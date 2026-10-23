@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
@@ -21,9 +21,9 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
  * Two invariants are asserted here, and neither was expressible while the function wrote both
  * columns and the routing set in one breath:
  *
- * 1. **A Welcome never demotes.** The conflict clause touches `kickedAt` and nothing else, so a
- *    row that is already `active` keeps its status. A demoted row is dropped by the fan-out
- *    (`WHERE status = 'active'`) and the device silently stops receiving the group.
+ * 1. **A Welcome never touches an existing row.** It neither demotes an `active` row - a demoted
+ *    row is dropped by the fan-out (`WHERE status = 'active'`) - nor clears a kick: the commit that
+ *    admits the device does that, and a Welcome is bytes, not an Add.
  * 2. **A Welcome never writes the routing set.** `group:members:{groupId}` is owned by
  *    `activateDeviceMembership`; a second writer here announced a device as routable in the same
  *    breath as recording that it had not joined.
@@ -35,6 +35,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     insert: jest.fn().mockReturnThis(),
     into: jest.fn().mockReturnThis(),
     values: jest.fn().mockReturnThis(),
+    orIgnore: jest.fn().mockReturnThis(),
     orUpdate: jest.fn().mockReturnThis(),
     execute: jest.fn().mockResolvedValue({}),
   };
@@ -59,12 +60,36 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   // The Welcome row is written through a transaction that first takes a read lock on the group, so
   // a group deleted mid-flight queues nothing. A live group keeps that path inert here.
   const queuedSave = jest.fn().mockImplementation(async (rows: unknown) => rows);
+  /** Every read inside the store's transaction, in order, so a test can see what was locked when. */
+  const txReads: string[] = [];
+  // The target's roster seat as the store's transaction re-reads it, under a lock.
+  const txSeat = jest.fn();
   const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
     cb({
-      getRepository: (entity: unknown) =>
-        entity === Group
-          ? { find: jest.fn().mockResolvedValue([{ id: 'g1', deletedAt: null }]) }
-          : { save: queuedSave },
+      getRepository: (entity: unknown) => {
+        if (entity === Group) {
+          return {
+            find: jest.fn(async () => {
+              txReads.push('group');
+              return [{ id: 'g1', deletedAt: null }];
+            }),
+          };
+        }
+        if (entity === GroupMember) {
+          return {
+            findOne: jest.fn(async (q: unknown) => {
+              txReads.push('seat');
+              return txSeat(q);
+            }),
+          };
+        }
+        return {
+          save: jest.fn(async (rows: unknown) => {
+            txReads.push('save');
+            return queuedSave(rows);
+          }),
+        };
+      },
     })
   );
   const queuedMessageRepo = {
@@ -99,6 +124,8 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   // Held as consts so the authorization cases below can say what each table answers.
   const groupMemberRepo = emptyRepo();
   const groupRepo = { ...emptyRepo(), manager: { transaction } };
+  // The conversation's user roster, which `dm_group_members` answers from.
+  let roster: Set<string>;
 
   const body = {
     targetDeviceId: 'd2',
@@ -111,11 +138,17 @@ describe('MessagingService - sendWelcome does not touch membership status or the
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    txReads.length = 0;
+    txSeat.mockResolvedValue({ id: 'm-u2' });
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1', userId: 'u2', deviceId: 'd2' });
     deviceGroupRepo.createQueryBuilder.mockReturnValue(insertBuilder);
     deviceGroupRepo.findOne.mockResolvedValue(null);
-    groupMemberRepo.findOne.mockResolvedValue(null);
-    groupRepo.findOne.mockResolvedValue(null);
+    roster = new Set(['u1', 'u2']);
+    groupMemberRepo.findOne.mockImplementation(
+      async ({ where }: { where: { groupId: string; userId: string } }) =>
+        where.groupId === 'g1' && roster.has(where.userId) ? { id: `m-${where.userId}` } : null
+    );
+    groupRepo.findOne.mockResolvedValue({ id: 'g1' });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -141,15 +174,63 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     await expect(service.sendWelcome(undefined, body)).resolves.toEqual({ status: 'queued' });
   });
 
-  it('overwrites ONLY `kickedAt` on conflict, so an active row is never demoted', async () => {
+  it('leaves an existing row alone: an active row is not demoted, a kicked one not cleared', async () => {
     await service.sendWelcome(undefined, body);
 
-    // THE REGRESSION THIS FILE EXISTS FOR. The previous `upsert` overwrote `status` with the
-    // literal 'pending', and `skipUpdateIfNoValuesChanged` does not spare a row whose value
-    // changes - so a Welcome to an already-active device knocked it out of the fan-out.
-    expect(insertBuilder.orUpdate).toHaveBeenCalledWith(['kickedAt'], ['deviceId', 'groupId']);
-    const [overwritten] = insertBuilder.orUpdate.mock.calls[0];
-    expect(overwritten).not.toContain('status');
+    // THE REGRESSION THIS FILE EXISTS FOR. An `upsert` overwrote `status` with the literal
+    // 'pending', which knocked an active device out of the fan-out; its successor overwrote
+    // `kickedAt`, which let a Welcome undo a kick no commit had answered.
+    expect(insertBuilder.orIgnore).toHaveBeenCalledTimes(1);
+    expect(insertBuilder.orUpdate).not.toHaveBeenCalled();
+    expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a conversation Welcome to a device whose owner is not on the group's roster", async () => {
+    roster.delete('u2');
+
+    await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+      response: { error: 'welcome_target_not_member' },
+    });
+    // Nothing is queued and no membership row is written for the outsider's device.
+    expect(queuedSave).not.toHaveBeenCalled();
+    expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
+    expect(redis.publish).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A REMOVAL RACING THE STORE: the seat was there when the target was checked, and the removal
+   * committed before the store's transaction re-read it. The store re-reads it under a share lock
+   * IN its own transaction, after the group, so the two serialise: a removal that committed first
+   * leaves no seat and nothing is stored; one that comes second waits, then deletes the Welcome.
+   */
+  it("re-reads the target's seat under a lock in the transaction that stores the Welcome", async () => {
+    await service.sendWelcome('u1', body);
+
+    expect(txSeat).toHaveBeenCalledWith({
+      where: { groupId: 'g1', userId: 'u2' },
+      lock: { mode: 'pessimistic_read' },
+    });
+    expect(txReads).toEqual(['group', 'seat', 'save']);
+  });
+
+  it('stores nothing when the seat is gone by the time the transaction reads it', async () => {
+    txSeat.mockResolvedValue(null);
+
+    await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+      response: { error: 'welcome_target_not_member' },
+    });
+    expect(queuedSave).not.toHaveBeenCalled();
+    expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
+    expect(redis.publish).not.toHaveBeenCalled();
+  });
+
+  it('refuses it on the background route too, which names no header', async () => {
+    roster.delete('u2');
+
+    await expect(service.sendWelcome(undefined, body)).rejects.toMatchObject({
+      response: { error: 'welcome_target_not_member' },
+    });
+    expect(queuedSave).not.toHaveBeenCalled();
   });
 
   it('still inserts a `pending` row when the device has none (bootstrap)', async () => {
@@ -208,16 +289,65 @@ describe('MessagingService - sendWelcome does not touch membership status or the
    * the gate refused every such Welcome; it asks the device table for this kind, like the replay.
    */
   describe('who may send a Welcome', () => {
-    it('lets a key-distribution member with an ACTIVE device row Welcome a newcomer', async () => {
+    let previous: string | undefined;
+    let fetchSpy: jest.SpyInstance;
+    /** social-service's answer for the Welcome's target (WP-KEYGROUP-JOIN-GATE). */
+    const social = (entitled: boolean) =>
+      fetchSpy.mockResolvedValue(new Response(JSON.stringify({ entitled }), { status: 200 }));
+
+    beforeEach(() => {
+      previous = process.env.INTERNAL_SECRET;
+      process.env.INTERNAL_SECRET = 'sekret';
+      fetchSpy = jest.spyOn(globalThis, 'fetch');
+    });
+
+    afterEach(() => {
+      fetchSpy.mockRestore();
+      if (previous === undefined) delete process.env.INTERNAL_SECRET;
+      else process.env.INTERNAL_SECRET = previous;
+    });
+
+    it('lets a key-distribution member with an ACTIVE device row Welcome an entitled newcomer', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
       deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      social(true);
 
       await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
       expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
         where: { groupId: 'g1', userId: 'u1', status: 'active' },
       });
-      // The user table cannot answer for this kind, so it is not asked at all.
+      // The user table cannot answer for this kind, so it is not asked at all: social-service is,
+      // about the TARGET.
       expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
+      expect(JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body))).toEqual({
+        kind: 'workspace',
+        scopeId: 'ws-1',
+        userId: 'u2',
+      });
+    });
+
+    it("refuses a key group's Welcome to a target social-service does not entitle", async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionChannelId: 'salon-1' });
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      social(false);
+
+      await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+        response: { error: 'welcome_target_not_member' },
+      });
+      expect(queuedSave).not.toHaveBeenCalled();
+      expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it("is a 503 - nothing queued, no row - when social-service cannot answer for a key group's target", async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      fetchSpy.mockRejectedValue(new TypeError('fetch failed'));
+
+      await expect(service.sendWelcome('u1', body)).rejects.toBeInstanceOf(
+        ServiceUnavailableException
+      );
+      expect(queuedSave).not.toHaveBeenCalled();
+      expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
     });
 
     it('refuses a sender with no active device in a private salon key group', async () => {
@@ -228,9 +358,6 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     });
 
     it('still asks dm_group_members for an ordinary conversation', async () => {
-      groupRepo.findOne.mockResolvedValue({ id: 'g1' });
-      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
-
       await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
       expect(groupMemberRepo.findOne).toHaveBeenCalledWith({
         where: { groupId: 'g1', userId: 'u1' },
@@ -238,7 +365,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     });
 
     it('refuses a non-member of an ordinary conversation', async () => {
-      groupRepo.findOne.mockResolvedValue({ id: 'g1' });
+      roster.delete('u1');
 
       await expect(service.sendWelcome('u1', body)).rejects.toBeInstanceOf(ForbiddenException);
     });

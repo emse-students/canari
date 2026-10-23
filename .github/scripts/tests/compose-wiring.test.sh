@@ -137,7 +137,7 @@ check_file() {
     # registry, a localhost tool port) and is none of this check's business.
     [ -n "$expected" ] || continue
 
-    if echo " $expected " | grep -q " $port "; then
+    if echo " $expected " | grep " $port " >/dev/null; then
       pass
     else
       fail "$file:$line addresses $svc on $port, but it listens on: ${expected% }"
@@ -155,7 +155,7 @@ EOF
       [ -n "${svc:-}" ] || continue
       expected=$(echo "$map" | awk -v s="$svc" '$1 == s { print $2 }' | tr '\n' ' ')
       [ -n "$expected" ] || continue
-      if echo " $expected " | grep -q " $port "; then
+      if echo " $expected " | grep " $port " >/dev/null; then
         pass
       else
         fail "$file:$line sets $portkey=$port for $hostkey=$svc, which listens on: ${expected% }"
@@ -359,7 +359,9 @@ assert_forwards() {
       continue
       ;;
     esac
-    if ! printf '%s\n' "$target_pairs" | grep -q "^$svc "; then
+    # `grep >/dev/null`, never `grep -q`, in every pipe of this file: `-q` exits on the first match,
+    # the writer takes SIGPIPE, and under `pipefail` a key that IS there reads as missing.
+    if ! printf '%s\n' "$target_pairs" | grep "^$svc " >/dev/null; then
       fail "production declares '$svc' with an environment block and $target has no such service - wire it, or name it as absent by design with a reason"
       continue
     fi
@@ -368,7 +370,7 @@ assert_forwards() {
       case "$absent_keys" in
       *" $svc:$key "*) continue ;;
       esac
-      if ! printf '%s\n' "$target_pairs" | grep -qx "$svc $key"; then
+      if ! printf '%s\n' "$target_pairs" | grep -x "$svc $key" >/dev/null; then
         missing="$missing $key"
       fi
     done
@@ -386,7 +388,7 @@ assert_forwards() {
   # look. So an exempted key that IS forwarded fails, and the fix is to delete
   # the exemption.
   for entry in $absent_keys; do
-    if printf '%s\n' "$target_pairs" | grep -qx "${entry%%:*} ${entry#*:}"; then
+    if printf '%s\n' "$target_pairs" | grep -x "${entry%%:*} ${entry#*:}" >/dev/null; then
       fail "$entry is exempted as absent from $target but is forwarded there - delete the stale exemption"
     fi
   done

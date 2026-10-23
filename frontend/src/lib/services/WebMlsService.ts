@@ -1,6 +1,8 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import { getClientAppVersion } from '$lib/utils/appVersion';
+import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
 import {
@@ -10,7 +12,7 @@ import {
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
-import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
   loadAndInitWasm,
   migrateLegacyMlsStateBlob,
@@ -31,12 +33,18 @@ import type {
   MlsKeyPackageRequest,
   MlsKeyPackageResponse,
 } from '$lib/mls-client/mlsWorkerProtocol';
-import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
+import {
+  isChannelEventFrame,
+  isEphemeralFrame,
+  isHeartbeatFrame,
+} from '$lib/mls-client/channelEventTypes';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import {
+  loadMlsState,
   saveMlsState,
   MlsStateWriteRefusedError,
+  type MlsStateWriteLatch,
   toBase64,
   fromBase64,
   tagMlsSnapshot,
@@ -465,9 +473,11 @@ export class WebMlsService extends BaseMlsService {
         /* rely on canari_ws_token cookie only */
       }
     }
-    const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
-    const fullWsUrl = `${wsUrl}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`;
-    const logUrl = `${wsUrl}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam ? '&token=***' : ''}`;
+    const { url: fullWsUrl, redacted: logUrl } = gatewaySocketUrl(
+      wsUrl,
+      this.deviceId,
+      resolvedToken || undefined
+    );
 
     return new Promise((resolve, reject) => {
       console.log(`[WS] Opening connection → ${logUrl}`);
@@ -567,13 +577,17 @@ export class WebMlsService extends BaseMlsService {
     // frame that was perfectly well formed. A reader who learns to skip that is a reader who
     // will skip the next real one, and one who does not learns nothing from three `undefined`s.
     // The payload fields are logged on the payload branch below, where they exist.
-    console.log(
-      `[WS RCV] ${sanitizeForLog(frameType || 'payload')} frame for group ` +
-        sanitizeForLog(String(msg.groupId ?? '-'))
-    );
+    // A typing signal or a read receipt decides nothing and arrives by the dozen (33 + 17 lines
+    // in two hours of one web console, 2026-10-18), so they are not announced; every other frame
+    // still is.
+    if (!isEphemeralFrame(frameType)) {
+      console.log(
+        `[WS RCV] ${sanitizeForLog(frameType || 'payload')} frame for group ` +
+          sanitizeForLog(String(msg.groupId ?? '-'))
+      );
+    }
     if (isChannelEventFrame(frameType)) {
       if (this.onChannelEvent) {
-        console.log(`[WS RCV] Triggering onChannelEvent for ${sanitizeForLog(String(msg.type))}`);
         this.onChannelEvent({ type: msg.type, data: msg.data });
       } else {
         console.warn(`[WS RCV] Received channel/post event but no onChannelEvent registered.`);
@@ -669,6 +683,8 @@ export class WebMlsService extends BaseMlsService {
             ratchetTreeBytes,
             queuedMessageId: (msg.queuedMessageId as string) || undefined,
             queuedCreatedAt: parseServerTimestampMs(msg.createdAt),
+            // Forwarded by the gateway since step A (history-answer-addressing, rule 4).
+            addressed: msg.addressed === true,
           },
           'live'
         );
@@ -797,6 +813,10 @@ export class WebMlsService extends BaseMlsService {
     // to the wrong user. Idempotent: a no-op when login already resolved it before
     // the pin-check.
     await this.resolveDeviceId(userId);
+
+    // A KEPT ID WITH A LOST STATE RE-ENROLS AS A NEW DEVICE (`reenrolLostState`): the rotation loads
+    // and persists the fresh client itself, so nothing below has anything left to load.
+    if (!state && (await this.reenrolLostState(deviceKeyB64, opts))) return;
 
     // Same span name as `TauriMlsService`, and for the reason written there: a browser report and
     // an Android report have to answer the same question with the same word to be comparable.
@@ -977,9 +997,23 @@ export class WebMlsService extends BaseMlsService {
     });
   }
 
-  /** Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over. */
-  protected async writeCheckpoint(deviceKeyB64: string): Promise<void> {
-    await saveMlsState(this.userId, await this.saveState(deviceKeyB64));
+  /**
+   * Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over.
+   *
+   * A CHECKPOINT THAT RESOLVES MEANS THIS STATE IS ON DISK (2026-10-21). It used to resolve on any
+   * outcome of the version guard, so every waiter - the send ledger, the history marks,
+   * `externalJoin` - declared durable a state the store did not hold. It resolves on `written`, and
+   * on `superseded` (this document's own later capture is stored, a superset of this one), and
+   * rejects typed on `stale` and `collision`, where the stored blob is another document's. Silent:
+   * the guard has already said it in one line.
+   *
+   * And on `ended`: the latch is handed to the write and read IN ITS TRANSACTION, after this capture
+   * and its off-thread seal - a refused rotation may have set it while this one was encrypting.
+   */
+  protected async writeCheckpoint(deviceKeyB64: string, latch: MlsStateWriteLatch): Promise<void> {
+    const outcome = await saveMlsState(this.userId, await this.saveState(deviceKeyB64), latch);
+    if (outcome === 'stale' || outcome === 'collision' || outcome === 'ended')
+      throw new MlsStateWriteRefusedError(outcome);
   }
 
   /** WASM client wrapper - burns `count` send generations, discarding every frame it produces. */
@@ -1006,14 +1040,21 @@ export class WebMlsService extends BaseMlsService {
    * a dropped re-seal leaves the stored state under the OLD key. That is a typed failure
    * ({@link MlsStateWriteRefusedError}), which ends the session into the recovery, never a "done".
    */
-  protected async changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void> {
+  protected async changeDeviceKeyImpl(
+    newDeviceKeyB64: string,
+    latch: MlsStateWriteLatch
+  ): Promise<void> {
     const newState = await this.saveState(newDeviceKeyB64);
-    const outcome = await saveMlsState(this.userId, newState);
+    const outcome = await saveMlsState(this.userId, newState, latch);
     if (outcome !== 'written') {
-      console.error(
-        `[MLS] Device key change: the re-sealed state was NOT written (${outcome}) - the stored ` +
-          'state stays under the old key.'
-      );
+      // An ENDED document was announced ONCE, by the refused rotation's own line; repeating it per
+      // refused write is the noise the latch exists to end.
+      if (outcome !== 'ended') {
+        console.error(
+          `[MLS] Device key change: the re-sealed state was NOT written (${outcome}) - the stored ` +
+            'state stays under the old key.'
+        );
+      }
       throw new MlsStateWriteRefusedError(outcome);
     }
     console.log('[MLS] Device key changed - state re-encrypted and persisted.');
@@ -1192,7 +1233,7 @@ export class WebMlsService extends BaseMlsService {
    */
   protected async stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -1200,11 +1241,11 @@ export class WebMlsService extends BaseMlsService {
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }> {
-    const jsArray = keyPackages.reduce((arr, kp) => {
-      arr.push(kp);
-      return arr;
-    }, [] as Uint8Array[]);
-    const res = this.client.add_members_bulk(groupId, jsArray);
+    const res = this.client.add_members_bulk(
+      groupId,
+      devices.map((d) => d.keyPackage),
+      devices.map((d) => d.identity)
+    );
     return {
       commit: res[0] as Uint8Array,
       welcome: res[1] as Uint8Array | undefined,
@@ -1212,6 +1253,55 @@ export class WebMlsService extends BaseMlsService {
       skipped: (res[3] as SkippedKeyPackage[] | undefined) ?? [],
       groupInfo: res[4] as Uint8Array,
     };
+  }
+
+  /** WASM client wrapper - `replace_device`, `[commit, welcome, group_info]`, staged not merged. */
+  protected async stageReplaceDevice(
+    groupId: string,
+    identity: string,
+    keyPackage: Uint8Array
+  ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }> {
+    const res = this.client.replace_device(groupId, identity, keyPackage);
+    return {
+      commit: res[0] as Uint8Array,
+      welcome: res[1] as Uint8Array,
+      groupInfo: res[2] as Uint8Array,
+    };
+  }
+
+  /**
+   * IndexedDB answered, and answered "nothing" (an empty record counts as nothing - `stateOrAbsent`).
+   * A failed read throws out of `loadMlsState`, which `reenrolLostState` reads as "not proven".
+   */
+  protected async savedStateProvenAbsent(): Promise<boolean> {
+    return (await loadMlsState(this.userId)) === null;
+  }
+
+  /** WASM client wrapper - `vet_key_package`, the Rust verdict on binding and pin. */
+  protected async vetKeyPackageNative(
+    keyPackage: Uint8Array,
+    identity: string
+  ): Promise<KeyPackageVerdict> {
+    return this.client.vet_key_package(keyPackage, identity) as KeyPackageVerdict;
+  }
+
+  /** WASM client wrapper - `pinned_signature_keys`, `{ keys, anchored, reaffirmations }` or `undefined`. */
+  protected async pinnedSignatureKeysNative(
+    userId: string,
+    deviceId: string
+  ): Promise<DevicePin | null> {
+    const pin = this.client.pinned_signature_keys(userId, deviceId) as DevicePin | undefined;
+    return pin ?? null;
+  }
+
+  /** WASM client wrapper - `removal_epochs`, a `Float64Array` of epochs. */
+  protected async removalEpochsNative(groupId: string, userId: string): Promise<number[]> {
+    return Array.from(this.client.removal_epochs(groupId, userId));
+  }
+
+  /** WASM client wrapper - `take_device_events`, JSON from Rust (`DeviceEvent`, camelCase). */
+  protected async takeDeviceEventsNative(): Promise<DeviceEvent[]> {
+    return JSON.parse(this.client.take_device_events()) as DeviceEvent[];
   }
 
   /** WASM client wrapper - stages a Remove commit for all devices of the given users (no merge). */
@@ -1471,6 +1561,23 @@ export class WebMlsService extends BaseMlsService {
     if (!this.client)
       throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s tree`);
     return (this.client.member_signature_key(groupId, identity) as Uint8Array | undefined) ?? null;
+  }
+
+  /** WASM client wrapper - `leaf_holding_key_of`, the leaf carrying a package's key, or null. */
+  async leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s tree`);
+    return (this.client.leaf_holding_key_of(groupId, keyPackage) as string | undefined) ?? null;
+  }
+
+  /**
+   * WASM client wrapper - the key group's clean run at its current epoch. The run may be (re)started
+   * by this read, which dirties the state; the next checkpoint persists it with the tree.
+   */
+  async graineRun(groupId: string): Promise<GraineRunReading> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s Graine run`);
+    return this.client.graine_run(groupId) as GraineRunReading;
   }
 
   /** The WASM crate's Ed25519 free functions (`wasmGraineSignatureEngine`). */

@@ -48,6 +48,17 @@ export class Association {
   lydiaOnboardingComplete: boolean;
 
   /**
+   * The Lydia Business private token, ENCRYPTED (`common/secret-box.ts`, migration 100), that
+   * verifies this association's `request/do` callbacks. Write-only from a browser's side: set by a
+   * MANAGE_PAYOUT_ACCOUNT holder, answered decrypted to core-service alone. Kept out of every
+   * TypeORM SELECT/INSERT/UPDATE (so no association read names it before migration 100 runs, and
+   * no entity serialisation can ever carry it) - read and written by raw SQL only
+   * (`AssociationsService.setLydiaBusinessKey`, `lydiaCallbackKey`).
+   */
+  @Column({ type: 'text', nullable: true, select: false, insert: false, update: false })
+  lydiaBusinessKeyCiphertext?: string | null;
+
+  /**
    * Lydia Business dashboard URL, returned once by `business/create` and never re-issuable
    * (unlike Stripe's Express dashboard link) - stored so the treasurer can still reach it after
    * the creating session ends.

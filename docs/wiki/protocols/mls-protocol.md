@@ -590,6 +590,259 @@ enqueueMessage()      enqueueMessage()
 
 **TauriMlsService** uses a `callbackLock` promise chain so `fetchPendingMessages` and `processQueue` never call the Rust layer concurrently.
 
+## Device binding
+
+**A KeyPackage is checked against the device it was fetched for, and device keys are pinned on first
+sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the TypeScript face is
+`frontend/src/lib/mls-client/deviceTrust.ts`. Tests: `frontend/mls-core/tests/device_binding.rs`,
+`deviceTrust.test.ts`, `BaseMlsService.deviceTrust.test.ts`, `actions.welcomeRequest.test.ts`,
+`actions.pendingInvitations.test.ts`, `refusedDevices.test.ts`.
+
+- **Binding.** Every Add carries, beside each package, the `userId:deviceId` it was fetched for
+  (`add_members_bulk_with_base(.., expected_identities)`). A credential naming anything else is
+  skipped as `identity-mismatch`. The user half compares case-insensitively, the device half
+  exactly, and an identity holds exactly one `:` - the TypeScript parsers (`leafIdentity.ts`) read
+  an identity with more as naming nobody. Pin lookup and binding use ONE canonical identity
+  (`canonical_identity`: user half lowercased, device half as is): the pin store is keyed by it,
+  every lookup and comparison goes through it - the tree-key lookup a seed endorsement is checked
+  against (`member_signature_key`), the removals by user and by device, the batch dedupe, and the
+  native push checks (`canonical_user_of`, `canonical_user_id`). `canonical_user_of` also reads the
+  LEGACY BARE `userId` credential as its user with no device; it is never pinned and never matches a
+  device ([legacy-compatibility](../legacy-compatibility.md)). A persisted record NOT keyed
+  canonically is dropped with an ERROR at load, never merged into a pin: merging would turn a key
+  conflict between two records into trust. Its TypeScript twin is `leafIdentity.ts` (`canonicalIdentity`,
+  `canonicalUserId`, `sameDeviceIdentity`, `treeHoldsDevice`), tested on the same cases. It is used
+  by every TypeScript tree check and every comparison against a leaf's user half, so a spelling Rust
+  takes for a device never reads as absent and falls through to an Add.
+- **Pins.** Each identity maps to the SET of signature keys this device has seen for it, kept in the
+  sealed MLS state (`PersistedState.device_pins`, CBOR, `#[serde(default)]`). A state written before
+  pins existed is seeded at load from every tree it holds, so nothing already trusted is refused. A
+  package for a known device under an unknown key is skipped as `signature-key-changed`. Nothing
+  today can prove such a change - the old key goes with the lost state and there is no
+  cross-signing - so the refusal stands until the device re-enrols under a new id, or a merged tree
+  shows it still holding its pinned key (below).
+- **Bounded.** Past 8192 pinned identities (`MAX_PINNED_IDENTITIES`), the pins of identities no held
+  tree contains are dropped, AT LOAD ONLY (`prune_absent`) - never when a group is forgotten, since a
+  forget is half of a forget-and-re-Welcome heal and the pins it would drop are about to be needed.
+  A pin of a device still in a held tree is never dropped. A dropped identity is remembered
+  (`device_pins_pruned`, bounded at 8192), and a pin written for it again is UNANCHORED: learned
+  from a tree after this device had already forgotten it, so it vouches for less than a pin held
+  since first sight. A prune is reported at WARN (`PINS PRUNED`, with the counts), and every load's
+  `state composition` line carries `pins <n>, <m> pruned remembered`. Both go to the device log
+  only - pins are client state the server never sees.
+- **A group the load does not seed.** A group with a staged commit at load is not seeded (its tree
+  may be an external join's server-served one). It is seeded from the tree the first merged commit
+  was built on - ours accepted, or a member's - or, if its commit is refused, from the tree it falls
+  back to at that moment.
+- **Reaffirmations.** A pin counts the merged commits that showed its device holding the pinned key -
+  its leaf re-entering under that key, or a commit it signed. A merge with nothing pending signed
+  nothing and counts nothing (`a_merge_with_nothing_pending_reaffirms_no_pin`). This is what lifts
+  a remembered refusal (below).
+- **The replace path: ONE commit.** `handleWelcomeRequest`, for a device whose leaf is still in the
+  tree, sends Remove and Add in the SAME commit (`replaceMember` -> Rust
+  `MlsManager::replace_device_with_base`, WASM `replace_device`, Tauri `remplacer_appareil`); the
+  Welcome goes to the re-added device. It used to kick the leaf, then re-add it in a second commit,
+  which left the device out of the group in between and recorded a departure for a device that never
+  left. The package is vetted FIRST, in TypeScript and again in Rust: a refused package stages
+  nothing. Its signature key must also EQUAL the key of every leaf it removes - local signed
+  evidence that holds with or without a pin. `addMember` and `replaceMember` throw the typed `DeviceTrustRefusedError` before staging,
+  and the callers log it once per identity per session (`reportDeviceTrustRefusal`) and retire
+  nothing. No path kicks any more: an Add refused as a `DuplicateSignature` asks the tree WHOSE
+  leaf carries the package's key (`leafHoldingKeyOf`, Rust `leaf_holding_key_of`) - the tree merely
+  containing the identity does not make the duplicate its leaf. If the holder is this identity, a
+  welcome request replaces it in one commit, and a pending invitation is already fulfilled (vouched,
+  no commit). If another identity holds it, which no legitimate flow produces (a device that changes
+  id starts with a fresh key), nothing is vouched, replaced or removed, and the line is an ERROR of
+  its own (`DUPLICATE KEY HELD BY ANOTHER DEVICE`). A holder that cannot be read, or a key no leaf
+  carries any more, is a WARN and the next request decides.
+- **A refusal no retry can lift is remembered.** Every package of a device carries the same
+  signature key, so a `signature-key-changed` refusal would come back at every sweep, each one
+  spending a one-time KeyPackage. It is recorded per own device (`refusedDevices.ts`,
+  `ACCOUNT_KEY.refusedDevices`), and `processPendingInvitations` and `handleWelcomeRequest` skip that
+  device without fetching anything, with a line naming the remedy: its owner resets it, and it
+  re-enrols under a new id. An `identity-mismatch` is not remembered - the next package may be the
+  right one. Each entry stores the pin's reaffirmation count when it was refused, and is LIFTED when
+  the count has grown (a merged tree showed the device under its pinned key, so the refused package
+  was not the device's) or when the pin is gone. Nothing is remembered for a device with no pin. A
+  device that rotates its own id drops what its old id remembered (`forgetRefusedDevicesOf`). The
+  bulk-Add skip report (`warnSkippedKeyPackages`) says each refused device once per session.
+- **External commits.** Pins gate the Adds this device builds. An external commit is a joiner
+  adding itself under its own signature, which another member cannot refuse without forking, so it
+  is merged as signed and what it admitted is recorded like any other admission. The joiner pins the
+  tree it joined only once its commit is MERGED (`pending_external_joins`): a join the server refused
+  pins nothing. The marker is in the sealed state, so a checkpoint and a restart before the merge
+  keep it, and the load-time seeding skips any group with a pending commit. Clearing an external
+  join's pending commit forgets the group: there is no prior epoch to fall back to.
+- **Events.** Every NEW device a merged commit admitted - ours or a peer's, the signer read from the
+  verified commit - is recorded as a `DeviceEvent` (`identity`, `keyFingerprint`, `trust`:
+  `first-sight` / `key-changed`, `addedBy`). The diff is on `(identity, key)` pairs, never on leaf
+  indexes, and a device re-added under its pinned key records nothing - a heal or a resync re-adds
+  devices daily, and an event each time would announce the same device again. The list is bounded
+  (512, the oldest dropped, said once per filling) and lives in the sealed state until
+  `IMlsService.takeDeviceEvents()` takes it. It is recorded whatever kind of group admitted the
+  device: the kind decides where a notice is PLACED (`deviceEventAudience`), not what is recorded. A
+  commit another member made is applied as signed - refusing it would fork the group - and what it
+  admitted is recorded.
+
+- **A key this device has seen: `pinnedSignatureKeys(userId, deviceId)`.** THE one source for any
+  verifier of a signature made by a device key (an admission voucher, a signed history entry): the
+  pins, never a key the server published alone. It answers a `DevicePin` -
+  `{ keys: Uint8Array[]; anchored: boolean; reaffirmations: number }` - or `null`. `null` is a device
+  never seen, or one whose pin was pruned past the bound - a verifier reads it as UNVERIFIED, never
+  as FORGED. `anchored: false` is a pin re-learned after a prune: a signature verifying under it is
+  weaker evidence, and a verifier says so rather than calling it verified. Several keys come back
+  only for a state seeded from trees that disagreed; a signature verifying under any of them was
+  made by a key this device saw. The "no pin" line is logged once, in Rust. Rust
+  `MlsManager::pinned_signature_keys`, WASM `pinned_signature_keys`, Tauri
+  `cles_signature_epinglees`.
+- **Departures: `removalEpochs(groupId, userId)`.** When a merged commit - live, replayed on
+  catch-up, or our own - removes a USER's last leaf from a tree, `(groupId, user, epoch)` is recorded
+  in the sealed state (`PersistedState.device_departures`, bounded at 8192 like the pins: past it,
+  the departures of groups no longer held are dropped). Recorded at merge time, so a device that
+  only caught up on a kick and a re-add still sees the removal. Compared per user over the trees: a
+  one-commit leaf swap (an external rejoin, a heal, the one-commit replace above) and one device
+  among several leaving record nothing; a kick and a re-add in two commits is a departure whatever
+  the kick was for. Two properties a reader must hold: it is PER USER, not per device, and it holds
+  only the commits THIS device merged - a commit before it joined, or one it skipped through a
+  Welcome, is absent. Never a device event and never shown. An empty answer is NOT SEEN, never
+  "never happened". Rust
+  `MlsManager::removal_epochs`, Tauri `epoques_departs`.
+
+### What each legitimate flow does
+
+| Flow | Outcome |
+|---|---|
+| Last-resort or one-time package rotation | Same device signature key, so the pin matches: no change. |
+| PIN change | Re-seals the state, the signature key is unchanged: no change. |
+| Several devices on one account | Each `userId:deviceId` has its own pin. |
+| Web device ids (`web-<user>-...`) | Ordinary identities, pinned like any other. |
+| Reinstall or factory wipe (new id) | A new device: first sight, admitted. |
+| Restore (WP-RESTORE-1) | Enrols as a new device, first sight. |
+| A device that kept its id but lost its state | **It is a new device** (decided 2026-10-22): at start-up it rotates to a new id (`reenrolLostState`) and its owner's devices see a new device. Taken only when the id pre-existed this boot AND the store PROVES the state absent - no `mls.bin` or an empty one (`mls_state_absent`), no IndexedDB record - never on a decryption failure, a PIN problem or a read the store could not answer. The old id is recorded (`abandonedDevices.ts`) before its deletion is asked and leaves the record only once the server confirms it, so it is retired exactly once; the live id is never deleted. A device that did a same-id fresh start on an older build is refused re-adds by upgraded peers (remembered, so no package of it is fetched again) until it resets; meanwhile it can still re-enter a group by external commit, which pins do not gate. |
+| Downgrade to a build without pins, then upgrade | The older build drops the pins it cannot read; the upgrade re-seeds them from the trees. |
+| A Tauri resume reload | Events not yet persisted in `mls.bin` can be lost with the reload, as any unsaved state is. |
+
+### New-device notices (decided by the user 2026-10-22, refined the same day)
+
+No mandatory approval of a new device. Instead, **produced by the client from the signed commit it
+processed, never from a server message** (a server that stays silent must not silence them):
+
+- the account owner gets an alert "a new device was added to your account", in the app and as a
+  local notification on the phone, whichever group the commit came from;
+- contacts see a discreet line "X added a device" in **private conversations only** (1:1 and
+  groups), **never in a community or salon key group**, where it would be noise.
+
+**What counts as a new device** is decided where the event is recorded, as a fact
+(`DeviceEvent.memberAlreadyPresent`: the user already had a leaf before the commit) and one predicate,
+`announcesNewDevice()` / `DeviceEvent::announces_new_device`:
+
+| Event | Announced? |
+|---|---|
+| first sight, the user was already in the conversation | yes |
+| first sight, the user arrives with it (a new member, a new conversation) | no - that is the member-added line |
+| a resync, a heal, a kick and re-add under the pinned key | no - not even recorded (`pinned` is refused by the predicate as well) |
+| `key-changed` admitted by a commit | yes, wherever it is - nothing proves it |
+| `key-changed` found in a joined tree (`addedBy` null) | no - no commit admitted it |
+| the processing device itself | never |
+| an event recorded before `memberAlreadyPresent` existed | no |
+
+Then `deviceEventAudience()` (`deviceTrust.ts`) routes it: `owner-alert` for this account, from
+any group; `contact-line` for a contact, asked once PER CONVERSATION the line could go in, so a
+community or salon key group never gets it; `none` otherwise. Rust's
+`DeviceEvent::is_owner_alert` applies the owner half for the background engines, and both are held
+to ONE table, `frontend/mls-core/tests/fixtures/device_notices.json`, read by a Rust and a TypeScript
+test. One device under one key is announced once (`deviceEventKey()` = `notice_key()`).
+
+**First sight by THIS device is not "new to its owner"** (#2278 review): a fresh install, a restore,
+a pin dropped by the bound, or a heal re-adding a device that was never in a tree this device holds
+all show OLD devices for the first time - and heals happen daily. So the app weighs one more piece
+of evidence, `isNewToItsOwner()` (`deviceTrust.ts`): the server's first sight of the device's key
+(`DeviceSignatureKey.firstSeenAt`, served as `firstSeen` by `GET /api/mls/devices/:u/:d/signature-keys`).
+It is used ONLY TO SUPPRESS, never to raise - the signed commit stays the only source of a notice,
+and the device list stays the place to audit the account:
+
+| Key first seen by the server | Owner alert | Contact line |
+|---|---|---|
+| never dated (published before the key history began) | no | no |
+| before THIS device enrolled (first sight of its own key) | no | no |
+| since this device enrolled | yes, however late this device learns of it | only within 7 days (`CONTACT_NEW_DEVICE_WINDOW_MS`) of learning of it |
+
+Chosen over a per-contact baseline of pins, which cannot tell a contact's old laptop a heal brings
+into a DM from a new one; the window trades a late line for no false one (the user: notices must not
+become noise). An age the server did not answer keeps the event for the next delivery
+(`undecided`, durable, 64 at most) - neither raised without evidence nor lost for want of it. The
+app finds the key by fingerprint (`keyFingerprintOf()`, Rust's `key_fingerprint`, held to
+`mls-core/tests/fixtures/key_fingerprints.json`).
+
+**Who consumes the events.** `BaseMlsService.setDeviceEventConsumer` hands the taken events to
+`deliverDeviceEvents` (`utils/chat/deviceNotices.svelte.ts`, registered by `registerDeviceNotices`
+at session start): after every drain, after this device's own Adds (`addMember`,
+`addMembersBulk`, `replaceMember`), and once at registration for what the sealed state already
+holds - so the 512-event store drains. An EMPTY take is handed over too: it is the durable moment
+the notices retry what they parked (an `undecided` event, an owed line), so a quiet account does not
+leave an alert parked until some unrelated device event arrives. With no consumer they stay:
+sign-out removes it (`unregisterDeviceNotices`), so the events wait in the state for the account
+that consumes them next.
+
+- **The contact line** is a client-written system row (`chat_system_device_added`), message id
+  `device-added:<groupId>:<key>` - one per conversation, idempotent, not unread, no sound, like every
+  `system` row. It is written in EVERY 1:1 and group row whose tree (`getGroupMemberIdentities`,
+  read locally) holds a leaf of the device's owner, whichever group admitted the device - a
+  contact's new device is often first seen in a community they share, and the line still reaches
+  the private conversations. Never in a channel row or a key group. Written once per device and
+  key, durably (`lined`, the last 256), not only against the messages a conversation has loaded.
+  A device is LINED only once no line is still owed: a group this device holds
+  (`getLocalGroups`) with the contact in its tree but no row loaded yet - the start-up drain may
+  run before the rows load - or whose tree is unreadable keeps the line OWED (`owedLines`, durable,
+  64 at most, an overflow warned with its count), retried at each hand-over without asking the
+  evidence again, and dropped past the 7-day contact window (the drop is persisted too). A held
+  group with no row loaded is owed only if the DURABLE store holds a live row for it
+  (`IStorage.getConversation`, lifecycle not `removed`): a key group never has one, and the
+  session-local `isDistributionGroup` may not name it yet at start-up; a deleted conversation's
+  lingering state has lost its row.
+- **A reset device re-added in one commit** (`replaceMember`) under a key a member never saw for it
+  reads to that member as "added a device": it is a device under a key they never saw, which is
+  what the line says. Defensible, and deliberate - the line never claims the device id is new. A
+  repair under the PINNED key announces nothing (`pinned`).
+- **The owner alert in the app** is `NewDeviceBanner.svelte` in the layout's banner column: the
+  device's name when the device list has one, when this device learned of it, and a link to
+  `/settings/security`. Durable per account (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the
+  last 256 announced keys) until dismissed or followed.
+- **A refused device of the owner's own** (`refusedDevices.ts`, a changed key under a kept id) is
+  told in the same banner column, with the remedy (`device_refused_remedy`: remove it from the
+  devices, sign in on it again, and it enrols as a new device). Built from the refusals this device
+  remembers at registration and from each new one (`setRefusedDeviceListener`); dismissed once, it
+  does not come back (`refusedSeen`). A contact's refused device is not told to anyone: its owner
+  learns of it only from a device of their own that refuses it too.
+- **The local notification** is raised by the native background engines only, from a commit they
+  merged in memory: the Android FCM service (a commit push, a catch-up, or its own background Add of
+  the account's new device once the server accepted it) and the iOS notification extension (a
+  catch-up before a message - the extension never sees a silent commit push, so an iPhone whose app
+  is closed learns of the device at the next message push or when the app opens). Each push-decrypt
+  answer carries `ownDeviceAdded` (`mobile/device_notice.rs`); the keys are claimed in a ledger of
+  one marker file per key (`create_new`, atomic across the app and the extension), in the app data
+  directory on Android and the App Group on iOS. The app claims the keys it showed
+  (`claim_device_notices`), so a later push replaying the commit notifies nothing. In the
+  foreground neither engine posts: Android reads `MainActivity.isInForeground`, the iOS extension
+  the `app_in_foreground` file the app keeps in the App Group (`CanariSetAppGroupForegroundFlag`).
+  The engines have no key ages, so at registration the app PRE-CLAIMS every key of the account's
+  other listed devices that `isNewToItsOwner` calls old - an old device a heal brings back is then
+  never posted. The ledger is swept with the account's push files on deletion.
+- **A background Add the server refused** (Android `processWelcomeRequestBackground`) admitted
+  nobody, and announces nothing. Its events exist only in the STAGED post-add state
+  (`prepare_welcome_background_with_key`), which is installed into `mls.bin` only on the server's
+  acceptance and discarded otherwise, so a refusal leaves the app no event to read. The service
+  posts the notification on `Outcome.Accepted` alone: the server admitted the device, whether or
+  not this phone could install its own copy.
+
+**Known limits, owed a decision or a reading:** a phone whose WebView is alive in the background
+processes the commit itself and so shows the in-app alert only, with no local notification; and a
+device first seen inside a tree this device JOINED (its leaf pinned silently) is never announced.
+The pre-claim reads the device list, which omits devices idle for 30 days, so a background engine
+can still post for such a device when a heal brings it back; the app does not announce it. A
+contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
+the history began carry that date, not their device's enrolment.
+
 ## Key packages
 
 ### The two kinds of key package

@@ -11,6 +11,7 @@ import axios from 'axios';
 import { UserBlock } from './entities/user-block.entity';
 import { User } from './entities/user.entity';
 import { socialUrl } from '../internal/service-urls';
+import { RefusalCode, refusalBody } from '../common/refusal-codes';
 
 /**
  * How many people one account may block.
@@ -131,10 +132,16 @@ export class UserBlocksService {
   async block(blockerId: string, blockedId: string): Promise<{ ok: true }> {
     this.logger.log(`[block] blocker=${blockerId} blocked=${blockedId}`);
     if (!blockedId) throw new BadRequestException('A user to block is required');
-    if (blockerId === blockedId) throw new BadRequestException('You cannot block yourself');
+    if (blockerId === blockedId)
+      throw new BadRequestException(
+        refusalBody(RefusalCode.BLOCK_SELF, 'You cannot block yourself')
+      );
 
     const target = await this.userRepo.findOne({ where: { id: blockedId }, select: { id: true } });
-    if (!target) throw new NotFoundException('User not found');
+    if (!target)
+      throw new NotFoundException(
+        refusalBody(RefusalCode.BLOCK_TARGET_NOT_FOUND, 'User not found')
+      );
 
     const existing = await this.blockRepo.findOne({ where: { blockerId, blockedId } });
     if (existing) {
@@ -145,7 +152,11 @@ export class UserBlocksService {
     const current = await this.blockRepo.count({ where: { blockerId } });
     if (current >= MAX_BLOCKS_PER_USER) {
       throw new UnprocessableEntityException(
-        `You cannot block more than ${MAX_BLOCKS_PER_USER} people`
+        refusalBody(
+          RefusalCode.BLOCK_LIMIT_REACHED,
+          `You cannot block more than ${MAX_BLOCKS_PER_USER} people`,
+          { max: MAX_BLOCKS_PER_USER }
+        )
       );
     }
 
@@ -159,7 +170,10 @@ export class UserBlocksService {
   async unblock(blockerId: string, blockedId: string): Promise<{ ok: true }> {
     this.logger.log(`[unblock] blocker=${blockerId} blocked=${blockedId}`);
     const res = await this.blockRepo.delete({ blockerId, blockedId });
-    if (!res.affected) throw new NotFoundException('This person is not blocked');
+    if (!res.affected)
+      throw new NotFoundException(
+        refusalBody(RefusalCode.NOT_BLOCKED, 'This person is not blocked')
+      );
     // Lifting one restores no follow, so `severFollows` does not run here and this is the only
     // thing telling the feed its cached pages are answers to a question that has changed.
     await this.dropFeedCache();

@@ -23,6 +23,7 @@ import type {
   StoredGraineSession,
   StoredMessage,
 } from '$lib/db';
+import { flushMacrotask } from '../../../test/flush';
 
 const storageForUser = new Map<string, IStorage>();
 vi.mock('$lib/db', async (importOriginal) => ({
@@ -43,6 +44,7 @@ const {
   LocalStateUnopenableError,
   LocalStateUnreadableNowError,
   dropStoredFeedPages,
+  moveSealedStoresOnly,
   performPinChange,
   resealDeviceKeyStores,
 } = await import('./pinChange');
@@ -331,6 +333,16 @@ describe('both PIN paths go through performPinChange', () => {
     }
   );
 
+  it('the change asks whether this tab may change the key BEFORE the server rotates the verifier', () => {
+    // A follower's re-seal is refused by the version guard (`pinChange.followerTab.test.ts`): asked
+    // after the server took the new PIN, the refusal would still cost the user a recovery.
+    const fn = body('export async function changePinImpl(');
+    const guard = fn.indexOf('thisTabMayChangeDeviceKey(');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(fn.indexOf('/api/mls/security/pin-change'));
+    expect(guard).toBeLessThan(fn.indexOf('await performPinChange('));
+  });
+
   it('the recovery hands performPinChange the STORED state, the change does not', () => {
     expect(body('export async function recoverPinImpl(')).toContain('storedMlsState: state');
     expect(body('export async function changePinImpl(')).not.toContain('storedMlsState');
@@ -597,7 +609,7 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await Promise.resolve();
 
     const change = performPinChange(options('u-inflight', fakeMls()), OLD, NEW);
-    await new Promise((r) => setTimeout(r, 20));
+    await flushMacrotask();
     land();
     await Promise.all([inFlight, change]);
 
@@ -768,6 +780,39 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
 
     expect(flush).toBeDefined();
     expect((await flush!)?.text).toBe('queued o1');
+  });
+});
+
+describe('moveSealedStoresOnly - an install with no MLS state to carry', () => {
+  it('moves every store, finishing a half-moved one, and retires the old key from the vault', async () => {
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    // A run killed half way already moved one row: it counts as done, not damaged.
+    await s.raw.saveMessages([message('m9')], NEW);
+    storageForUser.set('u-stores-only', s.gated);
+    vault.clearDeviceKey.mockClear();
+
+    await moveSealedStoresOnly('u-stores-only', OLD, NEW, () => {});
+
+    await everyRowUnder(s.raw, NEW);
+    expect(vault.clearDeviceKey).toHaveBeenCalledWith('u-stores-only');
+  });
+
+  it('a failure in the stores is typed as data moved, so the caller restarts', async () => {
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-stores-only-kill', s.gated);
+    vi.spyOn(s.raw, 'swapSealedPayloads').mockRejectedValueOnce(new Error('disk full'));
+
+    const failure = await moveSealedStoresOnly('u-stores-only-kill', OLD, NEW, () => {}).catch(
+      (e: unknown) => e
+    );
+
+    expect(failure).toBeInstanceOf(KeyChangeInterruptedError);
+    expect((failure as InstanceType<typeof KeyChangeInterruptedError>).dataMoved).toBe(true);
+    // The same two keys finish it.
+    await moveSealedStoresOnly('u-stores-only-kill', OLD, NEW, () => {});
+    await everyRowUnder(s.raw, NEW);
   });
 });
 

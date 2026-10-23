@@ -15,6 +15,16 @@
  *
  * TO ADD A GROUP: name the files and say WHY they are duplicated rather than shared. To REMOVE
  * one: delete the entry in the same change that deletes the duplication.
+ *
+ * A COPIED MODULE NEEDS ONE SPEC, NOT ONE PER COPY (WP-TEST-TOOLING-REFORM, 2026-10-21). An
+ * `exact` group pins every copy to the same bytes, so a spec run against the FIRST file of the
+ * group proves the behaviour of all of them; a byte-identical spec beside each other copy ran the
+ * same assertions on the same text and caught nothing more. The spec lives beside the first file,
+ * and the copies' specs were deleted. The ONE exception is a spec that builds its input with a
+ * dependency each service resolves for itself: `http-error-log.spec.ts` constructs an `AxiosError`
+ * from THAT service's `axios`, so each copy of it asks a question the other cannot (does this
+ * service's axios produce an error the renderer reads without leaking), and both stay, declared
+ * below. Read docs/wiki/test-suite-reform.md, section 7.2, before re-adding a copied spec.
  */
 export const DECLARED_GROUPS = [
   {
@@ -29,17 +39,6 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
-    what: 'the drain test that guards it',
-    compare: 'exact',
-    why: 'a copied module needs a copied test beside it, or three services assert the behaviour and the fourth only inherits the file',
-    files: [
-      'apps/chat-delivery-service/src/drain-on-sigterm.spec.ts',
-      'apps/core-service/src/drain-on-sigterm.spec.ts',
-      'apps/media-service/src/drain-on-sigterm.spec.ts',
-      'apps/social-service/src/drain-on-sigterm.spec.ts',
-    ],
-  },
-  {
     what: 'the CORS origin allowlist every service applies',
     compare: 'exact',
     why: 'no shared TS package; one would add a build stage and the --install-links trap to four production images (see the docblock in any copy)',
@@ -48,17 +47,6 @@ export const DECLARED_GROUPS = [
       'apps/core-service/src/cors-origins.ts',
       'apps/media-service/src/cors-origins.ts',
       'apps/social-service/src/cors-origins.ts',
-    ],
-  },
-  {
-    what: 'the CORS allowlist test that guards it',
-    compare: 'exact',
-    why: 'a copied module needs a copied test beside it, or three services assert the behaviour and the fourth only inherits the file',
-    files: [
-      'apps/chat-delivery-service/src/cors-origins.spec.ts',
-      'apps/core-service/src/cors-origins.spec.ts',
-      'apps/media-service/src/cors-origins.spec.ts',
-      'apps/social-service/src/cors-origins.spec.ts',
     ],
   },
   {
@@ -93,16 +81,6 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
-    what: 'the test that guards it',
-    compare: 'exact',
-    why: 'a copied module needs a copied test beside it, or one service asserts the behaviour and the others only inherit the file',
-    files: [
-      'apps/chat-delivery-service/src/guards/internal-token.spec.ts',
-      'apps/core-service/src/common/guards/internal-token.spec.ts',
-      'apps/social-service/src/common/guards/internal-token.spec.ts',
-    ],
-  },
-  {
     what: 'the block check that refuses to pull a blocker into a shared space',
     compare: 'code',
     why: 'the same refusal at two different mutations - a group add and a salon invitation - so each copy names its own call site in prose and must decide identically',
@@ -123,7 +101,9 @@ export const DECLARED_GROUPS = [
   {
     what: 'the spec of the failed-call log renderer',
     compare: 'exact',
-    why: 'a copied module needs a copied test beside it, or one service asserts the no-leak property and the other only inherits the file',
+    why: 'the one copied spec kept on purpose: it builds its AxiosError with the axios THIS service resolved, so each copy proves the no-leak property against its own dependency tree, which a spec run in the other service cannot (see the header of this file)',
+    // Read by tools/test-inventory: a copy of this spec is NOT a deletion candidate.
+    keepEachCopy: true,
     files: [
       'apps/core-service/src/common/http-error-log.spec.ts',
       'apps/social-service/src/common/http-error-log.spec.ts',
@@ -133,10 +113,7 @@ export const DECLARED_GROUPS = [
     what: 'the RFC 5545 primitives, client and server',
     compare: 'exact',
     why: 'a person can export an .ics from the app AND subscribe to the association feed the server serves; the two must describe the same evening - same UID, same UTC stamps, same one-hour default - and no shared TS package exists to hold the rules once',
-    files: [
-      'frontend/src/lib/calendar/ics.ts',
-      'apps/social-service/src/associations/ics.ts',
-    ],
+    files: ['frontend/src/lib/calendar/ics.ts', 'apps/social-service/src/associations/ics.ts'],
   },
   {
     what: 'the Minesweeper engine, client and server',
@@ -150,47 +127,44 @@ export const DECLARED_GROUPS = [
   {
     what: 'the one name precedence, on the server side',
     compare: 'exact',
-    why: 'one question - "what is this person called" - answered by a push notification title, a ring banner, a member list and a post notification, across two services. A third implementation exists in the frontend and CANNOT be a copy (different runtime, localized fallback), so the two halves of the guarantee are different mechanisms: identical text here, identical ANSWERS through libs/contracts/user-display-name.cases.json, which all three specs read. The file declares the minimal row shape itself rather than the model on either side, which is what lets the copies be identical.',
+    why: 'one question - "what is this person called" - answered by a push notification title, a ring banner, a member list and a post notification, across two services. A third implementation exists in the frontend and CANNOT be a copy (different runtime, localized fallback), so the two halves of the guarantee are different mechanisms: identical text here, identical ANSWERS through libs/contracts/user-display-name.cases.json, which the two specs (chat-delivery and the frontend) read - the social-service copy is proven by being these bytes. The file declares the minimal row shape itself rather than the model on either side, which is what lets the copies be identical.',
     files: [
       'apps/chat-delivery-service/src/utils/user-display-name.ts',
       'apps/social-service/src/utils/user-display-name.ts',
     ],
   },
   {
-    what: 'the contract spec that guards it',
+    what: "a booking space's wall clock (D25), server and screen",
     compare: 'exact',
-    why: 'a copied module needs a copied test beside it, or one service asserts the behaviour and the other only inherits the file',
+    why: "one question - \"what instant is this local time in the space's zone, and back\" - answered by the server for every rule and booking and by the organiser's and booker's screens for every date they show or take, which must not disagree on a DST night. No shared TS package between the NestJS service and the SvelteKit app, and the file has no import, which is what lets the copies be identical.",
     files: [
-      'apps/chat-delivery-service/src/utils/user-display-name.spec.ts',
-      'apps/social-service/src/utils/user-display-name.spec.ts',
+      'apps/social-service/src/bookings/zoned-time.ts',
+      'frontend/src/lib/bookings/zonedTime.ts',
     ],
   },
   {
     what: 'the presence-audience question, validated on both answering services',
     compare: 'exact',
-    why: 'the gateway asks chat-delivery (shared conversations) and social-service (shared communities) ONE question, `{ viewerId, userIds }`, and takes the union of the answers - so the two must parse it identically, or one half refuses what the other answers and every presence read is a 503. No shared TS package; the cap is the same number as MAX_PRESENCE_USERS in the gateway, pinned by libs/contracts/presence-audience.cases.json, which both specs and presence.rs read.',
+    why: 'the gateway asks chat-delivery (shared conversations) and social-service (shared communities) ONE question, `{ viewerId, userIds }`, and takes the union of the answers - so the two must parse it identically, or one half refuses what the other answers and every presence read is a 503. No shared TS package; the cap is the same number as MAX_PRESENCE_USERS in the gateway, pinned by libs/contracts/presence-audience.cases.json, which the chat-delivery spec and presence.rs read (the social-service copy is these bytes).',
     files: [
       'apps/chat-delivery-service/src/utils/presence-audience.ts',
       'apps/social-service/src/utils/presence-audience.ts',
     ],
   },
   {
-    what: 'the contract spec that guards the presence-audience question',
+    what: "a booking space's booking window (D26), server and screen",
     compare: 'exact',
-    why: 'a copied module needs a copied test beside it, or one service asserts the behaviour and the other only inherits the file',
+    why: 'one question - "may this range be booked now" - decided by the server on its own clock and drawn by the grid on the device clock, which must not disagree on a rule or its order. No shared TS package between the NestJS service and the SvelteKit app; the file takes plain numbers rather than either side\'s model, which is what lets the copies be identical, and both specs read libs/contracts/booking-window.cases.json.',
     files: [
-      'apps/chat-delivery-service/src/utils/presence-audience.spec.ts',
-      'apps/social-service/src/utils/presence-audience.spec.ts',
+      'apps/social-service/src/bookings/booking-window.ts',
+      'frontend/src/lib/bookings/bookingWindow.ts',
     ],
   },
   {
     what: 'the reading of a submitted form answer, screen and spreadsheet',
     compare: 'exact',
     why: 'one question - "what did this person answer" - asked by the responses table and by the XLSX export an hour later, and those two must not be able to disagree. No shared TS package, and the file declares the minimal question shape itself rather than the model on either side, which is what lets the copies be identical.',
-    files: [
-      'frontend/src/lib/forms/answerText.ts',
-      'apps/social-service/src/forms/answer-text.ts',
-    ],
+    files: ['frontend/src/lib/forms/answerText.ts', 'apps/social-service/src/forms/answer-text.ts'],
   },
 ];
 

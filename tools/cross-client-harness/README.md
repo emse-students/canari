@@ -800,6 +800,30 @@ next one's symptom names the wrong cause.
   test files afterwards. `bun run test` now compiles Paraglide itself, so there is nothing to
   remember - a rule that says "run X first" was a missing dependency, not a rule.
 
+### `callpeer.mjs` - a desktop Chrome as the other end of a phone call
+
+```sh
+bun callpeer.mjs --browser w3 --launch --url https://dev.canari-emse.fr/chat --accept --seconds 60
+bun callpeer.mjs --browser w2 --launch --wav <file.wav> --dial --hangup   # the conversation open on screen
+```
+
+The known-good engine (the call-audio rig measured desktop Chrome clean) on one end, a phone on the
+other: the phone that sounds wrong FROM it, or makes it conceal, is the faulty one
+([calls](../../docs/wiki/frontend/modules/calls.md#the-mi-9t-logged-no-worker-line-at-all-131-alpha2---the-worker-is-now-asked)).
+
+- `--launch` starts the profile with a FAKE microphone (Chrome's beep, or `--wav`). The flags are
+  read at start, so a profile already up is refused: `bun launch.mjs close w3` first.
+- Without `--launch` it attaches to the running profile, microphone as is.
+- It installs a peer-connection tracker before the app loads, then reloads.
+- `--dial` presses the header's audio-call button, `--accept` presses Accept when the phone rings.
+  Both labels are read from `frontend/messages/fr.json`.
+- It samples the RECEIVER every second and prints packets, loss, concealed %, jitter, level and
+  codec every 5 s.
+- It writes the samples and every `[Call]` console line (the E2E worker report included) to
+  `--out`, default the OS temp dir. `--hangup` ends the call and waits for the end-of-call report.
+- The profile must be signed in on the estate the phone uses (`--url`). Accounts stay in
+  `test-accounts.json`, out of tree.
+
 ### `deployed-wasm-check.mjs` - ask a DEPLOYED estate whether its wasm can panic
 
 ```sh
@@ -844,6 +868,8 @@ with their examples, in [testing-methodology](../../docs/wiki/testing-methodolog
 page before writing a check or believing one. The ones that decide whether a run is worth reading at
 all:
 
+- **ONE DRIVER PER BENCH PHONE AT A TIME**, assigned by the lead (BENCH-SHARED-2, 2026-10-21): a second
+  session's swipes and reloads spoiled a reading. [testing-methodology](../../docs/wiki/testing-methodology.md#one-driver-per-bench-phone-at-a-time-bench-shared-2-2026-10-21).
 - **A PUSH ROW MEASURES CANARI ONLY IF THE PHONE'S LINK TO GOOGLE IS ALIVE, AND THAT LINK FAILS
   `ESTABLISHED`.** Four verdicts on 2026-09-07 named the app over a transport that had silently
   stopped carrying anything while every readable fact - standby bucket, Doze whitelist, `ping`, the

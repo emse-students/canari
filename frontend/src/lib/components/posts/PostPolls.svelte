@@ -54,14 +54,29 @@
   let voterNames = $state<Record<string, { id: string; name: string }[]>>({});
   let tooltipPos = $state<{ top: number; right: number } | null>(null);
 
+  /** Duplicate-voter lists already said, so a redraw does not say them again. */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a record nothing draws
+  const warnedDuplicateVoters = new Set<string>();
+
   function getVoteCount(votes: string[] | number | undefined): number {
-    if (Array.isArray(votes)) return votes.length;
+    if (Array.isArray(votes)) return getVoterIds(votes).length;
     return (votes as number) || 0;
   }
 
   function getVoterIds(votes: string[] | number | undefined): string[] {
-    if (Array.isArray(votes)) return votes;
-    return [];
+    if (!Array.isArray(votes)) return [];
+    const ids = [...new Set(votes)];
+    // A voter id stored twice is drawn and counted once: it is the identity of a row in the voter list.
+    if (ids.length < votes.length) {
+      const key = ids.filter((id) => votes.indexOf(id) !== votes.lastIndexOf(id)).join(',');
+      if (!warnedDuplicateVoters.has(key)) {
+        warnedDuplicateVoters.add(key);
+        console.warn(
+          `[POSTS] a poll option stores voter id(s) more than once (${key}) - each counted once`
+        );
+      }
+    }
+    return ids;
   }
 
   function getTotalVotes(poll: Poll): number {

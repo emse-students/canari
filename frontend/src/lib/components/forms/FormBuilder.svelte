@@ -25,7 +25,8 @@
     tiers = [],
     formations = [],
     imageUploadFn = undefined,
-  } = $props<{
+    fileHint = undefined,
+  }: {
     item: any;
     onRemove: () => void;
     showPriceModifier?: boolean;
@@ -48,7 +49,9 @@
     formations?: FormationOption[];
     /** If provided, enables image upload for this question. */
     imageUploadFn?: (file: File) => Promise<string>;
-  }>();
+    /** What the editor says a FILE question does - who reads the file, when it goes. Defaults to a form's. */
+    fileHint?: string;
+  } = $props();
 
   let showTypePicker = $state(false);
 
@@ -437,7 +440,7 @@
       {item.type === 'short_text'
         ? m.form_builder_short_text_hint()
         : item.type === 'file'
-          ? m.form_builder_file_hint()
+          ? (fileHint ?? m.form_builder_file_hint())
           : m.form_builder_long_text_hint()}
     </div>
   {:else if item.type === 'linear_scale'}

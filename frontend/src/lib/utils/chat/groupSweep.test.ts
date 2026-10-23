@@ -1,5 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { readSource, relativeTo, sourceFiles } from '../../../test/sourceTree';
 import type { IMlsService } from '$lib/mlsService';
 import { withoutAnyComments } from '$lib/styles/markupSources';
 import { forgetGroupsAbsentFromServer, readGroupSweepSnapshot } from './groupSweep';
@@ -255,8 +254,6 @@ describe('forgetGroupsAbsentFromServer', () => {
  * here is that there is no THIRD copy and no way back to two: the destructive decision has exactly
  * one consumer, and neither sweep takes the local capture itself any more.
  */
-const dir = resolve(__dirname, '..', '..');
-
 /**
  * Source with comments removed, so a guard measures CALLS rather than prose about calls - and this
  * file is nothing but prose about the calls it forbids.
@@ -267,28 +264,14 @@ const dir = resolve(__dirname, '..', '..');
  */
 const code = (body: string) => withoutAnyComments(body);
 
-function sourceFiles(root: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(root)) {
-    const full = join(root, entry);
-    if (statSync(full).isDirectory()) {
-      out.push(...sourceFiles(full));
-      continue;
-    }
-    if (!/\.(ts|svelte)$/.test(entry) || /\.(test|spec)\.ts$/.test(entry)) continue;
-    out.push(full);
-  }
-  return out;
-}
-
 describe('nobody re-derives the comparison', () => {
-  const files = sourceFiles(dir);
+  const files = sourceFiles({ under: 'src/lib', extensions: ['ts', 'svelte'], tests: 'exclude' });
 
   it('`reconcileAbsentLocalGroup` has exactly one caller, and it is the sweep', () => {
     const callers = files
-      .filter((file) => !file.endsWith('groupLifecycle.ts'))
-      .filter((file) => /\breconcileAbsentLocalGroup\s*\(/.test(code(readFileSync(file, 'utf8'))))
-      .map((file) => relative(dir, file).replace(/\\/g, '/'));
+      .filter(({ path }) => !path.endsWith('groupLifecycle.ts'))
+      .filter(({ text }) => /\breconcileAbsentLocalGroup\s*\(/.test(code(text)))
+      .map(({ path }) => relativeTo(path, 'src/lib'));
 
     expect(callers).toEqual(['utils/chat/groupSweep.ts']);
   });
@@ -304,7 +287,7 @@ describe('nobody re-derives the comparison', () => {
     // the sweep must see the joins and purges the sweep just made, which is the opposite
     // requirement to the snapshot's.
     for (const site of ['mls-client/initializeConnection.ts', 'utils/chat/actions.ts']) {
-      expect(code(readFileSync(join(dir, site), 'utf8')), site).not.toMatch(/getUserGroups\s*\(/);
+      expect(code(readSource(`src/lib/${site}`)), site).not.toMatch(/getUserGroups\s*\(/);
     }
   });
 });

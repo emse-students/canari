@@ -60,6 +60,48 @@ export function visibleItemIds(items: ConditionalItem[], facts: PricingFacts): S
 }
 
 /**
+ * A submitter's answers as option-id lists keyed by question - what every criterion reads - for a
+ * form and a booking space alike, so the two cannot build it differently.
+ *
+ * THE KEYS ARE THE ITEMS' OWN DECLARED IDS, AND NOTHING ELSE GETS IN. Every key of `answers` comes
+ * straight off a request body, so `__proto__`, `constructor` or an id nobody declared is a key the
+ * submitter chooses; written onto a `{}` literal, `__proto__` REPLACES that map's prototype. The
+ * allowlist settles it, and the map is prototype-less besides, so even a declared id has nothing to
+ * walk into. Dropping an undeclared key changes nothing observable: every reader looks answers up
+ * BY declared id. A free-text answer becomes a one-element list and contributes nothing to a
+ * criterion; it keeps its place in the raw answers.
+ */
+export function answerSelections(
+  items: readonly { id: string }[],
+  answers: Record<string, unknown>
+): Record<string, string[]> {
+  const declared = new Set(items.map((item) => item.id));
+  const selections = Object.create(null) as Record<string, string[]>;
+  for (const [key, value] of Object.entries(answers)) {
+    if (!declared.has(key)) continue;
+    selections[key] = Array.isArray(value) ? (value as string[]) : [String(value)];
+  }
+  return selections;
+}
+
+/**
+ * The questions a person is NOT shown because of WHO they are - the PROFILE half of each condition
+ * (promo, formation, cotisation), decided on the server because a browser cannot be trusted with
+ * someone's profile. The ANSWER half stays for the page to evaluate as the person types. One rule
+ * for a form and a booking space, so the two never disagree on who sees a question.
+ */
+export function profileHiddenItemIds(items: ConditionalItem[], facts: PricingFacts): string[] {
+  return items
+    .filter((item) => {
+      const condition = normaliseCondition(item);
+      if (!condition) return false;
+      const { answer: _answer, ...profileOnly } = condition;
+      return Object.keys(profileOnly).length > 0 && !matchesCondition(profileOnly, facts);
+    })
+    .map((item) => item.id);
+}
+
+/**
  * The two condition shapes a stored item may carry, as ONE condition.
  *
  * `dependsOn`/`dependsValue` is the same statement as `showIf.answer`, so it is translated rather

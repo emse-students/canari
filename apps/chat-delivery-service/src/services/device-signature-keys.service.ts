@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { readKeyPackageLeaf } from '../utils/key-package-leaf';
+import { RefusalCode } from '../utils/refusal-codes';
 
 /** Which upload a batch of KeyPackages came from - named in every log line so a refusal is placed. */
 export type KeyPackageSource = 'register-device' | 'prekeys';
@@ -63,7 +64,7 @@ export class DeviceSignatureKeysService {
       // The code is what a client classifies on; both arms share it because both mean "this client
       // minted something no member may add", and neither is retryable.
       throw new BadRequestException({
-        code: 'KEY_PACKAGE_IDENTITY_INVALID',
+        code: RefusalCode.KEY_PACKAGE_IDENTITY_INVALID,
         message: 'Every key package must parse and name the device uploading it',
         unreadable,
         foreignIdentity: foreign,
@@ -112,5 +113,29 @@ export class DeviceSignatureKeysService {
     }
     this.logger.debug(`[DEVICE_KEY] served user=${userId} device=${deviceId} keys=${keys.length}`);
     return keys;
+  }
+
+  /**
+   * Each key the history RECORDED, with the instant this server first saw it, oldest first - the
+   * evidence a client weighs before saying "a new device was added": a key first seen long ago is a
+   * device coming back into a tree, not a new one (mls-protocol, "New-device notices").
+   *
+   * ONLY RECORDED KEYS ARE DATED. The current package key {@link keysFor} appends for a device that
+   * uploaded nothing since the history began has no date, and is left out rather than given one: a
+   * key with no recorded date predates the history, which is itself the answer.
+   */
+  async firstSeenFor(
+    userId: string,
+    deviceId: string
+  ): Promise<Array<{ signatureKey: string; firstSeenAt: string }>> {
+    const rows = await this.keyRepo.find({
+      where: { userId, deviceId },
+      order: { firstSeenAt: 'ASC' },
+    });
+    this.logger.debug(`[DEVICE_KEY] dated user=${userId} device=${deviceId} keys=${rows.length}`);
+    return rows.map((row) => ({
+      signatureKey: row.signatureKey,
+      firstSeenAt: row.firstSeenAt.toISOString(),
+    }));
   }
 }

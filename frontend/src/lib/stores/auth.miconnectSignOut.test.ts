@@ -164,6 +164,32 @@ describe('from sign-in to sign-out', () => {
     warn.mockRestore();
   });
 
+  it('a sign-out somebody chose revokes the session AND ends MiConnect with the kept id_token', async () => {
+    // WP-T5: this was a slice of `auth.ts`'s source looking for `await leaveSignedOut()` inside
+    // `signOutByChoice`; the chosen sign-out is run here instead, end to end.
+    const { signOutByChoice } = await import('$lib/stores/auth');
+    const token = idToken();
+    await signIn({ access_token: 'h.e30.s', id_token: token, user: { id: 'user-1' } });
+    const fetchMock = vi.fn((_url: RequestInfo | URL) =>
+      Promise.resolve(new Response(null, { status: 204 }))
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await signOutByChoice();
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url)).join(' ')).toContain('/auth/logout');
+    // The sign-out also empties the cache's `share_out/` (the decrypted file the last share out
+    // left there); every OTHER native call is the one that ends MiConnect.
+    const shareOut = 'plugin:gallery|discard_shared_out';
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === shareOut)).toHaveLength(1);
+    const ending = invokeMock.mock.calls.filter(([cmd]) => cmd !== shareOut);
+    expect(ending).toHaveLength(1);
+    const url = new URL((ending[0]![1] as { url: string }).url);
+    expect(url.searchParams.get('id_token_hint')).toBe(token);
+    expect(gotoMock).toHaveBeenCalledWith('/login', { replaceState: true });
+    vi.unstubAllGlobals();
+  });
+
   it('a chosen sign-out that fails is logged as an error and told to the user, never swallowed', async () => {
     const { signOutByChoice } = await import('$lib/stores/auth');
     const { toastStore } = await import('$lib/stores/toast.svelte');
@@ -211,6 +237,12 @@ describe('a sign-in refused while the account is being erased', () => {
   });
 });
 
+/**
+ * WHY A SOURCE TEST (WP-T5: keep). These are the CALL SITES: five controls in components no unit
+ * test mounts (a navbar, a settings panel, two gate overlays, the session shell) and one that must
+ * NOT call it. What each one runs is driven above; which one a control reaches for is a statement
+ * in its markup, which mounting the whole component to press one button would assert through mocks.
+ */
 describe('which sign-outs end MiConnect', () => {
   const src = (p: string) => readFileSync(resolvePath(__dirname, '..', '..', p), 'utf8');
 
@@ -222,13 +254,6 @@ describe('which sign-outs end MiConnect', () => {
       expect(text).not.toContain('leaveSignedOut');
     }
   );
-
-  it('signOutByChoice leaves through MiConnect', () => {
-    const text = src('lib/stores/auth.ts');
-    const start = text.indexOf('export async function signOutByChoice(');
-    expect(start).toBeGreaterThan(-1);
-    expect(text.slice(start, text.indexOf('\n}\n', start))).toContain('await leaveSignedOut()');
-  });
 
   it.each([
     'lib/components/settings/SettingsDangerZone.svelte',

@@ -7,11 +7,13 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { refreshAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
-  import { Wrench, Save, RefreshCw, Megaphone, Trash2 } from '@lucide/svelte';
+  import { Wrench, Save, RefreshCw, Megaphone, Trash2, PackageCheck } from '@lucide/svelte';
+  import { PLATFORM_ERROR_CODES, readPlatformRefusal } from '$lib/admin/platformRefusal';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
+  import { CALLS_MODES, LIVES_MODES, type CallsMode, type LivesMode } from '$lib/utils/appVersion';
 
   type PaymentProviderChoice = 'lydia' | 'disabled';
 
@@ -20,10 +22,22 @@
     maintenanceMessage: string | null;
     minClientVersion: string;
     paymentProvider: PaymentProviderChoice;
+    callsMode: CallsMode;
+    livesMode: LivesMode;
   };
+
+  /**
+   * The config as the server last answered it. A save sends ONLY the fields that differ from it: a
+   * form left open while another admin closed calls (or raised the floor) used to PATCH every field
+   * back as it was loaded, silently re-opening what the other admin had just shut.
+   */
+  let loaded: PlatformConfig | null = null;
 
   let loading = $state(true);
   let saving = $state(false);
+  let releasing = $state(false);
+  /** The provider the SERVER holds - not the form's pick - which is what the release button reads. */
+  let savedProvider = $state<PaymentProviderChoice>('disabled');
   let error = $state<string | null>(null);
   let savedMessage = $state('');
 
@@ -31,6 +45,25 @@
   let maintenanceMessage = $state('');
   let minClientVersion = $state('0.0.0');
   let paymentProvider = $state<PaymentProviderChoice>('disabled');
+  let callsMode = $state<CallsMode>('off');
+  let livesMode = $state<LivesMode>('off');
+  /** One label per mode, typed so a fourth mode cannot reach the picker unlabelled. */
+  const CALLS_MODE_LABELS: Record<CallsMode, () => string> = {
+    off: m.admin_platform_calls_mode_off,
+    audio: m.admin_platform_calls_mode_audio,
+    audio_video: m.admin_platform_calls_mode_audio_video,
+  };
+  const CALLS_MODE_OPTIONS: PickerOption[] = $derived(
+    CALLS_MODES.map((mode) => ({ value: mode, label: CALLS_MODE_LABELS[mode]() }))
+  );
+  /** One label per lives mode, typed like the calls labels so a new mode cannot reach the picker unlabelled. */
+  const LIVES_MODE_LABELS: Record<LivesMode, () => string> = {
+    off: m.admin_platform_lives_mode_off,
+    on: m.admin_platform_lives_mode_on,
+  };
+  const LIVES_MODE_OPTIONS: PickerOption[] = $derived(
+    LIVES_MODES.map((mode) => ({ value: mode, label: LIVES_MODE_LABELS[mode]() }))
+  );
   /** A product name, which reads the same in every locale, and the localized "off" switch. */
   const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = $derived([
     { value: 'lydia', label: 'Lydia' },
@@ -154,6 +187,40 @@
     }
   }
 
+  /** Shows a server answer in the form and makes it the snapshot the next save is diffed against. */
+  function applyConfig(data: PlatformConfig) {
+    loaded = data;
+    savedProvider = data.paymentProvider;
+    maintenanceEnabled = data.maintenanceEnabled;
+    maintenanceMessage = data.maintenanceMessage ?? '';
+    minClientVersion = data.minClientVersion;
+    paymentProvider = data.paymentProvider;
+    callsMode = data.callsMode;
+    livesMode = data.livesMode;
+  }
+
+  /**
+   * The fields this admin changed since the snapshot - and nothing they merely left as loaded.
+   * Only called with a snapshot: without one, every field would count as changed and a save after
+   * a failed load would write the form's placeholders (calls and lives `off`, floor `0.0.0`) over
+   * the server.
+   */
+  function changedFields(snapshot: PlatformConfig): Partial<PlatformConfig> {
+    const form: PlatformConfig = {
+      maintenanceEnabled,
+      maintenanceMessage: maintenanceMessage.trim() || null,
+      minClientVersion: minClientVersion.trim(),
+      paymentProvider,
+      callsMode,
+      livesMode,
+    };
+    return Object.fromEntries(
+      (Object.keys(form) as (keyof PlatformConfig)[])
+        .filter((key) => form[key] !== snapshot[key])
+        .map((key) => [key, form[key]])
+    ) as Partial<PlatformConfig>;
+  }
+
   async function loadConfig() {
     loading = true;
     error = null;
@@ -161,11 +228,7 @@
     try {
       const res = await apiFetch(`${coreUrl()}/api/users/admin/platform`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as PlatformConfig;
-      maintenanceEnabled = data.maintenanceEnabled;
-      maintenanceMessage = data.maintenanceMessage ?? '';
-      minClientVersion = data.minClientVersion;
-      paymentProvider = data.paymentProvider;
+      applyConfig((await res.json()) as PlatformConfig);
     } catch (e) {
       Log.d('admin.platform.loadConfig failed', e);
       error = m.admin_platform_load_error();
@@ -175,6 +238,13 @@
   }
 
   async function saveConfig() {
+    const snapshot = loaded;
+    if (!snapshot) {
+      // NOTHING WAS LOADED, SO NOTHING CAN BE DIFFED: refused rather than sent whole.
+      Log.d('admin.platform.saveConfig refused: no config was loaded to compare against');
+      error = m.admin_platform_save_needs_load();
+      return;
+    }
     saving = true;
     error = null;
     savedMessage = '';
@@ -182,22 +252,23 @@
       const res = await apiFetch(`${coreUrl()}/api/users/admin/platform`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          maintenanceEnabled,
-          maintenanceMessage: maintenanceMessage.trim() || null,
-          minClientVersion: minClientVersion.trim(),
-          paymentProvider,
-        }),
+        body: JSON.stringify(changedFields(snapshot)),
       });
       if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(text || `HTTP ${res.status}`);
+        const refusal = await readPlatformRefusal<PlatformConfig>(res);
+        if (refusal.code === PLATFORM_ERROR_CODES.WITHHELD_RELEASE_INCOMPLETE && refusal.config) {
+          // THE PROVIDER IS SAVED: only the release behind it failed. Saying "could not save" here
+          // was false, and the snapshot must become what the server holds, or the next save diffs
+          // against a provider that is no longer there. The retry is the release button.
+          Log.d('admin.platform.saveConfig: provider saved, withheld-product release incomplete');
+          applyConfig(refusal.config);
+          error = m.admin_platform_release_incomplete();
+          void refreshAppVersionCheck();
+          return;
+        }
+        throw new Error(`HTTP ${res.status} code=${refusal.code ?? 'none'}`);
       }
-      const data = (await res.json()) as PlatformConfig;
-      maintenanceEnabled = data.maintenanceEnabled;
-      maintenanceMessage = data.maintenanceMessage ?? '';
-      minClientVersion = data.minClientVersion;
-      paymentProvider = data.paymentProvider;
+      applyConfig((await res.json()) as PlatformConfig);
       savedMessage = m.admin_platform_saved_label();
       void refreshAppVersionCheck();
     } catch (e) {
@@ -205,6 +276,35 @@
       error = m.admin_platform_save_error();
     } finally {
       saving = false;
+    }
+  }
+
+  /**
+   * The explicit, idempotent release of the products withheld while payments were disabled. It is
+   * the retry for a save answered `WITHHELD_RELEASE_INCOMPLETE`, and it never depends on the form's
+   * diff - after a reload the form sends no provider at all, so re-saving could never re-run it.
+   */
+  async function releaseWithheld() {
+    releasing = true;
+    error = null;
+    savedMessage = '';
+    try {
+      const res = await apiFetch(
+        `${coreUrl()}/api/users/admin/platform/release-withheld-products`,
+        { method: 'POST' }
+      );
+      if (!res.ok) {
+        const refusal = await readPlatformRefusal<PlatformConfig>(res);
+        throw new Error(`HTTP ${res.status} code=${refusal.code ?? 'none'}`);
+      }
+      const { released } = (await res.json()) as { released: number; failed: number };
+      Log.d(`admin.platform.releaseWithheld released=${released}`);
+      savedMessage = m.admin_platform_released_count({ count: released });
+    } catch (e) {
+      Log.d('admin.platform.releaseWithheld failed', e);
+      error = m.admin_platform_release_error();
+    } finally {
+      releasing = false;
     }
   }
 
@@ -311,6 +411,59 @@
         />
         <p class="text-text-muted text-xs">
           {m.admin_platform_payment_provider_hint()}
+        </p>
+        {#if savedProvider !== 'disabled'}
+          <button
+            type="button"
+            id="release-withheld"
+            disabled={saving || releasing}
+            onclick={() => void releaseWithheld()}
+            class="border-cn-border text-text-main hover:bg-cn-yellow/10 mt-1 inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
+          >
+            <PackageCheck size={16} />
+            {m.admin_platform_release_button()}
+          </button>
+          <p class="text-text-muted text-xs">{m.admin_platform_release_hint()}</p>
+        {/if}
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="calls-mode" class="text-text-main text-sm font-bold">
+          {m.admin_platform_calls_mode_label()}
+        </label>
+        <Picker
+          id="calls-mode"
+          value={callsMode}
+          options={CALLS_MODE_OPTIONS}
+          label={m.admin_platform_calls_mode_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            const mode = CALLS_MODES.find((known) => known === v);
+            if (mode) callsMode = mode;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_calls_mode_hint()}
+        </p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="lives-mode" class="text-text-main text-sm font-bold">
+          {m.admin_platform_lives_mode_label()}
+        </label>
+        <Picker
+          id="lives-mode"
+          value={livesMode}
+          options={LIVES_MODE_OPTIONS}
+          label={m.admin_platform_lives_mode_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            const mode = LIVES_MODES.find((known) => known === v);
+            if (mode) livesMode = mode;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_lives_mode_hint()}
         </p>
       </div>
 

@@ -73,7 +73,8 @@ apply_copy_strips() {
   "$sql" "TRUNCATE TABLE push_token;" "$database"
   printf '%s   push_token truncated\n' "$prefix"
 
-  # (b) ALL EIGHT payment-provider columns, across four tables - eight rather than five because
+  # (b) ALL NINE payment-provider columns, across four tables (the ninth, the encrypted Business key,
+  # is below) - eight rather than five because
   # `associations` carries a Lydia trio beside the Stripe pair (WP-LYDIA coexistence):
   # `lydiaAccountId`/`lydiaOnboardingComplete` plus `lydiaDashboardUrl`, added alongside them
   # because it is the SAME kind of live identifier - Lydia hands it out once, at business/create,
@@ -95,7 +96,19 @@ apply_copy_strips() {
   "$sql" "UPDATE associations SET \"lydiaDashboardUrl\" = NULL WHERE \"lydiaDashboardUrl\" IS NOT NULL;" "$database"
   "$sql" "UPDATE purchase_records SET \"stripePaymentIntentId\" = NULL WHERE \"stripePaymentIntentId\" IS NOT NULL;" "$database"
   "$sql" "UPDATE submissions SET \"stripeSessionId\" = NULL WHERE \"stripeSessionId\" IS NOT NULL;" "$database"
-  printf '%s   payment identifiers cleared: 8 columns across users, associations, purchase_records, submissions\n' "$prefix"
+  # The ENCRYPTED Lydia Business key (migration 100). Ciphertext under production's secret, which
+  # neither dev nor a laptop holds (`env-from-prod.sh` regenerates it), so it could not open there -
+  # stripped anyway, because "unreadable today" is a property of a secret that may be shared tomorrow.
+  # Guarded on the column EXISTING: a dump taken before production ran 100 has none to clear, and
+  # an UPDATE naming it would stop the whole copy.
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'associations' AND column_name = 'lydiaBusinessKeyCiphertext') THEN UPDATE associations SET \"lydiaBusinessKeyCiphertext\" = NULL WHERE \"lydiaBusinessKeyCiphertext\" IS NOT NULL; END IF; END \$\$;" "$database"
+  # A boutique checkout attempt's Lydia request ids and the Business it was issued to (migration
+  # 101): a `request_uuid` is readable at Lydia with it alone, and a local `.env` may carry
+  # production's provider token. "vendorToken" is NOT NULL, so it is blanked rather than nulled -
+  # the same live identifier as `associations.lydiaAccountId`. Guarded on the table, because a dump
+  # taken before migration 101 reached production has no such table.
+  "$sql" "DO \$\$ BEGIN IF to_regclass('product_checkouts') IS NOT NULL THEN UPDATE product_checkouts SET \"requestUuid\" = NULL, \"requestId\" = NULL, \"vendorToken\" = '' WHERE \"requestUuid\" IS NOT NULL OR \"requestId\" IS NOT NULL OR \"vendorToken\" <> ''; END IF; END \$\$;" "$database"
+  printf '%s   payment identifiers cleared: 12 columns across users, associations, purchase_records, submissions, product_checkouts\n' "$prefix"
 
   # (c) platform_config.payment_provider is left ALONE, and that is a decision rather than an
   # oversight. Its type is 'stripe' | 'lydia' with no third value, so there is no way to say

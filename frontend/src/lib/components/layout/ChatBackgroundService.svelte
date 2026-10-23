@@ -28,6 +28,7 @@
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
+    withholdsResetForUnreadKey,
     isVaultRefusal,
     type LoginErrorCode,
     provesLocalStateExists,
@@ -77,9 +78,6 @@
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import type { BulkIngestPhase } from '$lib/mls-client';
-  import { Phone, PhoneOff, Video } from '@lucide/svelte';
-  import { fly } from 'svelte/transition';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
@@ -96,12 +94,10 @@
   import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
   import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
-  import {
-    buildConversationRow,
-    resolveConversationListPresentation,
-  } from '$lib/utils/chat/conversations';
+  import { buildConversationRow } from '$lib/utils/chat/conversations';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-  import type { CallParticipant } from '$lib/services/CallService';
+  import { resolveCallPeers } from '$lib/utils/chat/callPeers';
+  import { callView } from '$lib/stores/callView.svelte';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import {
     openNotificationTarget,
@@ -121,6 +117,7 @@
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
   import { channelService } from '$lib/services/ChannelService';
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
+  import IncomingShareHost from './IncomingShareHost.svelte';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { CALLS_ENABLED } from '$lib/features';
   import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
@@ -131,51 +128,21 @@
   import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
   import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 
-  /** Remote users to show on the call overlay (avatars / labels), excluding the local user. */
-  function buildRemoteCallParticipants(): CallParticipant[] {
-    const uid = (globalSession.userId || currentUserId() || '').toLowerCase();
-    const convo = globalConvs.currentConvo;
-    const callerId = globalSession.callService?.incomingCallerId?.toLowerCase();
+  /** Who is on the other end of the call - from the CALL's conversation, never the one on screen. */
+  let callRemoteParticipants = $derived.by(() => {
+    const service = globalSession.callService;
+    if (!service || globalSession.callState === 'idle') return [];
+    return resolveCallPeers({
+      userId: globalSession.userId || currentUserId() || '',
+      callGroupId: service.currentGroupId,
+      conversations: globalConvs.conversations.values(),
+      incomingCallerId: service.incomingCallerId,
+      nameOf: getUserDisplayNameSync,
+    });
+  });
 
-    if (!convo) {
-      if (callerId && callerId !== uid) {
-        return [{ userId: callerId, displayName: getUserDisplayNameSync(callerId) }];
-      }
-      return [];
-    }
-
-    const pres = resolveConversationListPresentation(
-      {
-        id: convo.id,
-        name: convo.name,
-        contactName: convo.contactName,
-        conversationType: convo.conversationType,
-        directPeerId: convo.directPeerId,
-      },
-      uid
-    );
-
-    if (pres.conversationType === 'direct') {
-      const peer = pres.contactId.toLowerCase();
-      if (!peer || peer === uid) return [];
-      return [{ userId: peer, displayName: pres.displayName }];
-    }
-
-    return globalConvs.groupMembers
-      .map((m) => m.toLowerCase())
-      .filter((m) => m && m !== uid)
-      .map((m) => ({ userId: m, displayName: getUserDisplayNameSync(m) }));
-  }
-
-  let callRemoteParticipants = $derived.by(buildRemoteCallParticipants);
-
-  /** Whether the current route is the chat page (where the full call overlay is native). */
-  let isOnChatPage = $derived(
-    typeof window !== 'undefined' && $page.url.pathname.startsWith('/chat')
-  );
-
-  /** When NOT on the chat page, show a compact incoming-call toast instead of the full hero screen. */
-  let showIncomingToast = $derived(globalSession.callState === 'incoming' && !isOnChatPage);
+  // The PIN lock sits under the call's rung: while it is up, a call is the banner it covers.
+  $effect(() => callView.setLocked(showPinModal));
 
   /** Last call id we started ringing for (dedupes effect re-runs). */
   let lastIncomingRingCallId = $state<string | null>(null);
@@ -393,8 +360,17 @@
    * by a session.
    */
   let deviceHoldsOtherAccount = $state(false);
+  /**
+   * The last unlock could not READ the hardware-held key (`hardware_key_unreadable`): it may still
+   * exist, so the gate withholds the reset - which would erase data a retry opens - and says why. Set
+   * and cleared by every failed unlock (`applyPinFailure`), and cleared with the other flag.
+   */
+  let keyReadRefused = $state(false);
   $effect(() => {
     if (globalSession.isLoggedIn) deviceHoldsOtherAccount = false;
+  });
+  $effect(() => {
+    if (globalSession.isLoggedIn) keyReadRefused = false;
   });
   let pinLoading = $state(false);
   /** The PIN typed on the gate, bound to `PinModal` so a refusal can empty it (`refusePinAttempt`). */
@@ -466,6 +442,7 @@
       return;
     }
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
+    keyReadRefused = withholdsResetForUnreadKey(code);
     // A TYPED PIN CAN MEET ANOTHER ACCOUNT'S STATE TOO, not only a saved unlock: `mls.owner` names
     // that account when this one's key does not open `mls.bin`. Read on every path, or the keypad
     // path offered the reset the saved-unlock path withheld.
@@ -668,6 +645,7 @@
     // The refused account leaves with its session: kept, the flag withheld the reset from the NEXT
     // account's gate on this shell (the root layout outlives `/login`), which may be the owner's.
     deviceHoldsOtherAccount = false;
+    keyReadRefused = false;
     _loginInProgress = false;
     globalSession.isLoginInProgress = false;
 
@@ -741,6 +719,7 @@
    */
   async function handlePinSignOut() {
     deviceHoldsOtherAccount = false;
+    keyReadRefused = false;
     appendLog('[AUTH] Sign-out from the PIN gate - ending the session, keeping the local state.');
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
@@ -945,6 +924,8 @@
     const base = {
       conversations: globalConvs.conversations,
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
+      invalidateRestores: () => globalConvs.invalidateRestores(),
+      forgetUnconfirmedSalonDraws: () => globalConvs.forgetUnconfirmedSalonDraws(),
       beginConversationSource: () => globalConvs.beginConversationSource(),
       endConversationSource: () => globalConvs.endConversationSource(),
       previewLandingTarget: (input: {
@@ -1993,6 +1974,13 @@
       pinError = m.auth_pin_reset_blocked_other_account();
       return;
     }
+    if (keyReadRefused) {
+      appendLog(
+        '[PIN_RESET] REFUSED - the hardware-held key could not be read but may exist; a reset would erase data a retry opens.'
+      );
+      pinError = m.auth_pin_reset_withheld_key_unreadable();
+      return;
+    }
     pinError = '';
     pinLoading = true;
     pinStep = m.auth_pin_step_resetting();
@@ -2097,11 +2085,18 @@
   isLoading={pinLoading}
   loadingStep={pinStep}
   isFirstSetup={isFirstPinSetup}
-  onForgotPinReset={deviceHoldsOtherAccount ? undefined : handlePinReset}
-  resetWithheldNotice={deviceHoldsOtherAccount ? m.auth_pin_reset_blocked_other_account() : ''}
+  onForgotPinReset={deviceHoldsOtherAccount || keyReadRefused ? undefined : handlePinReset}
+  resetWithheldNotice={deviceHoldsOtherAccount
+    ? m.auth_pin_reset_blocked_other_account()
+    : keyReadRefused
+      ? m.auth_pin_reset_withheld_key_unreadable()
+      : ''}
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
   account={globalSession.userId}
 />
+
+<!-- "Envoyer a...": where a share from another app goes (visible on all routes, after the PIN) -->
+<IncomingShareHost />
 
 <!-- PIN recovery after a cross-device PIN change -->
 <ChangePinModal
@@ -2115,73 +2110,6 @@
   account={globalSession.userId}
 />
 
-{#if showIncomingToast}
-  <!-- Compact incoming-call toast when user is browsing another page (P5) -->
-  {@const callerName = getUserDisplayNameSync(globalSession.callService?.incomingCallerId ?? '')}
-  {@const isVideoCall = globalSession.callService?.incomingHasVideo ?? true}
-  <div
-    class="bg-cn-scrim/95 fixed top-[calc(var(--safe-area-inset-top,0px)+1rem)] left-1/2 z-(--z-call-notice) flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 animate-[slideDown_0.3s_ease-out] items-center gap-3 rounded-2xl px-4 py-3 shadow-2xl ring-1 ring-white/10"
-    transition:fly={{ y: -20, duration: 250 }}
-  >
-    <div class="relative h-10 w-10 shrink-0">
-      <span
-        class="ring-cn-scrim absolute -top-0.5 -right-0.5 z-10 h-3 w-3 animate-pulse rounded-full bg-amber-400 ring-2"
-      ></span>
-      <div class="h-full w-full overflow-hidden rounded-full bg-black/30 ring-1 ring-white/20">
-        <Avatar
-          userId={globalSession.callService?.incomingCallerId ?? ''}
-          fill
-          shape="circle"
-          fallbackLabel={callerName}
-        />
-      </div>
-    </div>
-    <div class="min-w-0 flex-1">
-      <p class="truncate text-sm font-bold text-white">{callerName || m.call_incoming_label()}</p>
-      <p class="flex items-center gap-1 text-xs text-white/55">
-        {#if isVideoCall}
-          <Video size={12} strokeWidth={2.5} />
-        {:else}
-          <Phone size={12} strokeWidth={2.5} />
-        {/if}
-        {isVideoCall ? m.chat_video_call_label() : m.chat_audio_call_label()}
-      </p>
-    </div>
-    <div class="flex shrink-0 items-center gap-2">
-      <div class="flex flex-col items-center gap-0.5">
-        <button
-          class="ui-icon-button rounded-full bg-emerald-500 text-white transition-all hover:bg-emerald-400 active:scale-95"
-          onclick={() =>
-            globalSession.callService?.acceptCall(
-              globalSession.callService.currentGroupId ?? '',
-              globalSession.callService.currentCallId ?? ''
-            )}
-          aria-label={m.call_accept_label()}
-        >
-          <Phone size={18} class="fill-current" />
-        </button>
-        <span class="text-2xs font-bold tracking-wider text-emerald-400 uppercase"
-          >{m.call_accept_label()}</span
-        >
-      </div>
-      <div class="flex flex-col items-center gap-0.5">
-        <button
-          class="ui-icon-button rounded-full bg-red-500 text-white transition-all hover:bg-red-400 active:scale-95"
-          onclick={() => globalSession.callService?.endCall()}
-          aria-label={m.call_decline_label()}
-        >
-          <PhoneOff size={18} />
-        </button>
-        <span class="text-2xs font-bold tracking-wider text-red-400 uppercase"
-          >{m.call_decline_label()}</span
-        >
-      </div>
-    </div>
-  </div>
-{:else if globalSession.callService && globalSession.callState !== 'idle'}
-  <CallOverlay
-    callService={globalSession.callService}
-    currentUserId={globalSession.userId || currentUserId() || ''}
-    participants={callRemoteParticipants}
-  />
+{#if globalSession.callService && globalSession.callState !== 'idle'}
+  <CallOverlay callService={globalSession.callService} participants={callRemoteParticipants} />
 {/if}

@@ -10,6 +10,7 @@ vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn().mockResolvedValue('') }))
 
 import { TauriMlsService } from './TauriMlsService';
 import { isInEpochGap, resetEpochGapRegistry } from '$lib/utils/chat/epochGapRegistry';
+import { flushMacrotask } from '../../test/flush';
 
 /**
  * `getEpoch` on the native app is a CACHE, and it must say what the native manager says.
@@ -25,7 +26,7 @@ import { isInEpochGap, resetEpochGapRegistry } from '$lib/utils/chat/epochGapReg
  */
 
 /** Resolves on the next macrotask - later than any chain of microtasks a caller could await. */
-const macrotask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+const macrotask = () => flushMacrotask();
 
 /**
  * A fake native manager: the groups it holds and the epoch of each, behind the real command names.

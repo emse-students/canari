@@ -301,6 +301,10 @@ why a defect its own comment describes word for word could ship to the other one
 
 ---
 
+### Payments on dev are switched ON by hand (2026-10-21)
+
+`platform_config.payment_provider` is `lydia` on dev since 2026-10-21, set in the dev database so the Lydia sandbox end-to-end could run, and `echecs-fictif` is linked to a validated sandbox Business (the fictional seed ships no link). A reset of the dev data puts the provider back to `disabled` and drops the link: payments then answer "not ready" and boutique products are created withheld, which is the designed behaviour, not a regression. See [lydia-api](../lydia-api.md) and [payments](../frontend/modules/payments.md).
+
 ## 4. The version gap, and the one kind of evidence that lifts a ceiling
 
 Dev is the environment where a major version is allowed to run ahead of production, and

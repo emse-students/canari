@@ -406,8 +406,39 @@ describe('Mention tokens in a native banner', () => {
   it('renders the tokens on every composer that shows a decrypted body', () => {
     expect(kotlin).toMatch(/renderMentions\(it, myUserId/);
     expect(swift).toMatch(/content\.body = Self\.renderMentions\(body/);
-    expect(swift).toMatch(/body\.map \{ Self\.renderMentions\(/);
+    expect(swift).toMatch(/body\.map \{\s*Self\.renderMentions\(/);
     expect(objc).toMatch(/CanariRenderMentions\(body,/);
+  });
+
+  it("names the mentioned person from the phone's own copy of names, never from the push (WP-MENTION-NAME)", () => {
+    // Each renderer reads `display_names.json` lazily, at most once per banner, and only when the
+    // file names the account in the push context.
+    expect(kotlin).toMatch(/lazy \{ loadMentionNames\(myUserId\?\.lowercase\(\)\) \}/);
+    expect(kotlin).toMatch(/optString\("userId"\)\.equals\(me, ignoreCase = true\)/);
+    expect(swift).toMatch(/names = loadMentionNames\(myUserId: myUserId\?\.lowercased\(\)\)/);
+    expect(swift).toMatch(/\(root\["userId"\] as\? String\)\?\.lowercased\(\) == me/);
+    expect(objc).toMatch(/names = CanariLoadMentionNames\(me\)/);
+    expect(objc).toMatch(/\[\[owner lowercaseString\] isEqualToString:me\]/);
+  });
+
+  it('names the AUTHOR of a salon mention of this reader, from the same copy (WP-MENTION-NAME)', () => {
+    // A salon banner's title is the salon, so its author is named on a mention of the reader only:
+    // a line above the body on Android, the subtitle on iOS. One book per banner feeds both the
+    // author and the tokens. An MLS banner is untouched - its push already names the sender.
+    expect(kotlin).toMatch(
+      /val shownBody = if \(mentionsMe\) "\$\{mentionAuthorLine\(senderId, nameBook, res\)\}\\n\$body" else body/
+    );
+    expect(kotlin).toMatch(/renderMentions\(text, myUserId, res, nameBook\)/);
+    expect(kotlin).toMatch(/getString\(R\.string\.notif_social_mention_title, who\)/);
+    expect(swift).toMatch(/if mentionsMe \{\s*content\.subtitle = Self\.mentionAuthorLine\(/);
+    expect(swift).toMatch(
+      /localizedFormat\("notif\.social\.mention\.title", who, locale: locale\)/
+    );
+    expect(objc).toMatch(
+      /if \(namesMentionAuthor && mentionsMe\) \{\s*subtitle = CanariMentionAuthorLine\(senderId, nameBook\);/
+    );
+    expect(objc).toMatch(/shownMentionsMe, channelName, YES, NO\);/);
+    expect(objc).toMatch(/decrypted, NO,\s*senderName, NO, YES\);/);
   });
 
   it('names the two words in all four iOS tables and both Android ones', () => {
@@ -416,11 +447,13 @@ describe('Mention tokens in a native banner', () => {
         const table = parseLproj(bundle, lang, 'Localizable.strings');
         expect(table.has('notif.mention.you'), `${bundle}/${lang}`).toBe(true);
         expect(table.has('notif.mention.someone'), `${bundle}/${lang}`).toBe(true);
+        expect(table.has('notif.social.mention.title'), `${bundle}/${lang}`).toBe(true);
       }
     }
     for (const table of [fr, en]) {
       expect(table.has('notif_mention_you')).toBe(true);
       expect(table.has('notif_mention_someone')).toBe(true);
+      expect(table.has('notif_social_mention_title')).toBe(true);
     }
   });
 });

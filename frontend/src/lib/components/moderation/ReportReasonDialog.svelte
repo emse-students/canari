@@ -13,11 +13,21 @@
     /** True while the report is in flight; disables every control. */
     submitting?: boolean;
     /** Called with the chosen reason. The caller owns the request and its outcome. */
+    /** `critical` when raised over a full-screen viewer (see `Modal`). */
+    layer?: 'modal' | 'critical';
     onSubmit: (reason: ReportReason) => void;
     onClose: () => void;
   }
 
-  let { open, title, targetPreview = '', submitting = false, onSubmit, onClose }: Props = $props();
+  let {
+    open,
+    title,
+    targetPreview = '',
+    submitting = false,
+    layer = 'modal',
+    onSubmit,
+    onClose,
+  }: Props = $props();
 
   const reasons = $derived(reportReasons());
   let selected = $state<ReportReason | ''>('');
@@ -28,7 +38,7 @@
   });
 </script>
 
-<Modal {open} {onClose} {title} maxWidth="max-w-sm" dismissible={!submitting}>
+<Modal {open} {onClose} {layer} {title} maxWidth="max-w-sm" dismissible={!submitting}>
   <div class="space-y-4 px-1 pb-2">
     {#if targetPreview}
       <p class="text-text-muted line-clamp-3 text-sm italic">{targetPreview}</p>

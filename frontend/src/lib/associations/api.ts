@@ -1,6 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, mediaUrl, socialUrl } from '$lib/utils/apiUrl';
+import { imageSrcOrNull } from '$lib/utils/imageSrc';
 import {
   setAssociationSuperAdmin,
   setContentModerator,
@@ -367,10 +368,13 @@ export function mediaPublicBaseUrl(): string {
   return mediaUrl();
 }
 
-/** Resolve association logo URL for `<img src>` (handles relative `/api/…` paths). */
+/**
+ * Resolve association logo URL for `<img src>` (handles relative `/api/…` paths). A value that is
+ * neither a path nor an http(s) URL resolves to `null` (see `imageSrcOrNull`).
+ */
 export function associationLogoSrc(logoUrl: string | null | undefined): string | null {
-  if (!logoUrl?.trim()) return null;
-  const u = logoUrl.trim();
+  const u = imageSrcOrNull(logoUrl);
+  if (u === null) return null;
   if (u.startsWith('/')) {
     return `${mediaPublicBaseUrl()}${u}`;
   }
@@ -406,10 +410,40 @@ export class SocialApiError extends ApiRefusalError {
    * See {@link describeApiRefusal} for the sentence each becomes. Extending {@link ApiRefusalError}
    * is what lets `refusalStatus` / `refusalCode` read it without importing this module.
    */
-  constructor(message: string, code: string | null, status: number) {
+  constructor(
+    message: string,
+    code: string | null,
+    status: number,
+    /**
+     * The allowed amount range an `AMOUNT_OUT_OF_RANGE` refusal carries, in cents (`maxCents` null
+     * = no upper bound). Typed numbers so the UI words the range itself instead of echoing prose.
+     */
+    readonly amountBounds: AmountBounds | null = null
+  ) {
     super(status, code, message);
     this.name = 'SocialApiError';
   }
+}
+
+/** The allowed range of an `AMOUNT_OUT_OF_RANGE` refusal, in cents (`maxCents` null = unbounded). */
+export interface AmountBounds {
+  minCents: number;
+  maxCents: number | null;
+}
+
+/**
+ * Reads the allowed range an amount refusal carries beside its `code`, from an already-parsed body.
+ * THE ONE READER: every helper that builds a {@link SocialApiError} from a refusal (`socialRefusal`
+ * here, the forms and bookings ones) passes its body through this, so no surface loses the bounds
+ * and falls back to the server's English sentence. `null` when the body carries no integer range.
+ */
+export function amountBoundsOf(body: unknown): AmountBounds | null {
+  if (!body || typeof body !== 'object') return null;
+  const { minCents, maxCents } = body as Record<string, unknown>;
+  if (typeof minCents !== 'number' || !Number.isInteger(minCents)) return null;
+  if (maxCents === null) return { minCents, maxCents: null };
+  if (typeof maxCents !== 'number' || !Number.isInteger(maxCents)) return null;
+  return { minCents, maxCents };
 }
 
 /**
@@ -423,6 +457,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
   const raw = await res.text().catch(() => '');
   let message = raw || res.statusText;
   let code: string | null = null;
+  let amountBounds: AmountBounds | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -442,10 +477,12 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     ) {
       code = (parsed as Record<string, string>).code;
     }
+    // An amount refusal carries its allowed range beside the code, as numbers.
+    amountBounds = amountBoundsOf(parsed);
   } catch {
     // Ignore JSON parse failure: message is the raw error text and there is no code to read
   }
-  return new SocialApiError(message, code, res.status);
+  return new SocialApiError(message, code, res.status, amountBounds);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -1775,7 +1812,8 @@ export interface ViewerPrice {
 /** A completed purchase with buyer display name. */
 export interface AssociationPurchase {
   id: string;
-  userId: string;
+  /** Null for a guest's payment on a public form: a guest has no account. */
+  userId: string | null;
   source: 'form' | 'product';
   productId: string | null;
   formId: string | null;
@@ -2107,8 +2145,13 @@ export async function createProductCheckout(
   customAmountCents?: number,
   callbacks?: { successUrl?: string; cancelUrl?: string },
   payerEmail?: string
-): Promise<{ checkoutUrl: string; amountCents: number; currency: string }> {
-  return request<{ checkoutUrl: string; amountCents: number; currency: string }>(
+): Promise<{ checkoutUrl: string; amountCents: number; currency: string; checkoutId: string }> {
+  return request<{
+    checkoutUrl: string;
+    amountCents: number;
+    currency: string;
+    checkoutId: string;
+  }>(
     `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/checkout`,
     {
       method: 'POST',
@@ -2119,6 +2162,24 @@ export async function createProductCheckout(
         ...(payerEmail ? { payerEmail } : {}),
       }),
     }
+  );
+}
+
+/** Where one boutique checkout attempt stands (social-service `product_checkouts.status`). */
+export type ProductCheckoutStatus = 'open' | 'paid' | 'declined' | 'expired' | 'cancelled';
+
+/**
+ * The payer's return for ONE checkout attempt: the server asks Lydia about the attempt's own
+ * request, records it if paid, and answers its status. Only the buyer's own attempt is found.
+ */
+export async function confirmProductCheckout(
+  associationId: string,
+  productId: string,
+  checkoutId: string
+): Promise<{ checkoutId: string; productId: string; status: ProductCheckoutStatus }> {
+  return request<{ checkoutId: string; productId: string; status: ProductCheckoutStatus }>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/checkouts/${encodeURIComponent(checkoutId)}/confirm`,
+    { method: 'POST' }
   );
 }
 
@@ -2241,6 +2302,31 @@ export async function getAssociationPayoutAccount(
 ): Promise<AssociationPayoutAccount> {
   return request<AssociationPayoutAccount>(
     `/api/associations/${encodeURIComponent(associationId)}/payout-account`
+  );
+}
+
+/**
+ * Whether the association's Lydia Business private token is stored (MANAGE_PAYOUT_ACCOUNT). The key
+ * is WRITE-ONLY: this is the one thing a browser ever learns about it. Without one, Lydia's
+ * callbacks are refused and a payment is confirmed only when the payer returns to the app.
+ */
+export async function getLydiaBusinessKeyStatus(associationId: string): Promise<{ set: boolean }> {
+  return request<{ set: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`
+  );
+}
+
+/**
+ * Stores the association's Lydia Business private token (MANAGE_PAYOUT_ACCOUNT), encrypted on the
+ * server; replaces any key already stored. Answers `{ set: true }` and never the value.
+ */
+export async function setLydiaBusinessKey(
+  associationId: string,
+  businessPrivateToken: string
+): Promise<{ set: boolean }> {
+  return request<{ set: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`,
+    { method: 'PUT', body: JSON.stringify({ businessPrivateToken }) }
   );
 }
 

@@ -96,6 +96,16 @@ describe("PostMedia - a video is Canari's to play", () => {
     }
   });
 
+  it('a letterboxed clip is CONTAINED, the whole frame, and a gallery cell crops it', async () => {
+    const whole = await mountVideo({ letterbox: true });
+    const contained = whole.querySelector('video')!;
+    expect(contained.getAttribute('class')).toContain('object-contain');
+    expect(contained.getAttribute('class')).not.toContain('object-cover');
+    document.body.innerHTML = '';
+    const cell = await mountVideo({ letterbox: true, videoFit: 'cover' });
+    expect(cell.querySelector('video')!.getAttribute('class')).toContain('object-cover');
+  });
+
   it("shows Canari's poster while the bytes are on their way", async () => {
     const target = await mountVideo({}, false);
     expect(target.querySelector('[aria-hidden="true"].bg-linear-to-br')).not.toBeNull();

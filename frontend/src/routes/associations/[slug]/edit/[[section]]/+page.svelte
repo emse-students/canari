@@ -29,6 +29,7 @@
     Handshake,
     Inbox,
     Globe,
+    CalendarClock,
   } from '@lucide/svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import type { Crumb, HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
@@ -49,6 +50,7 @@
   import EditBoutiqueTab from '$lib/components/associations/edit/EditBoutiqueTab.svelte';
   import EditAchatsTab from '$lib/components/associations/edit/EditAchatsTab.svelte';
   import EditFormsTab from '$lib/components/associations/edit/EditFormsTab.svelte';
+  import EditBookingsTab from '$lib/components/bookings/organiser/EditBookingsTab.svelte';
   import EditCotisationsTab from '$lib/components/associations/edit/EditCotisationsTab.svelte';
   import EditDelegationTab from '$lib/components/associations/edit/EditDelegationTab.svelte';
   import EditPartnershipsTab from '$lib/components/associations/edit/EditPartnershipsTab.svelte';
@@ -185,6 +187,7 @@
     cotisations: HandCoins,
     delegation: Share2,
     formulaires: ClipboardList,
+    reservations: CalendarClock,
     partnerships: Handshake,
     republications: Inbox,
     audience: Globe,
@@ -210,6 +213,8 @@
         return m.asso_edit_tab_delegation();
       case 'formulaires':
         return m.asso_edit_tab_formulaires();
+      case 'reservations':
+        return m.bookings_tab_label();
       case 'partnerships':
         return m.asso_edit_tab_partenariats();
       case 'republications':
@@ -425,6 +430,10 @@
           {canManagePayoutAccount}
           onGoToPayments={() => goto(resolve(editSectionHref(slug, 'payments')))}
         />
+      {/if}
+
+      {#if editSection === 'reservations' && rights.bookings && asso}
+        <EditBookingsTab associationId={asso.id} />
       {/if}
 
       {#if editSection === 'partnerships' && canManagePartnerships && asso}

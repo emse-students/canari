@@ -57,6 +57,7 @@ import {
   serializeWorkspaceSnapshot,
   storeWorkspaceSnapshot,
 } from '$lib/utils/chat/workspaceSnapshot';
+import { flushMacrotask } from '../../test/flush';
 
 const ALICE = 'user-alice';
 const BOB = 'user-bob';
@@ -91,7 +92,7 @@ function makeContext(overrides: Partial<ChannelWorkspaceContext> = {}): ChannelW
 
 /** Lets every pending microtask and the awaited mocks run. */
 function settle() {
-  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+  return flushMacrotask();
 }
 
 beforeEach(() => {

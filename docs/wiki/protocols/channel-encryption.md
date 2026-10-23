@@ -81,12 +81,18 @@ media rather than permanently unreadable history.
 
 **The MLS-native analogue exists and does not fit.** RFC 9420 §8.5's exporter secret is the
 sanctioned hook, it is exposed in our WASM as `export_secret`, and we already use it -
-`CallService` derives the WebRTC media key with label `mls-webrtc-media`, which is exactly DAVE's
+`CallService` derives the WebRTC media keys with label `mls-webrtc-media-v2` (one per direction), which is exactly DAVE's
 shape. But an exported secret is DERIVED FROM group state: using it requires being in the group, at
 the right epoch, having processed every commit - and a newcomer could never read the past, because
 they were not there at those epochs. It answers a different question.
 
 **MLS keeps a job here, and it is the right one:** carrying the seeds. See §5.
+
+**Re-measured 2026-10-21: the table above is the 2026-08-17 premise, and it no longer holds.** A
+community key group now has 199 device seats and a group conversation 109, the latter carrying its
+messages over MLS. The argument from the commit rate (point 2) still stands, and production measures
+it: the 199-seat key group took 204 commits in two days. The numbers and what follows from them are on
+[dm-vs-community-encryption](dm-vs-community-encryption.md#group-sizes---the-never-above-a-pair-premise-no-longer-holds).
 
 ## 4. The design
 
@@ -102,6 +108,11 @@ design does not have:
 - **When?** Rotation is lazy: on the next send after the membership it was shared with changed.
   Nothing must happen at the moment somebody leaves, and nothing is owed by a member who never
   speaks again.
+
+  **"Changed" is implemented as "the key group's epoch moved", which a device JOINING also does.**
+  On production that makes adds the dominant trigger: 845 sessions for 1 698 messages, and 69-98 %
+  of a sender's messages more than an hour apart open a new session (measured 2026-10-21,
+  [dm-vs-community-encryption](dm-vs-community-encryption.md#rotation---one-seed-per-two-messages-not-one-per-sender-per-week)).
 
 A message key is `HKDF-SHA256(ikm = seed, salt = sessionId, info = "canari-graine-v1" || be32(index))`.
 **It is DERIVED from the seed, not ratcheted** - the difference from megolm is deliberate and argued
@@ -123,14 +134,17 @@ forgetting.
 
 | Trigger | What it buys |
 |---|---|
-| **A member leaves** | The only structural one. The leaver keeps what they could already read and gets **nothing said after they left**. Without it, leaving a community would change nothing |
-| **100 messages** | Slices a talkative sender, so one recovered seed does not yield years |
-| **7 days** | The same for a rare sender, whom a message counter would never slice |
+| **A leaf is removed** (any Remove merged since the mint, read from the key group's clean run since 2026-10-22: [graine-removal-tracker](graine-removal-tracker.md)) | The structural one. The leaver keeps what they could already read and gets **nothing said after they left**. Without it, leaving a community would change nothing |
+| **A new user joins** (`ROTATE_ON_NEW_USER`, decided by the user 2026-10-22) | A newcomer is never handed a seed minted before it arrived, whose earlier indices it could derive. A new DEVICE of a user already present (by an Add or an external commit; user half of the leaf's credential, lower-cased) does not rotate: the session is re-distributed at the new epoch. The server checks that an external commit's leaf names the caller |
+| **100 messages** (50 once re-distributed) | Slices a talkative sender, so one recovered seed does not yield years |
+| **7 days** (24 hours once re-distributed) | The same for a rare sender, whom a message counter would never slice |
 
 The last two cost only their bytes in the bundle. Values are Matrix's, which are field-proven.
 
-**This table is where the three triggers are distinguished, and the only place.** The client's
-`shouldRotateGraineSession` answers yes or no. It carried WHICH of the three fired as a typed value
+**This table is where the triggers are distinguished, and the only place.** The client's
+`graineOutboundVerdict` answers reuse, re-distribute or rotate, and the MLS layer logs WHY a run
+reset (`[GRAINE] run reset reason=departure|new-user|gap|none`); before 2026-10-22,
+`shouldRotateGraineSession` answered yes or no. It carried WHICH of the three fired as a typed value
 until 2026-09-14 - `'no-session' | 'message-count' | 'age' | 'roster'` - and the sweep that removed it
 found the value had no runtime consumer at all: nothing branched on it, the one string interpolating
 it went to `console.info`, and nothing in this product captures a browser console into a durable log,
@@ -149,6 +163,11 @@ so pairwise sealing would put 300 conversations in the sidebar and cost O(N) sen
 **Each community has exactly ONE MLS group containing every member's devices, carrying key material
 only and never a message body.** A seed is distributed as a single MLS application message to that
 group: **O(1) traffic per session, not O(N)** - which is the constraint that killed pairwise.
+
+That O(1) is the SENDER's. The server still queues one row per recipient device seat, about 31 per
+payload on 2026-10-21, and the key-group frames hold 883 MB of the 1.5 GB `queued_message` table,
+against 1.5 MB for every channel message ever written
+([dm-vs-community-encryption](dm-vs-community-encryption.md#o1-per-seed-is-true-of-the-client-not-of-the-server)).
 
 This is not a return to §3. The distinction is total: the group carries SEEDS, not messages. A
 device behind on commits misses a distribution and **requests the seeds it lacks** (§4.5) - a
@@ -171,6 +190,11 @@ today** - and that is the whole reason channel history is cheap where DM history
 keeps every channel ciphertext durably, so nothing is replayed peer to peer. Order of magnitude for
 a one-year community with 30 active senders rotating weekly: ~1 500 seeds x ~50 bytes ~= **80 KB, in
 one message.**
+
+**Both factors of that estimate were wrong by 2026-10-21.** A v2 seed is about 330 bytes on the wire,
+not 50. The largest community minted 458 seeds in its first 8 days, because adds rotate (§4.1). Its
+bundle is about 150 KB today, and the 8 000-seed cap is about 2.6 MB in one MLS message
+([dm-vs-community-encryption](dm-vs-community-encryption.md#the-history-bundle---6x-heavier-per-seed-and-sized-for-the-wrong-rotation-rate)).
 
 `history_visibility` is per community, **`shared` by default** (a newcomer receives the past),
 `joined` available for a sensitive salon. Two consequences to carry deliberately:
@@ -493,6 +517,48 @@ authorization decision - which is why it is the thing social-service gates, and 
 public `GET /mls/group-info/:groupId` is left refusing distribution groups rather than taught about
 them. A member removed from the community must still be removed from the MLS group (WP-30's
 rotation-on-departure); no server-side check substitutes for that.
+
+**AND THE COMMIT IS ASKED THE SAME QUESTION (WP-KEYGROUP-JOIN-GATE, 2026-10-22) - the third
+alternative above, taken after all, for the commit alone.** Gating the GroupInfo decides who may
+READ the base; it does not decide who may COMMIT, and an accepted external commit also promotes its
+committing device to `active`. So chat-delivery's commit gate now asks social-service, per key-group
+external commit, `POST /internal/distribution-groups/entitlement` (`kind`, `scopeId`, `userId`).
+Social-service answers with the SAME predicates as the routes that serve the GroupInfo
+(`isDistributionGroupEntitled`: a community's members; a private salon's readers). A conversation's
+external commit keeps its own roster check, and a member commit never reaches social-service.
+
+**Before either check, an external commit must join AS the caller's device** (2026-10-22): its path
+leaf, read in the clear by `readCommitFrame`, must name `<authenticated caller>:<deviceId>`, the same
+binding every KeyPackage upload is held to; otherwise `403 commit_identity_mismatch`. Graine's rotation
+reads the user from that leaf's own credential ([graine-removal-tracker](graine-removal-tracker.md)).
+
+| Outcome | What the commit gate does |
+| --- | --- |
+| `{ entitled: true }` | accepts; the epoch moves and the committer is activated |
+| `{ entitled: false }` | `403` (`code: NOT_A_MEMBER`, `error: committer_not_member`), before the epoch moves |
+| anything else (secret unset, unreachable, non-2xx, no boolean) | `503 entitlement_unavailable`, before the epoch moves - never an acceptance |
+
+The objection recorded above - a fail-closed network hop inside an authorization path - is paid
+deliberately: the hop happens only on a key-group EXTERNAL commit (~77/day measured 2026-10-22), and
+the client already reads any failed submission as `unreachable`, claims nothing about membership, and
+joins again on its next recovery pass. A key group's Welcome TARGET is asked the same question in
+`sendWelcome`, since a grant is written in social-service before the granting device Welcomes anyone
+(a conversation's Welcome target must be on its roster instead). Code:
+`apps/chat-delivery-service/src/internal/distribution-entitlement.ts`,
+`apps/social-service/src/internal/internal-distribution-entitlement.controller.ts`.
+
+**The answer is read before the commit lock, and an eviction can land after it - documented, with its
+bound, not closed.** The entitlement is asked in `validateCommit` before the lock is taken, and the
+committer is activated inside it, after the transaction. A departure in social-service
+(`evictFromDistributionGroup` on chat-delivery's internal controller) that runs in that gap deletes
+the leaver's rows first, and the activation then writes an `active` row back. A conversation's
+external commit has the same window between `isOnRoster` and the activation. Re-asking inside the
+lock would narrow the gap and not close it, because the eviction does not take the commit lock. The
+bound is the one every departure already has: the leaver's leaf is in the tree either way, and the
+removal commit that a remaining member makes when it next opens the community deactivates the row.
+Until then the device keeps receiving the group's frames. That leaver loses the immediate,
+server-enforced cut an eviction gives, and keeps only the cryptographic cut of the commit. The window is the duration of one commit's transaction, and closing it
+means making the eviction and the activation exclude each other.
 
 **What creation writes, and what it deliberately does not.** The `dm_groups` row, and nothing else:
 no `dm_group_members`, no `DeviceGroupMembership`. Both absences are asserted directly in
@@ -1093,7 +1159,10 @@ group.** Entry is by external commit against a published `mls_group_info`, and e
 from a roster the server owns. A server that wanted future seeds would not read them out of a column
 any more - it would admit a device it controls. That is a strictly better position than before (it
 buys nothing retroactive, and every commit is visible to the members in the group's log) but it is
-not nothing, and no client currently WATCHES that log for an unexpected admission.
+not nothing, and no client currently WATCHES that log for an unexpected admission. **The PAST is
+handed over on a member's signature, not on the roster** since 2026-10-22: a member gives a
+community's history only to a newcomer whose admission it can verify
+([section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)).
 
 **`history_visibility` is a policy guarantee, never a cryptographic one.** Only a device holding a
 seed can withhold it, so the rule is applied by the answering member. A modified client answers
@@ -1459,7 +1528,7 @@ member excluded from a private salon received, on their own authenticated socket
 | Event | What it carries |
 |---|---|
 | `channel.message.created` | `ciphertext`, `nonce`, `senderSessionId`, `messageIndex` - inline |
-| `channel.typing` | who is writing there, live |
+| `channel.typing` | who is writing there, live (never sent back to the typist) |
 | `channel.pin`, `channel.message.deleted` | what is pinned, what was removed |
 | `channel.poll.vote` | the tally |
 | `channel.updated`, `channel.member.joined` | the salon's NAME, and who was added to it |
@@ -1640,6 +1709,53 @@ distribution group and advances its epoch, so the epoch IS the version of that a
 finds the same epoch returns before the roster read and writes no line; a pass after the epoch moved
 asks again. The measured case: a phone joining while the laptop holding the seeds is offline, then
 the laptop coming online and joining - which is itself the commit that moves the epoch.
+
+### An answer carries only the seeds of the salons its key group may read (2026-10-22)
+
+**Seeds are STORED per community, whichever key group brought them** (`IMlsService.DistributionFrame`),
+so a device's store does not say on its own which roster a seed was sealed to. Both answer paths -
+the HISTORY bundle (`gatherCommunityHistory`) and a SESSIONS repair (`gatherNamedSessions`) - read
+that store, and an answer goes back on the key group the request ARRIVED on. So both keep only
+the sessions whose salon rides that group (`seedOutsideScope` in `frameHandler.ts`):
+
+- on the community's group, the seeds of PUBLIC salons only;
+- on a private salon's own group, the seeds of that salon only.
+
+Which group a salon rides is `scopeForChannel`, learned from the community listing
+(`registerChannelWorkspace`) - the same fact the seal uses. A salon the answerer has NOT listed is
+withheld: its roster is not known, and guessing public is the expensive half of the asymmetry. A
+withheld seed is absent from both lists of the answer, for the reason a `joined` refusal is (every
+honest member filters the same way, so `missing` would walk the roster), and a HISTORY answer left
+with nothing to send stays silent rather than claiming "I hold nothing" (section 24).
+
+**The receiver checks the same fact, for a NEW seed** (a held session is judged as before):
+
+- another salon's seed on a private salon's own group is refused, at error level - no honest path
+  sends it;
+- a seed of a salon registered PRIVATE, on the community's group, is not stored, at warn level and
+  accusing nobody: a salon made private after it was public leaves, in the community group's log,
+  the seeds minted while it was public;
+- a seed of a salon the community's listing did NOT name, once that listing has answered
+  (`markCommunityListed`), is held in memory, unstored (`awaitSalonListing`). The listing names
+  every public salon to every member and a private one only to its members and administrators, so
+  such a salon is private and closed to this viewer - or public and created since the listing, its
+  seed having beaten the channel-created event. Its registration decides: public, the seed is
+  admitted and the salon re-read; private, or never, it is dropped;
+- before the community's listing has answered, a seed of an unknown salon is kept: a public
+  salon's seeds arrive with the key group, ahead of the listing.
+
+Pinned by `frameHandler.test.ts`, "the salon scope of an answer".
+
+**The native mirror cannot make that check** - it knows neither which salons are private nor which
+key group a frame came on. So a bundle's seeds are marked `relayed` by `proto_fields::graine_seeds`,
+and `store_graine_seeds_json` mirrors a relayed seed only for a salon the mirror already holds a
+session of; any other is left to the app, which reads the same answer from its durable queue. That
+check opens the SEALED mirror with the cache key, through the one reader `read_graine_mirror`: a
+plain-text read of it failed on every sealed file, so no relayed seed was mirrored at all
+(`a_relayed_seed_is_mirrored_only_for_a_salon_the_device_already_reads`). A sender's own distributed
+seed is mirrored as before. Bundles reach the native path only on Android
+(`handleMlsFrame`, a key-group push with its ciphertext inline); the iOS extension opens only the
+`seedFrame` a salon push carries, which is a single seed.
 
 ### Found while writing this: a discriminator dropped in transit
 
@@ -2539,7 +2655,7 @@ logcat, NO `frame HELD` and no redraw, the plaintext on the first and only post.
 
 | Where | What it does |
 | --- | --- |
-| `sessionManager.ts`, `seedDistribution.ts` | `distributeGraineSeed` returns the sealed frame `{groupId, protoB64}`; the session keeps it in the SEALED half of its row (`graineCodec`); `shouldRotateGraineSession` rotates a session without one |
+| `sessionManager.ts`, `seedDistribution.ts` | `distributeGraineSeed` returns the sealed frame `{groupId, protoB64}`; the session keeps it in the SEALED half of its row (`graineCodec`); `graineOutboundVerdict` rotates a session without one |
 | `channelSeal.ts`, `channelCrypto.ts` | every non-silent send carries `seedFrame` + `seedGroupId`; a silent one (a reaction) carries neither, since it pushes nobody |
 | social-service `assertSeedFrame` | both or neither, base64, at most `MAX_SEED_FRAME_CHARS` (2048); `seedGroupId` must be the private salon's own group, the community's otherwise - `CHANNEL_SEED_FRAME_INVALID` / `CHANNEL_SEED_FRAME_GROUP_MISMATCH`. Never stored, never in `channel.message.created`. The controller used to REBUILD every refusal from its status and message, dropping `code`; a typed refusal now leaves as thrown |
 | social-service `notifyChannelRecipients` | hands `{ciphertext, seedFrame, seedGroupId}` to `internal/push/notify` as `inline`, apart from the fields every push carries; the fixed `ciphertext <= 3000` is gone |
@@ -2930,6 +3046,16 @@ killed app. **A replay is not refused here**: a notification path keeps no recor
 opened, so a replayed push shows its banner again. The app, which does keep that record, shows the row
 once.
 
+**A blind banner names no author (2026-10-22).** The push's `senderId` and `mentioned` are the
+server's words, and only the open above proves the author. So the face, the "<name> mentioned you"
+line and the mention route (`canari_mentions` on Android, the time-sensitive level on iOS) are drawn
+only on a banner that shows the decrypted text. A banner on the generic line - no seed, no inlined
+ciphertext, a refused open - draws the salon's initials and nothing about an author. One pure rule
+on each platform: Android `push/ChannelBannerAttribution` (tested in `android-tests`) and the NSE's
+`channelBannerAttribution`; `canari_push.mm` applies the same rule inline. A held v1 session still
+opens with no author check, as the app's v1 reader does
+([legacy-compatibility](../legacy-compatibility.md)).
+
 **The verified sender of an MLS push (the native half of WP-G2-1b).** Both push decrypts
 (`decrypt_push_message_with_key` and the commit catch-up) now take the push's `senderId` in a
 `PushFrame`. They decrypt with `process_incoming_message_with_sender`, and a frame whose verified
@@ -2978,7 +3104,7 @@ then persisted:
   refused by every reader, so the order is load-bearing;
 - a failed endorsement distributes and persists NOTHING, exactly like a failed distribution.
 
-**Rotation** (`shouldRotateGraineSession`) adds one cause: a session with no signing secret. That
+**Rotation** (`graineOutboundVerdict`, `shouldRotateGraineSession` until 2026-10-22) adds one cause: a session with no signing secret. That
 covers every v1 session (one rotation per salon and sender, at the first send after the upgrade) and
 a v2 session restored somewhere its secret is not.
 
@@ -3097,7 +3223,7 @@ still gets its 403), then the session and index, then the seed frame, then the s
 **Why nothing legitimate is refused.** This route has exactly ONE caller in the repository,
 `ChannelService.sendMessage` (frontend), reached only from `sendEncryptedChannelMessage`, which seals
 through `sealChannelMessage`. That function throws before the POST when the session holds no signing
-secret, and `shouldRotateGraineSession` mints a new session for any that lacks one. Text, polls,
+secret, and `graineOutboundVerdict` mints a new session for any that lacks one. Text, polls,
 mentions, reactions, edits and a community's system notice all go through it, and the `v1.0.3` tag
 already posted `signature: sealed.signature` on every one (read from the tag, 2026-10-13). What does
 NOT use this route, and is therefore untouched:
@@ -3495,6 +3621,15 @@ the native `group_reset`. The frames were LIVE requests (339-469 B) sealed by ot
 3-6 epochs behind, so every up-to-date member found them unreadable, and each loss drives a re-ask.
 The sender side is open in the [backlog](../backlog.md).
 
+**The server names the lagging sender (2026-10-18).** chat-delivery reads every application frame's
+clear epoch (`mlsFrameEpoch`) and, under the same locked group read as the write
+(`enqueueForLiveGroup`), compares it with `activeEpoch`. A frame below `activeEpoch - 2`
+(`isBeyondPastEpochWindow`, the client's `max_past_epochs`) logs `STALE_EPOCH_FRAME group=...
+keyGroup=... frameEpoch=E activeEpoch=A behind=N sender=user:device app=<build> rows=R` at `warn`.
+The build is the sender's KeyPackage `deviceAppVersion`, read by the query the fan-out already
+makes. It is REPORTED, never refused: a `stale_epoch` refusal changes what every shipped client sees
+on a send, and it waits for this line to say which builds lag. Commits and Welcomes are not checked.
+
 ## 24. A history ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, decided 2026-10-18)
 
 **The defect.** A device holding no seed of a community asks ONE member for its past
@@ -3612,3 +3747,211 @@ a device-less leaf does; one device counted once), `graineStore.test.ts` and
 reading - a cold start with every other member online, then a second start: the first shows one
 `holds nothing ... at distribution epoch N - recorded, asking the next member` per member and then
 `is final at distribution epoch N`; the second shows no `asked ... no-seed-held` for that community.
+
+## 25. A member hands the past only to an admission it can verify (decided by the user 2026-10-22)
+
+**The decision** (user, 2026-10-22, *"Garder Partagé par défaut"*): a community stays `shared` by
+default - a newcomer reads what was written before they arrived - but a member's device hands that
+past over only to a newcomer whose ADMISSION it can verify itself, from what it saw by itself,
+never on the roster's word. Seeds keep rotating when a new user arrives (D5, the rotation work of
+#2263, not this section).
+
+**It holds once every client that answers runs it.** An answering device of an older version
+hands the past to whoever the roster names, so the protection is complete only when
+`minClientVersion` reaches the version that carries this section - an owed floor, in
+[backlog](../backlog.md).
+
+### Three ways to prove an admission were weighed
+
+| Option | Verdict |
+| --- | --- |
+| A member-committed add (the admitter's device commits the newcomer into the key group) | Rejected: a link newcomer is admitted while no member is online, and the key group is entered by external commit for every device after the first (section 20). It would change the join path, not prove it. |
+| An admin-signed roster | Rejected: one more signed object to keep current on every change, and a link admission happens with no admin present. |
+| **A signed invitation - a voucher stored with the membership** | **Chosen.** Each real way in already passes through a member's device (the panel add, the link shown): that device signs, the voucher rides the membership row, and any member verifies it against what it recorded itself. |
+
+### The join paths, and what each carries
+
+| Path (`social-service`) | Who signs | Voucher |
+| --- | --- | --- |
+| Creating the community | nobody - the creator is a root | none needed |
+| A member adds someone from the panel (`inviteToChannel`) | that member's device, at the add | `direct`, sent with the add |
+| A newcomer follows an invite link (`acceptWorkspaceInvite`) | the device that SHOWED the link, at display; the newcomer redeems it | `link`, sent with the accept |
+| A link shown by an old client, or copied without its `#` part | nobody | none: the newcomer joins, and reads from their arrival on (accepted by the user, 2026-10-23) |
+| Any other way onto the roster | nobody | none: answered as `joined` |
+
+**An old invite link keeps working for joining and gives no past until it is re-issued** - the cost
+the user accepted (2026-10-23): old links are taken as they are. A link shown by this version carries its proof after the `#`; one shown before it
+does not, and its newcomer reads from their arrival on until a member adds them again or they follow
+a fresh link (a member already on the roster who follows a fresh link has the voucher written onto
+their row). The `#` part reaches the join page on every surface: a browser keeps it, and the app
+receives an App Link or Universal Link whole and navigates to it with its fragment
+(`appLinkNavigation.test.ts`).
+
+**Who may sign**: any admitted member's device. The product lets only members with the invite
+permission add someone or show a link, but that permission is roster data: reading it would make a
+voucher depend on the server's CURRENT word about its signer, and would add nothing against a member,
+who - holding the past - could hand it over directly (section 7).
+
+### The trust rule (`frontend/src/lib/utils/graine/admissionGate.ts`)
+
+An answering device reads only what it holds itself - its ADMISSION LEDGER (roots and verified
+admissions, per account) and its MLS layer (pins and departures):
+
+- **Roots**, fixed at the first community sync after the proof existed (the roster reconciliation
+  calls `observeAdmissionState`): the members who arrived before `ADMISSION_PROOF_SINCE` or created
+  the community, AND have a leaf in the community's key group at that sync. A roster row with no
+  leaf is never a root, and a root counts now only while the roster still shows the arrival it was
+  rooted with. **The cut date is the day the production stable carrying the proof ships** (decided
+  by the user, 2026-10-23): planned for 2026-10-27 UTC. If that stable moves, the constant moves
+  with it, in one line, before the stable's final pre-release.
+- **Verified admissions**: each voucher that held, at the place it was signed.
+- **Observations**: for each voucher on the roster, where (the community key group's epoch) and
+  when (this device's clock) this device first saw it. An observation is made only while the key
+  group is DRAINED on this device (`isGroupDrained`): the last pull listed the whole mailbox, no pull
+  is running, the socket is open, and nothing of the group is queued, parked or being applied.
+  A commit still held in the mailbox, a removal included, is therefore never observed as not yet
+  happened. A voucher that claims a place after the one this device first saw it at is refused.
+- **The drain drives the observation** (`whenGroupDrained`, an event and not a poll: it is
+  re-checked when the scheduler finishes a frame of the group and when a pull ends). A sync that
+  found the group not drained - the start-up sync runs before the first full pull - observes again
+  the moment it drains. An ask arrives ON the key group, so it is that group's current work and can
+  never see it drained. An ask whose answer depends on a voucher not observed yet
+  (`pastPolicyFor` -> `unobserved`) is therefore PARKED in memory (`parkedAsks.ts`): one per asking
+  device, community and kind, at most 64, the oldest dropped at warn. The drain that follows decides
+  it again and answers then; a decision that has become a refusal is answered as one, with its log.
+  **Consequence: the answer waits for the key group to catch up on the answering device.** A parked
+  ask lost with the app is acceptable: the asking device asks again at its next start. A SESSIONS
+  repair naming only seeds this device does not hold is answered at once (`missing` does not depend
+  on the admission). A failed pull wakes nothing - only a pull that ends whole does - and says how
+  many drain waiters it holds up. Sign-out forgets the parked asks (`clearParkedAsks`), and the MLS
+  service's `destroy` rejects its pending drain waiters (`GroupDrainAbandonedError`).
+- **Removals**: the epochs at which a commit this device merged - live or on catch-up - removed the
+  user's last leaf from the key group (`removalEpochs`, [mls-protocol](mls-protocol.md)); a device
+  repair is one commit (`replaceMember`) and records none. No removal seen means UNKNOWN, never
+  proof that none happened.
+
+**A signer's key has ONE trust source**: the key the community's key-group tree holds for that
+device now, else the keys the MLS layer PINNED for it (`pinnedSignatureKeys`, the device-binding
+pins, shared with every other caller that needs a device key it can stand behind); a signature that
+verifies under any of them counts. Never a key the server publishes on its own: a signer device
+that is neither in the tree nor pinned is unproven, and one that has since left the tree keeps
+verifying under its pin. A pin re-learned after a prune (`anchored: false`) is weaker evidence, and a
+signer verified only under one is unproven: the newcomer reads from arrival on. Every user id the
+gate and the voucher compare - roster rows, leaves, subject, signer - is in the one canonical form of
+`leafIdentity.ts` (`canonicalUserId`, Rust's `to_ascii_lowercase`), never a plain `toLowerCase`.
+
+A voucher carries a PLACE its signer wrote: a key group and that group's epoch. The newcomer's
+admission starts there, so a removal of the newcomer after it ends it. The SIGNER is judged
+elsewhere: at the place where THIS device first observed the voucher (decided by the user,
+2026-10-23). The device records, durably and per voucher, the community key group's epoch when it
+first saw the voucher on the roster (`observed` in its ledger, written at every community sync and
+every check). The voucher admits when its signer was admitted at that observed place - a root, or
+admitted by an earlier voucher - with no removal of the signer in between. A member is admitted now
+when some admission of theirs has no removal after it.
+
+So:
+- A voucher from a member of a former bureau still admits after they leave, provided this device saw
+  it before they left.
+- A voucher first observed after its signer's removal does not admit, whatever place it claims - a
+  removed signer cannot backdate one.
+- A removed member who comes back with the voucher they had is a newcomer without one.
+- Places in two key groups cannot be ordered, and the reading that hands nothing over is taken.
+
+**The cost, accepted by the user: a device that saw a voucher late grants less past, never more.**
+A device that joined the community after the signer left, or whose ledger was lost, observes every
+voucher anew, now. It then refuses the vouchers whose signer has since been removed: those newcomers
+read from their arrival on when this device answers. Another device that saw the voucher in time
+still hands them the past. The record holds only the vouchers on the current roster; one that leaves
+the roster and comes back is observed again, later.
+
+`pastPolicyFor(frame)` is THE gate, and both answer paths call it - the HISTORY bundle
+(`gatherCommunityHistory`) and the SESSIONS repair (`gatherNamedSessions`) - so the two cannot
+disagree about a member. It returns `joined` when the community is set to it, when the admission is
+not proven (`info`: a decision, not a loss), or when the roster or the tree cannot be read (`warn`:
+fail closed). **Not proven is never refused whole**: the answer is the one a `joined` community
+gives - nothing from before the asker's arrival, everything from it on, under the same
+server-computed floor. It returns `unobserved` when the admission is not proven only because a
+voucher waits for the key group to drain; the answer path then parks the ask (above). It judges on
+the COMMUNITY's key group (`communityKeyGroupOf`), whichever
+group the ask arrived on: a private salon's own group holds that salon's members and its own
+removals, and neither says who the community admitted.
+
+### The wire
+
+Every signed structure begins with its own length-prefixed label, as Graine v2's do: the label keeps
+one signature from verifying as another, and its leading `0x00` keeps a device-key signature from
+ever being an MLS `SignContent` (`mls-core/src/graine_signature.rs`). `lp` is a u32 big-endian length
+then the bytes; `be64` a u64 big-endian integer.
+
+```text
+A = lp("canari-graine-admit-direct-v1") || lp(workspaceId) || lp(subject) || lp(signerUser) || lp(signerDevice) || lp(keyGroupId) || be64(epoch) || be64(issuedAt)
+L = lp("canari-graine-admit-link-v1")   || lp(workspaceId) || lp(signerUser) || lp(signerDevice) || lp(keyGroupId) || be64(epoch) || lp(linkPublicKey) || be64(issuedAt) || be64(expiresAt)
+R = lp("canari-graine-admit-redeem-v1") || lp(workspaceId) || lp(subject) || lp(linkPublicKey)
+```
+
+- **direct**: the adding member's device signs `A` with its MLS credential key
+  (`signWithDeviceCredential`), placed at its key group's current epoch.
+- **link**: the device showing the link mints a fresh Ed25519 pair, signs `L` with its credential
+  key, and puts `L`'s fields, that signature and the link's SECRET in the fragment
+  (`canari-graine-invite-v1`, base64url) - a browser never sends a fragment to a server. The join page
+  takes it, drops it from the address at once, keeps it in the tab's session storage across a
+  sign-in (never in `returnTo`), and the newcomer signs `R` with the secret. The voucher carries `L`'s
+  fields and both signatures, and verifies with no secret. An admission through a link is placed
+  where the link was signed, however late it is used.
+- **A link's grant expires** (decided by the user, 2026-10-23). `expiresAt` is the invite link's own
+  expiry, or 30 days after signing (`LINK_GRANT_DEFAULT_LIFETIME_MS`) when the link has none. It is
+  signed into `L`, so no holder of the fragment can extend it. A member counts a link voucher only
+  if it first observed that voucher no later than `expiresAt`. The only reference for an instant is
+  this device's own clock: the key group's epochs order commits, not time. The clock is read once,
+  at the first observation, and recorded with it. It bounds the link from above and decides nothing
+  else. A device whose clock runs fast refuses a link early; one whose clock runs slow accepts it
+  late.
+- **The voucher** (`canari-graine-admission-v1`, base64url, at most 4096 characters) is stored in
+  `channel_members."admissionVoucher"` (migration `107`) and served on the roster with `isCreator`.
+  The server checks its alphabet and length and nothing else: it cannot verify it, and need not.
+
+### What it does not do, stated
+
+- A device key is pinned on first sight, and a tree admits devices the way MLS
+  BasicCredential does (section 21): the proof is as strong as the tree. Device cross-signing is
+  that work.
+- A removal counts on the devices that merged its commit; a member that arrived later holds no
+  record of it.
+- A device that first syncs a community after the cut records its roots from the members present
+  then.
+- A member whose every device left the tree needs a fresh admission for the past.
+- An invite link is a bearer proof until its grant expires: whoever holds the full link, `#` part
+  included, can be admitted with the past. Share it as you would the community itself.
+- A newcomer admitted by an older client, or through a link without its `#` part, reads from their
+  arrival on until re-admitted.
+
+### Order with the other drafts
+
+Merges after #2262 (salon scope) and #2264 (visibility floors). #2264 moves the visibility read into
+`seedsTheAskerMayRead`; on rebase, its `historyVisibilityFor(...) === 'shared'` becomes
+`(await pastPolicyFor(frame)) === 'shared'`, so the gate stays the ONE function both paths call.
+#2263 (rotation on a new user) and #2255 (paging) touch neither the gate nor the voucher.
+
+Tests: `graineAdmission.test.ts` (the leading `0x00`, round trips, every tampering: subject,
+community, place, signer, forged link key, an extended expiry, malformed bytes),
+`admissionGate.test.ts` (a removed signer's backdated voucher observed after the removal does not
+admit; nothing is observed while a commit is held; a start-up sync observes once the first pull
+drains the group; after a ledger loss the observation restarts and grants less; a link observed
+after its expiry does not admit, one observed before does; a device the server publishes for a
+rooted member is refused; a lost signer device keeps verifying under its pin; a roster row with no
+leaf is never a root; the roots are fixed at the first sync; a removed member's old voucher no
+longer admits, a fresh one does, a repaired device keeps its admission; a former bureau's voucher
+observed before they left still admits, one signed after its signer's removal does not; any pinned
+key verifies, but a pin re-learned after a prune does not prove a signer), `frameHandler.test.ts`
+(both answer paths floor an unproven newcomer; direct, link and chained admissions hand the past;
+copied, foreign or forged vouchers do not; a newcomer who asks at once is answered after the drain,
+with no restart; a voucher whose signer was removed before the observation stays refused after it;
+one parked ask per device, bounded; the creator is a root; an unreadable roster fails closed),
+`BaseMlsService.groupDrained.test.ts` (the drained fact and its event), `rosterReconcile.test.ts`
+(the sync feeds the ledger), `inviteFragment.test.ts`, `historyOverlayStack.test.ts` and
+`appLinkNavigation.test.ts` (the fragment), `useChannelWorkspaces.svelte.test.ts`,
+`channel.service.spec.ts` and `mls-device-guard.spec.ts`. **Owed on the rig** (proposed
+COMM-26..31): a fresh link with its fragment gives the past, on the web and through the app's link
+handler; an old link joins and reads from arrival; a member's add gives the past; a new device of a
+rooted member gets the past; a kicked member re-added with their old voucher reads from arrival; the
+`admission is not proven` line on the answerer for an unproven newcomer.

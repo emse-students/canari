@@ -144,6 +144,7 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
     await q(migration('072_drop_is_bde.sql'));
     await q(migration('073_republications.sql'));
     await q(migration('078_read_grants.sql'));
+    await q(migration('096_personal_republication_requests.sql'));
     await q(
       `INSERT INTO associations (id, name, slug, type) VALUES ($1, 'A3', 'a3', 'association')`,
       [A3]

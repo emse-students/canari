@@ -8,6 +8,7 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
+import { reportRejectionOnce } from '$lib/utils/reportRejectionOnce';
 import { SvelteSet } from 'svelte/reactivity';
 import { getStorage, type IStorage } from '$lib/db';
 import { resetSalonUnread } from '$lib/utils/chat/salonUnread';
@@ -18,19 +19,40 @@ import {
   KeyChangeSupersededError,
   LocalStateUnopenableError,
   LocalStateUnreadableNowError,
+  moveSealedStoresOnly,
   performPinChange,
+  thisTabMayChangeDeviceKey,
   type PinProgressCallback,
 } from '$lib/utils/chat/pinChange';
 import { endIntoKeyRecovery, joinDeviceKeyLock } from '$lib/db/deviceKeyGate';
 import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
+import {
+  HardwareKeyUnavailableError,
+  hardwareHeldKeyApplies,
+  noteHardwareHeldDeviceKey,
+  readHardwareHeldKey,
+  tauriHardwareKeyPort,
+  type AtRestKeyScheme,
+  type HardwareKeyPort,
+} from '$lib/crypto/hardwareHeldKey';
+import {
+  finishMigrationAtUnlock,
+  settledAtRestScheme,
+  startHardwareKeyMigration,
+} from '$lib/utils/chat/hardwareKeyMigration';
+import { noteBackupOwedAfterKeyMove } from '$lib/crypto/deviceRecoveryCode';
+import { showToast } from '$lib/stores/toast.svelte';
 import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // Every `throw` below whose message is a Paraglide line is a `LocalizedError`: the modals rendering
 // these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
 // `Failed to fetch`, and only the THROW knows which it is.
 import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { describeRefusalCode } from '$lib/utils/refusalCodes';
 import {
   LoginFailure,
   LoginStoppedBySignOutError,
+  hardwareKeyLoginFailure,
   isExpectedLoginOutcome,
   isVaultRefusal,
   loginErrorCode,
@@ -41,8 +63,10 @@ import {
   isKeystoreKeyUnavailable,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
+  type IMlsService,
   type VaultRefusal,
 } from '$lib/mls-client';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 import {
   getToken,
   clearAuth,
@@ -85,6 +109,7 @@ import { canSendInGroup } from '$lib/utils/chat/groupUsability';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { measureRestoreShortfall } from '$lib/utils/chat/restoreShortfall';
 import { graineRepairHoldObserver, setGraineRuntime } from '$lib/utils/graine/runtime';
+import { clearParkedAsks } from '$lib/utils/graine/parkedAsks';
 import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
 import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
 import { sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
@@ -95,6 +120,7 @@ import {
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { uninstallMlsStatePersisterLifecycle } from '$lib/mls-client/mlsStatePersisterLifecycle';
 import { disposeMlsEncryptWorker } from '$lib/mls-client/mlsEncryptWorkerSession';
+import { forgetRefusedRotationReloads } from '$lib/mls-client/refusedRotationReloads';
 import {
   setupMessageHandler,
   openGatewayConnection,
@@ -126,6 +152,7 @@ import {
   clearDeviceKey,
   clearDeviceKeyAndWrapKey,
   forgetUnlabelledDeviceKey,
+  isDeviceKeyPersistenceEnabled,
   retireUnlabelledDeviceKeyIfOwnedBy,
 } from '$lib/utils/deviceKeyVault';
 import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
@@ -182,6 +209,7 @@ import {
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
+import { registerDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 
 /**
  * Unregisters this session's presence listener. Module-level because the presence store outlives
@@ -399,8 +427,14 @@ function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
  * still only the observation, and keeps the sentence naming both remedies.
  */
 export function savedStateFailure(
-  reason: SavedStateUnopenedError | SavedStateOfAnotherAccountError
+  reason: SavedStateUnopenedError | SavedStateOfAnotherAccountError | MlsStateWriteRefusedError
 ): LoginFailure {
+  // The device identity rotation could not record its fresh state: another tab of this account
+  // wrote the stored one after this login loaded it (`BaseMlsService.rotateDeviceIdentity`).
+  // Nothing was moved, so the remedy is the other tab, never the PIN or a reset.
+  if (reason instanceof MlsStateWriteRefusedError) {
+    return new LoginFailure('state_written_by_another_tab', m.auth_state_written_by_another_tab());
+  }
   if (reason instanceof SavedStateOfAnotherAccountError) {
     return new LoginFailure('device_holds_other_account', m.auth_vault_other_account_device());
   }
@@ -414,6 +448,32 @@ export function savedStateFailure(
 }
 
 // ── Exported functions ────────────────────────────────────────────────────────
+
+/**
+ * THE EXPLICIT RESET, and the only path that frees a hardware-held key's keystore entry: the marker
+ * goes ONLY once this account's database was cleared, so the next PIN unlock may store a new key
+ * there. A database that survived keeps its marker - and with it the guard over the only key that
+ * opens it - exactly as the account deletion does (`accountLocalWipe.ts`).
+ */
+export async function forgetAtRestMarkerOnceDataIsGone(
+  databaseCleared: boolean,
+  userId: string,
+  port: Pick<HardwareKeyPort, 'forget'>,
+  log: (msg: string) => void
+): Promise<void> {
+  if (!databaseCleared) {
+    log(
+      '[SECURITY] ERROR: the local database was not cleared - the at-rest key marker is KEPT, so its key stays guarded'
+    );
+    return;
+  }
+  try {
+    await port.forget(userId);
+    log('[SECURITY] At-rest key marker forgotten - the keystore entry is free again.');
+  } catch (e) {
+    log(`[SECURITY] ERROR: the at-rest key marker could not be forgotten: ${String(e)}`);
+  }
+}
 
 /**
  * Wipes all local MLS state, device ID, and stored DB for the given user.
@@ -446,14 +506,25 @@ export async function resetDeviceAsFreshImpl(
     localStorage.removeItem(key);
   }
 
+  let databaseCleared = false;
   try {
     const storageToClear = await getStorage(userIdToReset);
     await storageToClear.clear();
+    databaseCleared = true;
     await storageToClear.close();
   } catch (e) {
     // Best-effort cleanup: continue even if local DB is not accessible - but never silently, since
     // a connection left open is what makes a later delete block instead of complete.
     console.warn('[SECURITY] could not clear the local database:', e);
+  }
+
+  if (hardwareHeldKeyApplies()) {
+    await forgetAtRestMarkerOnceDataIsGone(
+      databaseCleared,
+      userIdToReset,
+      tauriHardwareKeyPort,
+      cb.log
+    );
   }
 
   // The session's OWN handle. `getStorage` shares one open store per user, so when the wipe targets
@@ -853,6 +924,27 @@ export async function loginImpl(
     }
     const mlsService = ctx.ensureMls();
     loginClient = mlsService;
+    // WHICH KEY SEALS THIS PHONE'S DATA, read from the marker beside `mls.bin` before any key is asked
+    // for: the PIN-derived one, a hardware-held random one, or one of the two mid-migration
+    // (`hardwareHeldKey.ts`). The web and desktop builds are always `pin-derived`. A re-key running
+    // in this page is awaited first (`settledAtRestScheme`).
+    const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
+      ? await settledAtRestScheme(tauriHardwareKeyPort, ctx.getUserId())
+      : 'pin-derived';
+    stopIfSignedOut('at-rest-scheme');
+    if (atRestScheme === 'unreadable') {
+      // Never guessed into a scheme: the PIN-derived key over hardware-sealed rows would let the next
+      // re-key strand them. Nor called lost: the marker could not be READ, which proves nothing gone.
+      throw hardwareKeyLoginFailure('unreadable', cb.log);
+    }
+    if (isBiometric && atRestScheme === 'migrating') {
+      // Mid-migration the keystore may hold the new key while the state is still under the old one.
+      // Only the PIN path finishes the re-key (`finishMigrationAtUnlock`), so the keypad is asked for.
+      cb.log('[AT_REST_KEY] keystore unlock skipped - a re-key is under way, the PIN settles it');
+      throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
+    }
+    /** Set when the PIN unlock found a re-key already complete: nothing to resume after the login. */
+    let migrationCompleteAtUnlock = false;
     if (isVaultLogin && !vaultOwnerUnproven) {
       // The vault returned the device key before this function was called, so the store can be
       // opened and read now - nothing about either needs the token. `getStorage` shares one handle
@@ -1037,7 +1129,21 @@ export async function loginImpl(
           saltAhead: takePinSaltAhead(userIdForPin),
           fetchSalt: () => fetchPinSalt(ctx, userIdForPin, accessToken, loginAbort.signal),
           computeVerifier: (salt) => computePinVerifier(userIdForPin, pin, salt),
-          deriveDeviceKey: (salt) => deriveDeviceKeyB64(userIdForPin, pin, salt),
+          // ON A HARDWARE-HELD PHONE THE PIN DERIVES NOTHING THAT OPENS DATA: the key is read from the
+          // keystore, and `unlockWithPin` installs it only once the server accepted the PIN - the same
+          // gate the derived key went through. A key the keystore lost is typed here, so a wrong PIN
+          // is still reported as one (the read is awaited only after the check).
+          deriveDeviceKey: async (salt) => {
+            if (atRestScheme !== 'hardware') return deriveDeviceKeyB64(userIdForPin, pin, salt);
+            try {
+              return await readHardwareHeldKey(tauriHardwareKeyPort, userIdForPin, cb.log);
+            } catch (e) {
+              if (e instanceof HardwareKeyUnavailableError) {
+                throw hardwareKeyLoginFailure(e.refusal, cb.log);
+              }
+              throw e;
+            }
+          },
           resolveDeviceId: () => mlsService.resolveDeviceId(userIdForPin),
           checkPin: async ({ verifier, deviceId, salt }) => {
             const res = await fetchOrUnreachable(
@@ -1073,6 +1179,20 @@ export async function loginImpl(
         'pin-check'
       );
       stopIfSignedOut('pin-check');
+      if (atRestScheme === 'migrating') {
+        // The PIN is proven: the interrupted re-key is FINISHED here, before any store is opened for
+        // the session, so no session ever runs over rows under two keys (`finishMigrationAtUnlock`).
+        deviceKeyB64 = await finishMigrationAtUnlockForLogin(
+          mlsService,
+          userIdForPin,
+          deviceKeyB64,
+          cb
+        );
+        stopIfSignedOut('at-rest-migration-finished');
+        migrationCompleteAtUnlock = true;
+        noteHardwareHeldDeviceKey(deviceKeyB64);
+        ctx.setDeviceKey(deviceKeyB64);
+      }
       // Unlocked: any round trip a retry asked meanwhile belongs to a keypad that is gone.
       forgetPinSaltAhead('unlocked with the PIN', cb.log);
       // The first instant this path can decrypt anything: the PIN is proven and the device is not
@@ -1206,7 +1326,8 @@ export async function loginImpl(
       if (reason instanceof VaultOwnerUnprovenError) throw vaultRefusedFailure(reason.refusal);
       if (
         reason instanceof SavedStateUnopenedError ||
-        reason instanceof SavedStateOfAnotherAccountError
+        reason instanceof SavedStateOfAnotherAccountError ||
+        reason instanceof MlsStateWriteRefusedError
       ) {
         throw savedStateFailure(reason);
       }
@@ -1240,6 +1361,8 @@ export async function loginImpl(
       if (!sessionKey || !isValidDeviceKeyB64(sessionKey)) {
         throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
       }
+      // Read from the keystore: on a hardware-held phone no vault may copy it out (`saveDeviceKey`).
+      if (atRestScheme === 'hardware') noteHardwareHeldDeviceKey(sessionKey);
       ctx.setDeviceKey(sessionKey);
       // The keystore path learns its key only here, behind the single prompt and after the gate.
       // Not awaited before the session flips: the landing selects the row whenever it arrives.
@@ -1345,6 +1468,38 @@ export async function loginImpl(
           cb.log(`[VAULT] unlabelled vault proven to be ${owner.slice(0, 8)}'s - retired`);
         }
       })().catch((e: unknown) => cb.log(`[VAULT] saving the device key failed: ${String(e)}`));
+    }
+
+    // A PHONE STILL ON THE PIN-DERIVED KEY MOVES TO A HARDWARE-HELD ONE, once, in this session: every
+    // sealed store is re-sealed under a random key by the PIN change's own resumable path
+    // (`hardwareKeyMigration.ts`). The leader only, like a PIN change: it re-seals from the live client.
+    // Not awaited - the session is usable meanwhile, its storage calls held for the re-seal's length.
+    if (
+      hardwareHeldKeyApplies() &&
+      atRestScheme !== 'hardware' &&
+      !migrationCompleteAtUnlock &&
+      tabLeaderNow
+    ) {
+      const migratingUser = ctx.getUserId();
+      void startHardwareKeyMigration({
+        userId: migratingUser,
+        deviceId: ctx.getMyDeviceId(),
+        currentKeyB64: ctx.getDeviceKey(),
+        port: tauriHardwareKeyPort,
+        changeKey: (oldKeyB64, newKeyB64) =>
+          performPinChange(
+            {
+              userId: migratingUser,
+              mls: mlsService,
+              setDeviceKey: (k: string) => ctx.setDeviceKey(k),
+              log: cb.log,
+            },
+            oldKeyB64,
+            newKeyB64
+          ),
+        ...backupNoticeDeps(migratingUser),
+        log: cb.log,
+      });
     }
 
     // Stamp this session with the device that just unlocked. It is the ONLY
@@ -1574,6 +1729,15 @@ export async function loginImpl(
         onBulkIngestEnd: (phase) => endUi(phase),
       });
     }
+    // The new-device notices consume the device events from here on, and drain what is pending.
+    registerDeviceNotices(mlsService, {
+      getUserId: () => ctx.getUserId(),
+      getMyDeviceId: () => ctx.getMyDeviceId(),
+      conversations: cb.conversations,
+      storedConversation: (groupId) => storageSettled.value.getConversation(groupId),
+      addMessageToChat: (senderId, content, contactName, options) =>
+        cb.addMessageToChat(senderId, content, contactName, options),
+    });
     endStartupCatchupPhase();
 
     /**
@@ -1784,9 +1948,11 @@ export async function loginImpl(
               })
             );
             await cb.saveConversation(groupId);
-            await cb
-              .loadAndRestoreConversations()
-              .catch((e) => cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`));
+            // A burst of Welcomes is folded into ONE queued restore, so its failure is one line,
+            // not one per Welcome.
+            await reportRejectionOnce(cb.loadAndRestoreConversations(), (e) =>
+              cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`)
+            );
             // Fresh join: the Welcome lands us at the current epoch with no pre-join history. The
             // inviter pushes a bundle on the foreground add path, but its background twin
             // (send-welcome-and-commit) does not, so we compare here as well - which costs one
@@ -2151,6 +2317,96 @@ export async function loginImpl(
 }
 
 /**
+ * What the move to the hardware-held key needs for decision 4 of 2026-10-22: whether the install held
+ * conversations before it, and how to ask for a new backup once it is done - a notice the backup
+ * panel keeps until an export clears it, and a toast now.
+ */
+function backupNoticeDeps(userId: string): {
+  hadLocalData: () => Promise<boolean>;
+  onBackupsSuperseded: () => void;
+} {
+  return {
+    hadLocalData: async () => (await (await getStorage(userId)).getConversations()).length > 0,
+    onBackupsSuperseded: () => {
+      noteBackupOwedAfterKeyMove(userId);
+      showToast(m.profile_backup_owed_after_key_move(), 'info', 10_000);
+    },
+  };
+}
+
+/**
+ * The PIN login's half of {@link finishMigrationAtUnlock}: wires the stored state, the recovery's
+ * re-key and the stores-only move onto this login's client, and turns each failure into the login
+ * outcome that names it. Runs after the server accepted the PIN and before any store is opened.
+ *
+ * @returns the hardware-held key the session runs on
+ * @throws {LoginFailure} `hardware_key_unavailable` when the keystore will not hand the key back,
+ *   `local_state_unopenable` when the stored state opens under neither key; anything else as thrown
+ */
+async function finishMigrationAtUnlockForLogin(
+  mls: IMlsService,
+  userId: string,
+  pinDerivedKeyB64: string,
+  cb: ChatSessionCallbacks
+): Promise<string> {
+  const { loadMlsState: loadStored } = await import('$lib/utils/hex');
+  try {
+    return await finishMigrationAtUnlock({
+      userId,
+      pinDerivedKeyB64,
+      port: tauriHardwareKeyPort,
+      loadStoredState: async () => (await loadStored(userId)) ?? null,
+      openStoredStateWith: (keyB64, state) => mls.openLocalStateWithKey(userId, keyB64, state),
+      completeReKey: (oldKeyB64, newKeyB64, state) =>
+        performPinChange(
+          { userId, mls, storedMlsState: state, setDeviceKey: () => {}, log: cb.log },
+          oldKeyB64,
+          newKeyB64
+        ),
+      resealStoresOnly: (oldKeyB64, newKeyB64) =>
+        moveSealedStoresOnly(userId, oldKeyB64, newKeyB64, cb.log),
+      ...backupNoticeDeps(userId),
+      log: cb.log,
+    });
+  } catch (e) {
+    if (e instanceof HardwareKeyUnavailableError) {
+      throw hardwareKeyLoginFailure(e.refusal, cb.log);
+    }
+    if (e instanceof DeviceKeyMismatchError || e instanceof LocalStateUnopenableError) {
+      throw new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
+    }
+    throw e;
+  }
+}
+
+/**
+ * The auto-login when this account has no vault slot. ON A HARDWARE-HELD PHONE "STAY SIGNED IN"
+ * READS THE KEYSTORE, because the vault never holds that key (`saveDeviceKey`): the same unattended
+ * read the biometric cadence and the background push make - the keystore is the factor, as the
+ * vault was. Anywhere else no slot means the PIN is asked.
+ */
+async function stayingSignedInWithoutVault(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  userId: string
+): Promise<boolean> {
+  if (
+    hardwareHeldKeyApplies() &&
+    isDeviceKeyPersistenceEnabled() &&
+    (await settledAtRestScheme(tauriHardwareKeyPort, userId)) === 'hardware'
+  ) {
+    appendLog('[PIN] Stay signed in on a hardware-held key - keystore unlock, no prompt');
+    noteUnlockUnattended(userId);
+    ctx.setPin('');
+    ctx.setDeviceKey('');
+    await loginImpl(ctx, cb, { unattendedKeyRead: true });
+    return ctx.isLoggedIn();
+  }
+  appendLog('[PIN] No device key in vault for this account - auto-login impossible');
+  return false;
+}
+
+/**
  * On Tauri (no biometrics), restores the device key from the vault and delegates to loginImpl().
  * Returns true if login succeeded, false if manual PIN entry is still needed.
  *
@@ -2191,10 +2447,7 @@ export async function nativeStorageLoginImpl(
     // Before the vault is read, for the reason `loginImpl` gives.
     joinDeviceKeyLock(userId);
     const vaulted = await loadDeviceKey(userId);
-    if (!vaulted) {
-      appendLog('[PIN] No device key in vault for this account - auto-login impossible');
-      return false;
-    }
+    if (!vaulted) return await stayingSignedInWithoutVault(ctx, cb, userId);
     // Builds before the derivation existed stored the raw PIN under this key. Such a value can
     // never decrypt anything, so refuse the auto-login and let the PIN modal re-derive a real
     // key rather than failing deeper in the crypto stack with an opaque error.
@@ -2342,6 +2595,20 @@ export async function changePinImpl(
 ): Promise<void> {
   const userId = ctx.getUserId();
   if (!userId.trim()) throw new LocalizedError(m.auth_no_user_signed_in());
+  // BEFORE THE SERVER IS ASKED ANYTHING: a follower tab cannot re-seal the MLS state (see
+  // thisTabMayChangeDeviceKey), and a verifier rotated for a change that cannot finish here costs
+  // the user a recovery.
+  if (!thisTabMayChangeDeviceKey(log)) throw new LocalizedError(m.auth_pin_change_follower_tab());
+  // ALSO BEFORE THE SERVER: a re-key to the hardware-held key re-seals the same stores, and a PIN
+  // change deriving keys over rows already half moved would strand them. Wait for one in flight; refuse
+  // while one is interrupted (the next unlock resumes it).
+  const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
+    ? await settledAtRestScheme(tauriHardwareKeyPort, userId)
+    : 'pin-derived';
+  if (atRestScheme === 'migrating' || atRestScheme === 'unreadable') {
+    log(`[PIN_CHANGE] Refused before the server: the at-rest key is ${atRestScheme}.`);
+    throw new LocalizedError(m.auth_pin_change_key_migration_pending());
+  }
   log('[PIN_CHANGE] Starting PIN change...');
   onProgress?.({ percent: 2, stage: 'verify' });
 
@@ -2358,9 +2625,21 @@ export async function changePinImpl(
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ userId, oldVerifier, newVerifier }),
   });
-  if (res.status === 403) throw new LocalizedError(m.auth_pin_change_current_incorrect());
-  if (!res.ok) throw new LocalizedError(m.auth_pin_change_server_error());
+  if (!res.ok) {
+    // Worded from the refusal's stable code (PIN_INCORRECT, PIN_NOT_SET), never its prose or a bare
+    // status: a 403 here is the one refusal, but the code is what says so.
+    const refusal = await refusalFromResponse(res, 'PIN change refused');
+    throw new LocalizedError(describeRefusalCode(refusal.code) ?? m.auth_pin_change_server_error());
+  }
   log('[PIN_CHANGE] Account verifier rotated server-side.');
+
+  if (atRestScheme === 'hardware') {
+    // THE PIN DERIVES NOTHING ON THIS PHONE: its stores are sealed under the hardware-held key, which
+    // a PIN change does not touch. The server now expects the new PIN, and that is the whole change.
+    onProgress?.({ percent: 100, stage: 'finalize' });
+    log('[PIN_CHANGE] Complete - the at-rest key is hardware-held, nothing to re-seal.');
+    return;
+  }
 
   // Derive both device keys from the same salt: the old one to read the existing state,
   // the new one to re-seal it.
@@ -2461,9 +2740,46 @@ export async function recoverPinImpl(
 
   // Both device keys come from the same salt: the old one still seals the local state,
   // the new one is what every device will derive from now on.
+  //
+  // ON A HARDWARE-HELD PHONE THE NEW KEY IS THE KEYSTORE'S, never the new PIN's: a PIN change does
+  // not touch that key. Two cases reach here. The state already opens with it - nothing to move,
+  // the login follows. Or it is still under the key the PIN derived when the re-key ran (a background
+  // push wrote the state back under it, or the re-key was interrupted): the old PIN derives that key,
+  // and the same path moves it onto the hardware-held one. A re-key running in this page is awaited
+  // first (`settledAtRestScheme`).
+  const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
+    ? await settledAtRestScheme(tauriHardwareKeyPort, userId)
+    : 'pin-derived';
+  if (atRestScheme === 'unreadable') throw hardwareKeyLoginFailure('unreadable', cb.log);
+  let hardwareKeyB64: string | null = null;
+  if (atRestScheme === 'hardware' || atRestScheme === 'migrating') {
+    // `migrating` here is SETTLED (`cle_au_repos_schema`): a marker whose key never reached the
+    // keystore was reverted to `pin-derived` before this read, so a refusal now is never "fall back
+    // to the new PIN's key" - that would aim the re-key at a key the guard refuses to store.
+    const read = await tauriHardwareKeyPort.read(userId);
+    if (!('key' in read)) {
+      cb.log(`[PIN_RECOVER] The hardware-held key is unavailable (${read.refusal}).`);
+      throw hardwareKeyLoginFailure(read.refusal, cb.log);
+    }
+    hardwareKeyB64 = read.key;
+  }
+  if (hardwareKeyB64) {
+    const opened = await ctx.ensureMls().openLocalStateWithKey(userId, hardwareKeyB64, state);
+    if (opened.opened) {
+      await tauriHardwareKeyPort.mark(userId, hardwareKeyB64);
+      cb.log('[PIN_RECOVER] The state opens with the hardware-held key - nothing to move.');
+      ctx.setPin(newPin);
+      onProgress?.({ percent: 92, stage: 'login' });
+      await loginImpl(ctx, cb);
+      if (!ctx.isLoggedIn()) throw new LocalizedError(m.auth_login_failed_after_recovery());
+      onProgress?.({ percent: 100, stage: 'login' });
+      return;
+    }
+    cb.log(`[PIN_RECOVER] The state is not under the hardware-held key (${opened.cause}).`);
+  }
   const [oldDeviceKeyB64, newDeviceKeyB64] = await Promise.all([
     deriveDeviceKeyB64(userId, oldPin, salt),
-    deriveDeviceKeyB64(userId, newPin, salt),
+    hardwareKeyB64 ?? deriveDeviceKeyB64(userId, newPin, salt),
   ]);
 
   // THE SAME PATH AS AN IN-SESSION CHANGE (`performPinChange`). Only the MLS source differs: the
@@ -2518,6 +2834,8 @@ export async function recoverPinImpl(
     }
     throw e;
   }
+  // Every store now under the hardware-held key: the marker says so (idempotent when it already did).
+  if (hardwareKeyB64) await tauriHardwareKeyPort.mark(userId, hardwareKeyB64);
   ctx.setPin(newPin);
   cb.log('[PIN_RECOVER] Local state re-sealed with the new device key.');
 
@@ -2568,6 +2886,8 @@ export function tearDownLiveSession(
   resetHistoryReconciliation();
   // A Welcome this session sent says nothing about the next user's requests.
   resetWelcomeSent();
+  // Nor does a run of refused rotations: a sign-in after this one in the same tab starts its own.
+  forgetRefusedRotationReloads();
   // The probe sender closes over this session's storage and device key, so it must not outlive it:
   // a reconciliation from the next login would otherwise describe the previous user's store.
   setHistoryProbeSender(null);
@@ -2633,13 +2953,19 @@ export function tearDownLiveSession(
   ctx.setConnectionPaused(false);
   ctx.setIsMessagingInitializing(false);
   // The watchdog's candidate set IS the live conversation map, so emptying it is half of why
-  // nothing can drive recovery for a session that has ended.
+  // nothing can drive recovery for a session that has ended. The restore chain goes with it, or a
+  // restore this session queued would refill the map as the account that just left.
+  cb.invalidateRestores();
   cb.conversations.clear();
+  cb.forgetUnconfirmedSalonDraws();
   resetSalonUnread();
   cb.setSelectedContact(null);
   setCallSystemMessageContext(null);
   // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.
   setGraineRuntime(null);
+  // So are the seed asks parked for a drain (sender ids, request ids); the MLS service's destroy
+  // settles its own drain waiters.
+  clearParkedAsks();
   ctx.getCallService()?.setChatNotifier(null);
   resetSiblingCallWarning();
   return finalWrite;

@@ -16,13 +16,58 @@
 
 ```
 /login -> startOidcLogin()
-  -> redirect to Authentik /authorize (PKCE + state)
+  -> redirect to Authentik /authorize (PKCE S256 + state)
   -> callback to /auth/callback?code=...&state=...
-  -> POST /api/auth/oidc/callback { code, redirect_uri }
+  -> POST /api/auth/oidc/callback { code, redirect_uri, code_verifier }
   -> store access_token in memory
   -> set canari_ws_token cookie
   -> redirect to /chat
 ```
+
+**PKCE (RFC 7636, S256).** `startOidcLogin` keeps a verifier beside the state (`$lib/utils/pkce`),
+sends its hash as the challenge, and the callback hands the verifier to core-service with the code;
+MiConnect checks the pair at its token endpoint. A code captured on its way back is then refused
+without the verifier, which the client secret cannot ensure, since core-service is the party holding
+that secret. What authentik refuses is measured by `infrastructure/authentik/test-pkce.py`
+([authentik](../../infrastructure/authentik.md)).
+
+- **Sent only to a server that can redeem it.** The challenge goes out only when the last
+  `/api/version` answer carried `oidcPkce: true` (`getAppVersionCheck()`, refreshed by the login
+  preamble just before). A core-service older than that field drops the verifier, and MiConnect
+  refuses a challenged code redeemed without one, so a challenge sent to it would make the sign-in
+  fail. This is a CAPABILITY read before the request, not a fallback: no failed attempt sits behind
+  it, and a new client facing an older server simply signs in without PKCE, as before. A verifier
+  left by a sign-in that never returned is removed when no challenge is sent, since MiConnect also
+  refuses a verifier for an unchallenged code.
+- **Ship order.** The server half ships first, and core-service is never rolled back below the
+  release that publishes `oidcPkce`; the condition that later makes PKCE required lives in
+  [legacy-compatibility](../../legacy-compatibility.md).
+- **Where the verifier lives.** On the web, `sessionStorage`: the redirect to MiConnect and back stays
+  in one tab, and the secret dies with it rather than staying readable by every tab of the origin. In
+  the apps, the `oidc-state.json` plugin store, with the state, because the WebView's navigation can
+  clear web storage. It is read once and removed by the callback.
+- **A callback in another browsing context fails on the client, by name.** On the web the state is in
+  `localStorage` and the verifier in `sessionStorage`, so a callback that lands in a context other
+  than the one that started the sign-in (a link reopened in a new tab, an installed PWA handing off
+  to the browser, a closed tab) passes the state check and finds no verifier. Posting that challenged
+  code would only buy MiConnect's refusal, where sign-in used to work. So `startOidcLogin` also writes
+  `canari_oidc_challenged` WITH the state (it holds no secret), and a callback that finds the mark
+  and no verifier throws `OidcSignInError('verifier-lost')` without posting; the callback page shows
+  its localized message (`auth_oidc_verifier_lost`) on `instanceof`. core-service's typed refusals
+  `OIDC_PKCE_REFUSED` / `OIDC_CODE_REFUSED` become `OidcSignInError('code-refused')` the same way.
+  **Rejected: both in `localStorage`.** That would make the cross-context callback succeed, but it
+  leaves a bearer secret readable by every tab of the origin and by anything that reads persisted
+  storage, for as long as an abandoned sign-in leaves it there - exactly what the verifier must not
+  be. Both in `sessionStorage` is rejected too: the state would then be lost in the same contexts,
+  failing with a CSRF-shaped error rather than a named one. The cost accepted: a sign-in started in
+  one context and finished in another must be started again, and it says so.
+- **What it does not close.** PKCE binds a code to a verifier, not to an app: on a phone the redirect
+  is the `fr.emse.canari://callback` custom scheme, which the OS does not verify. That is the next
+  step, an `https` callback on a claimed host (in the backlog).
+- **No `nonce`.** The authorize request carries none, and nothing checks one: the id_token is
+  fetched by core-service straight from the token endpoint over TLS, bound to the code (and now to
+  the verifier), never received through the browser, so the replay a `nonce` guards against has no
+  path here. The client keeps that id_token only as the sign-out's `id_token_hint`.
 
 ### The press is not the first thing that happens, and the button must say so
 
@@ -308,7 +353,7 @@ domain-separated PBKDF2-SHA256 derivations over the same server-issued salt:
 | Derivation | Where | Iterations | Used for |
 |---|---|---|---|
 | `computePinVerifier` | `crypto/pinVerifier.ts` | 100 000 | Sent to `POST /api/mls/security/pin-check`; detects a PIN changed on another device |
-| `deriveDeviceKeyB64` | `crypto/deviceKey.ts` | 310 000 | 32-byte at-rest key (`deviceKeyB64`) - the only thing that decrypts `mls.bin` and local messages |
+| `deriveDeviceKeyB64` | `crypto/deviceKey.ts` | 310 000 | 32-byte at-rest key (`deviceKeyB64`) - the only thing that decrypts `mls.bin` and local messages. **Web and desktop only since 2026-10-22**: a phone's key is random and hardware-held ([below](#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22)) |
 
 `deviceKeyB64` is the single at-rest key: `mls.bin` is ChaCha20-Poly1305 (`[nonce 12 || ct]`),
 local messages, Graine seeds and outbox payloads are AES-256-GCM (`[iv 12 || ct]`). Rotating the
@@ -372,10 +417,234 @@ platform therefore keeps one entry that is hardware-backed yet usable unattended
 | iOS | second item, account `mls_bg_key_<alias>` | `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and **no** `kSecAttrAccessControl`; shared with the NSE through access group `group.fr.emse.canari` |
 
 Enabling biometrics changes the unlock *method*, never where this copy lives. Installs predating
-WP-SEC-1 hold the key in `push_context.json`; a one-shot migration
-(`CanariApplication.migrateDeviceKeyFromJson`, `CanariMigrateDeviceKeyFromJson`) promotes it to the
-keystore at the next app start and strips the field. The background readers have **no** JSON
-fallback, so one push before that first launch shows generic text.
+WP-SEC-1 (2026-07-28) held the key in `push_context.json`, promoted to the keystore by a one-shot
+native migration at the next start. **Both migrations were deleted on 2026-10-22**: they wrote the
+keystore entry with no at-rest guard (below), and every login since rewrote both the entry and the
+file, so nothing was left for them to promote. The background readers have **no** JSON fallback.
+`MlsDeviceKeyStore` is a reader of the device key; its one writer serves the install's native cache
+key and refuses an `mls_device_key_` alias (`pushContextFields.test.ts` pins both).
+
+### The at-rest key on a phone is held by the hardware (2026-10-22)
+
+**The user's decision of 2026-10-22, "cle materielle + PIN":** on the phone apps the local at-rest
+key is a random key held by the device's secure hardware, the PIN only unlocks it, the PIN stays
+short, and backups get their own recovery secret. Web and desktop keep the PIN-derived key above:
+a browser has no hardware keystore a key can be bound to (`hardwareHeldKeyApplies()` is
+`isMobileTauriRuntime()`).
+
+**The key hierarchy on a phone.**
+
+| Secret | Where it lives | What it opens |
+|---|---|---|
+| PIN | the user's head | nothing locally; the server's `pin-check` accepts or refuses it |
+| At-rest key: 32 random bytes from the OS RNG (`at_rest_key.rs`, `generate_data_key`) | the existing keystore entry `mls_device_key_{userId}_{deviceId}` and its background copy ([above](#where-the-key-lives)) | `mls.bin`, messages, Graine seeds, outbox - every row of [the store table](#what-the-device-key-seals-and-what-a-pin-change-does-with-each) |
+| Marker `at_rest_keys/<hex(userId)>.json`, ONE PER ACCOUNT | app data dir, written tmp + fsync + rename | nothing: says which scheme seals this account's data (`pin-derived` by absence, `migrating`, `hardware`), the keystore entry the key was written to, and a 128-bit HKDF check value of the key |
+| Backup recovery code (128 bits), ONE PER DEVICE | kept by the user; on the device, sealed under the at-rest key | every `.canari` file the device exports ([below](#backups-get-their-own-recovery-secret)) |
+
+**How the PIN gates the key.** The unlock still derives the verifier and asks the server, exactly as
+before (`unlockWithPin`); only the key source changes. On a `hardware` marker the PIN path reads the
+key from the keystore (`cle_au_repos_lire`, which refuses unless the key's check value matches the
+marker) and installs it ONLY after the server answers `ok`/`registered`. A refusal of the read is a
+type, `HardwareKeyUnavailableError`, turned into the login code `hardware_key_unavailable`: no PIN
+can derive a random key, so the old-PIN recovery is not offered and the reset is.
+
+**What the server holds, and why it is not enough.** The server still holds the salt and the PIN
+verifier, so it can still check the PIN. On a phone the at-rest key is no longer a function of the PIN
+and that salt: it is random and lives in the hardware keystore, so nothing the server holds - even
+together with a copy of the app's files - yields it without the phone itself. What hardware-holding
+does not change: code running on the unlocked phone can read the unattended key, as the background
+push already does.
+
+**The migration of an existing install is a RE-KEY, not a re-wrap** (`utils/chat/hardwareKeyMigration.ts`).
+Wrapping the PIN-derived key in the keystore would leave every row sealed under a key that is still
+PIN + salt, which is the thing the decision removes. So after the first PIN login on a new build the
+tab leader runs, once, in the background:
+
+1. `cle_au_repos_preparer`: generates the key, writes the marker `migrating` with its check value
+   BEFORE answering. If the marker already says `migrating` and the keystore holds a key whose check
+   value matches, that SAME key is returned (rows may already sit under it).
+2. `performPinChange(old, new)` - the PIN change's own resumable order: vault slot retired, keystore
+   pointed at the new key, every store re-sealed under the storage gate, the session adopts the key,
+   the MLS state re-sealed LAST.
+3. `cle_au_repos_marquer`: marker `hardware`, only for that user and that check value.
+
+**Rows move only after the key was written AND read back** - the invariant every recovery below rests
+on. `cle_au_repos_schema` settles the marker before anyone reads it (`settle_scheme`): a `migrating`
+marker whose keystore entry is empty or holds another key is REVERTED (nothing was sealed under a key
+that never reached the keystore), so a stuck PIN recovery or a restored marker resolves the same way
+every time; a read ERROR answers `unreadable`, never a guess.
+
+**A kill mid-migration is FINISHED AT THE NEXT PIN UNLOCK, before any store is opened**
+(`finishMigrationAtUnlock`). A kill in the store pass leaves rows under two keys, and a session run
+over that reads half of them as damaged - so no session ever starts on it. Once the PIN is proven:
+the keystore key opens the stored state (it moved last, so everything did) and the marker is
+completed; or no state is stored and the stores alone move (`moveSealedStoresOnly`); or the state is
+still under the PIN-derived key and the re-key runs to the end from the stored state, as the PIN
+recovery does. An interruption that moved data reloads the page, and the next unlock finishes it. A
+fresh install takes the same path (cheap: nothing is stored yet), so there is ONE code path for every
+install. While the marker says `migrating` a biometric unlock is sent to the PIN pad, and a PIN
+change waits for the migration and refuses (`auth_pin_change_key_migration_pending`).
+
+**ONE GUARD FOR THE ENTRY: once a marker names the hardware key, NOTHING deletes or overwrites that
+entry except the explicit reset.** It lives in the Rust bridge, not at the call sites
+(`at_rest_key.rs`: `guard_write`, `guard_delete`; `keystore_bridge.rs`: `store_guarded`,
+`delete_guarded`), and every mutation goes through it:
+
+- `store_push_context` at every login, `actualiser_cle_keystore_avec_devicekey`, and mls-core's
+  `DeviceKeyStore` (its stale-key probe included) - a write of another key is a typed `Refused`; a
+  write of the key already there is SKIPPED (`AlreadyHeld`), so a login rewrites nothing; any write
+  that does happen is read back and compared.
+- The WebView cannot reach the plugin's store or delete at all: the keystore plugin's default
+  permissions grant reads only, and a delete is the app command `supprimer_cle_appareil`, which asks
+  the same guard (`nativePluginCommands.test.ts` pins both).
+- The explicit reset is `cle_au_repos_oublier`, run only once that account's data is gone: the
+  "forgot PIN" reset after its database clear, the account deletion after its native database step
+  (and not when that step failed), the factory wipe by removing the whole marker directory first.
+- Turning biometrics off no longer touches the entry: it used to delete it and re-store it from the
+  session key with every failure swallowed, which on a migrated phone was the only copy of the key.
+- iOS rewrites the background copy IN PLACE (`SecItemUpdate`, an add only when absent) before the
+  `.userPresence` item, which cannot be updated without Face ID; Android `commit()`s and checks the
+  result instead of `apply()`.
+
+Markers are per account and the guard matches an entry by the EXACT alias its marker recorded, never
+a prefix: user ids allow `[A-Za-z0-9_.@-]` and device ids embed the user id, so one account's id can
+extend another's and an alias cannot be parsed back into its account. A marker that cannot be read
+guards EVERY alias (fail closed). Account deletion removes the entry the marker recorded as well as
+the one today's device id names (`cle_au_repos_oublier` answers the recorded alias).
+
+**One lock, one order.** A process-wide lock (`AT_REST_LOCK` in `at_rest_key.rs`) covers every marker
+read-modify AND every keystore write or delete: the settle, prepare, mark, forget and read commands,
+and the bridge's guarded store and delete. `prepare` writes the keystore entry itself, under the lock,
+after the `migrating` marker - so a settle never sees the gap between the two and never reverts a
+re-key in progress. In the page, every read of the scheme (login, "stay signed in", PIN change,
+recovery) goes through `settledAtRestScheme`, which first waits for a re-key running in that page.
+
+**A marker write is durable in its directory.** The temporary file is synced, renamed, and the
+DIRECTORY is synced; a creation and a removal sync their directory too (`sync_dir`). A rename that
+was never synced in its directory can come back undone after a power loss on F2FS, the file system
+of most Android phones - which would resurrect the previous marker. Windows has no directory handle
+to sync, so the step is a logged no-op there.
+
+The vault never copies a hardware-held key (`saveDeviceKey`
+returns on a key noted by `noteHardwareHeldDeviceKey`): a vault blob sits beside its wrap key in the
+app's files, and a copy there would undo the point. "Stay signed in" on a hardware-held phone is
+therefore the unattended keystore read (`nativeStorageLoginImpl` -> `loginImpl({ unattendedKeyRead:
+true })`).
+
+**Why the push cache keeps its own key (#2271).** That key must exist before the first push and stay
+stable; the at-rest key does not exist before the first PIN unlock and rotates (the migration, a
+recovery, a reset). Deriving one from the other would tie the push cache to every rotation.
+
+**The notification processes need no change.** The Android `MlsDeviceKeyStore` and the iOS NSE read
+the same alias and the same background copy as before (`AfterFirstUnlockThisDeviceOnly`, no access
+control; Android key with no user authentication), so a push on a locked phone still decrypts. After
+the migration that entry holds the random key instead of the PIN-derived one - the readers never knew
+which it was.
+
+**A PIN change on a hardware-held phone re-seals nothing**: only the server verifier rotates, since
+the key is not a function of the PIN. A PIN changed on ANOTHER device needs no recovery here either:
+the new PIN passes the server check and the key is read as before. The recovery path still exists
+for a phone mid-migration, and moves the state to the hardware-held key rather than to PBKDF2 of the
+new PIN.
+
+**A lost keystore entry loses the local data.** A keystore wipe, or an iOS restore onto a new phone
+(`ThisDeviceOnly` items do not migrate), leaves rows nothing can open: `hardware_key_unavailable`,
+the reset, and history from peers and backups. Markers stay IN the backup on purpose: a restored
+`hardware` marker without its key reads as that typed state (never a silent reset of good data), and
+a restored `migrating` marker without its key is reverted (nothing moved). The reset forgets the
+marker (`cle_au_repos_oublier`) once the data is gone, which is what frees the entry.
+
+#### Decisions taken on 2026-10-22, and what each costs
+
+**The product decision (user, 2026-10-22): notifications stay complete on a locked phone, and the
+PIN is verified by the server; the hardware key protects the device's stored data. Practicality
+first.** So what is built above is the design: a random key held by the hardware, read unattended
+by the push and by "stay signed in", with the PIN checked by the server. A design in which the PIN
+would enter the key on the phone was studied the same day and not taken, because a locked phone's
+notifications need the key with nobody present.
+
+Four questions were settled the same day as lead decisions:
+
+| Decision | What it costs |
+|---|---|
+| 1. One backup recovery code per device (`crypto/deviceRecoveryCode.ts`) | Losing that code loses every backup the device made; knowing it opens all of them. |
+| 2. The key is not bound to the device credential (passcode, enrolled biometrics) | Nothing is lost when a fingerprint or a Face ID is enrolled, and locked-phone pushes and "stay signed in" keep working - which is also why those read the key without the user. |
+| 3. A lost keystore entry loses the local data | A keystore wipe, or an iOS restore onto a new phone, leaves rows nothing can open; the login says so (`hardware_key_unavailable`, whose text says the messages on that phone are lost) and offers the reset. History comes back from other members and from backups. |
+| 4. A backup made before a phone's move to the hardware key stops opening on that phone | Those older backups cannot be imported there, so once the move re-sealed existing data the phone asks for a new backup: a toast at once, and a notice in the backup panel until an export is saved (`noteBackupOwedAfterKeyMove`). A fresh install, which takes the same path with no data, is not asked. |
+
+#### Backups get their own recovery secret
+
+A `.canari` file is now **v3** (`backup.ts`, `crypto/backupRecoveryCode.ts`): sealed under
+HKDF-SHA256(code, per-file salt) where the code is 128 random bits in Crockford base32 (26
+characters in groups of four; typed back case-insensitively, `I`/`L` read as `1`, `O` as `0`). 128
+bits need no key stretching.
+
+**One code per device** (`crypto/deviceRecoveryCode.ts`): generated at the device's first export
+and kept in `localStorage`, SEALED under the device key - never in the clear, since on a phone a
+plaintext code beside the app's files would let a copy of them open every backup. It is kept only
+once a file was saved with it, so a cancelled save leaves no code nobody saw - and kept INSIDE the
+storage gate, under the key the stores are under then (`keepDeviceRecoveryCode`, `liveDeviceKey`), so
+a re-key that ran during the save neither races its re-seal of the code nor makes the next export call
+it replaced. Every device key change
+re-seals it with the stores (`moveDeviceRecoveryCode` in `performPinChange` and
+`moveSealedStoresOnly`; never fatal, idempotent for a resumed change). A stored code the key no
+longer opens - a reset, an eviction - is replaced at the next export, and the panel says the earlier
+files keep their old code. Each export shows the code with what it is: the first, the same as
+before, or a replacement. Every message row and seed is
+re-sealed from the device key to the backup key at export and into the importing session's key at
+import, so the file carries no device key and opens on any device with the code. The MLS state rides
+along with a check value of the key it is sealed under (`mlsStateKeyCheck`) and is restored only where
+that key is the session's. The settings panel shows the code with a copy button and an "I have saved
+it" dismissal, and reads a file's header to ask for the code BEFORE an import (`backupFileVersion`).
+v2 files are still read, and open only where the exporting key is the session's - so a v2 file
+exported before a phone's migration no longer opens on that phone after it.
+
+**A key change and the background engines** (2026-10-23). A push or a drain loads `mls.bin` and the
+key, then works; the re-key (or a PIN change) can re-seal the file meanwhile and the app go to the
+background, which drops the foreground guard at once. Every background write of `mls.bin` therefore
+compares the file with the bytes the engine loaded, under the lock every writer takes
+(`write_over_loaded_state`, `background_write_mls_bin_if_unchanged`): a state loaded under the old
+key never lands over one re-sealed under the new. The native seed mirror and push cache are sealed
+under the install's own cache key, not the device key, so a re-key does not touch them.
+
+**A background Welcome staged across a key change** (2026-10-23). The sender-side background Welcome
+stages its post-add state, bound to the bytes of the `mls.bin` it was built on, and installs it only
+once the server accepted the commit, and never while the foreground is active (an install under a live
+foreground would be overwritten by its in-memory manager). A key move or a PIN change is a foreground
+checkpoint, so during a pending background Welcome it behaves as any foreground open does: the
+accepted add is not installed by the background, and the foreground recovers it. Handing an accepted
+background Welcome to the foreground is a separate change. What this branch adds: a Welcome is staged
+only while `mls.bin` is still the file it was built on, checked under the `mls.bin` write lock
+(`stage_over_loaded_state`), so a foreground write that landed while it was built refuses the staging
+before its commit reaches the server.
+
+**A key that could not be read is not a key that is lost.** `hardware_key_unavailable` ("the messages
+on this phone are lost", reset offered) is thrown only for `absent` and `mismatch`; an unreadable
+entry or marker is `hardware_key_unreadable` ("try again"), and the gate withholds the reset for it
+(`withholdsResetForUnreadKey`, the shell's `keyReadRefused`, and a second lock in `handlePinReset`).
+One function decides (`hardwareKeyLoginFailure`), for the unlock, the migration finish and the PIN
+recovery.
+
+**A failed keychain read is an error, never "no key".** The unattended read answers absent for the
+platform's not-found status ONLY (`errSecItemNotFound` on iOS); any other status - a locked device's
+interaction refusal, an entitlement error - is an error carrying its status
+(`keystore_bridge.rs`, `unattended_read_outcome`), so the marker logic never reverts a migration or
+replaces a key it merely could not read. The explicit reset forgets the marker only once the
+account's database was cleared (`forgetAtRestMarkerOnceDataIsGone`), as the account deletion does.
+
+**Account restore (WP-RESTORE-1, #2065)** restores a server session, never keys: a restored phone is
+a device that is born, or migrated, onto its own hardware-held key, and needs nothing from this page.
+
+**Owed on hardware, Mi 9T and iPhone:** fresh install; upgrade from the current store build (and how
+long the storage gate is held by the re-key); PIN change; a push readable with the app killed after
+the migration; a backup exported, then imported with its code on the other phone; a second export
+showing the same code; the new-backup notice after an upgrade with data, and its absence on a fresh
+install; "stay signed in" across a restart; biometric unlock after the migration. **No gate compiles
+the iOS side** (`KeystorePlugin.swift`, `canari_ios.mm`): it is owed a build on the Mac runner, and
+one iPhone reading of the unattended read's status handling (a push with the phone locked before its
+first unlock must log the status and refuse, never report the key absent).
+Android's Kotlin was compiled locally (`:app:compileArm64DebugKotlin`,
+`:tauri-plugin-keystore:compileDebugKotlin`).
 
 ### The vault names its account - FIXED 2026-10-14
 
@@ -604,10 +873,10 @@ non-destructively by `IMlsService.openLocalStateWithKey`).
 | MLS state | `mls.bin` (native), `CanariDBMls_<userId>` (web) | `changeDeviceKey` | `recoverAndRekey` (open + re-seal) | `changeDeviceKey`, LAST |
 | Keystore entry + background copy | platform keystore (native) | rewritten by `changeDeviceKey`, unawaited | same | `pointUnattendedUnlockAt`, awaited, FIRST |
 | Vault slot (+ an older build's unlabelled slot holding this key) | `canari_device_key_vault:v2:<userId>` | overwritten at the END | same | old slot cleared BEFORE the keystore (`retireOldDeviceKeyFromVault`), new key saved after it (`applyNewDeviceKeyLocally`) |
-| Graine native mirror | `graine_seeds.json` (native) | not sealed (app-private plaintext): nothing to do | same | same |
+| Graine native mirror, push message cache | `graine_seeds.json`, `fcm_message_cache*.ndjson` (native) | sealed since 2026-10-22, but under the INSTALL's native cache key, which a PIN change does not touch: nothing to do ([mobile](../mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)) | same | same |
 | Feed cache | memory only (`posts/feedCache.ts`) | not sealed, not persisted | same | same |
 | Stored feed first pages (#1896) | `IStorage` `feedPages` / `feed_pages` | dropped (`dropStoredFeedPages`) | dropped | DROPPED inside the storage hold, not re-sealed: a copy the server's next answer rewrites |
-| Exported backup file | wherever the user saved it | NOT re-sealed: a file the device no longer holds; its import refuses it as "a different device key" | same | same |
+| Exported backup file | wherever the user saved it | NOT re-sealed: a file the device no longer holds; a v2 import refuses it as "a different device key" | same | v3 (2026-10-22) is sealed under its own recovery code, so a PIN change does not touch it ([hardware-held key](#backups-get-their-own-recovery-secret)) |
 
 **What went wrong, and why both paths are now one.** The rule "what the device key seals, the
 change must re-seal" was honoured by the change for the seeds (2026-09, [channel-encryption
@@ -786,9 +1055,18 @@ holds the lock and, if one does, says so on screen (stage `waiting_tabs`,
 `auth_changepin_progress_waiting_tabs`: close that tab or bring it to the front).
 
 Without `navigator.locks` (WebKitGTK; the unit tests) the realm is alone, the reading `tabLeader.ts`
-makes of the same absence. Left open: a change made FROM a follower tab re-seals its own older
-capture, which the version guard refuses - so it now ends in a recovery instead of a silent "Done",
-but it still costs that recovery ([backlog](../../backlog.md)).
+makes of the same absence.
+
+**A change is made from the LEADER tab only** (`thisTabMayChangeDeviceKey` in `pinChange.ts`,
+asked by `changePinImpl` before the server verifier is rotated). A follower re-seals its own live
+client, loaded from an older snapshot than the leader last wrote, so the version guard refuses that
+write and the change ended in a recovery prompt every time. Re-sealing the STORED state instead was
+weighed and rejected: the change makes the leader go stale and reload, the reload frees the leader
+lock, the follower is PROMOTED, and the promotion handler (`useChatSession.svelte.ts`) reloads it in
+the middle of its own change - holding that promotion would be a new cross-tab mechanism. So a
+follower (or a tab whose leadership is still undecided) refuses on the settings screen with
+`auth_pin_change_follower_tab` - change it from the active tab, or take over here first - and
+nothing is asked of the server. Pinned by `pinChange.followerTab.test.ts` (two realms).
 
 **Resumable, because it cannot be atomic.** SQLite through the Tauri plugin has no multi-statement
 transaction (`sqliteBatch.ts`), so a history of thousands of rows cannot be swapped in one step, and
@@ -906,9 +1184,10 @@ SQLite rows are AES-256-GCM blobs. Nothing negotiates, so **a commit that change
 layouts must ship the reader for the previous layout with it**. Shipping the writer first is not a
 staged rollout: installed devices hold bytes in the old shape, the new reader rejects them, and the
 failure surfaces as an unopenable state - which `classifyStateLoadFailure` reads as `sealed` or
-`mismatch`, neither of which is what happened. The one-shot migrations already in the tree
-(`CanariApplication.migrateDeviceKeyFromJson`, `CanariMigrateDeviceKeyFromJson`) are the shape this
-takes: read the old, write the new, strip the old, all at the first start after the upgrade.
+`mismatch`, neither of which is what happened. The WP-SEC-1 one-shot migrations (deleted
+2026-10-22, see [where the key lives](#where-the-key-lives)) were the shape this takes: read the
+old, write the new, strip the old, all at the first start after the upgrade - and a migration that
+WRITES a key must go through the same guard as every other writer.
 
 ### The login guard cannot tell a caller's flag from a concurrent login
 
@@ -1365,13 +1644,14 @@ A sign-out keeps the local state on purpose; a deletion is the one exit after wh
 - **Every other tab is told** (`BroadcastChannel` `canari-account-deleted`, `utils/deletedAccountGuards.ts`): a tab signed in as the deleted account runs **`clearAuthLocally()`** - its identity and token only, **no `POST /api/auth/logout`, no cookie flush, no native credential**: those are one per origin, the deleting tab already revoked its own session, and by the time the notice lands the cookie may belong to an account signed in since, which a second logout would end for nothing. It then waits for its MLS checkpoint, closes its stores and goes to `/login`. A tab signed in as anyone else ignores it. A delete still deferred by such a tab is a reported failure, finished by the resume.
 - `wipeDeletedAccountImpl` (sessionAuth.ts) first awaits `whenMlsRetired()`, so the sign-out's final checkpoint cannot recreate what is deleted. The wipe then closes this account's handles, deletes `CanariDB_<id>`, `CanariDBOutbox_<id>` and `CanariDBMls_<id>` by exact name, and on Tauri asks `delete_user_database` to remove `canari_<id>.db` plus `-wal`/`-shm` **under `app_config_dir()`, the directory `tauri-plugin-sql` 2.4 really opens it in** (`app_data_dir()` is the same directory on Windows and macOS and a different one on Linux, where the first version removed 0 files and said "removed"). When a store was open for the account in this run, finding no file is an ERROR, not success.
 - It also deletes that account's platform-keystore entry (`mls_device_key_<id>_<deviceId>`, biometric enrolment) - the entry only, the per-install "configured" flag stays for the other accounts - and its per-account `localStorage` keys, through ONE list: `ACCOUNT_KEY` in `utils/accountLocalKeys.ts`, which every writer, reader and sweeper of such a key builds it from - send-ratchet ledger, device id, key-change epoch, archived conversations, the history ledgers, the not-ready registry, the feed-store epoch, the device names, the last-active stamp (and its native `session-meta.json` mirror, cleared by its own step), the legacy `mls_autosave_<id>`, the salon read marks, the `canari_graine_history_held_nothing:v1:<id>` record of #2027, and **`canari.salon-unsent.<id>`, the PLAINTEXT of unsent salon messages**. The keystore alias has ONE TypeScript builder, `keystoreAlias()`, used by all six callers (the Rust side spells the same shape in `commands/mls.rs` and `commands/push.rs`). **`accountLocalKeys.guard.test.ts` reads the source and fails** on a listed key's literal spelled outside the list, on an alias built inline, on a storage call whose key is built inline, and on a key-shaped literal interpolating a user id - the review of #2023 found nine keys the first list missed, and nothing at run time can tell a forgotten key from a deliberate one. A keystore entry that survived keeps its device id, so the resume can still name it.
-- **THE PUSH SIDE'S PLAINTEXT GOES TOO, BY OWNER.** `delete_user_push_files` (`commands/push.rs`) removes `outbox_pending.ndjson` (unsent `AppMessage` protos in the clear), `fcm_message_cache.ndjson`, `read_watermarks.ndjson`, `outbox_sent.ndjson` and then `push_context.json` (`userId`, `deviceId`, the bearer `pushToken`) - **only when `push_context.json` names the deleted account**, the one fact that says whose the NDJSON files are. It touches nothing when the context names another account (signed in since), and nothing when it is absent, unparseable or names nobody, logged. The context goes LAST, so a failure keeps the proof for the resume. `graine_seeds.json`, `mls.bin` and the push secret are not touched.
+- **THE PUSH SIDE'S PLAINTEXT GOES TOO, BY OWNER.** `delete_user_push_files` (`commands/push.rs`) removes `outbox_pending.ndjson` (unsent `AppMessage` protos in the clear), `fcm_message_cache.ndjson`, `read_watermarks.ndjson`, `outbox_sent.ndjson` and then `push_context.json` (`userId`, `deviceId`, the bearer `pushToken`) - **only when `push_context.json` names the deleted account**, the one fact that says whose the NDJSON files are. It touches nothing when the context names another account (signed in since), and nothing when it is absent, unparseable or names nobody, logged. The context goes LAST, so a failure keeps the proof for the resume. The read, the check and the removals hold `PUSH_CONTEXT_LOCK`, which every writer of `push_context.json` takes too (`store_push_context`, `store_device_identity`, `set_push_context_locale`): a new sign-in storing its context during the deletion used to be removed on a proof about the previous bytes; it now waits and survives (a sync Tauri command is not serialised by the runtime). `graine_seeds.json`, `mls.bin` and the push secret are not touched.
+- **ON iOS THE APP GROUP CONTAINER GOES ON THE SAME PROOF (2026-10-19).** Two writers put the deleted account's data there and neither ever deletes: `CanariMirrorPushStateToAppGroup` (`canari_push.mm`) copies `push_context.json` at `didBecomeActive` / `willResignActive` and SKIPS a missing source, and the Notification Service Extension writes its decrypted `fcm_message_cache.ndjson` there. So the bearer `pushToken`, `userId` and `deviceId` outlived a deletion at rest, readable by the extension. `delete_user_push_files` now removes every name of the account list (the four NDJSON files and `push_context.json`) from the container too, before the app's own context - a copy that will not go is a failure, so the proof stays for the resume. No container is logged at ERROR and returned, after the app's own files went: the mirror reaches the container through the same entitlement, so nothing was copied into one this call cannot reach. Deletion removes explicitly rather than the mirror deleting a destination whose source is gone, because the extension's cache has no source to mirror and the mirror next runs only when the app leaves the foreground. The mirror cannot copy the context back mid-deletion: the command is synchronous, and on iOS a synchronous command runs on the main thread the mirror runs on (read from wry 0.57 / tauri 2.12, not observed). **Owed on the iPhone 12** ([device-verification](../../device-verification.md)): this branch is `#[cfg(target_os = "ios")]` and nothing on a Windows host or a pull request's CI compiles it.
 - **THE LEGACY PLAINTEXT CONVERSATIONS (`canari_conv_<id>_<contact>`, `migration.ts`) ARE SWEPT ONLY WHERE PROVEN.** `_` is in the id allowlist, so the prefix `canari_conv_a_` also opens account `a_b`'s keys. `legacyConversationKeysIn` takes a key as `<id>`'s only when the rest after the prefix holds no `_`: any account whose id starts with `<id>_` writes a rest that always holds one. A rest with a `_` (a contact name carrying one, or another account's key) is kept, and the wipe logs how many at WARN. The guard's rule 4 also catches a concatenation (`'x_' + userId`, `PREFIX + userId`), the shape that hid this key.
 - **TWO IDS THAT DIFFER ONLY BY CASE SHARE STORAGE, SO THE WIPE REFUSES THEM.** Three keys lower-case the id (archived conversations, salon unsent, salon read marks) and `canari_<id>.db` lives on a case-INSENSITIVE filesystem on Windows and macOS: wiping `Abc` would take `abc`'s unsent texts and database. `caseCollidingAccountIdsIn` reads the id-naming keys back, and when another stored id case-folds to the deleted one the wipe is refused at ERROR, naming the twins, once per start, and stays owed - never a guess at whose rows are whose.
 - **A LOST 204 WIPES NOTHING, AND THAT IS ACCEPTED, NOT DETECTED.** When the server committed the deletion but the answer never arrived, `deleteMyAccount()` throws (a transport failure, or a deadline), the error is shown, no marker is written and the session continues until its next refresh answers 401 - the ordinary expired-session path. Detecting it would mean reading "this account was deleted" out of a 401 that also means "this session expired", a distinction the server does not carry; guessing it from the refusal is the learning-by-failing the rules forbid. The cost: that account's rows stay under its device key, unreadable without its PIN, until the next device reset - and a retry of the deletion (a 401 or 404 then) does not wipe either. Owed only if a server signal ever separates the two.
 - **THE ID GUARANTEE.** The user id is the MiConnect `sub`, a `varchar(255)` copied as it comes: a UUID, a hash, a username or an email. Both sides accept exactly `[A-Za-z0-9_.@-]{1,255}` (`isWipeableAccountId`, `is_wipeable_account_id`) and REFUSE anything else, loudly, rather than normalise it: the stores were created under the raw id, so a normalised one names another file, and an id holding `:` would let the prefix keys `history_*:<id>:` reach another account's.
 - LEFT ALONE, deliberately: every other account's database, slot and keys, the in-app log, the preferences, and `mls.bin` (one file per install that may hold another account's state: [backlog](../../backlog.md), the shared `mls.bin` P3).
-- Tests: `accountLocalWipe.test.ts` (the resume against a sign-in landing before and during it, the case collision, the whole key list), `accountLocalKeys.guard.test.ts`, `auth.deletedAccount.test.ts` (`clearAuthLocally` sends no logout; `accountLiveness`; scenario A - the callback drops the marker and a tokenless resume then wipes nothing; `isDeletedAccountHere` holds after the LIVE wipe finished, and a resumed wipe leaves no flag), `pinFirstSetupRefuted.test.ts` (`account_deleted` asks no salt and no recovery), `ConversationsMiniPanel.deleted.svelte.test.ts`, `offlineUnlock.test.ts` (scenario B - the refusal precedes every store opener and `getToken`), `deletedAccountGuards.test.ts`, `user.deleteMyAccount.test.ts`, `apiFetch.test.ts` (`onAuthorization`), three Rust tests in `commands/storage.rs`, four in `commands/push.rs` (`delete_user_push_files_tests`). **What only a device proves:** the SQLite file and the keystore entry are really gone on Android and iOS (where `app_config_dir()` was never read on hardware), and a second WebView tab is not a thing a phone has.
+- Tests: `accountLocalWipe.test.ts` (the resume against a sign-in landing before and during it, the case collision, the whole key list), `accountLocalKeys.guard.test.ts`, `auth.deletedAccount.test.ts` (`clearAuthLocally` sends no logout; `accountLiveness`; scenario A - the callback drops the marker and a tokenless resume then wipes nothing; `isDeletedAccountHere` holds after the LIVE wipe finished, and a resumed wipe leaves no flag), `pinFirstSetupRefuted.test.ts` (`account_deleted` asks no salt and no recovery), `ConversationsMiniPanel.deleted.svelte.test.ts`, `offlineUnlock.test.ts` (scenario B - the refusal precedes every store opener and `getToken`), `deletedAccountGuards.test.ts`, `user.deleteMyAccount.test.ts`, `apiFetch.test.ts` (`onAuthorization`), three Rust tests in `commands/storage.rs`, eight in `commands/push.rs` (`delete_user_push_files_tests`, App Group container included, `push_context_lock_tests`). **What only a device proves:** the SQLite file and the keystore entry are really gone on Android and iOS (where `app_config_dir()` was never read on hardware), and a second WebView tab is not a thing a phone has.
 
 ### One sign-out sent two logouts, and the vault logged the user back in during it - FIXED 2026-10-17
 
@@ -1626,7 +1906,7 @@ Two things must line up, and no compiler checks either:
 | ACL | listed in the plugin's `build.rs` COMMANDS **and** granted in `permissions/default.toml` | absent - the IPC boundary refuses the call although the Rust fn exists |
 
 Build the identifier with `keystoreCommand()` from `services/keystoreCommands.ts` rather than
-writing the string; `keystoreCommands.test.ts` reads the Rust sources and fails CI when a name,
+writing the string; `nativePluginCommands.test.ts` reads the Rust sources and fails CI when a name,
 the handler registration, the ACL array or the default permission set drift apart.
 
 `has_key_bytes` never prompts: Android reads SharedPreferences only, iOS matches keychain

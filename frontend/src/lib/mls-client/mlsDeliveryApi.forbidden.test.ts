@@ -5,6 +5,9 @@ import {
   SendEdgeRefusedError,
   SendForbiddenError,
   SenderNotActiveError,
+  SendServerError,
+  parseRetryAfterMs,
+  WithheldUnsupportedError,
 } from './mlsDeliveryApi';
 import { classifyOutgoingSendError } from './mlsSendError';
 import { refusalStatus } from '$lib/utils/apiRefusal';
@@ -67,6 +70,75 @@ describe('postApplicationMessage on a 403', () => {
 });
 
 /**
+ * A 5xx ON A SEND IS TYPED AT THE THROW (user, 2026-10-18): the outbox counts it by TYPE toward
+ * parking a text as failed, and any other status is an answer carried as a field, never a sentence.
+ */
+describe('postApplicationMessage on a 5xx or another status', () => {
+  const api = (res: Response) =>
+    new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: vi.fn().mockResolvedValue(res) as unknown as typeof fetch,
+    });
+
+  it('raises SendServerError with its status and WHO answered', async () => {
+    const gateway = await api(
+      new Response('{}', { status: 500, headers: { 'content-type': 'application/json' } })
+    )
+      .postApplicationMessage('g1', 'AAAA')
+      .catch((e: unknown) => e);
+    const edge = await api(
+      new Response('<html>bad gateway</html>', {
+        status: 502,
+        headers: { 'content-type': 'text/html' },
+      })
+    )
+      .postApplicationMessage('g1', 'AAAA')
+      .catch((e: unknown) => e);
+
+    expect(gateway).toBeInstanceOf(SendServerError);
+    expect((gateway as SendServerError).origin).toBe('gateway');
+    expect(refusalStatus(gateway)).toBe(500);
+    expect(edge).toBeInstanceOf(SendServerError);
+    expect((edge as SendServerError).origin).toBe('edge');
+    expect(classifyOutgoingSendError(edge)).toBe('unknown');
+  });
+
+  it('carries the Retry-After of a 5xx, in ms', async () => {
+    const failure = await api(
+      new Response('{}', {
+        status: 503,
+        headers: { 'content-type': 'application/json', 'retry-after': '120' },
+      })
+    )
+      .postApplicationMessage('g1', 'AAAA')
+      .catch((e: unknown) => e);
+
+    expect((failure as SendServerError).retryAfterMs).toBe(120_000);
+  });
+
+  it('reads Retry-After as seconds or an HTTP date against a given now, else null', () => {
+    const now = Date.parse('Sun, 18 Oct 2026 12:00:00 GMT');
+    expect(parseRetryAfterMs('30', now)).toBe(30_000);
+    expect(parseRetryAfterMs('Sun, 18 Oct 2026 12:02:00 GMT', now)).toBe(120_000);
+    expect(parseRetryAfterMs('Sun, 18 Oct 2026 11:00:00 GMT', now)).toBe(0);
+    expect(parseRetryAfterMs('soon', now)).toBeNull();
+    expect(parseRetryAfterMs(null, now)).toBeNull();
+  });
+
+  it('carries any other refusal status as a field, and it is not a SendServerError', async () => {
+    const failure = await api(
+      new Response('{}', { status: 400, headers: { 'content-type': 'application/json' } })
+    )
+      .postApplicationMessage('g1', 'AAAA')
+      .catch((e: unknown) => e);
+
+    expect(refusalStatus(failure)).toBe(400);
+    expect(failure).not.toBeInstanceOf(SendServerError);
+  });
+});
+
+/**
  * THE EXCLUSIONS READ IS CLASSIFIED AT THE THROW TOO (third review of #1878). An untyped
  * `Error('getGroupExclusions failed: 403')` was a blip to every reader, so a roster-less device's
  * replies were held for good and the roster repair never ran.
@@ -116,6 +188,60 @@ describe('getGroupExclusions on a refusal', () => {
 
     expect(refusalStatus(failure)).toBe(503);
     expect(classifyOutgoingSendError(failure)).toBe('unknown');
+  });
+});
+
+/**
+ * A SERVER THAT PREDATES `withheld` (2026-10-22) answers the route without it, for as long as a
+ * store build runs ahead of production. That must fail the withheld read alone, typed - the union
+ * every history answer and every received bundle depend on keeps working.
+ */
+describe('the windows read against a server that predates `withheld`', () => {
+  const old = () =>
+    new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(JSON.stringify({ exclusions: { bob: [{ from: 1, until: 2 }] } }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+      ) as unknown as typeof fetch,
+    });
+
+  it('still answers the exclusions', async () => {
+    expect(await old().getGroupExclusions('g1')).toEqual(
+      new Map([['bob', [{ from: 1, until: 2 }]]])
+    );
+  });
+
+  it('refuses the withheld read with its own type, never as a malformed answer', async () => {
+    const failure = await old()
+      .getGroupWithheld('g1', 'carol')
+      .catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(WithheldUnsupportedError);
+  });
+
+  it('asks `for` the one person, and shares the request with the exclusions asked for them', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ exclusions: {}, withheld: { me: [], carol: [] } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await Promise.all([api.getGroupExclusions('g1', 'carol'), api.getGroupWithheld('g1', 'carol')]);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(String((fetchImpl.mock.calls[0] as unknown[])[0])).toContain('/exclusions?for=carol');
   });
 });
 

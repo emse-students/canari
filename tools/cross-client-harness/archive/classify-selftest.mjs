@@ -22,6 +22,7 @@ import {
   DEVICE_PANEL_NARRATION,
   EVICTED_REJOIN_NARRATION,
   ignoringExpectedLog,
+  PAGE_BOOT_NARRATION,
   stripStamp,
   ignoringExpectedRefusal,
   report,
@@ -415,7 +416,13 @@ const CASES = [
     '[14:26:09] [WELCOME_REQ] web-b78568a3\u2026 already a member of 1bf6fefe... - skip',
     'notable',
   ],
-  // A kick followed by a re-add, claimed by the generic `re-?add` rule rather than a rule of its own.
+  // A leaf replaced (Remove + Add in ONE commit), claimed by the generic `re-?add` rule rather than
+  // a rule of its own. The older two-commit spelling is kept: an embedded APK emits it until updated.
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] web-b78568a3... leaf in MLS tree - remove + re-add in one commit (no Welcome sent from here this session)',
+    'notable',
+  ],
   [
     'log',
     '[14:26:09] [WELCOME_REQ] web-b78568a3... leaf in MLS tree - kick + re-add',
@@ -773,6 +780,17 @@ const CASES = [
     '[Push] startPushService device=tauri-aaaaaaaa…-bbbbbbbb-cccc (platform will be confirmed by FCM token)',
     'benign',
   ],
+  // TWO DECISION LINES the coding standard requires (read on GRP, 2026-10-22), pinned whole: the
+  // overlay hand-off and the composer's measured height. A re-worded emitter must fall back to
+  // `unexplained`, which the control after them proves.
+  [
+    'debug',
+    '[2026-10-22T01:32:57.758Z] [historyOverlay] overlay 39 takes the ghost entry under the pointer (a hand-off)',
+    'benign',
+  ],
+  ['debug', '[2026-10-22T01:32:59.021Z] [ChatComposer] composer height unset -> 70px', 'benign'],
+  ['debug', '[2026-10-22T01:32:59.021Z] [ChatComposer] composer height 70px -> 92px', 'benign'],
+  ['debug', '[2026-10-22T01:32:59.021Z] [ChatComposer] composer height changed', 'unexplained'],
   // THE `removed` GUARD FIRING, AND ITS FIVE SIBLINGS NOT BEING SWALLOWED WITH IT. Every one of
   // these lines is the SAME log statement in `discoverMissingGroups`; only the reducer's reason
   // separates a designed keep from a keep taken because the client could not read the server. A
@@ -1286,6 +1304,31 @@ const FORGIVE_CASES = [
     [['log', '[DevicePanel] Removal of f0a3bb2c-1d44-4e1a-9b77-2a0c5e8f1234 cancelled by user']],
     DEVICE_PANEL_NARRATION,
     { clean: false, unmatched: 5 },
+  ],
+  [
+    // Read verbatim on GRAINE-AUTH-1, -2 and -6 (2026-10-22): a reloaded page's own decisions. The
+    // five older needles of the list see no line here, hence `unmatched: 5`.
+    'a reloaded page narrating its own boot is forgiven',
+    [
+      ['log', '[04:13:20.680] [RESTORE] kept 2 salon row(s) the community load owns'],
+      ['log', '[04:13:20.681] [RESTORE] 19 conversation row(s) seeded - history follows'],
+      ['log', "[04:13:20.690] [WORKSPACE-SNAPSHOT] the list on screen is the server's now (1 community(ies))"],
+      ['log', '[04:13:20.691] [UNREAD] communities loaded: joined the counts request already in flight'],
+      ['debug', '[2026-10-22T02:13:20.806Z] [AvatarPresence] 1 of 1 have no photo - not requested'],
+      ['debug', '[2026-10-22T02:13:20.837Z] [RoutePreload] {"pathname":"/communities","first":true}'],
+      ['debug', '[04:08:14.347] [MLS] Bulk ingest checkpoint landed - committing its progress markers.'],
+      ['log', '[04:13:20.877] [STRAY] compared 1 tree(s): 1 roster(s) in one read, 0 refused, 0 not answered (nobody removed in them)'],
+      ['debug', '[2026-10-22T02:13:21.939Z] [CHAT_VIEW] channel_ messages 3 (hasNewMessage=true, response=repin-entry)'],
+    ],
+    PAGE_BOOT_NARRATION,
+    { clean: true, unmatched: 5 },
+  ],
+  [
+    // CONTROL: the same stray-tree sweep with a refusal in it is a finding, not the boot narrating.
+    'a stray-tree sweep that was refused is not forgiven',
+    [['log', '[04:13:20.877] [STRAY] compared 1 tree(s): 1 roster(s) in one read, 1 refused, 0 not answered (nobody removed in them)']],
+    PAGE_BOOT_NARRATION,
+    { clean: false, unmatched: 14 },
   ],
   [
     'a console error beside a forgiven line still breaks clean',

@@ -34,6 +34,7 @@ import {
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { AccountErasureService } from '../account-erasure/account-erasure.service';
+import { RefusalCode, refusalBody } from '../common/refusal-codes';
 
 /**
  * The most ids one `GET /users/batch` may carry.
@@ -518,7 +519,10 @@ export class UsersController {
     const isSelf = targetId.trim().toLowerCase() === (callerId ?? '').trim().toLowerCase();
     if (body.admin === false && isSelf) {
       throw new ForbiddenException(
-        'Un administrateur ne peut pas retirer ses propres droits ; un autre administrateur doit le faire.'
+        refusalBody(
+          RefusalCode.ADMIN_SELF_DEMOTE,
+          'Un administrateur ne peut pas retirer ses propres droits ; un autre administrateur doit le faire.'
+        )
       );
     }
     await this.usersService.setAdmin(targetId, body.admin);

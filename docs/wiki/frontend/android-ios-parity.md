@@ -68,6 +68,20 @@ sets the window's own background to the app's ground (`#f0f2f5` / `#000`, `app.h
 because that is what shows in the band above a keyboard and in its rounded top corners (black, until then).
 **OWED: one reading of the result on the iPhone** - every gate here is blind to it.
 
+#### The system theme on iOS is read at start only
+
+**The window override makes `prefers-color-scheme` the page's own echo (2026-10-19).** WKWebView's
+media query follows the window's style, so once `themeStore` has posted a theme the query reports
+THAT, not the phone. It was proved by a defect: the camera's `holdNativeBar('dark')` turned a
+light-theme app dark, and kept it dark after the camera closed
+([reels](modules/reels.md#the-tab-c5)). The store now ignores a change of the query once a theme
+has reached the iOS shell (`colorSchemeIsOwnCommand`). **What that leaves, and what it always was:**
+in the `system` preference the iOS app takes the phone's theme at START and does not follow a
+live switch made while it runs - the pinned override already hid every such switch from the page
+since 2026-09-30; only the app's own echoes ever arrived. Following it live needs the OS's style
+from something the override does not touch (the screen's trait collection, posted to the page by
+native) - a P3 in [backlog](../backlog.md#p3---ios-the-system-theme-does-not-follow-a-live-switch-of-the-phones-theme-2026-10-19).
+
 **The form accessory bar is removed** (up/down arrows and a check, ~45 pt above every keyboard):
 `CanariHideKeyboardAccessoryBar` swaps the WebKit content view's class for a subclass whose
 `inputAccessoryView` is nil. If a future iOS renames `WKContentView` the bar returns and the syslog
@@ -223,6 +237,7 @@ Verified in both trees while writing this page, so nobody spends an evening re-d
 |Background drain|`MlsBackgroundWorker` + `OutboxRetryWorker`|BGTasks `cleanup` + `outboxRetry`, both registered AND submitted|
 |App-chosen language in notifications|`appLocaleContext` from `push_context.json`|the NSE reads the same `locale` field|
 |Deep links|intent-filters + `autoVerify`|`CFBundleURLTypes` + AASA|
+|Share into Canari|`SEND`/`SEND_MULTIPLE` intent-filter + `IncomingShare.kt` ([sharing](sharing.md))|**missing** - a Share Extension (lot S4)|
 |Device key at rest|Android Keystore|Keychain, `AfterFirstUnlockThisDeviceOnly`, App Group|
 
 **And one asymmetry closed BY CONSTRUCTION, which must not be given a peer**: Android flushes the

@@ -4,9 +4,7 @@ Default permissions for the plugin
 
 #### This default permission set includes the following:
 
-- `allow-store-key-bytes`
 - `allow-get-key-bytes`
-- `allow-delete-key-bytes`
 - `allow-has-key-bytes`
 
 ## Permission Table

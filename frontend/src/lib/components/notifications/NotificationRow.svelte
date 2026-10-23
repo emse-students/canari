@@ -15,6 +15,8 @@
     Repeat2,
     CalendarPlus,
     Bell,
+    VideoOff,
+    TriangleAlert,
   } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -29,6 +31,7 @@
     reportUnknownNotificationType,
   } from '$lib/posts/notificationTarget';
   import { m } from '$lib/paraglide/messages';
+  import type { ReportReason } from '$lib/moderation/reasons';
 
   interface Props {
     /** The notification to render. */
@@ -57,6 +60,38 @@
   $effect(() => {
     if (isUnknownNotif) reportUnknownNotificationType(notif.type);
   });
+
+  /**
+   * THE STRIKE LADDER'S THREE NOTICES TO A BROADCASTER: a live a moderator cut (`live_cut`), the
+   * right to broadcast suspended (`live_suspended`, WP-L8b) or withdrawn (`live_withdrawn`). The
+   * server writes each with NO actor (`actorId` and `actorName` are `''`: which moderator acted is
+   * not the broadcaster's to read) and `text` = the reason CODE, so the whole sentence is built
+   * here, in the reader's locale, and the avatar is a neutral disc. None has a destination (a cut
+   * live is deleted; a suspension's end is the pre-live screen's to say), hence the row is not
+   * activatable, like an unknown type.
+   */
+  const LIVE_MODERATION_TEXT: Readonly<Record<string, () => string>> = {
+    live_cut: m.notif_live_cut_text,
+    live_suspended: m.notif_live_suspended_text,
+    live_withdrawn: m.notif_live_withdrawn_text,
+  };
+  const liveModerationText = $derived(
+    Object.hasOwn(LIVE_MODERATION_TEXT, notif.type) ? LIVE_MODERATION_TEXT[notif.type]() : null
+  );
+  const isLiveModerationNotif = $derived(liveModerationText !== null);
+  const LIVE_MODERATION_REASON_LABEL: Record<ReportReason, () => string> = {
+    spam: m.moderation_reason_spam,
+    harassment: m.moderation_reason_harassment,
+    inappropriate: m.moderation_reason_inappropriate,
+    other: m.moderation_reason_other,
+  };
+  /** The reason's label, or null for a code this build does not know (the sentence stands alone). */
+  const liveModerationReason = $derived(
+    isLiveModerationNotif && Object.hasOwn(LIVE_MODERATION_REASON_LABEL, notif.text)
+      ? LIVE_MODERATION_REASON_LABEL[notif.text as ReportReason]()
+      : null
+  );
+  const isInert = $derived(isUnknownNotif || isLiveModerationNotif);
 
   /** Bumped once async name resolution completes, to re-render resolved mentions. */
   let resolveVersion = $state(0);
@@ -141,9 +176,25 @@
    * and the body is the event's title.
    */
   const isCoorganiseNotif = $derived(notif.type === 'coorganise_proposed');
+  /**
+   * THE THREE REQUESTS TO AN AUTHOR (D38b), named for the same reason. A request is asked BY an
+   * association, so it draws the association's avatar; its answer is given by the AUTHOR, a person,
+   * whose avatar the two answers draw. The body is the post's opening either way.
+   */
+  const PERSONAL_REPOST_TYPES = [
+    'repost_personal_requested',
+    'repost_personal_accepted',
+    'repost_personal_refused',
+  ] as const;
+  const isPersonalRepostNotif = $derived(
+    (PERSONAL_REPOST_TYPES as readonly string[]).includes(notif.type)
+  );
   /** The actor is an association, whose logo stands in for a person's avatar. */
   const actorIsAssociation = $derived(
-    (notif.type === 'association_post' || isRepostNotif || isCoorganiseNotif) &&
+    (notif.type === 'association_post' ||
+      isRepostNotif ||
+      isCoorganiseNotif ||
+      notif.type === 'repost_personal_requested') &&
       !!notif.associationId
   );
   /**
@@ -178,19 +229,23 @@
           ? 'bg-blue-500 text-white'
           : notif.type === 'form_reminder'
             ? 'bg-purple-500 text-white'
-            : notif.type === 'event_rejected'
-              ? 'bg-red-500 text-white'
-              : notif.type === 'event_pending'
-                ? 'bg-amber-500 text-cn-ink'
-                : isEventNotif || isCoorganiseNotif
-                  ? 'bg-sky-600 text-white'
-                  : isPostNotif || isRepostNotif
-                    ? 'bg-indigo-500 text-white'
-                    : notif.type === 'profile_correction_refused'
-                      ? 'bg-red-500 text-white'
-                      : isUnknownNotif
-                        ? 'bg-gray-500 text-white'
-                        : 'bg-green-600 text-white'
+            : notif.type === 'form_paid_over_capacity'
+              ? 'bg-amber-500 text-cn-ink'
+              : notif.type === 'event_rejected'
+                ? 'bg-red-500 text-white'
+                : notif.type === 'event_pending'
+                  ? 'bg-amber-500 text-cn-ink'
+                  : isEventNotif || isCoorganiseNotif
+                    ? 'bg-sky-600 text-white'
+                    : isPostNotif || isRepostNotif || isPersonalRepostNotif
+                      ? 'bg-indigo-500 text-white'
+                      : notif.type === 'profile_correction_refused'
+                        ? 'bg-red-500 text-white'
+                        : isUnknownNotif
+                          ? 'bg-gray-500 text-white'
+                          : isLiveModerationNotif
+                            ? 'bg-red-500 text-white'
+                            : 'bg-green-600 text-white'
   );
 
   // ONE GEOMETRY, BECAUSE THERE IS ONE SURFACE. These were `compact ? a : b`, and `compact` was
@@ -203,10 +258,10 @@
 
 <button
   type="button"
-  disabled={isUnknownNotif}
-  aria-disabled={isUnknownNotif}
+  disabled={isInert}
+  aria-disabled={isInert}
   onclick={onOpen}
-  class="flex w-full items-start gap-3 rounded-lg px-2 py-2.5 text-left transition-colors {isUnknownNotif
+  class="flex w-full items-start gap-3 rounded-lg px-2 py-2.5 text-left transition-colors {isInert
     ? 'cursor-default'
     : 'hover:bg-black/5 dark:hover:bg-white/10'}"
 >
@@ -216,7 +271,15 @@
     drawing an outline.
   -->
   <span class="relative shrink-0 {avatarBox}">
-    {#if actorIsAssociation}
+    {#if isLiveModerationNotif}
+      <span
+        class="bg-cn-border/60 text-text-muted flex h-full w-full items-center justify-center rounded-full"
+        aria-hidden="true"
+        data-notif-live-cut-avatar
+      >
+        <VideoOff size={24} />
+      </span>
+    {:else if actorIsAssociation}
       <AssociationAvatar name={notif.actorName} logoUrl={notif.associationLogoUrl} fill />
     {:else}
       <Avatar userId={notif.actorId} fill fallbackLabel={notif.actorName} />
@@ -235,6 +298,8 @@
         <CornerDownLeft size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'form_reminder'}
         <Clock size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'form_paid_over_capacity'}
+        <TriangleAlert size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_proposed'}
         <CalendarClock size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_validated'}
@@ -251,12 +316,14 @@
         <UserX size={glyph} strokeWidth={2.75} />
       {:else if isPostNotif}
         <Newspaper size={glyph} strokeWidth={2.75} />
-      {:else if isRepostNotif}
+      {:else if isRepostNotif || isPersonalRepostNotif}
         <Repeat2 size={glyph} strokeWidth={2.75} />
       {:else if isCoorganiseNotif}
         <CalendarPlus size={glyph} strokeWidth={2.75} />
       {:else if isUnknownNotif}
         <Bell size={glyph} strokeWidth={2.75} />
+      {:else if isLiveModerationNotif}
+        <VideoOff size={glyph} strokeWidth={2.75} />
       {:else}
         <MessageCircle size={glyph} strokeWidth={2.75} />
       {/if}
@@ -273,12 +340,14 @@
     <p class="text-sm leading-snug {unread ? 'text-text-main' : 'text-text-muted'}">
       {#if isUnknownNotif}
         {m.notif_unknown_type_text()}
+      {:else if isLiveModerationNotif}
+        <span class="font-semibold">{liveModerationText}</span>
       {:else}
         <span class="font-semibold"
           ><EmojiText text={actorNames[0] || m.notif_actor_unknown()} /></span
         >
       {/if}
-      {#if isUnknownNotif}
+      {#if isUnknownNotif || isLiveModerationNotif}
         <!-- Neutral and unlinked: nothing more to say about a type this build cannot read. -->
       {:else if otherActorCount === 1}
         {m.notif_grouped_one_other()}
@@ -293,6 +362,13 @@
         {m.notif_reply_text()}
       {:else if notif.type === 'form_reminder'}
         <EmojiText text={bodyText} />
+      {:else if notif.type === 'form_paid_over_capacity'}
+        <!-- A payment landed on a full form: the sentence is built here, in the reader's locale,
+             from the type and the form's title - the only data the server stores on the row. -->
+        {m.notif_form_paid_over_capacity_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isLiveModerationNotif}
+        {#if liveModerationReason}&#8212; {liveModerationReason}{/if}
       {:else if isEventNotif}
         <!-- Built HERE, in the reader's own locale, from a type and a title - never printed back
              from a sentence the server composed. That is the whole repair. -->
@@ -322,6 +398,13 @@
         {notif.type === 'repost_proposed'
           ? m.notif_repost_proposed_text()
           : m.notif_association_repost_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isPersonalRepostNotif}
+        {notif.type === 'repost_personal_requested'
+          ? m.notif_repost_personal_requested_text()
+          : notif.type === 'repost_personal_accepted'
+            ? m.notif_repost_personal_accepted_text()
+            : m.notif_repost_personal_refused_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isCoorganiseNotif}
         {m.notif_coorganise_proposed_text()}

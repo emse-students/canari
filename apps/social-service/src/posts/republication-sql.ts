@@ -5,6 +5,14 @@
  */
 export const REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = ['association', 'institution'];
 
+/**
+ * THE KINDS OF ASSOCIATION THAT MAY ASK A PERSON TO REPUBLISH THEIR POST (D38b): associations only.
+ * The user asked for "republier en tant qu'association" (2026-10-19), and an INSTITUTION carrying a
+ * student's personal post is what D34-D36 rule out ("never a student's personal post" reaches the
+ * personnel side): it stays refused until somebody decides otherwise. A list never republishes.
+ */
+export const PERSONAL_REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = ['association'];
+
 /** How a card names an association that republished its post. */
 export interface Republisher {
   id: string;
@@ -41,7 +49,8 @@ export async function republishersOf(
 
 /**
  * What a HIDDEN post loses (D38, user 2026-10-04: "hiding or deleting the original removes every
- * republication"): every republication, and every repost proposal still pending for it.
+ * republication"): every republication, and every repost proposal still pending for it -
+ * an association's request to the AUTHOR of a personal post (D38b) included.
  *
  * A plain function over a query runner rather than a service method, because two places hide a post
  * - a moderator (`PostsService.hidePostByModeration`) and the report threshold
@@ -62,9 +71,30 @@ export async function dropRepublicationsOf(
   );
   const proposals = count(
     await manager.query(
-      `DELETE FROM proposals WHERE kind = 'repost' AND "subjectId" = $1 AND status = 'pending'`,
+      `DELETE FROM proposals WHERE kind IN ('repost', 'repost-personal') AND "subjectId" = $1
+          AND status = 'pending'`,
       [postId]
     )
   );
   return { republications, proposals };
+}
+
+/**
+ * Row-locks a post (`FOR UPDATE`) BEFORE any proposal row about it is written - the subject lock of
+ * `ProposalsService.lockInOrder`, taken by every decision (accept, refuse, withdraw) and every
+ * person-addressed ask. A moderation hide locks the post (its `UPDATE`) and then deletes the pending
+ * proposals, and a post delete does the same through its trigger; an acceptance that took the
+ * proposal first and the post second (in `writeRepublication`) could wait on a hide that waits on
+ * it. The other writers keep the same order on purpose, and each says so where it does: the account
+ * erasure scrubs posts before it touches a proposal (`ERASURE_PROPOSAL_STATEMENTS`), a republication
+ * withdrawal locks the post first (`RepublicationsService.unrepublish`), and an association delete,
+ * which locks the association first, is waited on by `lockInOrder`'s `KEY SHARE`. A new writer of
+ * proposals that does not lock the post first re-opens the deadlock, and the lock-order cases of
+ * `personal-republications.integration.spec.ts` are what find it.
+ */
+export async function lockPostRow(
+  manager: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+  postId: string
+): Promise<void> {
+  await manager.query(`SELECT 1 FROM posts WHERE id = $1 FOR UPDATE`, [postId]);
 }

@@ -54,8 +54,8 @@ fi
 
 # A dependency this repository must NOT merge unattended: the table has to name a gate for it.
 expect_refused() {
-  local name="$1" version="$2" why="$3" ecosystem="${4:-}" gate
-  gate=$(gate_for_dependency "$name" "$version" "$ecosystem")
+  local name="$1" version="$2" why="$3" ecosystem="${4:-}" file="${5:-}" gate
+  gate=$(gate_for_dependency "$name" "$version" "$ecosystem" "$file")
   if [ -n "$gate" ]; then
     echo "  ok   $name ${version:-(no version)} is refused"
   else
@@ -67,8 +67,8 @@ expect_refused() {
 # A dependency the check suite IS evidence about. Asserted so the table cannot quietly widen into a
 # blanket refusal, which would rebuild the queue nobody drains.
 expect_allowed() {
-  local name="$1" version="$2" ecosystem="${3:-}" gate
-  gate=$(gate_for_dependency "$name" "$version" "$ecosystem")
+  local name="$1" version="$2" ecosystem="${3:-}" file="${4:-}" gate
+  gate=$(gate_for_dependency "$name" "$version" "$ecosystem" "$file")
   if [ -z "$gate" ]; then
     echo "  ok   $name ${version:-(no version)} is allowed"
   else
@@ -155,13 +155,109 @@ expect_refused postgres "$((pg_major + 1))-alpine" "a major crossing arrives as 
 expect_refused postgres "$((pg_major + 1))-alpine" "an absent ecosystem must not be read as permission" ""
 
 echo "the branch Dependabot pushed states its own ecosystem:"
-for ref_case in   "dependabot/cargo/apps/chat-gateway/redis-1.7.0|cargo"   "dependabot/docker_compose/infrastructure/postgres-18-alpine|docker_compose"   "dependabot/github_actions/actions/checkout-7|github_actions"   "fix/a-human-branch|"; do
+for ref_case in   "dependabot/cargo/apps/chat-gateway/redis-1.7.0|cargo"   "dependabot/docker_compose/infrastructure/postgres-18-alpine|docker_compose"   "dependabot/github_actions/actions/checkout-7|github_actions"   "deps/lock-refresh/cargo/dependabot-12|cargo"   "fix/a-human-branch|"; do
   ref="${ref_case%%|*}"; want="${ref_case##*|}"
   got=$(ceiling_ecosystem_from_ref "$ref")
   if [ "$got" = "$want" ]; then
     echo "  ok   $ref -> '${got}'"
   else
     echo "  FAIL $ref read as '${got}', expected '${want}'"
+    failures=$((failures + 1))
+  fi
+done
+
+# -------------------------------------------------------------------------------------------------
+# THE IDENTITY PROVIDER'S STACK: A SECOND STATEFUL COMPOSE FILE, ON ITS OWN MAJOR (2026-10-23)
+# -------------------------------------------------------------------------------------------------
+# Dependabot watches `infrastructure/authentik/compose.yml` since 2026-10-23. Its PostgreSQL is not
+# production's and does not run production's major, so judging an update there against production's
+# file would pass `16 -> 18` as "same major" - the 2026-09-01 outage, on the database holding every
+# sign-in. The same derivation as above, read from THAT file: every stateful third-party image in
+# it is refused across its own major and allowed within it.
+authentik_compose="$repo_root/infrastructure/authentik/compose.yml"
+if [ ! -f "$authentik_compose" ]; then
+  echo "FAIL $authentik_compose is not in the tree, so the identity provider's datastore cannot be judged."
+  echo "     Add it to the sparse-checkout list in .github/workflows/ci.yml."
+  exit 1
+fi
+echo "a MAJOR crossing is refused for every stateful image the identity provider's stack runs:"
+auth_seen=0
+while read -r name vols; do
+  [ -z "$name" ] && continue
+  auth_seen=$((auth_seen + 1))
+  current=$(prod_image_major "$name" "$authentik_compose")
+  if [ -z "$current" ]; then
+    echo "  FAIL could not read the major the identity provider pins for $name"
+    failures=$((failures + 1))
+    continue
+  fi
+  expect_refused "$name" "$((current + 1))-alpine" "it mounts $vols named volume(s) in the identity provider's stack" docker_compose "$authentik_compose"
+  expect_allowed "$name" "${current}.9-alpine" docker_compose "$authentik_compose"
+  # THE SHAPE THIS SECTION EXISTS FOR: the major PRODUCTION runs, proposed for the identity
+  # provider's file. Only expressible while the two differ, which they did on the day it was written.
+  prod_current=$(prod_image_major "$name")
+  if [ -n "$prod_current" ] && [ "$prod_current" != "$current" ]; then
+    expect_refused "$name" "${prod_current}-alpine" "production's major is not the one this stack's data directory was written by" docker_compose "$authentik_compose"
+  fi
+done <<< "$(third_party_stateful_images "$authentik_compose")"
+if [ "$auth_seen" -lt 1 ]; then
+  echo "  FAIL no stateful image was read out of $authentik_compose; the parse is broken, not the table"
+  failures=$((failures + 1))
+fi
+
+echo "an image name means the same with or without docker.io/library/:"
+pg_now=$(prod_image_major postgres)
+expect_refused "docker.io/library/postgres" "$((pg_now + 1))-alpine" "the long spelling of a datastore is still that datastore" docker_compose
+expect_refused "library/postgres" "$((pg_now + 1))-alpine" "Dependabot may report the name without its registry" docker_compose
+expect_allowed "docker.io/library/postgres" "${pg_now}-alpine" docker_compose
+
+echo "a recorded dev rehearsal lifts production's refusal and nobody else's:"
+gap_work=$(mktemp -d)
+printf 'services:\n  postgres:\n    image: postgres:15-alpine\n    volumes:\n      - pg:/var/lib/postgresql/data\n' > "$gap_work/prod.yml"
+printf 'services:\n  postgresql:\n    image: docker.io/library/postgres:15-alpine\n    volumes:\n      - database:/var/lib/postgresql/data\n' > "$gap_work/authentik.yml"
+printf 'postgres:\n  dev_major: "16"\n  evidence: in_place_upgrade\n  proof: "a fixture"\n' > "$gap_work/gap.yml"
+gap_prod=$(CEILING_PROD_COMPOSE="$gap_work/prod.yml" CEILING_VERSION_GAP="$gap_work/gap.yml" gate_for_dependency postgres 16-alpine docker_compose "$gap_work/prod.yml")
+gap_auth=$(CEILING_PROD_COMPOSE="$gap_work/prod.yml" CEILING_VERSION_GAP="$gap_work/gap.yml" gate_for_dependency postgres 16-alpine docker_compose "$gap_work/authentik.yml")
+rm -rf "$gap_work"
+if [ -z "$gap_prod" ] && [ -n "$gap_auth" ]; then
+  echo "  ok   the rehearsal lifts production's 15 -> 16 and leaves the identity provider's refused"
+else
+  echo "  FAIL production lifted: '$([ -z "$gap_prod" ] && echo yes || echo no)', identity provider refused: '$([ -n "$gap_auth" ] && echo yes || echo no)'"
+  failures=$((failures + 1))
+fi
+
+echo "the branch names the compose file an update is in:"
+for c_case in "dependabot/docker_compose/infrastructure/authentik/postgres-18-alpine|$CEILING_AUTHENTIK_COMPOSE" \
+  "dependabot/docker_compose/infrastructure/postgres-18-alpine|$CEILING_PROD_COMPOSE" \
+  "dependabot/docker_compose/infrastructure/local/postgres-18-alpine|$CEILING_PROD_COMPOSE" \
+  "dependabot/docker/infrastructure/local/node-26-alpine|$CEILING_PROD_COMPOSE" \
+  "|$CEILING_PROD_COMPOSE"; do
+  ref="${c_case%%|*}"; want="${c_case##*|}"
+  got=$(ceiling_compose_from_ref "$ref")
+  if [ "$got" = "$want" ]; then
+    echo "  ok   '${ref}' -> ${got##*/infrastructure/}"
+  else
+    echo "  FAIL '${ref}' read as '${got}', expected '${want}'"
+    failures=$((failures + 1))
+  fi
+done
+
+# A TREE NO PULL-REQUEST JOB BUILDS refuses whatever it carries: the Android app module is compiled
+# only at release time. The JVM test project beside it is built by `test-android`, and is the one
+# Gradle directory let through - an allowlist, so a Gradle directory added later starts refused.
+echo "a Gradle update is refused unless a pull-request job builds its tree:"
+for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.firebase-firebase-messaging-ktx-25.0.0|refused" \
+  "dependabot/gradle/frontend/src-tauri/gen/android/gradle-dependencies-1a2b3c|refused" \
+  "dependabot/gradle/some/new/directory/junit-junit-4.13.3|refused" \
+  "dependabot/gradle/frontend/src-tauri/android-tests/junit-junit-4.13.3|allowed" \
+  "dependabot/cargo/apps/chat-gateway/serde-1.0.5|allowed" \
+  "fix/a-human-branch|allowed"; do
+  ref="${t_case%%|*}"; want="${t_case##*|}"
+  if [ -n "$(ceiling_gate_for_ref "$ref")" ]; then got=refused; else got=allowed; fi
+  if [ "$got" = "$want" ]; then
+    echo "  ok   $ref -> $got"
+  else
+    echo "  FAIL $ref -> $got, expected $want"
     failures=$((failures + 1))
   fi
 done
@@ -205,11 +301,51 @@ expect_allowed node "26-alpine"
 # the table's contract: it is given a BARE name.
 echo "the table is given a bare name:"
 if [ -z "$(gate_for_dependency '"postgres"' '15-alpine')" ]; then
-  echo "  ok   a quoted name does not match, so the caller's stripping is load-bearing and tested there"
+  echo "  ok   a quoted name does not match, so ceiling_parse_updates' stripping is load-bearing (tested below)"
 else
   echo "  FAIL a quoted name matched; the table's contract is now ambiguous"
   failures=$((failures + 1))
 fi
+
+# THE ONE PARSER, read by `dependency-ceiling.sh` and `cargo-lock-refresh.sh` alike. The fixture is a
+# grouped commit (two blocks) whose second block has NO `update-type`, plus a quoted scoped name -
+# the three traps the parser exists for.
+echo "the updated-dependencies blocks parse as blocks:"
+parsed_want=$'serde|patch|1.0.5\n@nestjs/common||12.0.1'
+parsed_got=$(ceiling_parse_updates <<'MSG'
+chore(deps): bump two
+
+---
+updated-dependencies:
+- dependency-name: serde
+  dependency-version: 1.0.5
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+- dependency-name: "@nestjs/common"
+  dependency-version: 12.0.1
+  dependency-type: direct:production
+...
+MSG
+)
+if [ "$parsed_got" = "$parsed_want" ]; then
+  echo "  ok   two blocks, the absent type stays empty and the quotes are stripped"
+else
+  echo "  FAIL parsed as: $parsed_got"
+  failures=$((failures + 1))
+fi
+
+echo "what an unattended actor reads as breaking:"
+for b_case in "major|2.0.0|y" "minor|0.20.5|y" "patch|0.0.9|y" "|0.9.0|y" "weird|1.2.3|y" \
+  "minor|1.4.0|n" "patch|1.0.5|n" "patch|0.17.3|n"; do
+  IFS='|' read -r b_type b_ver b_want <<<"$b_case"
+  if ceiling_update_is_breaking "$b_type" "$b_ver"; then b_got=y; else b_got=n; fi
+  if [ "$b_got" = "$b_want" ]; then
+    echo "  ok   '${b_type}' -> $b_ver: breaking=$b_got"
+  else
+    echo "  FAIL '${b_type}' -> $b_ver read as breaking=$b_got"
+    failures=$((failures + 1))
+  fi
+done
 
 echo
 if [ "$failures" -ne 0 ]; then

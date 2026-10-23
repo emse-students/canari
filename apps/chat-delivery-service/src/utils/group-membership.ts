@@ -1,6 +1,8 @@
 import { IsNull, type EntityManager } from 'typeorm';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { QueuedMessage } from '../entities/queued-message.entity';
 
 /**
  * Enrols a user into a group at the user level, and leaves an enrolment that already exists
@@ -59,6 +61,70 @@ export async function ensureGroupMember(
     .values({ groupId, userId, joinedAt: new Date(), leftAt: null })
     .orIgnore()
     .execute();
+}
+
+/**
+ * Who a departure takes out: a person (`userId`), narrowed to one device and/or one group. An
+ * omitted field widens the scope to every device or every group of that person - never further.
+ */
+export interface DepartureScope {
+  userId: string;
+  deviceId?: string;
+  groupId?: string;
+}
+
+/** `value` as an id, or a throw naming the field: never an empty, blank or absent one. */
+function requireId(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`endDeviceMemberships: ${field} must be a non-empty id`);
+  }
+  return value;
+}
+
+/**
+ * Ends the device memberships a departure names and deletes, in the SAME transaction, what is
+ * still queued for those devices: the Welcomes always (`'welcomes'`), or the whole queue of that
+ * scope when the departure takes everything (`'all'`: an eviction, a revoked device, an erased
+ * account).
+ *
+ * THE ONE IMPLEMENTATION FOR EVERY PATH THAT ENDS A DEVICE'S MEMBERSHIP. A device pulls its queue
+ * whatever the roster says (`fetchMessages`), so a Welcome left behind lets a device that is out
+ * enter the epoch the Welcome was built for, and read what members seal there until a commit
+ * removes its leaf - which a self-leave never makes. Each path deleted its own rows, and the
+ * Welcome was the row none of them named.
+ *
+ * NOT for a membership put back to `pending` (a kick, `deactivateDeviceMembership`) or a pending
+ * seat the cron purges while the person stays on the roster: a Welcome queued there IS the Add the
+ * device is owed.
+ *
+ * @param manager pass the transaction's manager, so the rows and the queue go together.
+ * @returns how many device rows and queued rows were deleted, for the caller's log line.
+ */
+export async function endDeviceMemberships(
+  manager: EntityManager,
+  scope: DepartureScope,
+  queue: 'welcomes' | 'all'
+): Promise<{ memberships: number; queued: number }> {
+  // A DELETE IS ONLY AS NARROW AS ITS FILTER, so every column the caller names must be a real id.
+  // An absent `userId`, or a named `deviceId`/`groupId` that is empty, undefined or null, is a
+  // caller's bug - refused here, before any statement exists, rather than handed to a builder that
+  // might drop the column and delete other people's rows.
+  const userId = requireId(scope.userId, 'userId');
+  const deviceId = 'deviceId' in scope ? requireId(scope.deviceId, 'deviceId') : undefined;
+  const groupId = 'groupId' in scope ? requireId(scope.groupId, 'groupId') : undefined;
+  const narrowing = {
+    ...(deviceId !== undefined ? { deviceId } : {}),
+    ...(groupId !== undefined ? { groupId } : {}),
+  };
+  const memberships = await manager
+    .getRepository(DeviceGroupMembership)
+    .delete({ userId, ...narrowing });
+  const queued = await manager.getRepository(QueuedMessage).delete({
+    recipientId: userId,
+    ...narrowing,
+    ...(queue === 'welcomes' ? { isWelcome: true } : {}),
+  });
+  return { memberships: memberships.affected ?? 0, queued: queued.affected ?? 0 };
 }
 
 /**
@@ -150,8 +216,9 @@ export type ExclusionWindow = { from: number; until: number | null };
  *
  * A window is the stretch between the END of one interval and the START of the next - and, when the
  * latest interval is closed, from its end onwards. **The time before the FIRST interval is never a
- * window**: a person who arrived late keeps whatever the existing history policy hands a new member,
- * which this change does not touch. A person with one open interval has no window at all, and that
+ * window HERE**: that span is a group-conversation rule, added by {@link withheldWindows}, and this
+ * function also feeds the server's own stream filter and the legacy `exclusions` field, whose
+ * readers take a union. A person with one open interval has no window at all, and that
  * is also what a brand-new device of a continuous member sees - intervals are per USER, never per
  * device, so a wipe or a new phone opens nothing.
  *
@@ -172,6 +239,80 @@ export function exclusionWindows(
   }
   return windows;
 }
+
+/**
+ * Everything a person may NOT be handed from a group's history: the gaps of {@link exclusionWindows}
+ * and, in a GROUP conversation, everything before their first arrival (user, 2026-10-21: a new member
+ * reads nothing from before they were added, as on WhatsApp and Signal).
+ *
+ * **Not in a 1:1.** Nobody is ever added to one, and its recorded arrivals are not arrivals: on
+ * production 2026-10-21, 51 of 472 1:1 members had a first interval starting more than 10 minutes
+ * after the conversation was created. Applying the span there would take a member's own past away
+ * from their next device.
+ *
+ * **The first arrival is the EARLIER of the first interval and the person's first device row in the
+ * group - a DECISION, not a proof: added = arrived** (as on WhatsApp, where a member is in the group
+ * from the moment someone adds them). A device row is written when a commit admits the device
+ * (`ValidateCommitBody.admits`), and it can wait there for an invitee who is offline, so an invitee
+ * receives from the history what was sent between the invitation and their first connection - the
+ * frames of that span were queued to them live anyway. `registerDevice` also re-creates rows for a
+ * member's new device, which can only be later than their first. Intervals alone are not enough: on
+ * production 2026-10-21, 4 of the 24 members who joined a group conversation late held a device row up
+ * to 268 hours before their recorded first interval, and their next device would have lost that span.
+ *
+ * **Two clocks, bounded.** An interval is stamped by this process (`new Date()`), a device row by the
+ * database (`CreateDateColumn`, the transaction's start). The admitting transaction commits BEFORE
+ * the commit that lets the device read anything is fanned out, so the database instant can only be
+ * early, by at most that one transaction - which can hand the newcomer frames sealed at the epoch
+ * before theirs, received in those milliseconds. Unifying the clocks needs a column and a migration
+ * for a bound of one transaction; that trade was declined.
+ *
+ * A person with neither - nothing admitted, nothing enrolled - is withheld everything.
+ *
+ * **THE PERSON WHO ARRIVED WITH THE GROUP HAS NO SPAN** (2026-10-22). Nothing precedes the creation,
+ * so their span is empty - but not harmless: a client reads an UNDATED copy against every window
+ * EDGE with a one-hour skew margin (`historyEntitlement.ts`), so `[0, creation)` made the creator drop
+ * every undated history entry of the group's first hour, for good (GRP-7). An arrival within
+ * {@link CREATION_ARRIVAL_BOUND_MS} of `groupCreatedAt`, on either side, is the creation. Measured on
+ * the local estate: the creator's interval 4 ms after the group row, the next member 13.5 s.
+ *
+ * Pure, so the arithmetic is tested without a database.
+ *
+ * @param intervals one person's intervals in one group, in any order.
+ * @param beforeFirstArrival true for a group conversation, false for a 1:1.
+ * @param firstDeviceAt when the person's earliest device row in the group was written, or `null`.
+ * @param groupCreatedAt when the group row was written, or `null` when it is not known.
+ */
+export function withheldWindows(
+  intervals: ReadonlyArray<{ joinedAt: Date; leftAt: Date | null }>,
+  beforeFirstArrival: boolean,
+  firstDeviceAt: Date | null,
+  groupCreatedAt: Date | null = null
+): ExclusionWindow[] {
+  const gaps = exclusionWindows(intervals);
+  if (!beforeFirstArrival) return gaps;
+  const arrivals = [
+    ...intervals.map((i) => i.joinedAt.getTime()),
+    ...(firstDeviceAt ? [firstDeviceAt.getTime()] : []),
+  ];
+  if (arrivals.length === 0) return [{ from: 0, until: null }];
+  const firstArrival = Math.min(...arrivals);
+  if (
+    groupCreatedAt !== null &&
+    Math.abs(firstArrival - groupCreatedAt.getTime()) <= CREATION_ARRIVAL_BOUND_MS
+  ) {
+    return gaps;
+  }
+  return [{ from: 0, until: firstArrival }, ...gaps];
+}
+
+/**
+ * How close to the group row's instant a first arrival must be to BE the creation. The creator's
+ * interval is written by the same request as the group row, on another clock (this process against
+ * the database's): 4 ms apart on the local estate. A member added by the next commit arrives seconds
+ * later (13.5 s measured), so one second separates the two with room on both sides.
+ */
+export const CREATION_ARRIVAL_BOUND_MS = 1000;
 
 /**
  * Whether the server instant `at` falls inside one of `windows` - start included, end excluded, the

@@ -78,6 +78,10 @@ const PUBLIC_BY_INTENT = [
     why: 'subscribed by an external calendar client, which cannot carry a session at all',
   },
   {
+    route: 'GET /bookings/:bookingId/calendar.ics',
+    why: 'one booking opened by a calendar app, which carries no session; authorised by an HMAC bound to one of the booking\'s people, re-checked at every fetch (booking-calendar.ts); it carries the names of the place, which may be a person\'s (D10), never answers, private texts or the holder\'s or participants\' names',
+  },
+  {
     route: 'GET /forms/:id/calendar-link',
     why: 'one agenda entry for a form, read by the public association page; never the form contents',
   },
@@ -88,6 +92,10 @@ const PUBLIC_BY_INTENT = [
   {
     route: 'GET /media/public/:id',
     why: 'the public-asset prefix - association logos and event images, served to an <img> on pages a signed-out visitor sees; every other media route needs the JWT',
+  },
+  {
+    route: 'GET /media/public/live/:liveId/:name',
+    why: 'one sealed live segment (WP-L4): ciphertext under the live key only social-service hands out, by a random uuid name learned only from the manifest; unauthenticated so the SAME bytes answer every viewer from the nginx cache (live_segments) and media-service runs once per segment, not per viewer; 404 unless LIVE_ENABLED (docs/wiki/services/lives.md)',
   },
   {
     route: 'GET /payments/provider',
@@ -292,9 +300,10 @@ const RUST_AUTH = [
   'caller_id',
   // `get_admin_presence` - the same header contract, one claim further along.
   'x-global-admin',
-  // Both WebSocket upgrades - the `canari_ws_token` JWT, which nginx never reads and `auth_request`
-  // therefore cannot have checked.
-  'decode::<Claims>',
+  // Both WebSocket upgrades - the access-token JWT, which nginx never reads and `auth_request`
+  // therefore cannot have checked. Each handler verifies it through `decode_access_claims`, which
+  // also refuses a refresh token.
+  'decode_access_claims',
 ];
 
 /**

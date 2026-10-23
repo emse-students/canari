@@ -35,7 +35,7 @@
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
   import { SvelteSet } from 'svelte/reactivity';
 
   interface Props {
@@ -182,11 +182,6 @@
     } finally {
       setChildBusy(childId, false);
     }
-  }
-
-  function buyerName(p: AssociationPurchase): string {
-    if (p.firstName || p.lastName) return `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim();
-    return getUserDisplayNameSync(p.userId);
   }
 
   function paymentMethodLabel(method: AssociationPurchase['paymentMethod']): string {
@@ -420,7 +415,7 @@
                               )}
                             </td>
                             <td class="text-text-main px-3 py-2 font-medium">
-                              {buyerName(purchase)}
+                              {purchaseBuyerName(purchase)}
                             </td>
                             <td class="text-text-main px-3 py-2">{purchase.productName}</td>
                             <td class="text-text-muted px-3 py-2">

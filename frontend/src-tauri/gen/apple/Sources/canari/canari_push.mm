@@ -135,6 +135,9 @@ static NSLock *g_cacheLock = nil;
 @property(nonatomic, copy) NSString *messageId;
 @property(nonatomic, assign) long long sentAt;
 @property(nonatomic, copy) NSString *type;
+// "image" | "video" | "audio" | "file" | "reel", as Rust read it. "reel" is a CanaReel sent in a
+// conversation (WP-RC-7): Rust words its line and withholds its key, so
+// CanariFetchAndDecryptMedia returns nil for it - no thumbnail, ever.
 @property(nonatomic, copy, nullable) NSString *mediaKind;
 // Media reference + CEK (WP-XP-3), populated only for a media message. Used to download and
 // AES-256-GCM-decrypt the blob for a notification thumbnail. nil for non-media messages.
@@ -339,6 +342,32 @@ static NSString *_Nullable CanariRetrieveDeviceKey(NSString *userId, NSString *d
   return nil;
 }
 
+// The install's native cache key (Rust `native_cache`), base64, from the shared Keychain item
+// `CanariEnsureNativeCacheKey` creates at bootstrap. @"" when absent or unreadable - which Rust
+// treats as "write nothing, read nothing sealed", never as a reason to write in the clear.
+// Swift twin: NotificationService.retrieveNativeCacheKey.
+static NSString *CanariRetrieveNativeCacheKey(void) {
+  NSDictionary *query = @{
+    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService : @"fr.emse.canari",
+    (__bridge id)kSecAttrAccount : @"mls_bg_key_canari_native_cache_key",
+    (__bridge id)kSecAttrAccessGroup : @"group.fr.emse.canari",
+    (__bridge id)kSecReturnData : @YES,
+    (__bridge id)kSecMatchLimit : (__bridge id)kSecMatchLimitOne,
+  };
+  CFTypeRef item = nil;
+  OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &item);
+  if (status == errSecSuccess && item != nil) {
+    NSData *data = (__bridge_transfer NSData *)item;
+    if (data.length == 32) {
+      // RAW key bytes, re-encoded - never read as UTF-8.
+      return [data base64EncodedStringWithOptions:0];
+    }
+  }
+  NSLog(@"[CanariPush] native cache key: ERROR unreadable (status=%d)", (int)status);
+  return @"";
+}
+
 static CanariPushContext *_Nullable CanariLoadPushContext(void) {
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
@@ -425,7 +454,41 @@ void CanariMirrorPushStateToAppGroup(void) {
            options:opts
              error:nil];
   }
+  CanariExcludeNativeCacheFilesFromBackup(container.path);
   NSLog(@"[CanariPush] mirror to App Group done");
+}
+
+void CanariExcludeNativeCacheFilesFromBackup(NSString *_Nullable dir) {
+  if (dir == nil) {
+    NSLog(@"[CanariPush] backupExclusion: directory unavailable");
+    return;
+  }
+  NSError *listErr = nil;
+  NSArray<NSString *> *names = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir
+                                                                                   error:&listErr];
+  if (names == nil) {
+    NSLog(@"[CanariPush] backupExclusion: ERROR %@ not listed: %@", dir.lastPathComponent,
+          listErr.localizedDescription);
+    return;
+  }
+  NSUInteger excluded = 0;
+  for (NSString *name in names) {
+    BOOL isCache = [name isEqualToString:kGraineSeedsFileName] ||
+                   ([name hasPrefix:@"fcm_message_cache"] && [name hasSuffix:@".ndjson"]);
+    if (!isCache) {
+      continue;
+    }
+    NSURL *url = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:name] isDirectory:NO];
+    NSError *err = nil;
+    if ([url setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:&err]) {
+      excluded++;
+    } else {
+      NSLog(@"[CanariPush] backupExclusion: ERROR %@ not excluded: %@", name,
+            err.localizedDescription);
+    }
+  }
+  NSLog(@"[CanariPush] backupExclusion: %lu cache file(s) excluded in %@", (unsigned long)excluded,
+        dir.lastPathComponent);
 }
 
 /**
@@ -508,8 +571,13 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // Republication (D38): the republishing, then the proposing, association names the title.
     @"social_association_repost" : @"association_repost",
     @"social_repost_proposed" : @"repost_proposed",
+    // D38b: an association asks the AUTHOR to republish their personal post.
+    @"social_repost_personal_requested" : @"repost_personal_requested",
     // Co-organisation (D39): the organising association names the title, the event is the body.
     @"social_coorganise_proposed" : @"coorganise_proposed",
+    // A live started (WP-L7): the broadcaster - a person or an association - names the title, and
+    // the body is always the fixed sentence (the server sends no fragment).
+    @"social_live_started" : @"live_started",
   };
   NSString *stem = actorTitled[key];
   if (stem) {
@@ -519,6 +587,19 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = arg.length > 0
                 ? arg
                 : CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", stem]);
+    return;
+  }
+  // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and no
+  // fragment.
+  NSDictionary<NSString *, NSString *> *fixedSocial = @{
+    @"social_live_cut" : @"live_cut",
+    @"social_live_suspended" : @"live_suspended",
+    @"social_live_withdrawn" : @"live_withdrawn",
+  };
+  NSString *fixedStem = fixedSocial[key];
+  if (fixedStem) {
+    *title = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.title", fixedStem]);
+    *body = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", fixedStem]);
     return;
   }
   if ([key isEqualToString:@"social_reaction"]) {
@@ -534,6 +615,13 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
   if ([key isEqualToString:@"form_open"]) {
     *title = CanariLocalized(@"notif.form.open.title");
     *body = CanariLocalized(@"notif.form.open.body");
+    return;
+  }
+  // A payment landed on a full form, to the form's managers: `arg` is the form's title only.
+  if ([key isEqualToString:@"form_paid_over_capacity"]) {
+    *title = CanariLocalized(@"notif.form.paid_over_capacity.title");
+    *body =
+        [NSString stringWithFormat:CanariLocalized(@"notif.form.paid_over_capacity.body"), arg];
     return;
   }
   // The agenda's five. `arg` is the event's title; only `event_proposed` also names the actor.
@@ -909,14 +997,27 @@ static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
  * Appends one entry to the app's `fcm_message_cache.ndjson`, bounded to kMaxFcmCacheEntries.
  * Two callers write it: a push decrypted while the app was dead, and a notification quick reply
  * this device SENT while the app was dead (CanariWriteSentMessageToCache).
+ *
+ * Each line is SEALED under the install's native cache key before it touches the disk. With no key
+ * the entry is NOT written - never in the clear: the message is still on the server.
  */
 static void CanariAppendFcmCacheEntry(NSDictionary *entry, NSString *messageId) {
   NSData *entryData = [NSJSONSerialization dataWithJSONObject:entry options:0 error:nil];
   if (entryData == nil) {
+    NSLog(@"[CanariPush] writeFcmCache: JSON encoding failed");
     return;
   }
-  NSString *entryLine =
+  NSString *plainLine =
       [[NSString alloc] initWithData:entryData encoding:NSUTF8StringEncoding];
+  char *sealedPtr = canari_native_seal_cache_line(CanariRetrieveNativeCacheKey().UTF8String,
+                                                  plainLine.UTF8String);
+  if (sealedPtr == nil) {
+    NSLog(@"[CanariPush] writeFcmCache: ERROR no cache key - entry NOT written messageId=%@",
+          [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)]);
+    return;
+  }
+  NSString *entryLine = [NSString stringWithUTF8String:sealedPtr];
+  canari_free_string(sealedPtr);
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
     return;
@@ -940,6 +1041,7 @@ static void CanariAppendFcmCacheEntry(NSDictionary *entry, NSString *messageId) 
     [lines addObject:entryLine];
     NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
     [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    CanariExcludeNativeCacheFilesFromBackup(dir);
     NSLog(@"[CanariPush] writeFcmCache messageId=%@", [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)]);
   } @finally {
     [g_cacheLock unlock];
@@ -1047,6 +1149,7 @@ void CanariDrainAppGroupFcmCache(void) {
     }
     NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
     [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    CanariExcludeNativeCacheFilesFromBackup(dst);
     NSLog(@"[CanariPush] drainAppGroupFcmCache: %lu entry/entries carried over", (unsigned long)lines.count);
   } @finally {
     [g_cacheLock unlock];
@@ -1366,92 +1469,6 @@ static NSData *_Nullable CanariHttpRequest(NSString *method, NSURL *url, NSStrin
     *outStatus = (int)statusCode;
   }
   return responseData;
-}
-
-static BOOL CanariAcquireAddLock(CanariPushContext *ctx, NSString *secret, NSString *groupId) {
-  NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/acquire-add-lock",
-                                                               ctx.baseUrl]];
-  NSDictionary *payload =
-      @{@"userId" : ctx.userId, @"deviceId" : ctx.deviceId, @"groupId" : groupId};
-  NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-  int status = 0;
-  NSData *resp = CanariHttpRequest(@"POST", url, secret, body, &status);
-  NSLog(@"[CanariPush] acquireAddLock: HTTP %d group=%@", status, groupId);
-  if (status != 201 || resp == nil) {
-    return NO;
-  }
-  id json = [NSJSONSerialization JSONObjectWithData:resp options:0 error:nil];
-  return [json isKindOfClass:[NSDictionary class]] && [json[@"acquired"] boolValue];
-}
-
-static void CanariReleaseAddLock(CanariPushContext *ctx, NSString *secret, NSString *groupId) {
-  NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/release-add-lock",
-                                                               ctx.baseUrl]];
-  NSDictionary *payload =
-      @{@"userId" : ctx.userId, @"deviceId" : ctx.deviceId, @"groupId" : groupId};
-  NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-  int status = 0;
-  CanariHttpRequest(@"DELETE", url, secret, body, &status);
-  NSLog(@"[CanariPush] releaseAddLock: HTTP %d group=%@", status, groupId);
-}
-
-static NSString *_Nullable CanariFetchKeyPackage(CanariPushContext *ctx, NSString *secret,
-                                                 NSString *targetUserId, NSString *targetDeviceId) {
-  NSString *encodedReq =
-      [ctx.userId stringByAddingPercentEncodingWithAllowedCharacters:
-                       [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *encodedDev =
-      [ctx.deviceId stringByAddingPercentEncodingWithAllowedCharacters:
-                        [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *encodedTargetUser =
-      [targetUserId stringByAddingPercentEncodingWithAllowedCharacters:
-                          [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *encodedTargetDev =
-      [targetDeviceId stringByAddingPercentEncodingWithAllowedCharacters:
-                           [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *urlStr = [NSString
-      stringWithFormat:
-          @"%@/api/mls/push/key-package?requesterId=%@&deviceId=%@&targetUserId=%@&targetDeviceId=%@",
-          ctx.baseUrl, encodedReq, encodedDev, encodedTargetUser, encodedTargetDev];
-  int status = 0;
-  NSData *resp = CanariHttpRequest(@"GET", [NSURL URLWithString:urlStr], secret, nil, &status);
-  if (status != 200 || resp == nil) {
-    NSLog(@"[CanariPush] fetchKeyPackage: HTTP %d", status);
-    return nil;
-  }
-  id json = [NSJSONSerialization JSONObjectWithData:resp options:0 error:nil];
-  if (![json isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  NSString *kp = [json[@"keyPackage"] isKindOfClass:[NSString class]] ? json[@"keyPackage"] : @"";
-  return kp.length > 0 ? kp : nil;
-}
-
-static BOOL CanariSendWelcomeAndCommit(CanariPushContext *ctx, NSString *secret, NSString *groupId,
-                                       NSString *targetUserId, NSString *targetDeviceId,
-                                       NSString *welcomePayload, NSString *_Nullable ratchetTree,
-                                       NSString *commitPayload, long long baseEpoch) {
-  NSURL *url =
-      [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/send-welcome-and-commit",
-                                                     ctx.baseUrl]];
-  NSMutableDictionary *payload = [@{
-    @"userId" : ctx.userId,
-    @"deviceId" : ctx.deviceId,
-    @"groupId" : groupId,
-    @"targetUserId" : targetUserId,
-    @"targetDeviceId" : targetDeviceId,
-    @"welcomePayload" : welcomePayload,
-    @"commitPayload" : commitPayload,
-  } mutableCopy];
-  payload[@"ratchetTreePayload"] = ratchetTree.length > 0 ? ratchetTree : [NSNull null];
-  if (baseEpoch >= 0) {
-    payload[@"baseEpoch"] = @(baseEpoch);
-  }
-  NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-  int status = 0;
-  CanariHttpRequest(@"POST", url, secret, body, &status);
-  NSLog(@"[CanariPush] sendWelcomeAndCommit: HTTP %d group=%@", status, groupId);
-  return status == 201;
 }
 
 static void CanariMarkMembershipActive(CanariPushContext *ctx, NSString *secret, NSString *groupId) {
@@ -2243,99 +2260,6 @@ static NSString *_Nullable CanariInitialsImagePath(NSString *_Nullable name) {
   return path;
 }
 
-static void CanariProcessWelcomeRequestBackground(NSString *groupId, NSString *requesterUserId,
-                                                  NSString *requesterDeviceId) {
-  CanariPushContext *ctx = CanariLoadPushContext();
-  if (ctx == nil) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: push_context absent");
-    return;
-  }
-  if (ctx.deviceKeyB64.length == 0) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: deviceKeyB64 empty");
-    return;
-  }
-  NSString *secret = CanariRetrievePushSecret();
-  if (secret == nil) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: pushSecret absent");
-    return;
-  }
-
-  BOOL lockAcquired = NO;
-  for (int attempt = 0; attempt < 3; attempt++) {
-    lockAcquired = CanariAcquireAddLock(ctx, secret, groupId);
-    if (lockAcquired) {
-      break;
-    }
-    usleep(2000000);
-  }
-  if (!lockAcquired) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: Redis lock not acquired");
-    return;
-  }
-
-  @try {
-    NSString *keyPackage = CanariFetchKeyPackage(ctx, secret, requesterUserId, requesterDeviceId);
-    if (keyPackage == nil) {
-      NSLog(@"[CanariPush] processWelcomeRequestBackground: keyPackage absent");
-      return;
-    }
-
-    if (![g_mlsStateLock tryLock]) {
-      NSLog(@"[CanariPush] processWelcomeRequestBackground: MlsStateLock busy");
-      return;
-    }
-    NSDictionary *result = nil;
-    @try {
-      NSString *dir = CanariTauriDataDir();
-      NSData *stateBytes = CanariLoadMlsState();
-      if (dir == nil || stateBytes == nil) {
-        NSLog(@"[CanariPush] processWelcomeRequestBackground: mls.bin absent");
-        return;
-      }
-      char *jsonPtr = canari_native_create_welcome_background(
-          dir.UTF8String, (const unsigned char *)stateBytes.bytes, stateBytes.length,
-          ctx.deviceKeyB64.UTF8String, ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String,
-          keyPackage.UTF8String);
-      if (jsonPtr == nil) {
-        return;
-      }
-      NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
-      canari_free_string(jsonPtr);
-      id json = [NSJSONSerialization JSONObjectWithData:[jsonStr dataUsingEncoding:NSUTF8StringEncoding]
-                                                  options:0
-                                                    error:nil];
-      if ([json isKindOfClass:[NSDictionary class]]) {
-        result = json;
-      }
-    } @finally {
-      [g_mlsStateLock unlock];
-    }
-
-    if (result == nil || ![result[@"ok"] boolValue]) {
-      NSLog(@"[CanariPush] processWelcomeRequestBackground: create welcome failed");
-      return;
-    }
-
-    NSString *welcomePayload = result[@"welcome"];
-    NSString *commitPayload = result[@"commit"];
-    NSString *ratchetTree = [result[@"ratchetTree"] isKindOfClass:[NSString class]] ? result[@"ratchetTree"] : nil;
-    if ([ratchetTree isEqualToString:@"null"]) {
-      ratchetTree = nil;
-    }
-    long long baseEpoch = [result[@"baseEpoch"] respondsToSelector:@selector(longLongValue)]
-                              ? [result[@"baseEpoch"] longLongValue]
-                              : -1;
-
-    BOOL sent = CanariSendWelcomeAndCommit(ctx, secret, groupId, requesterUserId, requesterDeviceId,
-                                           welcomePayload, ratchetTree, commitPayload, baseEpoch);
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: send=%d group=%@", sent, groupId);
-  } @finally {
-    CanariReleaseAddLock(ctx, secret, groupId);
-    int remaining = CanariDrainOutboxBackground(ctx);
-    CanariMaybeNotifyPendingSync(remaining);
-  }
-}
-
 static void CanariProcessReceivedWelcomeBackground(NSString *groupId, NSString *_Nullable queuedMessageId,
                                                    NSString *_Nullable inlineProto) {
   CanariPushContext *ctx = CanariLoadPushContext();
@@ -2460,12 +2384,77 @@ static NSString *_Nullable CanariFetchAndDecryptMedia(CanariPushContext *ctx,
   return tmpPath;
 }
 
-// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with a WORD - "you" for this
-// device's own user, "someone" for anybody else - and collapses the run of spaces a token left.
-// No name directory reaches this process, so it names the one id it knows for certain rather than
-// show a hex blob on the banner a mention makes time-sensitive. Twins: the NSE's `renderMentions`
-// and Android's `renderMentions`.
-static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUserId) {
+// The `names` map of `display_names.json` in the app's data directory, or nil when it cannot be
+// used: absent, unreadable, or written for another account than `me` (one file per install, and two
+// accounts may sign in on one phone). Written by `store_display_names` (Rust).
+static NSDictionary *_Nullable CanariLoadMentionNames(NSString *_Nullable me) {
+  NSString *dir = CanariTauriDataDir();
+  if (me.length == 0 || dir == nil) {
+    return nil;
+  }
+  NSData *data = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"display_names.json"]];
+  if (data == nil) {
+    NSLog(@"[CanariPush] [MENTION_NAME] no display_names.json - every other mention is 'someone'");
+    return nil;
+  }
+  id root = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  if (![root isKindOfClass:[NSDictionary class]]) {
+    NSLog(@"[CanariPush] [MENTION_NAME] display_names.json unreadable");
+    return nil;
+  }
+  id owner = ((NSDictionary *)root)[@"userId"];
+  if (![owner isKindOfClass:[NSString class]] || ![[owner lowercaseString] isEqualToString:me]) {
+    NSLog(@"[CanariPush] [MENTION_NAME] display_names.json belongs to another account - not used");
+    return nil;
+  }
+  id names = ((NSDictionary *)root)[@"names"];
+  return [names isKindOfClass:[NSDictionary class]] ? names : nil;
+}
+
+// The phone's names for ONE banner: `display_names.json` is read on the first call only, so the
+// author line and the tokens of one banner cost one file read, and a banner needing neither none.
+typedef NSDictionary *_Nullable (^CanariMentionNameBook)(void);
+static CanariMentionNameBook CanariMakeMentionNameBook(NSString *_Nullable myUserId) {
+  NSString *me = myUserId.lowercaseString;
+  __block NSDictionary *names = nil;
+  __block BOOL read = NO;
+  return ^NSDictionary *_Nullable {
+    if (!read) {
+      names = CanariLoadMentionNames(me);
+      read = YES;
+    }
+    return names;
+  };
+}
+
+// "Alice mentioned you" for a salon banner that mentions this reader (WP-MENTION-NAME, 2026-10-18):
+// the AUTHOR, named from the phone's own copy of names under the same owner rule as the tokens, and
+// "Someone" when the phone has never named them. Never from the push, which carries only
+// `senderId`. Salon only: an MLS banner already names its sender. Twins: the NSE's and Android's
+// `mentionAuthorLine`.
+static NSString *CanariMentionAuthorLine(NSString *senderId, CanariMentionNameBook nameBook) {
+  NSString *idLower = senderId.lowercaseString;
+  id name = idLower.length > 0 ? nameBook()[idLower] : nil;
+  BOOL known = [name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0;
+  NSLog(@"[CanariPush] [MENTION_NAME] author named=%d", known);
+  // The placeholder opens the sentence in both languages, so the word is capitalised there.
+  NSString *someone = CanariLocalized(@"notif.mention.someone");
+  NSString *who = known ? (NSString *)name
+                        : (someone.length > 0
+                               ? [[[someone substringToIndex:1] uppercaseString]
+                                     stringByAppendingString:[someone substringFromIndex:1]]
+                               : someone);
+  return [NSString stringWithFormat:CanariLocalized(@"notif.social.mention.title"), who];
+}
+
+// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with something readable - "you"
+// for this device's own user, the NAME the phone already holds for anybody else, and the word
+// "someone" for an id it has never named - and collapses the run of spaces a token left. The names
+// come from the phone's own copy (`nameBook`, shared with `CanariMentionAuthorLine` so one banner
+// reads the file once), never from the push or the network (WP-MENTION-NAME, 2026-10-18). Twins:
+// the NSE's `renderMentions` and Android's `renderMentions`.
+static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUserId,
+                                      CanariMentionNameBook nameBook) {
   if (text.length == 0 || [text rangeOfString:@"@["].location == NSNotFound) {
     return text;
   }
@@ -2477,15 +2466,33 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
   NSString *me = myUserId.lowercaseString;
   NSMutableString *out = [NSMutableString string];
   NSUInteger cursor = 0;
+  NSUInteger named = 0;
+  NSUInteger unknown = 0;
   for (NSTextCheckingResult *match in [regex matchesInString:text options:0 range:NSMakeRange(0, text.length)]) {
     [out appendString:[text substringWithRange:NSMakeRange(cursor, match.range.location - cursor)]];
     NSString *mentioned = [[text substringWithRange:[match rangeAtIndex:1]] lowercaseString];
     BOOL isMe = me.length > 0 && [mentioned isEqualToString:me];
     [out appendString:@"@"];
-    [out appendString:CanariLocalized(isMe ? @"notif.mention.you" : @"notif.mention.someone")];
+    if (isMe) {
+      [out appendString:CanariLocalized(@"notif.mention.you")];
+    } else {
+      // Read only when a token names somebody else.
+      id name = nameBook()[mentioned];
+      if ([name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0) {
+        named++;
+        [out appendString:name];
+      } else {
+        unknown++;
+        [out appendString:CanariLocalized(@"notif.mention.someone")];
+      }
+    }
     cursor = match.range.location + match.range.length;
   }
   [out appendString:[text substringFromIndex:cursor]];
+  if (named + unknown > 0) {
+    NSLog(@"[CanariPush] [MENTION_NAME] named=%lu unknown=%lu", (unsigned long)named,
+          (unsigned long)unknown);
+  }
   return [out stringByReplacingOccurrencesOfString:@"[ \\t]{2,}"
                                         withString:@" "
                                            options:NSRegularExpressionSearch
@@ -2501,10 +2508,20 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
 // because only the caller knows: a DM draws the sender, a salon draws the SALON (Android does the
 // same), and the title this function composes is no help - for a salon it is
 // `<Communaute> - #<salon>`, whose first character would be the community's, or a `#`.
+//
+// `namesMentionAuthor` is YES on the SALON path only: its title is the salon, so a mention of this
+// reader names its author in the subtitle (`CanariMentionAuthorLine`, WP-MENTION-NAME). An MLS
+// banner passes NO - its push already names the sender in the title or the subtitle.
+//
+// `scansBodyForMention` is YES on the MLS path only. The salon caller has already DECIDED the
+// mention (`mentionedByServer` is its answer, and NO on a blind banner, which nothing proved), and a
+// scan of a blind banner's body would read the generic line, whose salon name the server wrote -
+// a salon named `@[<id>]` would mention that reader again.
 static void CanariShowMessageNotification(NSString *senderName, NSString *groupName, NSString *body,
                                           NSString *groupId, NSString *senderId,
                                           CanariDecryptedMessage *_Nullable decrypted,
-                                          BOOL mentionedByServer, NSString *_Nullable initialsName) {
+                                          BOOL mentionedByServer, NSString *_Nullable initialsName,
+                                          BOOL namesMentionAuthor, BOOL scansBodyForMention) {
   if (canari_ios_is_in_foreground()) {
     return;
   }
@@ -2534,7 +2551,7 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   // @-mention of me (WP-XP-5): the decrypted body carries inline `@[uuid]` tokens; when one
   // targets my own userId the notification is delivered time-sensitive (Focus breakthrough).
   BOOL mentionsMe = mentionedByServer;
-  if (!mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {
+  if (scansBodyForMention && !mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {
     NSString *needle = [NSString stringWithFormat:@"@[%@]", ctx.userId];
     mentionsMe = [body rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound;
   }
@@ -2544,8 +2561,13 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   // Inside a group conversation, surface who spoke as a subtitle (Android: MessagingStyle.Message
   // already carries the sender Person). NSE twin: applyMessageContent in NotificationService.swift.
   NSString *subtitle = isGroup ? senderName : nil;
+  // The phone's names, read at most once for this banner: the author line and the tokens share it.
+  CanariMentionNameBook nameBook = CanariMakeMentionNameBook(ctx != nil ? ctx.userId : nil);
+  if (namesMentionAuthor && mentionsMe) {
+    subtitle = CanariMentionAuthorLine(senderId, nameBook);
+  }
   // Rendered for DISPLAY only, after the mention-of-me scan above has read the raw tokens.
-  NSString *shown = CanariRenderMentions(body, ctx != nil ? ctx.userId : nil);
+  NSString *shown = CanariRenderMentions(body, ctx != nil ? ctx.userId : nil, nameBook);
   CanariShowLocalNotification(title, shown, deepLink, threadId, notifId, attachmentPath,
                               groupId, mentionsMe, subtitle, decrypted != nil ? decrypted.sentAt : 0,
                               mentionsMe ? kCanariSoundMention : kCanariSoundMessage);
@@ -2582,9 +2604,9 @@ static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret
 // `read_and_clear_pending_call_accept` Tauri command) and the CallKit session is closed as soon as
 // the app becomes active - the in-app call UI takes over from there.
 
-/// Mirrors CALLS_COMPILED in frontend/src/lib/features.ts (callsCompiled.test.ts asserts it),
-/// which holds calling as the store binaries carry it off until it has been run on hardware
-/// (rung 15 CALL / CALL-13). It is duplicated rather than read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
+/// Mirrors CALLS_NATIVE_RING_COMPILED in frontend/src/lib/features.ts (CALLS_COMPILED until
+/// 2026-10-21; callsCompiled.test.ts asserts it), which holds the native ring - PushKit and CallKit -
+/// off until it has been run on hardware (WP-C6, K6/K7/K8). It is duplicated rather than read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
 /// at process start, and there is nothing to ask. The two must be flipped in the same commit,
 /// together with the `voip` UIBackgroundModes entry that Info.plist no longer carries: without that
 /// entry PKPushRegistry can never obtain a token, so installing it here would be a permanent
@@ -2970,7 +2992,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     dispatch_async(dispatch_get_main_queue(), ^{
       // MLS: the server cannot know who is mentioned, so the body scan inside decides.
       CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted, NO,
-                                    senderName);
+                                    senderName, NO, YES);
     });
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
@@ -2988,40 +3010,28 @@ static NSString *CanariBuildChannelFallbackText(NSString *channelName) {
   return [NSString stringWithFormat:CanariLocalized(@"notif.channel.message"), channelName];
 }
 
-// Looks up a Graine session's raw base64 seed in graine_seeds.json, written by the foreground.
-// Shape: { "<channelId>": { "<sessionId>": { "seed": "<b64>", "createdAt": <ms> } } }.
+// Whether graine_seeds.json (written by the foreground, sealed under the install's native cache
+// key) holds a Graine session - asked of Rust, which alone opens the file, so the seed never
+// enters Objective-C.
 //
 // The mirror is BOUNDED to the newest sessions per channel, so a miss on an old session is
 // expected and not a fault: the banner degrades to the generic body, the same outcome an
-// oversized ciphertext already produces.
-static NSString *_Nullable CanariLookupGraineSeed(NSString *channelId, NSString *sessionId) {
+// oversized ciphertext already produces. An unreadable mirror reads as a miss, and says so.
+static BOOL CanariGraineSeedHeld(NSString *channelId, NSString *sessionId) {
   if (sessionId.length == 0) {
-    return nil;
+    return NO;
   }
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
-    return nil;
+    return NO;
   }
-  NSData *raw =
-      [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"graine_seeds.json"]];
-  if (raw == nil) {
-    NSLog(@"[CanariPush] lookupGraineSeed: graine_seeds.json absent");
-    return nil;
+  int32_t held = canari_native_graine_seed_held(dir.UTF8String,
+                                                CanariRetrieveNativeCacheKey().UTF8String,
+                                                channelId.UTF8String, sessionId.UTF8String);
+  if (held < 0) {
+    NSLog(@"[CanariPush] graineSeedHeld: ERROR the seed mirror is unreadable channel=%@", channelId);
   }
-  id json = [NSJSONSerialization JSONObjectWithData:raw options:0 error:nil];
-  if (![json isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  id byChannel = ((NSDictionary *)json)[channelId];
-  if (![byChannel isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  id session = ((NSDictionary *)byChannel)[sessionId];
-  if (![session isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  id seed = ((NSDictionary *)session)[@"seed"];
-  return ([seed isKindOfClass:[NSString class]] && [(NSString *)seed length] > 0) ? seed : nil;
+  return held == 1;
 }
 
 // Decrypts a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) and shows
@@ -3065,14 +3075,12 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
 
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSString *body = nil;
-    NSString *seedB64 =
-        (ciphertext.length > 0 && nonce.length > 0 && messageIndexStr.length > 0)
-            ? CanariLookupGraineSeed(channelId, sessionId)
-            : nil;
-    if (seedB64.length > 0) {
+    BOOL seedHeld = (ciphertext.length > 0 && nonce.length > 0 && messageIndexStr.length > 0) &&
+                    CanariGraineSeedHeld(channelId, sessionId);
+    if (seedHeld) {
       // Rust reads the session from the mirror itself and applies the floor and, under a v2
       // session, the author, the signature and the AAD (channel-encryption section 21.5).
-      // `seedB64` above only says whether the mirror holds it.
+      // `seedHeld` above only says whether the mirror holds it.
       NSString *signature =
           [data[@"signature"] isKindOfClass:[NSString class]] ? data[@"signature"] : @"";
       NSString *dir = CanariTauriDataDir();
@@ -3081,7 +3089,8 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       char *jsonPtr =
           dir == nil ? nil
                      : canari_native_open_graine_push(
-                           dir.UTF8String, channelId.UTF8String, sessionId.UTF8String,
+                           dir.UTF8String, CanariRetrieveNativeCacheKey().UTF8String,
+                           channelId.UTF8String, sessionId.UTF8String,
                            (uint32_t)[messageIndexStr intValue], senderId.UTF8String,
                            nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String,
                            locale.UTF8String);
@@ -3113,8 +3122,18 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
             @"channel=%@",
             channelId);
     }
-    if (body.length == 0) {
+    // THE AUTHOR AND THE MENTION ARE THE SERVER'S WORDS until the open proves them, so a blind
+    // banner draws neither: no face, no mention route. Android twin: `ChannelBannerAttribution`.
+    BOOL showsMessage = body.length > 0;
+    NSString *shownSenderId = showsMessage ? senderId : @"";
+    BOOL shownMentionsMe = showsMessage && mentionsMe;
+    if (!showsMessage) {
       body = CanariBuildChannelFallbackText(channelName);
+      if (senderId.length > 0 || mentionsMe) {
+        NSLog(@"[CanariPush] handleChannelMessage: blind banner -> no author, no mention "
+              @"(server named sender=%@ mentioned=%d) channel=%@",
+              senderId.length > 8 ? [senderId substringToIndex:8] : senderId, mentionsMe, channelId);
+      }
     }
 
     // `<Communaute> - #<salon>`: a salon name alone is ambiguous, two communities may both have a
@@ -3125,12 +3144,12 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
                                 ? [NSString stringWithFormat:@"%@ - #%@", workspaceName, channelName]
                                 : [NSString stringWithFormat:@"#%@", channelName];
     dispatch_async(dispatch_get_main_queue(), ^{
-      // groupName empty + senderName as the title -> the banner shows it as-is; avatar from senderId.
-      // No media thumbnail for channels (WP-XP-3 is MLS DM/group only) -> pass nil.
-      // The initials fall back to the SALON, not to the composed title: Android twin uses
+      // groupName empty + senderName as the title -> the banner shows it as-is; avatar from senderId
+      // when the open proved it. No media thumbnail for channels (WP-XP-3 is MLS DM/group only) ->
+      // pass nil. The initials fall back to the SALON, not to the composed title: Android twin uses
       // channelName for exactly the same reason.
-      CanariShowMessageNotification(displayName, @"", body, conversationId, senderId, nil,
-                                    mentionsMe, channelName);
+      CanariShowMessageNotification(displayName, @"", body, conversationId, shownSenderId, nil,
+                                    shownMentionsMe, channelName, YES, NO);
     });
   });
 }
@@ -3138,8 +3157,10 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
 /**
  * Handles an ALERT frame's data while the app process runs: `willPresentNotification` (foreground)
  * and a tap. A silent frame never comes here - `CanariHandleBackgroundFrame` owns those - so the
- * `welcome_request_pending`, `isWelcome` and `process_queue` branches below, which only a silent
- * frame carries, are reached by nothing on iOS today (docs/wiki/backlog.md).
+ * `isWelcome` and `process_queue` branches below, which only a silent frame carries, are reached by
+ * nothing on iOS today (docs/wiki/backlog.md). The `welcome_request_pending` branch was the same and
+ * was deleted on 2026-10-22: it merged its add into `mls.bin` before the server answered, which
+ * Android stopped doing that day; a background re-add on iOS waits for the background-join row fix.
  */
 static void CanariHandleFcmData(NSDictionary *data) {
   if (data.count == 0) {
@@ -3185,22 +3206,6 @@ static void CanariHandleFcmData(NSDictionary *data) {
       [msgType isEqualToString:@"form_reminder"] || ([msgType isEqualToString:@"social"] && !isReaction);
   if (canari_ios_is_in_foreground() && !showsWhileForeground) {
     NSLog(@"[CanariPush] foreground actif - skip background MLS");
-    return;
-  }
-
-  if ([msgType isEqualToString:@"welcome_request_pending"]) {
-    NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
-    NSString *requesterUser =
-        [data[@"requesterUserId"] isKindOfClass:[NSString class]] ? data[@"requesterUserId"] : @"";
-    NSString *requesterDev =
-        [data[@"requesterDeviceId"] isKindOfClass:[NSString class]] ? data[@"requesterDeviceId"] : @"";
-    if (groupId.length == 0 || requesterUser.length == 0 || requesterDev.length == 0) {
-      NSLog(@"[CanariPush] welcome_request_pending: missing fields");
-      return;
-    }
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-      CanariProcessWelcomeRequestBackground(groupId, requesterUser, requesterDev);
-    });
     return;
   }
 
@@ -3572,18 +3577,59 @@ static BOOL CanariInstallRemoteNotificationHook(void) {
  *
  * UIKit records the delegate's optional-method answers when the delegate is SET; a method added
  * afterwards can go unseen. Firebase's own App Delegate Proxy does exactly this after it swizzles
- * (`GULAppDelegateSwizzler reassignAppDelegate`) - the proxy this file replaces by hand. The strong
- * local keeps the delegate alive across the nil assignment.
+ * (`GULAppDelegateSwizzler reassignAppDelegate`) - the proxy this file replaces by hand.
+ *
+ * THE DELEGATE IS THEN OWNED HERE, FOR THE LIFE OF THE PROCESS. `UIApplication.delegate` is
+ * documented as not retaining. That the delegate `UIApplicationMain` created is kept by
+ * UIApplication itself, and that a `setDelegate:` gives that ownership up, is BELIEVED, not read:
+ * UIKit's source is closed, and Firebase keeping its own strong copy (`gOriginalAppDelegate`, set
+ * on the line after its re-assignment) is the evidence. What WAS read (`pymobiledevice3 crash
+ * pull`, iPhone 12, v1.3.0-alpha.2): `-[UIResponder _enumerateKeyboardShortcutsInChainWithOptions:
+ * usingBlock:]` sent `_keyboardShortcutMenuLeaves` to a `_UISceneCloudKitShareMetadataBSActionHandler`
+ * - a freed responder whose memory UIKit had reused - so the responder chain, whose last link
+ * after UIApplication is this delegate, held a dead object. That the dead link IS the delegate is
+ * the hypothesis this copy tests; the becoming-active log below says which object UIKit holds
+ * (docs/wiki/backlog.md, P1 of 2026-10-19).
  */
+static id<UIApplicationDelegate> g_appDelegateKeptAlive = nil;
+
 static void CanariReassignAppDelegate(void) {
   UIApplication *app = [UIApplication sharedApplication];
   id<UIApplicationDelegate> delegate = app.delegate;
   if (delegate == nil) {
+    NSLog(@"[CanariPush] app delegate absent - nothing to re-assign");
     return;
   }
+  g_appDelegateKeptAlive = delegate;
   app.delegate = nil;
   app.delegate = delegate;
-  NSLog(@"[CanariPush] app delegate re-assigned so UIKit reads the added methods");
+  NSLog(@"[CanariPush] app delegate re-assigned so UIKit reads the added methods (kept alive: %@)",
+        [g_appDelegateKeptAlive class]);
+}
+
+/**
+ * Logs, each time the app becomes active, which object UIKit holds as the application's delegate
+ * compared with the one `CanariReassignAppDelegate` keeps alive.
+ *
+ * Diagnostic for the P1 of 2026-10-19: `same` on every activation, with no abort on an
+ * accessibility read, is the reading that confirms the kept-alive fix; `nil` or `different` says the
+ * re-assignment left UIKit pointing somewhere else. In that last case `class` names whatever lives
+ * at the address UIKit holds: a UIKit-internal class there means a reused allocation, the very
+ * signature the alpha.2 crash report carried.
+ */
+static void CanariLogAppDelegateIdentity(void) {
+  id<UIApplicationDelegate> current = [UIApplication sharedApplication].delegate;
+  if (current == nil) {
+    NSLog(@"[CanariPush] became active: app delegate is nil (kept alive: %@)",
+          g_appDelegateKeptAlive == nil ? @"none" : NSStringFromClass([g_appDelegateKeptAlive class]));
+  } else if (current == g_appDelegateKeptAlive) {
+    NSLog(@"[CanariPush] became active: app delegate is the kept-alive one (%@)",
+          NSStringFromClass([current class]));
+  } else {
+    NSLog(@"[CanariPush] became active: app delegate %@ differs from the kept-alive one (%@)",
+          NSStringFromClass([current class]),
+          g_appDelegateKeptAlive == nil ? @"none" : NSStringFromClass([g_appDelegateKeptAlive class]));
+  }
 }
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
@@ -3833,6 +3879,13 @@ void CanariPushSetup(void) {
                 if (added) {
                   CanariReassignAppDelegate();
                 }
+              }];
+  [[NSNotificationCenter defaultCenter]
+      addObserverForName:UIApplicationDidBecomeActiveNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                CanariLogAppDelegateIdentity();
               }];
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)

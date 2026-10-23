@@ -10,6 +10,10 @@ describe('isOutboxClearPatch', () => {
   it('accepts scheduling-only patches', () => {
     expect(isOutboxClearPatch({ status: 'pending', attempts: 3, nextAttemptAt: 5 })).toBe(true);
   });
+  it('accepts the consecutive 5xx count, 0 included (a reset is a write)', () => {
+    expect(isOutboxClearPatch({ serverErrors: 0 })).toBe(true);
+    expect(isOutboxClearPatch({ serverErrors: 3, attempts: 3 })).toBe(true);
+  });
   it('refuses a patch that touches the payload, and an empty one', () => {
     expect(isOutboxClearPatch({ attempts: 1, text: 'x' })).toBe(false);
     expect(isOutboxClearPatch({})).toBe(false);
@@ -28,7 +32,20 @@ describe('SqliteStorage.updateOutboxEntry', () => {
     expect(select).not.toHaveBeenCalled();
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls[0][0]).toContain('UPDATE outbox SET');
-    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, 2, null, 99]);
+    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, 2, null, 99, null]);
+  });
+
+  it('writes the consecutive 5xx count in place, a reset to 0 included', async () => {
+    const storage = new SqliteStorage('u');
+    const execute = vi.fn().mockResolvedValue(undefined);
+    const select = vi.fn();
+    (storage as unknown as { db: unknown }).db = { execute, select };
+
+    await storage.updateOutboxEntry('id-1', { serverErrors: 0 }, 'key');
+
+    expect(select).not.toHaveBeenCalled();
+    expect(execute.mock.calls[0][0]).toContain('server_errors = COALESCE($6, server_errors)');
+    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, null, null, null, 0]);
   });
 });
 
@@ -95,6 +112,6 @@ describe('the in-place patch keeps a zero', () => {
     const execute = vi.fn().mockResolvedValue(undefined);
     (storage as unknown as { db: unknown }).db = { execute, select: vi.fn() };
     await storage.updateOutboxEntry('id-1', { attempts: 0, nextAttemptAt: 0 }, 'key');
-    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, 0, null, 0]);
+    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, 0, null, 0, null]);
   });
 });

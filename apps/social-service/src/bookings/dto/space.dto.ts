@@ -36,6 +36,50 @@ export const WALL_TIME = /^(([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?|24:00(:00)?)$/;
 /** A calendar date's shape; whether it EXISTS is checked by `isCalendarDate`. */
 export const DATE_SHAPE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** The image types a poster may be: what the client's compression produces, and what a phone picks. */
+export const POSTER_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+
+/**
+ * A space's poster (D35): the reference `MediaService.encryptAndUpload` returns for an image, its
+ * per-file key travelling here as a post image's does. The service copies these fields and no
+ * other (`posterOf`), so a key a client adds is never stored.
+ */
+export class PosterDto {
+  @IsIn(['image'])
+  type: 'image';
+
+  @IsUUID()
+  mediaId: string;
+
+  /** AES-256-GCM key, 32 bytes in hex. */
+  @Matches(/^[0-9a-f]{64}$/i)
+  key: string;
+
+  /** AES-GCM nonce, 12 bytes in hex. */
+  @Matches(/^[0-9a-f]{24}$/i)
+  iv: string;
+
+  @IsIn(POSTER_MIME_TYPES)
+  mimeType: string;
+
+  @IsInt()
+  @Min(1)
+  @Max(64 * 1024 * 1024)
+  size: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20_000)
+  width?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20_000)
+  height?: number;
+}
+
 /**
  * Every setting of a space the organiser writes (D35). Each is optional: a PATCH sends what changed.
  * `null` clears a nullable setting, `undefined` (absent) leaves it.
@@ -159,6 +203,13 @@ export class SpaceSettingsDto {
   @Min(1)
   @Max(30)
   retentionDays?: number;
+
+  /** The poster (D35), encrypted by the client; null removes it. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @ValidateNested()
+  @Type(() => PosterDto)
+  poster?: PosterDto | null;
 }
 
 /** `POST bookings/spaces` - a new space, personal or of an entity the actor manages (D2, D16). */

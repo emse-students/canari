@@ -19,16 +19,19 @@ import { describeDeepLink } from '$lib/utils/logSanitize';
 import { openClaimedAppLink } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
+import { redactConsoleProse } from '$lib/utils/appLogRedact';
 import { captureConsoleLine, installAppLogFlushTriggers } from '$lib/utils/appLog';
 import { apiServiceOrigins } from '$lib/utils/apiUrl';
 import { createRoutedFetch } from '$lib/utils/fetchRouting';
+import { conformNativeFetch } from '$lib/utils/transportFailure';
 import { MOBILE_APP_PROTOCOL, OIDC_SIGNED_OUT_HOST } from '$lib/mobile/appSiteAssociation';
 import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
+import { shopReturnPath } from '$lib/shop/checkoutReturn';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones - and hand every non-debug line to the in-app log, the only
 // log a store build keeps (docs/wiki/frontend/mobile.md#the-in-app-log).
-installConsoleIdTruncation(captureConsoleLine);
+installConsoleIdTruncation(captureConsoleLine, redactConsoleProse);
 installAppLogFlushTriggers();
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -295,9 +298,9 @@ if (isTauriRuntime()) {
                 const productId =
                   u.searchParams.get('product_id') ?? u.searchParams.get('productId');
                 if (purchaseSuccess && productId) {
-                  navigate(
-                    `/shop?purchase_success=${encodeURIComponent(purchaseSuccess)}&productId=${encodeURIComponent(productId)}`
-                  );
+                  // The attempt the server named (`checkout_id`) is carried, so the shop asks
+                  // about THAT one.
+                  navigate(shopReturnPath('purchase_success', u.searchParams));
                 } else if (submissionId) {
                   navigate(`/forms/success?submission_id=${encodeURIComponent(submissionId)}`);
                 } else if (registered) {
@@ -309,7 +312,7 @@ if (isTauriRuntime()) {
                 }
               } else if (path === '/cancel') {
                 if (u.searchParams.get('purchase_cancel')) {
-                  navigate('/shop?purchase_cancel=1');
+                  navigate(shopReturnPath('purchase_cancel', u.searchParams));
                 } else if (submissionId) {
                   navigate(`/forms/cancel?submission_id=${encodeURIComponent(submissionId)}`);
                 } else {
@@ -512,4 +515,16 @@ if (isTauriRuntime()) {
     .catch(() => {
       // May fail during an in-flight page reload; the next load will retry.
     });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// WEB `fetch` - ITS TRANSPORT REJECTION IS TYPED WHERE IT IS RAISED
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The browser rejects "no answer" with a bare `TypeError`, which `isTransportFailure` no longer
+// reads (a programming `TypeError` looks the same). Wrapping `window.fetch` once types it for every
+// bare `fetch(...)` call in the app; on Tauri `createRoutedFetch` does the same for both branches.
+if (!isTauriRuntime()) {
+  const originalFetch = window.fetch;
+  window.fetch = conformNativeFetch((input, init) => originalFetch.call(window, input, init));
 }

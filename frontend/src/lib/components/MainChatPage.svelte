@@ -37,6 +37,10 @@
     recordDmReadMark,
     recordSalonReadMark,
   } from '$lib/utils/chat/salonReadMarkQueue';
+  import {
+    loadControlRefusals,
+    setControlRetryExecutor,
+  } from '$lib/utils/chat/controlRefusals.svelte';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { mayPinMessage } from '$lib/utils/chat/pinPermission';
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
@@ -63,6 +67,12 @@
   } from '$lib/stores/globalChatSingleton.svelte';
   import { openInvitedChannel, selectionBelongsToRoute } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
+  import { incomingShare, type SharedFileEntry } from '$lib/stores/incomingShare.svelte';
+  import { stageSharedFiles } from '$lib/mobile/incomingShareDrain';
+  import { discardSharedFiles } from '$lib/mobile/sharedInbox';
+  import { MediaService } from '$lib/media';
+  import { signOutGeneration } from '$lib/stores/auth';
+  import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
@@ -74,7 +84,8 @@
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
-  import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
+  import { callsAvailable, callVideoAvailable } from '$lib/utils/callsAvailability';
+  import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
   import type {
     AddMessageToChatOptions,
     ChatMessage,
@@ -394,6 +405,8 @@
     return {
       conversations: convs.conversations,
       loadAndRestoreConversations: () => convs.loadAndRestoreConversations(convCtx()),
+      invalidateRestores: () => convs.invalidateRestores(),
+      forgetUnconfirmedSalonDraws: () => convs.forgetUnconfirmedSalonDraws(),
       beginConversationSource: () => convs.beginConversationSource(),
       endConversationSource: () => convs.endConversationSource(),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
@@ -813,6 +826,17 @@
     };
   });
 
+  // ─── Refused control actions: the account's list, and the Retry that runs them ────
+  // The notices are durable per account, so they are bound to whoever is signed in; a Retry runs
+  // with the context of the tap (`msgCtx()` is built fresh), never one captured at the refusal.
+  $effect(() => {
+    if (session.userId) loadControlRefusals(session.userId);
+  });
+  onMount(() => {
+    setControlRetryExecutor((refusal) => messaging.retryRefusedControl(refusal, msgCtx()));
+    return () => setControlRetryExecutor(null);
+  });
+
   // ─── Mount: event listeners (window focus, visibility, debug shortcut) ────
   onMount(() => {
     isWindowFocused = document.hasFocus();
@@ -959,12 +983,12 @@
   const heldSends = createHeldSendQueue();
   let heldCount = $state(0);
 
-  function whenSessionUp(what: string, run: () => void) {
+  function whenSessionUp(what: string, run: () => void, discard?: () => void) {
     if (session.isLoggedIn) {
       run();
       return;
     }
-    heldSends.hold({ what, target: convs.selectedContact, run });
+    heldSends.hold({ what, target: convs.selectedContact, run, discard });
     heldCount = heldSends.size;
     log(`[LANDING_PREVIEW] ${what} held until the session is up`);
   }
@@ -1114,6 +1138,82 @@
     }
   }
 
+  // ─── A share from another app lands in the composer of the conversation it was sent to ────────
+  // `IncomingShareHost` asked where it goes and landed on that conversation; once it is the one on
+  // screen, its text joins the draft and its files are read from disk into the pending queue -
+  // through the same preparation as a picked file (size ceiling, compression, video re-encode). The member sends it with Send:
+  // a share is never sent on its own.
+  $effect(() => {
+    const target = incomingShare.target;
+    const selected = convs.selectedContact;
+    if (!target || !selected) return;
+    if (resolveConversationKey(convs.conversations, target) !== selected) return;
+    untrack(() => {
+      const share = incomingShare.takeFor(target);
+      if (!share) return;
+      log(
+        `[SHARE] staged in ${selected.slice(0, 16)}: ${share.text.length} chars, ${share.files.length} file(s)`
+      );
+      if (share.text) messageText = restoreFailedDraft(messageText, share.text);
+      if (share.files.length === 0) return;
+      // The copies are read HERE, once a destination is on screen, and not when the share arrived -
+      // one at a time, each staged before the next is read, under the composer's own ceiling.
+      const files = share.files;
+      const destination = selected;
+      // THE SESSION THE SHARE WAS TAKEN IN, read NOW - not after a held send or a network round
+      // trip, either of which a sign-out can fall inside (`stageSharedFiles`, `stillWanted`).
+      const generation = signOutGeneration();
+      whenSessionUp(
+        `a share of ${files.length} file(s)`,
+        () => void stageShare(files, destination, generation),
+        // Held, then never run: its copies are this share's to delete.
+        () =>
+          void discardSharedFiles(
+            files.map((f) => f.path),
+            'held share not sent'
+          )
+      );
+    });
+  });
+
+  /**
+   * Stages a share's files in the open conversation, one at a time, and says what did not make it:
+   * a copy over the upload ceiling (deleted unread, told as the composer tells a picked one) and a
+   * copy that could not be read. Every file goes to `destination`, the conversation the share was
+   * taken by, whichever one is on screen when its turn comes (`stageSharedFiles`).
+   */
+  async function stageShare(files: SharedFileEntry[], destination: string, generation: number) {
+    const limits = await new MediaService().uploadLimits();
+    // A sign-out since the share was taken stops the staging - before each file is read, and again
+    // after each is prepared - so nothing of it reaches the next account's composer.
+    const stillWanted = () => signOutGeneration() === generation;
+    const { lost, tooLarge } = await stageSharedFiles(
+      files,
+      destination,
+      limits,
+      (file, to) =>
+        messaging.handleFilesSelected(
+          [file],
+          { ...msgCtx(), selectedContact: to },
+          { stillWanted }
+        ),
+      stillWanted
+    );
+    // Signed out meanwhile: nobody is here to be told, and the next account must not be.
+    if (!stillWanted()) return;
+    if (lost > 0) showToast(m.share_items_lost({ count: lost }), 'error');
+    if (tooLarge.length > 0 && limits) {
+      showToast(
+        m.chat_media_too_large({
+          size: (tooLarge[0].size / 1024 / 1024).toFixed(1),
+          limit: Math.round(limits.maxBytes / 1024 / 1024),
+        }),
+        'error'
+      );
+      log(`[SHARE] ${tooLarge.length} shared file(s) over the upload ceiling, deleted unread`);
+    }
+  }
+
   /** Opens the forward picker for a given message. */
   function handleForward(message: ChatMessage) {
     forwardingMessage = message;
@@ -1153,9 +1253,18 @@
     const convo = convs.conversations.get(key);
     if (!convo?.id) return;
     Promise.resolve(session.ensureMls())
-      .then((m) => m?.sendTyping?.(convo.id, isTyping))
-      .catch(() => {});
+      .then(async (m) => {
+        await m?.sendTyping?.(convo.id, isTyping);
+        dmTypingFailing = false;
+      })
+      .catch((e) => {
+        // One line per failing streak, not per keystroke; the next success re-arms it.
+        if (dmTypingFailing) return;
+        dmTypingFailing = true;
+        appendLog(`[typing] DM typing signal not delivered (further failures not logged) - ${e}`);
+      });
   }
+  let dmTypingFailing = false;
 
   /**
    * Loads the conversation's shared media/links/files from the FULL local history
@@ -1519,12 +1628,12 @@
             messaging.removePendingMediaFile(convs.selectedContact, index)}
           videoPreparation={messaging.videoPreparation}
           isUploading={messaging.isUploadingMedia}
-          onStartAudioCall={CALLS_ENABLED && selectedIsDirect
+          onStartAudioCall={callsAvailable(serverCallsMode()) && selectedIsDirect
             ? () => {
                 void startCallForCurrentConversation(false);
               }
             : undefined}
-          onStartVideoCall={CALLS_ENABLED && CALLS_VIDEO_ENABLED && selectedIsDirect
+          onStartVideoCall={callVideoAvailable(serverCallsMode()) && selectedIsDirect
             ? () => {
                 void startCallForCurrentConversation(true);
               }

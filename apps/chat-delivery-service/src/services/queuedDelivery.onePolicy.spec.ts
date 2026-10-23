@@ -70,7 +70,7 @@ describe('a queued frame - one delivery, two routes', () => {
     insert: jest.fn().mockReturnThis(),
     into: jest.fn().mockReturnThis(),
     values: jest.fn().mockReturnThis(),
-    orUpdate: jest.fn().mockReturnThis(),
+    orIgnore: jest.fn().mockReturnThis(),
     execute: jest.fn().mockResolvedValue({}),
   };
 
@@ -119,7 +119,10 @@ describe('a queued frame - one delivery, two routes', () => {
           getRepository: (entity: unknown) =>
             entity === Group
               ? { find: jest.fn().mockResolvedValue([{ id: GROUP, deletedAt: null }]) }
-              : { save: queuedSave },
+              : entity === GroupMember
+                ? // The Welcome's target still holds its seat when the store re-reads it.
+                  { findOne: jest.fn().mockResolvedValue({ id: 'seat' }) }
+                : { save: queuedSave },
         })
       ),
     },
@@ -164,7 +167,11 @@ describe('a queued frame - one delivery, two routes', () => {
       providers: [
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: queuedMessageRepo },
-        { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
+        // The Welcome's target is on the conversation's roster, as every client path makes it.
+        {
+          provide: getRepositoryToken(GroupMember),
+          useValue: { ...emptyRepo(), findOne: jest.fn().mockResolvedValue({ id: 'm' }) },
+        },
         { provide: getRepositoryToken(Group), useValue: emptyRepo() },
         { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },

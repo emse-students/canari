@@ -12,6 +12,11 @@
     <string name="notif_channel_forms_desc">Rappels avant l\'ouverture des formulaires</string>
     <string name="notif_channel_calls_name">Appels Canari</string>
     <string name="notif_channel_calls_desc">Appels entrants (sonnerie)</string>
+    <!-- The ongoing-call notification of CallForegroundService (WP-C-BG-A). Its CONTENT (the name,
+         the status line) comes from the page's Paraglide messages; only the channel is named here,
+         because Android names a channel once, at creation, from the app's resources. -->
+    <string name="notif_channel_call_ongoing_name">Appel en cours</string>
+    <string name="notif_channel_call_ongoing_desc">La notification affichée pendant un appel, avec le bouton pour raccrocher</string>
     <string name="notif_channel_mentions_name">Mentions Canari</string>
     <string name="notif_channel_mentions_desc">Messages qui vous mentionnent (@)</string>
     <string name="notif_channel_reactions_name">Réactions à vos messages</string>
@@ -25,6 +30,10 @@
 
     <!-- The outbox nudge: sends are still queued and the app is closed. -->
     <string name="notif_outbox_pending_body">Vous avez peut-être des messages en attente, ouvrez l\'application pour les envoyer.</string>
+
+    <!-- A device was added to the user's own account, read from a signed MLS commit (2026-10-22). -->
+    <string name="notif_new_device_title">Nouvel appareil</string>
+    <string name="notif_new_device_body">Un nouvel appareil a été ajouté à votre compte. Si ce n\'est pas vous, ouvrez Canari.</string>
 
     <!-- MessagingStyle names the user's own messages with this. Since 2026-10-01 every message of a
          conversation carries its author's name - the other person's above theirs, this above ours -
@@ -84,12 +93,24 @@
     <string name="notif_social_association_repost_body">Nouvelle publication</string>
     <string name="notif_social_repost_proposed_title">%1$s propose de relayer une publication</string>
     <string name="notif_social_repost_proposed_body">Publication à relayer</string>
+    <string name="notif_social_repost_personal_requested_title">%1$s demande à relayer votre publication</string>
+    <string name="notif_social_repost_personal_requested_body">Demande de republication</string>
     <string name="notif_social_coorganise_proposed_title">%1$s propose de co-organiser un événement</string>
     <string name="notif_social_coorganise_proposed_body">Événement à co-organiser</string>
+    <string name="notif_social_live_started_title">%1$s est en live</string>
+    <string name="notif_social_live_started_body">Appuyez pour regarder</string>
+    <string name="notif_social_live_cut_title">Votre live a été interrompu</string>
+    <string name="notif_social_live_cut_body">La modération a coupé votre live. Ceci est un avertissement.</string>
+    <string name="notif_social_live_suspended_title">Lives suspendus</string>
+    <string name="notif_social_live_suspended_body">Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment.</string>
+    <string name="notif_social_live_withdrawn_title">Droit de lancer un live retiré</string>
+    <string name="notif_social_live_withdrawn_body">La modération vous a retiré le droit de lancer un live.</string>
     <string name="notif_form_opening_soon_title">Formulaire bientôt ouvert</string>
     <string name="notif_form_opening_soon_body">Un formulaire que vous suivez ouvre dans 5 minutes !</string>
     <string name="notif_form_open_title">Formulaire ouvert !</string>
     <string name="notif_form_open_body">Le formulaire est disponible - dépêchez-vous, les places sont limitées !</string>
+    <string name="notif_form_paid_over_capacity_title">Paiement sur un formulaire complet</string>
+    <string name="notif_form_paid_over_capacity_body">« %1$s » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.</string>
     <!-- The agenda's five pairs, added 2026-09-09 with the notifications themselves. `proposed`
          is the only one naming an actor, because it is the only one where WHO acted is the useful
          half: the other four are always "the BDE".

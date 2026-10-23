@@ -15,6 +15,8 @@
  * - a `/api/mls/gifs` line drops its whole query: the route exists so a search is never tied to the
  *   reader's address, and this line carries the address. The GIF relay (`/api/mls/gifs/media`) keeps
  *   its own path and drops its query too: it names which GIF the reader loaded.
+ * - a guest receipt page (`/f/<id>/receipt?receipt=`) drops its query: the receipt is a paying
+ *   guest's only proof of the answer (paid public forms WP-P2).
  *
  * STATIC (CI has no Docker daemon); the behaviour was run against nginx:stable-alpine on 2026-10-06
  * with five request lines, one log line each, the token redacted and `xtoken=` left alone.
@@ -48,6 +50,21 @@ if (/\$request(?![_\w])/.test(format) || /\$request_uri/.test(format)) {
   fail('the log format prints $request or $request_uri raw - the token would be logged');
 }
 if (!/\$logged_request_uri/.test(format)) fail('the log format does not print $logged_request_uri');
+// The diagnostic tail (2026-10-18): what lets one line say why a preview was slow, compressed or
+// degraded. Asserted PRESENT, and the format asserted free of the two request headers that would
+// turn a duration field into a credential leak.
+for (const field of [
+  'rt=$request_time',
+  'urt=$upstream_response_time',
+  'ust=$upstream_status',
+  'ce=$sent_http_content_encoding',
+  'deg=$sent_http_x_canari_degraded',
+]) {
+  if (!format.includes(field)) fail(`the log format lacks the diagnostic field ${field}`);
+}
+if (/\$http_(cookie|authorization)|\$cookie_/.test(format)) {
+  fail('the log format prints a cookie or an authorization header');
+}
 if (formatName === 'main') fail('the format is named `main`, a duplicate of the base image');
 
 const map = lines.join('\n').match(/map \$request_uri \$logged_request_uri \{([\s\S]*?)\n\}/)?.[1];
@@ -85,6 +102,11 @@ else {
         '/api/mls/gifs/media?url=https%3A%2F%2Fstatic.klipy.com%2Fii%2Fa%2Fb.gif&t=abc',
         '/api/mls/gifs/media?query-redacted',
       ],
+      // A paying guest's receipt, its only proof of the answer (2026-10-22): the query goes.
+      ['/f/abc-123/receipt?receipt=Q2FuYXJpU0VDUkVUcmVjZWlwdA', '/f/abc-123/receipt?query-redacted'],
+      ['/f/abc-123/receipt?x=1&receipt=SECRET', '/f/abc-123/receipt?query-redacted'],
+      ['/f/abc-123/receipt', '/f/abc-123/receipt'],
+      ['/f/abc-123?receipt=keep', '/f/abc-123?receipt=keep'],
     ];
     for (const [input, expected] of cases) {
       if (apply(input) !== expected) fail(`${input} logs as ${apply(input)}, expected ${expected}`);
@@ -109,4 +131,6 @@ if (failures.length > 0) {
   for (const f of failures) console.error(`  FAIL  ${f}`);
   process.exit(1);
 }
-console.log('access-log-redaction: the access log cannot record a token, nor a GIF search');
+console.log(
+  'access-log-redaction: the access log cannot record a token, a GIF search, nor a guest receipt'
+);

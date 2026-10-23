@@ -192,3 +192,10 @@ describe('PostContent gallery', () => {
     expect(cells(target)[3].textContent).not.toContain('quatrieme');
   });
 });
+
+describe('PostContent duplicate media', () => {
+  it('a post listing one media twice draws two cells instead of throwing each_key_duplicate', () => {
+    const target = render([image(0), image(0)]);
+    expect(cells(target)).toHaveLength(2);
+  });
+});

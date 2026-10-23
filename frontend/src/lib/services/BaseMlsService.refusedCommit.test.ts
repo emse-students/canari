@@ -9,6 +9,7 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 }));
 
 import { BaseMlsService } from './BaseMlsService';
+import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { isInEpochGap, resetEpochGapRegistry } from '$lib/utils/chat/epochGapRegistry';
 
 /**
@@ -164,5 +165,29 @@ describe('BaseMlsService - a commit refused for a stale epoch', () => {
     await expect(runCommit(ctx, 'g')).rejects.toThrow('Staged commit rejected');
 
     expect(ctx.refreshGroupInfo).not.toHaveBeenCalled();
+  });
+});
+
+describe('BaseMlsService - a partial replay after a refused commit', () => {
+  it('asks for a checkpoint when commits applied without closing the gap, and not when none did', async () => {
+    const persistNow = vi.mocked(scheduleOutboundMlsPersist);
+    persistNow.mockClear();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    const partial = makeCtx();
+    partial.fetchCommitsSince.mockResolvedValue({
+      commits: [{ baseEpoch: 195, proto: 'AA==' }],
+      activeEpoch: 400,
+      belowFloor: false,
+    });
+    await partial.catchUpOnRefusedCommit('g', 195, 400);
+    expect(partial.state.epoch).toBe(196);
+    expect(persistNow).toHaveBeenCalledTimes(1);
+
+    persistNow.mockClear();
+    const none = makeCtx();
+    none.fetchCommitsSince.mockResolvedValue({ commits: [], activeEpoch: 400, belowFloor: true });
+    await none.catchUpOnRefusedCommit('g', 195, 400);
+    expect(persistNow).not.toHaveBeenCalled();
   });
 });

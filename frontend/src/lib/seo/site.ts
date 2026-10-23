@@ -37,6 +37,7 @@ export const SITE = {
   defaultOgImagePath: '/og-canari.png',
   defaultOgImageWidth: 1080,
   defaultOgImageHeight: 1080,
+  defaultOgImageType: 'image/png',
   defaultOgImageAlt:
     'Logo Canari : canari stylisé jaune, bec ouvert, sur un carré bleu marine aux coins arrondis.',
 } as const;

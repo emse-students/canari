@@ -30,6 +30,7 @@ import {
   resetAuditRecord,
   type HistoryProbeSender,
 } from './historyReconcile';
+import { flushMacrotask } from '../../../test/flush';
 
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
 
@@ -582,7 +583,7 @@ describe('reconcileAllGroups', () => {
     mls.sendHistoryRequest.mockImplementation(async () => {
       inFlight++;
       peak = Math.max(peak, inFlight);
-      await new Promise((r) => setTimeout(r, 5));
+      await flushMacrotask();
       inFlight--;
       return {};
     });
@@ -600,7 +601,7 @@ describe('reconcileAllGroups', () => {
     mls.sendHistoryRequest.mockImplementation(async () => {
       inFlight++;
       peak = Math.max(peak, inFlight);
-      await new Promise((r) => setTimeout(r, 2));
+      await flushMacrotask();
       inFlight--;
       return {};
     });
@@ -611,6 +612,25 @@ describe('reconcileAllGroups', () => {
       log
     );
     expect(peak).toBeLessThanOrEqual(6);
+  });
+
+  it('reports groups already asked inside the window as ONE count, not one line each', async () => {
+    const mls = service();
+    const groups = Array.from({ length: 12 }, (_, i) => `g${i}`);
+    await reconcileAllGroups(mls, groups, log);
+    log.mockClear();
+    probe.mockClear();
+
+    await reconcileAllGroups(mls, groups, log);
+
+    expect(probe).not.toHaveBeenCalled();
+    expect(log.mock.calls.filter(([m]) => /asked \d+s ago at most/.test(String(m)))).toHaveLength(
+      0
+    );
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('0/12 group(s) asked, 12 already asked')
+    );
   });
 
   it('says so even when there is nothing to ask', async () => {

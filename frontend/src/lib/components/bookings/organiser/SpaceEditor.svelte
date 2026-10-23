@@ -1,0 +1,533 @@
+<script lang="ts">
+  import { untrack } from 'svelte';
+  import {
+    CalendarRange,
+    Database,
+    Download,
+    Info,
+    ListChecks,
+    Plus,
+    Trash2,
+    Users,
+  } from '@lucide/svelte';
+  import FormSection from '$lib/components/forms/FormSection.svelte';
+  import FormSaveBar from '$lib/components/forms/FormSaveBar.svelte';
+  import FormQuestionsSection from '$lib/components/forms/FormQuestionsSection.svelte';
+  import AudienceConditionEditor from '$lib/components/forms/AudienceConditionEditor.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
+  import Textarea from '$lib/components/ui/Textarea.svelte';
+  import Select from '$lib/components/ui/Select.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
+  import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import { CONTROL_HINT_CLASS, CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
+  import ResourceEditor from './ResourceEditor.svelte';
+  import SpacePosterField from './SpacePosterField.svelte';
+  import {
+    addResource,
+    bookingExportLabels,
+    deleteSpace,
+    exportBookings,
+    updateSpace,
+    type ManagedResource,
+    type ManagedSpace,
+  } from '$lib/bookings/api';
+  import { describeBookingRefusal } from '$lib/bookings/refusals';
+  import { strandedIdsOf } from '$lib/bookings/stranded';
+  import { guardUnsavedChanges } from '$lib/navigation/unsavedChanges';
+  import StrandedBookings from './StrandedBookings.svelte';
+  import {
+    activeRuleCount,
+    draftFromSpace,
+    draftProblems,
+    NUMBER_BOUNDS,
+    settingsFromDraft,
+    timeZoneChoices,
+    type NumberField,
+    type SettingsDraft,
+  } from '$lib/bookings/spaceSettings.svelte';
+  import type { MembershipTier } from '$lib/associations/api';
+  import type { FormationOption } from '$lib/pricing/criteriaOptions';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+  import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
+
+  /**
+   * THE ORGANISER'S EDITOR OF ONE SPACE (WP-B4), in D35's five sections: General; Resources and
+   * availability; Who and how; Booking rules (collapsed, a badge counting what is set); Data
+   * (collapsed). The space's settings save together through the bar at the bottom; each resource
+   * and its availability save on their own, because each is its own call and the server may refuse
+   * one (D29) while the others stand. Loading and navigation are the page's
+   * (`routes/bookings/spaces/[spaceId]/edit`); this component only edits what it is handed.
+   */
+  interface Props {
+    /** The space as the server answered it; the editor keeps its own copy from then on. */
+    initial: ManagedSpace;
+    /** The owning entity's cotisation tiers, for the audience and the questions' conditions. */
+    tiers: MembershipTier[];
+    formations: FormationOption[];
+    /** The settings were saved: the page renames its header. */
+    onSaved: (space: ManagedSpace) => void;
+    /** The space was deleted: the page leaves. */
+    onDeleted: () => void;
+  }
+
+  let { initial, tiers, formations, onSaved, onDeleted }: Props = $props();
+
+  let space = $state<ManagedSpace>(untrack(() => structuredClone($state.snapshot(initial))));
+  let draft = $state<SettingsDraft>(untrack(() => draftFromSpace(initial)));
+  let saving = $state(false);
+  let saveError = $state('');
+  let addingResource = $state(false);
+  let resourceError = $state('');
+  /** The bookings the last refused save named (D29), and a key so a new refusal is a new list. */
+  let stranded = $state<{ ids: string[]; key: number }>({ ids: [], key: 0 });
+
+  // A draft that does not parse yet is still a change: compare the raw draft, not what it sends.
+  const snapshot = (d: SettingsDraft) => JSON.stringify(d);
+  /** The settings as last loaded or saved, to tell a saved screen from one with changes. */
+  let savedSettings = $state(untrack(() => snapshot(draft)));
+  const dirty = $derived(snapshot(draft) !== savedSettings);
+  /** The resources (fields or availability) with changes not saved, by id. */
+  let dirtyResources = $state<Record<string, boolean>>({});
+  const anythingUnsaved = $derived(dirty || Object.values(dirtyResources).some(Boolean));
+  const leaveGuard = guardUnsavedChanges(
+    () => anythingUnsaved,
+    () => m.bookings_unsaved_leave()
+  );
+  const problems = $derived(draftProblems(draft));
+  const rulesActive = $derived(activeRuleCount(draft));
+  const zones = $derived(timeZoneChoices(draft.timeZone));
+  /** The step the availability editor offers times on: the SAVED one, which the server reads. */
+  const savedStep = $derived(space.slotMode === 'step' ? space.stepMinutes : null);
+
+  function problemOf(field: NumberField | 'name'): string | undefined {
+    const p = problems[field];
+    if (!p) return undefined;
+    if (p === 'required' || field === 'name') return m.bookings_problem_required();
+    return m.bookings_problem_range(NUMBER_BOUNDS[field as NumberField]);
+  }
+
+  async function saveSettings() {
+    if (saving) return;
+    const settings = settingsFromDraft(draft);
+    if (!settings) {
+      saveError = m.bookings_problems_summary();
+      return;
+    }
+    saving = true;
+    saveError = '';
+    stranded = { ids: [], key: stranded.key };
+    try {
+      await updateSpace(space.id, settings);
+      space = { ...space, ...settings };
+      savedSettings = snapshot(draft);
+      Log.i('BOOKINGS', `settings saved space=${space.id.slice(0, 8)}`);
+      onSaved(space);
+    } catch (e) {
+      saveError = describeBookingRefusal(e, m.bookings_save_settings());
+      stranded = { ids: strandedIdsOf(e), key: stranded.key + 1 };
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function newResource() {
+    if (addingResource) return;
+    addingResource = true;
+    resourceError = '';
+    const name = m.bookings_resource_default_name();
+    const position = space.resources.length;
+    try {
+      const { id } = await addResource(space.id, { name, position });
+      space.resources.push({
+        id,
+        name,
+        description: null,
+        privateInfo: null,
+        linkedUserId: null,
+        position,
+        lines: [],
+        exceptions: [],
+      });
+    } catch (e) {
+      resourceError = describeBookingRefusal(e, m.bookings_resource_add_button());
+    } finally {
+      addingResource = false;
+    }
+  }
+
+  function resourceChanged(next: ManagedResource) {
+    space.resources = space.resources.map((r) => (r.id === next.id ? next : r));
+  }
+
+  function resourceDeleted(id: string) {
+    space.resources = space.resources.filter((r) => r.id !== id);
+    delete dirtyResources[id];
+  }
+
+  let exporting = $state(false);
+  let exportError = $state('');
+
+  /** The bookings as an .xlsx (D24), its columns in this client's words, named after the space. */
+  async function exportXlsx() {
+    if (exporting) return;
+    exporting = true;
+    exportError = '';
+    try {
+      const blob = await exportBookings(space.id, bookingExportLabels());
+      await downloadDecryptedFile(blob, `${space.name.replace(/[\\/:*?"<>|]+/g, '_')}.xlsx`);
+      Log.i('BOOKINGS', `export downloaded space=${space.id.slice(0, 8)}`);
+    } catch (e) {
+      Log.i('BOOKINGS', `export refused: ${String(e)}`);
+      exportError = describeBookingRefusal(e, m.bookings_export_button());
+    } finally {
+      exporting = false;
+    }
+  }
+
+  async function removeSpace() {
+    const confirmed = await showConfirm(m.bookings_delete_space_confirm({ name: space.name }), {
+      danger: true,
+      confirmLabel: m.common_delete_button(),
+    });
+    if (!confirmed) return;
+    try {
+      await deleteSpace(space.id);
+      Log.i('BOOKINGS', `space deleted from the editor id=${space.id.slice(0, 8)}`);
+      // Nothing is left to save: the leave is the editor's own.
+      leaveGuard.release();
+      onDeleted();
+    } catch (e) {
+      saveError = describeBookingRefusal(e, m.common_delete_button());
+    }
+  }
+</script>
+
+<FormSection title={m.bookings_section_general()} icon={Info}>
+  <Input
+    id="space-name"
+    label={m.bookings_field_name()}
+    bind:value={draft.name}
+    maxlength={120}
+    error={problemOf('name')}
+  />
+  <Textarea
+    id="space-description"
+    label={m.bookings_field_description()}
+    bind:value={draft.description}
+    rows={3}
+    maxlength={4000}
+  />
+  <SpacePosterField
+    spaceId={space.id}
+    spaceName={space.name}
+    poster={space.poster}
+    onChanged={(poster) => {
+      space.poster = poster;
+      onSaved(space);
+    }}
+  />
+  <div>
+    <Select
+      id="space-zone"
+      label={m.bookings_field_time_zone()}
+      hint={m.bookings_field_time_zone_hint()}
+      value={draft.timeZone}
+      options={zones.map((z) => ({ value: z, label: z.replaceAll('_', ' ') }))}
+      onValueChange={(v) => (draft.timeZone = v)}
+    />
+  </div>
+  <div>
+    <Textarea
+      id="space-private"
+      label={m.bookings_field_private_info()}
+      bind:value={draft.privateInfo}
+      rows={2}
+      maxlength={4000}
+    />
+    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_private_info_hint()}</p>
+  </div>
+</FormSection>
+
+<FormSection
+  title={m.bookings_section_resources()}
+  icon={CalendarRange}
+  badge={String(space.resources.length)}
+>
+  <div>
+    <span class={CONTROL_LABEL_CLASS}>{m.bookings_field_mode()}</span>
+    <SegmentedControl
+      label={m.bookings_field_mode()}
+      items={[
+        { key: 'step', label: m.bookings_mode_step() },
+        { key: 'slots', label: m.bookings_mode_slots() },
+      ]}
+      value={draft.slotMode}
+      onSelect={(k) => (draft.slotMode = k)}
+    />
+    <p class={CONTROL_HINT_CLASS}>
+      {draft.slotMode === 'step' ? m.bookings_mode_step_hint() : m.bookings_mode_slots_hint()}
+    </p>
+  </div>
+  {#if draft.slotMode === 'step'}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <Input
+        id="space-step"
+        label={m.bookings_field_step()}
+        inputmode="numeric"
+        bind:value={draft.stepMinutes}
+        error={problemOf('stepMinutes')}
+      />
+      <Input
+        id="space-max-steps"
+        label={m.bookings_field_max_steps()}
+        inputmode="numeric"
+        bind:value={draft.maxSteps}
+        error={problemOf('maxSteps')}
+      />
+    </div>
+  {/if}
+
+  {#if space.resources.length === 0}
+    <p class="text-text-muted text-sm">{m.bookings_resource_none()}</p>
+  {/if}
+  <div class="space-y-4">
+    {#each space.resources as resource (resource.id)}
+      <ResourceEditor
+        {resource}
+        spaceId={space.id}
+        timeZone={space.timeZone}
+        stepMinutes={savedStep}
+        onChanged={resourceChanged}
+        onDeleted={resourceDeleted}
+        onDirty={(d) => (dirtyResources[resource.id] = d)}
+      />
+    {/each}
+  </div>
+  {#if resourceError}
+    <p
+      class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-3 py-2.5 text-sm"
+      role="alert"
+    >
+      {resourceError}
+    </p>
+  {/if}
+  <button
+    type="button"
+    onclick={newResource}
+    disabled={addingResource}
+    class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-40"
+  >
+    <Plus size={16} />
+    {m.bookings_resource_add_button()}
+  </button>
+</FormSection>
+
+<FormSection title={m.bookings_section_who()} icon={Users}>
+  <!-- The forms' audience switch (FormAdvancedSettings): off is everybody (null), on starts an
+         empty set of criteria for the editor to fill. -->
+  <div class="space-y-3">
+    <Toggle
+      label={m.bookings_field_audience()}
+      hint={m.bookings_field_audience_hint()}
+      bind:checked={
+        () => draft.audience != null,
+        (on) => {
+          draft.audience = on ? {} : null;
+        }
+      }
+    />
+    {#if draft.audience != null}
+      <AudienceConditionEditor bind:condition={draft.audience} {tiers} {formations} />
+    {/if}
+  </div>
+  <div>
+    <span class={CONTROL_LABEL_CLASS}>{m.bookings_field_names()}</span>
+    <SegmentedControl
+      label={m.bookings_field_names()}
+      items={[
+        { key: 'occupied', label: m.bookings_names_occupied() },
+        { key: 'names', label: m.bookings_names_names() },
+      ]}
+      value={draft.nameVisibility}
+      onSelect={(k) => (draft.nameVisibility = k)}
+    />
+  </div>
+  <div>
+    <span class={CONTROL_LABEL_CLASS}>{m.bookings_field_discoverability()}</span>
+    <SegmentedControl
+      label={m.bookings_field_discoverability()}
+      items={[
+        { key: 'listed', label: m.bookings_discoverability_listed() },
+        { key: 'link', label: m.bookings_discoverability_link() },
+      ]}
+      value={draft.discoverability}
+      onSelect={(k) => (draft.discoverability = k)}
+    />
+  </div>
+</FormSection>
+
+<FormQuestionsSection
+  bind:items={draft.items}
+  requiresPayment={false}
+  {tiers}
+  {formations}
+  fileHint={m.bookings_builder_file_hint()}
+/>
+
+<FormSection
+  title={m.bookings_section_rules()}
+  icon={ListChecks}
+  collapsible
+  startOpen={false}
+  badge={rulesActive ? m.bookings_rules_badge({ count: rulesActive }) : undefined}
+>
+  <div>
+    <span class={CONTROL_LABEL_CLASS}>{m.bookings_field_opens_at()}</span>
+    <DateTimeField
+      density="default"
+      id="space-opens-at"
+      label={m.bookings_field_opens_at()}
+      value={draft.opensAt}
+      clearable
+      onValueChange={(v) => (draft.opensAt = v)}
+    />
+    <p class={CONTROL_HINT_CLASS}>
+      {m.bookings_field_opens_at_zone({ zone: draft.timeZone.replaceAll('_', ' ') })}
+    </p>
+  </div>
+  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <Input
+      id="space-notice"
+      label={m.bookings_field_min_notice()}
+      inputmode="numeric"
+      bind:value={draft.minNoticeMinutes}
+      error={problemOf('minNoticeMinutes')}
+    />
+    <div>
+      <Input
+        id="space-horizon"
+        label={m.bookings_field_horizon()}
+        inputmode="numeric"
+        bind:value={draft.horizonDays}
+        error={problemOf('horizonDays')}
+      />
+      <p class={CONTROL_HINT_CLASS}>{m.bookings_field_horizon_hint()}</p>
+    </div>
+    <Input
+      id="space-max-active"
+      label={m.bookings_field_max_active()}
+      inputmode="numeric"
+      bind:value={draft.maxActiveBookings}
+      error={problemOf('maxActiveBookings')}
+    />
+    <Input
+      id="space-max-people"
+      label={m.bookings_field_max_people()}
+      inputmode="numeric"
+      bind:value={draft.maxPeople}
+      error={problemOf('maxPeople')}
+    />
+    <Input
+      id="space-quota"
+      label={m.bookings_field_quota()}
+      inputmode="numeric"
+      bind:value={draft.maxMinutesPerPeriod}
+      error={problemOf('maxMinutesPerPeriod')}
+    />
+    <div>
+      <span class={CONTROL_LABEL_CLASS}>{m.bookings_field_quota_period()}</span>
+      <SegmentedControl
+        label={m.bookings_field_quota_period()}
+        items={[
+          { key: 'day', label: m.bookings_period_day() },
+          { key: 'week', label: m.bookings_period_week() },
+        ]}
+        value={draft.quotaPeriod}
+        onSelect={(k) => (draft.quotaPeriod = k)}
+      />
+    </div>
+  </div>
+  <p class={CONTROL_HINT_CLASS}>{m.bookings_field_empty_hint()}</p>
+  <div>
+    <Input
+      id="space-withdraw"
+      label={m.bookings_field_withdraw()}
+      inputmode="numeric"
+      bind:value={draft.participantWithdrawMinMinutes}
+      error={problemOf('participantWithdrawMinMinutes')}
+    />
+    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_withdraw_hint()}</p>
+  </div>
+</FormSection>
+
+<FormSection title={m.bookings_section_data()} icon={Database} collapsible startOpen={false}>
+  <Input
+    id="space-retention"
+    label={m.bookings_field_retention()}
+    inputmode="numeric"
+    bind:value={draft.retentionDays}
+    error={problemOf('retentionDays')}
+  />
+  <p class={CONTROL_HINT_CLASS}>{m.bookings_field_retention_hint()}</p>
+  <div class="border-cn-border/60 space-y-2 border-t pt-4">
+    <p class="text-text-muted text-sm">{m.bookings_export_hint()}</p>
+    <button
+      type="button"
+      onclick={exportXlsx}
+      disabled={exporting}
+      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-40"
+    >
+      <Download size={16} />
+      {m.bookings_export_button()}
+    </button>
+    {#if exportError}
+      <p class="text-red-err text-xs font-medium" role="alert">{exportError}</p>
+    {/if}
+  </div>
+  <div class="border-cn-border/60 space-y-2 border-t pt-4">
+    <p class="text-text-muted text-sm">{m.bookings_delete_space_hint()}</p>
+    <button
+      type="button"
+      onclick={removeSpace}
+      class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors"
+    >
+      <Trash2 size={16} />
+      {m.bookings_delete_space_button()}
+    </button>
+  </div>
+</FormSection>
+
+{#if saveError}
+  <p
+    class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm"
+    role="alert"
+  >
+    {saveError}
+  </p>
+{/if}
+{#if stranded.ids.length}
+  {#key stranded.key}
+    <StrandedBookings
+      spaceId={space.id}
+      ids={stranded.ids}
+      resources={space.resources}
+      timeZone={space.timeZone}
+      onRetry={saveSettings}
+    />
+  {/key}
+{/if}
+
+<FormSaveBar
+  titleMissing={!draft.name.trim()}
+  isSubmitting={saving}
+  summary={Object.keys(problems).length
+    ? m.bookings_problems_summary()
+    : dirty
+      ? m.bookings_tab_resources_count({ count: space.resources.length })
+      : m.bookings_saved()}
+  saveLabel={m.bookings_save_settings()}
+  onSave={saveSettings}
+/>

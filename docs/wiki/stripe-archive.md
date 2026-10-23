@@ -67,8 +67,9 @@ in production through a rollback window. Nothing here drops data for a name.
 
 ## Notes for whoever reads this next
 
-- **The 50-cent floor** (`MIN_PAYMENT_CENTS = 50` in `forms.service.ts`) is Stripe's minimum, inherited.
-  Lydia's minimum is not measured; it is kept until it is.
+- **The 50-cent floor** that `forms.service.ts` inherited from Stripe is gone (2026-10-21): a form
+  total is now checked against Lydia's confirmed range, mirrored from core-service - see
+  [payments](frontend/modules/payments.md).
 - **Associations delegation.** `payment-delegation.util.ts` now reads only the Lydia columns and
   rejects a provider id it does not know, `stripe` included. An association whose delegation was
   onboarded on Stripe only is therefore not ready until it onboards on Lydia.

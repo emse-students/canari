@@ -7,8 +7,9 @@
     "module, `src/utils/presence-audience.ts`. The gateway refuses more than `maxUserIds` distinct",
     "ids before asking, and each service refuses the same bound again: three constants, one number.",
     "This file is that number, and the cases the two services' validator must answer the same way.",
-    "Read by `presence.rs` (the gateway's constant) and by `presence-audience.spec.ts` in both",
-    "services. `expected: null` is a refusal (a 400), never an empty audience."
+    "Read by `presence.rs` (the gateway's constant) and by chat-delivery's `presence-audience.spec.ts`,",
+    "which proves both services' copy since the module is pinned byte-identical. `expected: null` is a",
+    "refusal (a 400), never an empty audience."
   ],
   "maxUserIds": 1000,
   "cases": [

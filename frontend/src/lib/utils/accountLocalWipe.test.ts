@@ -26,7 +26,7 @@ function settledAs(liveId: string | null): AccountLiveness {
 let tauri = false;
 vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => tauri }));
 
-const invokeMock = vi.fn(async (_cmd: string, _args?: unknown) => {});
+const invokeMock = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined);
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
 }));
@@ -125,9 +125,11 @@ describe('wipeDeletedAccountLocalData', () => {
     expect(invokeMock).not.toHaveBeenCalled();
     tauri = true;
     await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
-    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenCalledTimes(3);
     // The push side's plaintext files too - gated natively on the owner `push_context.json` names.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_push_files', { userId: 'user-a' });
+    // The data is gone, so the at-rest marker goes: the explicit reset that frees the keystore entry.
+    expect(invokeMock).toHaveBeenCalledWith('cle_au_repos_oublier', { userId: 'user-a' });
     expect(invokeMock).toHaveBeenCalledWith('delete_user_database', {
       userId: 'user-a',
       expectDatabase: false,
@@ -147,7 +149,9 @@ describe('wipeDeletedAccountLocalData', () => {
     invokeMock.mockRejectedValueOnce(new Error('disk'));
     await saveDeviceKey('user-a', KEY_A);
     const failures = await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
-    expect(failures).toEqual(['the native message database']);
+    // A database that survived keeps its at-rest marker: the key sealing it stays guarded.
+    expect(failures).toEqual(['the native message database', 'the at-rest key marker']);
+    expect(invokeMock).not.toHaveBeenCalledWith('cle_au_repos_oublier', expect.anything());
     expect(await loadDeviceKey('user-a')).toBeNull();
   });
 
@@ -199,6 +203,7 @@ describe('wipeDeletedAccountLocalData - what else goes with the account', () => 
     for (const id of ['user-a', 'user-ab']) {
       localStorage.setItem(ACCOUNT_KEY.sendRatchetLedger(id), '{}');
       localStorage.setItem(ACCOUNT_KEY.historyHeldNothing(id), '{}');
+      localStorage.setItem(ACCOUNT_KEY.admissionLedger(id), '{}');
       localStorage.setItem(ACCOUNT_KEY.seenCipher(id, 'g1'), '[]');
       localStorage.setItem(ACCOUNT_KEY.historyAudit(id, 'd1'), '1');
     }
@@ -206,6 +211,7 @@ describe('wipeDeletedAccountLocalData - what else goes with the account', () => 
     expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([]);
     expect(localStorage.getItem(ACCOUNT_KEY.sendRatchetLedger('user-a'))).toBeNull();
     expect(localStorage.getItem(ACCOUNT_KEY.historyHeldNothing('user-a'))).toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.admissionLedger('user-a'))).toBeNull();
     expect(localStorage.getItem(ACCOUNT_KEY.seenCipher('user-a', 'g1'))).toBeNull();
     expect(localStorage.getItem(ACCOUNT_KEY.historyAudit('user-a', 'd1'))).toBeNull();
     // An id that merely STARTS with the deleted one is another account.
@@ -223,6 +229,22 @@ describe('wipeDeletedAccountLocalData - what else goes with the account', () => 
     expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([]);
     expect([...keystore]).toEqual([keystoreAlias('user-b', 'dev-b')]);
     expect(localStorage.getItem(ACCOUNT_KEY.deviceId('user-a'))).toBeNull();
+  });
+
+  it('removes the entry the at-rest marker recorded, not only the one today device id names', async () => {
+    // A device identity rotated after the re-key: the hardware-held key stays where the marker says.
+    tauri = true;
+    const recorded = keystoreAlias('user-a', 'dev-old');
+    invokeMock.mockImplementation(async (cmd: string) =>
+      cmd === 'cle_au_repos_oublier' ? recorded : undefined
+    );
+    localStorage.setItem(ACCOUNT_KEY.deviceId('user-a'), 'dev-a');
+    keystore.add(recorded);
+    keystore.add(keystoreAlias('user-a', 'dev-a'));
+    keystore.add(keystoreAlias('user-b', 'dev-b'));
+    expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([]);
+    expect([...keystore]).toEqual([keystoreAlias('user-b', 'dev-b')]);
+    invokeMock.mockImplementation(async () => undefined);
   });
 
   it("removes that account's native last-active mirror and keeps another account's", async () => {
@@ -315,11 +337,13 @@ describe('wipeDeletedAccountLocalData - what else goes with the account', () => 
     error.mockRestore();
   });
 
-  it('says so when no device id names a keystore entry, instead of passing in silence', async () => {
+  it('says so when neither a device id nor a marker names a keystore entry, instead of passing in silence', async () => {
     tauri = true;
     const warn = vi.spyOn(console, 'warn');
     expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([]);
-    expect(warn.mock.calls.some((c) => String(c[0]).includes('no device id recorded'))).toBe(true);
+    expect(
+      warn.mock.calls.some((c) => String(c[0]).includes('no device id and no at-rest marker'))
+    ).toBe(true);
     warn.mockRestore();
   });
 

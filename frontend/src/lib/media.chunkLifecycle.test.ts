@@ -21,7 +21,14 @@ const instant = async (ms: number) => {
   pauses.push(ms);
 };
 
-type Plan = { status: number; contentType?: string; failNetwork?: boolean; delayMs?: number };
+/** `hold`: the answer is never delivered (the test ends the attempt another way); `delayMs`: a SIMULATED latency, only under fake timers. */
+type Plan = {
+  status: number;
+  contentType?: string;
+  failNetwork?: boolean;
+  delayMs?: number;
+  hold?: boolean;
+};
 let plan: (url: string, index: number) => Plan;
 const calls: string[] = [];
 const deletes: string[] = [];
@@ -61,6 +68,7 @@ class FakeXhr {
       if (p.status !== 200) this.responseText = '{"message":"no"}';
       this.onload?.();
     };
+    if (p.hold) return;
     setTimeout(answer, p.delayMs ?? 0);
   }
 }
@@ -120,7 +128,7 @@ describe('a chunked upload that ends without an object', () => {
     const control = new AbortController();
     plan = (_u, i) => {
       if (i === 0) queueMicrotask(() => control.abort('cancel'));
-      return { status: 200, delayMs: 5 };
+      return { status: 200, hold: i >= 0 }; // the chunk is never answered; init is
     };
     const err = await new MediaService(undefined, instant)
       .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {
@@ -132,17 +140,32 @@ describe('a chunked upload that ends without an object', () => {
   });
 
   it('a slow server-side complete is not abandoned as silence, and nothing is released', async () => {
-    plan = (url) => (url.endsWith('/complete') ? { status: 200, delayMs: 300 } : { status: 200 });
-    const ref = await new MediaService(undefined, instant).encryptAndUpload(
-      fileOf(THREE_CHUNKS),
-      't',
-      undefined,
-      'ephemeral',
-      { idleMs: 50, answerMs: 5_000 }
-    );
-    expect(ref.mediaId).toBe('m1');
-    expect(deletes).toEqual([]);
-    expect(calls.at(-1)).toBe('/upload/chunk/u1/complete');
+    // SIMULATED latency: the answer of complete lands 300 ms (fake clock) after a 50 ms idle
+    // watchdog, which would have fired had silence been read from the missing answer.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      plan = (url) => (url.endsWith('/complete') ? { status: 200, delayMs: 300 } : { status: 200 });
+      const upload = new MediaService(undefined, instant).encryptAndUpload(
+        fileOf(THREE_CHUNKS),
+        't',
+        undefined,
+        'ephemeral',
+        { idleMs: 50, answerMs: 5_000 }
+      );
+      let settled = false;
+      void upload.then(
+        () => (settled = true),
+        () => (settled = true)
+      );
+      // Drive the simulated clock until the upload settles; the bound is a defect alarm, not a wait.
+      for (let step = 0; !settled && step < 10_000; step++) await vi.advanceTimersByTimeAsync(10);
+      const ref = await upload;
+      expect(ref.mediaId).toBe('m1');
+      expect(deletes).toEqual([]);
+      expect(calls.at(-1)).toBe('/upload/chunk/u1/complete');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a lost answer of complete re-asks the SAME uploadId, never a new session', async () => {
@@ -237,7 +260,7 @@ describe('a chunked upload that ends without an object', () => {
     const control = new AbortController();
     plan = (url) => {
       if (url.endsWith('/complete')) queueMicrotask(() => control.abort('cancel'));
-      return { status: 200, delayMs: 20 };
+      return { status: 200, hold: url.endsWith('/complete') }; // complete is never answered
     };
     await new MediaService(undefined, instant)
       .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {

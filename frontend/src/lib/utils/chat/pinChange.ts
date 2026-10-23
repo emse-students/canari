@@ -19,6 +19,7 @@
  * the device.
  */
 import { openSealedBytes, sealBytes } from '$lib/encryption';
+import { resealDeviceRecoveryCode } from '$lib/crypto/deviceRecoveryCode';
 import { getStorage, type IStorage, type SealedPayloadSwap, type SealedStore } from '$lib/db';
 import {
   KeyChangeSupersededError,
@@ -34,6 +35,7 @@ import {
   saveDeviceKey,
 } from '$lib/utils/deviceKeyVault';
 import { BiometricService } from '$lib/services/biometric';
+import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import type { IMlsService, StateLoadFailure } from '$lib/mls-client';
@@ -300,6 +302,25 @@ export async function dropStoredFeedPages(
 }
 
 /**
+ * Moves the device's backup recovery code to the new device key, beside the sealed stores
+ * (`deviceRecoveryCode.ts`). NEVER FATAL to the key change: a code that could not be re-sealed is
+ * logged at ERROR, and the next export finds it unreadable, replaces it and TELLS the user - whereas
+ * failing the change here would leave the stores half moved for a code.
+ */
+export async function moveDeviceRecoveryCode(
+  userId: string,
+  oldDeviceKeyB64: string,
+  newDeviceKeyB64: string,
+  log: (msg: string) => void
+): Promise<void> {
+  try {
+    await resealDeviceRecoveryCode(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
+  } catch (e) {
+    log(`[DEVICEKEY_CHANGE] ERROR: the backup recovery code was not re-sealed: ${String(e)}`);
+  }
+}
+
+/**
  * Takes the OLD device key out of this device's vault - the first thing {@link performPinChange}
  * writes, BEFORE the keystore ({@link IMlsService.pointUnattendedUnlockAt}).
  *
@@ -347,6 +368,30 @@ export async function applyNewDeviceKeyLocally(
     // unattended key: the next launch asks for the PIN, and this says why.
     log(`[DEVICEKEY] Saving the new device key to the local vault failed: ${String(e)}`);
   }
+}
+
+/**
+ * Whether an IN-SESSION PIN change may start in this tab: only in the account's MLS leader tab.
+ * Asked BEFORE the server verifier is rotated, so a refusal changes nothing anywhere.
+ *
+ * WHY THE LEADER ONLY, AND NOT A RE-SEAL OF THE STORED STATE. The change re-seals the MLS state from
+ * the LIVE client ({@link IMlsService.changeDeviceKey}). A follower's client was loaded from a
+ * snapshot older than the leader's last checkpoint, so the version guard refuses that write and the
+ * change always ended into a recovery prompt. Re-sealing the stored state instead would not save it:
+ * the change makes the leader go stale and reload, the reload frees the leader lock, the follower is
+ * PROMOTED, and the promotion handler reloads it (`useChatSession.svelte.ts`) - in the middle of its
+ * own change. Holding that promotion is a new cross-tab mechanism; refusing is a fact known here.
+ *
+ * `undecided` is refused too: the login decides leadership before any session exists, so a change
+ * cannot honestly be asked before it is known, and a write is never made on a guess.
+ */
+export function thisTabMayChangeDeviceKey(log: (msg: string) => void): boolean {
+  const leadership = getTabLeadership();
+  if (leadership === 'leader') return true;
+  log(
+    `[DEVICEKEY_CHANGE] Refused in this tab (${leadership}): a PIN change runs in the leader tab only - nothing asked, nothing moved.`
+  );
+  return false;
 }
 
 export interface PinChangeOptions {
@@ -459,6 +504,7 @@ export async function performPinChange(
           });
           // The stored feed pages are a copy the server's next answer rewrites: dropped, not moved.
           await dropStoredFeedPages(store, log);
+          await moveDeviceRecoveryCode(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
           return report;
         });
         setDeviceKey(newDeviceKeyB64);
@@ -485,4 +531,46 @@ export async function performPinChange(
   log('[DEVICEKEY_CHANGE] MLS state re-sealed with the new device key.');
   reportProgress(onProgress, { percent: 100, stage: 'finalize' });
   log('[DEVICEKEY_CHANGE] Done.');
+}
+
+/**
+ * {@link performPinChange} for an install with NO MLS state to carry: the old key leaves the vault,
+ * then every sealed store moves, under the other tabs' hold and the storage gate - the same steps
+ * in the same order, minus the MLS state. Used when an interrupted move to the hardware-held key is
+ * finished at the unlock and nothing was ever stored (`finishMigrationAtUnlock`); the keystore
+ * already holds the new key there, so it is not asked.
+ *
+ * @throws {KeyChangeInterruptedError} with its stage, as {@link performPinChange} does.
+ */
+export async function moveSealedStoresOnly(
+  userId: string,
+  oldDeviceKeyB64: string,
+  newDeviceKeyB64: string,
+  log: (msg: string) => void
+): Promise<void> {
+  log('[DEVICEKEY_CHANGE] Moving the sealed stores alone (no MLS state stored)...');
+  let stage: KeyChangeInterruptedError['stage'] = 'vault';
+  try {
+    await retireOldDeviceKeyFromVault(userId, oldDeviceKeyB64, log);
+    const storage = await getStorage(userId);
+    await holdOtherRealmsForKeyChange(userId, async () => {
+      stage = 'stores';
+      await holdStorageForKeyChange(storage, oldDeviceKeyB64, newDeviceKeyB64, async (store) => {
+        const report = await resealDeviceKeyStores(store, oldDeviceKeyB64, newDeviceKeyB64, {
+          log,
+        });
+        await dropStoredFeedPages(store, log);
+        await moveDeviceRecoveryCode(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
+        return report;
+      });
+    });
+  } catch (e) {
+    if (e instanceof KeyChangeSupersededError) {
+      log('[DEVICEKEY_CHANGE] Another tab changed the device key first - the stores did not move.');
+      throw e;
+    }
+    log(`[DEVICEKEY_CHANGE] ERROR: the store move stopped at the ${stage} step: ${String(e)}`);
+    throw new KeyChangeInterruptedError(stage, true, e);
+  }
+  log('[DEVICEKEY_CHANGE] Sealed stores moved to the new device key.');
 }
