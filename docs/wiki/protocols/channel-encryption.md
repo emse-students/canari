@@ -552,9 +552,17 @@ joins again on its next recovery pass. A key group's Welcome TARGET is asked the
 departure could run in between. `apps/chat-delivery-service/src/utils/seat-eviction.ts` closes that
 window with a durable row and a lock:
 
-- **The row.** `dm_seat_evictions` (migration `036_seat_evictions.sql`), one per (group, person):
-  a `generation` every eviction bumps, and `owedDeparture`, the NAME of a key group's departure in
-  progress (the generation of the eviction that began it), or null.
+- **The generation is the group's.** `dm_groups."seatGeneration"` (migration `036_seat_evictions.sql`)
+  is moved by every eviction of ANYONE from the group, first thing under the lock
+  (`bumpSeatGeneration`). Nothing naming an account has to survive for an earlier claim to be
+  refused, so an account erasure deletes the account's rows below. **The cost, accepted:** a claim
+  in a group where someone else was evicted meanwhile is refused once (`evicted_since_claim`) and its
+  writer retries with a fresh claim - evictions are rare, and an overtaken claim already meant one
+  refusal and a retry.
+- **The row.** `dm_seat_evictions`, one per (group, person): a `generation` of that person's
+  evictions and `owedDeparture`, the NAME of a key group's departure in progress (the person's
+  generation of the eviction that began it), or null. It refuses a claim only through
+  `owedDeparture`; naming a departure is all it is still for.
 - **The lock.** A transaction-scoped Postgres advisory lock on `seat:<groupId>`, released by the
   commit or the rollback and never by a clock. Every writer that evicts or creates a seat holds it:
   `evictFromDistributionGroup` (`evictSeats`), `removeGroupMember` (the conversation removal, its
@@ -565,17 +573,20 @@ window with a durable row and a lock:
   roster re-read under it).
 - **One order.** Every writer takes the seat lock, then the `dm_groups` row, then
   `dm_group_members` and its interval, then `queued_message`, then `dm_device_group_memberships`, and
-  writes `dm_seat_evictions` last; a group's end (`GROUP_OWNED_TABLES`) deletes in the same order. It
-  is written once, in `utils/seat-eviction.ts`.
+  writes `dm_seat_evictions` last; an eviction's `dm_groups` write is its generation, so it comes
+  first. A group's end (`GROUP_OWNED_TABLES`) deletes in the same order: the tombstone writes the
+  group row first, and the 90-day reaper locks it `FOR UPDATE` before deleting what it owns. It is
+  written once, in `utils/seat-eviction.ts`.
 - **The epoch moves from the base the gate read, or not at all.** The gate reads the epoch outside
   the advance's transaction, and the advance may wait on the seat lock. The advance is
   `UPDATE ... WHERE "activeEpoch" = base`: of two commits at one base, the second matches nothing and
   is refused `epoch_mismatch`, whatever the Redis commit lock's 5 s did. A commit-log row already
   holding that base refuses the advance too, so the log and the epoch never disagree.
 - **The claim.** Before the check that decides a seat (the roster, or
-  `isEntitledToDistributionGroup` over HTTP, always outside the lock) `claimSeat` reads the row.
-  Under the lock `seatClaimHolds` re-reads it - a database read only - and the seat is written only if
-  the generation has not moved and no departure is owed. An eviction therefore ran before the claim
+  `isEntitledToDistributionGroup` over HTTP, always outside the lock) `claimSeat` reads the group's
+  generation and the person's `owedDeparture`. Under the lock `seatClaimHolds` re-reads both - a
+  database read only - and the seat is written only if the generation has not moved and no departure
+  is owed. An eviction therefore ran before the claim
   (the check sees it), between claim and write (nothing is written), or after the write (it deletes
   the seat). An activation without a claim is refused and logged at error. The commit gate reads the
   claim too: a key-group external commit whose author has a departure in progress is refused there
@@ -687,8 +698,10 @@ question is in flight is refused with `DEPARTURE_SUPERSEDED` and the member stay
 seat lock is run against PostgreSQL (migration 036 applied) in `seat-lock.integration.spec.ts`, CI job
 `test-delivery-integration`: a claim overtaken while it waits on the lock, a departure refusing claims
 until settled, a send's queue write waiting for an eviction and queueing nothing for that seat, an
-eviction waiting for a send and deleting what it queued, two sends not waiting for each other, and a
-route restore waiting for an eviction and writing nothing.
+eviction waiting for a send and deleting what it queued, two sends not waiting for each other, a
+route restore waiting for an eviction and writing nothing, a claim refused after a whole account
+erasure with no eviction row of the account left, and a claim overtaken by SOMEONE ELSE's eviction
+refused once and holding on its retry.
 
 **`POST /mls/commit` is rate-limited per user (2026-10-22):** `MLS_COMMIT_LIMIT_PER_MINUTE` (600)
 through `UserThrottlerGuard`, after `HeaderAuthGuard`. A refusal is the throttler's `429` before the

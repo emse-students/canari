@@ -6,7 +6,6 @@ import { NotificationPreference } from '../entities/notification-preference.enti
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
-import { SeatEviction } from '../entities/seat-eviction.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 
 /**
@@ -22,7 +21,9 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
   const SECRET = 'erasure-secret';
   const USER = 'user-erased';
 
-  function make(opts: { routed?: string[]; deviceGroups?: string[] } = {}) {
+  function make(
+    opts: { routed?: string[]; deviceGroups?: string[]; evictionGroups?: string[] } = {}
+  ) {
     process.env.INTERNAL_SECRET = SECRET;
     const repo = () => ({
       find: jest.fn().mockResolvedValue([]),
@@ -41,7 +42,14 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       }),
     };
     const manager = {
-      query: jest.fn().mockResolvedValue([[], 2]),
+      // The account's eviction rows when asked for them; every other statement is a raw DELETE.
+      query: jest.fn((sql: string) =>
+        Promise.resolve(
+          sql.includes('SELECT "groupId" FROM dm_seat_evictions')
+            ? (opts.evictionGroups ?? []).map((groupId) => ({ groupId }))
+            : [[], 2]
+        )
+      ),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
       transaction: jest.fn((cb: (m: unknown) => Promise<unknown>) => cb(txManager)),
     };
@@ -63,7 +71,10 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       (opts.deviceGroups ?? []).map((groupId) => ({ groupId }))
     );
     repos.group.findBy.mockImplementation(async () =>
-      (opts.deviceGroups ?? []).map((id) => ({ id, isGroup: true }))
+      [...(opts.deviceGroups ?? []), ...(opts.evictionGroups ?? [])].map((id) => ({
+        id,
+        isGroup: true,
+      }))
     );
     const redis = {
       smembers: jest.fn().mockResolvedValue(opts.routed ?? []),
@@ -105,7 +116,9 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     const { controller, manager, txDeletes } = make();
     await controller.deleteUserData(USER, SECRET);
 
-    const [sql, params] = manager.query.mock.calls[0] as [string, unknown[]];
+    const [sql, params] = manager.query.mock.calls.find(([q]) =>
+      String(q).includes('DELETE FROM queued_message')
+    ) as unknown as [string, unknown[]];
     expect(sql).toMatch(/DELETE FROM queued_message/);
     expect(sql).toMatch(/"senderId" = \$1/);
     // A pending commit is the recipient's protocol state: deleting it forks their group.
@@ -140,17 +153,28 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
 
     await controller.deleteUserData(USER, SECRET);
 
-    // The rows, the queue and the routes (by prefix) go in one seat-locked eviction, which also
-    // records it - so a route restored from a read taken before cannot outlive the erasure.
+    // The rows, the queue and the routes (by prefix) go in one seat-locked cut, which also
+    // moves the group's seat generation - so a route restored from a read taken before cannot outlive the erasure.
     expect(messagingService.eraseSeats).toHaveBeenCalledWith('g-distribution', USER);
     expect(redis.srem).not.toHaveBeenCalled();
   });
 
-  it("keeps the account's eviction records, so a seat claim taken before the erasure never passes after it", async () => {
+  it("deletes the account's eviction records: a claim it took before is refused by the group's generation", async () => {
     const { controller, manager } = make({ deviceGroups: ['g-1'] });
     await controller.deleteUserData(USER, SECRET);
 
-    expect(manager.delete).not.toHaveBeenCalledWith(SeatEviction, expect.anything());
+    expect(manager.query).toHaveBeenCalledWith(
+      expect.stringMatching(/DELETE FROM dm_seat_evictions WHERE "userId" = \$1/),
+      [USER]
+    );
+  });
+
+  it('cuts a group the account is named in only by an eviction row - a departure in progress', async () => {
+    const { controller, messagingService } = make({ evictionGroups: ['g-departing'] });
+    await controller.deleteUserData(USER, SECRET);
+
+    // The cut moves that group's seat generation, the one thing left to refuse an earlier claim.
+    expect(messagingService.eraseSeats).toHaveBeenCalledWith('g-departing', USER);
   });
 
   it('answers ok on an account with nothing left, which is what the final pass meets', async () => {

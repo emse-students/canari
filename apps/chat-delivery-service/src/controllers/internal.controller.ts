@@ -722,13 +722,20 @@ export class InternalController {
     const who = userId.slice(0, 8);
     this.logger.log(`[INTERNAL_DELETE] starting user=${who}`);
 
-    // Every group the account is still recorded in, through EITHER membership table: a Graine
-    // distribution group carries device memberships and no `dm_group_members` row.
-    const [memberships, deviceMemberships] = await Promise.all([
+    // Every group the account is still recorded in, through EITHER membership table - a Graine
+    // distribution group carries device memberships and no `dm_group_members` row - or through an
+    // eviction row: an account mid-departure holds no seat, and its row is about to go, so only
+    // the group's own generation, moved by the cut below, still refuses a claim it took before.
+    const [memberships, deviceMemberships, evictions] = await Promise.all([
       this.groupMemberRepo.find({ where: { userId } }),
       this.deviceGroupRepo.find({ where: { userId }, select: { groupId: true } }),
+      this.groupRepo.manager.query(`SELECT "groupId" FROM dm_seat_evictions WHERE "userId" = $1`, [
+        userId,
+      ]) as Promise<Array<{ groupId: string }>>,
     ]);
-    const groupIds = [...new Set([...memberships, ...deviceMemberships].map((m) => m.groupId))];
+    const groupIds = [
+      ...new Set([...memberships, ...deviceMemberships, ...evictions].map((m) => m.groupId)),
+    ];
 
     if (groupIds.length > 0) {
       const groups = await this.groupRepo.findBy({ id: In(groupIds) });
@@ -755,9 +762,9 @@ export class InternalController {
       }
 
       // ── Multi-member groups: every seat of this account, per group, UNDER ITS SEAT LOCK ──
-      // The queue, the device rows and the routes (by prefix) go together and the eviction is
-      // recorded ({@link MessagingService.eraseSeats}): a route restored from a read taken before
-      // this waits for it, then finds no row - so a retry never leaves a route behind.
+      // The group's seat generation moves, then the queue, the device rows and the routes (by
+      // prefix) go together ({@link MessagingService.eraseSeats}): a claim or a route read taken
+      // before this waits for it, then is refused or finds no row - so a retry never leaves one.
       let routes = 0;
       for (const g of multiGroups) {
         routes += (await this.messagingService.eraseSeats(g.id, userId)).toRemove;
@@ -790,8 +797,9 @@ export class InternalController {
       manager.delete(DeviceSignatureKey, { userId }),
       manager.delete(NotificationPreference, { userId }),
       manager.delete(UserDismissedGroup, { userId }),
-      // The eviction records are KEPT: deleting one resets its generation to the value a claim
-      // taken before this erasure holds (`ACCOUNT_ERASURE_COVERAGE`). They go with their group.
+      // The account's eviction records: what refuses a claim it took before this erasure is the
+      // group's generation the cut above moved, never these rows (`utils/seat-eviction.ts`).
+      manager.query(`DELETE FROM dm_seat_evictions WHERE "userId" = $1`, [userId]),
       // An invite link the account minted keeps working for the group; only the name goes.
       this.groupInviteRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
     ]);

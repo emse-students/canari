@@ -10,18 +10,29 @@ import type { EntityManager } from 'typeorm';
  * BEFORE any lock - the roster, or social-service's entitlement over HTTP, which is never awaited
  * under a lock. So it is made against a CLAIM:
  *
- * 1. {@link claimSeat} reads the person's eviction row, before the check;
+ * 1. {@link claimSeat} reads the GROUP's seat generation (`dm_groups."seatGeneration"`) and whether
+ *    the person has a departure in progress there, before the check;
  * 2. the check runs, unlocked;
- * 3. under {@link withSeatLock}, {@link seatClaimHolds} re-reads the row - a database read, nothing
- *    else - and the seat is written only if no eviction rewrote it and no departure is in progress.
+ * 3. under {@link withSeatLock}, {@link seatClaimHolds} re-reads both - a database read, nothing
+ *    else - and the seat is written only if no eviction in the group moved the generation and no
+ *    departure is in progress.
  *
- * Every eviction rewrites the row under the same lock ({@link recordSeatEviction}), so one of three
- * orders holds: it ran before the claim (the check sees the departure), between the claim and the
- * write (the generation moved, nothing is written), or after the write (it deletes the seat).
+ * Every eviction moves the generation under the same lock ({@link bumpSeatGeneration}), so one of
+ * three orders holds: it ran before the claim (the check sees the departure), between the claim and
+ * the write (the generation moved, nothing is written), or after the write (it deletes the seat).
  *
- * A KEY GROUP'S DEPARTURE IS NAMED. Its first eviction (before social-service's roster write) sets
- * `owedDeparture` to its own generation; the second (after the roster write) and the hourly drain
- * settle THAT departure and no other ({@link settleSeatDeparture}).
+ * THE GENERATION IS THE GROUP'S, NOT THE PERSON'S, SO NOTHING NAMING AN ACCOUNT HAS TO OUTLIVE IT.
+ * An account erasure cuts each group's seats and moves that group's generation, so a claim the
+ * erased account took before the erasure is refused after it, while the account's eviction rows are
+ * deleted with the rest of the account. The cost: a claim in a group where SOMEONE ELSE was evicted
+ * meanwhile is refused once too, and its writer retries - evictions are rare, and an overtaken claim
+ * already meant one refusal and a retry.
+ *
+ * A KEY GROUP'S DEPARTURE IS NAMED, and that is what the person's own row (`dm_seat_evictions`) is
+ * still for. Its first eviction (before social-service's roster write) sets `owedDeparture` to the
+ * row's own generation; the second (after the roster write) and the hourly drain settle THAT
+ * departure and no other ({@link settleSeatDeparture}). The row refuses claims only through
+ * `owedDeparture`; the generation that refuses an overtaken claim is the group's.
  *
  * WHAT A SEAT CARRIES IS WRITTEN UNDER THE SAME LOCK. A route in the gateway's set is written only
  * under it, against a re-read of the active rows (`MessagingService.restoreRoutes`); a send's queued
@@ -33,7 +44,9 @@ import type { EntityManager } from 'typeorm';
  * `dm_device_group_memberships`, then `dm_seat_evictions` last. A removal
  * (`MembersController.removeGroupMember`), an eviction (`MessagingService.evictSeats`,
  * `eraseSeats`), one device's departure (`endDeviceMemberships`) and a group's end
- * (`GROUP_OWNED_TABLES`, which takes no seat lock and no other table first) all delete in it.
+ * (`GROUP_OWNED_TABLES`, which takes no seat lock; its callers write or lock the `dm_groups` row
+ * first) all delete in it. Each eviction moves the group's generation FIRST, right after the lock:
+ * that is its `dm_groups` row, second in the order.
  *
  * The lock is a Postgres transaction-scoped advisory lock: released by the commit or the rollback
  * itself, so it has no expiry and termination never rests on a clock.
@@ -77,13 +90,13 @@ export async function withSeatLock<T>(
   });
 }
 
-/** What {@link claimSeat} read: the eviction row of one person in one group, as it stood. */
+/** What {@link claimSeat} read: the group's seat generation and the person's departure, as they stood. */
 export interface SeatClaim {
   groupId: string;
   userId: string;
-  /** 0 when the person was never evicted. */
+  /** The group's seat generation when the claim was taken; every eviction in the group moves it. */
   generation: number;
-  /** A key group's departure was in progress when the claim was taken. */
+  /** A key group's departure of this person was in progress when the claim was taken. */
   owed: boolean;
 }
 
@@ -113,21 +126,45 @@ export async function readSeatEviction(
 }
 
 /**
+ * Reads what a claim compares: `groupId`'s seat generation and whether `userId` has a departure in
+ * progress there. One statement, one row; a group with no row reads generation 0.
+ */
+async function readSeatClaimState(
+  m: EntityManager,
+  groupId: string,
+  userId: string
+): Promise<{ generation: number; owed: boolean }> {
+  const rows = (await m.query(
+    `SELECT (SELECT "seatGeneration" FROM dm_groups WHERE id = $1) AS "generation",
+            (SELECT "owedDeparture" FROM dm_seat_evictions
+              WHERE "groupId" = $1 AND "userId" = $2) AS "owedDeparture"`,
+    [groupId, userId]
+  )) as Array<{ generation: number | string | null; owedDeparture: number | string | null }>;
+  const row = rows[0];
+  return {
+    generation: Number(row?.generation ?? 0),
+    owed: row !== undefined && row.owedDeparture !== null && row.owedDeparture !== undefined,
+  };
+}
+
+/**
  * Takes a claim on a seat of `userId` in `groupId`: read BEFORE the check that decides the
- * activation, so any eviction after that check is visible to {@link seatClaimHolds}.
+ * activation, so any eviction in the group after that check is visible to {@link seatClaimHolds}.
  */
 export async function claimSeat(
   manager: EntityManager,
   groupId: string,
   userId: string
 ): Promise<SeatClaim> {
-  const now = await readSeatEviction(manager, groupId, userId);
-  return { groupId, userId, generation: now.generation, owed: now.owedDeparture !== null };
+  const now = await readSeatClaimState(manager, groupId, userId);
+  return { groupId, userId, generation: now.generation, owed: now.owed };
 }
 
 /**
  * Whether `claim` still stands - read under the seat lock (`m` must hold it). It stands when no
- * eviction rewrote the row since the claim and no departure is in progress.
+ * eviction in the group moved its generation since the claim and the person has no departure in
+ * progress. An eviction of SOMEONE ELSE in the group refuses it too: one refusal, and its writer
+ * retries with a new claim.
  *
  * @returns `null` when it stands, otherwise why not, for the caller's log line.
  */
@@ -135,15 +172,28 @@ export async function seatClaimHolds(
   m: EntityManager,
   claim: SeatClaim
 ): Promise<null | 'evicted_since_claim' | 'departure_in_progress'> {
-  const now = await readSeatEviction(m, claim.groupId, claim.userId);
+  const now = await readSeatClaimState(m, claim.groupId, claim.userId);
   if (now.generation !== claim.generation) return 'evicted_since_claim';
-  if (now.owedDeparture !== null) return 'departure_in_progress';
+  if (now.owed) return 'departure_in_progress';
   return null;
 }
 
 /**
- * Records an eviction of `userId` from `groupId` - the generation moves, so every older claim fails.
- * Call it under the seat lock (`m` must hold it), in the transaction that deletes the seats.
+ * Moves `groupId`'s seat generation, so no claim on a seat of that group taken before it passes
+ * {@link seatClaimHolds} after it. EVERY eviction calls it FIRST under the seat lock (`m` must hold
+ * it) - the `dm_groups` row, second in the one order - an account erasure's cut included. A group
+ * with no row moves nothing.
+ */
+export async function bumpSeatGeneration(m: EntityManager, groupId: string): Promise<void> {
+  await m.query(`UPDATE dm_groups SET "seatGeneration" = "seatGeneration" + 1 WHERE id = $1`, [
+    groupId,
+  ]);
+}
+
+/**
+ * Records an eviction of `userId` from `groupId` in the person's own row - what names a key group's
+ * departure. It does NOT refuse a claim: the eviction's {@link bumpSeatGeneration}, called first, does.
+ * Call it under the seat lock (`m` must hold it), last, in the transaction that deletes the seats.
  *
  * @param beginsDeparture true for a key group's eviction made BEFORE social-service's roster write:
  *   the departure it begins is named by the new generation and stays owed until settled
@@ -184,10 +234,15 @@ export async function settleSeatDeparture(
   userId: string,
   departure: number
 ): Promise<boolean> {
+  // Wrapped in a SELECT: a bare UPDATE ... RETURNING answers `[rows, count]` through the driver, so
+  // its length was 2 whether a row matched or not.
   const rows = (await m.query(
-    `UPDATE dm_seat_evictions SET "owedDeparture" = NULL, "updatedAt" = now()
-     WHERE "groupId" = $1 AND "userId" = $2 AND "owedDeparture" = $3
-     RETURNING "generation"`,
+    `WITH settled AS (
+       UPDATE dm_seat_evictions SET "owedDeparture" = NULL, "updatedAt" = now()
+       WHERE "groupId" = $1 AND "userId" = $2 AND "owedDeparture" = $3
+       RETURNING "generation"
+     )
+     SELECT "generation" FROM settled`,
     [groupId, userId, departure]
   )) as Array<{ generation: number | string }>;
   return rows.length > 0;

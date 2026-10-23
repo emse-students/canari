@@ -248,10 +248,13 @@ waits for `social` the same way (2026-10-22)**: social's part removes the person
 community, each removal evicts their key-group seats in chat-delivery, and that eviction writes a
 `dm_seat_evictions` row under their id. Run after social's part completed, chat-delivery's part - its
 final pass included - cuts every remaining seat per group under that group's seat lock (`eraseSeats`:
-the queue, the device rows and the routes, then a new generation of the record). **The
-`dm_seat_evictions` rows are KEPT** (`ACCOUNT_ERASURE_COVERAGE`): a generation counter per group and
-account, no content, and deleting one resets it to the value a seat claim taken before the erasure
-holds - that claim would then pass. They go with their group. The cost of the ordering is that an
+the GROUP's seat generation moves, then the queue, the device rows and the routes go), the groups
+named only by one of those rows included. **Then the `dm_seat_evictions` rows are DELETED**
+(`ACCOUNT_ERASURE_COVERAGE`), and that costs nothing: what refuses a seat claim the account took
+before the erasure is the group's generation, which names no one, never the account's row
+([channel-encryption](protocols/channel-encryption.md), "A seat is written against a CLAIM"). Proven
+on PostgreSQL with the whole erasure run between a claim and its check
+(`seat-lock.integration.spec.ts`, "a claim in flight across a whole account erasure"). The cost of the ordering is that an
 account's MLS data waits for social's final pass, the account itself being deactivated at once. The claim is
 `FOR UPDATE SKIP LOCKED` with a lease, so several workers never run one job twice at once; a
 completion write is guarded by `"completedAt" IS NULL`, so a pass that outlived its lease cannot

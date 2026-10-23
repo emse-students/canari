@@ -1065,6 +1065,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         let seats: Map<string, unknown>;
         /** `dm_seat_evictions`, by `groupId:userId`. */
         let evictions: Map<string, { generation: number; owedDeparture: number | null }>;
+        /** `dm_groups."seatGeneration"`, by group: what a claim compares. */
+        let seatGenerations: Map<string, number>;
         /** When armed, the seat write waits on it - an activation caught holding the lock. */
         let upsertGate: Deferred<void> | null;
         let upsertStarted: Deferred<void>;
@@ -1074,6 +1076,19 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         /** The rows of `dm_seat_evictions` as its SQL reads and writes them. */
         const evictionTable = (sql: string, params: unknown[] = []): unknown[] => {
           const key = `${String(params[0])}:${String(params[1])}`;
+          if (sql.includes('UPDATE dm_groups SET "seatGeneration"')) {
+            const groupId = String(params[0]);
+            seatGenerations.set(groupId, (seatGenerations.get(groupId) ?? 0) + 1);
+            return [];
+          }
+          if (sql.includes('SELECT "seatGeneration" FROM dm_groups')) {
+            return [
+              {
+                generation: seatGenerations.get(String(params[0])) ?? 0,
+                owedDeparture: evictions.get(key)?.owedDeparture ?? null,
+              },
+            ];
+          }
           if (sql.includes('INSERT INTO dm_seat_evictions')) {
             const generation = (evictions.get(key)?.generation ?? 0) + 1;
             const next = {
@@ -1109,6 +1124,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           events = [];
           seats = new Map();
           evictions = new Map();
+          seatGenerations = new Map();
           upsertGate = null;
           upsertStarted = deferred<void>();
           redis.sadd.mockImplementation(() => {

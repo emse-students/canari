@@ -2,20 +2,17 @@ import { Entity, PrimaryColumn, Column, UpdateDateColumn, Index } from 'typeorm'
 
 /**
  * The durable record that a person was cut off a group's seats - one row per `(groupId, userId)`,
- * rewritten by every eviction (migration 036).
+ * rewritten by every eviction of that person (migration 036).
  *
- * **WHAT IT IS FOR: A SEAT IS WRITTEN ONLY AGAINST A CLAIM NO EVICTION HAS OVERTAKEN.** An activation
- * that creates a seat (an accepted commit's committer, a commit's admit, a key group's publisher) is
- * decided by a check made BEFORE the seat lock - the roster, or social-service's entitlement over
- * HTTP - and an HTTP call is never made under a lock. So the writer reads this row first
- * ({@link claimSeat}), makes its check, and writes the seat under the group's seat lock only if the
- * row has not moved since ({@link seatClaimHolds}). An eviction rewrites the row under the same lock,
- * so either it ran before the claim (and the check sees the departure), after the claim (and the
- * generation differs), or after the write (and it deletes the seat). The mechanism:
+ * **WHAT IT IS FOR: NAMING A KEY GROUP'S DEPARTURE.** A seat is written only against a claim no
+ * eviction has overtaken, and what a claim compares is the GROUP's seat generation
+ * (`Group.seatGeneration`), moved by every eviction of anyone - not this row, so nothing naming an
+ * account has to outlive the account to refuse a claim it took before its erasure
+ * (`utils/seat-eviction.ts`). This row refuses a claim only through `owedDeparture`. The mechanism:
  * `docs/wiki/protocols/channel-encryption.md` ("WP-21, and the gate it had nowhere to live").
  *
- * `owedDeparture` is a key group's departure IN PROGRESS, named by the generation of the eviction
- * that began it: social-service evicts before its roster write and again after it, and between the
+ * `owedDeparture` is a key group's departure IN PROGRESS, named by this row's generation for the
+ * eviction that began it: social-service evicts before its roster write and again after it, and between the
  * two its entitlement still answers `true`. While it is set no seat is written for that person. The
  * second eviction names the departure it settles; one that never arrives is settled by the hourly
  * drain (`MessagingService.drainOwedSeatEvictions`), which asks social-service for THAT departure's
@@ -36,7 +33,7 @@ export class SeatEviction {
   @PrimaryColumn({ type: 'varchar', length: 255 })
   userId: string;
 
-  /** Incremented by every eviction of this person from this group; a claim compares it. */
+  /** Incremented by every eviction of this person from this group; it names their departures. */
   @Column({ type: 'integer', default: 0 })
   generation: number;
 

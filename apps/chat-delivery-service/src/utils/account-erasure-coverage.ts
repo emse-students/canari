@@ -53,12 +53,6 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
       'Welcome is the recipients protocol state and leaves the queue when it is delivered',
   },
   'RevokedDevice.userId': { action: 'delete' },
-  'SeatEviction.userId': {
-    action: 'kept',
-    reason:
-      'a generation counter per group and account, no content; the erasure moves it so a seat ' +
-      'claim taken before the erasure never passes after it, and deleting it would reset it to the ' +
-      'value such a claim holds. It goes with its group',
-  },
+  'SeatEviction.userId': { action: 'delete' },
   'UserDismissedGroup.userId': { action: 'delete' },
 };

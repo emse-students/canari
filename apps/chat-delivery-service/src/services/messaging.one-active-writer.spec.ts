@@ -391,10 +391,12 @@ describe('the ONE writer of an active membership', () => {
     });
 
     /**
-     * The seat lock's transaction, over an in-memory `dm_seat_evictions`: `query` answers the claim
-     * re-read and records the lock taken, `getRepository` hands back the seat table.
+     * The seat lock's transaction: `query` answers the claim re-read (the group's generation and the
+     * departure in progress) and records the lock taken, `getRepository` hands back the seat table.
      */
-    const lockedManager = (eviction: { generation: number; owed: boolean } | null) => {
+    const lockedManager = (
+      eviction: { generation: number; owedDeparture: number | null } | null
+    ) => {
       const locks: string[] = [];
       (groupRepo as unknown as { manager: unknown }).manager = {
         transaction: async (cb: (m: unknown) => Promise<unknown>) =>
@@ -461,12 +463,12 @@ describe('the ONE writer of an active membership', () => {
 
     it('writes no seat against a claim an eviction overtook, or a departure in progress', async () => {
       seats = [];
-      lockedManager({ generation: 1, owed: false });
+      lockedManager({ generation: 1, owedDeparture: null });
       await expect(
         service.activateDeviceMembership('u1', 'd1', 'g1', { authority: 'accepted_commit', claim })
       ).resolves.toEqual({ ok: false, reason: 'departed' });
 
-      lockedManager({ generation: 0, owed: true });
+      lockedManager({ generation: 0, owedDeparture: 1 });
       await expect(
         service.activateDeviceMembership('u1', 'd1', 'g1', {
           authority: 'distribution_publisher',

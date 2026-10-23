@@ -661,15 +661,18 @@ describe('InternalController - the community distribution group', () => {
       });
       // Under the group's seat lock, the one every claimed activation also takes, and RECORDED
       // there as a departure in progress (the call before social-service's roster write).
-      // THE ONE ORDER (`utils/seat-eviction.ts`): the lock, the queue, the device rows, then the
-      // record - the order a group's end and a removal delete in too, so none waits on another's.
+      // THE ONE ORDER (`utils/seat-eviction.ts`): the lock, the group's seat generation, the queue,
+      // the device rows, then the record - the order a group's end and a removal take too, so none
+      // waits on another's.
       expect(seatLockQueries[0]).toBe(
         'SELECT pg_advisory_xact_lock(hashtextextended($1, 0)) ["seat:g-1"]'
       );
-      expect(seatLockQueries[1]).toBe('queued-deleted');
-      expect(seatLockQueries[2]).toBe('devices-deleted');
-      expect(seatLockQueries[3]).toContain('INSERT INTO dm_seat_evictions');
-      expect(seatLockQueries[3]).toContain(`["g-1","${USER}",true]`);
+      expect(seatLockQueries[1]).toContain('UPDATE dm_groups SET "seatGeneration"');
+      expect(seatLockQueries[1]).toContain('["g-1"]');
+      expect(seatLockQueries[2]).toBe('queued-deleted');
+      expect(seatLockQueries[3]).toBe('devices-deleted');
+      expect(seatLockQueries[4]).toContain('INSERT INTO dm_seat_evictions');
+      expect(seatLockQueries[4]).toContain(`["g-1","${USER}",true]`);
       expect(deviceGroupRepo.delete).toHaveBeenCalledWith({ groupId: 'g-1', userId: USER });
       expect(queuedMessageRepo.delete).toHaveBeenCalledWith({
         groupId: 'g-1',
@@ -694,9 +697,10 @@ describe('InternalController - the community distribution group', () => {
         '3'
       );
 
-      expect(seatLockQueries[1]).toContain(`["g-1","${USER}",false]`);
-      expect(seatLockQueries[2]).toContain('"owedDeparture" = NULL');
-      expect(seatLockQueries[2]).toContain(`["g-1","${USER}",3]`);
+      expect(seatLockQueries[1]).toContain('UPDATE dm_groups SET "seatGeneration"');
+      expect(seatLockQueries[2]).toContain(`["g-1","${USER}",false]`);
+      expect(seatLockQueries[3]).toContain('"owedDeparture" = NULL');
+      expect(seatLockQueries[3]).toContain(`["g-1","${USER}",3]`);
       // And it cuts again: whatever a racing activation wrote before it is deleted.
       expect(deviceGroupRepo.delete).toHaveBeenCalledWith({ groupId: 'g-1', userId: USER });
       // It begins nothing, so it names nothing.

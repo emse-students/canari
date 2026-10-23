@@ -65,6 +65,7 @@ import {
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import {
+  bumpSeatGeneration,
   claimSeat,
   readSeatEviction,
   recordSeatEviction,
@@ -3067,11 +3068,12 @@ export class MessagingService {
   }
 
   /**
-   * Cuts `userId` off every seat of `groupId`, under the seat lock, and RECORDS it: the membership
-   * rows, the frames queued to them, the Redis routes, and a new generation of their eviction row so
-   * no claim taken before this is honoured after it ({@link recordSeatEviction}).
+   * Cuts `userId` off every seat of `groupId`, under the seat lock, and RECORDS it: the group's seat
+   * generation moves so no claim taken before this is honoured after it ({@link bumpSeatGeneration}),
+   * then the membership rows, the frames queued to them, the Redis routes, and the person's eviction
+   * row, which names a key group's departure ({@link recordSeatEviction}).
    *
-   * Idempotent: every step is a delete keyed on the pair, and the generation only moves.
+   * Idempotent: every step is a delete keyed on the pair, and the generations only move.
    *
    * @param departure `'begin'` for a key group's eviction made BEFORE social-service's roster write:
    *   it begins a departure, named by the generation returned. `{ settles }` for the eviction made
@@ -3089,7 +3091,8 @@ export class MessagingService {
     settled: boolean;
   }> {
     return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
-      // The deletes, then the record: the one delete order (`utils/seat-eviction.ts`).
+      // The group's generation, the deletes, then the record: the one order (`utils/seat-eviction.ts`).
+      await bumpSeatGeneration(m, groupId);
       const cut = await this.deleteSeats(m, groupId, userId);
       const generation = await recordSeatEviction(m, groupId, userId, departure === 'begin');
       const settled =
@@ -3100,24 +3103,25 @@ export class MessagingService {
 
   /**
    * An account erasure's cut of every seat `userId` holds in `groupId`, under the seat lock: the
-   * queue, the device rows and the Redis routes ({@link deleteSeats}), then a new generation of the
-   * eviction record, so a claim or a route read taken before the erasure never writes after it.
-   * The record is KEPT by the erasure for that reason (`ACCOUNT_ERASURE_COVERAGE`).
+   * GROUP's seat generation moves ({@link bumpSeatGeneration}), so a claim or a route read the
+   * account took before the erasure never writes after it, then the queue, the device rows and the
+   * Redis routes go ({@link deleteSeats}). Nothing naming the account is written: what refuses the
+   * old claim is the group's, and the account's eviction rows are deleted by the erasure.
    *
    * Idempotent: a retry deletes nothing more and moves the generation again, which only refuses more.
    */
   async eraseSeats(
     groupId: string,
     userId: string
-  ): Promise<{ memberships: number; queued: number; toRemove: number; generation: number }> {
+  ): Promise<{ memberships: number; queued: number; toRemove: number }> {
     return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      await bumpSeatGeneration(m, groupId);
       const cut = await this.deleteSeats(m, groupId, userId);
-      const generation = await recordSeatEviction(m, groupId, userId, false);
       this.logger.log(
         `[INTERNAL_DELETE] seats erased group=${groupId} user=${userId.slice(0, 8)} ` +
-          `memberships=${cut.memberships} queued=${cut.queued} routes=${cut.toRemove} generation=${generation}`
+          `memberships=${cut.memberships} queued=${cut.queued} routes=${cut.toRemove}`
       );
-      return { ...cut, generation };
+      return cut;
     });
   }
 
@@ -3200,8 +3204,10 @@ export class MessagingService {
           const now = await readSeatEviction(m, row.groupId, row.userId);
           if (now.owedDeparture !== departure) return 'moved';
           if (decided === 'departed') {
-            await recordSeatEviction(m, row.groupId, row.userId, false);
+            // The one order: the group's generation, the deletes, the person's record.
+            await bumpSeatGeneration(m, row.groupId);
             await this.deleteSeats(m, row.groupId, row.userId);
+            await recordSeatEviction(m, row.groupId, row.userId, false);
           }
           await settleSeatDeparture(m, row.groupId, row.userId, departure);
           return decided ?? 'not_a_key_group';

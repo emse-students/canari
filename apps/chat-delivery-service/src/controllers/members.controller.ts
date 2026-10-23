@@ -34,7 +34,7 @@ import {
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
-import { recordSeatEviction, withSeatLock } from '../utils/seat-eviction';
+import { bumpSeatGeneration, recordSeatEviction, withSeatLock } from '../utils/seat-eviction';
 import {
   ensureGroupMember,
   endDeviceMemberships,
@@ -746,6 +746,7 @@ export class MembersController {
       this.dataSource.manager,
       safeGroupId,
       async (manager) => {
+        await bumpSeatGeneration(manager, safeGroupId);
         const closed = await endGroupMembership(manager, safeGroupId, safeUserId);
         const gone = await endDeviceMemberships(
           manager,

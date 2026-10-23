@@ -37,8 +37,13 @@ import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { PinVerifier } from '../entities/pin-verifier.entity';
+import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
+import { NotificationPreference } from '../entities/notification-preference.entity';
+import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { InvitationsController } from '../controllers/invitations.controller';
 import { DevicesController } from '../controllers/devices.controller';
+import { InternalController } from '../controllers/internal.controller';
 import { claimSeat, seatClaimHolds, withSeatLock, type SeatClaim } from '../utils/seat-eviction';
 import { memberCommitFrame } from '../testing/mlsFrameFixture';
 
@@ -51,6 +56,8 @@ const migration = readFileSync(
 );
 
 const GROUP = '00000000-0000-4000-8000-0000000000e1';
+/** What an eviction does to the claims of a group, as the raw holder writes it. */
+const BUMP = `UPDATE dm_groups SET "seatGeneration" = "seatGeneration" + 1 WHERE id = $1`;
 const SENDER = { userId: 'sender', deviceId: 'dev-s' };
 const PEER = { userId: 'peer', deviceId: 'dev-p' };
 const ROUTES = `group:members:${GROUP}`;
@@ -209,6 +216,11 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         MlsGroupInfo,
         GroupInvite,
         GroupMembershipInterval,
+        // The rest of what an account erasure deletes, for `deleteUserData` run whole.
+        PinVerifier,
+        DeviceSignatureKey,
+        NotificationPreference,
+        UserDismissedGroup,
       ],
       synchronize: false,
       uuidExtension: 'pgcrypto',
@@ -240,6 +252,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     await q(`DELETE FROM dm_device_group_memberships`);
     await q(`DELETE FROM queued_message`);
     await q(`DELETE FROM dm_seat_evictions`);
+    await q(`DELETE FROM dm_group_members`);
     await seat(SENDER);
     await seat(PEER);
   });
@@ -256,10 +269,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     const claim = await claimSeat(ds.manager, GROUP, PEER.userId);
     const evicting = await holder('exclusive');
     try {
-      await evicting.query(
-        `INSERT INTO dm_seat_evictions ("groupId", "userId", "generation") VALUES ($1, $2, 1)`,
-        [GROUP, PEER.userId]
-      );
+      await evicting.query(BUMP, [GROUP]);
       const checked = withSeatLock(ds.manager, GROUP, (m) => seatClaimHolds(m, claim));
       await parked(1);
       await evicting.query('COMMIT');
@@ -379,10 +389,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     const claim = await claimSeat(ds.manager, GROUP, PEER.userId);
     const evicting = await holder('exclusive');
     try {
-      await evicting.query(
-        `INSERT INTO dm_seat_evictions ("groupId", "userId", "generation") VALUES ($1, $2, 1)`,
-        [GROUP, PEER.userId]
-      );
+      await evicting.query(BUMP, [GROUP]);
       const storing = storeWelcome(PEER, claim);
       await parked(1);
       await evicting.query('COMMIT');
@@ -469,13 +476,96 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     await expect(service.eraseSeats(GROUP, PEER.userId)).resolves.toMatchObject({
       memberships: 1,
       toRemove: 1,
-      generation: 1,
     });
     expect(await seatsOf(PEER)).toBe(0);
     expect(routes.has(`${PEER.userId}:${PEER.deviceId}`)).toBe(false);
     await expect(withSeatLock(ds.manager, GROUP, (m) => seatClaimHolds(m, claim))).resolves.toBe(
       'evicted_since_claim'
     );
+  });
+
+  /**
+   * THE WHOLE ERASURE (`InternalController.deleteUserData`), NOT ONE STEP OF IT. The claim is taken
+   * before it starts and checked after it ends: nothing about the account may remain to refuse it,
+   * so what refuses it must be the group's own generation.
+   */
+  describe('a claim in flight across a whole account erasure', () => {
+    const SECRET = 'seat-lock-it-secret';
+    const internal = () => {
+      process.env.INTERNAL_SECRET = SECRET;
+      return new InternalController(
+        ds.getRepository(PushToken),
+        ds.getRepository(KeyPackage),
+        ds.getRepository(OneTimeKeyPackage),
+        ds.getRepository(Group),
+        ds.getRepository(GroupMember),
+        ds.getRepository(DeviceGroupMembership),
+        ds.getRepository(QueuedMessage),
+        ds.getRepository(PinVerifier),
+        ds.getRepository(RevokedDevice),
+        ds.getRepository(GroupInvite),
+        ds.getRepository(GroupMembershipInterval),
+        redis as unknown as Redis,
+        service
+      );
+    };
+    const evictionRowsOf = async (who: { userId: string }): Promise<number> => {
+      const [row]: { n: string }[] = await q(
+        `SELECT count(*) AS n FROM dm_seat_evictions WHERE "userId" = $1`,
+        [who.userId]
+      );
+      return Number(row.n);
+    };
+    const holds = (claim: SeatClaim) =>
+      withSeatLock(ds.manager, GROUP, (m) => seatClaimHolds(m, claim));
+
+    it('is refused after it, and no eviction row of the account is left', async () => {
+      await q(
+        `INSERT INTO dm_group_members ("groupId", "userId", role) VALUES ($1, $2, 'member')`,
+        [GROUP, PEER.userId]
+      );
+      // A departure begun and settled earlier: the account HAS an eviction row to lose.
+      await service.evictSeats(GROUP, PEER.userId, 'begin');
+      await service.evictSeats(GROUP, PEER.userId, { settles: 1 });
+      await seat(PEER);
+      const claim = await claimSeat(ds.manager, GROUP, PEER.userId);
+
+      await internal().deleteUserData(PEER.userId, SECRET);
+
+      await expect(holds(claim)).resolves.toBe('evicted_since_claim');
+      expect(await evictionRowsOf(PEER)).toBe(0);
+      expect(await seatsOf(PEER)).toBe(0);
+    });
+
+    it('is refused after it when the account held no seat, only a departure in progress', async () => {
+      // Seats cut and roster gone: the eviction row is all that still names the group.
+      await service.evictSeats(GROUP, PEER.userId, 'begin');
+      const claim = await claimSeat(ds.manager, GROUP, PEER.userId);
+
+      await internal().deleteUserData(PEER.userId, SECRET);
+
+      await expect(holds(claim)).resolves.toBe('evicted_since_claim');
+      expect(await evictionRowsOf(PEER)).toBe(0);
+    });
+  });
+
+  it('an eviction of SOMEONE ELSE refuses a claim taken before it once, and the retried claim holds', async () => {
+    const claim = await claimSeat(ds.manager, GROUP, SENDER.userId);
+    await service.evictSeats(GROUP, PEER.userId, 'begin');
+
+    await expect(withSeatLock(ds.manager, GROUP, (m) => seatClaimHolds(m, claim))).resolves.toBe(
+      'evicted_since_claim'
+    );
+    const retried = await claimSeat(ds.manager, GROUP, SENDER.userId);
+    await expect(withSeatLock(ds.manager, GROUP, (m) => seatClaimHolds(m, retried))).resolves.toBe(
+      null
+    );
+  });
+
+  it('a settlement naming no departure in progress says it settled nothing', async () => {
+    await expect(service.evictSeats(GROUP, PEER.userId, { settles: 7 })).resolves.toMatchObject({
+      settled: false,
+    });
   });
 
   describe('a pending seat is written under the seat lock, never after an eviction', () => {

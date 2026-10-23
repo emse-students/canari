@@ -1244,6 +1244,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const ids = deadGroups.map((g) => g.id);
 
     const counts = await this.groupRepo.manager.transaction(async (tx) => {
+      // The `dm_groups` rows FIRST, before any row they own: the one order of
+      // `utils/seat-eviction.ts`, which an eviction also takes (it moves the group's seat generation
+      // before it deletes seats). Deleting the owned rows first would wait on it in a cycle.
+      await tx.getRepository(Group).find({
+        where: { id: In(ids) },
+        select: { id: true },
+        lock: { mode: 'pessimistic_write' },
+      });
       const removed = await deleteGroupOwnedRows(tx, ids);
       await tx.getRepository(Group).delete(ids);
       return removed;
