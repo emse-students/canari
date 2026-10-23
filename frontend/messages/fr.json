@@ -3362,6 +3362,8 @@
   "auth_vault_other_account_device": "Cet appareil garde les messages d'un autre compte, qui n'ont pas été touchés : l'application ne garde les messages que d'un seul compte à la fois sur un même appareil.",
   "auth_keystore_empty_enter_pin": "Veuillez entrer votre PIN pour déverrouiller la messagerie.",
   "auth_hardware_key_unavailable": "Votre PIN est correct, mais ce téléphone ne détient plus la clé qui protège ses messages : les messages enregistrés sur ce téléphone sont perdus, et aucun PIN ne peut les ouvrir. Réinitialisez la messagerie sur ce téléphone. Vos autres appareils, vos contacts et vos sauvegardes peuvent rapporter l'historique.",
+  "auth_hardware_key_unreadable": "Ce téléphone n'a pas pu lire pour l'instant la clé qui protège ses messages. Vos messages ne sont pas perdus : réessayez dans un instant, après avoir déverrouillé le téléphone. Si cela se reproduit, redémarrez le téléphone.",
+  "auth_pin_reset_withheld_key_unreadable": "La réinitialisation n'est pas proposée : la clé qui protège les messages de ce téléphone n'a pas pu être lue, mais elle est peut-être toujours là, et une réinitialisation effacerait des messages encore lisibles. Réessayez, ou déconnectez-vous.",
   "auth_pin_change_key_migration_pending": "Ce téléphone place encore ses messages sous sa nouvelle clé de protection. Réessayez dans un instant. Rien n'a été modifié.",
   "auth_biometric_no_user": "Aucun compte n'est connecté sur cet appareil. Reconnectez-vous.",
   "auth_no_user_signed_in": "Aucun utilisateur n'est connecté.",

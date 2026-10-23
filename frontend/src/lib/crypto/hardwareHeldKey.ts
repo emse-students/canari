@@ -28,8 +28,10 @@ export type HardwareKeyRead = { key: string } | { refusal: HardwareKeyRefusal };
 /**
  * The hardware-held key was asked for and is not there, or is not the key the marker names.
  *
- * Thrown at the read, as a type: the login turns it into `hardware_key_unavailable`, which offers the
- * reset - no PIN can open data sealed under a random key the keystore lost.
+ * Thrown at the read, as a type, carrying WHY: the login turns `absent` / `mismatch` into
+ * `hardware_key_unavailable`, which offers the reset - no PIN can open data sealed under a random key
+ * the keystore lost - and every other refusal into `hardware_key_unreadable`, which offers a retry
+ * and no reset (`hardwareKeyLoginFailure`).
  */
 export class HardwareKeyUnavailableError extends Error {
   constructor(readonly refusal: HardwareKeyRefusal) {

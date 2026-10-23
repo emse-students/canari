@@ -3,9 +3,12 @@ import {
   backupOwedAfterKeyMove,
   clearBackupOwedAfterKeyMove,
   deviceRecoveryCode,
+  keepDeviceRecoveryCode,
   noteBackupOwedAfterKeyMove,
   resealDeviceRecoveryCode,
 } from './deviceRecoveryCode';
+import { gateStorage, holdStorageForKeyChange } from '$lib/db/deviceKeyGate';
+import type { IStorage } from '$lib/db/types';
 
 /**
  * ONE BACKUP CODE PER DEVICE (decision of 2026-10-22). What these hold: the second export reuses the
@@ -62,6 +65,28 @@ describe('deviceRecoveryCode', () => {
     const next = await deviceRecoveryCode(USER, KEY_B, log);
     expect(next.origin).toBe('kept');
     expect(hex(next.bytes)).toBe(hex(started.bytes));
+  });
+
+  it('a keep that waits on a key change in progress writes under the key the change moved to', async () => {
+    // The session adopts the new key only once the storage gate is released, so its copy lags the
+    // stores for a moment; the keep runs INSIDE the gate and asks the gate which key is live.
+    const keyC = btoa(String.fromCharCode(...new Uint8Array(32).fill(3)));
+    const keyD = btoa(String.fromCharCode(...new Uint8Array(32).fill(4)));
+    const store = gateStorage({ ping: async () => {} } as unknown as IStorage, USER);
+    const code = await deviceRecoveryCode(USER, keyC, log);
+    let finishReseal!: () => void;
+    const resealing = new Promise<void>((resolve) => (finishReseal = resolve));
+    const change = holdStorageForKeyChange(store, keyC, keyD, async () => {
+      await resealing;
+      await resealDeviceRecoveryCode(USER, keyC, keyD, log);
+    });
+    const kept = keepDeviceRecoveryCode(USER, code, keyC);
+    finishReseal();
+    await Promise.all([change, kept]);
+
+    const next = await deviceRecoveryCode(USER, keyD, log);
+    expect(next.origin).toBe('kept');
+    expect(hex(next.bytes)).toBe(hex(code.bytes));
   });
 
   it('replaces an entry this build did not write', async () => {

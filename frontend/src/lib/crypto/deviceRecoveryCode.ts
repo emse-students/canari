@@ -19,6 +19,7 @@
  * reset forgot the key) is REPLACED, and the outcome says so: the files made under the old code keep
  * opening with it, and the user is told the new one is new.
  */
+import { liveDeviceKey, withDeviceKeyHeld } from '$lib/db/deviceKeyGate';
 import { openSealedBytes, sealBytes } from '$lib/encryption';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { generateRecoveryCodeBytes, RECOVERY_CODE_BYTES } from './backupRecoveryCode';
@@ -38,9 +39,10 @@ export interface DeviceRecoveryCode {
   origin: RecoveryCodeOrigin;
   /**
    * Stores a `new` or `replaced` code once the file sealed with it exists, sealed under the device key
-   * the session holds NOW - not the one the export started under: a key change that ran during the
+   * the stores are under NOW - not the one the export started under: a key change that ran during the
    * save (the move to the hardware-held key) re-sealed every store, and a code written under the old
    * key would read as `replaced` at the next export. A no-op for `kept`, which that change re-sealed.
+   * Called through {@link keepDeviceRecoveryCode}, which runs it inside the storage gate.
    */
   keep: (currentDeviceKeyB64: string) => Promise<void>;
 }
@@ -131,6 +133,21 @@ export async function deviceRecoveryCode(
       );
     },
   };
+}
+
+/**
+ * Keeps `code` once its file is saved, INSIDE the storage gate and under the key the stores are under
+ * then ({@link liveDeviceKey} of the key the export started with). A device key change re-seals the
+ * stored code inside the same gate (`moveDeviceRecoveryCode`), so the two are ordered: a keep that
+ * enters first is moved by the change, and one that enters after writes under the new key - even
+ * before the session adopts it, which happens only once the gate is released.
+ */
+export async function keepDeviceRecoveryCode(
+  userId: string,
+  code: DeviceRecoveryCode,
+  exportKeyB64: string
+): Promise<void> {
+  await withDeviceKeyHeld(userId, () => code.keep(liveDeviceKey(exportKeyB64)));
 }
 
 /**

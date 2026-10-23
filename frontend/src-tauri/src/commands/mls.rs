@@ -2,7 +2,7 @@
 
 use crate::concurrency::{
     checkpoint_live_manager, foreground_checkpoint_lock, persist_locked_manager,
-    write_mls_state_blob, ForegroundCritical,
+    write_checkpoint_carrying_staged, write_mls_state_blob, ForegroundCritical,
 };
 use crate::keystore_bridge::PluginDeviceKeyStore;
 use crate::state::{
@@ -232,10 +232,14 @@ pub(crate) async fn sauvegarder_mls_et_persister(
         // engine writes back the state it loaded BEFORE this one started (see `concurrency.rs`).
         let _checkpoint = ForegroundCritical::enter();
         let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
+        // The key the session opened with: the OLD key when this checkpoint is a key change.
+        let session_key = *device_key_state
+            .lock()
+            .map_err(|_| "Failed to lock device key".to_string())?;
         // The manager lock spans the export only; the seal and the write run on the copy, in
         // checkpoint order - see `checkpoint_live_manager` for what that freed and what it kept.
         checkpoint_live_manager(&manager_state, &key, |sealed| {
-            write_mls_state_blob(&app, sealed)
+            write_checkpoint_carrying_staged(&app, sealed, &key, session_key)
         })
     })
     .await

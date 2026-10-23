@@ -51,6 +51,7 @@ import { describeRefusalCode } from '$lib/utils/refusalCodes';
 import {
   LoginFailure,
   LoginStoppedBySignOutError,
+  hardwareKeyLoginFailure,
   isExpectedLoginOutcome,
   isVaultRefusal,
   loginErrorCode,
@@ -927,8 +928,8 @@ export async function loginImpl(
     stopIfSignedOut('at-rest-scheme');
     if (atRestScheme === 'unreadable') {
       // Never guessed into a scheme: the PIN-derived key over hardware-sealed rows would let the next
-      // re-key strand them.
-      throw new LoginFailure('hardware_key_unavailable', m.auth_hardware_key_unavailable());
+      // re-key strand them. Nor called lost: the marker could not be READ, which proves nothing gone.
+      throw hardwareKeyLoginFailure('unreadable', cb.log);
     }
     if (isBiometric && atRestScheme === 'migrating') {
       // Mid-migration the keystore may hold the new key while the state is still under the old one.
@@ -1132,10 +1133,7 @@ export async function loginImpl(
               return await readHardwareHeldKey(tauriHardwareKeyPort, userIdForPin, cb.log);
             } catch (e) {
               if (e instanceof HardwareKeyUnavailableError) {
-                throw new LoginFailure(
-                  'hardware_key_unavailable',
-                  m.auth_hardware_key_unavailable()
-                );
+                throw hardwareKeyLoginFailure(e.refusal, cb.log);
               }
               throw e;
             }
@@ -2357,7 +2355,7 @@ async function finishMigrationAtUnlockForLogin(
     });
   } catch (e) {
     if (e instanceof HardwareKeyUnavailableError) {
-      throw new LoginFailure('hardware_key_unavailable', m.auth_hardware_key_unavailable());
+      throw hardwareKeyLoginFailure(e.refusal, cb.log);
     }
     if (e instanceof DeviceKeyMismatchError || e instanceof LocalStateUnopenableError) {
       throw new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
@@ -2737,7 +2735,7 @@ export async function recoverPinImpl(
   const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
     ? await settledAtRestScheme(tauriHardwareKeyPort, userId)
     : 'pin-derived';
-  if (atRestScheme === 'unreadable') throw new LocalizedError(m.auth_hardware_key_unavailable());
+  if (atRestScheme === 'unreadable') throw hardwareKeyLoginFailure('unreadable', cb.log);
   let hardwareKeyB64: string | null = null;
   if (atRestScheme === 'hardware' || atRestScheme === 'migrating') {
     // `migrating` here is SETTLED (`cle_au_repos_schema`): a marker whose key never reached the
@@ -2746,7 +2744,7 @@ export async function recoverPinImpl(
     const read = await tauriHardwareKeyPort.read(userId);
     if (!('key' in read)) {
       cb.log(`[PIN_RECOVER] The hardware-held key is unavailable (${read.refusal}).`);
-      throw new LocalizedError(m.auth_hardware_key_unavailable());
+      throw hardwareKeyLoginFailure(read.refusal, cb.log);
     }
     hardwareKeyB64 = read.key;
   }

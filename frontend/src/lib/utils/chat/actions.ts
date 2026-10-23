@@ -3,6 +3,7 @@ import { formatRecoveryCode } from '$lib/crypto/backupRecoveryCode';
 import {
   clearBackupOwedAfterKeyMove,
   deviceRecoveryCode,
+  keepDeviceRecoveryCode,
   type RecoveryCodeOrigin,
 } from '$lib/crypto/deviceRecoveryCode';
 import { fromHex, saveMlsState, hasMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
@@ -699,12 +700,10 @@ export async function exportUserBackup(params: {
   storage: IStorage;
   userId: string;
   deviceKeyB64: string;
-  /** The device key the session holds when the save returns - what the kept code is sealed under. */
-  currentDeviceKey: () => string;
   myDeviceId: string;
   log: (msg: string) => void;
 }): Promise<{ recoveryCode: string; codeOrigin: RecoveryCodeOrigin } | null> {
-  const { storage, userId, deviceKeyB64, currentDeviceKey, myDeviceId, log } = params;
+  const { storage, userId, deviceKeyB64, myDeviceId, log } = params;
   const mlsStateHex = await exportMlsStateAsHex(userId);
   const code = await deviceRecoveryCode(userId, deviceKeyB64, log);
   const blob = await exportBackup(
@@ -727,7 +726,7 @@ export async function exportUserBackup(params: {
   );
   log(saved ? `[OK] Backup exported: ${filename}` : '[..] Backup export cancelled');
   if (!saved) return null;
-  await code.keep(currentDeviceKey());
+  await keepDeviceRecoveryCode(userId, code, deviceKeyB64);
   clearBackupOwedAfterKeyMove(userId);
   return { recoveryCode: formatRecoveryCode(code.bytes), codeOrigin: code.origin };
 }

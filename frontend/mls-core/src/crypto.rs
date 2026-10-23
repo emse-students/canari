@@ -137,60 +137,64 @@ impl MlsManager {
         encrypted_blob: Option<Vec<u8>>,
         key: &[u8; 32],
     ) -> Result<Self, MlsError> {
-        let decrypted_state = if let Some(blob) = encrypted_blob {
-            // THE LENGTH FLOORS AND THE SHAPE DECISION BOTH LIVE IN `state_blob::parse`, because
-            // three readers used to make them independently with a bare `len() >= 12` - and that
-            // test passes for a framed blob carrying four bytes of body.
-            // THE DISCRIMINATOR, AND IT IS CHECKED BEFORE THE CIPHER RATHER THAN AFTER IT - in both
-            // framed versions, by the same function. A failed AEAD tag cannot say whether the key
-            // was wrong or the bytes were altered; the fingerprint answers the first question on its
-            // own, so asking it first is the difference between "your PIN was changed on another
-            // device" being a fact and being a guess. *Never learn by failing what a fact could have
-            // told you.*
-            let require_this_key = |fp: [u8; crate::state_blob::FINGERPRINT_LEN]| {
-                if fp != crate::state_blob::key_fingerprint(key) {
-                    return Err(MlsError::StateSealedUnderAnotherKey(
-                        "the state's header names a different device key, so the PIN was rotated \
-                         on another device and the OLD one opens this state"
-                            .into(),
-                    ));
-                }
-                Ok(())
-            };
-            let plain = match crate::state_blob::parse(&blob)? {
-                crate::state_blob::Framed::Legacy(body) => crate::security::decrypt_blob(key, body)
-                    .map_err(|s| MlsError::StateUndecryptable(s.to_string()))?,
-                // What `encrypt_state_blob_with_key` writes. A tag that fails HERE has already passed
-                // the fingerprint, so the key is the one that sealed it and the bytes were altered.
-                crate::state_blob::Framed::V1 {
-                    key_fingerprint,
-                    sealed,
-                } => {
-                    require_this_key(key_fingerprint)?;
-                    crate::security::decrypt_blob(key, sealed).map_err(|s| {
-                        MlsError::StateAltered(format!(
-                            "v1 tag did not verify under the key its header names - the blob was \
-                             altered: {s}"
-                        ))
-                    })?
-                }
-                // Written by the web client's WebCrypto seal only; read here on every target
-                // because a `.canari` backup carries it to a phone.
-                crate::state_blob::Framed::V2 {
-                    key_fingerprint,
-                    header,
-                    sealed,
-                } => {
-                    require_this_key(key_fingerprint)?;
-                    crate::state_blob::open_v2(key, header, sealed)?
-                }
-            };
-            Some(plain)
-        } else {
-            None
+        let decrypted_state = match encrypted_blob {
+            Some(blob) => Some(Self::open_state_blob_with_key(&blob, key)?),
+            None => None,
         };
-
         Self::load_or_create(user_id, device_id, decrypted_state)
+    }
+
+    /// Opens a sealed state blob with `key` into the serialised state it carries, WITHOUT loading
+    /// it - every shape [`Self::load_with_key`] reads, with the same typed refusals.
+    pub fn open_state_blob_with_key(blob: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, MlsError> {
+        // THE LENGTH FLOORS AND THE SHAPE DECISION BOTH LIVE IN `state_blob::parse`, because
+        // three readers used to make them independently with a bare `len() >= 12` - and that
+        // test passes for a framed blob carrying four bytes of body.
+        // THE DISCRIMINATOR, AND IT IS CHECKED BEFORE THE CIPHER RATHER THAN AFTER IT - in both
+        // framed versions, by the same function. A failed AEAD tag cannot say whether the key
+        // was wrong or the bytes were altered; the fingerprint answers the first question on its
+        // own, so asking it first is the difference between "your PIN was changed on another
+        // device" being a fact and being a guess. *Never learn by failing what a fact could have
+        // told you.*
+        let require_this_key = |fp: [u8; crate::state_blob::FINGERPRINT_LEN]| {
+            if fp != crate::state_blob::key_fingerprint(key) {
+                return Err(MlsError::StateSealedUnderAnotherKey(
+                    "the state's header names a different device key, so the PIN was rotated \
+                         on another device and the OLD one opens this state"
+                        .into(),
+                ));
+            }
+            Ok(())
+        };
+        let plain = match crate::state_blob::parse(blob)? {
+            crate::state_blob::Framed::Legacy(body) => crate::security::decrypt_blob(key, body)
+                .map_err(|s| MlsError::StateUndecryptable(s.to_string()))?,
+            // What `encrypt_state_blob_with_key` writes. A tag that fails HERE has already passed
+            // the fingerprint, so the key is the one that sealed it and the bytes were altered.
+            crate::state_blob::Framed::V1 {
+                key_fingerprint,
+                sealed,
+            } => {
+                require_this_key(key_fingerprint)?;
+                crate::security::decrypt_blob(key, sealed).map_err(|s| {
+                    MlsError::StateAltered(format!(
+                        "v1 tag did not verify under the key its header names - the blob was \
+                             altered: {s}"
+                    ))
+                })?
+            }
+            // Written by the web client's WebCrypto seal only; read here on every target
+            // because a `.canari` backup carries it to a phone.
+            crate::state_blob::Framed::V2 {
+                key_fingerprint,
+                header,
+                sealed,
+            } => {
+                require_this_key(key_fingerprint)?;
+                crate::state_blob::open_v2(key, header, sealed)?
+            }
+        };
+        Ok(plain)
     }
 
     // --- G. EXPORT SECRET (WebRTC / Call) ---

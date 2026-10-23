@@ -537,9 +537,10 @@ bits need no key stretching.
 **One code per device** (`crypto/deviceRecoveryCode.ts`): generated at the device's first export
 and kept in `localStorage`, SEALED under the device key - never in the clear, since on a phone a
 plaintext code beside the app's files would let a copy of them open every backup. It is kept only
-once a file was saved with it, so a cancelled save leaves no code nobody saw - and sealed under the
-key the session holds when the save returns, so a re-key that ran during the save does not make the
-next export call it replaced. Every device key change
+once a file was saved with it, so a cancelled save leaves no code nobody saw - and kept INSIDE the
+storage gate, under the key the stores are under then (`keepDeviceRecoveryCode`, `liveDeviceKey`), so
+a re-key that ran during the save neither races its re-seal of the code nor makes the next export call
+it replaced. Every device key change
 re-seals it with the stores (`moveDeviceRecoveryCode` in `performPinChange` and
 `moveSealedStoresOnly`; never fatal, idempotent for a resumed change). A stored code the key no
 longer opens - a reset, an eviction - is replaced at the next export, and the panel says the earlier
@@ -560,6 +561,26 @@ compares the file with the bytes the engine loaded, under the lock every writer 
 (`write_over_loaded_state`, `background_write_mls_bin_if_unchanged`): a state loaded under the old
 key never lands over one re-sealed under the new. The native seed mirror and push cache are sealed
 under the install's own cache key, not the device key, so a re-key does not touch them.
+
+**A background Welcome staged across a key change** (2026-10-23). The sender-side background Welcome
+stages its post-add state, bound to the bytes of the `mls.bin` it was built on, and installs it only
+once the server accepted the commit. A re-seal changes every byte, so the install was refused and the
+device left one epoch behind its own accepted commit. Settling first is not possible - only the native
+task holding the server's answer knows it - so the checkpoint CARRIES the staging in its own step,
+under the `mls.bin` write lock (`write_checkpoint_carrying_staged`, `carry_staged_welcomes`): a staged
+file bound to the file being replaced is re-sealed under the new key and bound to the new bytes, but
+only when the new file holds the SAME state (`same_persisted_state`, compared decoded since the CBOR
+map order is not deterministic). A foreground that moved the state keeps the refusal, since installing
+would erase its move. The staging itself, the install and the discard read and write the staged file
+under the same lock, and a Welcome is staged only while `mls.bin` is still the file it was built on,
+so its commit never reaches the server otherwise.
+
+**A key that could not be read is not a key that is lost.** `hardware_key_unavailable` ("the messages
+on this phone are lost", reset offered) is thrown only for `absent` and `mismatch`; an unreadable
+entry or marker is `hardware_key_unreadable` ("try again"), and the gate withholds the reset for it
+(`withholdsResetForUnreadKey`, the shell's `keyReadRefused`, and a second lock in `handlePinReset`).
+One function decides (`hardwareKeyLoginFailure`), for the unlock, the migration finish and the PIN
+recovery.
 
 **A failed keychain read is an error, never "no key".** The unattended read answers absent for the
 platform's not-found status ONLY (`errSecItemNotFound` on iOS); any other status - a locked device's
