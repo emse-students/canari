@@ -1262,7 +1262,8 @@ describe('a history request from a joiner (WP-34)', () => {
     // page an offline device catches up in (dm-vs-community-encryption, "the history bundle").
     const many: StoredGraineSession[] = Array.from({ length: 3000 }, (_, i) => ({
       workspaceId: 'ws-1',
-      channelId: `chan-${i % 7}`,
+      // Only the two salons the describe lists: an answer carries no seed of a salon it cannot place (#2262).
+      channelId: `chan-${(i % 2) + 1}`,
       sessionId: `s-${String(i).padStart(24, '0')}`,
       senderId: 'carol'.repeat(12),
       seedB64: toBase64(SEED),
