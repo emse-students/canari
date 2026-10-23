@@ -9,6 +9,7 @@
   import CommentComposer from './CommentComposer.svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
+  import { commentArrivals } from '$lib/posts/commentArrival';
 
   type SortMode = 'recent' | 'oldest' | 'liked';
 
@@ -233,6 +234,23 @@
     // recent = newest first
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   });
+
+  // THE ENTRANCE OF ONE NEW COMMENT (`motion-pop-in`, `commentArrivals`). The reader's own comment is
+  // shown under a local id and swapped for the server's row when it lands: that swap is the same
+  // comment, so a pass in which a local id vanished is not an arrival.
+  const knownIds = new Set<string>();
+  let listDrawn = false;
+  let heldLocalIds = new Set<string>();
+  let arrived = $state<ReadonlySet<string>>(new Set());
+  $effect(() => {
+    const ids = sortedTopLevel.map((c) => c.id);
+    const present = new Set(ids);
+    const swapped = [...heldLocalIds].some((id) => !present.has(id));
+    heldLocalIds = new Set(ids.filter((id) => pendingCommentIds?.has(id)));
+    const fresh = commentArrivals(knownIds, ids, listDrawn && !swapped);
+    listDrawn = true;
+    if (fresh.length) arrived = new Set([...arrived, ...fresh]);
+  });
 </script>
 
 <!--
@@ -272,20 +290,22 @@
     {#if sortedTopLevel.length > 0}
       <div class="mb-3 space-y-1">
         {#each sortedTopLevel as comment (comment.id)}
-          <CommentItem
-            {comment}
-            {comments}
-            {currentUserId}
-            {authToken}
-            {pendingCommentIds}
-            {focusCommentId}
-            onLike={onLikeComment}
-            onReply={initiateReply}
-            onEditStart={dropReplyForEdit}
-            onEdit={onEditComment}
-            onDelete={onDeleteComment}
-            {onReport}
-          />
+          <div class={arrived.has(comment.id) ? 'motion-pop-in' : ''}>
+            <CommentItem
+              {comment}
+              {comments}
+              {currentUserId}
+              {authToken}
+              {pendingCommentIds}
+              {focusCommentId}
+              onLike={onLikeComment}
+              onReply={initiateReply}
+              onEditStart={dropReplyForEdit}
+              onEdit={onEditComment}
+              onDelete={onDeleteComment}
+              {onReport}
+            />
+          </div>
         {/each}
       </div>
     {/if}

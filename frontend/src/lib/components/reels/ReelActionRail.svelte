@@ -11,7 +11,9 @@
    * sheet, the send is the post menu's share (`posts/sharePost.ts`). `data-no-double-tap` keeps
    * the column out of the double tap that likes the reel (PR #2113): a tap here acts at once.
    */
-  import { Heart, MessageCircle, Send } from '@lucide/svelte';
+  import type { Snippet } from 'svelte';
+  import { Heart, MessageCircle, Send, Volume2, VolumeX } from '@lucide/svelte';
+  import { videoSound } from '$lib/stores/videoSound.svelte';
   import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
   import { compactCount } from '$lib/reels/reelRail';
@@ -25,18 +27,39 @@
      * DRAWN AS ITSELF in the heart's place (lead's decision, 2026-10-19), so a tap that takes it
      * back never removes a reaction the rail did not show.
      */
-    readerReaction: string | null;
+    readerReaction?: string | null;
     /** Every reaction on the post. */
-    reactionCount: number;
+    reactionCount?: number;
     /** The comments the post carries, replies included - the card's own count. */
-    commentCount: number;
-    onHeart: () => void;
-    onComments: () => void;
-    onSend: () => void;
+    commentCount?: number;
+    /**
+     * The three social actions. ABSENT - a conversation's reel, which is not a post - only the
+     * tools below are drawn.
+     */
+    onHeart?: () => void;
+    onComments?: () => void;
+    onSend?: () => void;
+    /**
+     * The reel's own tools, under the send (user, 2026-10-23): the save (`ReelSaveButton`, the
+     * caller's) and then THE SOUND, drawn here when `sound` is set. Not on a photo page.
+     */
+    tools?: Snippet;
+    /** Draws the sound button, the app's one answer (`videoSound`), under `tools`. */
+    sound?: boolean;
   }
 
-  let { readerReaction, reactionCount, commentCount, onHeart, onComments, onSend }: Props =
-    $props();
+  let {
+    readerReaction = null,
+    reactionCount = 0,
+    commentCount = 0,
+    onHeart,
+    onComments,
+    onSend,
+    tools,
+    sound = false,
+  }: Props = $props();
+
+  const social = $derived(!!onHeart && !!onComments && !!onSend);
 
   const reacted = $derived(readerReaction !== null);
   /**
@@ -76,57 +99,79 @@
   data-reel-rail
   data-no-double-tap
 >
-  <div class="flex flex-col items-center">
+  {#if social}
+    <div class="flex flex-col items-center">
+      <button
+        type="button"
+        class="ui-icon-button motion-press rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        aria-pressed={reacted}
+        aria-label={heartLabel}
+        onclick={onHeart}
+        data-reel-rail-heart
+      >
+        {#if otherEmoji}
+          <span class="text-2xl leading-none drop-shadow-md" aria-hidden="true" data-reel-rail-emoji
+            ><EmojiText text={otherEmoji} /></span
+          >
+        {:else}
+          <Heart
+            size={30}
+            strokeWidth={2}
+            class="drop-shadow-md {reacted ? 'fill-red-500 text-red-500' : ''}"
+            aria-hidden="true"
+          />
+        {/if}
+      </button>
+      <span class="text-xs font-semibold drop-shadow-md" aria-hidden="true"
+        >{compactCount(reactionCount, locale)}</span
+      >
+    </div>
+
+    <div class="flex flex-col items-center">
+      <button
+        type="button"
+        class="ui-icon-button motion-press rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        aria-haspopup="dialog"
+        aria-label={m.reels_rail_comments({ count: commentCount })}
+        onclick={onComments}
+        data-reel-rail-comments
+      >
+        <MessageCircle size={30} strokeWidth={2} class="drop-shadow-md" aria-hidden="true" />
+      </button>
+      <span class="text-xs font-semibold drop-shadow-md" aria-hidden="true"
+        >{compactCount(commentCount, locale)}</span
+      >
+    </div>
+
+    <button
+      type="button"
+      class="ui-icon-button motion-press rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+      aria-label={m.post_share_label()}
+      title={m.post_share_label()}
+      onclick={onSend}
+      data-reel-rail-send
+    >
+      <Send size={28} strokeWidth={2} class="drop-shadow-md" aria-hidden="true" />
+    </button>
+  {/if}
+
+  {@render tools?.()}
+
+  {#if sound}
     <button
       type="button"
       class="ui-icon-button rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-      aria-pressed={reacted}
-      aria-label={heartLabel}
-      onclick={onHeart}
-      data-reel-rail-heart
+      aria-label={m.video_sound_label()}
+      title={m.video_sound_label()}
+      aria-pressed={!videoSound.muted}
+      onclick={() => videoSound.toggle()}
+      data-reel-rail-sound
     >
-      {#if otherEmoji}
-        <span class="text-2xl leading-none drop-shadow-md" aria-hidden="true" data-reel-rail-emoji
-          ><EmojiText text={otherEmoji} /></span
-        >
+      {#if videoSound.muted}
+        <VolumeX size={26} strokeWidth={2} class="drop-shadow-md" aria-hidden="true" />
       {:else}
-        <Heart
-          size={30}
-          strokeWidth={2}
-          class="drop-shadow-md {reacted ? 'fill-red-500 text-red-500' : ''}"
-          aria-hidden="true"
-        />
+        <Volume2 size={26} strokeWidth={2} class="drop-shadow-md" aria-hidden="true" />
       {/if}
     </button>
-    <span class="text-xs font-semibold drop-shadow-md" aria-hidden="true"
-      >{compactCount(reactionCount, locale)}</span
-    >
-  </div>
-
-  <div class="flex flex-col items-center">
-    <button
-      type="button"
-      class="ui-icon-button rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-      aria-haspopup="dialog"
-      aria-label={m.reels_rail_comments({ count: commentCount })}
-      onclick={onComments}
-      data-reel-rail-comments
-    >
-      <MessageCircle size={30} strokeWidth={2} class="drop-shadow-md" aria-hidden="true" />
-    </button>
-    <span class="text-xs font-semibold drop-shadow-md" aria-hidden="true"
-      >{compactCount(commentCount, locale)}</span
-    >
-  </div>
-
-  <button
-    type="button"
-    class="ui-icon-button rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-    aria-label={m.post_share_label()}
-    title={m.post_share_label()}
-    onclick={onSend}
-    data-reel-rail-send
-  >
-    <Send size={28} strokeWidth={2} class="drop-shadow-md" aria-hidden="true" />
-  </button>
+  {/if}
 </div>

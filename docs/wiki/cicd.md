@@ -1399,6 +1399,45 @@ lock instead - `cargo update -p serde_with --precise 3.21.0` also added `bs58` a
 `windows-*` crates, a resolver-wide change on the one target this repository can only verify by
 compiling. The rule is in [durable-rules](durable-rules.md).
 
+### Native and identity-provider manifests (2026-10-23)
+
+A dependency audit found three committed manifest trees nothing watched. What is declared now, and
+what is deliberately not:
+
+| Tree | Dependabot | What gates an update |
+| --- | --- | --- |
+| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | **Nothing on a pull request**, so `ceiling_gate_for_ref` (`lib/ceiling.sh`) refuses every update there. The `:app` module cannot be configured without the generated, git-ignored `tauri.settings.gradle` and the `google-services.json` secret; only `android.yml` builds it, at release time. The refusal names the missing gate: a pull-request job that compiles `:app`. |
+| `frontend/src-tauri/android-tests` (the JVM test project) | `gradle`, its own block | `test-android`, which builds and runs it whenever it changes. The only Gradle directory the ceiling lets through - an allowlist, so a new Gradle directory starts refused. |
+| `frontend/src-tauri/gen/apple` | **not declared** | The Podfile declares no pod, CocoaPods is not a Dependabot ecosystem, and the `swift` ecosystem reads `Package.swift` while Firebase is pinned in `project.pbxproj` + `Package.resolved` of an Xcode project. `firebase-ios-sdk` moves by hand. |
+| `infrastructure/authentik/compose.yml` | `docker-compose`, its own block | The ceiling's datastore arm, against **this file's** PostgreSQL major. |
+
+**Why the identity provider's file needed a ceiling change before it could be watched.** Its
+PostgreSQL ran 16 while production ran 18 (2026-10-23). Dependabot proposes the highest tag with the
+same suffix, so its first pull request there is `16-alpine -> 18-alpine`; compared with
+production's compose file - the only one the ceiling read - that is "the major production runs" and
+it would have passed: the 2026-09-01 outage, moved onto the database every sign-in depends on. So
+`ceiling_compose_from_ref` reads the directory off Dependabot's branch
+(`dependabot/docker_compose/infrastructure/authentik/...`) and the datastore arm compares with that
+file; `version-gap.yml`, which records rehearsals of PRODUCTION's data directory, lifts nothing
+there. Image names are compared without `docker.io/library/`, which that file spells and production's
+does not (`ceiling_image_name`). The `dependency-ceiling` job's sparse checkout carries the file, and
+`ceiling.test.sh` derives the stateful images from it exactly as it does from production's.
+
+**Each new directory has its OWN block** rather than joining a `directories:` list, because the
+ceiling reads the directory off the branch name, and one block per directory is what guarantees the
+branch carries it.
+
+**Two things this does not cover, owed a decision rather than code:**
+
+- **The authentik server and worker images are invisible to Dependabot.** They are written
+  `${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.0}` so the host's `.env`
+  can override them, and Dependabot does not resolve an interpolated reference. A literal reference
+  would be watched (and `test-miconnect-blueprints` boots it, so an update would be gated) but would
+  take the `.env` override away on a host this repository does not own. That is the operator's call.
+- **`gen/android` may not resolve at all.** Its `settings.gradle` applies the git-ignored
+  `tauri.settings.gradle`; if Dependabot's update job fails on it, the symptom is an absence of pull
+  requests, exactly as for the two cargo directories below. Read the first Monday's update job.
+
 ### And a manifest can make a whole directory invisible to Dependabot
 
 Enabling the switch above did not ship the fix, because a THIRD refusal was waiting under it, and
@@ -1945,6 +1984,126 @@ therefore not three independent draws; they are one npm blip lasting minutes. Th
 `0.16.2-alpha.1` bump commit met - three attempts, three 503s, exit 2, correct. The pass went red
 anyway, because the CALLER could not read the answer, and that defect is above. _The classifier's
 rate says the design is right; only its reader was wrong._
+
+### Container images are scanned (2026-10-23)
+
+`bun audit` and `cargo audit` read lockfiles; what an estate RUNS is images, and until 2026-10-23
+nothing read them. `Dependency audit / Container image scan` (`code-analysis.yml`, job
+`image-scan`) runs `.github/scripts/image-scan.sh`: Trivy, pinned by version and SHA-256 in the job's
+`env`, over every image `image-scan-targets.sh` derives - the SHIPPED stage (last `FROM`) of each
+`infrastructure/local/Dockerfile.*`, and every third-party `image:` of the production, dev and
+identity-provider compose files, an interpolation read as its default. This repository's own images
+are left out (they are their Dockerfile's base plus our code, which the lockfile audits read), and so
+are builder stages and the local compose file, which reach no estate.
+
+| Choice | Why |
+| --- | --- |
+| HIGH and CRITICAL, **with a fix published** (`--ignore-unfixed`) | a finding nobody can act on is a wall, not a gate |
+| in the `dependencies` half, so it gates `CI passed` and runs nightly | same footing as the audits: a database that moves without a commit; exit `2` (database or registry unreachable) is priced by `registry_outage_is_failure` |
+| the allowlist is `.github/image-scan-allowlist.yaml`, Trivy's own format | one entry per advisory, each with a `statement`; `image-scan-allowlist.test.mjs` refuses a missing statement, an unknown key and any `expired_at` - an entry retires on evidence, never on a date |
+| **every entry retires itself** | each image is rescanned WITHOUT the allowlist and `ignored-advisories-still-reported.sh` (media-service's check) fails on an id nothing reports any more. A pull request that moves a pin deletes the entries it made unnecessary in the same commit |
+| Trivy from its release tarball, not `aquasecurity/trivy-action` | a tag can move, a checksum cannot. **Nothing watches the pin**: move it by changing `TRIVY_VERSION` and `TRIVY_SHA256` together, the checksum read from that release's `trivy_<v>_checksums.txt` |
+
+**What the first measurement found (Trivy 0.75.0, 2026-10-23), and what each became:**
+
+- `postgres:18-alpine` (production, dev, local, the CI service containers) carried fixable OpenSSL and
+  `libuuid` advisories: **the digest moved** to the current `18-alpine` build, same major.
+- `nginx:1.31.7-alpine` (the edge, production and dev) carried `libexpat` and `libx11`: **moved to
+  `1.31.8-alpine`**, which carries neither.
+- `gosu` in both postgres images (26 Go standard-library advisories): **allowlisted** - it runs once
+  in the entrypoint to drop privileges and `exec`s postgres, so that code never runs; the newest
+  upstream image still ships the same build.
+- npm bundled in `node:24-alpine` (3): **allowlisted** - `frontend-ssr` runs `node index.js` and never
+  invokes npm.
+- `ghcr.io/goauthentik/server:2026.8.0` (41 ids): **allowlisted**, each saying whether 2026.8.5 fixes
+  it (30) or not (11). The upgrade (#2315) must delete the 30 it retires, which this check will
+  insist on.
+
+**Not gated: Trivy's Dockerfile misconfiguration scan.** Measured the same day, it finds `DS-0002`
+(no non-root `USER`) in all eight Dockerfiles and `DS-0029` (`--no-install-recommends`) in the two
+Rust ones. A `USER` change on production images needs its volumes' ownership verified on a running
+estate, so it is a backlog item ([backlog](backlog.md#p3---the-eight-service-images-run-as-root-trivy-ds-0002-measured-2026-10-23)), not a gate that would be red from day one.
+
+### A `code_scanning` rule on the ruleset: analysed 2026-10-23, NOT applied
+
+**The question.** Ruleset `22152902` requires one check, `CI passed`. The `CodeQL` check-run (the
+code scanning results of the `Security / CodeQL Security Analysis` upload) is advisory: it fails on a
+NEW high alert and nothing enforces it. A `code_scanning` rule (tool `CodeQL`, `alerts_threshold:
+errors`, `security_alerts_threshold: high_or_higher`) would make it binding. GitHub documents three
+conditions under which that rule blocks a merge: a required tool found an alert at the threshold,
+its analysis is **still in progress**, or the tool is **not configured** for the repository. The risk
+to measure is the second: a pull request on which CodeQL never runs waits for ever.
+
+**What decides it here, read rather than assumed:**
+
+| Case | Does CodeQL upload an analysis for the pull request? |
+| --- | --- |
+| a documentation-only pull request | **yes** - `security` in `ci.yml` is NOT behind `changes` (deliberately: a secret can be committed in a doc), and the `CI` workflow has no `paths` filter |
+| a paths-filtered job skipped by `Detect changes` | irrelevant - no CodeQL step is paths-filtered |
+| a Dependabot pull request | **yes** - #2152, #2154, #2156 each carry an analysis on `refs/pull/N/merge` |
+| a pull request from a fork | none in the last 300; a fork run gets a read-only token, so this is the case to watch if one arrives |
+| a pull request with NO `CI` run at all (a conflicting merge ref, or a run that never started) | no - but `CI passed` is then missing too, so it is already blocked; the rule adds nothing |
+| `push` to `main` (the release bump) | not a pull request, and made by `canari-auto-merge`, a bypass actor |
+
+Measured over the 40 most recent pull requests: **every one that had a `CI` run carried a CodeQL
+analysis**, the 16 with no JavaScript or TypeScript file among them; the three without one were
+drafts carrying no `CI passed` check at all (one of them conflicting). The upload's category is fixed (`/language:javascript-typescript`,
+`codeql-category.test.mjs`), so no "configuration not found" can appear. On `main` today: one open
+alert (`warning`, security `high`, a test file) - a STANDING alert, which the rule like the check
+judges only when a pull request introduces it.
+
+**Two facts that shape what the rule would actually do.** `canari-auto-merge` (`4791068`) is a
+bypass actor with `bypass_mode: always`, and auto-merge merges as whoever armed it - so the new rule
+binds exactly as far as `CI passed` already does for those merges, no further. And the analysis
+takes 2-4 minutes, well inside the CI run, so "in progress" costs no extra wall-clock time.
+
+**Recommendation: apply it.** No pull request this repository produces today would be blocked for a
+missing analysis, and it turns the one security verdict still advisory into a binding one. **Its
+precondition must stay true**: CodeQL must never move behind `changes` or a `paths` filter - that
+would make every documentation pull request wait on an analysis that never starts. Apply it while
+watching the first fork pull request, if one ever comes. The decision is the user's
+([owed](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+
+`PUT` replaces the whole ruleset, so the body carries every current rule plus the new one (read back
+2026-10-23 with `gh api repos/emse-students/canari/rulesets/22152902`; read it again before applying):
+
+```sh
+gh api -X PUT repos/emse-students/canari/rulesets/22152902 --input - <<'JSON'
+{
+  "name": "main",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" },
+    { "actor_id": 4791068, "actor_type": "Integration", "bypass_mode": "always" }
+  ],
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    { "type": "pull_request", "parameters": {
+        "allowed_merge_methods": ["squash", "merge", "rebase"],
+        "dismiss_stale_reviews_on_push": false,
+        "dismissal_restriction": { "allowed_actors": [], "enabled": false },
+        "require_code_owner_review": false,
+        "require_extra_approval_for_unattributed_changes": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0,
+        "required_review_thread_resolution": false,
+        "required_reviewers": [] } },
+    { "type": "required_status_checks", "parameters": {
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [{ "context": "CI passed" }],
+        "strict_required_status_checks_policy": false } },
+    { "type": "code_scanning", "parameters": {
+        "code_scanning_tools": [
+          { "tool": "CodeQL", "alerts_threshold": "errors", "security_alerts_threshold": "high_or_higher" } ] } }
+  ]
+}
+JSON
+```
+
+Undoing it is the same `PUT` without the last rule.
 
 ### A Tauri plugin bump is two halves, and the crate half can be a runtime bump (2026-10-08)
 

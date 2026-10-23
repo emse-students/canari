@@ -40,6 +40,12 @@ describe('VersionService', () => {
     expect(out.lives).toEqual({ mode: 'on' });
   });
 
+  it('says it forwards a PKCE verifier, so a client challenges only a server that will redeem it', async () => {
+    const out = await service.getVersion();
+
+    expect(out.oidcPkce).toBe(true);
+  });
+
   it('reports no build when the environment was not given one', async () => {
     delete process.env.DEPLOY_BUILD;
 
