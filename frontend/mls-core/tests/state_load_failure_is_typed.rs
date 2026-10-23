@@ -119,6 +119,44 @@ fn a_keystore_that_hands_back_no_key_is_its_own_variant_and_never_a_state_verdic
     );
 }
 
+/// A keystore whose entry holds a key that does not open the blob, and whose delete is REFUSED -
+/// the app's at-rest guard keeping the only copy of a hardware-held key.
+struct GuardedStaleEntry {
+    held: [u8; 32],
+    deletes: std::sync::atomic::AtomicU32,
+}
+
+impl mls_core::keystore::DeviceKeyStore for GuardedStaleEntry {
+    fn store_device_key(&self, _key: &[u8; 32], _alias: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn retrieve_device_key(&self, _alias: &str) -> Option<[u8; 32]> {
+        Some(self.held)
+    }
+    fn delete_device_key(&self, _alias: &str) -> Result<(), String> {
+        self.deletes
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err("refused by the at-rest guard".into())
+    }
+}
+
+#[test]
+fn a_stale_keystore_key_whose_delete_is_refused_is_kept_and_the_failure_stays_typed() {
+    let sealed = encrypt_blob(&key(1), b"cbor-mls-snapshot").expect("seal");
+    let store = GuardedStaleEntry {
+        held: key(2),
+        deletes: std::sync::atomic::AtomicU32::new(0),
+    };
+    let err = MlsManager::resolve_at_rest_key(USER, DEVICE, Some(&sealed), None, &store)
+        .expect_err("a key that does not open the blob is not handed back");
+    // The delete was ASKED and refused; the probe neither panics nor claims a deletion.
+    assert_eq!(store.deletes.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(
+        matches!(err, MlsError::KeystoreKeyUnavailable(_)),
+        "expected KeystoreKeyUnavailable, got {err:?}"
+    );
+}
+
 #[test]
 fn no_state_at_all_is_not_a_failure() {
     // The control. A first launch has no blob, and reading "undecryptable" there would send a new

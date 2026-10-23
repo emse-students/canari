@@ -228,26 +228,11 @@ impl Drop for ForegroundCritical {
 
 /// True while the foreground guard holds (the background must then refrain from writing): either a
 /// foreground operation is IN FLIGHT, or the heartbeat deadline has not expired.
-/// Mobile only: that is where the background writers (`background_write_mls_bin`) live.
+/// Mobile only: that is where the background writer (`background_write_mls_bin_if_unchanged`) lives.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn foreground_is_active() -> bool {
     foreground_critical_depth().load(Ordering::SeqCst) > 0
         || now_ms() < foreground_active_until().load(Ordering::SeqCst)
-}
-
-/// Writes `mls.bin` from the background under the global lock, UNLESS the foreground is active (in
-/// which case it gives up: the foreground holds the up-to-date state in memory and would overwrite
-/// it - C1/FCM3). The "foreground active" error leaves the work pending, picked up on the next
-/// foreground pass.
-#[cfg(any(target_os = "android", target_os = "ios", test))]
-pub(crate) fn background_write_mls_bin(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
-    let _guard = mls_bin_write_lock()
-        .lock()
-        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
-    if foreground_is_active() {
-        return Err("foreground active - background mls.bin write abandoned (C1/FCM3)".to_string());
-    }
-    write_mls_bin_atomically(path, data)
 }
 
 /// The digest a background engine takes of the `mls.bin` bytes it LOADED, so that
@@ -258,7 +243,11 @@ pub(crate) fn mls_bin_digest(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
-/// [`background_write_mls_bin`], AND ONLY OVER THE FILE THE CALLER LOADED - a compare-and-swap.
+/// Writes `mls.bin` from the background under the global lock, UNLESS the foreground is active (it
+/// gives up: the foreground holds the up-to-date state in memory and would overwrite it - C1/FCM3),
+/// AND ONLY OVER THE FILE THE CALLER LOADED - a compare-and-swap. The ONE background writer: the
+/// plain write it replaced let a state loaded under one key land over a file re-sealed under another
+/// (`mobile/background.rs`, `write_over_loaded_state`).
 ///
 /// A background engine that holds its loaded state across a network round trip - the background
 /// Welcome waits for the server's answer before it installs anything - cannot rely on the
@@ -414,18 +403,23 @@ mod tests {
         mark_foreground_inactive();
 
         let path = std::env::temp_dir().join(format!("canari-cas-{}.bin", std::process::id()));
-        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, b"loaded state").unwrap();
+        let loaded = mls_bin_digest(b"loaded state");
 
         let checkpoint = ForegroundCritical::enter();
-        let refused = background_write_mls_bin(&path, b"background state");
+        let refused = background_write_mls_bin_if_unchanged(&path, &loaded, b"background state");
         assert!(
             refused.is_err(),
             "the background must give up, not overwrite"
         );
-        assert!(!path.exists(), "and it must not have written anything");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"loaded state",
+            "and it must not have written anything"
+        );
 
         drop(checkpoint);
-        background_write_mls_bin(&path, b"background state")
+        background_write_mls_bin_if_unchanged(&path, &loaded, b"background state")
             .expect("allowed once the checkpoint ends");
         assert_eq!(std::fs::read(&path).unwrap(), b"background state");
         let _ = std::fs::remove_file(&path);

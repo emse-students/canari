@@ -86,6 +86,16 @@ export const ACCOUNT_KEY = {
    */
   legacyConversation: (userId: string, contactName: string) =>
     `canari_conv_${userId}_${contactName}`,
+  /**
+   * `deviceRecoveryCode.ts`: this device's backup recovery code, SEALED under the device key - one
+   * code for every backup the device exports (decision of 2026-10-22).
+   */
+  backupRecoveryCode: (userId: string) => `canari_backup_recovery_code:v1:${userId}`,
+  /**
+   * `deviceRecoveryCode.ts`: set when the move to the hardware-held key re-sealed existing data, so
+   * backups made before it no longer open here; cleared by the next export.
+   */
+  backupOwedAfterKeyMove: (userId: string) => `canari_backup_owed_after_key_move:v1:${userId}`,
   /** No longer written; removed by the device reset and the deletion where an old build left it. */
   syncGuideSeen: (userId: string) => `canari_sync_guide_seen_${userId}`,
   /** `history.ts`: the processed-ciphertext fingerprints of one group. */
@@ -150,6 +160,8 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),
     ACCOUNT_KEY.lastActive(userId),
+    ACCOUNT_KEY.backupRecoveryCode(userId),
+    ACCOUNT_KEY.backupOwedAfterKeyMove(userId),
   ];
 }
 

@@ -30,6 +30,10 @@ use tauri::{
 use crate::state::{AppState, PendingDb};
 
 // Re-export commands for generate_handler!
+use crate::commands::at_rest_key::{
+    cle_au_repos_lire, cle_au_repos_marquer, cle_au_repos_oublier, cle_au_repos_preparer,
+    cle_au_repos_schema, supprimer_cle_appareil,
+};
 #[cfg(feature = "bench-observables")]
 use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
@@ -1314,6 +1318,12 @@ pub fn run() {
             graine_member_signature_key,
             graine_run,
             recuperer_cle_session_mls,
+            cle_au_repos_schema,
+            cle_au_repos_preparer,
+            cle_au_repos_marquer,
+            cle_au_repos_lire,
+            cle_au_repos_oublier,
+            supprimer_cle_appareil,
             sauvegarder_mls_et_persister,
             creer_groupe,
             lister_groupes,
