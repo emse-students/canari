@@ -11,6 +11,7 @@ import type {
   StateLoadFailure,
 } from '$lib/mls-client';
 import {
+  GroupDrainAbandonedError,
   LocalStateNotReadyError,
   MlsDeliveryApi,
   isKeystoreKeyUnavailable,
@@ -780,6 +781,8 @@ export abstract class BaseMlsService implements IMlsService {
     // would hold its group's flight for ever and hand every later caller the same hung promise.
     this.wakeKeyPackageRoundWaiters(true);
     externalJoinFlights.get(this)?.clear();
+    // Nor a wait for a drain this client will never see (the admission gate's parked asks).
+    this.abandonGroupDrainedWaiters();
     if (this.heartbeatTimer !== null) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -1498,6 +1501,103 @@ export abstract class BaseMlsService implements IMlsService {
     await this.messageScheduler.waitUntilGroupIdle(groupId);
   }
 
+  /** @inheritdoc */
+  isGroupDrained(groupId: string): boolean {
+    const drained = this.groupDrainedNow(groupId);
+    if (!drained) {
+      console.debug(
+        `[QUEUE] group ${groupId.slice(0, 8)} not known drained: pulled=${this.mailboxEmptiedByAPull} pulling=${Boolean(this.pendingPullInFlight)} socket=${this.isWsOpen()} idle=${this.messageScheduler.isGroupIdle(groupId)}`
+      );
+    }
+    return drained;
+  }
+
+  /** {@link isGroupDrained}'s evidence, read silently - the waiters re-read it on every event. */
+  private groupDrainedNow(groupId: string): boolean {
+    return (
+      this.mailboxEmptiedByAPull &&
+      !this.pendingPullInFlight &&
+      this.isWsOpen() &&
+      this.messageScheduler.isGroupIdle(groupId)
+    );
+  }
+
+  /** Waiters of {@link whenGroupDrained}, by group. */
+  private readonly groupDrainedWaiters = new Map<
+    string,
+    Array<{ resolve: () => void; reject: (e: Error) => void }>
+  >();
+
+  /** Groups whose scheduler idleness is already being waited for, so it is armed once per group. */
+  private readonly groupDrainedArmed = new Set<string>();
+
+  /** @inheritdoc */
+  whenGroupDrained(groupId: string): Promise<void> {
+    if (this.groupDrainedNow(groupId)) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const waiters = this.groupDrainedWaiters.get(groupId) ?? [];
+      waiters.push({ resolve, reject });
+      this.groupDrainedWaiters.set(groupId, waiters);
+      this.armGroupDrained(groupId);
+    });
+  }
+
+  /**
+   * Waits for the scheduler to finish `groupId`'s frames, then re-reads the evidence. Armed ONLY
+   * while the group still has frames: an idle group waiting on the pull or the socket is woken by
+   * the pull's end instead, and re-arming on an idle group would resolve at once, for ever.
+   */
+  private armGroupDrained(groupId: string): void {
+    if (this.groupDrainedArmed.has(groupId) || this.messageScheduler.isGroupIdle(groupId)) return;
+    this.groupDrainedArmed.add(groupId);
+    void this.messageScheduler.waitUntilGroupIdle(groupId).then(() => {
+      this.groupDrainedArmed.delete(groupId);
+      this.wakeGroupDrainedWaiters('group idle');
+    });
+  }
+
+  /**
+   * Resolves every {@link whenGroupDrained} waiter whose group now reads drained, and re-arms the
+   * others whose group has frames again. Called where the evidence can change: a group's frames
+   * done, a pull ended.
+   */
+  private wakeGroupDrainedWaiters(cause: string): void {
+    for (const [groupId, waiters] of this.groupDrainedWaiters) {
+      if (!this.groupDrainedNow(groupId)) {
+        this.armGroupDrained(groupId);
+        continue;
+      }
+      this.groupDrainedWaiters.delete(groupId);
+      console.debug(
+        `[QUEUE] group ${groupId.slice(0, 8)} drained (${cause}) - waking ${waiters.length} waiter(s)`
+      );
+      for (const { resolve } of waiters) resolve();
+    }
+  }
+
+  /** How many {@link whenGroupDrained} waiters are pending, across groups. */
+  private pendingGroupDrainWaiters(): number {
+    let n = 0;
+    for (const waiters of this.groupDrainedWaiters.values()) n += waiters.length;
+    return n;
+  }
+
+  /**
+   * Rejects every pending {@link whenGroupDrained} waiter with {@link GroupDrainAbandonedError}: this
+   * client is ending and will drain nothing more. Called by {@link destroy}.
+   */
+  private abandonGroupDrainedWaiters(): void {
+    const pending = this.pendingGroupDrainWaiters();
+    if (pending > 0) {
+      console.info(`[QUEUE] destroy - ${pending} drain waiter(s) abandoned`);
+    }
+    for (const [groupId, waiters] of this.groupDrainedWaiters) {
+      for (const { reject } of waiters) reject(new GroupDrainAbandonedError(groupId));
+    }
+    this.groupDrainedWaiters.clear();
+    this.groupDrainedArmed.clear();
+  }
+
   private async settleMailbox(): Promise<void> {
     await this.pendingPullInFlight?.catch(() => {});
     return this.messageScheduler.waitUntilIdle();
@@ -2100,6 +2200,14 @@ export abstract class BaseMlsService implements IMlsService {
             e
           );
         }
+        // WHAT THIS FAILURE HOLDS UP, made visible: a drain waiter (a parked seed ask, an admission
+        // observation) is woken only by a pull that ENDS whole, so it waits for the next one.
+        const waiting = this.pendingGroupDrainWaiters();
+        if (waiting > 0) {
+          console.info(
+            `[PENDING] ${waiting} drain waiter(s) (parked seed asks, admission observations) wait for a pull that completes`
+          );
+        }
       }
     })();
     // CHAINED, NEVER OVERWRITTEN. Two pulls can overlap (a reconnect and the restore's seeded-rows
@@ -2121,6 +2229,9 @@ export abstract class BaseMlsService implements IMlsService {
       if (this.pendingPullInFlight === announced) this.pendingPullInFlight = null;
     }
     await this.settleMailbox();
+    // THE PULL'S END IS AN EVENT FOR `whenGroupDrained`: a group that went idle before the mailbox
+    // was listed whole reads drained only now (the start-up sync runs before the first full pull).
+    this.wakeGroupDrainedWaiters('pull ended');
     // Every frame refused for lack of a conversation row before this pull started has now been
     // listed AND handled - read, or refused again under a later mark - so the gap healer stops
     // holding live frames behind it (`refusedBacklogIsQueued`). A pull that died half-way proves

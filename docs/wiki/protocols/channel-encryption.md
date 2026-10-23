@@ -1159,7 +1159,10 @@ group.** Entry is by external commit against a published `mls_group_info`, and e
 from a roster the server owns. A server that wanted future seeds would not read them out of a column
 any more - it would admit a device it controls. That is a strictly better position than before (it
 buys nothing retroactive, and every commit is visible to the members in the group's log) but it is
-not nothing, and no client currently WATCHES that log for an unexpected admission.
+not nothing, and no client currently WATCHES that log for an unexpected admission. **The PAST is
+handed over on a member's signature, not on the roster** since 2026-10-22: a member gives a
+community's history only to a newcomer whose admission it can verify
+([section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)).
 
 **`history_visibility` is a policy guarantee, never a cryptographic one.** Only a device holding a
 seed can withhold it, so the rule is applied by the answering member. A modified client answers
@@ -3744,3 +3747,211 @@ a device-less leaf does; one device counted once), `graineStore.test.ts` and
 reading - a cold start with every other member online, then a second start: the first shows one
 `holds nothing ... at distribution epoch N - recorded, asking the next member` per member and then
 `is final at distribution epoch N`; the second shows no `asked ... no-seed-held` for that community.
+
+## 25. A member hands the past only to an admission it can verify (decided by the user 2026-10-22)
+
+**The decision** (user, 2026-10-22, *"Garder Partagé par défaut"*): a community stays `shared` by
+default - a newcomer reads what was written before they arrived - but a member's device hands that
+past over only to a newcomer whose ADMISSION it can verify itself, from what it saw by itself,
+never on the roster's word. Seeds keep rotating when a new user arrives (D5, the rotation work of
+#2263, not this section).
+
+**It holds once every client that answers runs it.** An answering device of an older version
+hands the past to whoever the roster names, so the protection is complete only when
+`minClientVersion` reaches the version that carries this section - an owed floor, in
+[backlog](../backlog.md).
+
+### Three ways to prove an admission were weighed
+
+| Option | Verdict |
+| --- | --- |
+| A member-committed add (the admitter's device commits the newcomer into the key group) | Rejected: a link newcomer is admitted while no member is online, and the key group is entered by external commit for every device after the first (section 20). It would change the join path, not prove it. |
+| An admin-signed roster | Rejected: one more signed object to keep current on every change, and a link admission happens with no admin present. |
+| **A signed invitation - a voucher stored with the membership** | **Chosen.** Each real way in already passes through a member's device (the panel add, the link shown): that device signs, the voucher rides the membership row, and any member verifies it against what it recorded itself. |
+
+### The join paths, and what each carries
+
+| Path (`social-service`) | Who signs | Voucher |
+| --- | --- | --- |
+| Creating the community | nobody - the creator is a root | none needed |
+| A member adds someone from the panel (`inviteToChannel`) | that member's device, at the add | `direct`, sent with the add |
+| A newcomer follows an invite link (`acceptWorkspaceInvite`) | the device that SHOWED the link, at display; the newcomer redeems it | `link`, sent with the accept |
+| A link shown by an old client, or copied without its `#` part | nobody | none: the newcomer joins, and reads from their arrival on (accepted by the user, 2026-10-23) |
+| Any other way onto the roster | nobody | none: answered as `joined` |
+
+**An old invite link keeps working for joining and gives no past until it is re-issued** - the cost
+the user accepted (2026-10-23): old links are taken as they are. A link shown by this version carries its proof after the `#`; one shown before it
+does not, and its newcomer reads from their arrival on until a member adds them again or they follow
+a fresh link (a member already on the roster who follows a fresh link has the voucher written onto
+their row). The `#` part reaches the join page on every surface: a browser keeps it, and the app
+receives an App Link or Universal Link whole and navigates to it with its fragment
+(`appLinkNavigation.test.ts`).
+
+**Who may sign**: any admitted member's device. The product lets only members with the invite
+permission add someone or show a link, but that permission is roster data: reading it would make a
+voucher depend on the server's CURRENT word about its signer, and would add nothing against a member,
+who - holding the past - could hand it over directly (section 7).
+
+### The trust rule (`frontend/src/lib/utils/graine/admissionGate.ts`)
+
+An answering device reads only what it holds itself - its ADMISSION LEDGER (roots and verified
+admissions, per account) and its MLS layer (pins and departures):
+
+- **Roots**, fixed at the first community sync after the proof existed (the roster reconciliation
+  calls `observeAdmissionState`): the members who arrived before `ADMISSION_PROOF_SINCE` or created
+  the community, AND have a leaf in the community's key group at that sync. A roster row with no
+  leaf is never a root, and a root counts now only while the roster still shows the arrival it was
+  rooted with. **The cut date is the day the production stable carrying the proof ships** (decided
+  by the user, 2026-10-23): planned for 2026-10-27 UTC. If that stable moves, the constant moves
+  with it, in one line, before the stable's final pre-release.
+- **Verified admissions**: each voucher that held, at the place it was signed.
+- **Observations**: for each voucher on the roster, where (the community key group's epoch) and
+  when (this device's clock) this device first saw it. An observation is made only while the key
+  group is DRAINED on this device (`isGroupDrained`): the last pull listed the whole mailbox, no pull
+  is running, the socket is open, and nothing of the group is queued, parked or being applied.
+  A commit still held in the mailbox, a removal included, is therefore never observed as not yet
+  happened. A voucher that claims a place after the one this device first saw it at is refused.
+- **The drain drives the observation** (`whenGroupDrained`, an event and not a poll: it is
+  re-checked when the scheduler finishes a frame of the group and when a pull ends). A sync that
+  found the group not drained - the start-up sync runs before the first full pull - observes again
+  the moment it drains. An ask arrives ON the key group, so it is that group's current work and can
+  never see it drained. An ask whose answer depends on a voucher not observed yet
+  (`pastPolicyFor` -> `unobserved`) is therefore PARKED in memory (`parkedAsks.ts`): one per asking
+  device, community and kind, at most 64, the oldest dropped at warn. The drain that follows decides
+  it again and answers then; a decision that has become a refusal is answered as one, with its log.
+  **Consequence: the answer waits for the key group to catch up on the answering device.** A parked
+  ask lost with the app is acceptable: the asking device asks again at its next start. A SESSIONS
+  repair naming only seeds this device does not hold is answered at once (`missing` does not depend
+  on the admission). A failed pull wakes nothing - only a pull that ends whole does - and says how
+  many drain waiters it holds up. Sign-out forgets the parked asks (`clearParkedAsks`), and the MLS
+  service's `destroy` rejects its pending drain waiters (`GroupDrainAbandonedError`).
+- **Removals**: the epochs at which a commit this device merged - live or on catch-up - removed the
+  user's last leaf from the key group (`removalEpochs`, [mls-protocol](mls-protocol.md)); a device
+  repair is one commit (`replaceMember`) and records none. No removal seen means UNKNOWN, never
+  proof that none happened.
+
+**A signer's key has ONE trust source**: the key the community's key-group tree holds for that
+device now, else the keys the MLS layer PINNED for it (`pinnedSignatureKeys`, the device-binding
+pins, shared with every other caller that needs a device key it can stand behind); a signature that
+verifies under any of them counts. Never a key the server publishes on its own: a signer device
+that is neither in the tree nor pinned is unproven, and one that has since left the tree keeps
+verifying under its pin. A pin re-learned after a prune (`anchored: false`) is weaker evidence, and a
+signer verified only under one is unproven: the newcomer reads from arrival on. Every user id the
+gate and the voucher compare - roster rows, leaves, subject, signer - is in the one canonical form of
+`leafIdentity.ts` (`canonicalUserId`, Rust's `to_ascii_lowercase`), never a plain `toLowerCase`.
+
+A voucher carries a PLACE its signer wrote: a key group and that group's epoch. The newcomer's
+admission starts there, so a removal of the newcomer after it ends it. The SIGNER is judged
+elsewhere: at the place where THIS device first observed the voucher (decided by the user,
+2026-10-23). The device records, durably and per voucher, the community key group's epoch when it
+first saw the voucher on the roster (`observed` in its ledger, written at every community sync and
+every check). The voucher admits when its signer was admitted at that observed place - a root, or
+admitted by an earlier voucher - with no removal of the signer in between. A member is admitted now
+when some admission of theirs has no removal after it.
+
+So:
+- A voucher from a member of a former bureau still admits after they leave, provided this device saw
+  it before they left.
+- A voucher first observed after its signer's removal does not admit, whatever place it claims - a
+  removed signer cannot backdate one.
+- A removed member who comes back with the voucher they had is a newcomer without one.
+- Places in two key groups cannot be ordered, and the reading that hands nothing over is taken.
+
+**The cost, accepted by the user: a device that saw a voucher late grants less past, never more.**
+A device that joined the community after the signer left, or whose ledger was lost, observes every
+voucher anew, now. It then refuses the vouchers whose signer has since been removed: those newcomers
+read from their arrival on when this device answers. Another device that saw the voucher in time
+still hands them the past. The record holds only the vouchers on the current roster; one that leaves
+the roster and comes back is observed again, later.
+
+`pastPolicyFor(frame)` is THE gate, and both answer paths call it - the HISTORY bundle
+(`gatherCommunityHistory`) and the SESSIONS repair (`gatherNamedSessions`) - so the two cannot
+disagree about a member. It returns `joined` when the community is set to it, when the admission is
+not proven (`info`: a decision, not a loss), or when the roster or the tree cannot be read (`warn`:
+fail closed). **Not proven is never refused whole**: the answer is the one a `joined` community
+gives - nothing from before the asker's arrival, everything from it on, under the same
+server-computed floor. It returns `unobserved` when the admission is not proven only because a
+voucher waits for the key group to drain; the answer path then parks the ask (above). It judges on
+the COMMUNITY's key group (`communityKeyGroupOf`), whichever
+group the ask arrived on: a private salon's own group holds that salon's members and its own
+removals, and neither says who the community admitted.
+
+### The wire
+
+Every signed structure begins with its own length-prefixed label, as Graine v2's do: the label keeps
+one signature from verifying as another, and its leading `0x00` keeps a device-key signature from
+ever being an MLS `SignContent` (`mls-core/src/graine_signature.rs`). `lp` is a u32 big-endian length
+then the bytes; `be64` a u64 big-endian integer.
+
+```text
+A = lp("canari-graine-admit-direct-v1") || lp(workspaceId) || lp(subject) || lp(signerUser) || lp(signerDevice) || lp(keyGroupId) || be64(epoch) || be64(issuedAt)
+L = lp("canari-graine-admit-link-v1")   || lp(workspaceId) || lp(signerUser) || lp(signerDevice) || lp(keyGroupId) || be64(epoch) || lp(linkPublicKey) || be64(issuedAt) || be64(expiresAt)
+R = lp("canari-graine-admit-redeem-v1") || lp(workspaceId) || lp(subject) || lp(linkPublicKey)
+```
+
+- **direct**: the adding member's device signs `A` with its MLS credential key
+  (`signWithDeviceCredential`), placed at its key group's current epoch.
+- **link**: the device showing the link mints a fresh Ed25519 pair, signs `L` with its credential
+  key, and puts `L`'s fields, that signature and the link's SECRET in the fragment
+  (`canari-graine-invite-v1`, base64url) - a browser never sends a fragment to a server. The join page
+  takes it, drops it from the address at once, keeps it in the tab's session storage across a
+  sign-in (never in `returnTo`), and the newcomer signs `R` with the secret. The voucher carries `L`'s
+  fields and both signatures, and verifies with no secret. An admission through a link is placed
+  where the link was signed, however late it is used.
+- **A link's grant expires** (decided by the user, 2026-10-23). `expiresAt` is the invite link's own
+  expiry, or 30 days after signing (`LINK_GRANT_DEFAULT_LIFETIME_MS`) when the link has none. It is
+  signed into `L`, so no holder of the fragment can extend it. A member counts a link voucher only
+  if it first observed that voucher no later than `expiresAt`. The only reference for an instant is
+  this device's own clock: the key group's epochs order commits, not time. The clock is read once,
+  at the first observation, and recorded with it. It bounds the link from above and decides nothing
+  else. A device whose clock runs fast refuses a link early; one whose clock runs slow accepts it
+  late.
+- **The voucher** (`canari-graine-admission-v1`, base64url, at most 4096 characters) is stored in
+  `channel_members."admissionVoucher"` (migration `107`) and served on the roster with `isCreator`.
+  The server checks its alphabet and length and nothing else: it cannot verify it, and need not.
+
+### What it does not do, stated
+
+- A device key is pinned on first sight, and a tree admits devices the way MLS
+  BasicCredential does (section 21): the proof is as strong as the tree. Device cross-signing is
+  that work.
+- A removal counts on the devices that merged its commit; a member that arrived later holds no
+  record of it.
+- A device that first syncs a community after the cut records its roots from the members present
+  then.
+- A member whose every device left the tree needs a fresh admission for the past.
+- An invite link is a bearer proof until its grant expires: whoever holds the full link, `#` part
+  included, can be admitted with the past. Share it as you would the community itself.
+- A newcomer admitted by an older client, or through a link without its `#` part, reads from their
+  arrival on until re-admitted.
+
+### Order with the other drafts
+
+Merges after #2262 (salon scope) and #2264 (visibility floors). #2264 moves the visibility read into
+`seedsTheAskerMayRead`; on rebase, its `historyVisibilityFor(...) === 'shared'` becomes
+`(await pastPolicyFor(frame)) === 'shared'`, so the gate stays the ONE function both paths call.
+#2263 (rotation on a new user) and #2255 (paging) touch neither the gate nor the voucher.
+
+Tests: `graineAdmission.test.ts` (the leading `0x00`, round trips, every tampering: subject,
+community, place, signer, forged link key, an extended expiry, malformed bytes),
+`admissionGate.test.ts` (a removed signer's backdated voucher observed after the removal does not
+admit; nothing is observed while a commit is held; a start-up sync observes once the first pull
+drains the group; after a ledger loss the observation restarts and grants less; a link observed
+after its expiry does not admit, one observed before does; a device the server publishes for a
+rooted member is refused; a lost signer device keeps verifying under its pin; a roster row with no
+leaf is never a root; the roots are fixed at the first sync; a removed member's old voucher no
+longer admits, a fresh one does, a repaired device keeps its admission; a former bureau's voucher
+observed before they left still admits, one signed after its signer's removal does not; any pinned
+key verifies, but a pin re-learned after a prune does not prove a signer), `frameHandler.test.ts`
+(both answer paths floor an unproven newcomer; direct, link and chained admissions hand the past;
+copied, foreign or forged vouchers do not; a newcomer who asks at once is answered after the drain,
+with no restart; a voucher whose signer was removed before the observation stays refused after it;
+one parked ask per device, bounded; the creator is a root; an unreadable roster fails closed),
+`BaseMlsService.groupDrained.test.ts` (the drained fact and its event), `rosterReconcile.test.ts`
+(the sync feeds the ledger), `inviteFragment.test.ts`, `historyOverlayStack.test.ts` and
+`appLinkNavigation.test.ts` (the fragment), `useChannelWorkspaces.svelte.test.ts`,
+`channel.service.spec.ts` and `mls-device-guard.spec.ts`. **Owed on the rig** (proposed
+COMM-26..31): a fresh link with its fragment gives the past, on the web and through the app's link
+handler; an old link joins and reads from arrival; a member's add gives the past; a new device of a
+rooted member gets the past; a kicked member re-added with their old voucher reads from arrival; the
+`admission is not proven` line on the answerer for an unproven newcomer.
