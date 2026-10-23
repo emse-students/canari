@@ -46,7 +46,9 @@ Homogeneity is not sameness, and the script says which is which rather than flat
   making three identical to five would invent one. Canari is excluded **by name**, so the exception
   is visible in the output instead of being an absence nobody notices.
 - **`arm-auto-merge.yml` is compared twice, and the two answers mean different things.** Its YAML is
-  identical in all four and that is the property that must never fork. Its prose is identical in the
+  identical in all four and that is the property that must never fork. **One declared exception:**
+  Canari's `# canari-only:begin` ... `# canari-only:end` region (the lockfile-refresh allowlist, 2026-10-18)
+  is cut before the comparison, so an edit outside it still forks and an unclosed marker fails. Its prose is identical in the
   three siblings and longer in Canari, whose copy cites the two pull requests the behaviour was
   measured on **there** (#329, #330). Copying a measurement into three repositories that never made
   it would be an invention.

@@ -4,6 +4,13 @@ import type { FormItem } from './api';
 const TYPES_WITHOUT_OPTIONS = ['short_text', 'long_text', 'linear_scale', 'file'];
 
 /**
+ * Question types whose options may carry a supplement. Any other type (a matrix) keeps its options
+ * as columns at no price, so a question turned from a choice into a matrix drops its old supplements
+ * rather than store prices its answer can never charge.
+ */
+const TYPES_WITH_PRICED_OPTIONS = ['single_choice', 'multiple_choice', 'dropdown'];
+
+/**
  * Converts the builder's questions into the payload the API expects: prices in cents, blank
  * options dropped, matrix rows flattened to strings.
  *
@@ -17,6 +24,7 @@ const TYPES_WITHOUT_OPTIONS = ['short_text', 'long_text', 'linear_scale', 'file'
 export function toFormItemsPayload(items: any[]): FormItem[] {
   return items.map((item) => {
     const hasOptions = !TYPES_WITHOUT_OPTIONS.includes(item.type);
+    const pricesOptions = TYPES_WITH_PRICED_OPTIONS.includes(item.type);
     return {
       ...item,
       options: hasOptions
@@ -24,7 +32,10 @@ export function toFormItemsPayload(items: any[]): FormItem[] {
             .filter((opt: any) => opt.label?.trim())
             .map((opt: any) => ({
               ...opt,
-              priceModifier: opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
+              priceModifier:
+                pricesOptions && opt.priceModifier != null
+                  ? Math.round(opt.priceModifier * 100)
+                  : 0,
             }))
         : [],
       rows: (item.rows ?? [])

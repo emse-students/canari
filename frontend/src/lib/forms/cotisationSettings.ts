@@ -64,17 +64,26 @@ export function cotisationPayload(
  * enforces all four; this keeps the screen honest about what it will accept.
  *
  * Reported in the order the manager can act on: payment first (their own switch, one section up),
- * then the beneficiary, then that association's catalogue, then the right they do not hold.
+ * then the beneficiary, then that association's catalogue, then the right they do not hold. A
+ * PUBLIC form comes after payment: its guests have no account to grant to (the server's refusal in
+ * `assertPublicConfigValid`), whatever else holds.
  */
-export type CotisationGrantBlocker = 'no-payment' | 'no-association' | 'no-cotisation' | 'no-right';
+export type CotisationGrantBlocker =
+  | 'no-payment'
+  | 'public'
+  | 'no-association'
+  | 'no-cotisation'
+  | 'no-right';
 
 export function cotisationGrantBlocker(
   requiresPayment: boolean,
   associationId: string,
   tierCount: number,
-  mayGrant: boolean
+  mayGrant: boolean,
+  isPublic = false
 ): CotisationGrantBlocker | null {
   if (!requiresPayment) return 'no-payment';
+  if (isPublic) return 'public';
   if (!associationId) return 'no-association';
   if (tierCount === 0) return 'no-cotisation';
   if (!mayGrant) return 'no-right';

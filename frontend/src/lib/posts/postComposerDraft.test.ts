@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { newPollOption } from './pollDraft';
 import {
+  composerAllowsReel,
   clearPostComposerDraft,
   postComposerDraftKey,
   emptyPostComposerDraft,
@@ -130,5 +131,27 @@ describe('a draft is owned by the account that wrote it', () => {
     savePostComposerDraft(emptyPostComposerDraft('x'));
     expect(loadPostComposerDraft()).toBeNull();
     expect(localStorage.length).toBe(0);
+  });
+});
+
+describe('composerAllowsReel (review of #2124: what a reel cannot carry keeps the video on the post)', () => {
+  const none = {
+    scheduledAt: '',
+    includePoll: false,
+    includeForm: false,
+    linkedCalendarEventId: '',
+  };
+
+  it('a composer with none of them set lets a filmed video become a CanaReel', () => {
+    expect(composerAllowsReel(none)).toBe(true);
+  });
+
+  it.each([
+    ['a schedule', { scheduledAt: '2030-01-01T10:00' }],
+    ['a poll', { includePoll: true }],
+    ['a form', { includeForm: true }],
+    ['a linked event', { linkedCalendarEventId: 'ev-1' }],
+  ])('%s keeps the video attached to the post', (_, set) => {
+    expect(composerAllowsReel({ ...none, ...set })).toBe(false);
   });
 });

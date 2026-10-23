@@ -38,4 +38,14 @@ describe('coversScreen - what the iOS native tab bar hides under', () => {
     expect(screenCover.covered).toBe(false);
     a.destroy();
   });
+
+  it('marks the surface while it covers, which is what keeps a call bar above it (app.css)', () => {
+    const el = node();
+    const a = coversScreen(el, false);
+    expect(el.hasAttribute('data-covers-screen')).toBe(false);
+    a.update(true);
+    expect(el.hasAttribute('data-covers-screen')).toBe(true);
+    a.destroy();
+    expect(el.hasAttribute('data-covers-screen')).toBe(false);
+  });
 });

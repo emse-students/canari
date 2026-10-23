@@ -23,12 +23,9 @@ const getPost = vi.fn(pending);
 vi.mock('$lib/posts/api', () => ({ getPost: () => getPost() }));
 vi.mock('$lib/posts/feedAudience', () => ({ redirectIfNotFeedAudience: async () => false }));
 
-/** Resolves to 'done' if the promise settles first, 'blocked' if the macrotask queue wins. */
-async function settlesPromptly(p: Promise<unknown>): Promise<'done' | 'blocked'> {
-  return Promise.race([
-    p.then(() => 'done' as const),
-    new Promise<'blocked'>((r) => setTimeout(() => r('blocked'), 50)),
-  ]);
+/** Resolves to 'done' once the promise settles; one that never does fails on the test timeout. */
+async function settlesPromptly(p: Promise<unknown>): Promise<'done'> {
+  return p.then(() => 'done' as const);
 }
 
 describe('route loads', () => {

@@ -60,6 +60,21 @@ describe('every sign-out ends the live session on the device', () => {
     expect(guard).toBeLessThan(end.indexOf("tearDownLiveSession(ctx, cb, 'logout');"));
   });
 
+  it("the session's end clears the tab's refused-rotation reload count, on both exits", () => {
+    // Otherwise a sign-out then a sign-in in the same tab inherits a run of reloads it never had,
+    // and its first refused rotation stops the page instead of curing it. The factory wipe empties
+    // `sessionStorage` whole; this is the sign-out and revocation seam, shared by both reasons.
+    const teardown = sessionAuth.slice(
+      sessionAuth.indexOf('export function tearDownLiveSession('),
+      sessionAuth.indexOf('\n}\n', sessionAuth.indexOf('export function tearDownLiveSession('))
+    );
+    expect(teardown).toContain('forgetRefusedRotationReloads();');
+    // Unconditional: not inside the logout-only branch.
+    expect(teardown.indexOf('forgetRefusedRotationReloads(')).toBeLessThan(
+      teardown.indexOf("if (reason === 'logout')")
+    );
+  });
+
   it('a login opens no state before a signed-out session has finished its final checkpoint', () => {
     // `mlsHolder.ts` hands the next sign-in a fresh client at once; what keeps that client from
     // reading a state still being written is this wait, ahead of every MLS and state access.

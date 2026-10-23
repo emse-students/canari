@@ -10,6 +10,7 @@ import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
+import { Log } from '$lib/utils/Log';
 import type {
   AddMessageToChatOptions,
   MessageBatchOrigin,
@@ -174,9 +175,10 @@ export function useConversations() {
   // keyed by group so a mid-invite conversation switch never leaks pending rows.
   let pendingInvites = $state<{ groupId: string; ids: string[] } | null>(null);
   let isLoadingHistory = $state(false);
-  // True once the initial IndexedDB restore has populated the map, so consumers (e.g. the
+  // True once THIS session's IndexedDB restore has populated the map, so consumers (e.g. the
   // /posts mini-panel) can treat the live map as authoritative and reflect deletions
-  // instead of resurrecting stale rows from their own snapshot.
+  // instead of resurrecting stale rows from their own snapshot. Reset at sign-out
+  // (`invalidateRestores`), when the map is cleared.
   let conversationsRestored = $state(false);
   /**
    * How many startup/resume passes that can still ADD a conversation are running.
@@ -264,6 +266,25 @@ export function useConversations() {
     string,
     { sentAt: number | null; generation: number; done: Promise<void> }
   >();
+  /**
+   * The rows of each salon drawn from the store that no server page has confirmed yet (F4).
+   *
+   * OWNED BY THE SALON, NOT BY THE LOAD THAT DREW THEM. A load that drew the copy and was then
+   * superseded never merges, and the newer load finds those rows already in memory and draws nothing -
+   * so when the draw was the load's own, NEITHER withdrew a row the server no longer serves, and a
+   * refused or deleted message stayed on screen (GRAINE-AUTH-1, 2026-10-22). Whichever load merges
+   * withdraws every row here its page does not name, then clears the entry.
+   */
+  const salonRowsDrawnUnconfirmed = new SvelteMap<string, SvelteSet<string>>();
+
+  /**
+   * The sign-out half of `salonRowsDrawnUnconfirmed`: the ending account's unconfirmed draws go with
+   * its conversations, so its failed load can never withdraw a row from the next account's page.
+   */
+  function forgetUnconfirmedSalonDraws(): void {
+    Log.d('CHANNEL', `forgetting ${salonRowsDrawnUnconfirmed.size} salon(s) of unconfirmed draws`);
+    salonRowsDrawnUnconfirmed.clear();
+  }
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
     salonStaleDeclarations++;
@@ -571,25 +592,28 @@ export function useConversations() {
       }
 
       // Fetch from network → decrypt → save to DB (no direct UI update).
-      // The replay runs in a bulk-ingest window so an encrypted checkpoint flushes on close;
-      // its progress markers are committed only afterwards (never ahead of persisted state).
+      // The replay runs in a bulk-ingest window; its progress markers are committed by the helper
+      // once a checkpoint that started after the replay LANDED, and never when that checkpoint
+      // fails. The page below is drawn without waiting for the disk.
       try {
-        const commit = await withMlsBulkIngest(ctx.ensureMls(), () =>
-          replayConversationHistory({
-            mlsService: ctx.ensureMls(),
-            id,
-            contactName,
-            userId: ctx.userId,
-            deviceKey: () => ctx.deviceKeyB64,
-            storage: ctx.storage,
-            getConversation: (name) => conversations.get(name),
-            setConversation: (name, next) => conversations.set(name, next),
-            saveConversation: (name) => saveConversation(name, ctx),
-            messageReactions: ctx.messageReactions,
-            log: ctx.log,
-          })
+        await withMlsBulkIngest(
+          ctx.ensureMls(),
+          () =>
+            replayConversationHistory({
+              mlsService: ctx.ensureMls(),
+              id,
+              contactName,
+              userId: ctx.userId,
+              deviceKey: () => ctx.deviceKeyB64,
+              storage: ctx.storage,
+              getConversation: (name) => conversations.get(name),
+              setConversation: (name, next) => conversations.set(name, next),
+              saveConversation: (name) => saveConversation(name, ctx),
+              messageReactions: ctx.messageReactions,
+              log: ctx.log,
+            }),
+          (commit) => commit()
         );
-        commit?.();
         // Reload from DB so display reflects the latest saved state
         await renderStoredPage(contactName, id, ctx, undefined, drawnFirst);
       } catch (e) {
@@ -610,8 +634,8 @@ export function useConversations() {
   /**
    * Draws a salon's last page from this device's store, before its server page (F4 of
    * community-open-budget). Only on the first draw of the salon in this process - a salon already in
-   * memory has newer rows than any copy - and only for the load still the latest. Returns the rows it
-   * drew, which the server page later confirms or withdraws.
+   * memory has newer rows than any copy - and only for the load still the latest. The rows it draws
+   * join `salonRowsDrawnUnconfirmed`, which the next server page merged confirms or withdraws.
    *
    * Never fatal: a store that cannot be read costs the early draw, said in the log, and the server
    * page draws the salon as it always did.
@@ -620,9 +644,13 @@ export function useConversations() {
     channelConversationId: string,
     ctx: ConversationContext,
     generation: number
-  ): Promise<ChatMessage[]> {
-    if (!ctx.storage) return [];
-    if (conversations.get(channelConversationId)?.messages.some((m) => !m.status)) return [];
+  ): Promise<void> {
+    if (!ctx.storage) return;
+    const salonTag = channelConversationId.slice(0, 16);
+    if (conversations.get(channelConversationId)?.messages.some((m) => !m.status)) {
+      Log.d('CHANNEL', `${salonTag} stored page not drawn - rows already on screen`);
+      return;
+    }
     let stored: Awaited<ReturnType<NonNullable<ConversationContext['storage']>['getMessagesPage']>>;
     try {
       stored = await ctx.storage.getMessagesPage(
@@ -632,23 +660,34 @@ export function useConversations() {
       );
     } catch (e) {
       ctx.log(
-        `[CHANNEL] stored page of ${channelConversationId.slice(0, 16)} not read - the server page draws it: ${String(e)}`
+        `[CHANNEL] stored page of ${salonTag} not read - the server page draws it: ${String(e)}`
       );
-      return [];
+      return;
     }
-    if (stored.length === 0) return [];
-    if (!salonLoadGenerations.isLatest(channelConversationId, generation)) return [];
+    if (stored.length === 0) {
+      Log.d('CHANNEL', `${salonTag} stored page empty - nothing drawn`);
+      return;
+    }
+    if (!salonLoadGenerations.isLatest(channelConversationId, generation)) {
+      Log.d('CHANNEL', `${salonTag} stored page not drawn - a newer load started meanwhile`);
+      return;
+    }
     const current = conversations.get(channelConversationId);
-    if (!current) return [];
+    if (!current) {
+      Log.d('CHANNEL', `${salonTag} stored page not drawn - the salon left memory meanwhile`);
+      return;
+    }
     const drawn = mapStoredMessagesToChatMessages(stored, ctx.userId);
     conversations.set(channelConversationId, {
       ...current,
       messages: mergeMessagePage(current.messages, drawn),
     });
+    const pending = salonRowsDrawnUnconfirmed.get(channelConversationId) ?? new SvelteSet<string>();
+    for (const m of drawn) pending.add(m.id);
+    salonRowsDrawnUnconfirmed.set(channelConversationId, pending);
     ctx.log(
-      `[CHANNEL] ${channelConversationId.slice(0, 16)} stored page drawn (${drawn.length} row(s)) before the server page`
+      `[CHANNEL] ${salonTag} stored page drawn (${drawn.length} row(s)) before the server page`
     );
-    return drawn;
   }
 
   /**
@@ -779,7 +818,7 @@ export function useConversations() {
         (error: unknown) => ({ ok: false as const, error })
       );
       // THE STORED PAGE IS DRAWN WHILE THE SERVER PAGE IS ON THE WIRE (F4): the request has left.
-      const drawnFirst = await drawStoredSalonPage(channelConversationId, ctx, generation);
+      await drawStoredSalonPage(channelConversationId, ctx, generation);
       const settledPage = await pageRequest;
       if (!settledPage.ok) throw settledPage.error;
       const [rows, rawMarks] = settledPage.answer;
@@ -894,18 +933,19 @@ export function useConversations() {
         // alone cannot say it: memory is authoritative outside a page's window, so a deleted newest
         // row reads as a live arrival and an emptied salon's page removes nothing. A drawn row older
         // than a full page is withdrawn too: what lies between it and the page is unknown, and a row
-        // shown across a hidden gap is worse than one fetched again on scroll. Only rows this load
-        // drew from the store: a message that arrived live after the draw is not in `drawnFirst`.
+        // shown across a hidden gap is worse than one fetched again on scroll. Only rows drawn from
+        // the store and not yet confirmed - by THIS load or by one it superseded (see
+        // `salonRowsDrawnUnconfirmed`): a message that arrived live after the draw is in neither.
         let base = current.messages;
         // The server's rows alone: the older-messages notice is not a message, and is never stored.
         const serverRows = loadedEdited.filter(
           (m) => m.id !== olderMessagesNoticeId(channelConversationId)
         );
-        if (drawnFirst.length > 0) {
+        const drawnUnconfirmed = salonRowsDrawnUnconfirmed.get(channelConversationId);
+        salonRowsDrawnUnconfirmed.delete(channelConversationId);
+        if (drawnUnconfirmed && drawnUnconfirmed.size > 0) {
           const inPage = new SvelteSet(serverRows.map((m) => m.id));
-          const withdrawn = new SvelteSet(
-            drawnFirst.filter((m) => !inPage.has(m.id)).map((m) => m.id)
-          );
+          const withdrawn = new SvelteSet([...drawnUnconfirmed].filter((id) => !inPage.has(id)));
           if (withdrawn.size > 0) {
             ctx.log(
               `[CHANNEL] ${channelConversationId.slice(0, 16)} ${withdrawn.size} stored row(s) the fresh page does not name withdrawn`
@@ -1027,6 +1067,11 @@ export function useConversations() {
     if (current) {
       const existingIds = new SvelteSet(current.messages.map((m) => m.id));
       const added = decodedAll.filter((m) => !existingIds.has(m.id));
+      // EVERY ROW THIS SWEEP DECODED IS CONFIRMED BY THE SERVER, so it leaves the unconfirmed draws.
+      // Otherwise a stored row it just merged stays pending past a failed load, and the next page,
+      // whose window starts above it, would withdraw a message the server still holds.
+      const pending = salonRowsDrawnUnconfirmed.get(channelConversationId);
+      if (pending) for (const m of decodedAll) pending.delete(m.id);
       if (added.length) {
         // A whole-history sweep brings the oldest rows of all: the notice stays above them.
         const merged = keepNoticeOnTop(
@@ -1044,13 +1089,128 @@ export function useConversations() {
     return matches.sort((a, b) => a.ts - b.ts).map((m) => m.id);
   }
 
-  /** Reads all saved conversations from IndexedDB, verifies MLS state consistency, and populates the conversations map. */
-  async function loadAndRestoreConversations(ctx: ConversationContext) {
+  /**
+   * One SESSION's restore chain: the restore running now, and the ONE restore queued behind it.
+   * Plain fields, not `$state`: nothing renders them, they only order calls.
+   *
+   * A generation, because this composable is a global singleton that outlives a sign-out and a
+   * chain must not. The sign-out retires it ({@link invalidateRestores}): a queued restore of a
+   * retired generation never starts - it would recreate an MLS client with the previous account's
+   * storage and key and refill the map the teardown just cleared - and a restore still running from
+   * one blocks nothing, because the next session asks on a fresh generation.
+   */
+  interface RestoreGeneration {
+    /** Numbered only so a log line can say which session a dropped ask belonged to. */
+    readonly id: number;
+    retired: boolean;
+    running: Promise<void> | null;
+    queued: Promise<void> | null;
+    /** The context the queued restore will run with - the latest one asked, as a later ask supersedes. */
+    queuedCtx: ConversationContext | null;
+    /** How many asks the queued restore carries, reported once when it starts rather than per ask. */
+    queuedAsks: number;
+  }
+
+  function newRestoreGeneration(id: number): RestoreGeneration {
+    return { id, retired: false, running: null, queued: null, queuedCtx: null, queuedAsks: 0 };
+  }
+
+  let restoreGeneration = newRestoreGeneration(0);
+
+  /**
+   * Retires the current session's restore chain - called by the sign-out teardown, next to the
+   * clearing of the map. What it guarantees is in {@link RestoreGeneration}; the restore already
+   * running cannot be interrupted, but its end no longer marks the map restored nor wakes the MLS
+   * client it captured, and the next login's restore does not wait for it.
+   */
+  function invalidateRestores(): void {
+    const retired = restoreGeneration;
+    retired.retired = true;
+    restoreGeneration = newRestoreGeneration(retired.id + 1);
+    // The map is cleared beside this call, so it is no longer "restored": the flag is the NEXT
+    // session's to set, and a reader asking before then (the share-sheet suggestions, a deep-link
+    // landing) must wait for that session's restore rather than trust the one that left.
+    conversationsRestored = false;
+    Log.i(
+      'RESTORE',
+      `generation ${retired.id} retired (running=${retired.running !== null}, queued asks=${retired.queuedAsks})`
+    );
+  }
+
+  /**
+   * Reads all saved conversations from IndexedDB, verifies MLS state consistency, and populates the
+   * conversations map.
+   *
+   * ONE RESTORE AT A TIME, AND AT MOST ONE QUEUED BEHIND IT (performance audit 2026-10-12, finding
+   * 8). Every Welcome for a group the map lacks asks for a whole restore - every stored
+   * conversation read, `/groups` asked, every history replayed - so a new device joining 80 groups
+   * in one drain restored 80 times, the restores overlapping on the one WASM client their phase 2
+   * is serialised for. An ask while a restore runs cannot join it: that run read the store before
+   * the asker saved its row. So it is queued as the run AFTER it, and every further ask while that
+   * one waits is folded into it - its caller awaits the same run, which starts after their rows
+   * were saved and therefore reads them. A burst of N asks costs at most two restores, decided by
+   * the order of the calls and nothing else.
+   *
+   * Every caller folded into the queued restore receives THE SAME promise, so a failure reaches
+   * each of them as one rejection - which is what lets a caller report it once
+   * (`reportRejectionOnce`). A chain belongs to one session: see {@link RestoreGeneration}.
+   */
+  function loadAndRestoreConversations(ctx: ConversationContext): Promise<void> {
+    const gen = restoreGeneration;
+    if (!gen.running && !gen.queued) return startRestore(gen, ctx);
+    gen.queuedCtx = ctx;
+    gen.queuedAsks++;
+    // Folded silently: the queued restore names how many asks it carries when it starts, one line
+    // per burst instead of one per Welcome.
+    if (gen.queued) return gen.queued;
+    const running = gen.running as Promise<void>;
+    // The running restore's failure is delivered to ITS callers; the queued one runs either way,
+    // because the asks it carries were made after that run read the store.
+    gen.queued = running
+      .then(
+        () => undefined,
+        () => undefined
+      )
+      .then(() => {
+        const next = gen.queuedCtx as ConversationContext;
+        const asks = gen.queuedAsks;
+        gen.queued = null;
+        gen.queuedCtx = null;
+        gen.queuedAsks = 0;
+        if (gen.retired) {
+          // The session that asked has ended: running it would act as that account on the next
+          // one's map. Its callers resolve - there is nothing left for them to wait for.
+          next.log(
+            `[RESTORE] ${asks} queued ask(s) dropped - generation ${gen.id} ended before they ran`
+          );
+          return;
+        }
+        next.log(`[RESTORE] one restore for ${asks} ask(s) made while the previous one ran`);
+        return startRestore(gen, next);
+      });
+    return gen.queued;
+  }
+
+  /** Starts one restore and marks it running in its generation until it settles. */
+  function startRestore(gen: RestoreGeneration, ctx: ConversationContext): Promise<void> {
+    const run = restoreOnce(gen, ctx).finally(() => {
+      if (gen.running === run) gen.running = null;
+    });
+    gen.running = run;
+    return run;
+  }
+
+  /** One restore pass - see {@link loadAndRestoreConversations} for why passes never overlap. */
+  async function restoreOnce(gen: RestoreGeneration, ctx: ConversationContext) {
     if (!ctx.storage) return;
     // The restore supersedes any local preview: from here the map is the session's.
     landingPreviewKey = null;
     landingPreviewOwner = null;
+    // THE CLIENT THIS PASS RESTORED INTO, named once: asking `ensureMls()` again at the end would
+    // CREATE a client if a sign-out retired this one meanwhile.
+    let mlsService: IMlsService | null = null;
     try {
+      mlsService = ctx.ensureMls();
       await loadExistingConversations({
         // The landing target stays pending while it is displayed, so this keeps the thread on
         // screen through the rebuild - see `preserveMessagesOf`.
@@ -1058,7 +1218,7 @@ export function useConversations() {
         userId: ctx.userId,
         deviceKeyB64: ctx.deviceKeyB64,
         storage: ctx.storage,
-        mlsService: ctx.ensureMls(),
+        mlsService,
         conversations,
         messageReactions: ctx.messageReactions,
         archivedConversationIds: [],
@@ -1067,11 +1227,15 @@ export function useConversations() {
         onArchivedIdsChange: () => {},
       });
     } finally {
-      conversationsRestored = true;
-      // A frame that reached the handler while this map was still empty was left in the server
-      // queue rather than dropped. The restore finishing is what makes it readable, so it is the
-      // trigger to ask again - there is no timer waiting to notice.
-      ctx.ensureMls().notifyConversationsRestored();
+      // A pass whose session ended speaks for nobody: the map is the next session's to mark, and
+      // the client it would wake belongs to the account that left.
+      if (!gen.retired) {
+        conversationsRestored = true;
+        // A frame that reached the handler while this map was still empty was left in the server
+        // queue rather than dropped. The restore finishing is what makes it readable, so it is the
+        // trigger to ask again - there is no timer waiting to notice.
+        mlsService?.notifyConversationsRestored();
+      }
     }
   }
 
@@ -2172,6 +2336,8 @@ export function useConversations() {
     noteLiveStreamTransition,
     /** Reads saved conversations from IndexedDB and populates the reactive map. */
     loadAndRestoreConversations,
+    invalidateRestores,
+    forgetUnconfirmedSalonDraws,
     /** Prepends an older page of messages from IndexedDB to the conversation. */
     loadOlderMessages,
     /** Asks a peer for the page below what this device holds, once the local store is exhausted. */

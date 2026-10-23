@@ -106,3 +106,20 @@ export async function rasterizeElementToCanvas(
     placeholders: false,
   });
 }
+
+/**
+ * Encodes a canvas as a PNG blob. `toBlob` hands back `null` when the canvas is too large for the
+ * engine to encode, and that is an error here rather than an empty file.
+ */
+export function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob);
+        return;
+      }
+      Log.d('pdfRaster:pngEncodeFailed', { width: canvas.width, height: canvas.height });
+      reject(new Error(`PNG encode failed for a ${canvas.width}x${canvas.height} canvas`));
+    }, 'image/png');
+  });
+}

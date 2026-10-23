@@ -175,6 +175,47 @@ describe('NotificationRow sentence', () => {
     expect(row.textContent).not.toContain('a commenté');
     expect(row.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
   });
+
+  // D38b: an association ASKS the author (its logo); the author ANSWERS the proposer (a person).
+  it('says an association asks to relay YOUR post, and how the author answered', () => {
+    const asked = renderRow({
+      ...postRow('repost_personal_requested'),
+      associationId: 'asso-1',
+    });
+    expect(asked.textContent).toContain('demande à relayer votre publication');
+    expect(asked.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
+    const accepted = renderRow({ ...postRow('repost_personal_accepted'), associationId: 'asso-1' });
+    expect(accepted.textContent).toContain('a accepté votre demande');
+    expect(accepted.querySelector('[aria-label^="Logo de"]')).toBeNull();
+    const refused = renderRow(postRow('repost_personal_refused'));
+    expect(refused.textContent).toContain('a refusé votre demande');
+    expect(refused.textContent).not.toContain('a commenté');
+  });
+});
+
+/**
+ * A PAYMENT LANDED ON A FULL FORM, told to its managers. The row stores the form's TITLE and nothing
+ * else (no payer, no amount); the sentence is built here, never a comment's, and the row opens.
+ */
+describe('NotificationRow for a payment over capacity', () => {
+  const row: PostNotification = {
+    id: 'n-over',
+    type: 'form_paid_over_capacity',
+    postId: 'f1',
+    actorId: 'system',
+    actorName: 'Canari',
+    text: 'Gala de printemps',
+    read: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  it('says a refund is owed on that form, never that someone commented', () => {
+    const target = renderRow(row);
+    expect(target.textContent).toContain(m.notif_form_paid_over_capacity_text());
+    expect(target.textContent).toContain('Gala de printemps');
+    expect(target.textContent).not.toContain(m.notif_comment_text());
+    expect(target.querySelector('button')!.disabled).toBe(false);
+  });
 });
 
 describe('NotificationRow with a type this build does not know', () => {
@@ -228,6 +269,7 @@ const EVERY_TYPE_THE_SERVER_EMITS = [
   'reaction',
   'mention',
   'form_reminder',
+  'form_paid_over_capacity',
   'association_post',
   'followed_post',
   'association_repost',
@@ -260,4 +302,84 @@ describe('NotificationRow with every known type', () => {
       expect(target.querySelector('button')!.disabled, type).toBe(false);
     }
   });
+});
+
+describe('NotificationRow for a live a moderator cut', () => {
+  const base: PostNotification = {
+    id: 'n9',
+    type: 'live_cut',
+    postId: 'live-1',
+    // The server writes no actor for it.
+    actorId: '',
+    actorName: '',
+    text: 'harassment',
+    read: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  it('says it in the readers locale with the reason label, and draws no avatar of nobody', () => {
+    const target = renderRow(base);
+    expect(target.textContent).toContain(m.notif_live_cut_text());
+    expect(target.textContent).toContain(m.moderation_reason_harassment());
+    expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    expect(target.querySelector('[data-notif-live-cut-avatar]')).not.toBeNull();
+    expect(target.querySelector('[aria-label^="Avatar de"]')).toBeNull();
+  });
+
+  it('a suspension and a withdrawal read as their own sentences, with the reason', () => {
+    for (const [type, text] of [
+      ['live_suspended', m.notif_live_suspended_text()],
+      ['live_withdrawn', m.notif_live_withdrawn_text()],
+    ] as const) {
+      const target = renderRow({ ...base, type });
+      expect(target.textContent).toContain(text);
+      expect(target.textContent).toContain(m.moderation_reason_harassment());
+      expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    }
+  });
+
+  it('is not activatable: its live is deleted, there is nowhere to go', () => {
+    const target = renderRow(base);
+    expect(target.querySelector('button')!.disabled).toBe(true);
+  });
+
+  it('a reason that is an Object.prototype name is not a label either', () => {
+    const target = renderRow({ ...base, text: 'constructor' });
+    expect(target.textContent).toContain(m.notif_live_cut_text());
+    expect(target.textContent).not.toContain('constructor');
+  });
+
+  it('a reason code this build does not know leaves the sentence alone', () => {
+    const target = renderRow({ ...base, text: 'something_new' });
+    expect(target.textContent).toContain(m.notif_live_cut_text());
+    expect(target.textContent).not.toContain('something_new');
+  });
+});
+
+describe('NotificationRow for the right to broadcast suspended or withdrawn (WP-L8b)', () => {
+  it.each([
+    ['live_suspended', () => m.notif_live_suspended_text()],
+    ['live_withdrawn', () => m.notif_live_withdrawn_text()],
+  ])(
+    '%s is told in the reader locale with its reason, inert, with no avatar of nobody',
+    (type, text) => {
+      const target = renderRow({
+        id: 'n10',
+        type,
+        // The member's own id for a withdrawal, the live's for a suspension: neither is a page.
+        postId: 'x1',
+        actorId: '',
+        actorName: '',
+        text: 'spam',
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+      expect(target.textContent).toContain(text());
+      expect(target.textContent).toContain(m.moderation_reason_spam());
+      expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+      expect(target.textContent).not.toContain(m.notif_live_cut_text());
+      expect(target.querySelector('[data-notif-live-cut-avatar]')).not.toBeNull();
+      expect(target.querySelector('button')!.disabled).toBe(true);
+    }
+  );
 });

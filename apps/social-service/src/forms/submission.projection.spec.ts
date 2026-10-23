@@ -20,6 +20,8 @@ describe('submission responses - nothing a client could pay or cancel with', () 
     cotisationGrantedAt: new Date('2026-10-15T01:02:03Z'),
     purchaseRecordedAt: new Date('2026-10-15T04:05:06Z'),
     paymentRequestedAt: new Date('2026-10-15T07:08:09Z'),
+    // A paying guest's receipt hash (migration 104): matched, never answered.
+    guestReceiptHash: 'hash-SECRET-9c1d',
   };
   const row: Submission = {
     id: '11111111-1111-4111-8111-111111111111',
@@ -38,7 +40,7 @@ describe('submission responses - nothing a client could pay or cancel with', () 
 
   /** Keys a client response must never carry, whatever their value. */
   const FORBIDDEN_KEY =
-    /account|vendor|token|lydia|stripe|session|request|settled|granted|recorded/i;
+    /account|vendor|token|lydia|stripe|session|request|settled|granted|recorded|receipt|hash/i;
 
   function makeService() {
     const submissionRepo: any = {
@@ -62,7 +64,9 @@ describe('submission responses - nothing a client could pay or cancel with', () 
       {} as any,
       {} as any,
       {} as any,
-      {} as any
+      {} as any,
+      // FormOrganiserAlertService: switched off, as it ships.
+      { enabled: () => false } as any
     );
     jest.spyOn(service, 'assertFormManager').mockResolvedValue({} as any);
     return service;
@@ -105,7 +109,27 @@ describe('submission responses - nothing a client could pay or cancel with', () 
   it('GET :id/submissions (manager list): no provider id, the submitter still named', async () => {
     const [response] = await makeService().getSubmissions('f1');
     assertNothingPrivate(response);
-    expect(response).toMatchObject({ userId: 'user-SECRET-owner', email: 'payer@example.com' });
+    expect(response).toMatchObject({
+      userId: 'user-SECRET-owner',
+      email: 'payer@example.com',
+      reference: null,
+    });
+  });
+
+  it('GET :id/submissions (manager list): a paying guest is filed under the reference it was given', async () => {
+    const service = makeService();
+    const guest = { ...row, userId: null, paymentStatus: 'paid' };
+    const free = {
+      ...row,
+      id: '22222222-2222-4222-8222-222222222222',
+      userId: null,
+      paymentStatus: 'free',
+    };
+    (service as any).submissionRepo.find.mockResolvedValue([guest, free]);
+    const [paid, unpaid] = await service.getSubmissions('f1');
+    assertNothingPrivate(paid);
+    expect(paid).toMatchObject({ userId: null, reference: '1111-1111' });
+    expect(unpaid).toMatchObject({ userId: null, reference: null });
   });
 
   it('GET :id/submissions/pending-cash (manager list): no provider id', async () => {

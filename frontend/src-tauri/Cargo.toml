@@ -1,6 +1,6 @@
 [package]
 name = "canari"
-version = "1.2.9-alpha.7"
+version = "1.4.1-alpha.1"
 description = "Le réseau des marteaux"
 authors = ["Léon Muselli / Jolan Boudin"]
 edition = "2021"
@@ -36,7 +36,11 @@ tauri-plugin-http = { version = "2.8", default-features = false, features = ["ru
 tauri-plugin-deep-link = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2.7"
-tauri-plugin-websocket = "2.4.2"
+# EXACT, and PATCHED (`[patch.crates-io]` below): the app supplies the TCP connect. The vendored
+# patch (`patches/tauri-plugin-websocket`) makes `Builder::new` TAKE the connector and removes
+# `init()` and `Default`; an unpatched upstream `Builder::new` takes no argument, so the app's
+# `Builder::new(happy_eyeballs::tcp_connector())` fails to COMPILE rather than install silently.
+tauri-plugin-websocket = "=2.5.0"
 tauri-plugin-log = "2"
 tauri-plugin-store = "2.5"
 tauri-plugin-os = "2"
@@ -51,7 +55,7 @@ aes-gcm = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
 log = "0.4"
-tokio = { version = "1.0", features = ["rt", "rt-multi-thread"] }
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "net", "time", "macros"] }
 
 [patch.crates-io]
 # tauri-plugin-keystore upstream only stores ONE secret behind a hardcoded English prompt. The
@@ -65,6 +69,15 @@ tauri-plugin-keystore = { path = "patches/tauri-plugin-keystore" }
 # every keyboard dismissal alongside `CanariApplyKeyboardLayout` - the `CANARI PATCH` hunks in
 # `ios/Sources`; everything else is the published crate, unchanged.
 tauri-plugin-system-components = { path = "patches/tauri-plugin-system-components" }
+# tauri-plugin-websocket 2.5.0 connects through `tokio-tungstenite`'s `TcpStream::connect`, which
+# tries the resolved addresses IN TURN: on a network handing out an IPv6 that routes nowhere, the
+# chat socket waited 20 s on IPv6 before trying IPv4 and missed the page's 15 s deadline every time
+# (CALL-WS-V6, 2026-10-20). The local patch makes `Builder::new` REQUIRE a TCP connector, through
+# which the app's Happy Eyeballs connect (`src/happy_eyeballs.rs`) runs before the unchanged TLS
+# and WebSocket handshakes, and registers a connection's writer BEFORE answering its id (so a
+# `disconnect()` right after the id cannot miss it) - the `CANARI PATCH` hunks in `src/lib.rs`;
+# everything else is the published crate. A vendored fork: an upstream release is rebased by hand.
+tauri-plugin-websocket = { path = "patches/tauri-plugin-websocket" }
 
 # The native iOS tab bar - Liquid Glass on iOS 26 (docs/wiki/frontend/mobile.md#the-native-ios-tab-bar).
 # iOS ONLY, and EXACT: a 0.1.x from one author, whose Swift ships inside the app - PATCHED, see
@@ -83,6 +96,10 @@ objc2 = "0.6"
 # asserted to carry none of it (`.github/scripts/bench-observables.sh`).
 [features]
 bench-observables = []
+
+[dev-dependencies]
+# Paused clock for the Happy Eyeballs race tests: virtual time, never the wall clock.
+tokio = { version = "1.0", features = ["test-util", "macros", "rt"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", default-features = false }

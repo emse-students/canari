@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { IMlsService } from '$lib/mls-client';
 import type { MlsStatePersister } from '$lib/mls-client/mlsStatePersister';
 import type { ChatSessionCallbacks, SessionContext } from './sessionTypes';
+import { flushMacrotask } from '../../../test/flush';
 
 /**
  * Account A signs out while its final MLS checkpoint is still being written, account B signs in on
@@ -102,7 +103,7 @@ function persister(held: boolean) {
 
 const background = () =>
   window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: false } }));
-const settle = () => new Promise((r) => setTimeout(r, 0));
+const settle = () => flushMacrotask();
 
 /** Account A, signed in: its client, its call service, its persister and hooks, a live session. */
 function signedInAsA() {
@@ -122,6 +123,8 @@ function signedInAsA() {
   const cb = {
     log: vi.fn(),
     conversations: new Map(),
+    invalidateRestores: vi.fn(),
+    forgetUnconfirmedSalonDraws: vi.fn(),
     setSelectedContact: vi.fn(),
   } as unknown as ChatSessionCallbacks;
   setSignOutHandler(() => session.endSession(cb));

@@ -66,6 +66,67 @@ export interface FileRetentionDeps {
   markGone: (fileId: string) => Promise<void>;
 }
 
+/** The columns a due file is selected with, by either scheduler. */
+export interface DueFileRow {
+  id: string;
+  uploaderId: string;
+  start: Date | string;
+  days: number | string;
+}
+
+/** What a run accumulates across its passes: files kept for the next run, and blob outcomes. */
+export interface FileRetentionTotals {
+  kept: number;
+  blobs: Record<FileBlobOutcome, number>;
+}
+
+/**
+ * ONE PREDICATE OF A RUN, LOOPED UNTIL IT SELECTS NOTHING - the loop both the forms' scheduler and
+ * the bookings' one run (`FormFileRetentionScheduler`, `BookingRetentionScheduler`). What is kept is
+ * excluded from the next query of the same pass, so one file the store will not delete never spins
+ * it; a candidate neither gone nor kept stops the pass with an error, since it would be selected
+ * again for ever.
+ *
+ * @param counts Due and gone counts of THIS pass, incremented.
+ * @param totals The run's kept count and blob outcomes, incremented.
+ * @param select The caller's query, given the ids to exclude; `[]` when nothing is due.
+ */
+export async function runFileRetentionPass(
+  counts: { due: number; gone: number },
+  totals: FileRetentionTotals,
+  now: Date,
+  select: (excluded: string[]) => Promise<DueFileRow[]>,
+  deps: FileRetentionDeps,
+  logger: Logger,
+  tag: string
+): Promise<void> {
+  const excluded: string[] = [];
+  for (;;) {
+    const rows = await select(excluded);
+    if (rows.length === 0) return;
+    const candidates: FileRetentionCandidate[] = rows.map((row) => ({
+      fileId: row.id,
+      ownerId: row.uploaderId,
+      start: new Date(row.start),
+      retentionDays: Number(row.days),
+    }));
+    counts.due += candidates.length;
+    const result = await purgeExpiredFiles(candidates, now, deps, logger, tag);
+    counts.gone += result.gone.length;
+    totals.kept += result.kept.length;
+    for (const [outcome, n] of Object.entries(result.blobs)) {
+      totals.blobs[outcome as FileBlobOutcome] += n;
+    }
+    excluded.push(...result.kept);
+    const settled = new Set([...result.gone, ...result.kept]);
+    const unsettled = candidates.filter((c) => !settled.has(c.fileId));
+    if (unsettled.length > 0) {
+      logger.error(`${tag} ${unsettled.length} file(s) neither gone nor kept - stopping`);
+      return;
+    }
+  }
+}
+
 /**
  * Deletes the blobs of the DUE candidates, then clears each reference whose blob is gone. A
  * candidate not due by its own `start` and `retentionDays` is refused here whatever the caller's

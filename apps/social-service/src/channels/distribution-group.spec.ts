@@ -831,4 +831,88 @@ describe('ChannelService - the community distribution group', () => {
       expect(channel.isPrivate).toBe(true);
     });
   });
+  /**
+   * THE QUESTION CHAT-DELIVERY'S JOIN GATE ASKS (WP-KEYGROUP-JOIN-GATE), answered by the same
+   * predicates as the routes that serve the group's GroupInfo - so a commit is accepted exactly when
+   * its base could have been served to its author. The repositories answer by `where`.
+   */
+  describe('isDistributionGroupEntitled', () => {
+    type Row = Record<string, unknown>;
+    const hit = (rows: Row[], where: Row) =>
+      rows.find((r) => Object.entries(where).every(([k, v]) => r[k] === v)) ?? null;
+
+    function world(t: { workspaces?: Row[]; channels?: Row[]; members?: Row[] }) {
+      const made = makeService();
+      made.workspaceRepo.findOne.mockImplementation(async ({ where }: { where: Row }) =>
+        hit(t.workspaces ?? [], where)
+      );
+      made.channelRepo.findOne.mockImplementation(async ({ where }: { where: Row }) =>
+        hit(t.channels ?? [], where)
+      );
+      made.memberRepo.findOne.mockImplementation(async ({ where }: { where: Row }) =>
+        hit(t.members ?? [], where)
+      );
+      return made;
+    }
+    const salon = { id: 'ch-1', workspaceId: WORKSPACE, isPrivate: true, allowedUsers: [USER] };
+
+    it('entitles a member of the community to its group, asking by workspace and user', async () => {
+      const { service, memberRepo } = world({
+        workspaces: [{ id: WORKSPACE }],
+        members: [{ workspaceId: WORKSPACE, userId: USER }],
+      });
+
+      await expect(service.isDistributionGroupEntitled('workspace', WORKSPACE, USER)).resolves.toBe(
+        true
+      );
+      expect(memberRepo.findOne).toHaveBeenCalledWith({
+        where: { workspaceId: WORKSPACE, userId: USER },
+      });
+    });
+
+    it.each([
+      ['a non-member', { workspaces: [{ id: WORKSPACE }], members: [] }],
+      [
+        'a member of a community that no longer exists',
+        { workspaces: [], members: [{ workspaceId: WORKSPACE, userId: USER }] },
+      ],
+      [
+        'a member of ANOTHER community',
+        { workspaces: [{ id: WORKSPACE }], members: [{ workspaceId: 'ws-2', userId: USER }] },
+      ],
+    ])("does not entitle %s to a community's group", async (_name, t) => {
+      const { service } = world(t);
+
+      await expect(service.isDistributionGroupEntitled('workspace', WORKSPACE, USER)).resolves.toBe(
+        false
+      );
+    });
+
+    it("entitles a private salon's reader, who is a member of its community", async () => {
+      const { service } = world({
+        channels: [salon],
+        members: [{ workspaceId: WORKSPACE, userId: USER }],
+      });
+
+      await expect(service.isDistributionGroupEntitled('channel', 'ch-1', USER)).resolves.toBe(
+        true
+      );
+    });
+
+    it.each([
+      [
+        'a community member the salon does not admit',
+        { channels: [{ ...salon, allowedUsers: ['someone-else'] }] },
+      ],
+      ['an admitted user who left the community', { channels: [salon], members: [] }],
+      ['anyone, once the salon is public', { channels: [{ ...salon, isPrivate: false }] }],
+      ['anyone, for a salon that no longer exists', { channels: [] }],
+    ])("does not entitle %s to a private salon's group", async (_name, t) => {
+      const { service } = world({ members: [{ workspaceId: WORKSPACE, userId: USER }], ...t });
+
+      await expect(service.isDistributionGroupEntitled('channel', 'ch-1', USER)).resolves.toBe(
+        false
+      );
+    });
+  });
 });

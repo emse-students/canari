@@ -55,6 +55,10 @@ export type MediaType = 'image' | 'video' | 'audio' | 'file';
  * - `'reel-pending'` - what a feed reel is UPLOADED as: deleted by AGE a day after upload unless
  *   the post's claim promotes it to `'reel'` first, so a publish that fails after its upload
  *   leaves nothing behind ([media-service](docs/wiki/services/media-service.md)).
+ * - `'poster-pending'` - what a booking space's POSTER is UPLOADED as, and nothing else is: deleted by
+ *   AGE unless the space's save claims it, which binds it to that one space. So a poster is never an
+ *   object another surface shows, and removing it can never send a post's image to the sweep
+ *   ([bookings-chantier](docs/wiki/bookings-chantier.md)).
  * - `'chat-reel'` - a CanaReel sent in a conversation: deleted by AGE, 30 days after upload, and
  *   counted against the member's 500 MB a day. Naming it can only SHORTEN an object's life, which
  *   is why the client may set it ([media-service](docs/wiki/services/media-service.md)).
@@ -72,6 +76,7 @@ export type MediaRetentionClass =
   | 'association'
   | 'reel'
   | 'reel-pending'
+  | 'poster-pending'
   | 'chat-reel';
 
 export interface MediaRef {
@@ -573,6 +578,23 @@ export const MEDIA_CIPHERTEXT_OVERHEAD_BYTES = 16;
 function worstCaseOverheadBytes(maxBytes: number): number {
   if (!SEGMENTED_MEDIA_WRITER_ENABLED) return MEDIA_CIPHERTEXT_OVERHEAD_BYTES;
   return segmentedCiphertextLength(maxBytes) - maxBytes;
+}
+
+/**
+ * Whether a file of this type and size is refused BEFORE it is prepared for upload: any type but a
+ * video, over the server's plaintext ceiling. A video is re-encoded on the device first, so its own
+ * size says nothing about what is sent. `null` limits refuse nothing (see `uploadLimits`).
+ *
+ * ONE predicate for every path that stages a file: the composer applies it to a picked file, and a
+ * share into Canari applies it to a copy still on disk, so a copy the composer would refuse is
+ * deleted unread instead of being read whole first.
+ */
+export function refusedBeforePreparation(
+  file: { type: string; size: number },
+  limits: { maxPlaintextBytes: number } | null
+): boolean {
+  if (limits === null || file.type.startsWith('video/')) return false;
+  return file.size > limits.maxPlaintextBytes;
 }
 
 /**

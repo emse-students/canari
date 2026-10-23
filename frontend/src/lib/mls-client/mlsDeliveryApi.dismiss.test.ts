@@ -21,10 +21,10 @@ describe('dismissGroup / undismissGroup', () => {
     await expect(api.undismissGroup('g1')).resolves.toBeUndefined();
   });
 
-  it('throw on a refusal, naming the status', async () => {
+  it('throw a typed refusal carrying the status', async () => {
     const api = makeApi(async () => new Response('nope', { status: 403 }));
-    await expect(api.dismissGroup('g1')).rejects.toThrow('HTTP 403');
-    await expect(api.undismissGroup('g1')).rejects.toThrow('HTTP 403');
+    await expect(api.dismissGroup('g1')).rejects.toMatchObject({ status: 403, code: null });
+    await expect(api.undismissGroup('g1')).rejects.toMatchObject({ status: 403, code: null });
   });
 
   it('throw on a transport failure', async () => {

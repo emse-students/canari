@@ -197,6 +197,15 @@ services:
       # peer and this service only relays their handshake - it opens no peer connection, so it has
       # nothing to point at a relay. The CLIENTS get TURN from chat-delivery-service, below.
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
+    # Production's, plus `start_interval`. Without it the deploy read this service as `none` - started,
+    # never proven to answer - on the estate where dev calls are tested (2026-10-19).
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+      start_interval: 2s
 
   # ─────────────────────────────────────────────────────
   # Node services
@@ -238,6 +247,12 @@ services:
       # Unset: the endpoint answers 503 and a call fails before it rings.
       CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
+      # The TURN budget's meter (B7): Cloudflare's own count of relayed egress, read with an
+      # Account Analytics token. Unset: ice-servers answers STUN only (TURN_METER_UNAVAILABLE) - no relay without a budget.
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
+      # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
+      CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
       # Server-side Safe Browsing lookup for shared links (WP-SAFELINK-1). Optional and
       # fails open: unset means no check, never a blocked link.
       GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
@@ -327,6 +342,9 @@ services:
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       FRONTEND_URL: ${FRONTEND_URL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
+      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      LIVE_ENABLED: ${LIVE_ENABLED:-false}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
       GARAGE_USE_SSL: "${GARAGE_USE_SSL:-false}"
@@ -339,6 +357,15 @@ services:
       - media_meta:/app/media_meta
       # Staging of resumable upload sessions (parts land here before the object store takes the blob).
       - media_upload_sessions:/app/upload_sessions
+    # Production's, plus `start_interval`: the deploy read this service as `none` until 2026-10-19,
+    # and it carries the live segments `LIVE_ENABLED` opens on dev.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3011/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+      start_interval: 2s
     depends_on:
       garage:
         condition: service_healthy
@@ -387,8 +414,6 @@ services:
       LYDIA_ENV: homologation
       LYDIA_PROVIDER_TOKEN: ${LYDIA_PROVIDER_TOKEN:-}
       LYDIA_PROVIDER_PRIVATE_TOKEN: ${LYDIA_PROVIDER_PRIVATE_TOKEN:-}
-      # Dev-only measurement of which key signs Lydia's callback; empty by default, removed once known.
-      LYDIA_OBSERVE_KEYS: ${LYDIA_OBSERVE_KEYS:-}
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       # Account deletion fans out to media-service to remove the user's own uploads.
@@ -452,6 +477,9 @@ services:
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       MEDIA_SERVICE_URL: http://media-service:3011
+      # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
+      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      LIVE_ENABLED: ${LIVE_ENABLED:-false}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
       PAYMENT_SERVICE_URL: http://core-service:3012
       FRONTEND_URL: ${FRONTEND_URL:-}
@@ -466,6 +494,12 @@ services:
       # and this defect still ship: the check existed and was pointed at the wrong file.
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
+      # Signs a reported live chat line kept for staff (WP-L8b, docs/wiki/services/lives.md).
+      LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
+      # Encrypts each association's Lydia Business private token at rest (migration 100). Unset, a
+      # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
+      # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
+      LYDIA_KEY_ENCRYPTION_SECRET: ${LYDIA_KEY_ENCRYPTION_SECRET:-}
       # PRESENT ON PROD AND LOCAL AND MISSING HERE UNTIL 2026-09-09, which is the whole of the
       # defect: `RedisService` falls back to `redis://localhost:6379`, so this service dialled
       # itself, failed, and retried for ever - 3 657 error lines in one hour, and `POST /api/posts`
@@ -585,7 +619,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: pinned
-    image: nginx:1.30.6-alpine@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5
+    image: nginx:1.31.7-alpine@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
     restart: always
     <<: *dev-limits
     command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]
@@ -593,6 +627,15 @@ services:
       - ./edge:/etc/nginx/edge:ro
     ports:
       - "127.0.0.1:${FRONTEND_HOST_PORT:-3080}:80"
+    # Healthy means LISTENING - the production file says why; deploy-replace.test.sh holds the two
+    # (and the rolling fixture's) to the same test.
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/run/nginx.pid && grep -q ' 00000000:0050 00000000:0000 0A ' /proc/net/tcp"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
     depends_on:
       frontend:
         condition: service_started

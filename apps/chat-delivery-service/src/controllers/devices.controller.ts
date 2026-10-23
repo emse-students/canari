@@ -13,9 +13,10 @@ import {
   UseGuards,
   Logger,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual, DataSource, In, IsNull } from 'typeorm';
+import { Repository, MoreThanOrEqual, DataSource, In, IsNull, Not } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import {
@@ -48,6 +49,7 @@ import {
 } from '../retention.constants';
 import { resolveUserDisplayName } from '../utils/display-name';
 import { activeRevocationWhere } from '../utils/revocation';
+import { RefusalCode } from '../utils/refusal-codes';
 
 /**
  * Why a device cannot be handed a KeyPackage right now - and whether that is for ever.
@@ -295,7 +297,7 @@ export class DevicesController {
         `[REGISTER_DEVICE] REFUSED revoked device user=${userId} device=${deviceId}`
       );
       throw new ForbiddenException({
-        code: 'DEVICE_REVOKED',
+        code: RefusalCode.DEVICE_REVOKED,
         message: 'This device was revoked. Enrol again under a new device id.',
       });
     }
@@ -338,7 +340,7 @@ export class DevicesController {
         `[REGISTER_DEVICE] REFUSED device cap user=${userId} device=${deviceId} live=${deviceCount}/${MAX_DEVICES_PER_USER}`
       );
       throw new BadRequestException({
-        code: 'DEVICE_LIMIT_REACHED',
+        code: RefusalCode.DEVICE_LIMIT_REACHED,
         message: `Maximum ${MAX_DEVICES_PER_USER} devices per user reached. Delete an unused device in Settings first.`,
         max: MAX_DEVICES_PER_USER,
       });
@@ -350,6 +352,23 @@ export class DevicesController {
       `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}` +
         ` notAfter=${notAfter ? notAfter.toISOString() : 'unknown'}`
     );
+    // ONE OWNER PER DEVICE ID. The table is unique on the pair, yet memberships, commits and the
+    // fan-out name a device by its id, so an id held by two accounts would let one stand in for the
+    // other's. A client mints its id per account (`resolveDeviceId`), so only a forged registration
+    // lands here - 0 shared ids on production, 2026-10-22.
+    const heldElsewhere = await this.keyPackageRepo.findOne({
+      where: { deviceId, userId: Not(userId) },
+      select: { id: true },
+    });
+    if (heldElsewhere) {
+      this.logger.warn(
+        `[REGISTER_DEVICE] REFUSED device_id_taken user=${userId} device=${deviceId}`
+      );
+      throw new ConflictException({
+        error: 'device_id_taken',
+        message: 'this device id is registered to another account',
+      });
+    }
     await this.deviceSignatureKeys.record(userId, deviceId, [keyPackagePayload], 'register-device');
     const existing = await this.keyPackageRepo.findOne({
       where: { userId, deviceId },
@@ -616,7 +635,13 @@ export class DevicesController {
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    return { keys: await this.deviceSignatureKeys.keysFor(safeUserId, safeDeviceId) };
+    // `firstSeen` dates the keys the history recorded (`firstSeenFor`); additive, so an older
+    // client reading `keys` alone is unaffected.
+    const [keys, firstSeen] = await Promise.all([
+      this.deviceSignatureKeys.keysFor(safeUserId, safeDeviceId),
+      this.deviceSignatureKeys.firstSeenFor(safeUserId, safeDeviceId),
+    ]);
+    return { keys, firstSeen };
   }
 
   @UseGuards(HeaderAuthGuard)

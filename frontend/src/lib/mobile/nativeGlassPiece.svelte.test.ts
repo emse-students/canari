@@ -26,13 +26,14 @@ vi.mock('$lib/mobile/avatarBitmap', () => ({ renderedAvatarPng: async () => 'png
 
 import { coversScreen } from '$lib/actions/coversScreen.svelte';
 import { nativeGlassPiece } from './nativeGlassPiece.svelte';
+import { flushMacrotask } from '../../test/flush';
 
 /** Lets the action's queue of plugin calls drain. */
 async function settle() {
   for (let i = 0; i < 10; i++) {
     flushSync();
     await Promise.resolve();
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
   }
 }
 

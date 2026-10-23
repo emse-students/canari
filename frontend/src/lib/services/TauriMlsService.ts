@@ -19,10 +19,12 @@ import {
   type BatchDecryptRow,
 } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
-import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -30,10 +32,11 @@ import { getLocale } from '$lib/i18n';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
-import { keystoreCommand } from './keystoreCommands';
+import { DELETE_DEVICE_KEY_COMMAND } from './keystoreCommands';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
+import { connectNativeSocket, NATIVE_CONNECT_TIMEOUT_MS } from './nativeSocketConnect';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -69,6 +72,10 @@ type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live
  */
 export class TauriMlsService extends BaseMlsService {
   private ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** The `pagehide` listener releasing the native socket with its page (see `connect`). */
+  private _pageHideHandler: (() => void) | null = null;
+  /** The `pageshow` listener asking for a new socket when the page SURVIVED its `pagehide`. */
+  private _pageShowHandler: (() => void) | null = null;
   private wsUnlisten: (() => void) | null = null;
   /** Consecutive pings sent without any incoming data frame from the server. */
   private missedHeartbeats = 0;
@@ -276,6 +283,29 @@ export class TauriMlsService extends BaseMlsService {
       };
       document.addEventListener('visibilitychange', this._visibilityHandler);
       window.addEventListener('online', this._onlineHandler);
+      // THE PAGE LEAVING RELEASES ITS NATIVE SOCKET. The plugin's connection and its `addListener`
+      // channel live in RUST and outlive the document: after a WebView reload (a system text-size
+      // change) the old page's channel id kept being answered into the new page,
+      // `[TAURI] Couldn't find callback id N` every ~15 s (Mi 9T, 2026-10-17). The only recurring
+      // Rust-to-JS channel is this socket's, so it is released with the page - the same release
+      // the backgrounding path performs, and the next page opens its own. The cause is REASONED,
+      // not observed: the reading that closes it is the id no longer repeating after a reload.
+      this._pageHideHandler = () => {
+        if (!this.ws) return;
+        console.log('[WS] page leaving - releasing the native socket and its listener channel');
+        this.pauseSocket();
+      };
+      window.addEventListener('pagehide', this._pageHideHandler);
+      // A `pagehide` the page SURVIVES (a bfcache entry restored, a navigation that did not
+      // destroy the document) leaves it with no socket and no visibility edge to notice: the
+      // restore itself is the trigger, so it asks for the reconnect.
+      this._pageShowHandler = () => {
+        if (!this.ws) {
+          console.log('[WS] page shown again with no socket - reconnecting');
+          this.disconnectCallback?.();
+        }
+      };
+      window.addEventListener('pageshow', this._pageShowHandler);
       // THE EDGE THE VISIBILITY API NEVER FIRES ON A PHONE. A backgrounded Android WebView stays
       // `visible` (measured, see `appForeground.ts`), so the handler above cannot see the user
       // coming back; the activity's own foreground event can. Same decision, honest trigger.
@@ -300,23 +330,14 @@ export class TauriMlsService extends BaseMlsService {
 
     // Use the same regex as WebMlsService to avoid http:// → wss:// mismatch.
     const wsBase = this.baseUrl.replace(/^https?:/, (m) => (m === 'https:' ? 'wss:' : 'ws:'));
-    const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
-    const wsUrl = `${wsBase}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`;
-    console.log(
-      `[WS] Opening connection → ${wsBase}/api/ws?device_id=${this.deviceId}${resolvedToken ? '&token=***' : ' (no token)'}`
+    const { url: wsUrl, redacted } = gatewaySocketUrl(
+      wsBase,
+      this.deviceId,
+      resolvedToken || undefined
     );
+    console.log(`[WS] Opening connection → ${redacted}`);
 
-    // NativeWebSocket.connect() resolves when the handshake completes, rejects on failure.
-    // Impose the same 15-second timeout as WebMlsService to prevent silent hangs on Android.
-    let resolved = false;
-    const connectPromise = NativeWebSocket.connect(wsUrl);
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => {
-        if (!resolved) reject(new Error('WebSocket connection timeout after 15s'));
-      }, 15_000)
-    );
-    this.ws = await Promise.race([connectPromise, timeoutPromise]);
-    resolved = true;
+    this.ws = await connectNativeSocket(NativeWebSocket.connect(wsUrl), NATIVE_CONNECT_TIMEOUT_MS);
     console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {
@@ -380,7 +401,6 @@ export class TauriMlsService extends BaseMlsService {
   ): Promise<void> {
     if (isChannelEventFrame(msgType)) {
       if (this.onChannelEvent) {
-        console.log(`[WS RCV] Triggering onChannelEvent for ${msgType}`);
         this.onChannelEvent({ type: msgType, data: parsed.data });
       } else {
         console.warn(`[WS RCV] Received channel event but no onChannelEvent registered.`);
@@ -466,6 +486,8 @@ export class TauriMlsService extends BaseMlsService {
             ratchetTreeBytes,
             queuedMessageId: (parsed.queuedMessageId as string) || undefined,
             queuedCreatedAt: parseServerTimestampMs(parsed.createdAt),
+            // Forwarded by the gateway since step A (history-answer-addressing, rule 4).
+            addressed: parsed.addressed === true,
           },
           'live'
         );
@@ -491,6 +513,19 @@ export class TauriMlsService extends BaseMlsService {
         // Best-effort - ignore if the socket is already closing
       });
     }
+  }
+
+  /** Removes the page-lifecycle listeners this class registered, then the base teardown. */
+  override destroy(): void {
+    if (this._pageHideHandler) {
+      window.removeEventListener('pagehide', this._pageHideHandler);
+      this._pageHideHandler = null;
+    }
+    if (this._pageShowHandler) {
+      window.removeEventListener('pageshow', this._pageShowHandler);
+      this._pageShowHandler = null;
+    }
+    super.destroy();
   }
 
   /**
@@ -634,13 +669,25 @@ export class TauriMlsService extends BaseMlsService {
     // is idempotent: a no-op when login already resolved it before the pin-check.
     await this.resolveDeviceId(userId);
 
+    // A KEPT ID WITH A LOST STATE RE-ENROLS AS A NEW DEVICE (`reenrolLostState`). The rotation loads
+    // and persists the fresh client itself; the post-init steps below (push context, groups cache)
+    // still run, under the new id.
+    const reenrolled = !savedStateExists && (await this.reenrolLostState(deviceKeyB64, opts));
+
     // THE NAME IS THE SAME ON BOTH PLATFORMS ON PURPOSE. `WebMlsService` brackets its own decrypt
     // with `mls-load-state` too, so an Android report and a browser report answer the same question
     // with the same word - which is the only way the two can be compared at all, and the phone is
     // where this block was measured at 1621.9 ms with nothing inside it named.
     beginBootSpan('mls-load-state');
     try {
-      await this.loadStateWithKey(deviceKeyB64, state, opts?.stateOnDisk, opts?.unattendedKeyRead);
+      if (!reenrolled) {
+        await this.loadStateWithKey(
+          deviceKeyB64,
+          state,
+          opts?.stateOnDisk,
+          opts?.unattendedKeyRead
+        );
+      }
       endBootSpan('mls-load-state', { recovered: false });
     } catch (e) {
       // CLOSED HERE RATHER THAN IN A `finally`, because the two exits are not the same measurement:
@@ -1082,9 +1129,11 @@ export class TauriMlsService extends BaseMlsService {
         deviceId: this.deviceId,
       });
     } catch (e) {
+      // Through the at-rest guard: an entry holding a phone's hardware-held key is never deleted
+      // here (its account's marker refuses it) - the change moved no data, and that key still opens it.
       console.error('[MLS][Tauri] Keystore refused the new device key - deleting its entry:', e);
-      await invoke(keystoreCommand('deleteKeyBytes'), {
-        payload: { alias: keystoreAlias(this.userId, this.deviceId) },
+      await invoke(DELETE_DEVICE_KEY_COMMAND, {
+        alias: keystoreAlias(this.userId, this.deviceId),
       }).catch((d) =>
         console.error('[MLS][Tauri] Deleting the keystore entry after a refusal failed too:', d)
       );
@@ -1223,7 +1272,7 @@ export class TauriMlsService extends BaseMlsService {
    */
   protected async stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -1231,10 +1280,11 @@ export class TauriMlsService extends BaseMlsService {
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }> {
-    const keyPackagesBytes = keyPackages.map((kp) => Array.from(kp));
+    const keyPackagesBytes = devices.map((d) => Array.from(d.keyPackage));
+    const expectedIdentities = devices.map((d) => d.identity);
     const result = await invoke<
       [number[], number[] | null, number[], SkippedKeyPackage[], number[]]
-    >('ajouter_membres_bulk', { groupId, keyPackagesBytes });
+    >('ajouter_membres_bulk', { groupId, keyPackagesBytes, expectedIdentities });
     return {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
@@ -1242,6 +1292,66 @@ export class TauriMlsService extends BaseMlsService {
       skipped: result[3] ?? [],
       groupInfo: Uint8Array.from(result[4]),
     };
+  }
+
+  /** Tauri-native `invoke` wrapper - `remplacer_appareil`, staged not merged. */
+  protected async stageReplaceDevice(
+    groupId: string,
+    identity: string,
+    keyPackage: Uint8Array
+  ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }> {
+    const [commit, welcome, groupInfo] = await invoke<[number[], number[], number[]]>(
+      'remplacer_appareil',
+      { groupId, identity, keyPackage: Array.from(keyPackage) }
+    );
+    return {
+      commit: Uint8Array.from(commit),
+      welcome: Uint8Array.from(welcome),
+      groupInfo: Uint8Array.from(groupInfo),
+    };
+  }
+
+  /**
+   * `mls_state_absent`: `true` only when `mls.bin` does not exist or is empty. An unreadable data
+   * directory is an `Err`, which `reenrolLostState` reads as "not proven" - unlike `mls_state_size`,
+   * which answers 0 for it.
+   */
+  protected async savedStateProvenAbsent(): Promise<boolean> {
+    return invoke<boolean>('mls_state_absent');
+  }
+
+  /** Tauri-native `invoke` wrapper - `verifier_key_package`, the Rust verdict on binding and pin. */
+  protected async vetKeyPackageNative(
+    keyPackage: Uint8Array,
+    identity: string
+  ): Promise<KeyPackageVerdict> {
+    return invoke<KeyPackageVerdict>('verifier_key_package', {
+      keyPackage: Array.from(keyPackage),
+      expectedIdentity: identity,
+    });
+  }
+
+  /** Tauri-native `invoke` wrapper - `cles_signature_epinglees`, the keys as byte arrays. */
+  protected async pinnedSignatureKeysNative(
+    userId: string,
+    deviceId: string
+  ): Promise<DevicePin | null> {
+    const pin = await invoke<{
+      keys: number[][];
+      anchored: boolean;
+      reaffirmations: number;
+    } | null>('cles_signature_epinglees', { userId, deviceId });
+    return pin === null ? null : { ...pin, keys: pin.keys.map((k) => Uint8Array.from(k)) };
+  }
+
+  /** Tauri-native `invoke` wrapper - `epoques_departs`, the epochs as JSON numbers. */
+  protected async removalEpochsNative(groupId: string, userId: string): Promise<number[]> {
+    return invoke<number[]>('epoques_departs', { groupId, userId });
+  }
+
+  /** Tauri-native `invoke` wrapper - `prendre_evenements_appareils` (`DeviceEvent`, camelCase). */
+  protected async takeDeviceEventsNative(): Promise<DeviceEvent[]> {
+    return invoke<DeviceEvent[]>('prendre_evenements_appareils');
   }
 
   /** Tauri-native `invoke` wrapper - stages a Remove commit for all devices of the given users (no merge). */
@@ -1444,6 +1554,19 @@ export class TauriMlsService extends BaseMlsService {
   async memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null> {
     const key = await invoke<number[] | null>('graine_member_signature_key', { groupId, identity });
     return key ? new Uint8Array(key) : null;
+  }
+
+  /** The leaf carrying a package's signature key, or null (`feuille_portant_cle`). */
+  async leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null> {
+    return invoke<string | null>('feuille_portant_cle', {
+      groupId,
+      keyPackage: Array.from(keyPackage),
+    });
+  }
+
+  /** The key group's clean run at its current epoch (`graine_run`), read live under the manager lock. */
+  async graineRun(groupId: string): Promise<GraineRunReading> {
+    return invoke<GraineRunReading>('graine_run', { groupId });
   }
 
   /** This device's credential key signs `message` (`graine_sign_with_device_credential`). */

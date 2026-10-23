@@ -4,6 +4,8 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { Log } from '$lib/utils/Log';
+  import { refusalCode } from '$lib/utils/apiRefusal';
+  import { describeRefusalCode } from '$lib/utils/refusalCodes';
   import { goto } from '$app/navigation';
   import { searchDirectory, type DirectoryUserRow } from '$lib/profile/api';
   import { listAssociations, type Association } from '$lib/associations/api';
@@ -80,7 +82,7 @@
       total = res.total;
     } catch (err) {
       Log.d('directory search failed', err);
-      error = m.directory_search_error_fallback();
+      error = describeRefusalCode(refusalCode(err)) ?? m.directory_search_error_fallback();
       results = [];
       total = 0;
     } finally {

@@ -46,3 +46,41 @@ describe('simultaneous identical reads', () => {
     expect(urls).toHaveLength(2);
   });
 });
+
+describe('the account-level reads of a boot (WP-W4)', () => {
+  it('sends ONE users/:id/groups request for simultaneous askers, and asks again afterwards', async () => {
+    const { api, urls } = counting('[]');
+    await Promise.all([api.getUserGroups('u1'), api.getUserGroups('u1'), api.getUserGroups('u1')]);
+    expect(urls).toHaveLength(1);
+    await api.getUserGroups('u1');
+    expect(urls).toHaveLength(2);
+  });
+
+  it('sends ONE devices/:id request for simultaneous askers, and keeps accounts apart', async () => {
+    const { api, urls } = counting('[]');
+    await Promise.all([
+      api.fetchUserDevices('u1'),
+      api.fetchUserDevices('u1'),
+      api.fetchUserDevices('u1'),
+      api.fetchUserDevices('u2'),
+    ]);
+    expect(urls.filter((u) => u.endsWith('/api/mls/devices/u1'))).toHaveLength(1);
+    expect(urls.filter((u) => u.endsWith('/api/mls/devices/u2'))).toHaveLength(1);
+  });
+
+  it('a failed shared read rejects every joiner and is not remembered', async () => {
+    let calls = 0;
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://test.local',
+      getToken: async () => 'tok',
+      fetchImpl: async () => {
+        calls++;
+        return new Response('[]', { status: calls === 1 ? 500 : 200 });
+      },
+    });
+    const both = await Promise.allSettled([api.getUserGroups('u1'), api.getUserGroups('u1')]);
+    expect(both.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+    expect(calls).toBe(1);
+    await expect(api.getUserGroups('u1')).resolves.toEqual([]);
+  });
+});

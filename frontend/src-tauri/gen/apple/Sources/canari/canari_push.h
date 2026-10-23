@@ -49,8 +49,14 @@ void CanariScheduleOutboxRetryTask(void);
 void CanariMirrorPushStateToAppGroup(void);
 
 /// Carries the FCM cache entries the Notification Service Extension wrote into the App Group
-/// container over to the app's own file, the only one `read_and_clear_fcm_cache` reads. Call it
+/// container over to the app's own file, the only one `take_fcm_cache` reads. Call it
 /// at the same transitions as the mirror above.
 void CanariDrainAppGroupFcmCache(void);
+
+/// Marks the native caches in `dir` - `graine_seeds.json` and every `fcm_message_cache*.ndjson` -
+/// excluded from iCloud and computer backups, and nothing else in it: the directory also holds
+/// `mls.bin`, `push_context.json` and the identity files a restore must bring back. Per file, so it
+/// is re-applied after every atomic write (a new inode does not carry the flag). nil is a no-op.
+void CanariExcludeNativeCacheFilesFromBackup(NSString *_Nullable dir);
 
 #endif

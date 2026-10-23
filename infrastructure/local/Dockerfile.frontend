@@ -50,8 +50,21 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 #   NOT api.klipy.com, since 2026-10-16: the GIF search goes through chat-delivery's
 #   /api/mls/gifs so KLIPY never sees a reader's query, IP or identifier (gifSearch.ts).
 # img-src stays wide (https:) because it renders arbitrary user-posted image URLs;
-# connect-src must not, since it governs what the app can read into memory.
-RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"'; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
+# connect-src must not, since it governs what the app can read into memory. It names
+# no bare ws:/wss: either: both WebSockets are same-origin, and the estate's own wss://
+# names are listed because 'self' matches wss: only under CSP Level 3 (older Safari).
+#
+# NO 'unsafe-inline' FOR SCRIPTS, AND A PAGE IS NOT GOVERNED BY THIS SNIPPET (2026-10-22).
+# These directives are written ONCE MORE, in frontend/src/lib/security/cspPolicy.js, and
+# csp.test.ts holds the two equal: SvelteKit sends that policy on every PAGE, plus the
+# hash of each inline script the page carries, which only the build knows. This snippet
+# covers every OTHER response - a worker script's policy is its own response's, so the
+# MLS worker compiles its WebAssembly under 'wasm-unsafe-eval' from here. A page block
+# (@ssr, @app_shell) must NOT include it: a second policy is intersected with the first,
+# and this one, holding no hash, would refuse the page's own scripts. It includes
+# csp-page.conf instead, which says only what a <meta> policy cannot (frame-ancestors).
+RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss://canari.emse.fr wss://canari-emse.fr wss://www.canari-emse.fr wss://dev.canari-emse.fr https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
+RUN printf 'add_header Content-Security-Policy "frame-ancestors '"'"'none'"'"'" always;\n' > /etc/nginx/snippets/csp-page.conf
 
 # The headers of an error this nginx makes itself on an API route (@api_error_*): JSON, never cached,
 # readable cross-origin by the three WebView origins ($api_error_cors_origin, an allowlist - empty
@@ -72,13 +85,31 @@ RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: ever
 # because a map takes the first rule that matches. The GIF RELAY (`/api/mls/gifs/media?url=`) keeps its\n\
 # path but not its query either: which GIF a reader loaded, beside their address, is the association\n\
 # the relay exists to keep from KLIPY - our own log must not rebuild it.\n\
+# A GUEST RECEIPT IS NOT LOGGED (2026-10-22, paid public forms WP-P2): `/f/<id>/receipt?receipt=` is\n\
+# a guest'"'"'s proof of a paid answer, the only one it has, so the route keeps its path and drops its\n\
+# query. The page itself sends no Referer (`no-referrer`), so its own requests do not carry it either.\n\
 map $request_uri $logged_request_uri {\n\
     "~^/api/mls/gifs/media(?:[?]|$)" "/api/mls/gifs/media?query-redacted";\n\
     "~^/api/mls/gifs(?:[?/]|$)" "/api/mls/gifs?query-redacted";\n\
+    "~^(?<receipt_path>/f/[^/?]+/receipt)[?]" "${receipt_path}?query-redacted";\n\
     "~^(?<uri_before_token>.*[?&])token=[^&]*(?<uri_after_token>.*)$" "${uri_before_token}token=redacted${uri_after_token}";\n\
     default $request_uri;\n\
 }\n\
-log_format canari_redacted "$remote_addr - $remote_user [$time_local] \\"$request_method $logged_request_uri $server_protocol\\" $status $body_bytes_sent \\"$http_referer\\" \\"$http_user_agent\\" \\"$http_x_forwarded_for\\"";\n\
+# A PUBLIC FORM PAGE SENDS NO REFERER (2026-10-22, paid public forms WP-P2). `/f/<id>/receipt` carries\n\
+# a guest'"'"'s receipt in its query, and the page boots on the client: the first requests it makes (its\n\
+# own chunks) leave before any <meta> in it can apply, carrying the whole URL as their Referer. So the\n\
+# policy is a HEADER of the page itself, on every `/f/` page. Keyed on $request_uri, which @app_shell'"'"'s\n\
+# try_files does not rewrite. An empty value sends no header, so every other page is unchanged.\n\
+map $request_uri $public_form_referrer_policy {\n\
+    default "";\n\
+    "~^/f/" "no-referrer";\n\
+}\n\
+# FIVE DIAGNOSTIC FIELDS TRAIL THE LINE (2026-10-18), for the intermittent Messenger preview failure the\n\
+# access log could not explain: it held two response sizes for one crawler hit and nothing to say why.\n\
+# rt = total time; urt and ust = the upstream's time and status (a slow or failing SSR shows here);\n\
+# ce = whether THIS response was compressed; deg = the SSR's own admission that it served a degraded\n\
+# head (X-Canari-Degraded). Durations, statuses and one header value: no address, cookie or query.\n\
+log_format canari_redacted "$remote_addr - $remote_user [$time_local] \\"$request_method $logged_request_uri $server_protocol\\" $status $body_bytes_sent \\"$http_referer\\" \\"$http_user_agent\\" \\"$http_x_forwarded_for\\" rt=$request_time urt=$upstream_response_time ust=$upstream_status ce=$sent_http_content_encoding deg=$sent_http_x_canari_degraded";\n\
 \n\
 # THE COOKIE ADMINER IS GIVEN: the browser sends the Canari adminer session (canari_adminer) with\n\
 # every request on /adminer/, and the upstream has no use for it - it is stripped, and the cookies of Adminer\n\
@@ -102,6 +133,68 @@ map $http_origin $api_error_cors_origin {\n\
     "https://tauri.localhost" $http_origin;\n\
     "tauri://localhost" $http_origin;\n\
 }\n\
+\n\
+# A LIVE SEGMENT IS THE ONE UPLOAD A CLIENT SENDS EVERY FEW SECONDS (docs/wiki/services/lives.md).\n\
+# The per-account limits are the service (byte budget, segment rate, starts per hour); this is the\n\
+# edge ceiling in front of them, per client address (real_ip below). PUT ONLY: viewers polling the\n\
+# manifest from one campus address share it, and an empty key is never limited. 2 r/s is four times\n\
+# the planned rate of one broadcaster (a segment every 2-3 s); the burst absorbs a reconnect.\n\
+map $request_method $lives_ingest_key {\n\
+    default "";\n\
+    PUT $binary_remote_addr;\n\
+}\n\
+limit_req_zone $lives_ingest_key zone=lives_ingest:1m rate=2r/s;\n\
+\n\
+# THE SEALED SEGMENTS OF A LIVE LEAVE THE STORE ONCE PER SEGMENT, NOT ONCE PER VIEWER (WP-L4,\n\
+# docs/wiki/services/lives.md "Serving a segment"). Every viewer of a live fetches the SAME ciphertext\n\
+# by the SAME name, so this cache answers all but the first, and `proxy_cache_lock` makes the viewers\n\
+# that arrive together wait for that first one instead of each reaching media-service. Sizes:\n\
+# 2 min (`inactive`, and `proxy_cache_valid 200` below) is far past the manifest window a viewer reads\n\
+# from (10 segments of a few seconds), and it bounds how long a segment outlives the purge of its live here.\n\
+# 512 MB holds two minutes of ~20 lives at the planned 3 Mb/s; past it the oldest go first, which costs\n\
+# a refetch, never an error. `use_temp_path=off` writes a response straight into this directory.\n\
+proxy_cache_path /var/cache/nginx/live levels=1:2 keys_zone=live_segments:1m max_size=512m inactive=2m use_temp_path=off;\n\
+# The segment route is unauthenticated, so it has an edge ceiling of its own, per client address. A\n\
+# whole campus may share ONE address: 30 r/s is the whole viewer cap of the host (24 seats, lives.md)\n\
+# fetching a segment a second, with room to spare; the burst absorbs a player catching up.\n\
+limit_req_zone $binary_remote_addr zone=lives_segments:1m rate=30r/s;\n\
+# limit_req counts REQUESTS, not bytes: 30 r/s of 4 MiB segments is ~1 Gb/s from one address. So the\n\
+# BYTES are bounded too, per address, from the plan's own numbers (live.constants.ts): at most 24\n\
+# segment fetches at once (limit_conn below: the viewer cap, so a FULL audience behind ONE campus\n\
+# address is never refused), each sent at 750 000 B/s (limit_rate: twice the 3 Mb/s a viewer costs, so\n\
+# a 3 s segment arrives in 1.5 s and a player can catch up). THE TRADE-OFF, stated: both cannot hold\n\
+# with the live share of the uplink (24 x 3 Mb/s = 72 Mb/s) - 24 fetches at 2x would need twice it. We\n\
+# do not throttle honest viewers, so ONE address is bounded at 24 x 6 Mb/s = 144 Mb/s, twice the live\n\
+# share and above the measured link: a COARSE protection (against ~1 Gb/s unbounded), not the uplink\n\
+# budget - that is the seat cap, for an honest client. live-segments-route.test.mjs recomputes both\n\
+# bounds from the constants. (nginx grants each response one second of head start, so a single short\n\
+# fetch runs a little faster than the rate.)\n\
+limit_conn_zone $binary_remote_addr zone=lives_segments_conn:1m;\n\
+\n\
+# THE CACHE-CONTROL OF AN SSR RESPONSE, decided in two steps.\n\
+# 1. A response that DECLARED its own public max-age keeps it: routes/sitemap.xml/+server.ts is\n\
+#    prerender=false, so it is served through @ssr, and its 1 h is a budget it set for itself.\n\
+#    An SSR page declares none (adapter-node sets no Cache-Control), so it takes the default:\n\
+#    shared-cacheable for 60 s (see @ssr).\n\
+map $upstream_http_cache_control $ssr_cache_control_declared {\n\
+    default "public, max-age=0, s-maxage=60";\n\
+    "~^public, max-age=[0-9]+$" $upstream_http_cache_control;\n\
+}\n\
+# 2. EXCEPT a response the SSR itself marked degraded (`X-Canari-Degraded`, any value), which is\n\
+#    `no-store` whatever it declared.\n\
+map $upstream_http_x_canari_degraded $ssr_cache_control {\n\
+    default $ssr_cache_control_declared;\n\
+    "~." "no-store";\n\
+}\n\
+# THE LYDIA CALLBACK IS THE ONE PUBLIC POST THAT READS A KEY AND THEN ASKS LYDIA (payments.md): a\n\
+# signature is checked per call against a Business key fetched from social-service, and a verified\n\
+# one makes social-service read the request at Lydia. Lydia sends a handful per payment; 5 r/s burst\n\
+# 50 per client address is far above that and bounds what a flood of forged bodies can cost.\n\
+map $request_method $lydia_callback_key {\n\
+    default "";\n\
+    POST $binary_remote_addr;\n\
+}\n\
+limit_req_zone $lydia_callback_key zone=lydia_callback:1m rate=5r/s;\n\
 \n\
 server {\n\
     listen 80;\n\
@@ -184,10 +277,22 @@ server {\n\
     # error MADE HERE reaches these: proxy_intercept_errors is off, so a 5xx a service answers passes\n\
     # through with its own CORS headers. `location /` declares its own error_page (the app shell)\n\
     # and so does not inherit this; the other locations serve files and make no 5xx of their own.\n\
+    # 413 and 429 too (2026-10-18): client_max_body_size and limit_req answer them HERE, and a\n\
+    # broadcaster told "too large" or "too fast" must read a status, not a transport failure.\n\
+    error_page 413 @api_error_413;\n\
+    error_page 429 @api_error_429;\n\
     error_page 500 @api_error_500;\n\
     error_page 502 @api_error_502;\n\
     error_page 503 @api_error_503;\n\
     error_page 504 @api_error_504;\n\
+    location @api_error_413 {\n\
+    include /etc/nginx/snippets/api-error-headers.conf;\n\
+    return 413 "{\\"statusCode\\":413,\\"message\\":\\"request body too large\\"}";\n\
+    }\n\
+    location @api_error_429 {\n\
+    include /etc/nginx/snippets/api-error-headers.conf;\n\
+    return 429 "{\\"statusCode\\":429,\\"message\\":\\"too many requests\\"}";\n\
+    }\n\
     location @api_error_500 {\n\
     include /etc/nginx/snippets/api-error-headers.conf;\n\
     return 500 "{\\"statusCode\\":500,\\"message\\":\\"edge error\\"}";\n\
@@ -416,8 +521,20 @@ server {\n\
     # block declared none, which is how HTML kept CSP, nosniff and X-Frame-Options by\n\
     # inheritance; adding Cache-Control here would have stripped all three from every\n\
     # navigation on the site.\n\
-    add_header Cache-Control "public, max-age=0, s-maxage=60" always;\n\
-    include /etc/nginx/snippets/csp.conf;\n\
+    # A DEGRADED HEAD IS NEVER OFFERED TO A CACHE (2026-10-18). When the enrichment of a page got\n\
+    # no answer, frontend-ssr serves the generic head and says so with `X-Canari-Degraded`; the\n\
+    # map `$ssr_cache_control` turns that into `no-store` here, where the one Cache-Control of this\n\
+    # block is decided. Without it the 60 s above pinned the generic card at the edge for a minute,\n\
+    # and every unfurler retry inside it was handed the same failure. The upstream's own\n\
+    # Cache-Control is hidden and re-emitted by the map, so there is ONE declaration: a page gets the\n\
+    # default, and the sitemap's own public max-age passes through the first map unchanged.\n\
+    proxy_hide_header Cache-Control;\n\
+    add_header Cache-Control $ssr_cache_control always;\n\
+    add_header Referrer-Policy $public_form_referrer_policy always;\n\
+    # THE CONTENT-SECURITY-POLICY OF A PAGE IS WRITTEN BY SVELTEKIT (kit.csp, hash mode), passed from the\n\
+    # upstream with the hash of each inline script; csp.conf here would be intersected with it and\n\
+    # refuse those scripts. csp-page.conf adds only frame-ancestors (see the snippet comment above).\n\
+    include /etc/nginx/snippets/csp-page.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\
     error_page 502 503 504 =200 @app_shell;\n\
@@ -438,7 +555,10 @@ server {\n\
     try_files /app-shell.html =502;\n\
     add_header Cache-Control "no-store" always;\n\
     add_header X-Canari-Degraded "ssr-unavailable" always;\n\
-    include /etc/nginx/snippets/csp.conf;\n\
+    add_header Referrer-Policy $public_form_referrer_policy always;\n\
+    # The prerendered shell carries its policy as a <meta> (kit.csp, hashes included), which cannot\n\
+    # say frame-ancestors - csp-page.conf says it.\n\
+    include /etc/nginx/snippets/csp-page.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\
     }\n\
@@ -628,6 +748,89 @@ server {\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
+    # ONE SEALED LIVE SEGMENT, NO TOKEN, ANSWERED FROM THIS CACHE (WP-L4, docs/wiki/services/lives.md\n\
+    # "Serving a segment"). The bytes are ciphertext under the live key, which only social-service hands\n\
+    # out; the names are random uuids learned only from the manifest.\n\
+    # THE WHOLE PREFIX IS OWNED HERE, `^~`: no regex location is tried after it, and nothing under\n\
+    # /api/media/public/live/ can fall into /api/media/public/ (no cache, no limit) - an upper-case id,\n\
+    # a trailing slash or any other spelling of a segment would have reached the store on every request\n\
+    # (review of #2105). Inside, ONE regex: two lower-case uuids and nothing after; everything else is\n\
+    # a 404 HERE. media-service refuses any non-canonical path a second time, for the other locations.\n\
+    # The regex ends in `\\z`, NOT `$`: PCRE's `$` also matches before a FINAL NEWLINE, so a trailing\n\
+    # %%0A matched, and `proxy_pass ...$uri` then wrote a raw LF into the upstream request line - never\n\
+    # cached, so every such request reached media-service (second review of #2105).\n\
+    # - THE UPSTREAM REQUEST IS THE SAME FOR EVERY VIEWER: the key is the path alone (a query string is\n\
+    #   neither in the key nor forwarded, so no viewer can bust the cache), and the cookie, the token,\n\
+    #   the origin and any range are dropped. A range is answered by this nginx from the cached whole:\n\
+    #   `proxy_force_ranges on`, since media-service sends no Accept-Ranges and nginx would otherwise\n\
+    #   answer every Range with the whole 200.\n\
+    # - `proxy_buffering on` HERE: it is off server-wide, and an unbuffered response is never cached.\n\
+    # - Media-service sends no Cache-Control; whatever an upstream sends is ignored for the cache and\n\
+    #   hidden from the client, so the header below is the one policy: `private` (no shared cache\n\
+    #   between here and the viewer keeps a segment) and 2 min, the same bound as this cache: a viewer\n\
+    #   reads a segment once, within the manifest window, and the ciphertext of an ended live must not\n\
+    #   sit in a device's HTTP cache for an hour after it (register C16). No `immutable`, likewise.\n\
+    # - THE BYTES ARE BOUNDED PER ADDRESS (limit_conn + limit_rate, sized at the zone above), because\n\
+    #   limit_req counts requests. The viewer cap itself is advisory: it holds for an honest client.\n\
+    #   A refusal (429) is logged at `warn`, not `error`: it is the limit doing its job, not a fault.\n\
+    # - A 404 (absent, or LIVE_ENABLED off) is kept 10 s, so a repeated miss costs one upstream call.\n\
+    # - `X-Canari-Cache` says HIT or MISS; the access log shows `urt=- ust=-` on a hit - the proof that a\n\
+    #   second viewer never reached media-service.\n\
+    # - CORS as the API errors do: the three WebView origins, allowlisted, credentials allowed, so the\n\
+    #   app may fetch it either way; the web app is same-origin and needs none.\n\
+    location ^~ /api/media/public/live/ {\n\
+    location ~ "^/api/media/public/live/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" {\n\
+    limit_except GET { deny all; }\n\
+    limit_req zone=lives_segments burst=60 nodelay;\n\
+    limit_req_status 429;\n\
+    limit_req_log_level warn;\n\
+    limit_conn lives_segments_conn 24;\n\
+    limit_conn_status 429;\n\
+    limit_conn_log_level warn;\n\
+    limit_rate 750000;\n\
+    proxy_cache live_segments;\n\
+    proxy_cache_key $uri;\n\
+    proxy_cache_valid 200 2m;\n\
+    proxy_cache_valid 404 10s;\n\
+    proxy_cache_lock on;\n\
+    proxy_cache_lock_timeout 10s;\n\
+    proxy_cache_lock_age 10s;\n\
+    proxy_buffering on;\n\
+    proxy_force_ranges on;\n\
+    proxy_ignore_headers Cache-Control Expires Set-Cookie Vary X-Accel-Expires;\n\
+    proxy_hide_header Cache-Control;\n\
+    proxy_hide_header Set-Cookie;\n\
+    proxy_hide_header Vary;\n\
+    proxy_hide_header Access-Control-Allow-Origin;\n\
+    proxy_hide_header Access-Control-Allow-Credentials;\n\
+    proxy_set_header X-User-Id "";\n\
+    proxy_set_header X-User-Logged-In "false";\n\
+    proxy_set_header X-Global-Admin "false";\n\
+    proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header Cookie "";\n\
+    proxy_set_header Authorization "";\n\
+    proxy_set_header Origin "";\n\
+    proxy_set_header Range "";\n\
+    proxy_set_header If-Range "";\n\
+    set $upstream_media_live media-service:3011;\n\
+    proxy_pass http://$upstream_media_live$uri;\n\
+    proxy_http_version 1.1;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    add_header Cache-Control "private, max-age=120";\n\
+    add_header X-Canari-Cache $upstream_cache_status always;\n\
+    add_header Access-Control-Allow-Origin $api_error_cors_origin always;\n\
+    add_header Access-Control-Allow-Credentials "true" always;\n\
+    add_header Vary "Origin" always;\n\
+    include /etc/nginx/snippets/csp.conf;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
+    }\n\
+    include /etc/nginx/snippets/api-error-headers.conf;\n\
+    return 404 "{\\"statusCode\\":404,\\"message\\":\\"not found\\"}";\n\
+    }\n\
     location /api/media {\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
@@ -658,6 +861,27 @@ server {\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_post social-service:3014;\n\
     proxy_pass http://$upstream_post;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    \n\
+    # The public Lydia callback, rate-limited at the edge (zone lydia_callback); otherwise /api/payments.\n\
+    location = /api/payments/lydia-request-callback {\n\
+    limit_req zone=lydia_callback burst=50 nodelay;\n\
+    limit_req_status 429;\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
+    auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    proxy_set_header X-User-Id $user_id;\n\
+    proxy_set_header X-User-Logged-In $user_logged_in;\n\
+    proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
+    set $upstream_payment core-service:3012;\n\
+    proxy_pass http://$upstream_payment;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -712,6 +936,28 @@ server {\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_booking social-service:3014;\n\
     proxy_pass http://$upstream_booking;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    \n\
+    location /api/lives {\n\
+    # A segment is at most 4 MiB (LIVE_SEGMENT_MAX_BYTES); the server default of 100m is for media.\n\
+    client_max_body_size 5m;\n\
+    limit_req zone=lives_ingest burst=20 nodelay;\n\
+    limit_req_status 429;\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
+    auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    proxy_set_header X-User-Id $user_id;\n\
+    proxy_set_header X-User-Logged-In $user_logged_in;\n\
+    proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
+    set $upstream_live social-service:3014;\n\
+    proxy_pass http://$upstream_live;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\

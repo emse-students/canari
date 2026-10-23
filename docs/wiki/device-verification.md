@@ -22,6 +22,8 @@ here and nothing else.**
 
 ## Where the pass stands
 
+**2026-10-22, the background Welcome read on the Mi 9T (debug build, frontend `2547870a7`, from `dabc36813` plus an uncommitted manifest whitespace change; local estate with chat-delivery from `4f31a81ad` and the frontend of `5fa025d87`).** The phone was killed (no process), one `mls_group_info` row was deleted, and a new web device of another member asked for a Welcome. Phone: `Welcome created ... baseEpoch=1`, `HTTP 201`, `Welcome sent`, no `sendWelcomeAndCommit failed`. Server: `[BG_WELCOME] START ... baseEpoch=1`, then `REJECT commit epoch_mismatch (server epoch: 3, sent base: 1)`, so there is no `commit accepted`. The commit-caller checks did not refuse. The stale base and the 201 are in [backlog](backlog.md#p2---a-killed-phone-answers-a-background-welcome-from-a-stale-epoch-and-the-route-reports-it-as-sent-read-on-the-mi-9t-2026-10-22). Not read: the newcomer afterwards.
+
 **2026-10-13, the bench pass of the owed rows: Mi 9T on `v1.2.6-alpha.1`, iPhone 12 on `1.2.3-alpha.5` (the newest pre-release TestFlight serves it).** `PASS`: check V, check W on the Mi 9T, the "Rester connecte" cold path and its landing preview, #1603 both halves, #1605 on Android, #1548 and the send path on the iPhone. `FAIL`: Android at 200 % text (two P3 in the agenda) and, met in three-button mode, ONE system Back closing both the message action sheet and the conversation (P2). Answered in part: #1604. Detail: [the bench readings of 2026-10-13](#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
 
 **2026-10-11, `v1.2.3-alpha.5` on the iPhone 12 (iOS 27.0.1, TestFlight build 100200305, `dev.canari-emse.fr`, account `canari-test-gamma`).** `PASS`: the login page's "Ouvrir dans l'application" opens the app (#1605, iPhone half), the conversation's glass chrome (alignment, "+" > Photos opens ONE picker, the four accessible names), the camera opening full-bleed on the front lens 15 of 15 times with a home-and-return (#1370, front half), the emoji pictures in the composer and the bubble (rows 3 and 12, in part), the profile hub's breadcrumb, a 5 s video sent, the associations list scroll. **`FAIL` in a new shape: check W on the iPhone** (3 of 3 rises). Every reading, what is blocked and what waits for the next pre-release: [the inventory below](#the-iphone-12-owed-readings-inventory-2026-10-11).
@@ -79,6 +81,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 |---|---|---|---|
 | B | WP-VERIF-0 (background decrypt), WP-VERIF-2 | PASS v0.11.7 | owed |
 | B-bis | `G2` - a dismissed notification not coming back at launch, and a new one still arriving | **owed** | n/a (the record is Android's) |
+| B-reel | WP-RC-7 - a CanaReel sent in a DM, a group and a salon reads as one on the lock screen of a killed app, in French and English | **owed** (needs a sender with the RC-4 writer switched on) | owed (same) |
 | D, E | WP-VERIF-0 (PIN change, fresh install) | PASS v0.11.7 | owed |
 | F | WP-VERIF-1 | PASS v0.11.7 | owed |
 | G | WP-VERIF-3 | PASS v0.11.6 | owed |
@@ -301,6 +304,40 @@ alerting` is the OTHER guard (the notification was still visible) and does not t
 
 **Known limit, not a bug:** a SALON message is not covered. Its push payload carries no timestamp, so
 the builder can identify no message of its own and never guesses - see `docs/wiki/backlog.md`.
+
+## B-reel. A CanaReel announces itself on the lock screen of a killed app - owed on BOTH platforms
+
+**Proves** WP-RC-7 where no gate here reaches: the Rust scanner reads `MediaMsg.intent` and words
+the line (`mobile/push_text.rs`, `PushText::Reel`), but only a phone proves that the line it returns
+is the one the Android service and the iOS NSE post, through all three decrypt paths - MLS for a DM
+and a group, Graine for a salon - and that no thumbnail is ever attempted
+([reels-in-chat](frontend/modules/reels-in-chat.md#push-text)).
+
+**Precondition, not ambient:** the SENDER must run a build with the reel writer (RC-4, behind its OFF
+switch) turned on; nothing else can produce a reel message. The receiving phone runs any build
+carrying RC-7.
+
+1. On the receiving phone set the app language to **French** (Settings, inside Canari - not the
+   phone's). Kill the app. Lock the screen.
+2. From the peer, send a CanaReel with NO caption in a **DM**, then one in a **group**, then one in a
+   **salon** of a shared community.
+3. Read each notification on the lock screen **without unlocking**.
+4. Send one more in the DM WITH a caption.
+5. Open the app once (so the locale is mirrored), switch the app language to **English**, kill it,
+   lock, and repeat 2-4.
+
+**Pass** = French: the DM reads `🎬 CanaReel` under the sender's name, the group and the salon read
+it under their own titles as any message does there, and the captioned one reads `🎬 CanaReel : <caption>`;
+English: `🎬 CanaReel` and `🎬 CanaReel: <caption>`. **No picture** on any of them. **FAIL** =
+`🎥 Vidéo` / `🎥 Video` (the receiving build does not carry RC-7, or the sender did not declare the
+intent), a generic "Nouveau message" (the decrypt did not happen: that is check B's failure, not this
+one's), or any thumbnail.
+
+**Where to look:** Android `adb logcat -s CanariFCM`: `decryptProto: success type=media -> "🎬 CanaReel"`
+(`decryptProtoWithCommits` after a catch-up; the salon's Graine path logs its own open). iOS:
+Console.app on the `fr.emse.canari.push` process (`[CanariNSE]`). The Rust
+`[MediaBG] ... reel=true - no thumbnail, key withheld` line is a `debug` line of a process the app's
+logger may not run in - its absence proves nothing; the missing picture is the reading.
 
 ## C. The row a push creates carries the GROUP's name - owed on BOTH platforms
 
@@ -1142,6 +1179,138 @@ other 3 it spends 24 ms at 881.5. No real IME on this phone is that short; a flo
 one-row keyboard would be. Evidence: `<harness-dir>/a1-bench/r1013-owed/checkW-mi9t.json`
 (the LatinIME run; the ADB-keyboard numbers above are the only record of that run).
 
+## DT. A double tap likes a post - owed on BOTH phones
+
+**Proves** [the double tap that likes](frontend/modules/posts.md#a-double-tap-likes-the-post-and-never-unlikes-it-2026-10-19)
+on real fingers: every gate here dispatches synthetic `click`s, so whether WebKit and the Android
+WebView deliver the two taps as two clicks with a `detail`, and nothing else, is read here only.
+**Precondition:** a build carrying `doubleTapLike`, a bench account, a feed holding a text post, a
+photo post, a poll post and a reel, none of them reacted to by the account; the console (CDP on the
+Mi 9T, the in-app log on the iPhone) for the `[doubleTapLike] double tap` and
+`[PostCard.doubleTap]` / `[reel-viewer] double tap` lines.
+
+**When a double tap does NOT like, read what reached the page before suspecting anything** (DT-IOS,
+2026-10-21: a native XCUITest double tap never liked on the iPhone, real W3C two-tap sequences did).
+Each tap of the gesture logs `[doubleTapLike] press ended (touch)` and then `[doubleTapLike] click
+(detail N, surface|opener|owned)`; a sequence under way that ended logs `sequence ended: <why>`.
+Two `press ended` with no `click` after them is the engine's own double-tap recognizer swallowing
+both clicks - the one case worth a detector change, and only once it is seen with a finger. No
+`press ended` at all means the touches never reached the card (another layer took them).
+
+1. **A reel, in the viewer**: open it, double tap the picture. Expect the heart at the finger, one
+   `like` line, the controls ending as they started, the video still playing. Double tap again: the
+   heart, an `already reacted, heart only` line, no request. Close: the card shows ❤️ as the reader's
+   reaction. Single tap: the controls toggle AT ONCE (no wait).
+2. **A reel card in the feed**: double tap it - liked, and the viewer does NOT open. Single tap it -
+   the viewer opens after a beat (~250 ms) and, if sound was turned on in the app, plays WITH sound
+   (the held tap is replayed from a timer: the user-activation question is the one thing reasoned
+   rather than measured).
+3. **A photo post**: double tap the picture - liked, no lightbox. Single tap - the lightbox opens.
+4. **A text post**: double tap the text - liked, no word selected, the page did not zoom or slide
+   to a neighbouring tab. A long press still selects the text.
+5. **A poll option**: double tap an option - it votes / unvotes as two taps always did, and the post
+   is NOT liked (no heart, no line).
+6. **VoiceOver (iPhone) and TalkBack (Mi 9T) on**: the reaction button still likes ("Ajouter une
+   réaction", then the heart in the picker); activating a photo opens the lightbox at once (no held tap); activating anything never
+   likes the post. A two-finger or three-finger screen-reader gesture over a card likes nothing.
+7. **Haptic**: the Mi 9T ticks on a like with vibrations on in the settings, and not with them off.
+   The iPhone has no web vibration and is expected to stay still.
+
+## Y. Watching a live - owed on BOTH phones (Mi 9T, iPhone 12)
+
+**Proves** [the live viewer](frontend/modules/live.md#the-viewer-as-built-2026-10-19) in the app's
+own WebViews, which no gate here runs: the tests drive fake MSE objects, and WP-L1 measured the
+bench page, not this player. **Precondition:** a DEV build carrying the viewer (`LIVE_ENABLED` is on
+for dev builds only), a broadcaster sealing segments in [format v1](frontend/modules/live.md#the-segment-seal-format-v1)
+(the app's own broadcaster on the other phone - run with [LIVE-B1](#live-b1-the-broadcaster-on-both-bench-phones---owed-on-both);
+the WP-L1 bench's own `live-bench` seal reads "Live indisponible" here, by design), and the console over CDP or the WebKit bridge for the `[LIVE]` lines.
+
+1. **Watch from the other phone.** Start a live on phone A; on phone B open the Feed: the LIVE card is
+   at the top, naming A. Tap it: `[LIVE] viewer joined <id> at segment N`, then picture and sound
+   (after one tap on the sound button), the LIVE badge and the time on air counting. Read
+   glass-to-glass against WP-L1's 5.8-7.3 s p50 (clap in front of A's camera).
+2. **Kill the network** on B for 20 s (airplane mode): "Reconnexion..." within a few polls, never
+   "Live complet". Back online: `seek to the live edge (catch-up)` and the picture at the edge, not
+   replaying the gap. Then kill A's network for 20 s: B says "Le live est interrompu, il devrait
+   reprendre." and comes back by itself when A does.
+3. **Rejoin**: close the viewer (X, then Android Back on a second try), reopen from the card. The
+   server's seat count must not grow (`DELETE /api/lives/:id/seat` in the access log on close).
+4. **The cap**: on dev, lower `LIVE_VIEWER_CAP` to 1 for the reading (an operator change on the dev
+   estate, put back afterwards), watch from a browser, then open on B: "Live complet" with "Réessayer";
+   close the browser viewer, tap "Réessayer" on B: it plays.
+5. **Background and foreground** B for 10 s, then 40 s (past the 30 s seat lease): it comes back to
+   the live edge, or to "Live complet" if the seat was taken meanwhile - never a frozen frame.
+6. **The end**: end the live on A: B reads "Le live est terminé" within about a second, the video
+   stops, and no further `[LIVE]` poll line follows.
+
+Record per phone: the engine's MSE flavour (`MediaSource` on the Mi 9T, `ManagedMediaSource` on the
+iPhone), any `append failed` or `did not open` line, and whether `endstreaming` from
+`ManagedMediaSource` (ignored in v1) left the iPhone starved.
+
+## CR. The composer's camera films a CanaReel - owed on BOTH phones
+
+**Proves** [one camera, one behaviour](frontend/modules/reels.md#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)
+on real hardware: every gate here replaces the camera, the recorder and the server, so whether the
+overlay, the publish step and the composer's modal hand over cleanly (history entries, the native
+chrome on iOS, the keyboard) is read here only. **Precondition:** a pre-release carrying it, a bench
+account, the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-capture]`,
+`[reel-publish]` and `[POST_COMPOSER]` lines.
+
+1. **"+" -> new post**, type a line of text, "Ouvrir la caméra", HOLD the shutter ~3 s. Expect the
+   review, then "Suivant" opens "Nouveau CanaReel" with the amber line "CanaReel : supprimé au bout
+   de 30 jours..." ABOVE the identity, and the text as the caption.
+2. **"Publier"**: the toast "CanaReel publié", the camera AND the composer gone, the feed under it
+   showing the reel as a 9:16 card that opens the reel viewer. Reopen "+": the text is NOT offered
+   again. The server row is `kind='reel'` with `durationMs` (the same as a reel filmed from the tab).
+3. **Again, but "Garder comme post"**: back in the composer with the video attached and the text
+   intact; "Publier" makes an ordinary post (the file's ratio, the media viewer).
+4. **A TAP in the composer's camera** (a photo): "Ajouter" attaches it to the composer, no publish step.
+5. **"Photo/vidéo" -> a gallery video**: attached to the composer, published as a post, never a reel.
+6. **Edit an existing post -> its camera -> HOLD**: "Ajouter" attaches the video; no publish step.
+7. **Back / the edge swipe** from the publish step returns to the take, a second one asks to discard
+   it, a third closes the camera onto the composer (iPhone: the native tab bar and chrome stay hidden
+   while the camera is up).
+8. **Back DURING the upload** (a 60 s take on a throttled network, on the tab AND from "+"): nothing
+   happens, the back arrow is greyed, `Back refused: the publish is past its upload` in the log, and
+   ONE reel appears. The screen reader (VoiceOver / TalkBack) reads the 30-day notice first when the
+   step opens from "+".
+9. **A poll (or a schedule) switched on in the new post, then the camera, HOLD**: "Ajouter" attaches
+   the video to that post; no publish step. "Garder comme post" after editing the caption and
+   choosing "Anonyme" in the step: the composer shows the edited text and "Anonyme"; publishing it
+   lands on the "Tout" feed.
+
+## RR. The CanaReels rail, the comments sheet and the photo pages - owed on BOTH phones
+
+**Proves** [the rail, the sheet and the photo pages](frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)
+on real fingers and a real keyboard: every gate here is jsdom, which has no layout, no keyboard
+and no WebView. **Precondition:** a build carrying `ReelActionRail` against a social-service
+carrying `singlePhotos`, a bench account, at least two reels and one post of exactly one photo;
+the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-viewer]` and
+`[reel-comments]` lines.
+
+1. **The rail**: open CanaReels. Expect heart, comments and send bottom-right over every page, with
+   their numbers, clear of the caption and of the player's bar, at 1x and at 200 % text.
+2. **The heart**: tap it - filled, the count +1, one `heart ... like` line; tap again - empty, a
+   `take back` line. A double tap on the rail likes nothing more (no burst at the finger). On a
+   post the account reacted to with 😂 (from the card's picker), the rail shows 😂, not a heart.
+   Two fast taps on a slow network send one request (`in flight, ignored` line).
+   The comments number matches the card's on a post of more than twenty comments.
+3. **The sheet**: tap comments - the sheet rises over the lower ~60 %, the reel keeps playing above.
+   Type a comment: the keyboard does not cover the field. Send it; close the viewer - the card shows
+   it. Close the sheet each way: drag the grabber down, Back (the viewer stays open), tap the reel
+   above, the X. A swipe over the list scrolls it and does not close the sheet.
+4. **Report a comment from the sheet**: the reason dialog is drawn ABOVE the viewer.
+5. **Send**: a toast says the link is copied; the clipboard holds `/posts/<id>`.
+6. **Photo pages**: the one-photo post appears among the reels as a page, its picture whole, no
+   player bar, the caption lower, the same rail. A post of two photos never appears.
+7. **VoiceOver / TalkBack**: the rail reads "J'aime, N réactions", "Commentaires, N commentaires",
+   "Partager"; the sheet takes the focus on open and gives it back to the comments button on close.
+8. **Desktop wheel** (a browser on a desktop, a mouse, then a trackpad): one wheel notch down is
+   the next reel, up the previous; a hard spin of a free-spinning wheel and a trackpad flick each
+   turn ONE page (`[reel-viewer] wheel` once per gesture); ctrl+wheel zooms the page and does not
+   turn it; with the comments sheet open the wheel scrolls the list; over an unfolded caption it
+   scrolls the caption.
+
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 
 Every reading the wiki, the backlog, `CLAUDE.md` and the pull requests of 2026-10-09 to 2026-10-11
@@ -1173,6 +1342,7 @@ the build it names.**
 | #1742 reel frame parity | PR | **WAITS** (merged, in no release yet) |
 | #1738 IndexedDB eviction: kill with a queued 13 MB file, relaunch | PR #1738 (open) | **WAITS**: the PR is not merged |
 | #1744 feed reel fetch, playback start | PR #1744 (open) | **WAITS**: not merged |
+| An account deletion empties the App Group copies: delete a throwaway account on a debug (inspectable) build, then list `group.fr.emse.canari` - no `push_context.json` or `fcm_message_cache.ndjson` left, `mls.bin` / `graine_seeds.json` / `push_secret.txt` kept; `[DEL-LOCAL] push files: N removed from the extension's container` in the log, no `no App Group container` | [auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18), added 2026-10-19 | **WAITS for a pre-release carrying it**: the `#[cfg(target_os = "ios")]` branch is not even compiled before the release's iOS build |
 | PDF viewer performance | branch `perf/pdf-viewer` | **WAITS**: no pull request yet |
 | Session holds, check P | CLAUDE.md | **not re-read by rule**: proven, "must not be re-verified" |
 
@@ -1395,6 +1565,113 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
   prompt is the in-app one (`NSCameraUsageDescription` stays, `getUserMedia` needs it).
 - The overlay over the keyboard and over a conversation with a pending draft; a camera refused
   (permission denied) shows the refusal screen with no native fallback.
+
+## LIVE-B1. The broadcaster on both bench phones - owed on BOTH
+
+The broadcaster of WP-L5 ([live](frontend/modules/live.md#the-broadcaster-as-built)), on dev builds
+only (`LIVE_ENABLED = deployEnvironment() === 'development'`; dev's server has `LIVE_ENABLED` on).
+Every test of it runs on fakes: none of the readings below has been taken. Written 2026-10-19.
+
+**Preconditions - each a reading:** both phones on a PRE-RELEASE build carrying the broadcaster
+(Settings > A propos shows `X.Y.Z-alpha.N`, the store-serves-the-highest-build TRAP of CALL-L1
+applies); two dev accounts sharing a space (a member's live is watched by readers sharing one); the
+app's own viewer on the other phone - [check Y](#y-watching-a-live---owed-on-both-phones-mi-9t-iphone-12)
+reads the same session from that side. Save the in-app log after each run
+(Settings > A propos > "Enregistrer le journal"); the `[LIVE-PIPE] summary` and `[LIVE-BROADCAST]`
+lines are what decide each row - no key, no segment byte is ever in them.
+
+| Row | Mi 9T (app WebView) | iPhone 12 (app WKWebView) |
+| --- | --- | --- |
+| **1. Ten minutes on air**, the other phone watching: the composer's "En direct" chip, the rules screen with 60 min and 60 s from the server, Start, the red badge and its clock. Log: `[LIVE-BROADCAST] on air (recorder 1)`, a summary every 30 s with `not on keyframe 0`, `dropped 0`, and `two-fragment chunks` near 14 % of segments on Android (0 on iOS) | owed | owed |
+| **2. Background and return**: home for ~20 s, back. The screen shows "Camera en pause" while away, then the badge again on the SAME live; the viewer sees a gap then catches up. Log: `recording paused: the app is in the background`, `re-acquiring`, `on air (recorder 2)`, and `generation 2 begins at +<ms>` | owed (the WebView ENDED the track in WP-L1: the release-on-hidden must make that moot) | owed (WP-L1 saw a MUTE in Safari; the app's WKWebView is unread) |
+| **3. Background past the window**: home for 90 s, back. The end screen says the live stopped while the camera was paused; no camera opens. Log: `ended while the camera was away` | owed | owed |
+| **4. Network cut and restored** (airplane mode ~20 s, on air): the quiet "Reconnexion..." badge with a growing backlog, which drains by itself when the network returns; nothing ends. Log: `reconnecting`, then summaries resuming with no `dropped` | owed | owed |
+| **5. End**: End, "Continuer" keeps the live, End again and confirm. The viewer's live ends; the end screen says you ended it. Log: `ended (broadcaster)` | owed | owed |
+| **6. Battery, UNPLUGGED, 30 min on air**: the level before and after, the phone's heat by hand. Also: under 60 % the rules screen shows the battery warning (Android only: WebKit has no Battery API) | owed (WP-L1: ~40 %/h PLUGGED) | owed (no warning expected) |
+| **7. The screen stays on** for the whole of row 1 without a touch (the Screen Wake Lock); if the log says `no Screen Wake Lock API here`, that engine dims and it is a finding | owed | owed |
+| **8. Does a NEW recorder's media time start at 0?** After row 2's return, read the first segment of `recorder 2` on the viewer side (or the rig's `readTimes`): its `tfdt` must be the `+<ms>` of `generation 2 begins`, NOT that plus the time the first recorder ran. `rebaseFragment` ASSUMES a fresh recorder restarts at zero - WP-L1 never measured it; an engine that keeps counting would put the second recorder's picture in the future for every viewer | owed | owed |
+| **9. Network cut longer than the window** (airplane mode ~90 s, on air): the end screen says the connection was lost too long, the camera light goes off. Log: `segments waiting, over the <n> the reconnect window holds`, `ended (connection-lost)` | owed | owed |
+| **10. End while offline**: airplane mode, End, confirm. The camera light goes off AT ONCE; the screen says the last seconds are being sent and offers "Quitter sans attendre", which closes it. Log: `camera given back; <n> segments to send` | owed | owed |
+
+## CALL-L1. A 1:1 dev call between the two bench phones - owed on BOTH
+
+Lot 1 of [calls](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only):
+in-app 1:1 AUDIO, peer to peer, Cloudflare TURN as the last resort, on dev builds only
+(`CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'development'`). Nothing in it was ever
+run on a phone ([2026-10-18 bench](device-readings-calls-live-2026-10-18.md): `BLOCKED`, dev was on
+`1.2.9-alpha.7`). Written 2026-10-19, when dev served `1.3.0-alpha.4` with the dev TURN pair.
+
+**Preconditions - each one is a reading, never assumed:**
+
+1. **Both phones run a PRE-RELEASE build**: Settings > A propos shows `X.Y.Z-alpha.N` and the app
+   talks to `dev.canari-emse.fr`. A stable build has `CALLS_ENABLED = false` and no call button.
+   **TRAP: a store serves the HIGHEST build number.** The stable `1.3.0` is `100300099` and outranks
+   `1.3.0-alpha.4` (`100300004`), so once `1.3.0` is offered, Play updates the Mi 9T to a build that
+   cannot call; on TestFlight, pick the alpha build by hand. When Play offers no alpha above the
+   latest stable, the reading needs the next pre-release (`v1.3.1-alpha.1` = `100300101`).
+2. **Two dev accounts, one per phone, sharing a DIRECT conversation**: calls are offered in direct
+   conversations only. No block between them (a block refuses the call with `call_unavailable`).
+3. **The call permission is not refused**: the conversation's panel, "Appels", reads "Autorises", or
+   no choice was made and the level is not `none`.
+4. **Both apps OPEN, in the foreground, screen on.** The ring is the MLS `call_invite` over the chat
+   socket. A killed or backgrounded app is NOT rung (`CALLS_COMPILED = false`, no native ring; and dev
+   has no Firebase sender, so chat-delivery logs `[ring] Firebase Admin is not initialised` at every
+   ring - expected on dev, not the finding).
+5. **The microphone prompt** appears on the first call on each phone: accept it.
+
+**The log.** A store build is not inspectable: Settings > A propos > "Enregistrer le journal" saves
+the in-app log after each call. **Never paste the `[Call] encryption key derived from MLS (fp=...)`
+line of a build older than 2026-10-21 into this public repository** - it printed key bytes. From
+then on the line reads `media keys derived from MLS (role= send_fp= recv_fp=, sha256)`, a hash of
+each direction's key, safe to quote ([calls](frontend/modules/calls.md)).
+
+**Steps:**
+
+| # | Action | Expected on screen | Expected in the log |
+| --- | --- | --- | --- |
+| 0 | **FIRST, before any other row, on the build carrying #2148**: one p2p call on dev, connected, then left IDLE (nobody speaks, no network change, both apps in the foreground, screens on) for **more than 60 s** | the call goes on: no "Reconnexion...", no end | server (dev `call-service`): `[call] p2p paired ...` and **NO `held dead`, `keepalive-lost` or `not taken within` line** for either peer over the whole idle minute. It proves the keepalive's Pong crosses the PUBLIC path (Cloudflare tunnel + host nginx) - which no local test covers; a `held dead` line here means the path eats Pongs, and every other row would read the keepalive, not the network |
+| 1 | Mi 9T opens the DM, taps "Appel audio" | the call screen; the iPhone rings IN-APP within seconds | caller: `[Call] fetching ICE servers for group=...`, `[Call] server ring sent - answer window open`, `[Call] signalling connected, joining p2p room...`, `[Call] p2p room ready (...)`; callee: `[Call] signal from <id> in <group> call=<id>` |
+| 2 | iPhone answers | both show the call in progress; each hears the other, both ways, for at least 30 s | caller `[Call] peer ready - this side is initiator`, callee `... is polite`; `[Call] offer (...) -> peer` / `[Call] answer (...) -> peer`; `[Call] connectionState=connected`; `[Call] selected path pair=<local>/<proto>-><remote>/<proto> relayed=yes\|no`; `[Call] E2E encrypting audio` and `[Call] E2E decrypting audio`; `[Call] remote track unmuted kind=audio` |
+| 3 | iPhone hangs up | both screens leave the call; the conversation shows the call line | no `[Call] terminal failure` |
+| 4 | Steps 1-3 the other way: the iPhone calls the Mi 9T | the same | the same, roles swapped |
+| 5 | Mi 9T calls, nobody answers | after 60 s the ring stops; a missed-call line on both | caller `[Call] ring window (60000 ms) closed unanswered - call=<id>` |
+| 6 | The callee app KILLED, then called | **nothing rings - EXPECTED in lot 1**, not a `FAIL` | caller as step 5 |
+| 7 | Callee sets "Appels" to "Non autorises", then is called; then back to "Autorises" | refused: no ring, a missed-call line at once; allowed again: it rings | callee: `[Call] invite <id> in <group> not rung - calls are not allowed in this conversation` |
+| 8 | **CALL-WIFI** (owed on a build carrying the resume, both phones on it). In a connected call, Wi-Fi OFF on the Mi 9T for **6 s**, then on | the call does NOT end; both screens show "Reconnexion..." only on a build that also carries the call UI of #2138 (it reads `callService.reconnecting`); audio comes back both ways | Mi 9T: `[Call] signalling WebSocket closed code=1006 - resuming`, `[Call] signalling resume attempt N/15`, `[Call] signalling resumed on attempt N`, `[Call] peer ready - ... (resumed)`, `[Call] pair resumed: ... audio packets A -> B`; either `the media path carried audio across the outage - no ICE restart`, or on the INITIATOR `[Call] ICE restart 1/3 (...)` + `[Call] ICE restart offer (...) -> peer` then `[Call] media path restored after 1 ICE restart(s)`; NO `[Call] terminal failure`. Server: `[call] p2p seat away ...` then `[call] p2p paired ... resumed=true`. **`1.3.1-alpha.2`: `PASS`** (2026-10-19, [readings](device-readings-2026-10.md)) |
+| 9 | **CALL-WIFI**, the same with a **14 s** outage; then once more as callee (the iPhone calls) | as step 8 | as step 8; record the attempt number that resumed (expected 5, at +15 s on the capped ladder). If the initiator's first restart offer was lost: `rolling back an unanswered offer - its answer can no longer come`. **`1.3.1-alpha.2`: `FAIL`** - resumed at attempt 5 (+32 s), the restart request was dropped as "already in flight", both phones stayed on "Reconnexion..." with no audio; cause and fix (explicit restart offer, rollback, per-pairing guard, capped ladder) on [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix); **re-read owed on the build carrying it** |
+| 10 | **CALL-WIFI**, Wi-Fi OFF on the Mi 9T for **90 s** (longer than the 60 s seat grace) | the call ENDS on both phones: the Mi 9T by its attempt budget (~+55 s), the iPhone at most ~90 s after the loss | iPhone `[Call] the other party lost its signalling connection` within ~30 s, then `[Call] the other party left the call room`; server `... held dead (half-open socket)` / `disposition=keepalive-lost`, then `p2p seat EXPIRED`; Mi 9T `[Call] signalling resume refused (call-over)` or `... not restored after 15 resume attempts`. **`1.3.1-alpha.2`: `FAIL`** - the Mi 9T ended at +30 s, the iPhone sat on "Reconnexion..." for 100+ s: the server never held the half-open socket dead, so no grace and no `PeerLeft`; fixed by the keepalive liveness proof; **re-read owed** |
+| 11 | **CALL-WIFI keepalive, a SUSPENDED app** (owed on the build carrying #2148): in a connected call, lock the screen on ONE phone for **more than 30 s**, then unlock; again with the app sent to the background instead; each phone in turn | EITHER the call goes on (the app kept running: its process answered the keepalive) OR, if the OS suspended the app, the partner shows "Reconnexion..." about 20-30 s in, then the call ENDS on it ~60 s later; on unlock the suspended phone resumes if it is back before that end, else it is told the call is over. NEVER a partner stuck on "Reconnexion..." past ~90 s | server: no `held dead` line while the app runs; if suspended, `... answered none of 2 keepalive pings - held dead (half-open socket)`, `disposition=keepalive-lost`, then `p2p seat EXPIRED` or `paired ... resumed=true`. Record per phone and per gesture whether the app was suspended: the change of behaviour (a suspended app used to keep its seat "present" indefinitely) is the thing measured. Android's background microphone is CALL-LOCK-ANDROID, not this row |
+| 12 | **WP-C-BG-I, the iPhone's microphone in the background** (owed on the first pre-release carrying it, in this order). (a) The iOS job's `UIBackgroundModes of this pre-release build:` line lists `audio`. (b) In a connected call: lock the iPhone 60 s, then send it to the background 60 s. (c) Out of a call - **the mode is APP-WIDE**: play a reel with sound, then a voice message, and lock then background the iPhone during each. (d) In a call: an audio ROUTE change (AirPods connected then removed, a wired headset in and out) and a short interruption (an alarm or a Siri press of about 2 s). (e) A call ACCEPTED from the lock screen (the track can be handed over already muted). Record every `mute`/`unmute` pair with its duration BEFORE any debounce is written | (b) the Mi 9T keeps HEARING the iPhone through the lock and the background (its inbound audio packets keep rising - `getStats()` over CDP every 5 s) and the iPhone keeps playing the Mi 9T's voice. (c) RECORD whether playback continues while locked or in the background - it did not before this build, and now may: that is a behaviour change to accept or refuse, not a defect by itself. (d) a route change should NOT produce a `the system took the microphone` line; if it does, how often and for how long - a flicker would put false "Le telephone de ... a coupe son micro" notices on the partner's screen. (e) the call connects, and if the track starts muted the notice shows until it is given back | iPhone log: NO `the system took the microphone` in (b); in (d)/(e), each `WARN the system took the microphone (track muted, page visible\|hidden) - telling the other party` and `gave the microphone back after N s` with N; Mi 9T log: `the other party's system took its microphone` / `gave its microphone back` for each; server: one `p2p mic-suspended relayed` per transition. If (b) still mutes the capture, read the iPhone's syslog (`WebKit`, `mediaserverd`) before any native audio-session code ([calls](frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)) |
+| 13 | **B0 of the audio-only plan - a hidden peer video is still under its transform** (owed on the first pre-release carrying #2171). A dev build WITH video calls a build with video FORCED OFF (`CALLS_VIDEO_ENABLED` false: a local build, or the first audio-only alpha), the video side turns its camera on; once with the iPhone as the audio-only side, once with the Mi 9T | the audio-only side shows NO video and the call goes on past 30 s with the camera on; the video side still hears and is heard | audio-only side: `[Call] the peer sends video - this build is audio only, it is received and not shown`, then `E2E path check ...: no media around the transform` with `received ... video=` rising; NEVER `media flowed AROUND the transform on receiver:video` nor a `CallE2eBypassedError` end. A false END here means the engine does not feed a receiver transform whose track has no sink - then the `inactive` route of B0 is owed ([calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21)) |
+
+**Record per direction:** the verdict, the `relayed=` value (only `relayed=yes` is billed TURN), the
+network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the build on each phone.
+
+**Failure signatures, and what each names:**
+
+- `[Call] ICE servers HTTP 503`: the dev TURN pair is missing from dev's chat-delivery-service
+  (`DEV_CLOUDFLARE_CALLS_API_TOKEN`, `DEV_CLOUDFLARE_TURN_KEY_ID`), or the monthly budget refused.
+- `[Call] startCall refused - RTCRtpScriptTransform unavailable` (or `acceptCall refused ...`): that
+  WebView has no E2E transform - a finding about the engine, P1 for lot 1, never a reason to degrade.
+- `[Call] WARN remote audio still muted after 5s`, or `[Call] E2E decrypt failed`: media arrives
+  but cannot be heard or decrypted; note both phones' MLS state.
+- `[Call] ERROR E2E key mismatch` and the "ne peut pas être déchiffré" notice (builds carrying the 2026-10-21 port
+  of #2013): no receiver decrypted anything after 100 failures - compare one phone's `send_fp` with
+  the other's `recv_fp` (`media keys derived from MLS` line); unequal means the two devices derived
+  different keys (different MLS epochs, or one build older than the v2 wire) ([calls](frontend/modules/calls.md)).
+- `[Call] signalling refused: <reason>`: the relay refused the room (`room-full`, `group-mismatch`,
+  `token-refused`; `call-over` on a resume means the seat expired or the other party hung up).
+- `[Call] terminal failure: ... the relay gave no resume token`: the call-service on that estate
+  predates the resume (CALL-WIFI) - a deploy gap, not a client defect.
+- `[Call] connectionState=failed` with no `selected path`: no candidate pair, not even TURN - read
+  `iceConnectionState` and the network.
+
+**`[CALL_REPORT]` reaches a build with the first pre-release carrying the 2026-10-21 port of #2011**
+(check the release notes; no build before it has the line). From then on each device logs one line per call every 10 s and once at the end
+(`[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms= engine= ice= pair= relayed= ...
+e2e=on enc_frames= dec_frames= dec_fail=`); record `setup_ms`, `relayed`, `rtt_ms`, `loss_in_pct` and
+`dec_fail` per direction, which is the plan's exit criterion
+([calls-revival-plan](frontend/modules/calls-revival-plan.md)).
 
 ## The Mi 9T readings of v1.2.9-alpha.7 (2026-10-17)
 
@@ -2037,6 +2314,21 @@ it ("Ouvrir"), then a `terminate` and a relaunch. Settings > A propos read "Vers
 
 **Left on the bench:** signed in as `canari-test-gamma` on `1.2.9-alpha.7`, unlocked, on the feed.
 Dynamic Type and 200 % text were not read (not owed by this build).
+
+**3b, read again from the same evidence.** The emoji keyboard opened over the already-open DM
+keyboard (`overlap=388`, 13:50:58), and `11-dmkbd-menu-open.png` then shows the header and the "+"
+in place. Only the rise from a CLOSED keyboard goes wrong. The analysis and the three candidate
+causes are in [mobile](frontend/mobile.md#the-dm-whose-chrome-stands-one-keyboard-too-high-2026-10-17).
+**Owed on the next build that carries `keyboard settled:` (one reading names the cause):**
+
+1. Run `pymobiledevice3 syslog live -pn Canari`, grepping for `[CanariIOS] keyboard`.
+2. Open the same DM (last message a tall video) and tap the composer field with the keyboard
+   closed. Then run `bun tools/ios-device/ios.mjs shot` and `bun tools/ios-device/ios.mjs webview`
+   (543 tall expected), and `find "Ajouter"` for the native "+" rect.
+3. Copy the `keyboard settled:` line that follows `overlap=301`.
+4. Control 1: the salon "general", same steps.
+5. Control 2: the DM after the emoji keyboard. Switch to it, then back.
+6. Close and reopen the keyboard three times in the DM. One line per rise is the measurement.
 
 ## Traps that outlived the work that found them
 

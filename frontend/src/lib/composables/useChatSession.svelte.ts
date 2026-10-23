@@ -7,6 +7,7 @@
  * and delegation to the session/* sub-modules.
  */
 import { deliveryUrl } from '$lib/utils/apiUrl';
+import { RECONNECT_DELAYS_MS } from '$lib/utils/reconnectBackoff';
 import { createMlsService } from '$lib/mlsService';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
@@ -91,7 +92,7 @@ export function useChatSession() {
    * cookie) and a repeated transport failure is not one. See `scheduleReconnectImpl` for the
    * measurement that removed the old 20-attempt circuit (WP-RECONNECT-1).
    */
-  const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
+  const RECONNECT_DELAYS = [...RECONNECT_DELAYS_MS];
   /** Index into RECONNECT_DELAYS; reset to 0 by a successful connect and by resumeConnection. */
   let reconnectAttempts = 0;
   /** welcome_requests received while the target group was not yet ready.
@@ -165,7 +166,7 @@ export function useChatSession() {
 
     // Services
     ensureMls,
-    resetMls: () => mlsHolder.reset(),
+    resetMls: (only) => mlsHolder.reset(only),
     retireMls: (finalWrite) => mlsHolder.retire(finalWrite),
     whenMlsRetired: () => mlsHolder.whenRetired(),
     isMlsRetiring: () => mlsHolder.isRetiring(),
@@ -483,7 +484,8 @@ export function useChatSession() {
       file: File,
       log: (msg: string) => void,
       clearConversations: () => void,
-      reloadConversations: () => Promise<void>
+      reloadConversations: () => Promise<void>,
+      recoveryCode?: string
     ) =>
       importBackupImpl(
         ctx,
@@ -493,7 +495,8 @@ export function useChatSession() {
           isImporting = v;
         },
         clearConversations,
-        reloadConversations
+        reloadConversations,
+        recoveryCode
       ),
     /** Processes pending MLS invitations from our other devices (multi-device sync). */
     processDeviceInvitationsLocally: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>

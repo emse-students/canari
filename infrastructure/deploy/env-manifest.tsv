@@ -69,6 +69,7 @@ CHANNELS_ENCRYPTION_SECRET	required	required	secret:CHANNELS_ENCRYPTION_SECRET	c
 INTERNAL_SHARED_SECRET	required	required	secret:INTERNAL_SHARED_SECRET	inter-service HMAC auth is disabled, which is a security hole
 CALL_ROOM_SECRET	required	required	secret:CALL_ROOM_SECRET	WebRTC room access control is disabled, which is a security hole
 AGENDA_SIGNING_KEY	required	required	secret:AGENDA_SIGNING_KEY	calendar subscription links cannot be signed and every campus / formation feed is refused
+LIVE_REPORT_SIGNING_KEY	required	required	secret:LIVE_REPORT_SIGNING_KEY	a reported live chat line cannot be signed, so every chat-line report is refused 503 and nothing is kept for staff
 ALLOW_ORIGIN	computed	computed	computed	the chat-gateway refuses every client, or accepts every origin on earth
 CALL_E2E_ENCRYPTION	literal	literal	literal:false	nothing - it is off in both environments
 INTERNAL_SECRET	warn	warn	secret:INTERNAL_SECRET	social and form push notifications are disabled
@@ -78,6 +79,9 @@ CERCLE_API_KEY	warn	skip	secret:CERCLE_API_KEY	/api/public/cotisant-status rejec
 FIREBASE_SERVICE_ACCOUNT_JSON	warn	warn	secret:FIREBASE_SERVICE_ACCOUNT_JSON	push notifications are disabled
 CLOUDFLARE_CALLS_API_TOKEN	warn	warn	secret:CLOUDFLARE_CALLS_API_TOKEN	calls fail - ice-servers answers 503
 CLOUDFLARE_TURN_KEY_ID	warn	warn	secret:CLOUDFLARE_TURN_KEY_ID	calls fail - ice-servers answers 503
+CLOUDFLARE_ACCOUNT_ID	warn	warn	secret:CLOUDFLARE_ACCOUNT_ID	no TURN relay - ice-servers answers STUN only (TURN_METER_UNAVAILABLE), a call behind NAT cannot connect
+CLOUDFLARE_TURN_MONTHLY_BUDGET_GB	silent	silent	secret:CLOUDFLARE_TURN_MONTHLY_BUDGET_GB	the default budget (950 GB) applies, which is the intended value; 0 makes calls STUN only
+CLOUDFLARE_TURN_ANALYTICS_TOKEN	warn	warn	secret:CLOUDFLARE_TURN_ANALYTICS_TOKEN	no TURN relay - ice-servers answers STUN only (TURN_METER_UNAVAILABLE), a call behind NAT cannot connect
 MIGALLERY_API_KEY	warn	warn	secret:MIGALLERY_API_KEY	the avatar service does not work
 MICONNECT_EDITOR_TOKEN	warn	skip	secret:MICONNECT_EDITOR_TOKEN	an admin's profile edit is refused (typed: not configured) - production only, because dev and production share ONE MiConnect
 GOOGLE_SAFE_BROWSING_API_KEY	warn	warn	secret:GOOGLE_SAFE_BROWSING_API_KEY	links are not checked against Safe Browsing
@@ -89,7 +93,9 @@ APNS_VOIP_TEAM_ID	silent	silent	secret:APNS_VOIP_TEAM_ID	the APNs key cannot be 
 SERVICE_ACCOUNT_USER_ID	silent	silent	secret:SERVICE_ACCOUNT_USER_ID	the default from .env.example applies, which is the intended value
 LYDIA_PROVIDER_TOKEN	warn	warn	secret:LYDIA_PROVIDER_TOKEN	Lydia payments are unavailable if selected as the active provider
 LYDIA_PROVIDER_PRIVATE_TOKEN	warn	warn	secret:LYDIA_PROVIDER_PRIVATE_TOKEN	Lydia payments are unavailable if selected as the active provider
+LYDIA_KEY_ENCRYPTION_SECRET	required	required	secret:LYDIA_KEY_ENCRYPTION_SECRET	no association can store or open its Lydia Business key, so every Lydia callback is refused and the PUT key route answers 503
 DEPLOY_BUILD	skip	computed	computed	the /api/version build field is null, so two dev deployments of one release are indistinguishable
 FRONTEND_HOST_PORT	computed	computed	computed	the host port this estate's nginx publishes - 8080 prod, 3080 dev; both estates share one machine so they may never agree
 GARAGE_API_HOST_PORT	computed	computed	computed	garage's S3 API on 127.0.0.1 - 19010 prod, 19100 dev
 GARAGE_ADMIN_HOST_PORT	computed	computed	computed	garage's admin API on 127.0.0.1 - 19011 prod, 19101 dev
+LIVE_ENABLED	computed	computed	computed	the live routes (docs/wiki/services/lives.md) - true on dev, false on production, so a stable release serves no live

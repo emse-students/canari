@@ -54,6 +54,51 @@ import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simp
 interface OidcCallbackDto {
   code: string;
   redirect_uri: string;
+  /**
+   * The PKCE verifier of the authorization request that produced `code` (RFC 7636). MiConnect checks
+   * it against the challenge the client sent, so a code captured on its way back cannot be redeemed
+   * here by anybody but the device that asked for it. Absent from a build that predates PKCE, and
+   * from a client that read no `oidcPkce` capability in `GET /api/version` before it signed in
+   * (docs/wiki/legacy-compatibility.md).
+   */
+  code_verifier?: string;
+}
+
+/**
+ * The typed refusals of `POST /auth/oidc/callback` when MiConnect will not redeem the code. The
+ * client renders on `code`, never on `message`.
+ *
+ * - `OIDC_PKCE_REFUSED`: the code was redeemed WITH a verifier and MiConnect answered `400`. The
+ *   verifier did not match the challenge, or the code was spent or expired - authentik answers
+ *   `invalid_grant` to all of them alike (measured by infrastructure/authentik/test-pkce.py), so
+ *   nothing finer can be stated truthfully. What it does state: the sign-in was a PKCE one.
+ * - `OIDC_CODE_REFUSED`: the code was redeemed WITHOUT a verifier and MiConnect answered `400` - a
+ *   spent or expired code from a client that did not challenge, or a challenged code whose verifier
+ *   the caller lost.
+ * - `OIDC_TOKEN_EXCHANGE_FAILED`: any other status. Not a judgement on the code.
+ */
+export type OidcTokenRefusalCode =
+  | 'OIDC_PKCE_REFUSED'
+  | 'OIDC_CODE_REFUSED'
+  | 'OIDC_TOKEN_EXCHANGE_FAILED';
+
+/**
+ * Classifies MiConnect's refusal of a code from the two facts this server KNOWS - the status it got
+ * and whether it sent a verifier - never from the provider's prose, which is logged and not returned.
+ */
+export function oidcTokenRefusal(
+  status: number,
+  verifierSent: boolean
+): { code: OidcTokenRefusalCode; message: string } {
+  if (status !== 400) {
+    return {
+      code: 'OIDC_TOKEN_EXCHANGE_FAILED',
+      message: `Authentik token exchange failed (${status})`,
+    };
+  }
+  return verifierSent
+    ? { code: 'OIDC_PKCE_REFUSED', message: 'MiConnect refused the code and its PKCE verifier' }
+    : { code: 'OIDC_CODE_REFUSED', message: 'MiConnect refused the code' };
 }
 
 /** Claims carried by the refresh JWT. `sid`/`jti` are absent on tokens issued before WP-SESS-2. */
@@ -449,9 +494,22 @@ export class AuthController {
       admin: boolean;
     };
   }> {
-    const { code, redirect_uri } = body ?? {};
+    const { code, redirect_uri, code_verifier } = body ?? {};
     if (!code) throw new BadRequestException('code is required');
     if (!redirect_uri) throw new BadRequestException('redirect_uri is required');
+    if (code_verifier !== undefined && typeof code_verifier !== 'string') {
+      throw new BadRequestException('code_verifier must be a string');
+    }
+    if (!code_verifier) {
+      // A sign-in with no proof that the caller started it: a build older than PKCE, or a caller
+      // that is not the app at all. THIS LINE IS THE REMOVAL METRIC of the legacy branch
+      // (docs/wiki/legacy-compatibility.md, "an OIDC callback with no PKCE verifier"): the branch
+      // goes when it is silent on production for a week, so it stays a warn - demoting it to debug
+      // would make that condition true by hiding it, not by the clients upgrading.
+      this.logger.warn(
+        `OIDC callback without a PKCE verifier (origin=${req.get('origin') ?? 'none'}) - legacy client`
+      );
+    }
 
     if (!this.authentikBaseUrl || !this.authentikClientId || !this.authentikClientSecret) {
       throw new BadRequestException('Authentik OIDC is not configured on the server');
@@ -468,14 +526,19 @@ export class AuthController {
         redirect_uri,
         client_id: this.authentikClientId,
         client_secret: this.authentikClientSecret,
+        ...(code_verifier ? { code_verifier } : {}),
       }),
     });
 
     if (!tokenRes.ok) {
+      // The provider's answer is logged here and NOT handed to the caller: it describes the
+      // provider's checks to whoever POSTed the code, and the client has nothing to do with it.
       const errText = await tokenRes.text().catch(() => '');
-      throw new UnauthorizedException(
-        `Authentik token exchange failed (${tokenRes.status}): ${errText}`
+      const refusal = oidcTokenRefusal(tokenRes.status, Boolean(code_verifier));
+      this.logger.warn(
+        `Authentik token exchange refused (${tokenRes.status}, ${refusal.code}): ${errText}`
       );
+      throw new UnauthorizedException(refusal);
     }
 
     const tokenData = (await tokenRes.json()) as {
@@ -565,9 +628,13 @@ export class AuthController {
    * everyone and the body copy for the clients that carry their own credential.
    */
   private async issueSession(user: User, req: Request, res: Response): Promise<IssuedSession> {
-    const access_token = jwt.sign({ sub: user.id, admin: !!user.admin }, this.jwtSecret, {
-      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-    });
+    const access_token = jwt.sign(
+      { sub: user.id, admin: !!user.admin, type: 'access' },
+      this.jwtSecret,
+      {
+        expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+      }
+    );
     const session = await this.authSessions.create(user.id, this.clientInfo(req));
     const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
 
@@ -753,9 +820,13 @@ export class AuthController {
     }
     const nextTokenId = result.tokenId;
 
-    const access_token = jwt.sign({ sub: payload.sub, admin: isAdmin }, this.jwtSecret, {
-      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-    });
+    const access_token = jwt.sign(
+      { sub: payload.sub, admin: isAdmin, type: 'access' },
+      this.jwtSecret,
+      {
+        expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+      }
+    );
     const new_refresh = this.signRefreshToken(payload.sub, sessionId, nextTokenId);
 
     // Rotate on BOTH transports the caller can hold, for the reason above. From this moment the old

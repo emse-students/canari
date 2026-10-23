@@ -8,6 +8,7 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
+import { reportRejectionOnce } from '$lib/utils/reportRejectionOnce';
 import { SvelteSet } from 'svelte/reactivity';
 import { getStorage, type IStorage } from '$lib/db';
 import { resetSalonUnread } from '$lib/utils/chat/salonUnread';
@@ -17,18 +18,40 @@ import {
   KeyChangeInterruptedError,
   KeyChangeSupersededError,
   LocalStateUnopenableError,
+  moveSealedStoresOnly,
   performPinChange,
+  thisTabMayChangeDeviceKey,
   type PinProgressCallback,
 } from '$lib/utils/chat/pinChange';
 import { endIntoKeyRecovery, joinDeviceKeyLock } from '$lib/db/deviceKeyGate';
 import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
+import {
+  HardwareKeyUnavailableError,
+  hardwareHeldKeyApplies,
+  noteHardwareHeldDeviceKey,
+  readHardwareHeldKey,
+  tauriHardwareKeyPort,
+  type AtRestKeyScheme,
+  type HardwareKeyPort,
+} from '$lib/crypto/hardwareHeldKey';
+import {
+  finishMigrationAtUnlock,
+  settledAtRestScheme,
+  startHardwareKeyMigration,
+} from '$lib/utils/chat/hardwareKeyMigration';
+import { noteBackupOwedAfterKeyMove } from '$lib/crypto/deviceRecoveryCode';
+import { showToast } from '$lib/stores/toast.svelte';
 import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // Every `throw` below whose message is a Paraglide line is a `LocalizedError`: the modals rendering
 // these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
 // `Failed to fetch`, and only the THROW knows which it is.
 import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { describeRefusalCode } from '$lib/utils/refusalCodes';
 import {
   LoginFailure,
+  LoginStoppedBySignOutError,
+  hardwareKeyLoginFailure,
   isExpectedLoginOutcome,
   isVaultRefusal,
   loginErrorCode,
@@ -39,14 +62,17 @@ import {
   isKeystoreKeyUnavailable,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
+  type IMlsService,
   type VaultRefusal,
 } from '$lib/mls-client';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 import {
   getToken,
   clearAuth,
   SessionExpiredError,
   SignOutInProgressError,
   isRefreshCredentialProvenDead,
+  signOutGeneration,
 } from '$lib/stores/auth';
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
@@ -88,6 +114,7 @@ import { canSendInGroup } from '$lib/utils/chat/groupUsability';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { measureRestoreShortfall } from '$lib/utils/chat/restoreShortfall';
 import { graineRepairHoldObserver, setGraineRuntime } from '$lib/utils/graine/runtime';
+import { clearParkedAsks } from '$lib/utils/graine/parkedAsks';
 import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
 import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
 import { sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
@@ -98,6 +125,7 @@ import {
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { uninstallMlsStatePersisterLifecycle } from '$lib/mls-client/mlsStatePersisterLifecycle';
 import { disposeMlsEncryptWorker } from '$lib/mls-client/mlsEncryptWorkerSession';
+import { forgetRefusedRotationReloads } from '$lib/mls-client/refusedRotationReloads';
 import {
   setupMessageHandler,
   openGatewayConnection,
@@ -129,6 +157,7 @@ import {
   clearDeviceKey,
   clearDeviceKeyAndWrapKey,
   forgetUnlabelledDeviceKey,
+  isDeviceKeyPersistenceEnabled,
   retireUnlabelledDeviceKeyIfOwnedBy,
 } from '$lib/utils/deviceKeyVault';
 import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
@@ -185,6 +214,7 @@ import {
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
+import { registerDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 
 /**
  * Unregisters this session's presence listener. Module-level because the presence store outlives
@@ -196,6 +226,26 @@ let unregisterPeerReturn: (() => void) | null = null;
  * ends without a session removes ITS preview, never the one a later, overlapping login drew.
  */
 let loginSeq = 0;
+/**
+ * The login that set `isLoginInProgress` last, by its `loginSeq` number. A login clears the flag only
+ * while it still owns it: `handlePinSubmit` clears the flag to start a sign-in beside a login still
+ * running, and that older login's exit must not release the newer one's flow.
+ */
+let loginFlowOwner = 0;
+/**
+ * Settles when the login holding the flow has ended - its catch or its success, never a clock. A
+ * sign-out during that login retires the MLS client ON IT (`endSessionImpl`): the holder lets go at
+ * once, so the next sign-in waits (`whenMlsRetired`) and then builds its own client, and the stopped
+ * login's client is destroyed only once that login has released its socket. Null when no login runs.
+ */
+let loginInFlightSettled: Promise<void> | null = null;
+/**
+ * Cancels the network waits of the login in flight, aborted by a sign-out (`endSessionImpl`). The
+ * retirement above waits for that login to END, and a request with no deadline (a refresh, the PIN
+ * salt, pin-check, the revocation question) would hold the next sign-in behind it for as long as the
+ * network chose. The sign-out ends those waits by cancelling them, not a clock. Null when no login runs.
+ */
+let loginInFlightAbort: AbortController | null = null;
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
@@ -382,8 +432,14 @@ function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
  * still only the observation, and keeps the sentence naming both remedies.
  */
 export function savedStateFailure(
-  reason: SavedStateUnopenedError | SavedStateOfAnotherAccountError
+  reason: SavedStateUnopenedError | SavedStateOfAnotherAccountError | MlsStateWriteRefusedError
 ): LoginFailure {
+  // The device identity rotation could not record its fresh state: another tab of this account
+  // wrote the stored one after this login loaded it (`BaseMlsService.rotateDeviceIdentity`).
+  // Nothing was moved, so the remedy is the other tab, never the PIN or a reset.
+  if (reason instanceof MlsStateWriteRefusedError) {
+    return new LoginFailure('state_written_by_another_tab', m.auth_state_written_by_another_tab());
+  }
   if (reason instanceof SavedStateOfAnotherAccountError) {
     return new LoginFailure('device_holds_other_account', m.auth_vault_other_account_device());
   }
@@ -394,6 +450,32 @@ export function savedStateFailure(
 }
 
 // ── Exported functions ────────────────────────────────────────────────────────
+
+/**
+ * THE EXPLICIT RESET, and the only path that frees a hardware-held key's keystore entry: the marker
+ * goes ONLY once this account's database was cleared, so the next PIN unlock may store a new key
+ * there. A database that survived keeps its marker - and with it the guard over the only key that
+ * opens it - exactly as the account deletion does (`accountLocalWipe.ts`).
+ */
+export async function forgetAtRestMarkerOnceDataIsGone(
+  databaseCleared: boolean,
+  userId: string,
+  port: Pick<HardwareKeyPort, 'forget'>,
+  log: (msg: string) => void
+): Promise<void> {
+  if (!databaseCleared) {
+    log(
+      '[SECURITY] ERROR: the local database was not cleared - the at-rest key marker is KEPT, so its key stays guarded'
+    );
+    return;
+  }
+  try {
+    await port.forget(userId);
+    log('[SECURITY] At-rest key marker forgotten - the keystore entry is free again.');
+  } catch (e) {
+    log(`[SECURITY] ERROR: the at-rest key marker could not be forgotten: ${String(e)}`);
+  }
+}
 
 /**
  * Wipes all local MLS state, device ID, and stored DB for the given user.
@@ -426,14 +508,25 @@ export async function resetDeviceAsFreshImpl(
     localStorage.removeItem(key);
   }
 
+  let databaseCleared = false;
   try {
     const storageToClear = await getStorage(userIdToReset);
     await storageToClear.clear();
+    databaseCleared = true;
     await storageToClear.close();
   } catch (e) {
     // Best-effort cleanup: continue even if local DB is not accessible - but never silently, since
     // a connection left open is what makes a later delete block instead of complete.
     console.warn('[SECURITY] could not clear the local database:', e);
+  }
+
+  if (hardwareHeldKeyApplies()) {
+    await forgetAtRestMarkerOnceDataIsGone(
+      databaseCleared,
+      userIdToReset,
+      tauriHardwareKeyPort,
+      cb.log
+    );
   }
 
   // The session's OWN handle. `getStorage` shares one open store per user, so when the wipe targets
@@ -545,6 +638,43 @@ export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCall
 }
 
 /**
+ * Releases what a login stopped by a sign-out took: its gateway socket and its MLS client.
+ *
+ * THE SAME TWO STEPS AS `endSessionImpl`, and for the same reason - the socket goes first (a socket
+ * left open keeps decrypting and ACKing the leaving account's frames), then the client goes, so the
+ * next sign-in builds a fresh one. Nothing else: the session never went live, or it did and the
+ * sign-out's own `endSessionImpl` already tore it down, and the stop is found right after the await
+ * the sign-out ran during, so nothing was registered since.
+ *
+ * `client` is the client THIS login built, held by name: after a sign-out of a live session the
+ * holder has already let go of it, and the socket a late handshake opens is on it. `handshake`, when
+ * the login started one, may still be in flight; the socket it opens is released when it settles
+ * (it never rejects - see `StartedHandshake`).
+ */
+function releaseLoginStoppedBySignOut(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  client: ReturnType<SessionContext['ensureMls']> | null,
+  handshake: ReturnType<typeof startGatewayHandshake>
+): void {
+  if (client) {
+    client.pauseSocket();
+    if (handshake) {
+      void handshake.then(() => {
+        cb.log('[INIT] Stopped login: its gateway handshake settled - socket released.');
+        client.pauseSocket();
+      });
+    }
+  }
+  // A live session here is another login's (this one's was ended by the sign-out), and so is its flag.
+  if (!ctx.isLoggedIn()) ctx.setIsWsConnected(false);
+  // THIS LOGIN'S CLIENT ONLY. A sign-out of the live session has already retired it (and destroys it
+  // after its final write), and the next sign-in may have built its own since - which is not ours.
+  if (client) ctx.resetMls(client);
+  cb.log('[INIT] Stopped login released its socket and its MLS client.');
+}
+
+/**
  * Full login flow: verifies the PIN against the server (unless biometric mode),
  * initialises MLS, opens IndexedDB, restores conversations, connects the WebSocket,
  * and schedules device-sync.
@@ -639,7 +769,73 @@ export async function loginImpl(
     );
     return;
   }
+  const loginId = ++loginSeq;
   ctx.setIsLoginInProgress(true);
+  loginFlowOwner = loginId;
+  let settleLogin: () => void = () => {};
+  const thisLoginSettled = new Promise<void>((done) => (settleLogin = done));
+  loginInFlightSettled = thisLoginSettled;
+  const loginAbort = new AbortController();
+  loginInFlightAbort = loginAbort;
+  /**
+   * `work`, unless a sign-out cancels this login first: then it rejects at once with the stop, typed,
+   * and `work`'s own late answer (or rejection) is dropped. For the awaits that wait on the NETWORK
+   * only - a local step (the MLS decrypt) is let finish, because the next login opens the same state.
+   */
+  const untilSignedOut = <T>(work: Promise<T>, stage: string): Promise<T> =>
+    new Promise<T>((resolveWork, rejectWork) => {
+      const onAbort = (): void =>
+        rejectWork(new LoginStoppedBySignOutError(`${stage} (cancelled)`));
+      if (loginAbort.signal.aborted) {
+        onAbort();
+        void work.catch(() => {});
+        return;
+      }
+      loginAbort.signal.addEventListener('abort', onAbort, { once: true });
+      work.then(
+        (value) => {
+          loginAbort.signal.removeEventListener('abort', onAbort);
+          resolveWork(value);
+        },
+        (e: unknown) => {
+          loginAbort.signal.removeEventListener('abort', onAbort);
+          rejectWork(e);
+        }
+      );
+    });
+  /** Set once this login starts its OWN revocation wipe, which signs out on purpose. */
+  let ownWipeStarted = false;
+  /**
+   * Marks this login's own revocation wipe as started. The wipe's `clearAuth` reaches
+   * `endSessionImpl`, which aborts the login in flight - this one, doing the wipe - so the login
+   * withdraws itself from that abort first: its outcome is `device_revoked`, not a stopped login.
+   */
+  const startOwnWipe = (): void => {
+    ownWipeStarted = true;
+    if (loginInFlightAbort === loginAbort) loginInFlightAbort = null;
+    cb.log(
+      '[SECURITY] Revocation wipe started by this login - its own sign-out does not cancel it.'
+    );
+  };
+  /** Clears the login flag only while this login still owns the flow - see `loginFlowOwner`. */
+  const releaseLoginFlag = (): void => {
+    if (loginFlowOwner !== loginId) {
+      cb.log('[LOGIN] Flag left set - a newer login owns the flow.');
+      return;
+    }
+    ctx.setIsLoginInProgress(false);
+  };
+
+  // A SIGN-OUT DURING THIS LOGIN STOPS IT, read after every await. The sign-out finds no live session
+  // while the login runs (`isLoggedIn` is still false), so `endSessionImpl` stops nothing; left alone,
+  // the login completed afterwards and set `isLoggedIn` for a signed-out user. A sign-out can only
+  // run while this function is suspended, so a re-read right after each await is enough for nothing
+  // below it to act for a signed-out account. Thrown as a type; the catch releases what was taken.
+  const signOutsAtStart = signOutGeneration();
+  const signedOutSinceStart = (): boolean => signOutGeneration() !== signOutsAtStart;
+  const stopIfSignedOut = (stage: string): void => {
+    if (signedOutSinceStart()) throw new LoginStoppedBySignOutError(stage);
+  };
 
   // THE PREVIOUS ACCOUNT'S FINAL CHECKPOINT LANDS FIRST. A sign-out retires its MLS client once that
   // write is on disk (`endSessionImpl`), and this login reads the disk: opening the state while the
@@ -649,18 +845,6 @@ export async function loginImpl(
     cb.log('[LOGIN] Waiting for the signed-out session to finish its final MLS checkpoint.');
   }
   await ctx.whenMlsRetired();
-
-  ctx.setLoginError('');
-  ctx.setUserId(userId.trim().toLowerCase());
-
-  // Clear any stale reconnect timer from a previous session
-  if (ctx.timers.reconnect !== null) {
-    clearTimeout(ctx.timers.reconnect);
-    ctx.timers.reconnect = null;
-  }
-  ctx.setReconnectAttempts(0);
-
-  ctx.setTabLeaderSessionCb(cb);
 
   // ── THE NOTIFICATION LANDING'S LOCAL PREVIEW (F1, decided by the user 2026-10-12) ──
   //
@@ -680,7 +864,6 @@ export async function loginImpl(
   // open hangs is never held behind it, and the login flag is released only after the cleanup. The
   // discard names `loginId`, so a later login that overlaps this one keeps what it drew. The
   // restore still awaits the read before rebuilding the map, so it cannot land after the rebuild.
-  const loginId = ++loginSeq;
   let landingPreview: Promise<void> | null = null;
   let previewWithdrawn = false;
   let storageOpen: Promise<IStorage> | null = null;
@@ -707,8 +890,27 @@ export async function loginImpl(
     previewWithdrawn = true;
     cb.discardLandingPreview?.(reason, loginId);
   };
+  // WHAT A LOGIN STOPPED BY A SIGN-OUT MUST RELEASE, named as they are taken: the client this login
+  // builds and the handshake it starts beside the state load (see `releaseLoginStoppedBySignOut`).
+  let loginClient: ReturnType<SessionContext['ensureMls']> | null = null;
+  let loginHandshake: ReturnType<typeof startGatewayHandshake> = null;
 
   try {
+    // The wait above is the first await a sign-out can run during, so nothing - not even the
+    // session's identity or the tab-leader callback - is set before this re-read.
+    stopIfSignedOut('previous-account-retired');
+
+    ctx.setLoginError('');
+    ctx.setUserId(userId.trim().toLowerCase());
+
+    // Clear any stale reconnect timer from a previous session
+    if (ctx.timers.reconnect !== null) {
+      clearTimeout(ctx.timers.reconnect);
+      ctx.timers.reconnect = null;
+    }
+    ctx.setReconnectAttempts(0);
+
+    ctx.setTabLeaderSessionCb(cb);
     // AN ACCOUNT DELETED FROM THIS DEVICE OPENS NOTHING, refused before the first store is touched
     // (the landing preview and the MLS state lookup below both open one). Its wipe is owed or running,
     // and a session would re-create what the wipe removes - the offline unlock above all, which has no
@@ -723,6 +925,28 @@ export async function loginImpl(
       throw new LoginFailure('account_deleted', m.auth_account_deleted_here());
     }
     const mlsService = ctx.ensureMls();
+    loginClient = mlsService;
+    // WHICH KEY SEALS THIS PHONE'S DATA, read from the marker beside `mls.bin` before any key is asked
+    // for: the PIN-derived one, a hardware-held random one, or one of the two mid-migration
+    // (`hardwareHeldKey.ts`). The web and desktop builds are always `pin-derived`. A re-key running
+    // in this page is awaited first (`settledAtRestScheme`).
+    const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
+      ? await settledAtRestScheme(tauriHardwareKeyPort, ctx.getUserId())
+      : 'pin-derived';
+    stopIfSignedOut('at-rest-scheme');
+    if (atRestScheme === 'unreadable') {
+      // Never guessed into a scheme: the PIN-derived key over hardware-sealed rows would let the next
+      // re-key strand them. Nor called lost: the marker could not be READ, which proves nothing gone.
+      throw hardwareKeyLoginFailure('unreadable', cb.log);
+    }
+    if (isBiometric && atRestScheme === 'migrating') {
+      // Mid-migration the keystore may hold the new key while the state is still under the old one.
+      // Only the PIN path finishes the re-key (`finishMigrationAtUnlock`), so the keypad is asked for.
+      cb.log('[AT_REST_KEY] keystore unlock skipped - a re-key is under way, the PIN settles it');
+      throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
+    }
+    /** Set when the PIN unlock found a re-key already complete: nothing to resume after the login. */
+    let migrationCompleteAtUnlock = false;
     if (isVaultLogin && !vaultOwnerUnproven) {
       // The vault returned the device key before this function was called, so the store can be
       // opened and read now - nothing about either needs the token. `getStorage` shares one handle
@@ -755,6 +979,7 @@ export async function loginImpl(
     // which call answered. The log used to report "IndexedDB" on a mobile launch that had just read
     // mls.bin, which is a misleading thing to hand someone debugging local storage.
     const { loadMlsState, mlsStateSize } = await import('$lib/utils/hex');
+    stopIfSignedOut('state-lookup-import');
     const mlsStatePromise = (async (): Promise<
       { bytes?: Uint8Array; source: 'native' | 'indexeddb' } | undefined
     > => {
@@ -770,17 +995,16 @@ export async function loginImpl(
     let accessToken: string;
     try {
       beginBootSpan('access-token');
-      accessToken = await getToken();
+      accessToken = await untilSignedOut(getToken(), 'access-token');
       endBootSpan('access-token');
     } catch (err) {
-      // THE USER IS SIGNING OUT: this login stops, and that is all. Not a session loss - answering
-      // it with `onSessionExpired` was the second sign-out (Mi 9T, 2026-10-17) - and not a failed
-      // login either, which would put the PIN gate up over the sign-out.
-      if (err instanceof SignOutInProgressError) {
-        cb.log('[LOGIN] Stopped - a sign-out is in progress.');
-        withdrawLandingPreview('sign-out in progress');
-        ctx.setIsLoginInProgress(false);
-        return;
+      // THE USER IS SIGNING OUT, OR SIGNED OUT WHILE THIS WAS ASKED: this login stops, and that is
+      // all. Not a session loss - answering it with `onSessionExpired` was the second sign-out (Mi 9T,
+      // 2026-10-17), and a 401 met after a sign-out is that sign-out's own revocation - and not a
+      // failed login either, which would put the PIN gate up over the sign-out. Handed to the outer
+      // catch, which releases what this login took.
+      if (err instanceof SignOutInProgressError || signedOutSinceStart()) {
+        throw new LoginStoppedBySignOutError('access-token');
       }
       // A SessionExpiredError means the refresh cookie is dead (HTTP 401/403) - the session
       // cannot be recovered by re-entering the PIN. Surface it as a session loss (logout +
@@ -796,7 +1020,7 @@ export async function loginImpl(
         if (cb.onSessionExpired) cb.onSessionExpired();
         else void goto(resolve('/login'), { replaceState: true });
         withdrawLandingPreview('session expired');
-        ctx.setIsLoginInProgress(false);
+        releaseLoginFlag();
         return;
       }
       // THE TOKEN IS FOR SOMEBODY ELSE THAN THIS DEVICE'S MLS IDENTITY. Not a transport failure
@@ -810,7 +1034,7 @@ export async function loginImpl(
         );
         cb.onLoginFailed?.(m.identity_split_title());
         withdrawLandingPreview('identity split');
-        ctx.setIsLoginInProgress(false);
+        releaseLoginFlag();
         return;
       }
       // Anything else is a transport failure (no network, backend restarting): the server was
@@ -826,7 +1050,7 @@ export async function loginImpl(
       } else {
         // The PIN path genuinely cannot continue: the salt it needs lives on the server. Keep the
         // PIN modal open with a truthful retryable message - do NOT claim the session expired.
-        ctx.setIsLoginInProgress(false);
+        releaseLoginFlag();
         const msg = m.auth_server_unreachable();
         ctx.setLoginError(msg);
         // Notify the caller so a PIN-modal spinner does not hang forever.
@@ -834,9 +1058,11 @@ export async function loginImpl(
         return;
       }
     }
+    stopIfSignedOut('access-token');
 
     // Collect the MLS state that was loading in the background.
     const mlsStateResult = await mlsStatePromise;
+    stopIfSignedOut('state-lookup');
     if (mlsStateResult) {
       cb.log(
         mlsStateResult.source === 'native'
@@ -900,32 +1126,75 @@ export async function loginImpl(
       // (`prefetchPinSaltImpl`); the check, the derivations and the order between them are
       // `unlockWithPin`'s, where they are exercised on their own (`pinUnlock.test.ts`).
       const userIdForPin = ctx.getUserId();
-      deviceKeyB64 = await unlockWithPin({
-        saltAhead: takePinSaltAhead(userIdForPin),
-        fetchSalt: () => fetchPinSalt(ctx, userIdForPin, accessToken),
-        computeVerifier: (salt) => computePinVerifier(userIdForPin, pin, salt),
-        deriveDeviceKey: (salt) => deriveDeviceKeyB64(userIdForPin, pin, salt),
-        resolveDeviceId: () => mlsService.resolveDeviceId(userIdForPin),
-        checkPin: async ({ verifier, deviceId, salt }) => {
-          const res = await fetchOrUnreachable(
-            `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${accessToken}`,
+      deviceKeyB64 = await untilSignedOut(
+        unlockWithPin({
+          saltAhead: takePinSaltAhead(userIdForPin),
+          fetchSalt: () => fetchPinSalt(ctx, userIdForPin, accessToken, loginAbort.signal),
+          computeVerifier: (salt) => computePinVerifier(userIdForPin, pin, salt),
+          // ON A HARDWARE-HELD PHONE THE PIN DERIVES NOTHING THAT OPENS DATA: the key is read from the
+          // keystore, and `unlockWithPin` installs it only once the server accepted the PIN - the same
+          // gate the derived key went through. A key the keystore lost is typed here, so a wrong PIN
+          // is still reported as one (the read is awaited only after the check).
+          deriveDeviceKey: async (salt) => {
+            if (atRestScheme !== 'hardware') return deriveDeviceKeyB64(userIdForPin, pin, salt);
+            try {
+              return await readHardwareHeldKey(tauriHardwareKeyPort, userIdForPin, cb.log);
+            } catch (e) {
+              if (e instanceof HardwareKeyUnavailableError) {
+                throw hardwareKeyLoginFailure(e.refusal, cb.log);
+              }
+              throw e;
+            }
+          },
+          resolveDeviceId: () => mlsService.resolveDeviceId(userIdForPin),
+          checkPin: async ({ verifier, deviceId, salt }) => {
+            const res = await fetchOrUnreachable(
+              `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${accessToken}`,
+                },
+                body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt }),
+                signal: loginAbort.signal,
               },
-              body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt }),
-            },
-            m.auth_pin_check_unreachable()
-          );
-          if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
-          return (await res.json()) as PinCheckAnswer;
-        },
-        wipeRevokedDevice: () => wipeRevokedDevice(ctx, cb),
-        installDeviceKey: (key) => ctx.setDeviceKey(key),
-        log: cb.log,
-      });
+              m.auth_pin_check_unreachable()
+            );
+            if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
+            return (await res.json()) as PinCheckAnswer;
+          },
+          // Re-read first: the wipe waits for the MLS retirement, which a sign-out during this login
+          // chains on this login's own end - a wipe started after one would wait on itself.
+          wipeRevokedDevice: () => {
+            stopIfSignedOut('pin-check-revoked');
+            startOwnWipe();
+            return wipeRevokedDevice(ctx, cb);
+          },
+          // A key proven after a sign-out belongs to nobody signed in.
+          installDeviceKey: (key) => {
+            stopIfSignedOut('pin-check-install');
+            ctx.setDeviceKey(key);
+          },
+          log: cb.log,
+        }),
+        'pin-check'
+      );
+      stopIfSignedOut('pin-check');
+      if (atRestScheme === 'migrating') {
+        // The PIN is proven: the interrupted re-key is FINISHED here, before any store is opened for
+        // the session, so no session ever runs over rows under two keys (`finishMigrationAtUnlock`).
+        deviceKeyB64 = await finishMigrationAtUnlockForLogin(
+          mlsService,
+          userIdForPin,
+          deviceKeyB64,
+          cb
+        );
+        stopIfSignedOut('at-rest-migration-finished');
+        migrationCompleteAtUnlock = true;
+        noteHardwareHeldDeviceKey(deviceKeyB64);
+        ctx.setDeviceKey(deviceKeyB64);
+      }
       // Unlocked: any round trip a retry asked meanwhile belongs to a keypad that is gone.
       forgetPinSaltAhead('unlocked with the PIN', cb.log);
       // The first instant this path can decrypt anything: the PIN is proven and the device is not
@@ -954,6 +1223,7 @@ export async function loginImpl(
       beginBootSpan('resolve-device-id');
       const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
       endBootSpan('resolve-device-id');
+      stopIfSignedOut('resolve-device-id');
       revocationAnswer = mlsService.isDeviceRevoked(ctx.getUserId(), deviceId);
     }
 
@@ -970,6 +1240,7 @@ export async function loginImpl(
     beginBootSpan('tab-leadership');
     const tabLeaderNow = await initTabLeadershipAsync(cb.log);
     endBootSpan('tab-leadership', { leader: tabLeaderNow });
+    stopIfSignedOut('tab-leadership');
     ctx.setIsTabLeader(tabLeaderNow);
     if (!tabLeaderNow) {
       cb.log('[TAB] Follower tab - WebSocket active in another Canari tab.');
@@ -989,6 +1260,7 @@ export async function loginImpl(
     const startedHandshake = offlineSession
       ? null
       : startGatewayHandshake({ mlsService, log: cb.log });
+    loginHandshake = startedHandshake;
 
     // THE PAIR KEEPS ITS CLOCK AND EACH HALF GAINS ONE, because the pair's clock cannot answer the
     // question the pair's cost raises. On the Mi 9T this block was 1621.9 ms - 78% of everything
@@ -1027,15 +1299,24 @@ export async function loginImpl(
     // await can neither throw into the destructive catch below nor leave a rejection unhandled when
     // an earlier line throws past it.
     endBootSpan('mls-init-and-storage');
+    // THE LONGEST AWAIT OF THE LOGIN (~12 s of native decrypt on a Mi 9T), and the window the open
+    // defect was found in. A signed-out device is not wiped for a revocation either: the sign-out
+    // already ended the session, and the next login asks the server again.
+    stopIfSignedOut('mls-init-and-storage');
     beginBootSpan('revocation-gate');
-    const revoked = revocationAnswer !== null && (await revocationAnswer);
+    const revoked =
+      revocationAnswer !== null && (await untilSignedOut(revocationAnswer, 'revocation-gate'));
     endBootSpan('revocation-gate', { asked: revocationAnswer !== null });
+    stopIfSignedOut('revocation-gate');
     if (revoked) {
       // What the local preview drew comes off the screen BEFORE the wipe, and the wipe starts only
       // once the read is over - it deletes the store that read was reading. The store is already
       // open here (the init above awaited it), so this wait is the read alone and cannot hang.
       withdrawLandingPreview('device revoked');
       if (landingPreview) await landingPreview;
+      // Same reason as on the PIN path: a wipe started after a sign-out would wait on this login.
+      stopIfSignedOut('revocation-preview-settled');
+      startOwnWipe();
       await wipeRevokedDevice(ctx, cb);
       cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
       throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
@@ -1047,7 +1328,8 @@ export async function loginImpl(
       if (reason instanceof VaultOwnerUnprovenError) throw vaultRefusedFailure(reason.refusal);
       if (
         reason instanceof SavedStateUnopenedError ||
-        reason instanceof SavedStateOfAnotherAccountError
+        reason instanceof SavedStateOfAnotherAccountError ||
+        reason instanceof MlsStateWriteRefusedError
       ) {
         throw savedStateFailure(reason);
       }
@@ -1077,9 +1359,12 @@ export async function loginImpl(
       beginBootSpan('keystore-session-key');
       const sessionKey = await mlsService.resolveSessionDeviceKey();
       endBootSpan('keystore-session-key');
+      stopIfSignedOut('keystore-session-key');
       if (!sessionKey || !isValidDeviceKeyB64(sessionKey)) {
         throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
       }
+      // Read from the keystore: on a hardware-held phone no vault may copy it out (`saveDeviceKey`).
+      if (atRestScheme === 'hardware') noteHardwareHeldDeviceKey(sessionKey);
       ctx.setDeviceKey(sessionKey);
       // The keystore path learns its key only here, behind the single prompt and after the gate.
       // Not awaited before the session flips: the landing selects the row whenever it arrives.
@@ -1102,6 +1387,7 @@ export async function loginImpl(
     // is one read. Wired first, so the loop's own registrations below are stored too.
     mlsService.setDistributionGroupStore(storageSettled.value);
     await mlsService.hydrateDistributionGroups();
+    stopIfSignedOut('distribution-groups');
 
     // Notify only on genuine private browsing (blocked / ephemeral storage).
     void isLikelyPrivateBrowsing()
@@ -1122,8 +1408,13 @@ export async function loginImpl(
     // destroy the very session that just unlocked. The empty token is what every network-touching
     // helper reads as "not authenticated yet"; promoteOfflineSession fills it in.
     beginBootSpan('auth-token-final');
-    ctx.setAuthToken(offlineSession ? '' : await getToken());
+    const sessionToken = offlineSession ? '' : await untilSignedOut(getToken(), 'auth-token-final');
     endBootSpan('auth-token-final', { offline: offlineSession });
+    // THE LAST READ BEFORE THE SESSION GOES LIVE, and the one the defect was about. Nothing below
+    // awaits before `setIsLoggedIn(true)`, so from here a sign-out finds a live session and
+    // `endSessionImpl` stops it - and every await further down re-reads the generation.
+    stopIfSignedOut('auth-token-final');
+    ctx.setAuthToken(sessionToken);
     ctx.setIsOfflineSession(offlineSession);
 
     ctx.setIsLoggedIn(true);
@@ -1179,6 +1470,38 @@ export async function loginImpl(
           cb.log(`[VAULT] unlabelled vault proven to be ${owner.slice(0, 8)}'s - retired`);
         }
       })().catch((e: unknown) => cb.log(`[VAULT] saving the device key failed: ${String(e)}`));
+    }
+
+    // A PHONE STILL ON THE PIN-DERIVED KEY MOVES TO A HARDWARE-HELD ONE, once, in this session: every
+    // sealed store is re-sealed under a random key by the PIN change's own resumable path
+    // (`hardwareKeyMigration.ts`). The leader only, like a PIN change: it re-seals from the live client.
+    // Not awaited - the session is usable meanwhile, its storage calls held for the re-seal's length.
+    if (
+      hardwareHeldKeyApplies() &&
+      atRestScheme !== 'hardware' &&
+      !migrationCompleteAtUnlock &&
+      tabLeaderNow
+    ) {
+      const migratingUser = ctx.getUserId();
+      void startHardwareKeyMigration({
+        userId: migratingUser,
+        deviceId: ctx.getMyDeviceId(),
+        currentKeyB64: ctx.getDeviceKey(),
+        port: tauriHardwareKeyPort,
+        changeKey: (oldKeyB64, newKeyB64) =>
+          performPinChange(
+            {
+              userId: migratingUser,
+              mls: mlsService,
+              setDeviceKey: (k: string) => ctx.setDeviceKey(k),
+              log: cb.log,
+            },
+            oldKeyB64,
+            newKeyB64
+          ),
+        ...backupNoticeDeps(migratingUser),
+        log: cb.log,
+      });
     }
 
     // Stamp this session with the device that just unlocked. It is the ONLY
@@ -1414,6 +1737,15 @@ export async function loginImpl(
         onBulkIngestEnd: (phase) => endUi(phase),
       });
     }
+    // The new-device notices consume the device events from here on, and drain what is pending.
+    registerDeviceNotices(mlsService, {
+      getUserId: () => ctx.getUserId(),
+      getMyDeviceId: () => ctx.getMyDeviceId(),
+      conversations: cb.conversations,
+      storedConversation: (groupId) => storageSettled.value.getConversation(groupId),
+      addMessageToChat: (senderId, content, contactName, options) =>
+        cb.addMessageToChat(senderId, content, contactName, options),
+    });
     endStartupCatchupPhase();
 
     /**
@@ -1450,6 +1782,7 @@ export async function loginImpl(
      * conversations this device holds and must not run before they are loaded.
      */
     await mlsService.markInboundReady();
+    stopIfSignedOut('inbound-ready');
 
     // Offline: skip the connection entirely rather than let it fail. `openGatewayConnection` would
     // degrade correctly on its own, but the attempt costs a timeout on a launch that already knows
@@ -1463,6 +1796,7 @@ export async function loginImpl(
       // `startGatewayHandshake` above. Everything after the socket opens is unchanged.
       gatewayIsOpen = await openGatewayConnection(makeConnectionDeps(ctx, cb), startedHandshake);
       endStartupCatchupPhase();
+      stopIfSignedOut('open-gateway');
     }
 
     // Adopt anything the native side queued on its own (an undelivered notification quick reply
@@ -1472,6 +1806,7 @@ export async function loginImpl(
     await adoptOrphanedMirrorEntries(ctx.getStorage()!, ctx.getDeviceKey(), ctx.getUserId()).catch(
       (e) => cb.log(`[OUTBOX_MIRROR] Adoption pass failed: ${String(e)}`)
     );
+    stopIfSignedOut('mirror-adoption');
 
     // EVERYTHING FROM HERE TO THE FCM MERGE IS ONE SPAN, and a deep-link landing must not conclude
     // anything about this device's conversations until it closes. The restore below marks itself
@@ -1486,10 +1821,12 @@ export async function loginImpl(
       // the restore would be a stale copy the restore no longer knows about. Long settled by now
       // on every path - it is one store read, and the gateway was awaited since.
       if (landingPreview) await landingPreview;
+      stopIfSignedOut('landing-preview');
       // Load conversations first: consumeFcmCache can access
       // the conversations Map via addMessageToChat once it is populated.
       beginStartupCatchupPhase('load_conversations');
       await cb.loadAndRestoreConversations();
+      stopIfSignedOut('load-conversations');
       {
         const stats = summarizeConversationStats(cb.conversations);
         endStartupCatchupPhase({
@@ -1503,8 +1840,10 @@ export async function loginImpl(
       await reconcileOutboxSent(ctx.getStorage()!).catch((e) =>
         cb.log(`[OUTBOX_MIRROR] Login reconcile failed: ${String(e)}`)
       );
+      stopIfSignedOut('outbox-reconcile');
       // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
       await applyOutboxPendingStatuses();
+      stopIfSignedOut('outbox-statuses');
 
       beginStartupCatchupPhase('fcm_cache');
       // THE PLACEHOLDERS TRAVEL WITH THE MESSAGES, and at login as much as on resume: the
@@ -1516,6 +1855,7 @@ export async function loginImpl(
         ctx.getStorage()!,
         ctx.getUserId()
       ).catch(() => ({ messages: [], placeholders: new Map<string, PushPlaceholder>() }));
+      stopIfSignedOut('fcm-cache');
       if (fcmInjected.messages.length > 0) {
         const mergedCount = mergeFcmMessagesIntoConversations(
           fcmInjected.messages,
@@ -1540,6 +1880,7 @@ export async function loginImpl(
     await consumeNativeReadWatermarks(cb.conversations, ctx.getUserId(), cb.saveConversation).catch(
       (e) => cb.log(`[READ_WATERMARK] Merge pass failed: ${String(e)}`)
     );
+    stopIfSignedOut('read-watermarks');
 
     try {
       const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
@@ -1591,6 +1932,8 @@ export async function loginImpl(
     } catch (e) {
       console.warn('[INIT] Error detecting missing MLS groups:', e);
     }
+    // After the block, not inside it: its catch would swallow the stop.
+    stopIfSignedOut('restore-verdict');
 
     // processDeviceInvitationsLocally is called at the end of syncConnectionAfterWsOpen -
     // calling it here before the WebSocket is opened is redundant.
@@ -1613,9 +1956,11 @@ export async function loginImpl(
               })
             );
             await cb.saveConversation(groupId);
-            await cb
-              .loadAndRestoreConversations()
-              .catch((e) => cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`));
+            // A burst of Welcomes is folded into ONE queued restore, so its failure is one line,
+            // not one per Welcome.
+            await reportRejectionOnce(cb.loadAndRestoreConversations(), (e) =>
+              cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`)
+            );
             // Fresh join: the Welcome lands us at the current epoch with no pre-join history. The
             // inviter pushes a bundle on the foreground add path, but its background twin
             // (send-welcome-and-commit) does not, so we compare here as well - which costs one
@@ -1790,6 +2135,7 @@ export async function loginImpl(
       beginStartupCatchupPhase('initialize_connection');
       if (gatewayIsOpen)
         passVerdicts = await syncConnectionAfterWsOpen(makeConnectionDeps(ctx, cb));
+      stopIfSignedOut('connection-sync');
       {
         const stats = summarizeConversationStats(cb.conversations);
         endStartupCatchupPhase({
@@ -1842,6 +2188,7 @@ export async function loginImpl(
         /* non-blocking */
       }
     }
+    stopIfSignedOut('last-active');
     const nowMs = Date.now();
     localStorage.setItem(lastActiveKey, String(nowMs));
     // Persist to Tauri Store so the value survives Android process kills.
@@ -1888,10 +2235,33 @@ export async function loginImpl(
     // login that did not complete), and NOTHING ELSE: no error under the PIN, no `onSessionExpired`
     // (a second sign-out), and above all not `clearDeviceKey` below, which would forget this
     // account's "Rester connecte" slot that a sign-out keeps on purpose.
-    if (_e instanceof SignOutInProgressError) {
-      withdrawLandingPreview('sign-out in progress');
-      cb.log('[INIT] Login stopped - a sign-out is in progress.');
-      ctx.resetMls();
+    //
+    // Whatever was thrown, once a sign-out began it is THAT sign-out's consequence, not a failure:
+    // the refresh refused during it, this login's own re-read of the generation, and any await that
+    // REJECTED after it and so never reached a re-read - a 401 from the session it revoked (the PIN
+    // check, a refresh), a store the teardown closed. Read by type and by code, never by message.
+    // The one exception is this login's own revocation wipe, which signs out on purpose and whose
+    // outcome (`device_revoked`) the PIN gate must still show.
+    if (ownWipeStarted && loginErrorCode(_e) !== 'device_revoked') {
+      // THE WIPE ITSELF FAILED, after its own `clearAuth`: the sign-out below is the wipe's, and what
+      // must be read in the log is that a revoked device may still hold its data.
+      cb.log(`[SECURITY] The revoked-device wipe FAILED - local data may remain: ${String(_e)}`);
+      console.error('[SECURITY] The revoked-device wipe failed - local data may remain:', _e);
+    }
+    if (
+      _e instanceof SignOutInProgressError ||
+      _e instanceof LoginStoppedBySignOutError ||
+      (signedOutSinceStart() && loginErrorCode(_e) !== 'device_revoked')
+    ) {
+      withdrawLandingPreview('signed out during the login');
+      cb.log(
+        `[INIT] Login stopped - the account signed out during it (${
+          _e instanceof LoginStoppedBySignOutError
+            ? `after ${_e.stage}`
+            : `${_e instanceof Error ? _e.name : typeof _e} thrown after the sign-out`
+        }).`
+      );
+      releaseLoginStoppedBySignOut(ctx, cb, loginClient, loginHandshake);
       return;
     }
     // A login that failed shows nothing it drew before the session: the PIN gate, the recovery
@@ -1952,9 +2322,102 @@ export async function loginImpl(
       });
     }
   } finally {
-    ctx.setIsLoginInProgress(false);
-    ctx.setIsMessagingInitializing(false);
+    if (loginFlowOwner === loginId) ctx.setIsMessagingInitializing(false);
+    releaseLoginFlag();
+    if (loginInFlightSettled === thisLoginSettled) loginInFlightSettled = null;
+    if (loginInFlightAbort === loginAbort) loginInFlightAbort = null;
+    settleLogin();
   }
+}
+
+/**
+ * What the move to the hardware-held key needs for decision 4 of 2026-10-22: whether the install held
+ * conversations before it, and how to ask for a new backup once it is done - a notice the backup
+ * panel keeps until an export clears it, and a toast now.
+ */
+function backupNoticeDeps(userId: string): {
+  hadLocalData: () => Promise<boolean>;
+  onBackupsSuperseded: () => void;
+} {
+  return {
+    hadLocalData: async () => (await (await getStorage(userId)).getConversations()).length > 0,
+    onBackupsSuperseded: () => {
+      noteBackupOwedAfterKeyMove(userId);
+      showToast(m.profile_backup_owed_after_key_move(), 'info', 10_000);
+    },
+  };
+}
+
+/**
+ * The PIN login's half of {@link finishMigrationAtUnlock}: wires the stored state, the recovery's
+ * re-key and the stores-only move onto this login's client, and turns each failure into the login
+ * outcome that names it. Runs after the server accepted the PIN and before any store is opened.
+ *
+ * @returns the hardware-held key the session runs on
+ * @throws {LoginFailure} `hardware_key_unavailable` when the keystore will not hand the key back,
+ *   `local_state_unopenable` when the stored state opens under neither key; anything else as thrown
+ */
+async function finishMigrationAtUnlockForLogin(
+  mls: IMlsService,
+  userId: string,
+  pinDerivedKeyB64: string,
+  cb: ChatSessionCallbacks
+): Promise<string> {
+  const { loadMlsState: loadStored } = await import('$lib/utils/hex');
+  try {
+    return await finishMigrationAtUnlock({
+      userId,
+      pinDerivedKeyB64,
+      port: tauriHardwareKeyPort,
+      loadStoredState: async () => (await loadStored(userId)) ?? null,
+      openStoredStateWith: (keyB64, state) => mls.openLocalStateWithKey(userId, keyB64, state),
+      completeReKey: (oldKeyB64, newKeyB64, state) =>
+        performPinChange(
+          { userId, mls, storedMlsState: state, setDeviceKey: () => {}, log: cb.log },
+          oldKeyB64,
+          newKeyB64
+        ),
+      resealStoresOnly: (oldKeyB64, newKeyB64) =>
+        moveSealedStoresOnly(userId, oldKeyB64, newKeyB64, cb.log),
+      ...backupNoticeDeps(userId),
+      log: cb.log,
+    });
+  } catch (e) {
+    if (e instanceof HardwareKeyUnavailableError) {
+      throw hardwareKeyLoginFailure(e.refusal, cb.log);
+    }
+    if (e instanceof DeviceKeyMismatchError || e instanceof LocalStateUnopenableError) {
+      throw new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
+    }
+    throw e;
+  }
+}
+
+/**
+ * The auto-login when this account has no vault slot. ON A HARDWARE-HELD PHONE "STAY SIGNED IN"
+ * READS THE KEYSTORE, because the vault never holds that key (`saveDeviceKey`): the same unattended
+ * read the biometric cadence and the background push make - the keystore is the factor, as the
+ * vault was. Anywhere else no slot means the PIN is asked.
+ */
+async function stayingSignedInWithoutVault(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  userId: string
+): Promise<boolean> {
+  if (
+    hardwareHeldKeyApplies() &&
+    isDeviceKeyPersistenceEnabled() &&
+    (await settledAtRestScheme(tauriHardwareKeyPort, userId)) === 'hardware'
+  ) {
+    appendLog('[PIN] Stay signed in on a hardware-held key - keystore unlock, no prompt');
+    noteUnlockUnattended(userId);
+    ctx.setPin('');
+    ctx.setDeviceKey('');
+    await loginImpl(ctx, cb, { unattendedKeyRead: true });
+    return ctx.isLoggedIn();
+  }
+  appendLog('[PIN] No device key in vault for this account - auto-login impossible');
+  return false;
 }
 
 /**
@@ -1998,10 +2461,7 @@ export async function nativeStorageLoginImpl(
     // Before the vault is read, for the reason `loginImpl` gives.
     joinDeviceKeyLock(userId);
     const vaulted = await loadDeviceKey(userId);
-    if (!vaulted) {
-      appendLog('[PIN] No device key in vault for this account - auto-login impossible');
-      return false;
-    }
+    if (!vaulted) return await stayingSignedInWithoutVault(ctx, cb, userId);
     // Builds before the derivation existed stored the raw PIN under this key. Such a value can
     // never decrypt anything, so refuse the auto-login and let the PIN modal re-derive a real
     // key rather than failing deeper in the crypto stack with an opaque error.
@@ -2091,10 +2551,15 @@ export async function biometricLoginImpl(
  * account verifier ({@link computePinVerifier}) and this device's at-rest key
  * ({@link deriveDeviceKeyB64}), so every flow that touches the PIN needs it.
  */
-async function fetchPinSalt(ctx: SessionContext, userId: string, token: string): Promise<string> {
+async function fetchPinSalt(
+  ctx: SessionContext,
+  userId: string,
+  token: string,
+  signal?: AbortSignal
+): Promise<string> {
   const res = await fetchOrUnreachable(
     `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-salt/${encodeURIComponent(userId)}`,
-    { headers: { Authorization: `Bearer ${token}` } },
+    { headers: { Authorization: `Bearer ${token}` }, signal },
     m.auth_pin_salt_unreachable()
   );
   if (!res.ok) throw new LocalizedError(m.auth_pin_salt_unreachable());
@@ -2144,6 +2609,20 @@ export async function changePinImpl(
 ): Promise<void> {
   const userId = ctx.getUserId();
   if (!userId.trim()) throw new LocalizedError(m.auth_no_user_signed_in());
+  // BEFORE THE SERVER IS ASKED ANYTHING: a follower tab cannot re-seal the MLS state (see
+  // thisTabMayChangeDeviceKey), and a verifier rotated for a change that cannot finish here costs
+  // the user a recovery.
+  if (!thisTabMayChangeDeviceKey(log)) throw new LocalizedError(m.auth_pin_change_follower_tab());
+  // ALSO BEFORE THE SERVER: a re-key to the hardware-held key re-seals the same stores, and a PIN
+  // change deriving keys over rows already half moved would strand them. Wait for one in flight; refuse
+  // while one is interrupted (the next unlock resumes it).
+  const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
+    ? await settledAtRestScheme(tauriHardwareKeyPort, userId)
+    : 'pin-derived';
+  if (atRestScheme === 'migrating' || atRestScheme === 'unreadable') {
+    log(`[PIN_CHANGE] Refused before the server: the at-rest key is ${atRestScheme}.`);
+    throw new LocalizedError(m.auth_pin_change_key_migration_pending());
+  }
   log('[PIN_CHANGE] Starting PIN change...');
   onProgress?.({ percent: 2, stage: 'verify' });
 
@@ -2160,9 +2639,21 @@ export async function changePinImpl(
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ userId, oldVerifier, newVerifier }),
   });
-  if (res.status === 403) throw new LocalizedError(m.auth_pin_change_current_incorrect());
-  if (!res.ok) throw new LocalizedError(m.auth_pin_change_server_error());
+  if (!res.ok) {
+    // Worded from the refusal's stable code (PIN_INCORRECT, PIN_NOT_SET), never its prose or a bare
+    // status: a 403 here is the one refusal, but the code is what says so.
+    const refusal = await refusalFromResponse(res, 'PIN change refused');
+    throw new LocalizedError(describeRefusalCode(refusal.code) ?? m.auth_pin_change_server_error());
+  }
   log('[PIN_CHANGE] Account verifier rotated server-side.');
+
+  if (atRestScheme === 'hardware') {
+    // THE PIN DERIVES NOTHING ON THIS PHONE: its stores are sealed under the hardware-held key, which
+    // a PIN change does not touch. The server now expects the new PIN, and that is the whole change.
+    onProgress?.({ percent: 100, stage: 'finalize' });
+    log('[PIN_CHANGE] Complete - the at-rest key is hardware-held, nothing to re-seal.');
+    return;
+  }
 
   // Derive both device keys from the same salt: the old one to read the existing state,
   // the new one to re-seal it.
@@ -2263,9 +2754,46 @@ export async function recoverPinImpl(
 
   // Both device keys come from the same salt: the old one still seals the local state,
   // the new one is what every device will derive from now on.
+  //
+  // ON A HARDWARE-HELD PHONE THE NEW KEY IS THE KEYSTORE'S, never the new PIN's: a PIN change does
+  // not touch that key. Two cases reach here. The state already opens with it - nothing to move,
+  // the login follows. Or it is still under the key the PIN derived when the re-key ran (a background
+  // push wrote the state back under it, or the re-key was interrupted): the old PIN derives that key,
+  // and the same path moves it onto the hardware-held one. A re-key running in this page is awaited
+  // first (`settledAtRestScheme`).
+  const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
+    ? await settledAtRestScheme(tauriHardwareKeyPort, userId)
+    : 'pin-derived';
+  if (atRestScheme === 'unreadable') throw hardwareKeyLoginFailure('unreadable', cb.log);
+  let hardwareKeyB64: string | null = null;
+  if (atRestScheme === 'hardware' || atRestScheme === 'migrating') {
+    // `migrating` here is SETTLED (`cle_au_repos_schema`): a marker whose key never reached the
+    // keystore was reverted to `pin-derived` before this read, so a refusal now is never "fall back
+    // to the new PIN's key" - that would aim the re-key at a key the guard refuses to store.
+    const read = await tauriHardwareKeyPort.read(userId);
+    if (!('key' in read)) {
+      cb.log(`[PIN_RECOVER] The hardware-held key is unavailable (${read.refusal}).`);
+      throw hardwareKeyLoginFailure(read.refusal, cb.log);
+    }
+    hardwareKeyB64 = read.key;
+  }
+  if (hardwareKeyB64) {
+    const opened = await ctx.ensureMls().openLocalStateWithKey(userId, hardwareKeyB64, state);
+    if (opened.opened) {
+      await tauriHardwareKeyPort.mark(userId, hardwareKeyB64);
+      cb.log('[PIN_RECOVER] The state opens with the hardware-held key - nothing to move.');
+      ctx.setPin(newPin);
+      onProgress?.({ percent: 92, stage: 'login' });
+      await loginImpl(ctx, cb);
+      if (!ctx.isLoggedIn()) throw new LocalizedError(m.auth_login_failed_after_recovery());
+      onProgress?.({ percent: 100, stage: 'login' });
+      return;
+    }
+    cb.log(`[PIN_RECOVER] The state is not under the hardware-held key (${opened.cause}).`);
+  }
   const [oldDeviceKeyB64, newDeviceKeyB64] = await Promise.all([
     deriveDeviceKeyB64(userId, oldPin, salt),
-    deriveDeviceKeyB64(userId, newPin, salt),
+    hardwareKeyB64 ?? deriveDeviceKeyB64(userId, newPin, salt),
   ]);
 
   // THE SAME PATH AS AN IN-SESSION CHANGE (`performPinChange`). Only the MLS source differs: the
@@ -2314,6 +2842,8 @@ export async function recoverPinImpl(
     }
     throw e;
   }
+  // Every store now under the hardware-held key: the marker says so (idempotent when it already did).
+  if (hardwareKeyB64) await tauriHardwareKeyPort.mark(userId, hardwareKeyB64);
   ctx.setPin(newPin);
   cb.log('[PIN_RECOVER] Local state re-sealed with the new device key.');
 
@@ -2364,6 +2894,8 @@ export function tearDownLiveSession(
   resetHistoryReconciliation();
   // A Welcome this session sent says nothing about the next user's requests.
   resetWelcomeSent();
+  // Nor does a run of refused rotations: a sign-in after this one in the same tab starts its own.
+  forgetRefusedRotationReloads();
   // The probe sender closes over this session's storage and device key, so it must not outlive it:
   // a reconciliation from the next login would otherwise describe the previous user's store.
   setHistoryProbeSender(null);
@@ -2429,13 +2961,19 @@ export function tearDownLiveSession(
   ctx.setConnectionPaused(false);
   ctx.setIsMessagingInitializing(false);
   // The watchdog's candidate set IS the live conversation map, so emptying it is half of why
-  // nothing can drive recovery for a session that has ended.
+  // nothing can drive recovery for a session that has ended. The restore chain goes with it, or a
+  // restore this session queued would refill the map as the account that just left.
+  cb.invalidateRestores();
   cb.conversations.clear();
+  cb.forgetUnconfirmedSalonDraws();
   resetSalonUnread();
   cb.setSelectedContact(null);
   setCallSystemMessageContext(null);
   // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.
   setGraineRuntime(null);
+  // So are the seed asks parked for a drain (sender ids, request ids); the MLS service's destroy
+  // settles its own drain waiters.
+  clearParkedAsks();
   ctx.getCallService()?.setChatNotifier(null);
   resetSiblingCallWarning();
   return finalWrite;
@@ -2461,6 +2999,20 @@ export function tearDownLiveSession(
  */
 export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   if (!ctx.isLoggedIn()) {
+    // A LOGIN IN FLIGHT HOLDS A CLIENT THAT IS NOW THE SIGNED-OUT ACCOUNT'S. The holder lets go of it
+    // now, so the next sign-in cannot be handed it (it waits for this retirement, then builds its
+    // own); the client is destroyed once that login has stopped and released its socket.
+    const stopping = loginInFlightSettled;
+    if (stopping) {
+      // ITS NETWORK WAITS ARE CANCELLED, so it ends now rather than when a hung request gives up -
+      // the retirement below, and the next sign-in behind it, wait for that end.
+      loginInFlightAbort?.abort();
+      cb.log(
+        '[LOGOUT] Signed out during a login - its MLS client is retired once that login stops.'
+      );
+      void ctx.retireMls(stopping);
+      return;
+    }
     cb.log('[LOGOUT] Signed out with no live session on this device - nothing to stop.');
     return;
   }

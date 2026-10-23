@@ -5,15 +5,15 @@
     Pencil,
     Trash2,
     Flag,
-    Link,
+    Share2,
     Ellipsis,
     VenetianMask,
     Repeat2,
     Send,
     Undo2,
+    Megaphone,
+    X,
   } from '@lucide/svelte';
-  import { copyPublicShareLink } from '$lib/utils/copyShareLink';
-  import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
@@ -48,7 +48,8 @@
    * `onReport` now opens the shared dialog and this component holds no report state at all.
    *
    * Every gate below is a boolean the SERVER answered for this reader (`canManage`, `canPin`,
-   * `canReport`, `canRepublish`, `canProposeRepublication`, and the `canUnrepublishAs` list);
+   * `canReport`, `canRepublish`, `canProposeRepublication`, `canRequestRepublication`, and the
+   * `canUnrepublishAs` and `republicationRequests` lists);
    * nothing here is derived from the post's contents. A card cannot tell its own
    * association's posts from anyone else's - their author is stripped on purpose - nor whether its
    * reader moderates the feed.
@@ -94,6 +95,14 @@
     onProposeRepublication?: () => void;
     /** Called with the association whose republication the reader withdraws. */
     onUnrepublish?: (associationId: string) => void;
+    /** May ask the AUTHOR of this personal post to let one of their associations carry it (D38b). */
+    canRequestRepublication?: boolean;
+    /** The requests of the reader's associations still waiting on the author, one entry each. */
+    pendingRequests?: { proposalId: string; name: string }[];
+    /** Called when the reader picks "Republier au nom d'une association". */
+    onRequestRepublication?: () => void;
+    /** Called with the request (a proposal id) the reader cancels. */
+    onWithdrawRequest?: (proposalId: string) => void;
   }
 
   let {
@@ -115,6 +124,10 @@
     onRepublish = () => {},
     onProposeRepublication = () => {},
     onUnrepublish = () => {},
+    canRequestRepublication = false,
+    pendingRequests = [],
+    onRequestRepublication = () => {},
+    onWithdrawRequest = () => {},
   }: Props = $props();
 
   let open = $state(false);
@@ -152,19 +165,26 @@
   }
 
   /**
-   * Copies the post's public link and confirms it with a toast.
+   * "Partager" opens the post's share sheet (`PostShareSheet`): send into a conversation, copy the
+   * link, the system sheet. It is loaded on the first open, never with the card: the sheet reads
+   * the conversation list (`globalChatSingleton`), weight no card that is only scrolled past should
+   * pay - the reason `LinkPreviewCard` loads `PostMedia` the same way.
    *
-   * A TOAST, NOT AN IN-MENU CHECKMARK - `pick()` sets `open = false` in the same tick as this row
-   * flipped to its checkmark, so the confirmation only ever painted for the 150 ms slide-out
-   * transition before the whole menu unmounted, not the 2 s the old timeout intended. A toast
-   * lives outside the menu's own open state, so it survives the close. `Log.d` on the rejection
-   * path answers what a swallowed promise would not: `writeText` refuses on an unfocused document
-   * and in any non-secure context, same as `copyId`.
+   * The sheet lives OUTSIDE the menu: `pick()` closes the menu on the same tap, and anything drawn
+   * inside it unmounts with it (the toast rule of 2026-09-27).
    */
-  function sharePost() {
-    copyPublicShareLink(`/posts/${postId}`)
-      .then(() => showToast(m.post_link_copied_label(), 'info'))
-      .catch((e: unknown) => Log.d('PostActionsMenu', `share link copy failed: ${String(e)}`));
+  let ShareSheet = $state<typeof import('./PostShareSheet.svelte').default | null>(null);
+  let shareOpen = $state(false);
+
+  function openShareSheet() {
+    import('./PostShareSheet.svelte')
+      .then((mod) => {
+        ShareSheet = mod.default;
+        shareOpen = true;
+      })
+      .catch((e: unknown) =>
+        Log.d('PostActionsMenu', `the share sheet did not load: ${String(e)}`)
+      );
   }
 
   /** One row per action: same box, same padding, so the menu reads as a list rather than a pile. */
@@ -210,10 +230,10 @@
         <button
           type="button"
           role="menuitem"
-          onclick={() => pick(sharePost)}
+          onclick={() => pick(openShareSheet)}
           class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
         >
-          <Link size={16} strokeWidth={2.5} />
+          <Share2 size={16} strokeWidth={2.5} />
           {m.post_share_label()}
         </button>
 
@@ -240,6 +260,30 @@
             {m.post_propose_republication_action()}
           </button>
         {/if}
+
+        {#if canRequestRepublication}
+          <button
+            type="button"
+            role="menuitem"
+            onclick={() => pick(onRequestRepublication)}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            <Megaphone size={16} strokeWidth={2.5} />
+            {m.post_request_republication_action()}
+          </button>
+        {/if}
+
+        {#each pendingRequests as pending (pending.proposalId)}
+          <button
+            type="button"
+            role="menuitem"
+            onclick={() => pick(() => onWithdrawRequest(pending.proposalId))}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            <X size={16} strokeWidth={2.5} />
+            <span class="truncate">{m.post_request_withdraw_action({ name: pending.name })}</span>
+          </button>
+        {/each}
 
         {#each unrepublishAs as republisher (republisher.id)}
           <button
@@ -317,4 +361,8 @@
       </div>
     {/if}
   </div>
+
+  {#if ShareSheet}
+    <ShareSheet open={shareOpen} {postId} onClose={() => (shareOpen = false)} />
+  {/if}
 {/if}

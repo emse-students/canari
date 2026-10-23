@@ -7,7 +7,7 @@
  * AND IT DOES NOT TAKE A ROW OLDER THAN ITS OWN WRITE (second review): a feed GET issued before a
  * tap can land after the tap's own POST answered, and adopting that row whole erased the tap.
  */
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import PostCard from './PostCard.svelte';
 import type { PostEntity } from '$lib/posts/api';
@@ -18,13 +18,18 @@ import {
   likeComment,
   deleteComment,
   editComment,
-  getPost,
+  fetchComments,
   listPosts,
   votePoll,
 } from '$lib/posts/api';
 import { nextPostSequence, servedAt, stampServed } from '$lib/posts/postCardSync';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { m } from '$lib/paraglide/messages';
+import { flushMacrotask } from '../../../test/flush';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+
+// The comment sheet is a Modal: its transitions end through the test's own clock.
+afterAll(adoptTransitionAnimations());
 
 // `listPosts` stays REAL: the order it stamps its rows in is what is under test.
 vi.mock('$lib/posts/api', async (importOriginal) => ({
@@ -32,12 +37,15 @@ vi.mock('$lib/posts/api', async (importOriginal) => ({
   addReaction: vi.fn(),
   removeReaction: vi.fn(),
   votePoll: vi.fn(),
-  getPost: vi.fn(),
+  fetchComments: vi.fn(),
   addComment: vi.fn(),
   likeComment: vi.fn(),
   editComment: vi.fn(),
   deleteComment: vi.fn(),
 }));
+// A delete asks first; the test answers yes.
+vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: vi.fn().mockResolvedValue(true) }));
+
 vi.mock('$lib/utils/apiFetch', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/apiFetch')>()),
   apiFetch: vi.fn(),
@@ -54,7 +62,7 @@ beforeEach(() => {
   for (const fn of [
     addReaction,
     votePoll,
-    getPost,
+    fetchComments,
     addComment,
     likeComment,
     editComment,
@@ -125,7 +133,7 @@ function deferred<T>() {
 }
 
 async function settle(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 0));
+  await flushMacrotask();
   flushSync();
 }
 
@@ -352,113 +360,115 @@ function comment(i: number, extra: Partial<PostComment> = {}): PostComment {
   };
 }
 
+/** The comment SHEET is a portal on the document: what a reader does in the thread is done there. */
+const sheet = () => document.body;
+
 it('an edited comment is not put back by a row read before the edit answered', async () => {
-  const mine = comment(1, { userId: 'alice', text: 'old words' });
-  const { target, props } = mountCard(row({ comments: [mine] }), true);
+  const mine = comment(1, { userId: 'alice', text: 'old words', canEdit: true, canDelete: true });
+  const { props } = mountCard(row({ comments: [mine] }), true);
   const getIssuedAt = nextPostSequence();
   vi.mocked(editComment).mockResolvedValue({ comment: { ...mine, text: 'new words' } } as never);
 
   (
-    target.querySelector(`button[aria-label="${m.common_edit_label()}"]`) as HTMLButtonElement
+    sheet().querySelector(`button[aria-label="${m.common_edit_label()}"]`) as HTMLButtonElement
   ).click();
   flushSync();
-  const input = target.querySelector('input[type="text"]') as HTMLInputElement;
+  const input = sheet().querySelector('input[type="text"]') as HTMLInputElement;
   input.value = 'new words';
   input.dispatchEvent(new Event('input', { bubbles: true }));
   flushSync();
   (
-    target.querySelector(`button[aria-label="${m.common_validate_button()}"]`) as HTMLButtonElement
+    sheet().querySelector(`button[aria-label="${m.common_validate_button()}"]`) as HTMLButtonElement
   ).click();
   await settle();
-  expect(target.textContent).toContain('new words');
+  expect(sheet().textContent).toContain('new words');
 
   props.post = servedRow(getIssuedAt, { markdown: 'served text', comments: [mine] });
   flushSync();
 
-  expect(target.textContent).toContain('served text');
-  expect(target.textContent).toContain('new words');
-  expect(target.textContent).not.toContain('old words');
+  expect(sheet().textContent).toContain('served text');
+  expect(sheet().textContent).toContain('new words');
+  expect(sheet().textContent).not.toContain('old words');
 });
 
 it('a deleted comment is not brought back by a row read before the delete answered', async () => {
-  const mine = comment(1, { userId: 'alice', text: 'gone words' });
-  const { target, props } = mountCard(row({ comments: [mine] }), true);
+  const mine = comment(1, { userId: 'alice', text: 'gone words', canEdit: true, canDelete: true });
+  const { props } = mountCard(row({ comments: [mine] }), true);
   const getIssuedAt = nextPostSequence();
   vi.mocked(deleteComment).mockResolvedValue({ ok: true } as never);
 
   (
-    target.querySelector(`button[aria-label="${m.common_delete_button()}"]`) as HTMLButtonElement
+    sheet().querySelector(`button[aria-label="${m.common_delete_button()}"]`) as HTMLButtonElement
   ).click();
   await settle();
-  expect(target.textContent).not.toContain('gone words');
+  expect(sheet().textContent).not.toContain('gone words');
 
   props.post = servedRow(getIssuedAt, { markdown: 'served text', comments: [mine] });
   flushSync();
 
-  expect(target.textContent).toContain('served text');
-  expect(target.textContent).not.toContain('gone words');
+  expect(sheet().textContent).toContain('served text');
+  expect(sheet().textContent).not.toContain('gone words');
 });
 
 it('a failed comment takes back only its own row, never a heart still being sent', async () => {
   const theirs = comment(1);
-  const { target, props } = mountCard(row({ comments: [theirs] }), true);
+  const { props } = mountCard(row({ comments: [theirs] }), true);
   // A newer row lands first, so a rollback "to the served value" would have one to go back to.
   props.post = servedRow(nextPostSequence(), { comments: [theirs] });
   flushSync();
 
   vi.mocked(likeComment).mockReturnValue(new Promise(() => {})); // the heart is still out
-  const like = [...target.querySelectorAll('button')].find(
-    (b) => b.textContent?.trim() === m.post_like_label()
+  // The like is ONE heart control: it is found by its name, and says its count in that name.
+  const like = sheet().querySelector(
+    `button[aria-label="${m.post_like_label()}"]`
   ) as HTMLButtonElement;
   like.click();
   flushSync();
   const hearted = m.post_likes_count_label({ count: 1 });
-  expect(target.textContent).toContain(hearted);
+  const heartCounted = () => sheet().querySelector(`button[aria-label="${hearted}"]`) !== null;
+  expect(heartCounted()).toBe(true);
 
   vi.mocked(addComment).mockRejectedValue(new Error('offline'));
-  const editor = target.querySelector('[contenteditable="true"]') as HTMLElement;
+  const editor = sheet().querySelector('[contenteditable="true"]') as HTMLElement;
   editor.textContent = 'my words';
   editor.dispatchEvent(new Event('input', { bubbles: true }));
   flushSync();
   (
-    target.querySelector(`button[aria-label="${m.post_send_comment_label()}"]`) as HTMLButtonElement
+    sheet().querySelector(
+      `button[aria-label="${m.post_send_comment_label()}"]`
+    ) as HTMLButtonElement
   ).click();
   await settle();
 
   expect(addComment).toHaveBeenCalled();
-  expect(target.textContent).toContain(hearted);
+  expect(heartCounted()).toBe(true);
 });
 
-it('an expanded thread is held over a feed row, then read again', async () => {
+it('older threads the reader read are kept over a fresher feed row', async () => {
   const first = Array.from({ length: 20 }, (_, i) => comment(i + 1));
-  const { target, props } = mountCard(row({ comments: first }), true);
-  const stampedPost = (comments: PostComment[]) => {
-    const r = row({ comments });
-    stampServed(r, nextPostSequence());
-    return r;
-  };
-  vi.mocked(getPost).mockResolvedValueOnce(stampedPost([...first, comment(21), comment(22)]));
-  const button = [...target.querySelectorAll('button')].find(
-    (b) => b.textContent?.trim() === m.post_load_all_comments_label()
+  // The server counts two more than the twenty a feed row carries: that is what offers the button.
+  const { props } = mountCard(row({ comments: first, commentCount: 22 }), true);
+  vi.mocked(fetchComments).mockResolvedValueOnce({
+    comments: [comment(21), comment(22)],
+    nextCursor: null,
+    hasMore: false,
+  });
+  const button = [...sheet().querySelectorAll('button')].find(
+    (b) => b.textContent?.trim() === m.post_comment_load_older_label()
   ) as HTMLButtonElement;
   button.click();
   await settle();
-  expect(target.textContent).toContain('note-c-22');
+  expect(sheet().textContent).toContain('note-c-22');
 
-  const reread = deferred<PostEntity>();
-  vi.mocked(getPost).mockReturnValueOnce(reread.promise);
-  // A feed refresh: the row carries the first comments only.
+  // A feed refresh: the row carries the newest few only.
   props.post = servedRow(nextPostSequence(), {
     markdown: 'served text',
     comments: first.slice(0, 3),
   });
   flushSync();
 
-  expect(target.textContent).toContain('served text');
-  expect(target.textContent).toContain('note-c-22');
-  expect(getPost).toHaveBeenCalledTimes(2);
-
-  reread.resolve(stampedPost([...first, comment(21), comment(22), comment(23)]));
-  await settle();
-  expect(target.textContent).toContain('note-c-23');
+  expect(sheet().textContent).toContain('served text');
+  // The older rows stay where the reader put them, and nothing is read again.
+  expect(sheet().textContent).toContain('note-c-22');
+  expect(fetchComments).toHaveBeenCalledTimes(1);
 });

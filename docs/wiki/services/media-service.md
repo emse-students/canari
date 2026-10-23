@@ -86,12 +86,19 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
 | POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md)                                                                                           |
+| POST | `/api/media/internal/poster-claim` | `INTERNAL_SECRET` | `{mediaIds, ownerId, spaceId, retentionClass}` - `poster`/`poster-association` on `ownerId`'s fresh `poster-pending` upload, bound to `spaceId`; idempotent for that space |
+| POST | `/api/media/internal/poster-release` | `INTERNAL_SECRET` | `{mediaIds}` - a CLAIMED poster to `ephemeral`; any other class is refused and untouched |
+| GET | `/api/media/internal/poster-list` | `INTERNAL_SECRET` | every claimed poster and its space, for social-service's hourly reconciliation |
 | POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete on the owner's say-so, one outcome per id (`deleted`/`absent`/`refused`/`failed`)                                                        |
 | POST   | `/api/media/internal/form-file`        | `INTERNAL_SECRET` | multipart `file` + `ownerId`: store a form answer's PLAINTEXT file as class `form-file` ([form-file](#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15)) |
 | POST   | `/api/media/internal/form-file-purge`  | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete form files, class AND owner allowlist, one outcome per id |
 | GET    | `/api/media/internal/form-file/:id`    | `INTERNAL_SECRET` | The ONE read of a form file, for social-service's manager-gated download; serves nothing else |
+| POST   | `/api/media/internal/live/:liveId/:name` | `INTERNAL_SECRET` | multipart `file`: one sealed live segment (1 B to 4 MiB) stored under `live/<liveId>/<name>`; 404 unless `LIVE_ENABLED` ([lives](lives.md)) |
+| POST   | `/api/media/internal/live-purge`       | `INTERNAL_SECRET` | `{liveId}` - delete every object under the live's prefix, then re-list: `{deleted, failed, remaining}`; runs whatever the switch says |
+| POST   | `/api/media/internal/live-list`        | `INTERNAL_SECRET` | `{liveIds}` - one id per `live/<liveId>/` folder (a delimiter listing), for social-service's orphan reaper, which purges a folder with no live row behind it; runs whatever the switch says |
+| GET    | `/api/media/public/live/:liveId/:name` | none (ciphertext) | One sealed live segment, by the name its manifest gave; reached once per segment, the nginx `live_segments` cache answers every other viewer, and nginx owns its Cache-Control; 404 unless `LIVE_ENABLED`, and 404 for any path but the canonical lower-case one ([lives](lives.md#serving-a-segment-from-the-nginx-cache-wp-l4)) |
 
-(`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel`, `reel-pending` and `form-file`: they are attached at the upload that creates the object. Every CLIENT upload route refuses `form-file` with a 400.)
+(`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel`, `reel-pending`, `form-file` and the three poster classes: they are attached at the upload that creates the object, or by the poster claim. Every CLIENT upload route refuses `form-file`, `poster` and `poster-association` with a 400, and `retention-class` never moves a claimed poster.)
 
 Neither `DELETE` is reachable by a client. `:id` is called by
 `AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
@@ -232,6 +239,9 @@ community image (`channel_workspaces`) was unclassified, uploaded before `upload
 | `reel-pending` | the client at upload of a FEED reel ([below](#the-reel-pending-class-a-feed-reel-whose-post-does-not-exist-yet-2026-10-11)) | **by AGE: 24 h from upload**, unless claimed | takes it         |
 | `chat-reel`    | the client at upload ([below](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09))                          | **by AGE: 30 days from upload**              | takes it         |
 | `form-file`    | social-service only, at `internal/form-file` ([below](#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15))   | keeps - social-service's purge deletes it    | takes it         |
+| `poster-pending` | the client at upload of a booking space's POSTER, and nothing else ([bookings-chantier](../bookings-chantier.md#wp-b6-as-built---file-answers-the-poster-the-purge-the-export-2026-10-18)) | **by AGE: 48 h from upload**, unless claimed | takes it |
+| `poster` | social-service's `internal/poster-claim`, proven by `ownerId`, bound to ONE space; moved out by `internal/poster-release` alone | keeps | takes it |
+| `poster-association` | the same claim, for an entity's space | keeps | **keeps** |
 | none           | an old client, anything before 2026-10-01, an entry re-created after an index loss                                          | **keeps**                                    | takes it         |
 
 - **The client's `encryptAndUpload` takes the class as a REQUIRED argument**, so no new call site
@@ -405,6 +415,15 @@ sets the class yet** (the sender is RC-4, the resumable upload RC-5), so on prod
   `encryptAndUpload` class argument now accepts `'chat-reel'` but nothing passes it, and the storage
   forecast re-read with a real send rate (RC-0). **Tested with unit specs over a stubbed store, NOT
   against a real media-service over HTTP**: that bench run (window shortened by env) is still owed.
+
+## Live segments: outside the index, deleted by prefix (WP-L3, 2026-10-18)
+
+A live's sealed segments are stored under `live/<liveId>/<name>` and are NOT entries of the metadata
+index: one every few seconds would rewrite the whole JSON index every few seconds, and nothing the
+index records applies (the owner is the live, the retention its end, the reaper social-service's live
+sweep, which purges by prefix). So the idle sweep and the account fan-out never see them, and
+`getStorageStats` reports them as `liveSegmentCount` / `liveSegmentBytes` instead of `untracked`. The
+contract, the switch and the proof the purge answers are on [lives](lives.md).
 
 ## The `form-file` class: plaintext, read by the server only (2026-10-15)
 
@@ -726,6 +745,7 @@ machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
 | `MEDIA_UPLOAD_SESSION_TTL_MS`           | no       | The resume window, from the opening (default 24 h)                                                                                                                                                           |
 | `MEDIA_UPLOAD_SESSION_MAX_OPEN`         | no       | Open sessions per member (default 4)                                                                                                                                                                         |
 | `MEDIA_UPLOAD_SESSION_MAX_STAGED_BYTES` | no       | Total declared size of open sessions (default 2 GiB)                                                                                                                                                         |
+| `LIVE_ENABLED`                          | no       | `true` opens the two live segment routes; anything else is a 404. Rendered `true` on dev, `false` on production ([lives](lives.md)) |
 
 **Every one of these was named `MINIO_*` until 2026-08-18**, four days after the store itself
 stopped being MinIO. Renamed rather than kept: a name that lies about what it configures is read

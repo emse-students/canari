@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
  * `fcm_message_cache.ndjson` is written by two native writers and read by one Rust reader:
  *   - Kotlin: CanariFirebaseMessagingService.writeFcmCache
  *   - Swift:  NotificationService.writeFcmCache
- *   - Rust:   read_and_clear_fcm_cache (push.rs)
+ *   - Rust:   take_fcm_cache (push.rs), deleted by ack_fcm_cache once persisted
  *
  * The file is an unframed newline-delimited JSON stream. Any drift in field names, missing
  * fields, or encoding differences between Android and iOS will only surface at runtime when

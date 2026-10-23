@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
-
 import { withoutAnyComments } from '$lib/styles/markupSources';
+import { sourceFiles } from '../../test/sourceTree';
 
 /**
  * NO MEMBER-FACING SCREEN MAY RENDER THE SERVER'S OWN SENTENCE.
@@ -30,8 +28,6 @@ import { withoutAnyComments } from '$lib/styles/markupSources';
  * collapse into this single one because there is nothing left for a partial list to mean. The
  * story of each pass, its counts and what it could not close is in `docs/wiki/backlog.md`.
  */
-
-const ROOT = process.cwd();
 
 /**
  * The one tree, and the only files under it this walk skips.
@@ -103,27 +99,18 @@ const MUST_COVER = [
  */
 const ALLOWED: Record<string, string> = {};
 
-/** Every hand-written `.svelte` and `.ts` file under `dir`, recursively. */
-function sourcesUnder(dir: string): string[] {
-  const abs = join(ROOT, dir);
-  const out: string[] = [];
-  for (const name of readdirSync(abs)) {
-    const here = join(dir, name).replace(/\\/g, '/');
-    if (GENERATED.includes(here)) continue;
-    const full = join(abs, name);
-    if (statSync(full).isDirectory()) {
-      out.push(...sourcesUnder(here));
-    } else if (name.endsWith('.svelte') || name.endsWith('.ts')) {
-      out.push(here);
-    }
-  }
-  return out;
-}
+/** Every hand-written `.svelte` and `.ts` file under `TREES` (the shared snapshot has no generated one). */
+const SOURCES = new Map(
+  sourceFiles({ under: TREES, extensions: ['svelte', 'ts'], tests: 'include' }).map((f) => [
+    f.path,
+    f.text,
+  ])
+);
 
 /** `x instanceof Error ? x.message` - the ternary that picks the server's English. */
 const SERVER_PROSE = /instanceof Error\s*\?\s*[A-Za-z_$][\w$]*\.message/;
 
-const files = TREES.flatMap(sourcesUnder).map((p) => relative('.', p).replace(/\\/g, '/'));
+const files = [...SOURCES.keys()];
 
 describe('no member-facing tree renders a server sentence', () => {
   it('is looking at the trees it thinks it is', () => {
@@ -166,10 +153,10 @@ describe('no member-facing tree renders a server sentence', () => {
     // green ones.
     const offenders: string[] = [];
     const staleAllowed: string[] = [];
-    for (const file of files) {
+    for (const [file, text] of SOURCES) {
       // The SHARED stripper: the rule has to be documentable beside the code it governs, and a
       // docblock explaining why nothing may render `.message` necessarily writes `.message`.
-      const code = withoutAnyComments(readFileSync(join(ROOT, file), 'utf8'));
+      const code = withoutAnyComments(text);
       const offends = SERVER_PROSE.test(code);
       if (ALLOWED[file]) {
         // An allowlisted file must STILL offend, or the entry is stale and buys nothing.

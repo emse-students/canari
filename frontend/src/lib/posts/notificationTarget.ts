@@ -1,4 +1,11 @@
 import type { PostNotification } from './api';
+import { formResponsesRoute } from '$lib/forms/responsesLink';
+
+/**
+ * The author's inbox of republication requests (D38b) - where a `repost_personal_requested`
+ * notification and its push (`fr.emse.canari://republication-requests`) both land.
+ */
+export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests';
 
 /**
  * WHERE A NOTIFICATION GOES WHEN IT IS OPENED - the one answer, for both surfaces.
@@ -19,6 +26,10 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
   switch (notif.type) {
     case 'form_reminder':
       return `/forms/${notif.postId}`;
+    // A payment landed on a full form (`postId` is the FORM): its manager is sent to that form's
+    // responses, where the paid-over-capacity answer is, not to the page that answers the form.
+    case 'form_paid_over_capacity':
+      return formResponsesRoute(notif.postId);
     // A calendar manager was told an event is waiting: send them where they can validate it, not to
     // the month view where a pending event is a grey square among thirty.
     case 'event_proposed':
@@ -42,6 +53,10 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'repost_proposed':
     case 'coorganise_proposed':
       return null;
+    // D38b: the author was asked to let an association carry a personal post. Their inbox is where
+    // the answer is given; `postId` is the post, which the inbox row links to.
+    case 'repost_personal_requested':
+      return REPUBLICATION_REQUESTS_ROUTE;
     // The types whose `postId` IS a post.
     case 'comment':
     case 'reply':
@@ -50,7 +65,17 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'association_post':
     case 'followed_post':
     case 'association_repost':
+    // D38b: the proposer was told the author's answer - the post shows it (carried, or not).
+    case 'repost_personal_accepted':
+    case 'repost_personal_refused':
       return `/posts/${notif.postId}`;
+    // A live a moderator cut (`postId` is the live, deleted when it ended): the row tells the
+    // broadcaster and goes nowhere - there is no page of a live that no longer exists. The same for
+    // the right to broadcast suspended or withdrawn (WP-L8b; `postId` is the member's own id).
+    case 'live_cut':
+    case 'live_suspended':
+    case 'live_withdrawn':
+      return null;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
     default:
@@ -68,11 +93,15 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'reaction',
   'mention',
   'form_reminder',
+  'form_paid_over_capacity',
   'association_post',
   'followed_post',
   'association_repost',
   'repost_proposed',
   'coorganise_proposed',
+  'repost_personal_requested',
+  'repost_personal_accepted',
+  'repost_personal_refused',
   'event_proposed',
   'event_validated',
   'event_rejected',
@@ -81,6 +110,9 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'event_pending',
   'profile_correction_applied',
   'profile_correction_refused',
+  'live_cut',
+  'live_suspended',
+  'live_withdrawn',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */

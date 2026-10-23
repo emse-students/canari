@@ -8,6 +8,7 @@
   import { onMount, tick } from 'svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
+  import CallBanner from '$lib/components/layout/CallBanner.svelte';
   import TabFollowerBanner from '$lib/components/chat/TabFollowerBanner.svelte';
   import Navbar from '$lib/components/navigation/Navbar.svelte';
   import MobileHeader from '$lib/components/navigation/MobileHeader.svelte';
@@ -16,7 +17,13 @@
   import { isFullScreenPlace } from '$lib/navigation/places';
   import NativeTabBar, { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
   import { screenCover } from '$lib/actions/coversScreen.svelte';
-  import { isIosTauriRuntime } from '$lib/utils/appVersion';
+  import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
+  import { releaseCallServiceOfPreviousPage } from '$lib/mobile/androidCallService';
+  import {
+    clearEdgeExclusionsForNewDocument,
+    excludeLeftEdgeOver,
+    wantsFeedLeftEdgeExclusion,
+  } from '$lib/mobile/edgeGestureExclusion';
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
   import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
   import AnnouncementModal from '$lib/components/shared/AnnouncementModal.svelte';
@@ -38,6 +45,7 @@
   import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
+  import NewDeviceBanner from '$lib/components/shared/NewDeviceBanner.svelte';
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
@@ -90,6 +98,10 @@
     return !isBelowMinClientVersion() && info?.maintenance.enabled === true && isGlobalAdmin();
   });
 
+  // The root layout is created once per document and before any page reports a band, so this is
+  // the point where a reload drops the bands the previous document declared.
+  clearEdgeExclusionsForNewDocument();
+
   // Hide BottomNav and remove its padding from the composer when a conversation
   // is open on mobile (only relevant on the chat / communities routes).
   const isMobileConvoOpen = $derived(
@@ -129,6 +141,9 @@
   onMount(() => {
     // A click goes to the component the press began on, never to what a layout change put under it.
     const disposePressedClickGuard = installPressedClickGuard();
+    // A page that has just loaded holds no call: an ongoing-call service still up is the orphan of
+    // the page before it (a reload mid-call). Once per page load (WP-C-BG-A).
+    if (isAndroidTauriRuntime()) releaseCallServiceOfPreviousPage(window);
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
@@ -289,6 +304,19 @@
 
   /** Whether this screen can swipe at all - `isSwipeNavArmed` owns the reasoning. */
   const swipeNavArmed = $derived(isSwipeNavArmed(pathname, swipeNavViewport));
+
+  // THE FEED'S LEFT EDGE IS THE CAMERA SWIPE'S, NOT ANDROID'S BACK (Mi 9T, 2026-10-21: a swipe
+  // started in the left 30 CSS px was taken as Back, 8 of 8). Declared on the feed alone and only
+  // while its swipe can happen; the cleanup removes it on every route change, keyboard rise,
+  // covering overlay or viewport change, so the left-edge Back is untouched everywhere else (and
+  // closes a reel viewer or a modal over the feed). A no-op off Android.
+  const feedLeftEdgeExcluded = $derived(
+    wantsFeedLeftEdgeExclusion(pathname, swipeNavArmed, isKeyboardOpen, screenCover.covered)
+  );
+  $effect(() => {
+    if (!feedLeftEdgeExcluded || !pageScrollWrap) return;
+    return excludeLeftEdgeOver(pageScrollWrap);
+  });
 
   // BOTH NEIGHBOURS' CODE IS FETCHED ON ARRIVAL, not at the horizontal lock. A fast swipe locks and
   // releases inside ~100ms, and the route's JS imported in that window was part of what the finger
@@ -639,7 +667,7 @@
        included; at 390px it was 84px tall and hid the whole 56px mobile header, so the phone showed
        no top bar at all. A row in the shell's own column cannot overlap it, at any width and for any
        number of banners, with nothing measured and no variable to keep in step. -->
-  <div bind:this={bannerColumn} class="z-(--z-banner) flex shrink-0 flex-col">
+  <div bind:this={bannerColumn} class="app-banner-column z-(--z-banner) flex shrink-0 flex-col">
     <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
          property of the whole deployment, so a transient notice must not push it off screen. -->
     <EnvironmentBanner />
@@ -647,6 +675,12 @@
       <MaintenanceAdminBanner />
     {/if}
     <MlsFatalErrorBanner />
+    <!-- A device joined this account: a security fact the owner must see, until seen. -->
+    <NewDeviceBanner />
+    <!-- A MINIMISED CALL (2026-10-19) - right after the interrupting facts, before the transients: a
+         call in progress is what the reader is doing, and its hang-up must stay at the top of the
+         screen, the one edge no native chrome is drawn over (CallBanner). -->
+    <CallBanner />
     <!-- THE LAST TWO JOINED THE COLUMN ON 2026-09-22, and they are the reason it publishes its
          height. Both were rendered inside the CONTENT column instead, under a comment claiming
          "pleine largeur, jamais dans la rangee sidebar" - which is the one thing that placement
@@ -698,7 +732,11 @@
           bind:this={pageScrollWrap}
           class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-(--bottom-nav-reserve) md:pb-0"
         >
-          <svelte:boundary onerror={(e) => console.error('[Layout] page crash:', e)}>
+          <!-- console.error enters the in-app log (appLog.ts); the route id names the page there,
+               where no URL bar does, and carries no member's id. -->
+          <svelte:boundary
+            onerror={(e) => console.error(`[Layout] page crash on ${page.route.id ?? '?'}:`, e)}
+          >
             {@render children?.()}
             {#snippet failed(_error, reset)}
               <div class="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">

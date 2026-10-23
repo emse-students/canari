@@ -1,6 +1,13 @@
 import { BadGatewayException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AxiosError, AxiosHeaders } from 'axios';
-import { mapCorePaymentError, PAYMENT_PROVIDER_REFUSED } from './core-payment-error';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import {
+  mapCorePaymentError,
+  PAYMENT_PROVIDER_REFUSED,
+  PROVIDER_MAX_AMOUNT_CENTS,
+  PROVIDER_MIN_AMOUNT_CENTS,
+} from './core-payment-error';
 
 function coreAnswer(status: number, data: unknown): AxiosError {
   const config = {
@@ -53,6 +60,36 @@ describe('mapCorePaymentError', () => {
     expect((out.getResponse() as { message: string }).message).toBe('Stripe error: bad amount');
   });
 
+  it('keeps the typed code AND the bounds of an out-of-range amount, and logs the refusal', () => {
+    const log = logger();
+    const out = mapCorePaymentError(
+      coreAnswer(400, {
+        code: 'AMOUNT_OUT_OF_RANGE',
+        message: 'Lydia accepts payments from 0.50 to 1000.00 EUR (got 0.49)',
+        minCents: 50,
+        maxCents: 100000,
+      }),
+      log,
+      'SHOP'
+    );
+    expect(out).toBeInstanceOf(BadRequestException);
+    expect(out.getResponse()).toMatchObject({
+      code: 'AMOUNT_OUT_OF_RANGE',
+      minCents: 50,
+      maxCents: 100000,
+    });
+    expect(log.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONTROL: the same code without bounds is not typed as a range (no guessed bounds)', () => {
+    const out = mapCorePaymentError(
+      coreAnswer(400, { code: 'AMOUNT_OUT_OF_RANGE', message: 'x' }),
+      logger(),
+      'SHOP'
+    );
+    expect((out.getResponse() as { code?: string }).code).toBeUndefined();
+  });
+
   it('answers a 5xx or a missing response with a 502 and never leaks the secret', () => {
     for (const err of [
       coreAnswer(500, { message: 'boom' }),
@@ -70,5 +107,18 @@ describe('mapCorePaymentError', () => {
   it('passes an exception this service already chose through untouched', () => {
     const own = new ForbiddenException('payments not ready');
     expect(mapCorePaymentError(own, logger(), 'FORM')).toBe(own);
+  });
+});
+
+describe('the provider range mirrored from core-service', () => {
+  it('equals the shared contract core-service asserts too, so the two apps cannot disagree', () => {
+    const contract = JSON.parse(
+      readFileSync(
+        join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'payment-amount-range.json'),
+        'utf8'
+      )
+    ) as { minCents: number; maxCents: number };
+    expect(PROVIDER_MIN_AMOUNT_CENTS).toBe(contract.minCents);
+    expect(PROVIDER_MAX_AMOUNT_CENTS).toBe(contract.maxCents);
   });
 });

@@ -11,6 +11,7 @@ import { FormReminder } from './entities/form-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { FormFile } from './entities/form-file.entity';
 import { FormFilesService } from './form-files.service';
+import { FormOrganiserAlertService } from './organiser-alert.service';
 import { FormFileRetentionScheduler } from './form-file-retention.scheduler';
 import { AssociationsModule } from '../associations/associations.module';
 import { FormReminderScheduler } from './forms-reminder.scheduler';
@@ -34,11 +35,14 @@ import { PricingModule } from '../pricing/pricing.module';
   controllers: [FormsController, PublicFormsController],
   providers: [
     FormsService,
+    FormOrganiserAlertService,
     FormFilesService,
     FormReminderScheduler,
     FormFileRetentionScheduler,
     PushService,
   ],
-  exports: [FormsService],
+  // FormFilesService: the store and the purge of the `form-file` class, which a booking's file
+  // answers use too (BookingsModule, WP-B6).
+  exports: [FormsService, FormFilesService],
 })
 export class FormsModule {}

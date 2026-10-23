@@ -5,7 +5,7 @@ import { Repository, Between, LessThanOrEqual } from 'typeorm';
 import { FormReminder } from './entities/form-reminder.entity';
 import { PushService } from '../push/push.service';
 import { formOpeningSoonContent, formOpenContent } from '../push/push-content';
-import { PostNotificationsService } from '../posts/post-notifications.service';
+import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
 import { FormsService } from './forms.service';
 
 /** Retention durations for unbounded-growth data tables. */
@@ -57,7 +57,7 @@ export class FormReminderScheduler {
           type: 'form_reminder',
           postId: r.formId,
           actorId: 'system',
-          actorName: 'Canari',
+          actorName: SYSTEM_ACTOR_NAME,
           text: content.legacyBody,
           skipPush: true,
         });
@@ -91,7 +91,7 @@ export class FormReminderScheduler {
           type: 'form_reminder',
           postId: r.formId,
           actorId: 'system',
-          actorName: 'Canari',
+          actorName: SYSTEM_ACTOR_NAME,
           text: content.legacyBody,
           skipPush: true,
         });
@@ -156,9 +156,19 @@ export class FormReminderScheduler {
     }
     this.expiringPendingPayments = true;
     try {
-      await this.formsService.expireStalePendingPayments();
-    } catch (e) {
-      this.logger.warn('[PENDING] Error expiring stale online payments', e);
+      try {
+        await this.formsService.expireStalePendingPayments();
+      } catch (e) {
+        this.logger.warn('[PENDING] Error expiring stale online payments', e);
+      }
+      // Its own `try`: a failed expiry must not keep a visitor key the rows no longer need, and a
+      // failed forget must not hide an expiry that worked. AFTER the expiry, so the rows it just
+      // moved out of `pending` lose their key in the same tick.
+      try {
+        await this.formsService.forgetSettledGuestVisitors();
+      } catch (e) {
+        this.logger.warn('[PENDING] Error clearing settled guest visitor keys', e);
+      }
     } finally {
       this.expiringPendingPayments = false;
     }

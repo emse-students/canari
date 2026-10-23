@@ -110,9 +110,14 @@ impl MlsManager {
             if key_valid {
                 return Ok(key);
             }
-            // Stale key — delete it.
-            let _ = keystore.delete_device_key(&alias);
-            log::warn!("[MLS] Keystore key failed to decrypt blob — key deleted.");
+            // Stale key - delete it. The delete may be REFUSED (the app's at-rest guard keeps an entry
+            // that holds a hardware-held key), so the line says what actually happened.
+            match keystore.delete_device_key(&alias) {
+                Ok(()) => log::warn!("[MLS] Keystore key failed to decrypt blob - key deleted."),
+                Err(e) => log::warn!(
+                    "[MLS] Keystore key failed to decrypt blob - its delete was refused, entry kept: {e}"
+                ),
+            }
         }
 
         // No device_key_b64 and no keystore key — nothing we can do.

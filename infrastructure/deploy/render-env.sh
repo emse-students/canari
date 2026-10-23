@@ -181,6 +181,14 @@ compute_garage_admin_host_port() {
   if [ "$ENVIRONMENT" = "dev" ]; then printf '19101'; else printf '19011'; fi
 }
 
+# THE LIVE SWITCH (docs/wiki/services/lives.md): the live routes open on dev, where the chantier is
+# built and read on phones, and stay closed on production until the user decides otherwise - so a
+# stable release reaches no live route whatever client calls it. Computed rather than a template
+# default, for the reason the ports above are: one place decides, per estate.
+compute_live_enabled() {
+  if [ "$ENVIRONMENT" = "dev" ]; then printf 'true'; else printf 'false'; fi
+}
+
 # ── Minimum lengths ───────────────────────────────────────────────────────────
 # A value can be PRESENT and still unusable: social-service refuses to sign anything with an
 # AGENDA_SIGNING_KEY shorter than 32 characters and answers 503 at runtime, which the deploy's
@@ -189,7 +197,22 @@ compute_garage_admin_host_port() {
 min_length() {
   case "$1" in
   AGENDA_SIGNING_KEY) printf '32' ;;
+  # Signs a reported live chat line kept for staff (WP-L8b); shorter, social-service refuses the
+  # report with 503 LIVE_REPORT_SIGNING_UNAVAILABLE.
+  LIVE_REPORT_SIGNING_KEY) printf '32' ;;
+  LYDIA_KEY_ENCRYPTION_SECRET) printf '32' ;;
   esac
+}
+
+# ── Whole numbers ─────────────────────────────────────────────────────────────
+# A value the service reads as a NUMBER, refused here when it is not one, whatever its disposition:
+# chat-delivery reads an unreadable TURN budget as 0 and turns TURN off on every call, which the
+# deploy's colour would never show. 15 digits at most: past that a JavaScript number is not exact.
+whole_number() {
+  case "$1" in
+  CLOUDFLARE_TURN_MONTHLY_BUDGET_GB) return 0 ;;
+  esac
+  return 1
 }
 
 # ── Pass 1: resolve everything, and fail before writing anything ─────────────
@@ -225,6 +248,7 @@ while IFS=$'\t' read -r key prod dev source note; do
     FRONTEND_HOST_PORT) value="$(compute_frontend_host_port)" ;;
     GARAGE_API_HOST_PORT) value="$(compute_garage_api_host_port)" ;;
     GARAGE_ADMIN_HOST_PORT) value="$(compute_garage_admin_host_port)" ;;
+    LIVE_ENABLED) value="$(compute_live_enabled)" ;;
     *)
       printf 'render-env: %s is marked computed and nothing computes it\n' "$key" >&2
       exit 2
@@ -258,6 +282,13 @@ while IFS=$'\t' read -r key prod dev source note; do
   if [ -n "$minimum" ] && [ "${#value}" -lt "$minimum" ] && [ "$disposition" = "required" ]; then
     printf '::error::%s is set for the %s environment but is only %s characters, %s needs at least %s - %s
 '       "$key" "$ENVIRONMENT" "${#value}" "$key" "$minimum" "$note" >&2
+    MISSING=1
+    continue
+  fi
+
+  if whole_number "$key" && ! [[ "$value" =~ ^[0-9]{1,15}$ ]]; then
+    printf '::error::%s is set for the %s environment but is not a whole number - %s
+'       "$key" "$ENVIRONMENT" "$note" >&2
     MISSING=1
     continue
   fi

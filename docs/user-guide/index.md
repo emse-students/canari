@@ -9,7 +9,9 @@
 |---|---|
 | Etudiant ou personnel EMSE utilisant Canari | [Guide membre](membre.md) |
 | Secretaire, tresorier ou president d'une association | [Guide responsable d'association](responsable-association.md) |
+| Organisateur d'un evenement ouvert a des personnes sans compte (inscription payante) | [Formulaires publics](formulaires-publics.md) |
 | Responsable qui doit donner des droits a ses membres | [Les permissions d'une association](permissions-association.md) |
+| Membre qui reserve une salle ou un rendez-vous, ou organisateur d'un espace de reservation | [Reservations](reservations.md) |
 | Curieux de savoir comment vos messages sont protégés (PIN, nouvel appareil, historique) | [Comprendre le chiffrement de vos messages](chiffrement-et-historique.md) |
 | Administrateur de la plateforme Canari | [Guide administrateur](administrateur.md) |
 | Mainteneur du projet (deploiement, releases, environnement dev) | [Workflow de developpement](workflow-developpement.md) |
@@ -22,7 +24,7 @@ Canari est la plateforme officielle de messagerie et de vie associative de l'EMS
 - **Communautes** : chaque association dispose d'un espace (workspace) avec des channels thematiques.
 - **Fil d'actualites** : publications des associations, sondages, partage de documents.
 - **Formulaires** : inscription aux evenements, adhesion, paiement en ligne ou en especes.
-- **Boutique** : achat de produits aupres des associations (paiement Stripe ou especes).
+- **Boutique** : achat de produits aupres des associations (paiement en ligne Lydia ou especes).
 
 ## Disponibilite
 

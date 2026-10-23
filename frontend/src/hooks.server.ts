@@ -2,10 +2,11 @@ import type { Handle } from '@sveltejs/kit';
 import { renderSeoTags, renderSeoTitle } from '$lib/seo/renderHead';
 import { resolveServerSeo } from '$lib/seo/serverSeo';
 import { SITE } from '$lib/seo/site';
+import { degradedHeaders } from '$lib/seo/upstream';
 // Lives in its own module so a test can import it WITHOUT pulling `$env/dynamic/private` in
 // through the SEO chain above - the same reason `handleError` is not written here either.
 import { preloadableAsset } from '$lib/server/preload';
-import { WASM_PRELOAD_MARKER, renderWasmPreloadScript } from '$lib/server/wasmPreload';
+import { WASM_PRELOAD_MARKER, renderWasmPreloadMeta } from '$lib/server/wasmPreload';
 // The content-hashed URL of the MLS engine, as the bundler resolved it: the same string the client
 // loader's own `?url` import yields, so the preload and the later fetch share one cache entry.
 import wasmUrl from '$lib/wasm/mls_wasm_bg.wasm?url';
@@ -64,13 +65,25 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   let seoBlock: string | null = null;
   let seoTitle: string | null = null;
+  let degraded = false;
   try {
-    const meta = await resolveServerSeo(pathname);
-    seoBlock = renderSeoTags(meta, pathname);
-    seoTitle = renderSeoTitle(meta);
+    const result = await resolveServerSeo(pathname);
+    degraded = result.degraded;
+    seoBlock = renderSeoTags(result.meta, pathname);
+    seoTitle = renderSeoTitle(result.meta);
   } catch (err) {
     // The head is a bonus; the page is the app. Never let one failed lookup cost a navigation.
     console.log('[SEO] head resolution failed for', pathname, err);
+    // The page then carries the shell's head-less default: not to be remembered by any cache either.
+    degraded = true;
+  }
+
+  // THE HEAD OF A PAGE WHOSE ENRICHMENT GOT NO ANSWER IS NOT TO BE REMEMBERED by any cache between
+  // here and an unfurler, and the access log carries `deg=1` for it (nginx `canari_redacted`).
+  // `no-store` replaces whatever SvelteKit set: a shared cache keeping this for its default
+  // lifetime is what turned one slow call into a card that stayed wrong.
+  if (degraded) {
+    event.setHeaders(degradedHeaders());
   }
 
   return resolve(event, {
@@ -78,7 +91,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     transformPageChunk: ({ html }) => {
       // Starts the WASM download beside the JS (WASM_PRELOAD_MARKER, wasmPreload.ts). Independent of
       // the SEO lookup, so a failed lookup does not cost the cold start its parallelism.
-      const withPreload = html.replace(WASM_PRELOAD_MARKER, renderWasmPreloadScript(wasmUrl));
+      const withPreload = html.replace(WASM_PRELOAD_MARKER, renderWasmPreloadMeta(wasmUrl));
       if (!seoBlock || !seoTitle) return withPreload;
       return withPreload.replace(STATIC_TITLE, seoTitle).replace(SEO_MARKER, seoBlock);
     },

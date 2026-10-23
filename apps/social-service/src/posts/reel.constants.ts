@@ -9,6 +9,13 @@
 /** The longest reel, in milliseconds - decision C4. Declared by the client, refused above this. */
 export const REEL_MAX_DURATION_MS = 90_000;
 
+/**
+ * The longest reel SENT IN A CONVERSATION, in milliseconds - the user's D-size decision of
+ * 2026-10-09. A published reel stays at {@link REEL_MAX_DURATION_MS}. Served as
+ * `chatMaxDurationMs`, so no client carries it (docs/wiki/frontend/modules/reels-in-chat.md).
+ */
+export const CHAT_REEL_MAX_DURATION_MS = 60_000;
+
 /** How long a reel lives - decision C6. Applied ONCE, at creation, into `posts.expiresAt`. */
 export const REEL_RETENTION_DAYS = 30;
 
@@ -38,11 +45,13 @@ export function isExpiredReel(
 /** The numbers as the API serves them. */
 export function reelLimits(): {
   maxDurationMs: number;
+  chatMaxDurationMs: number;
   retentionDays: number;
   warningWindowDays: number;
 } {
   return {
     maxDurationMs: REEL_MAX_DURATION_MS,
+    chatMaxDurationMs: CHAT_REEL_MAX_DURATION_MS,
     retentionDays: REEL_RETENTION_DAYS,
     warningWindowDays: REEL_EXPIRY_WARNING_DAYS,
   };

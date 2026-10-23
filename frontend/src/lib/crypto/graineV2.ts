@@ -107,7 +107,7 @@ export function encodeGraineHeaderV2(header: GraineMessageHeaderV2): Uint8Array 
   requireText('sessionId', header.sessionId);
   requireText('minterUserId', header.minterUserId);
   requireIndex(header.index);
-  const out = new Writer();
+  const out = new GraineFieldWriter();
   out.field(utf8(GRAINE_V2_HEADER_LABEL));
   out.field(utf8(header.channelId));
   out.field(utf8(header.sessionId));
@@ -137,7 +137,7 @@ export function encodeGraineEndorsementV2(endorsement: GraineEndorsementV2): Uin
       `createdAt must be a non-negative integer, got ${endorsement.createdAt}`
     );
   }
-  const out = new Writer();
+  const out = new GraineFieldWriter();
   out.field(utf8(GRAINE_V2_ENDORSEMENT_LABEL));
   out.field(utf8(endorsement.channelId));
   out.field(utf8(endorsement.sessionId));
@@ -272,8 +272,13 @@ export async function verifyGraineEndorsementV2(
   }
 }
 
-/** Appends length-prefixed fields and fixed-width integers, big-endian. */
-class Writer {
+/**
+ * Appends length-prefixed fields and fixed-width integers, big-endian. Exported for the other Graine
+ * structures a device credential signs (`graineAdmission.ts`), which must begin the same way: a
+ * 4-byte length whose first byte is `0x00`, the property that keeps them from ever being an MLS
+ * `SignContent` (`mls-core/src/graine_signature.rs`).
+ */
+export class GraineFieldWriter {
   private readonly parts: Uint8Array[] = [];
 
   field(bytes: Uint8Array): void {

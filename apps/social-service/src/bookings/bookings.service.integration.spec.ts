@@ -16,7 +16,12 @@ import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { createHmac, randomUUID } from 'crypto';
 import type { AddressInfo } from 'net';
-import { HttpException, Module, type INestApplication } from '@nestjs/common';
+import {
+  HttpException,
+  Module,
+  ServiceUnavailableException,
+  type INestApplication,
+} from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DataSource } from 'typeorm';
 import { Client } from 'pg';
@@ -41,8 +46,13 @@ import type { PricingFactsService } from '../pricing/pricing-facts.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import type { UserTagService } from '../users/user-tag.service';
 import { BookingSpacesService } from './booking-spaces.service';
+import { bookingCalendarPath } from './booking-calendar';
 import { BookingSpacesController } from './booking-spaces.controller';
 import { MAX_PERSONAL_SPACES, MAX_RESOURCES_PER_SPACE } from './dto/space.dto';
+import { BookingFilesService } from './booking-files.service';
+import { BookingFile } from './entities/booking-file.entity';
+import type { BookingPosterMedia } from './booking-poster-media';
+import type { FormFilesService } from '../forms/form-files.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -96,6 +106,10 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
   const facts = new Map<string, Record<string, unknown>>();
   /** Runs while the facts are built - i.e. between `book`'s first read of the space and its lock. */
   let duringFacts: (() => Promise<void>) | null = null;
+  /** The answers each facts build was handed, in order. */
+  const builtAnswers: Record<string, string[]>[] = [];
+  /** core-service's profile call fails while set (`listedSpaces`). */
+  let profileDown = false;
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
   beforeAll(async () => {
@@ -111,7 +125,9 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     });
     await ds.initialize();
     // The tables of other owners the API reads, in the shape it reads them.
-    await q(`CREATE TABLE associations (id uuid PRIMARY KEY)`);
+    await q(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, name varchar, archived boolean NOT NULL DEFAULT false)`
+    );
     await q(`CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar)`);
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
@@ -136,12 +152,34 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       mayAct: async (userId: string, associationId: string, flag: number) =>
         flag === AssociationPermissionFlag.MANAGE_BOOKINGS &&
         grants.has(`${userId}:${associationId}`),
+      mayActOnAny: async (
+        userId: string,
+        ids: string[],
+        flag: number,
+        opts?: { isGlobalAdmin?: boolean }
+      ) =>
+        new Set(
+          ids.filter(
+            (id) =>
+              opts?.isGlobalAdmin ||
+              (flag === AssociationPermissionFlag.MANAGE_BOOKINGS && grants.has(`${userId}:${id}`))
+          )
+        ),
     } as unknown as AssociationsService;
     const pricingFacts = {
-      build: async ({ userId }: { userId: string }) => {
+      build: async ({ userId, answers }: { userId: string; answers: Record<string, string[]> }) => {
+        builtAnswers.push(answers);
         await duringFacts?.();
         return facts.get(userId) ?? {};
       },
+      profileFor: async (userId: string, needProfile: boolean) => {
+        if (!needProfile) return { promo: null, formation: null };
+        if (profileDown) throw new ServiceUnavailableException('core-service is down');
+        const f = facts.get(userId) ?? {};
+        return { promo: f.promo ?? null, formation: f.formation ?? null };
+      },
+      cotisationTiersByAssociation: async (userId: string, ids: string[]) =>
+        new Map(ids.map((id) => [id, (facts.get(userId)?.cotisationTiers as never) ?? []])),
     } as unknown as PricingFactsService;
     const repo = <T extends object>(e: new () => T) => ds.getRepository(e);
     const slots = (slotsService = new BookingSlotsService(
@@ -152,6 +190,11 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       repo(BookingBlock),
       repo(Booking)
     ));
+    // The media service is not under test here (WP-B6's files have their own integration spec,
+    // `bookings.files.integration.spec.ts`): a store that refuses to be reached says so if used.
+    const unreachable = () => {
+      throw new Error('the media service is not part of this spec');
+    };
     service = new BookingsService(
       repo(BookingSpace),
       repo(BookingResource),
@@ -160,7 +203,12 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       repo(BookingBlock),
       slots,
       associations,
-      pricingFacts
+      pricingFacts,
+      new BookingFilesService(repo(BookingFile), {
+        storeBlob: unreachable,
+        fetchBlob: unreachable,
+        purgeBlobs: unreachable,
+      } as unknown as FormFilesService)
     );
     organiser = new BookingSpacesService(
       repo(BookingSpace),
@@ -170,7 +218,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       repo(Booking),
       slots,
       associations,
-      { listCotisationTiers: async () => [] } as unknown as UserTagService
+      { listCotisationTiers: async () => [] } as unknown as UserTagService,
+      { claim: async () => {}, releaseUncited: async () => {} } as unknown as BookingPosterMedia
     );
   });
 
@@ -303,7 +352,14 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       const r = resourceIds[0];
       await q(`UPDATE booking_resources SET "linkedUserId" = $1 WHERE id = $2`, [CAROL, r]);
       await service.book(space.id, slot(r), as(CAROL), DAY_NOW);
-      const c = new Client({ connectionString: URL, options: `-c search_path=${schema}` });
+      // PostgreSQL aborts the backend whose `deadlock_timeout` runs out first. The booker waits
+      // first, so it is normally the one - but under a loaded run the erasure's check could fire
+      // first and the erasure would be the victim (seen 2026-10-18 with the specs in parallel).
+      // A longer timeout on the erasure's own connection makes the booker the victim, always.
+      const c = new Client({
+        connectionString: URL,
+        options: `-c search_path=${schema} -c deadlock_timeout=20s`,
+      });
       await c.connect();
       const db = {
         write: async (sql: string, params: unknown[]) => (await c.query(sql, params)).rowCount ?? 0,
@@ -473,6 +529,45 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       await expect(book(space.id, r, '10:00', '10:30')).resolves.toHaveProperty('id');
     });
 
+    it('refuses a block over a block of the same resource: the same range twice writes one row', async () => {
+      const { resourceIds } = await setup({}, 2);
+      const [r, other] = resourceIds;
+      const first = { startsAt: on('09:00'), endsAt: on('10:00') };
+      await service.addBlock(r, first, as(ORGA), NOW);
+      const refused = { code: 'block-overlap' };
+      expect(await refusal(service.addBlock(r, first, as(ORGA), NOW))).toEqual(refused);
+      // Any overlap, whichever side reaches into the other.
+      for (const [from, to] of [
+        ['09:30', '09:45'],
+        ['08:00', '09:15'],
+        ['09:45', '11:00'],
+        ['08:00', '11:00'],
+      ]) {
+        expect(
+          await refusal(service.addBlock(r, { startsAt: on(from), endsAt: on(to) }, as(ORGA), NOW))
+        ).toEqual(refused);
+      }
+      // Touching ranges and another resource are not overlaps.
+      await service.addBlock(r, { startsAt: on('10:00'), endsAt: on('11:00') }, as(ORGA), NOW);
+      await service.addBlock(r, { startsAt: on('08:00'), endsAt: on('09:00') }, as(ORGA), NOW);
+      await service.addBlock(other, first, as(ORGA), NOW);
+      expect(await ds.getRepository(BookingBlock).countBy({ resourceId: r })).toBe(3);
+      // Racing the same block: one winner, the rest told it exists.
+      const racing = { startsAt: on('15:00'), endsAt: on('16:00') };
+      const racers = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          service.addBlock(r, racing, as(ORGA), NOW).then(
+            () => 'won',
+            (err: unknown) => refusal(Promise.reject(err))
+          )
+        )
+      );
+      expect(racers.filter((x) => x === 'won')).toHaveLength(1);
+      // Every loser is told the block exists: never a deadlock or a try-again.
+      expect(racers.filter((x) => x !== 'won')).toEqual(Array(4).fill({ code: 'block-overlap' }));
+      expect(await ds.getRepository(BookingBlock).countBy({ resourceId: r })).toBe(4);
+    });
+
     it('lets the linked account block its own resource, and refuses a past range', async () => {
       const { space, resourceIds } = await setup();
       const r = resourceIds[0];
@@ -578,6 +673,29 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       const last = await service.spaceBookings(space.id, as(ORGA), 2, 2);
       expect(last.items.map((b) => b.id)).toEqual([ids[2]]);
       expect(last.nextOffset).toBeNull();
+    });
+
+    it('narrows the organiser list to the bookings a D29 refusal named, in this space only', async () => {
+      const { space, resourceIds } = await setup();
+      const other = await setup({ name: 'other' });
+      const a = await book(space.id, resourceIds[0], '10:00', '10:30');
+      await book(space.id, resourceIds[0], '11:00', '11:30');
+      const c = await book(space.id, resourceIds[0], '12:00', '12:30');
+      const elsewhere = await book(other.space.id, other.resourceIds[0], '10:00', '10:30');
+      const named = await service.spaceBookings(space.id, as(ORGA), 0, 200, [
+        c.id,
+        a.id,
+        elsewhere.id,
+      ]);
+      expect(named.items.map((b) => b.id)).toEqual([a.id, c.id]);
+      expect(named.items[0]).toHaveProperty('holderName');
+      await expect(service.spaceBookings(space.id, as(ORGA), 0, 200, [])).resolves.toEqual({
+        items: [],
+        nextOffset: null,
+      });
+      expect(await refusal(service.spaceBookings(space.id, as(ALICE), 0, 200, [a.id]))).toEqual({
+        code: 'not-manager',
+      });
     });
 
     it('the account linked to a resource reads its bookings (D10): names, never answers', async () => {
@@ -843,6 +961,304 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     });
   });
 
+  describe("the booker's page and the calendar link (WP-B5)", () => {
+    const KEY = 'k'.repeat(48);
+    let previousKey: string | undefined;
+    let previousFrontend: string | undefined;
+    beforeAll(() => {
+      previousKey = process.env.AGENDA_SIGNING_KEY;
+      previousFrontend = process.env.FRONTEND_URL;
+      process.env.AGENDA_SIGNING_KEY = KEY;
+      process.env.FRONTEND_URL = 'https://canari.example';
+    });
+    afterAll(() => {
+      if (previousKey === undefined) delete process.env.AGENDA_SIGNING_KEY;
+      else process.env.AGENDA_SIGNING_KEY = previousKey;
+      if (previousFrontend === undefined) delete process.env.FRONTEND_URL;
+      else process.env.FRONTEND_URL = previousFrontend;
+    });
+
+    /** The ids of `listedSpaces` among `mine`, in the order they were answered. */
+    const listedAmong = async (viewer: string, mine: string[]) =>
+      (await service.listedSpaces(as(viewer))).map((s) => s.id).filter((id) => mine.includes(id));
+
+    it('lists the listed spaces whose audience admits the reader, never a link-only one', async () => {
+      const open = await setup({ name: '0000 open' });
+      const promo = await setup({ name: '0001 promo', audience: { promo: { values: [2024] } } });
+      const link = await setup({ name: '0002 link', discoverability: 'link' });
+      await q(`UPDATE associations SET name = 'BDA' WHERE id = $1`, [open.space.associationId]);
+      facts.set(BOB, { promo: 2024, formation: null, cotisationTiers: [], answers: {} });
+      const mine = [open.space.id, promo.space.id, link.space.id];
+
+      expect(await listedAmong(ALICE, mine)).toEqual([open.space.id]);
+      expect(await listedAmong(BOB, mine)).toEqual([open.space.id, promo.space.id]);
+      // The organiser of all three sees what is listed, the audience aside - and still no link.
+      expect(await listedAmong(ORGA, mine)).toEqual([open.space.id, promo.space.id]);
+
+      const row = (await service.listedSpaces(as(ALICE))).find((s) => s.id === open.space.id);
+      expect(row).toEqual(
+        expect.objectContaining({ associationName: 'BDA', resourceCount: 1, timeZone: 'UTC' })
+      );
+      expect(row).not.toHaveProperty('privateInfo');
+    });
+
+    it("lists a personal space to its owner alone (D43), never an archived association's", async () => {
+      const personal = await setup({ name: '0003 personal', associationId: null, ownerId: DAN });
+      const archived = await setup({ name: '0004 archived' });
+      await q(`UPDATE associations SET archived = true WHERE id = $1`, [
+        archived.space.associationId,
+      ]);
+      const mine = [personal.space.id, archived.space.id];
+      expect(await listedAmong(DAN, mine)).toEqual([personal.space.id]);
+      for (const viewer of [ALICE, ORGA]) expect(await listedAmong(viewer, mine)).toEqual([]);
+      expect(
+        (await service.listedSpaces({ userId: STRANGER, isGlobalAdmin: true }))
+          .map((s) => s.id)
+          .filter((id) => mine.includes(id))
+      ).toEqual([]);
+    });
+
+    it('keeps the page when core-service fails: only a space needing the profile is left out', async () => {
+      const open = await setup({ name: '0005 open' });
+      const promo = await setup({ name: '0006 promo', audience: { promo: { values: [2024] } } });
+      const cotisants = await setup({
+        name: '0007 cotisants',
+        audience: { cotisation: { anyTier: true } },
+      });
+      facts.set(BOB, { promo: 2024, formation: null, cotisationTiers: [null], answers: {} });
+      const mine = [open.space.id, promo.space.id, cotisants.space.id];
+      expect(await listedAmong(BOB, mine)).toEqual(mine);
+      profileDown = true;
+      try {
+        expect(await listedAmong(BOB, mine)).toEqual([open.space.id, cotisants.space.id]);
+      } finally {
+        profileDown = false;
+      }
+    });
+
+    it("hands the calendar link to the booking's people alone, never for a cancelled one", async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      const { path } = await service.calendarLink(id, as(ALICE));
+      expect(path).toMatch(
+        new RegExp(`^/api/bookings/${id}/calendar\\.ics\\?u=${ALICE}&sig=[\\w%-]+$`)
+      );
+      // Each person's link names them: never the same link twice.
+      const links = await Promise.all([BOB, ORGA].map((p) => service.calendarLink(id, as(p))));
+      expect(new Set([path, ...links.map((l) => l.path)]).size).toBe(3);
+      // A global admin who is not of the booking gets none: its fetch would refuse it.
+      expect(
+        await refusal(service.calendarLink(id, { userId: STRANGER, isGlobalAdmin: true }))
+      ).toEqual({ code: 'not-yours' });
+      for (const stranger of [STRANGER, CAROL]) {
+        expect(await refusal(service.calendarLink(id, as(stranger)))).toEqual({
+          code: 'not-yours',
+        });
+      }
+      // An id that names nothing reads exactly like someone else's booking.
+      expect(await refusal(service.calendarLink(randomUUID(), as(ALICE)))).toEqual({
+        code: 'not-yours',
+      });
+      await service.withdraw(id, as(BOB), NOW);
+      expect(await refusal(service.calendarLink(id, as(BOB)))).toEqual({ code: 'not-yours' });
+      await service.cancel(id, as(ALICE), NOW);
+      expect(await refusal(service.calendarLink(id, as(ALICE)))).toEqual({
+        code: 'already-cancelled',
+      });
+    });
+
+    it('judges answers keyed by the declared questions only: a __proto__ key reaches no map', async () => {
+      const items = [{ id: 'q', label: 'Remarque', required: true, type: 'short_text' }];
+      const { space, resourceIds } = await setup({ items: items as never });
+      // As a JSON body arrives: `__proto__` an OWN key, which a `{}` literal turns into its prototype.
+      const answers = JSON.parse('{"q":"oui","__proto__":["x"],"undeclared":"y"}') as Record<
+        string,
+        string
+      >;
+      builtAnswers.length = 0;
+      const { id } = await service.book(
+        space.id,
+        { resourceId: resourceIds[0], startsAt: on('10:00'), endsAt: on('10:30'), answers },
+        as(ALICE),
+        NOW
+      );
+      const judged = builtAnswers[builtAnswers.length - 1];
+      expect(Object.getPrototypeOf(judged)).toBeNull();
+      expect(Object.keys(judged)).toEqual(['q']);
+      expect(judged.q).toEqual(['oui']);
+      const [row] = await q(`SELECT answers FROM bookings WHERE id = $1`, [id]);
+      expect(row.answers).toEqual({ q: 'oui' });
+    });
+
+    it('serves the .ics on its signature alone, with no answer, private text or name', async () => {
+      const items = [{ id: 'cv', label: 'Remarque', required: false, type: 'short_text' }];
+      const { space, resourceIds } = await setup({ items: items as never });
+      const { id } = await service.book(
+        space.id,
+        {
+          resourceId: resourceIds[0],
+          startsAt: on('10:00'),
+          endsAt: on('10:30'),
+          answers: { cv: 'answer-secret' },
+        },
+        as(ALICE),
+        NOW
+      );
+      const parts = (path: string) => {
+        const params = new URLSearchParams(path.split('?')[1]);
+        return [params.get('u') ?? undefined, params.get('sig') ?? undefined] as const;
+      };
+      const fetchIcs = (bookingId: string, path: string) =>
+        service.calendarIcs(bookingId, ...parts(path));
+      const { path } = await service.calendarLink(id, as(ALICE));
+
+      const ics = await fetchIcs(id, path);
+      expect(ics).toContain('SUMMARY:Salle de musique - Salle 0');
+      expect(ics).toContain('DTSTART:20261102T100000Z');
+      expect(ics).toContain('DTEND:20261102T103000Z');
+      expect(ics).toContain(`/bookings/spaces/${space.id}`);
+      for (const secret of ['answer-secret', 'code 1234', 'cle 0', 'Alice']) {
+        expect(ics).not.toContain(secret);
+      }
+
+      // Another booking's signature, none, a forged one: refused before anything is read.
+      const other = await book(space.id, resourceIds[0], '11:00', '11:30', BOB, {});
+      const [bob, otherSig] = parts((await service.calendarLink(other.id, as(BOB))).path);
+      const [alice, aliceSig] = parts(path);
+      for (const [who, bad] of [
+        [bob, otherSig],
+        [alice, otherSig],
+        [bob, aliceSig],
+        [alice, undefined],
+        [undefined, aliceSig],
+        [alice, 'forged'],
+      ] as const) {
+        expect(await refusal(service.calendarIcs(id, who, bad))).toEqual({
+          code: 'calendar-signature',
+        });
+      }
+      // A valid signature for an id that names nothing learns only that.
+      const ghost = randomUUID();
+      expect(await refusal(fetchIcs(ghost, bookingCalendarPath(ghost, ALICE)))).toEqual({
+        code: 'booking-not-found',
+      });
+
+      // Rotating the key ends every saved link.
+      process.env.AGENDA_SIGNING_KEY = `${KEY}-rotated`;
+      try {
+        expect(await refusal(fetchIcs(id, path))).toEqual({
+          code: 'calendar-signature',
+        });
+      } finally {
+        process.env.AGENDA_SIGNING_KEY = KEY;
+      }
+
+      // A cancelled booking's link answers 410: a stale import cannot write it back.
+      await service.cancel(id, as(ALICE), NOW);
+      expect(await refusal(fetchIcs(id, path))).toEqual({
+        code: 'booking-cancelled',
+      });
+    });
+
+    it('stops a link when its recipient stops being of the booking, or is erased', async () => {
+      const ERASED = '9e'.repeat(32);
+      await q(`INSERT INTO users (id, "firstName", "lastName") VALUES ($1, 'Gone', 'X')`, [ERASED]);
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      await ds.getRepository(BookingResource).update(r, { linkedUserId: DAN });
+      const { id } = await book(space.id, r, '10:00', '10:30', ALICE, { participantIds: [BOB] });
+      const past = await ds.getRepository(Booking).save({
+        resourceId: r,
+        holderId: ERASED,
+        holderName: 'Gone X',
+        bookedById: ERASED,
+        startsAt: new Date(on('09:00', '2026-10-01')),
+        endsAt: new Date(on('09:30', '2026-10-01')),
+      });
+      const fetchAs = async (bookingId: string, who: string) => {
+        const params = new URLSearchParams(
+          (await service.calendarLink(bookingId, as(who))).path.split('?')[1]
+        );
+        return () =>
+          service.calendarIcs(
+            bookingId,
+            params.get('u') ?? undefined,
+            params.get('sig') ?? undefined
+          );
+      };
+      const bobs = await fetchAs(id, BOB);
+      const dans = await fetchAs(id, DAN);
+      const orgas = await fetchAs(id, ORGA);
+      const erased = await fetchAs(past.id, ERASED);
+      for (const f of [bobs, dans, orgas, erased]) await expect(f()).resolves.toContain('VEVENT');
+
+      await service.withdraw(id, as(BOB), NOW);
+      await ds.getRepository(BookingResource).update(r, { linkedUserId: null });
+      grants.delete(`${ORGA}:${space.associationId}`);
+      await runErasureStatements(
+        {
+          write: async (sql, params) => ((await q(sql, params)) as [unknown, number])[1] ?? 0,
+          read: async <T>(sql: string, params: unknown[]) => (await q(sql, params)) as T[],
+        },
+        BOOKINGS_ERASURE_STATEMENTS,
+        ERASED
+      );
+      await q(`DELETE FROM users WHERE id = $1`, [ERASED]);
+      for (const f of [bobs, dans, orgas, erased]) {
+        expect(await refusal(f())).toEqual({ code: 'calendar-revoked' });
+      }
+      // The holder's own link is untouched by the others leaving.
+      await expect((await fetchAs(id, ALICE))()).resolves.toContain('VEVENT');
+    });
+
+    it("names the questions a reader's profile hides, as a form does, and no others", async () => {
+      const items = [
+        { id: 'all', label: 'Nom', required: true, type: 'short_text' },
+        {
+          id: 'p24',
+          label: 'Promo 2024',
+          required: true,
+          type: 'short_text',
+          showIf: { promo: { values: [2024] } },
+        },
+        {
+          id: 'ans',
+          label: 'Suite',
+          required: false,
+          type: 'short_text',
+          showIf: { answer: { questionId: 'all', optionIds: ['x'] } },
+        },
+      ];
+      const { space } = await setup({ items: items as never });
+      facts.set(CAROL, { promo: 2024, formation: null, cotisationTiers: [], answers: {} });
+      expect((await service.getSpace(space.id, as(ALICE))).hiddenItemIds).toEqual(['p24']);
+      expect((await service.getSpace(space.id, as(CAROL))).hiddenItemIds).toEqual([]);
+    });
+
+    it('sends a block id only to whoever may lift it', async () => {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      await ds.getRepository(BookingResource).update(r, { linkedUserId: DAN });
+      const { id: blockId } = await service.addBlock(
+        r,
+        { startsAt: on('09:00'), endsAt: on('10:00'), reason: 'travaux', reasonVisible: true },
+        as(ORGA),
+        NOW
+      );
+      const blockedUnit = async (viewer: string) =>
+        (await service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(viewer)))[0].units.find(
+          (u) => u.state === 'blocked'
+        )!;
+      expect((await blockedUnit(ORGA)).blockId).toBe(blockId);
+      expect((await blockedUnit(DAN)).blockId).toBe(blockId);
+      const seen = await blockedUnit(ALICE);
+      expect(seen).not.toHaveProperty('blockId');
+      expect(seen.blockReason).toBe('travaux');
+    });
+  });
+
   describe('the organiser (WP-B4)', () => {
     const EVERY_DAY = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({
       weekday,
@@ -880,9 +1296,10 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);
       expect(await refusal(patch({ timeZone: 'Mars/Olympus' }))).toEqual({ code: 'time-zone' });
       expect(await refusal(patch({ maxMinutesPerPeriod: 60 }))).toEqual({ code: 'quota-pair' });
-      expect(
-        await refusal(patch({ items: [{ id: 'q', label: 'CV', required: true, type: 'file' }] }))
-      ).toEqual({ code: 'file-question-not-yet' });
+      // WP-B6 brought the file question's storage and purge: it is accepted now.
+      await expect(
+        patch({ items: [{ id: 'q', label: 'CV', required: true, type: 'file' }] })
+      ).resolves.toEqual({ ok: true });
       await expect(patch({ slotMode: 'slots' })).resolves.toEqual({ ok: true });
       const view = await organiser.managedSpaceView(id, as(ALICE));
       expect([view.slotMode, view.stepMinutes, view.maxSteps]).toEqual(['slots', null, null]);

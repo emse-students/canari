@@ -1,4 +1,44 @@
+import { Logger } from '@nestjs/common';
 import { FormReminderScheduler } from './forms-reminder.scheduler';
+
+/**
+ * The 5-minute tick moves stale online answers to `expired`, THEN forgets the visitor of every guest
+ * answer no longer waiting (PP5, `guest-visitor.ts`) - each in its own `try`, so one failing never
+ * keeps the other from running.
+ */
+describe('FormReminderScheduler.expireStalePendingPayments', () => {
+  function withForms(forms: Record<string, jest.Mock>) {
+    return new FormReminderScheduler({} as never, {} as never, {} as never, forms as never);
+  }
+
+  it('forgets settled guest visitors after the expiry, in the same tick', async () => {
+    const calls: string[] = [];
+    await withForms({
+      expireStalePendingPayments: jest.fn(async () => void calls.push('expire')),
+      forgetSettledGuestVisitors: jest.fn(async () => void calls.push('forget')),
+    }).expireStalePendingPayments();
+    expect(calls).toEqual(['expire', 'forget']);
+  });
+
+  // Control (2026-10-22): the expiry's own `try` removed -> a failed expiry skipped the forget,
+  // and this test failed.
+  it('still forgets when the expiry fails, and logs the failure', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const forget = jest.fn(async () => 0);
+    await withForms({
+      expireStalePendingPayments: jest.fn(async () => {
+        throw new Error('db down');
+      }),
+      forgetSettledGuestVisitors: forget,
+    }).expireStalePendingPayments();
+    expect(forget).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      '[PENDING] Error expiring stale online payments',
+      expect.any(Error)
+    );
+    warn.mockRestore();
+  });
+});
 
 /**
  * TWO COPIES OF THIS SERVICE RUN AT ONCE DURING A RELEASE - the new replica starts beside the old one

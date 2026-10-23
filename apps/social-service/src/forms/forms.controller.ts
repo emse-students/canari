@@ -279,10 +279,11 @@ export class FormsController {
   // association's books that no money ever backed. No Stripe call verified anything; the optional
   // `sessionId` was stored unchecked. Nothing in our own client ever called it.
   //
-  // The three legitimate ways a submission becomes paid all still exist and none of them is this:
-  // Stripe confirms through `POST /api/internal/forms/submissions/:id/mark-paid`, which is guarded
-  // by the timing-safe `X-Internal-Secret` and reached only from core-service AFTER
-  // `stripe.webhooks.constructEvent` has verified the signature; a form manager takes cash through
+  // The legitimate ways a submission becomes paid all still exist and none of them is this: Lydia,
+  // asked server to server about the row's OWN request, answers paid - triggered by the payer's
+  // return (`confirm-payment` below) or by a Lydia callback core-service verified with the
+  // association's Business key (`POST /api/internal/forms/submissions/:id/provider-confirm`,
+  // `X-Internal-Secret`); a form manager takes cash through
   // `POST :id/submissions/:submissionId/validate-cash`, which is scoped to the form they manage;
   // and a free submission is written `'free'` at submit time.
 

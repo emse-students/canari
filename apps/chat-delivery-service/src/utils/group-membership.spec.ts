@@ -2,14 +2,17 @@
 
 import type { EntityManager } from 'typeorm';
 import {
+  endDeviceMemberships,
   endGroupMembership,
   ensureGroupMember,
   exclusionWindows,
   openMissingIntervals,
+  withheldWindows,
   withholdExcludedHistoryRows,
 } from './group-membership';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { recordingDataSource } from '../testing/recordingDataSource';
 
 /**
  * The statement this helper builds is the whole of what it does, so the statement is what is
@@ -313,7 +316,7 @@ describe('exclusionWindows', () => {
     ).toEqual([{ from: at('2026-10-03T09:00:00Z').getTime(), until: null }]);
   });
 
-  it('the time before the FIRST arrival is never a window - a late joiner keeps the existing policy', () => {
+  it('the time before the FIRST arrival is never a GAP - that span is withheldWindows, not this', () => {
     const windows = exclusionWindows([{ joinedAt: at('2026-10-09T10:00:00Z'), leftAt: null }]);
     expect(windows).toEqual([]);
   });
@@ -329,6 +332,118 @@ describe('exclusionWindows', () => {
       from: at('2026-10-04T00:00:00Z').getTime(),
       until: at('2026-10-05T00:00:00Z').getTime(),
     });
+  });
+});
+
+describe('withheldWindows', () => {
+  const at = (iso: string) => new Date(iso);
+
+  it('a group conversation withholds everything before the first arrival, then the gaps', () => {
+    // Out of order on purpose, as above.
+    const windows = withheldWindows(
+      [
+        { joinedAt: at('2026-10-05T00:00:00Z'), leftAt: null },
+        { joinedAt: at('2026-10-01T00:00:00Z'), leftAt: at('2026-10-03T00:00:00Z') },
+      ],
+      true,
+      null
+    );
+    expect(windows).toEqual([
+      { from: 0, until: at('2026-10-01T00:00:00Z').getTime() },
+      { from: at('2026-10-03T00:00:00Z').getTime(), until: at('2026-10-05T00:00:00Z').getTime() },
+    ]);
+  });
+
+  it('a 1:1 withholds the gaps only - its recorded arrivals are not arrivals', () => {
+    expect(
+      withheldWindows([{ joinedAt: at('2026-10-09T10:00:00Z'), leftAt: null }], false, null)
+    ).toEqual([]);
+  });
+
+  it('an EARLIER device row is the arrival - the 4 production members whose interval was recorded late', () => {
+    expect(
+      withheldWindows(
+        [{ joinedAt: at('2026-10-12T00:00:00Z'), leftAt: null }],
+        true,
+        at('2026-10-01T04:00:00Z')
+      )
+    ).toEqual([{ from: 0, until: at('2026-10-01T04:00:00Z').getTime() }]);
+  });
+
+  it('a device row admitted before any interval opened is the arrival', () => {
+    expect(withheldWindows([], true, at('2026-10-20T00:00:00Z'))).toEqual([
+      { from: 0, until: at('2026-10-20T00:00:00Z').getTime() },
+    ]);
+  });
+
+  it('a person with neither an interval nor a device row is withheld everything, open-ended', () => {
+    expect(withheldWindows([], true, null)).toEqual([{ from: 0, until: null }]);
+  });
+
+  // THE CREATOR ARRIVES WITH THE GROUP, so nothing precedes them and the span is empty - yet a client
+  // reads an UNDATED copy against every window edge with a one-hour skew margin, so `[0, creation)`
+  // dropped every undated history entry of the group's first hour on the creator (GRP-7, 2026-10-22).
+  // Measured on the local estate: the creator's interval 4 ms after `createdAt`, the next member 13.5 s.
+  const created = at('2026-10-22T04:50:00.000Z');
+
+  it('the person who arrived WITH the group has no before-arrival span', () => {
+    expect(
+      withheldWindows(
+        [{ joinedAt: at('2026-10-22T04:50:00.004Z'), leftAt: null }],
+        true,
+        null,
+        created
+      )
+    ).toEqual([]);
+  });
+
+  it('a device row written a moment BEFORE the group row (two clocks) is still the creation', () => {
+    expect(
+      withheldWindows(
+        [{ joinedAt: at('2026-10-22T04:50:00.004Z'), leftAt: null }],
+        true,
+        at('2026-10-22T04:49:59.990Z'),
+        created
+      )
+    ).toEqual([]);
+  });
+
+  it("the creator's later gaps are still withheld", () => {
+    expect(
+      withheldWindows(
+        [
+          { joinedAt: at('2026-10-22T04:50:00.004Z'), leftAt: at('2026-10-22T06:00:00Z') },
+          { joinedAt: at('2026-10-22T07:00:00Z'), leftAt: null },
+        ],
+        true,
+        null,
+        created
+      )
+    ).toEqual([
+      { from: at('2026-10-22T06:00:00Z').getTime(), until: at('2026-10-22T07:00:00Z').getTime() },
+    ]);
+  });
+
+  it("a joiner's protection is unchanged: arriving 13.5 s after the group keeps the span", () => {
+    expect(
+      withheldWindows(
+        [{ joinedAt: at('2026-10-22T04:50:13.504Z'), leftAt: null }],
+        true,
+        null,
+        created
+      )
+    ).toEqual([{ from: 0, until: at('2026-10-22T04:50:13.504Z').getTime() }]);
+  });
+
+  it('a 1:1 is untouched by the creation rule', () => {
+    expect(
+      withheldWindows(
+        [{ joinedAt: at('2026-10-22T04:50:00.004Z'), leftAt: null }],
+        false,
+        null,
+        created
+      )
+    ).toEqual([]);
   });
 });
 
@@ -350,5 +465,65 @@ describe('withholdExcludedHistoryRows', () => {
     expect(withholdExcludedHistoryRows([row('x', null)], W).rows).toEqual([]);
     const untouched = [row('x', null)];
     expect(withholdExcludedHistoryRows(untouched, []).rows).toBe(untouched);
+  });
+});
+
+/**
+ * EVERY PATH THAT ENDS A DEVICE'S MEMBERSHIP TAKES ITS QUEUED WELCOMES WITH IT, through this one
+ * helper. A device pulls its queue whatever the roster says, so a Welcome left behind lets a device
+ * that is out enter the epoch the Welcome was built for.
+ *
+ * Asserted on the SQL the real TypeORM query builder produces (`recordingDataSource`): a delete
+ * whose filter lost a column is a delete of other people's rows, and only the real criteria
+ * handling can show which column survived.
+ */
+describe('endDeviceMemberships', () => {
+  it('deletes the device rows and the queued Welcomes of exactly the scope it is given', async () => {
+    const { manager, statements } = await recordingDataSource();
+
+    await endDeviceMemberships(
+      manager,
+      { userId: 'bob', deviceId: 'b1', groupId: 'g-1' },
+      'welcomes'
+    );
+
+    expect(statements.map((s) => [s.sql, s.params])).toEqual([
+      [
+        'DELETE FROM "dm_device_group_memberships" WHERE ("userId" = $1 AND "deviceId" = $2 AND "groupId" = $3)',
+        ['bob', 'b1', 'g-1'],
+      ],
+      [
+        'DELETE FROM "queued_message" WHERE ("recipientId" = $1 AND "deviceId" = $2 AND "groupId" = $3 AND "isWelcome" = $4)',
+        ['bob', 'b1', 'g-1', true],
+      ],
+    ]);
+  });
+
+  it('widens to the whole queue of that scope when the departure takes everything', async () => {
+    const { manager, statements } = await recordingDataSource();
+
+    await endDeviceMemberships(manager, { userId: 'bob', groupId: 'g-1' }, 'all');
+
+    expect(statements[1]).toEqual({
+      sql: 'DELETE FROM "queued_message" WHERE ("recipientId" = $1 AND "groupId" = $2)',
+      params: ['bob', 'g-1'],
+    });
+  });
+
+  it.each([
+    ['an empty userId', { userId: '' }],
+    ['an undefined userId', { userId: undefined as unknown as string }],
+    ['a blank userId', { userId: '  ' }],
+    ['an empty deviceId it names', { userId: 'bob', deviceId: '' }],
+    ['an undefined deviceId it names', { userId: 'bob', deviceId: undefined }],
+    ['an empty groupId it names', { userId: 'bob', groupId: '' }],
+    ['a null groupId it names', { userId: 'bob', groupId: null as unknown as string }],
+  ])('refuses %s, before any statement is built', async (_name, scope) => {
+    const { manager, statements } = await recordingDataSource();
+
+    await expect(endDeviceMemberships(manager, scope, 'all')).rejects.toThrow(
+      /endDeviceMemberships: /
+    );
+    expect(statements).toEqual([]);
   });
 });

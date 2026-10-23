@@ -72,7 +72,8 @@ the three answers are legitimately different, and only the PRECEDENCE is shared.
 BYTE-IDENTICAL and declared in `.github/scripts/lib/declared-duplicates.mjs`, so a change to one
 that is not made to the other fails CI outright. The frontend's cannot be a copy of them - different
 runtime, a localized fallback, and a module full of caching and backoff around it - so what ties it
-in is this contract, read by all three specs. **Identical text on one side, identical ANSWERS on
+in is this contract, read by both specs (chat-delivery's, which proves the byte-identical
+social-service copy too, and the frontend's). **Identical text on one side, identical ANSWERS on
 the other**, and neither mechanism alone would have caught the divergence that was reported: the
 servers agreed with each other perfectly.
 
@@ -92,11 +93,21 @@ The presence-audience question (WP-PRESENCE, 2026-10-18): `GET /api/presence` as
 social-service `{ viewerId, userIds }` and takes the union of the answers
 ([chat-gateway](services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)). Same
 two mechanisms as above: the two services validate it with ONE byte-identical module,
-`src/utils/presence-audience.ts` (declared in `declared-duplicates.mjs`, its spec copied beside it),
+`src/utils/presence-audience.ts` (declared in `declared-duplicates.mjs`, ONE spec in chat-delivery
+proving both copies - [test-suite-reform](test-suite-reform.md#72-the-declared-copies-deleted-2026-10-21)),
 and this file pins what that module answers plus `maxUserIds`, the cap the gateway's
-`MAX_PRESENCE_USERS` must equal. Read by both copies of `presence-audience.spec.ts` and by a test in
+`MAX_PRESENCE_USERS` must equal. Read by chat-delivery's `presence-audience.spec.ts` and by a test in
 `apps/chat-gateway/src/presence.rs`, which is why CI's gateway filter names `libs/contracts/` too.
 `expected: null` is a refusal: a malformed question is a 400, never an empty audience.
+
+### `payment-amount-range.json`
+
+The payable range of one checkout, in cents (Lydia's 0.50-1000 EUR, 2026-10-21). Not a case table
+but two numbers two services must agree on: core-service enforces them (`LYDIA_MIN/MAX_AMOUNT_CENTS`)
+and social-service refuses a form total outside them before calling core (`PROVIDER_MIN/MAX_AMOUNT_CENTS`,
+`core-payment-error.ts`). Read by `apps/core-service/src/payment/lydia-payment-provider.spec.ts`
+and `apps/social-service/src/common/core-payment-error.spec.ts`, which is why CI's core-service
+filter names `libs/contracts/` too ([payments](frontend/modules/payments.md)).
 
 ## A SHAPE IS NOT A RULE, AND IT IS PINNED WHERE IT IS WRITTEN (2026-09-22)
 

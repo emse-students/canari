@@ -10,6 +10,14 @@ import { ChannelMember } from '../../channels/entities/channel-member.entity';
 import { Submission } from '../../forms/entities/submission.entity';
 import { BookingResource } from '../../bookings/entities/booking-resource.entity';
 import { BookingParticipant } from '../../bookings/entities/booking-participant.entity';
+import { Live } from '../../lives/entities/live.entity';
+import { LiveRemovedViewer } from '../../lives/entities/live-removed-viewer.entity';
+import { LiveStart } from '../../lives/entities/live-start.entity';
+import { LiveCut } from '../../lives/entities/live-cut.entity';
+import { LiveRulesAcceptance } from '../../lives/entities/live-rules-acceptance.entity';
+import { LiveChatMessage } from '../../lives/entities/live-chat-message.entity';
+import { LiveReactionBurst } from '../../lives/entities/live-reaction-burst.entity';
+import { ProductCheckout } from './product-checkout.entity';
 
 /**
  * A user id in this estate is NOT a UUID, and one column forgot it.
@@ -35,6 +43,15 @@ describe('a user-id column is varchar(255), never uuid', () => {
     ['form_submissions', 'userId', Submission],
     ['booking_resources', 'linkedUserId', BookingResource],
     ['booking_participants', 'userId', BookingParticipant],
+    ['lives', 'broadcasterId', Live],
+    ['live_removed_viewers', 'viewerId', LiveRemovedViewer],
+    ['live_starts', 'broadcasterId', LiveStart],
+    ['live_cuts', 'broadcasterId', LiveCut],
+    ['live_cuts', 'reviewerId', LiveCut],
+    ['live_rules_acceptances', 'userId', LiveRulesAcceptance],
+    ['live_chat_messages', 'authorId', LiveChatMessage],
+    ['live_reaction_bursts', 'userId', LiveReactionBurst],
+    ['product_checkouts', 'userId', ProductCheckout],
   ];
 
   it.each(CASES)('%s.%s is declared varchar(255)', (_table, property, target) => {

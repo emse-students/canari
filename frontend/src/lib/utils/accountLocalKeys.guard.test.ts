@@ -1,5 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 import { ACCOUNT_KEY, keystoreAlias } from './accountLocalKeys';
 
 /**
@@ -19,27 +18,14 @@ import { ACCOUNT_KEY, keystoreAlias } from './accountLocalKeys';
  *    The few names that are NOT storage keys are named with a reason.
  */
 
-const ROOT = 'src';
 const LIST_FILE = 'lib/utils/accountLocalKeys.ts';
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === 'paraglide' || entry.name === 'wasm' || entry.name === 'proto') continue;
-      out.push(...sourceFiles(path));
-    } else if (/\.(ts|svelte)$/.test(entry.name) && !entry.name.endsWith('.test.ts')) {
-      out.push(path);
-    }
-  }
-  return out;
-}
-
-const SOURCES = sourceFiles(ROOT).map((path) => ({
-  file: relative(ROOT, path).replaceAll('\\', '/'),
-  text: readFileSync(path, 'utf8'),
-}));
+const SOURCES = sourceFiles({
+  under: 'src',
+  extensions: ['ts', 'svelte'],
+  tests: 'exclude',
+  skipDirs: ['proto'],
+}).map(({ path, text }) => ({ file: relativeTo(path, 'src'), text }));
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

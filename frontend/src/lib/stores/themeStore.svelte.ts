@@ -4,7 +4,9 @@
  * Persists the *preference* (`dark` | `light` | `system`) to localStorage under
  * `canari-theme`. In `system` mode the active theme follows the OS
  * `prefers-color-scheme` media query **and updates live** when the OS theme
- * changes. Applies the theme by setting `data-theme` on `<html>`.
+ * changes - in a browser and on Android; in the iOS app the query reports the window style this
+ * store itself set (see `colorSchemeIsOwnCommand`), so it is read at start only. Applies the theme by
+ * setting `data-theme` on `<html>`.
  */
 
 const THEME_KEY = 'canari-theme';
@@ -48,9 +50,22 @@ function postThemeToNative(theme: 'dark' | 'light'): void {
     webkit?: { messageHandlers?: { canariTheme?: { postMessage: (m: string) => void } } };
     canariTheme?: { set?: (m: string) => void };
   };
-  w.webkit?.messageHandlers?.canariTheme?.postMessage(theme);
+  const ios = w.webkit?.messageHandlers?.canariTheme;
+  ios?.postMessage(theme);
+  colorSchemeIsOwnCommand = ios !== undefined;
   w.canariTheme?.set?.(theme);
 }
+
+/**
+ * Whether the page's `prefers-color-scheme` now reports the page's OWN last command rather than the
+ * phone's theme. True once a theme reached the iOS shell: `CanariApplyTheme` sets the WINDOW's
+ * `overrideUserInterfaceStyle`, and WKWebView's media query follows the window. So a change of that
+ * query there is the echo of what this store posted - the camera's `holdNativeBar('dark')` above all -
+ * and never evidence of the OS (iPhone, 2026-10-19: opening the camera turned the app dark, and the
+ * release then posted that echoed dark back, so it stayed dark until a restart). Android's bridge only
+ * sets the bar icons and leaves the WebView's scheme to the OS, so the query stays the OS's there.
+ */
+let colorSchemeIsOwnCommand = false;
 
 /** The native bars' theme while a full-bleed screen holds them (see `holdNativeBar`), else null. */
 let heldNativeTheme: 'dark' | 'light' | null = null;
@@ -80,6 +95,13 @@ function attachOsListener(): void {
   osListenerAttached = true;
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
     if (preference !== 'system') return;
+    if (colorSchemeIsOwnCommand) {
+      console.debug(
+        `[theme] prefers-color-scheme -> ${e.matches ? 'dark' : 'light'} not followed: on iOS it` +
+          ' echoes the window style this page set, not the phone'
+      );
+      return;
+    }
     isDark = e.matches;
     applyToDocument(isDark);
   });

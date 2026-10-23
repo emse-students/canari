@@ -21,6 +21,21 @@ export type BookingNameVisibility = 'names' | 'occupied';
 /** Listed on the Reservations page for its audience, or reached by link only (D31). */
 export type BookingDiscoverability = 'listed' | 'link';
 
+/**
+ * A space's poster as the client uploaded it (`MediaService.encryptAndUpload`): the media id, the
+ * per-file key and IV in hex, the type and the display size. The server never decrypts it.
+ */
+export interface SpacePoster {
+  type: 'image';
+  mediaId: string;
+  key: string;
+  iv: string;
+  mimeType: string;
+  size: number;
+  width?: number;
+  height?: number;
+}
+
 /** The period of the per-person duration ceiling (D17). */
 export type BookingQuotaPeriod = 'day' | 'week';
 
@@ -145,6 +160,13 @@ export class BookingSpace {
   /** Answers and files are purged this many days after the slot's end, 1 to 30 (D23). */
   @Column({ type: 'int', default: 7 })
   retentionDays: number;
+
+  /**
+   * The poster (D35, migration 092): a media reference ENCRYPTED BY THE CLIENT, its key in this
+   * row, as a post's image - the media service holds ciphertext only. NULL: none.
+   */
+  @Column('jsonb', { nullable: true })
+  poster: SpacePoster | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

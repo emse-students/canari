@@ -249,6 +249,15 @@ export function matrixOf(raw: unknown): PriceMatrix | null {
  * `requiresPayment`, and nothing on a product, which is always for sale. Off, the grid is dropped
  * rather than kept as dead state nobody can see.
  */
+/**
+ * Whether a grid that will be SAVED divides on who the person is (promo, formation, cotisation)
+ * rather than on their answers only - what a public form's guest has not got, so the public switch
+ * stays shut (`FormAdvancedSettings`). A grid the payload drops (`matrixPayload`) counts for nothing.
+ */
+export function pricesOnProfile(matrix: PriceMatrix | null, enabled = true): boolean {
+  return enabled && !!matrix && matrix.dimensions.some((d) => d.kind !== 'answer');
+}
+
 export function matrixPayload(matrix: PriceMatrix | null, enabled = true): unknown {
   if (!matrix || !enabled || matrix.dimensions.length === 0) return null;
   const cells: Record<string, CellValue> = {};

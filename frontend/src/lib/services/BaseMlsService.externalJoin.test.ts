@@ -19,6 +19,7 @@ import {
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 
 /**
  * Unit-tests the external-join ORCHESTRATION (Phase 4a) in isolation: fetch GroupInfo -> build the
@@ -216,6 +217,31 @@ describe('BaseMlsService.externalJoin', () => {
     // reload. What the failure costs is durability, and that is what the log has to say.
     expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
     expect(ctx.forgetGroup).not.toHaveBeenCalled();
+  });
+
+  // A STALE WRITE IS ONLY A FAILURE WHEN THE STORED BLOB IS ANOTHER DOCUMENT'S (2026-10-21). A direct
+  // `persistCheckpoint` landing before the persister's flight makes that flight older than the store;
+  // the newer blob is this document's own and holds the join, so the checkpoint resolves
+  // (`writeCheckpoint` on `superseded`) and the fork accusation below must not be printed. Against
+  // another tab's blob the checkpoint rejects typed, and the accusation is exactly right.
+  it.each([
+    ['superseded by its own later capture', null, false],
+    ["refused behind another document's blob", new MlsStateWriteRefusedError('stale'), true],
+  ] as const)('a join whose checkpoint was %s', async (_c, refusal, accuses) => {
+    const ctx = makeCtx();
+    if (refusal) vi.mocked(persistMlsStructuralCheckpoint).mockRejectedValue(refusal);
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 6 });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+    const accused = error.mock.calls.some((c) => String(c[0]).includes('FAILED to checkpoint'));
+    error.mockRestore();
+    expect(accused).toBe(accuses);
   });
 
   it('does not checkpoint a join the gate refused', async () => {

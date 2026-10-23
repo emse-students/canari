@@ -18,23 +18,15 @@
  * lies (`GifPickerModal.overlay.test.ts`, 2026-09-13).
  */
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { sourceFiles } from '../../../test/sourceTree';
 import { withoutAnyComments } from '$lib/styles/markupSources';
-
 const SRC = join(process.cwd(), 'src');
 
 /** Every `.svelte` under `src`, so a renderer added anywhere is seen without a list to maintain. */
-function svelteFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) return svelteFiles(full);
-    return name.endsWith('.svelte') ? [full] : [];
-  });
-}
-
-const RENDERERS = svelteFiles(SRC)
-  .map((path) => ({ path, body: withoutAnyComments(readFileSync(path, 'utf8')) }))
+const RENDERERS = sourceFiles({ under: 'src', extensions: ['svelte'], tests: 'include' })
+  .map(({ path, text }) => ({ path, body: withoutAnyComments(text) }))
   .filter(({ body }) => body.includes('<SvelteMarkdown'));
 
 describe('the markdown renderers', () => {

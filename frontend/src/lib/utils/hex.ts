@@ -98,6 +98,21 @@ const _snapshotVersions = new WeakMap<Uint8Array, { seq: number; writer: string 
 let _lastAcceptedWriter = '(nothing yet this session)';
 
 /**
+ * The version THIS document last wrote, per account - what tells an own later export from another
+ * tab's blob when a write is refused as older (2026-10-21).
+ *
+ * The version counter is per document, so a stored version equal to the one recorded here can only
+ * be this document's own blob: another writer reaching the same number is refused as a collision
+ * and never stored. And this document's versions are tagged at capture from one monotonic counter,
+ * so its later version holds every change its earlier capture held. An untagged write (restore,
+ * migration) stores bytes without moving the version, so THIS document's clears the record.
+ * ANOTHER document's cannot, and is not seen: its restore leaves this record true-looking, and an
+ * older flight here then reads `superseded` over bytes it does not hold - a named residual
+ * (docs/wiki/protocols/mls-desync-prevention.md), closed only when every write carries a version.
+ */
+const _ownStoredVersion = new Map<string, number>();
+
+/**
  * Tags `bytes` with the next monotonic snapshot version and returns the same reference.
  *
  * MUST BE CALLED IN THE SAME SYNCHRONOUS TURN AS THE CAPTURE THAT PRODUCED `bytes`. The number
@@ -193,19 +208,32 @@ function openMlsDb(userId: string): Promise<IDBDatabase> {
  * Stores raw bytes - no base64 overhead.
  */
 /**
- * What became of one MLS state write: `written`, or refused by the version guard as `stale` (an
- * older capture of this document) or `collision` (another writer reached the same version). A caller
- * whose write MUST land - a device key change - reads it; a checkpoint may ignore it.
+ * What became of one MLS state write: `written`; `superseded` (not written, because THIS document's
+ * own later capture is already stored, which holds everything this one did); or refused by the
+ * version guard as `stale` (older than another document's stored blob) or `collision` (another
+ * writer reached the same version). A checkpoint is durable on `written` or `superseded`; a write
+ * that must land ITSELF - a device key change's re-seal - only on `written`. `ended` is the writing
+ * document's own refusal, not the guard's: its {@link MlsStateWriteLatch} is set.
  */
-export type MlsStateWriteOutcome = 'written' | 'stale' | 'collision';
+export type MlsStateWriteOutcome = 'written' | 'superseded' | 'stale' | 'collision' | 'ended';
 
 /**
- * A write that MUST land was refused by the version guard. The device key change throws it: a
- * dropped re-seal leaves the stored state under the OLD key while the session would log "done".
+ * A write was refused by the version guard, so the state it carried is NOT on disk. The device key
+ * change throws it (a dropped re-seal leaves the stored state under the OLD key), and so does a web
+ * checkpoint, whose waiters would otherwise declare that state durable. The guard has already said
+ * it in one line; a catcher that only re-reports it adds noise.
+ *
+ * `ended` is not the guard's: the document itself refused the write, because a rotation it ran was
+ * refused and what it holds in memory is on no disk ({@link MlsStateWriteLatch}). That refusal is
+ * said once, by the document, the first time it refuses.
  */
 export class MlsStateWriteRefusedError extends Error {
   constructor(readonly outcome: Exclude<MlsStateWriteOutcome, 'written'>) {
-    super(`the MLS state write was refused by the version guard (${outcome})`);
+    super(
+      outcome === 'ended'
+        ? 'the MLS state write was refused: this document ended after a refused rotation'
+        : `the MLS state write was refused by the version guard (${outcome})`
+    );
     this.name = 'MlsStateWriteRefusedError';
   }
 }
@@ -219,12 +247,37 @@ export class MlsStateWriteRefusedError extends Error {
  */
 export async function saveMlsStateEncrypted(
   userId: string,
-  bytes: Uint8Array
+  bytes: Uint8Array,
+  latch?: MlsStateWriteLatch
 ): Promise<MlsStateWriteOutcome> {
-  return withDeviceKeyHeld(userId, () => writeMlsState(userId, bytes));
+  return withDeviceKeyHeld(userId, () => writeMlsState(userId, bytes, latch));
 }
 
-async function writeMlsState(userId: string, bytes: Uint8Array): Promise<MlsStateWriteOutcome> {
+/**
+ * A document's write latch, read and set INSIDE the write's own transaction.
+ *
+ * A check made before the write starts is not enough: a checkpoint captures, then encrypts off the
+ * main thread, then waits for the gate and the database, and the latch can be set by another write
+ * of the same document during any of those awaits. IndexedDB serialises read-write transactions on
+ * one store, so the verdict below and the put are one synchronous step, and a latch set by an earlier
+ * transaction's verdict is seen by every later one.
+ */
+export interface MlsStateWriteLatch {
+  /** True once this document may write no MLS state: the write resolves `ended`, nothing stored. */
+  isEnded(): boolean;
+  /**
+   * For a write whose refusal ENDS the document (a rotation's checkpoint): called synchronously in
+   * the transaction that refused it, so no later transaction of this document can land.
+   */
+  endOnRefusal?(): void;
+}
+
+async function writeMlsState(
+  userId: string,
+  bytes: Uint8Array,
+  latch?: MlsStateWriteLatch
+): Promise<MlsStateWriteOutcome> {
+  if (latch?.isEnded()) return 'ended';
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -244,6 +297,11 @@ async function writeMlsState(userId: string, bytes: Uint8Array): Promise<MlsStat
     const store = tx.objectStore(IDB_STORE);
     const verReq = store.get(MLS_STATE_VERSION_KEY);
     verReq.onsuccess = () => {
+      // THE LATCH, AT THE PUT: see `MlsStateWriteLatch` for why the check at the start is not one.
+      if (latch?.isEnded()) {
+        outcome = 'ended';
+        return;
+      }
       const stored = (verReq.result as number | undefined) ?? 0;
       // A tagged write older than or equal to what is stored is a stale flush - skip it so a slow
       // encrypted checkpoint cannot clobber a fresher concurrent write. Untagged writes (restore,
@@ -252,8 +310,8 @@ async function writeMlsState(userId: string, bytes: Uint8Array): Promise<MlsStat
       // TWO CASES, AND THEY ARE NOT THE SAME EVENT. `_snapshotSeq` is a PER-DOCUMENT counter seeded
       // from the stored version on load, so:
       //
-      //   version < stored   one of THIS document's own flushes finished out of order - exactly what
-      //                      the guard was written for, and worth a line.
+      //   version < stored   a newer capture is on disk: this document's own (split out below as
+      //                      `superseded`), or another tab's whose counter ran further.
       //   version === stored two writers seeded from the same stored value both produced this
       //                      number. Within one document that cannot happen (the counter only goes
       //                      up), so it means a SECOND writer - another tab. Nothing is stale; the
@@ -268,22 +326,34 @@ async function writeMlsState(userId: string, bytes: Uint8Array): Promise<MlsStat
       // two writers ARE the finding: this line is the visible end of two captures overlapping, and
       // which two decides whether the overlap is legitimate coalescing or an ordering inversion.
       const mine = mlsSnapshotWriter(bytes) ?? 'unnamed';
+      // OLDER THAN STORED SPLITS AGAIN, ON WHO WROTE THE STORED BLOB (2026-10-21). This document's
+      // own later export already holds everything this capture held - a direct `persistCheckpoint`
+      // landing before a slower persister flight is the ordinary case - so it is `superseded`, and
+      // SILENT: nothing is lost and nothing upstream is wrong. Against another tab's blob it is a
+      // refusal, and the one line it gets is this one: the callers rethrow it typed and say nothing.
       if (version !== undefined && version < stored) {
+        if (_ownStoredVersion.get(userId) === stored) {
+          outcome = 'superseded';
+          return;
+        }
         console.warn(
-          `[MLS] Skipping stale MLS state write (v${version} < stored v${stored}) - this write came ` +
-            `from ${mine}, the stored one from ${_lastAcceptedWriter}. Two captures were in flight ` +
-            `at once; if either tagged itself after an await, the numbers do not order the captures`
+          `[MLS] MLS state write REFUSED as stale (v${version} < stored v${stored}) - the stored ` +
+            `blob is another document's (this one last wrote ` +
+            `${_ownStoredVersion.has(userId) ? `v${_ownStoredVersion.get(userId)}` : 'nothing'}), so ` +
+            `this state from ${mine} is not on disk`
         );
         outcome = 'stale';
+        latch?.endOnRefusal?.();
         return;
       }
       if (version !== undefined && version === stored) {
-        console.log(
-          `[MLS] Snapshot v${version} collides with the stored one - another writer reached this ` +
-            `version from the same seed, so the two are not comparable; not writing (this write ` +
-            `from ${mine})`
+        console.warn(
+          `[MLS] MLS state write REFUSED: snapshot v${version} collides with the stored one - ` +
+            `another writer reached this version from the same seed, so the two are not ` +
+            `comparable and this state from ${mine} is not on disk`
         );
         outcome = 'collision';
+        latch?.endOnRefusal?.();
         return;
       }
       store.put(bytes, MLS_STATE_ENCRYPTED_KEY);
@@ -293,7 +363,14 @@ async function writeMlsState(userId: string, bytes: Uint8Array): Promise<MlsStat
       }
     };
     verReq.onerror = () => reject(verReq.error);
-    tx.oncomplete = () => resolve(outcome);
+    tx.oncomplete = () => {
+      if (outcome === 'written') {
+        // Recorded on COMMIT, never on the put: a transaction that fails stored nothing of ours.
+        if (version !== undefined) _ownStoredVersion.set(userId, version);
+        else _ownStoredVersion.delete(userId);
+      }
+      resolve(outcome);
+    };
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -314,9 +391,10 @@ export async function purgeLegacyPlainMlsState(userId: string): Promise<void> {
 /** @deprecated Alias for {@link saveMlsStateEncrypted}. */
 export async function saveMlsState(
   userId: string,
-  bytes: Uint8Array
+  bytes: Uint8Array,
+  latch?: MlsStateWriteLatch
 ): Promise<MlsStateWriteOutcome> {
-  return saveMlsStateEncrypted(userId, bytes);
+  return saveMlsStateEncrypted(userId, bytes, latch);
 }
 
 /**

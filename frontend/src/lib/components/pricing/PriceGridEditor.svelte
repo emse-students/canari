@@ -51,6 +51,11 @@
     items: FormItem[];
     /** Whether the beneficiary association sells any cotisation - gates that one criterion. */
     hasCotisation: boolean;
+    /**
+     * Offer only the ANSWER criterion: a public form's guest has no promo, formation or cotisation
+     * for a grid to read (the server refuses the others, `assertPublicConfigValid`).
+     */
+    answersOnly?: boolean;
   }
 
   let {
@@ -60,6 +65,7 @@
     formations,
     items,
     hasCotisation,
+    answersOnly = false,
   }: Props = $props();
 
   const problem = $derived(matrixProblem(matrix));
@@ -73,10 +79,10 @@
         {
           kind: 'cotisation' as const,
           label: m.form_criterion_cotisation(),
-          enabled: hasCotisation,
+          enabled: hasCotisation && !answersOnly,
         },
-        { kind: 'promo' as const, label: m.form_criterion_promo(), enabled: true },
-        { kind: 'formation' as const, label: m.form_criterion_formation(), enabled: true },
+        { kind: 'promo' as const, label: m.form_criterion_promo(), enabled: !answersOnly },
+        { kind: 'formation' as const, label: m.form_criterion_formation(), enabled: !answersOnly },
         {
           kind: 'answer' as const,
           label: m.form_criterion_answer(),

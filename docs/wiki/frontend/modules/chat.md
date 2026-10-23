@@ -612,6 +612,40 @@ it always did.
   `static.klipy.com` - owed as a network trace on dev after an alpha, and on the phones
   ([backlog](../../backlog.md)).
 
+### The GIF picker loads in a controlled way, and a comment GIF says what it is doing (2026-10-22)
+
+User report: the picker shifted its content, was slow to fill, and GIFs struggled to send. Measured
+with a CDP harness (headless Chrome, a modelled relay that answers 503 `busy` past 16 distinct
+downloads, a shared pipe slowing each download as more run together):
+
+| | before | after |
+| --- | --- | --- |
+| relay refusals (blank tiles) | 7 phone / 5 desktop | 0 / 0 |
+| downloads in flight at once | 16 | 6 |
+| tiles that moved (desktop) | 13 (the scrollbar appearing narrowed the grid) | 0 |
+| layout shift (desktop) | 0.0044 | 0 |
+
+- **Weight.** The server adds the provider's smallest rendition as an optional `tiny` when it is
+  strictly narrower than `preview` (`klipy.ts`). `pickGridRendition(gif, tileWidth)` draws the
+  lightest rendition that still covers the tile, from the declared sizes. A comment attaches the
+  small rendition (`commentGifRendition`), not the medium one a chat sends: it is shown at most
+  224 px wide, and the medium one (median 1.1 MB, up to 11.7 MB against the relay's 12 MiB ceiling)
+  was downloaded only to be re-encrypted and uploaded.
+- **Order.** `gifImageGate` lets 6 thumbnails download together, in the order tiles asked (top
+  first); a tile that scrolls away before its turn leaves the queue and never asks the network.
+  `GifTileImage` retries a failed thumbnail once, then shows an icon instead of staying blank.
+- **No shift.** Tiles are always rendered at their declared box (a skeleton tone until the picture
+  lands) and the scroller carries `scrollbar-gutter: stable`, so the grid width never changes.
+- **Reopening is instant.** `gifSearchCache` keeps the pages read in the last five minutes (the
+  server's own `max-age`), in memory only. The query stays the same private, never-logged request.
+- **A failed page can be retried**: a button for the first page and under the grid for a later one,
+  and a search that does not answer in 10 s counts as failed.
+- **Comments.** `fetchGifFile` reads the body as it arrives (progress), under a 25 s deadline, and
+  throws a typed `GifRelayError` (`busy` for the relay's 503, `timeout`, `too-large`, `network`,
+  `rejected`). The composer shows the chip at once with a progress bar, the cause in words and a
+  retry, and holds the send button while the GIF is still arriving. The relay ticket is asked as the
+  composer mounts.
+
 ### The GIF search is the whole screen, and a quoted GIF is a picture (2026-10-05)
 
 **Two reports from the user.** Typing in the panel's search left the picker as a 200 px strip above
@@ -1220,6 +1254,10 @@ drains its own entries oldest first. Rules that came with it:
 - **`MAX_CONCURRENT_SENDS = 3`** frames on the wire across lanes (a slot is handed to the next waiter,
   never freed and re-raced): enough that one stalled lane freezes only itself, few enough that a
   50 kbit/s uplink is not cut into slivers that each miss their deadline.
+- **An attachment's UPLOAD runs outside the lane and holds no send slot** (WP-OFF-9, 2026-10-18): the
+  lane starts it and moves on, so a text written after a big file is not held by it; only the media
+  message's small MLS send takes the lane once the upload ended. Display order stays `sentAt`; the
+  rules and the order semantics are in [offline-and-weak-network 13.8](../offline-and-weak-network.md#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18).
 - The send POST is under a `write` deadline ([offline-and-weak-network](../offline-and-weak-network.md#11-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)),
   so a stalled lane ends as `DeliveryUnreachableError` and takes the ordinary backoff.
 
@@ -1323,8 +1361,10 @@ out of the tab.
 `extract_full_message_info`) decides WHAT a decrypted message is and reads `voice_note` (field 11)
 beside the `MediaKind`: a declared recording is announced `Message vocal` / `Voice message`, an
 undeclared audio (an import, or a recording from before 2026-09-17) `Fichier audio` / `Audio file`.
-Every sentence it composes - the system events, `a réagi {emoji}`, the four media placeholders, the
-poll line, the two call lines and the `événement de groupe ({event})` trap - is written ONCE, in both
+Every sentence it composes - the system events, `a réagi {emoji}`, the media placeholders (a
+CanaReel's included since WP-RC-7, declared by `MediaMsg.intent` the same way:
+[reels-in-chat](reels-in-chat.md#push-text)), the poll line, the two call lines and the
+`événement de groupe ({event})` trap - is written ONCE, in both
 languages, in `mobile/push_text.rs` (`PushText::render`): a closed enum whose exhaustive `match`
 refuses to compile a sentence written in one language only, and a test that writes out all of them.
 The text somebody TYPED passes through untouched.
@@ -1339,6 +1379,18 @@ to the OS locale in that one case, so the two may disagree on a device that has 
 that mirrors the locale; a device that has, cannot. Why Rust and not a KIND worded natively: the text
 is what the FCM cache persists as a message body, and one implementation keeps Android and iOS from
 diverging ([mobile](../mobile.md#the-language-a-notification-speaks)).
+
+### "Format non supporte" names its cause in the log (2026-10-18)
+
+`VoiceMessagePlayer` draws "Format non supporte / Telecharger" on ANY `error` event of its `<audio>`
+element, and four causes reach that event: an abort (`MediaError` code 1), a revoked or unreadable
+blob URL (2), bytes the engine cannot decode (3), a container it does not know (4). Two voice notes showed the label
+on the Mi 9T on 2026-10-06 while an iPhone listed them, and the branch logged nothing, so the cause
+could not be read. It now writes one `[voice] the audio element refused its source` warning carrying
+the code and its name, the engine's message, the type the message declares and the engine's
+`canPlayType` answer for that type: `canPlayType` "no" means the engine lacks the format, a
+"maybe"/"probably" with code 3 or 4 means the bytes are not what the message declares. **Owed: the
+line from the Mi 9T on that conversation** ([backlog](../../backlog.md)).
 
 ### A system event is executed, never displayed
 
@@ -2762,6 +2814,7 @@ render, and every consumer - the slice, the hidden-above count, `loadOlderGroups
 `fillViewportThenPin`, `navigateToMessage` - reads the clamped value while pagination keeps writing
 the raw state. The invariant it guarantees is the one worth remembering: **a non-empty list always
 yields a non-empty window.** `renderWindow.test.ts` pins it across every combination of stored index
+and list length, which is the assertion that fails against the old arithmetic.
 
 **The entry window is 20 groups, then 60 (2026-10-14).** Mounting a page of rows is one task that
 scales with the rows (339-635 ms for 56-200 rows on a Mi 9T) and nothing paints until it ends. So an
@@ -2774,7 +2827,17 @@ the start. Known duplication: that scroll compensation repeats what `observeThre
 growth above the viewport; folding the two is a note, not done. The salon skeleton raised by a history
 request issued at the tap is keyed by its salon (`skeletonSalon`). `ChatArea.entryWindow.svelte.test.ts`
 pins the row counts under a modelled geometry.
-and list length, which is the assertion that fails against the old arithmetic.
+
+**The render BEFORE the entry is the entry frame too (2026-10-22).** The entry effect sets
+`windowStart`, but an effect runs AFTER the render it follows. So the first render of a mount used
+the initial `windowStart` of 0 and mounted EVERY group of the thread. A switch used the window the
+previous conversation had left. The entry frame then cut it to 20 in the same flush, so the DOM
+looked right while the work was thrown away. That cost grew with the whole thread, not the window:
+2.0 s at 300 rows against 0.5 s at 70 under happy-dom, and the 20/60 split above existed to bound
+it. `awaitingEntry` (the conversation's entry key differs from `lastConversationKey`) now makes the
+window the entry frame until the effect has run. The test counts every row that EXISTED during the
+mount, from the observer's removals as well as its additions, because the DOM after the flush shows
+20 either way.
 
 The replacement itself - the reason the window and the list could disagree at all - is gone as of
 2026-08-12, see below.

@@ -21,6 +21,9 @@ function withoutHtmlComments(text: string): string {
  * counted two glows on it against zero on the reference apps, and every one was a utility class in
  * this file. Asserting the classes' absence is the whole guard - a glow here can only come back as
  * one of them.
+ *
+ * WHY A SOURCE TEST (WP-T5 disposition: keep). The class list IS the property, and a rendered card
+ * cannot say whether a shadow utility is present: happy-dom computes no Tailwind styles.
  */
 describe('LoginForm', () => {
   const source = readFileSync(resolve(import.meta.dirname, 'LoginForm.svelte'), 'utf8');

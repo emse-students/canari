@@ -67,6 +67,8 @@ export const MOBILE_UNIVERSAL_LINK_PATHS = [
   '/calendar/*',
   '/shop',
   '/shop/*',
+  '/bookings',
+  '/bookings/*',
   '/',
 ] as const;
 
