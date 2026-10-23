@@ -191,14 +191,16 @@ Traps found while writing this, each measured on authentik 2026.8.0:
 Authentik acts as the OIDC **Provider**; Canari's [`core-service`](../services/core-service.md) acts as the **Relying Party**:
 
 ```
-Browser → Authentik /authorize (PKCE + state)
+Browser → Authentik /authorize (PKCE S256 + state)
   → User authenticates (login/password, SSO)
   → Redirect to /auth/callback?code=...&state=...
-  → Browser POSTs code to core-service
-  → core-service exchanges code for tokens (server-side)
+  → Browser POSTs code + PKCE verifier to core-service
+  → core-service exchanges code + verifier for tokens (server-side)
   → core-service upserts user in PostgreSQL (sub = userId)
   → Returns { access_token (JWT HS256, 15 min), refresh (HttpOnly cookie, 7d) }
 ```
+
+The verifier binds a code to the device that asked for it ([auth](../frontend/modules/auth.md#login-flow)).
 
 The user's `sub` claim from Authentik becomes the canonical `userId` across all Canari services (`findOrCreateFromOidc` uses `userinfo.sub` as the primary key).
 

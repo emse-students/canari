@@ -16,13 +16,20 @@
 
 ```
 /login -> startOidcLogin()
-  -> redirect to Authentik /authorize (PKCE + state)
+  -> redirect to Authentik /authorize (PKCE S256 + state)
   -> callback to /auth/callback?code=...&state=...
-  -> POST /api/auth/oidc/callback { code, redirect_uri }
+  -> POST /api/auth/oidc/callback { code, redirect_uri, code_verifier }
   -> store access_token in memory
   -> set canari_ws_token cookie
   -> redirect to /chat
 ```
+
+**PKCE (RFC 7636, S256).** `startOidcLogin` keeps a verifier beside the state (`$lib/utils/pkce`),
+sends its hash as the challenge, and the callback hands the verifier to core-service with the code;
+MiConnect checks the pair at its token endpoint. It binds a code to the device that asked for it,
+which the client secret cannot do, since core-service is the party holding that secret. A callback
+with no verifier comes from an older build: core-service logs it, and its removal condition is in
+[legacy-compatibility](../../legacy-compatibility.md).
 
 ### The press is not the first thing that happens, and the button must say so
 

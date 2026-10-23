@@ -550,7 +550,11 @@ describe('AuthController sessions', () => {
     it("hands MiConnect's id_token to the client, for the sign-out's id_token_hint", async () => {
       authentikAnswers('h.idtoken.s');
       const body = await callbackController().oidcCallback(
-        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        {
+          code: 'c',
+          redirect_uri: 'https://canari.example/auth/callback',
+          code_verifier: 'v'.repeat(43),
+        } as never,
         makeReq({ origin: 'https://canari.example' }),
         makeRes().res
       );
@@ -609,6 +613,79 @@ describe('AuthController sessions', () => {
         code: 'ACCOUNT_ERASURE_PENDING',
       });
       expect(cookies).toEqual({});
+      warn.mockRestore();
+    });
+
+    /** The form body of the token request this controller sent to Authentik. */
+    function tokenRequestBody(): URLSearchParams {
+      const init = fetchSpy.mock.calls[0]![1] as RequestInit;
+      return new URLSearchParams(String(init.body));
+    }
+
+    it('redeems the code with the PKCE verifier the client sent', async () => {
+      authentikAnswers('h.idtoken.s');
+      await callbackController().oidcCallback(
+        {
+          code: 'c',
+          redirect_uri: 'https://canari.example/auth/callback',
+          code_verifier: 'v'.repeat(43),
+        } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      expect(tokenRequestBody().get('code_verifier')).toBe('v'.repeat(43));
+    });
+
+    it('names a sign-in with no verifier, and sends none rather than an empty one', async () => {
+      authentikAnswers('h.idtoken.s');
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      await callbackController().oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      expect(tokenRequestBody().has('code_verifier')).toBe(false);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('without a PKCE verifier'));
+      warn.mockRestore();
+    });
+
+    it('refuses a verifier that is not a string', async () => {
+      authentikAnswers('h.idtoken.s');
+      const err = await callbackController()
+        .oidcCallback(
+          {
+            code: 'c',
+            redirect_uri: 'https://canari.example/auth/callback',
+            code_verifier: { $ne: 1 },
+          } as never,
+          makeReq({ origin: 'https://canari.example' }),
+          makeRes().res
+        )
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+    });
+
+    it("keeps Authentik's refusal in the log and out of the response", async () => {
+      fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+        new globalThis.Response('{"error":"invalid_grant","detail":"provider internals"}', {
+          status: 400,
+        })
+      );
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const err = await callbackController()
+        .oidcCallback(
+          {
+            code: 'c',
+            redirect_uri: 'https://canari.example/auth/callback',
+            code_verifier: 'v'.repeat(43),
+          } as never,
+          makeReq({ origin: 'https://canari.example' }),
+          makeRes().res
+        )
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect((err as UnauthorizedException).message).not.toContain('provider internals');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('provider internals'));
       warn.mockRestore();
     });
 

@@ -22,6 +22,7 @@ import {
   getIdentitySplit,
 } from '$lib/stores/tokenIdentity.svelte';
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
+import { createPkcePair } from '$lib/utils/pkce';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -54,6 +55,8 @@ import {
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
+/** The PKCE verifier of the sign-in under way, redeemed with its code - see `$lib/utils/pkce`. */
+const OIDC_VERIFIER_KEY = 'canari_oidc_verifier';
 /** MiConnect's id_token for the session this device signed in with - see {@link leaveSignedOut}. */
 const OIDC_ID_TOKEN_KEY = 'canari_oidc_id_token';
 const OIDC_STORE_FILE = 'oidc-state.json';
@@ -428,6 +431,10 @@ export async function startOidcLogin(
   const state = crypto.randomUUID();
   await setOidcEntry(OIDC_STATE_KEY, state);
   await setOidcEntry(OIDC_RETURN_KEY, returnTo);
+  // PKCE binds the code MiConnect hands back to THIS device: the verifier stays here until the
+  // redemption, so a code captured on the way (another app claiming the custom scheme) is useless.
+  const pkce = await createPkcePair();
+  await setOidcEntry(OIDC_VERIFIER_KEY, pkce.verifier);
 
   const redirectUri = oidcRedirectUri();
   const params = new URLSearchParams({
@@ -436,6 +443,8 @@ export async function startOidcLogin(
     response_type: 'code',
     scope: 'openid profile promo name formation',
     state,
+    code_challenge: pkce.challenge,
+    code_challenge_method: 'S256',
   });
 
   const authorizePath = `/application/o/authorize/?${params}`;
@@ -534,6 +543,11 @@ async function handleOidcCallbackUnderway(
     throw new Error('Invalid OIDC state - possible CSRF attack');
   }
   await removeOidcEntry(OIDC_STATE_KEY);
+  // Read once and spent: a code can be redeemed once, and so can the proof that goes with it. A
+  // sign-in started by a build that predates PKCE has none, and its code carries no challenge.
+  const codeVerifier = await getOidcEntry(OIDC_VERIFIER_KEY);
+  await removeOidcEntry(OIDC_VERIFIER_KEY);
+  if (!codeVerifier) awarn('OIDC callback: no PKCE verifier stored for this sign-in');
 
   const redirectUri = oidcRedirectUri();
   console.debug('[auth] redirectUri:', redirectUri, 'coreUrl:', coreUrl());
@@ -543,7 +557,11 @@ async function handleOidcCallbackUnderway(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include', // receive HttpOnly cookie
-    body: JSON.stringify({ code, redirect_uri: redirectUri }),
+    body: JSON.stringify({
+      code,
+      redirect_uri: redirectUri,
+      ...(codeVerifier ? { code_verifier: codeVerifier } : {}),
+    }),
   });
   console.debug('[auth] core-service response status:', res.status);
 
