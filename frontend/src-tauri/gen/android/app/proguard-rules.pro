@@ -33,6 +33,8 @@
 -keep class fr.emse.canari.MainActivity { *; }
 -keep class fr.emse.canari.CanariFirebaseMessagingService { *; }
 -keep class fr.emse.canari.PushSecretKeystore { *; }
+# Called from Rust by name (push_registration.rs): renamed, every sign-out's token deletion fails.
+-keep class fr.emse.canari.PushRegistrationEnd { *; }
 # WorkManager instancie MlsBackgroundWorker par réflexion (nom qualifié complet).
 # MlsStateLock est un singleton Kotlin `object` dont le nom est résolu par JNI.
 # Sans ces règles, R8 renomme les classes → ClassNotFoundException en release.

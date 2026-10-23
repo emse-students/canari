@@ -2990,13 +2990,19 @@ export function tearDownLiveSession(
     finalWrite = Promise.resolve();
   }
 
+  // THE SERVER-SIDE DEREGISTRATION OF A LIVE SESSION, and only that. The device deletes its own push
+  // registration at every sign-out regardless (`endPushRegistration`, run by `clearAuth`), and the
+  // server ends the device's push token itself when it ends the session (logout and every
+  // revocation, core-service) - so this call is a third, redundant path, kept for a live session.
   if (reason === 'logout') {
     const tokenForPushCleanup = ctx.getAuthToken();
     const deviceForPushCleanup = ctx.getMyDeviceId();
     if (isRefreshCredentialProvenDead()) {
-      // A DEAD SESSION ENDING: the server already refused this session's credential, so the
-      // deregistration would only earn a refusal - known here, so it is not asked.
-      cb.log('[LOGOUT] Push token left registered - the session is already dead on the server.');
+      // A DEAD SESSION ENDING: the server already refused this session's credential, so this call
+      // would only earn a refusal. The device's own deletion still runs from `clearAuth`.
+      cb.log(
+        '[LOGOUT] Server push deregistration skipped - the session is already dead; the device deletes its token.'
+      );
     } else if (tokenForPushCleanup && deviceForPushCleanup) {
       void stopPushService(ctx.getHistoryBaseUrl(), tokenForPushCleanup, deviceForPushCleanup);
     }

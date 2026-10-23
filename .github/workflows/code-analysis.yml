@@ -136,7 +136,7 @@ jobs:
       # string that merely looks like one. That cannot be a warning: the step fails, and the
       # credential is rotated before anything else happens.
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@v3.99.2
+        uses: trufflesecurity/trufflehog@v3.99.3
         with:
           path: ./
           extra_args: --debug --only-verified
@@ -445,6 +445,61 @@ jobs:
             echo "::error::a premise behind an ignore no longer holds:$failed"
             exit 1
           fi
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE CONTAINER IMAGES, WHICH NO AUDIT ABOVE READS (2026-10-23)
+  #
+  # `bun audit` and `cargo audit` read lockfiles. What an estate RUNS is images - an Alpine
+  # `libssl`, the Go runtime inside `gosu`, the identity provider's Python - and nothing scanned
+  # them. `image-scan.sh` scans every image the estates run (the list is DERIVED from the
+  # Dockerfiles and compose files by `image-scan-targets.sh`) for HIGH/CRITICAL advisories WITH A
+  # FIX PUBLISHED, against `.github/image-scan-allowlist.yaml`, and fails when an allowlist entry is
+  # no longer reported - the same retirement media-service's ignores have.
+  #
+  # IN THE `dependencies` HALF, with the audits: like them it reads an advisory database that moves
+  # without a commit, and like them its outage (the database mirror or a registry not answering) is
+  # exit 2, which `registry_outage_is_failure` prices - a warning on a pull request, a failure on
+  # the nightly pass.
+  #
+  # TRIVY IS PINNED BY VERSION AND SHA-256 and fetched from its release, not through
+  # `aquasecurity/trivy-action`: an action tag can be moved to another commit, and a checksum of
+  # the binary is what a moved tag cannot fake. Nothing watches the pin (it is neither an action
+  # nor a manifest); docs/wiki/cicd.md says how it moves.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  image-scan:
+    name: Container image scan
+    if: inputs.scope == 'all' || inputs.scope == 'dependencies'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      TRIVY_VERSION: "0.75.0"
+      TRIVY_SHA256: "c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Trivy ${{ env.TRIVY_VERSION }}, checked against its SHA-256
+        run: |
+          set -euo pipefail
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${tarball}"
+          echo "${TRIVY_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/trivy"
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/trivy" trivy
+          echo "$RUNNER_TEMP/trivy" >> "$GITHUB_PATH"
+
+      # `rc=0` then `|| rc=$?`, for the reason the npm audit step above gives: GitHub runs this
+      # block as `bash -e`, and a bare call would kill the step before its exit code is read.
+      - name: Scan every image an estate runs
+        env:
+          REGISTRY_OUTAGE_IS_FAILURE: ${{ inputs.registry_outage_is_failure }}
+        run: |
+          set -uo pipefail
+          rc=0
+          bash .github/scripts/image-scan.sh || rc=$?
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE RUST HALF, AND WHY IT IS NOT CACHED
