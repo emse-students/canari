@@ -390,14 +390,15 @@ native handlers instead of shown. The mechanism, and the two durable marks it le
 that token, and the dispatcher drops the row at the next send (`registration-token-not-registered`).
 The server's deletion needs nothing from the device. The server-side ending is single-shot: a failed
 call is logged at error and not retried; making it durable is tracked in
-[backlog](backlog.md#p2---a-push-registration-is-not-bound-to-the-session-that-made-it-2026-10-22).
+[backlog](backlog.md#p2---a-push-registration-is-not-bound-to-the-session-that-made-it-2026-10-22---decided-build-it-user-2026-10-23).
 
 **Scope.** A delete keyed on `(userId, deviceId)` cannot reach another account's registration.
 Within one account, its order against a re-sign-in on the same device is guaranteed only once a
-registration is bound to the session that made it - a schema change, listed with the decisions
-owed in [backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks). A session
+registration is bound to the session that made it - a schema change the user approved on
+2026-10-23, built next ([backlog](backlog.md#p2---a-push-registration-is-not-bound-to-the-session-that-made-it-2026-10-22---decided-build-it-user-2026-10-23)). A session
 that EXPIRES (7 idle days, `deleteExpired`) is not a revocation and leaves the push registration as
-it is; whether it should is an open decision in the same table.
+it is - **decided by the user, 2026-10-23: only an explicit sign-out (or a revocation) ends it, never
+an expiry alone**, so an idle phone keeps its notifications, as WhatsApp's does.
 
 ## A dead session sends the user to `/login` carrying where they were going (2026-10-09)
 

@@ -444,20 +444,20 @@ Measure first: the maximum number of commits per user per minute on production o
 (`mls_commit_log`, grouped by sender device and minute). Set the limit above that maximum, then add a
 test that the route answers `429` past it and never below it.
 
-## P2 - A push registration is not bound to the session that made it (2026-10-22)
+## P2 - A push registration is not bound to the session that made it (2026-10-22) - DECIDED: build it (user, 2026-10-23)
 
 A session that ends ends its device's push registration on both sides since 2026-10-22
 ([sessions](sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
 The server half is ONE internal call per ended session, deleting by `(userId, deviceId)`. Two
-reliability properties need a schema change, and the user's yes
-([owed](#owed-to-the-user---decisions-rotations-and-one-off-clicks)):
+reliability properties need a schema change. **The user said yes on 2026-10-23**: the migration and
+the outbox below are built as their own pull request, after this one:
 
 - **Durability.** The server-side ending is single-shot: a failed call is logged at error and not
   retried.
 - **Precision.** The delete is keyed on the device, not on the registration the ended session made,
   so its order against a re-sign-in on the same device is not fixed by construction.
 
-**Proposal (not built).** Migration on chat-delivery: `push_token."sessionId" uuid NULL`, written by
+**The design to build.** Migration on chat-delivery: `push_token."sessionId" uuid NULL`, written by
 `POST /mls/push/register` from the access token's session claim (if the access token does not carry
 `sid`, core-service adds it); the internal route deletes `WHERE "sessionId" = :sid`. Rows registered
 before the column carry NULL and are rewritten at their next registration - no backfill. Migration on
@@ -650,8 +650,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| **migration: bind a push registration to its session (+ outbox)** | 1 decision (a migration on two services) | [the P2](#p2---a-push-registration-is-not-bound-to-the-session-that-made-it-2026-10-22) |
-| **should session expiry end the push registration of a device never reopened?** (today an expired session leaves it as it is) | 1 decision | [sessions](sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22) |
 | **optional: count `LEGACY_CONTENT_PATH` in the 30-day chat-delivery deploy-log archive** (`zgrep -c` over the production project's archived chat-delivery logs, in the runner account's home). A confirmation of a removal already made on other evidence, not a blocker | 1 command | [legacy-compatibility](legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration) |
 | **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
 | **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |
