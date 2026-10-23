@@ -80,10 +80,10 @@ export type PastPolicy = GraineHistoryVisibility;
  * voucher on the roster waits for the key group to drain before this device may observe it. Not a
  * refusal: the caller parks the ask and decides it again once the group drains (`parkedAsks.ts`).
  *
- * Or `unverifiable`: the admission could not be CHECKED (the roster or the tree did not read). The
- * answer is the `joined` one all the same - fail-closed - but it is a fact about this moment, not
- * about the asker, so the caller must not turn it into a durable claim (an empty hand answered
- * "nothing here for you" is recorded by the requester for the whole roster, section 24).
+ * Or `unverifiable`: the admission could not be CHECKED (the roster or the tree did not read). A
+ * fact about this moment, not about the asker, so the caller answers with SILENCE - never a floored
+ * seed, which is lasting at the requester, nor a "nothing here for you", recorded for the whole
+ * roster (section 24). The requester asks again at its next start.
  */
 export type PastDecision = PastPolicy | 'unobserved' | 'unverifiable';
 
@@ -174,8 +174,8 @@ export function communityKeyGroupOf(mlsService: IMlsService, workspaceId: string
  * HISTORY bundle and the SESSIONS repair - call it, so the two cannot disagree about a member.
  *
  * `joined` when the community is set to it, or when it shares its past and the asker's admission is
- * not proven. `unverifiable` when it cannot be checked (fail-closed, at warn): answered as `joined`,
- * but never as a durable claim. `shared` only for a proven admission.
+ * not proven. `unverifiable` when it cannot be checked (fail-closed, at warn): answered by silence.
+ * `shared` only for a proven admission.
  * `unobserved` when the admission is not proven only because the key group has not drained on this
  * device since a voucher appeared - the caller waits for that drain rather than answering.
  */
@@ -191,7 +191,7 @@ export async function pastPolicyFor(frame: DistributionFrame): Promise<PastDecis
   } catch (e) {
     console.warn(
       `[GRAINE] cannot verify ${frame.sender}'s admission to community ${frame.workspaceId.slice(0, 8)} - ` +
-        `answering as 'joined', nothing from before their arrival: ${String(e)}`
+        `not answering, so nothing lasting reaches them; they ask again at their next start: ${String(e)}`
     );
     return 'unverifiable';
   }

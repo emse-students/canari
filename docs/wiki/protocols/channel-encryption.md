@@ -1055,9 +1055,10 @@ applies, in this order:
 2. the cap (history only);
 3. the rule as this session LEARNED it (`knownHistoryVisibility`): not learned yet PARKS the ask
    until the listing states it (`parkAskUntilRuleKnown`, woken by `whenHistoryRuleKnown`);
-4. the gate (`pastPolicyFor`): `unobserved` PARKS the ask (section 25); `shared` hands everything;
-5. under `joined` - the community's setting, an unproven admission, or an admission that could not
-   be checked (`unverifiable`) - the floor at the asking MEMBER's arrival.
+4. the gate (`pastPolicyFor`): `unobserved` PARKS the ask (section 25); `unverifiable` (the roster
+   or the tree did not read) is answered by SILENCE; `shared` hands everything;
+5. under `joined` - the community's setting or an unproven admission - the floor at the asking
+   MEMBER's arrival.
 
 | Case | Answer | Why |
 | --- | --- | --- |
@@ -1066,7 +1067,7 @@ applies, in this order:
 | Rule `shared`, admission proven | everything in scope | section 25 |
 | Rule `shared`, voucher not observed yet | parked until the key group drains, then decided again | section 25; nothing is floored before the gate decides |
 | Rule `shared`, admission not proven | floored at the member's arrival, "nothing for you" when every row predates it | section 25's "never refused whole"; the same floor as a `joined` community |
-| Rule `shared`, admission not checkable (roster or tree unreadable) | floored at the member's arrival; an empty hand stays SILENT | a moment's failure is not a fact about the asker's roster, so no durable "nothing"; on a repair the withheld session is in neither list and no bundle leaves, so the requester records no decline |
+| Rule `shared`, admission not checkable (roster or tree unreadable) | SILENCE on both paths: no floored seed, no "nothing", no decline (decided 2026-10-23) | a floored seed is lasting at the requester - the rows below its floor are asked of nobody - so a passing read failure would cost a member part of a session for good; silence records nothing, and the requester asks again at its next start |
 | Rule `joined`, proven or not | floored at the member's arrival | the rule outranks the proof: a proven admission lifts the `shared` gate, never a closed past |
 | Floors cannot be read | silence | fail-closed |
 | A row withheld for its roster, or the cap cut the list | never "nothing for you" | an unlisted salon may be the asker's; past the cap the floors judged nothing |
@@ -3976,8 +3977,9 @@ the roster and comes back is observed again, later.
 `seedsTheAskerMayRead` - the HISTORY bundle (`gatherCommunityHistory`) and the SESSIONS repair
 (`gatherNamedSessions`) - so the two cannot disagree about a member. It returns `joined` when the
 community is set to it, or when the admission is not proven (`info`: a decision, not a loss), and
-`unverifiable` when the roster or the tree cannot be read (`warn`: fail closed, answered as `joined`
-but never as a durable "nothing"). **Not proven is never refused whole**: the answer is the one a
+`unverifiable` when the roster or the tree cannot be read (`warn`: fail closed, answered by
+SILENCE on both paths - a floored seed would be lasting at the requester, a passing failure must
+not be). **Not proven is never refused whole**: the answer is the one a
 `joined` community gives - nothing from before the asker's arrival, everything from it on, under the
 same server-computed floor, on the history path too since the reconciliation with #2264
 ([the decision table](#the-floor-is-the-members-on-every-path-and-a-widening-reaches-the-members-already-in-2026-10-22)).

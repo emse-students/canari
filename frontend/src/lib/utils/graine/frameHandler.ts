@@ -691,12 +691,6 @@ interface AskersShare {
   outOfScope: number;
   /** The policy that decided, or `null` when nothing was in scope and no policy was asked. */
   policy: 'shared' | 'joined' | null;
-  /**
-   * Whether the decision is a fact about the ASKER that an empty hand may be claimed from ("nothing
-   * here for you", section 24) - false when the gate could not check the admission (`unverifiable`):
-   * answered as `joined`, but a durable "nothing" from a moment's failure would outlive it.
-   */
-  durable: boolean;
 }
 
 /**
@@ -716,10 +710,10 @@ interface AskersShare {
  *    community's newcomer handed the floored past records the ask answered and never asks again;
  * 4. **THE GATE** (`pastPolicyFor`, channel-encryption section 25): `shared` only for an admission
  *    this device can verify; `joined` when the community is set to it, or the admission is not
- *    proven; `unverifiable` when it cannot be checked (floored as `joined`, but `durable: false`, so
- *    no "nothing here for you" is claimed from a moment's failure); `unobserved` ({@link UNOBSERVED})
+ *    proven; `unverifiable` when it cannot be checked - SILENCE (`null`), never a floor, since a
+ *    floored seed is lasting at the requester and a moment's failure must not be; `unobserved` ({@link UNOBSERVED})
  *    when a voucher waits for the key group to drain - the caller parks the ask;
- * 5. **under `joined`, the MEMBER's floor** - whatever made it `joined`: each seed raised to the
+ * 5. **under `joined`, the MEMBER's floor** - the community's setting or an unproven admission: each seed raised to the
  *    floor the server places at the asking member's arrival (`channel_members.createdAt`), a session
  *    with nothing readable for them withheld whole. The member's, never the device's: a new device of
  *    a member who has been in the community for a year is entitled to that year, and an unproven
@@ -730,8 +724,8 @@ interface AskersShare {
  * rule or is not applying it; on a history bundle it is the ordinary pre-arrival past.
  *
  * @param cap At most this many in-scope sessions are considered (the history bundle's bound).
- * @returns `null` when the floors cannot be established - said here, and answered by the caller
- *   with silence; {@link UNOBSERVED} or {@link RULE_UNKNOWN} when the ask must wait for an event.
+ * @returns `null` when the admission or the floors cannot be established - said, and answered by
+ *   the caller with silence; {@link UNOBSERVED} or {@link RULE_UNKNOWN} when the ask must wait for an event.
  */
 async function seedsTheAskerMayRead(
   frame: DistributionFrame,
@@ -749,7 +743,7 @@ async function seedsTheAskerMayRead(
       ? [...inScope].sort((a, b) => b.createdAt - a.createdAt).slice(0, cap)
       : inScope;
   if (held.length === 0) {
-    return { seeds: [], inScope: inScope.length, outOfScope, policy: null, durable: true };
+    return { seeds: [], inScope: inScope.length, outOfScope, policy: null };
   }
 
   if (knownHistoryVisibility(frame.workspaceId) === null) {
@@ -768,11 +762,14 @@ async function seedsTheAskerMayRead(
       inScope: inScope.length,
       outOfScope,
       policy: 'shared',
-      durable: true,
     };
   }
-  // `joined` and `unverifiable` floor alike; only the claim an empty hand may make differs.
-  const durable = decision === 'joined';
+  // AN ADMISSION THAT COULD NOT BE CHECKED IS ANSWERED BY SILENCE, on both paths - never floored.
+  // A floored seed is lasting at the requester: the rows below its floor are classed "before this
+  // device was given the seed" and asked of nobody, so a passing read failure would cost a member
+  // who would have been proven part of a session for good. Silence costs a re-ask at the
+  // requester's next start, and records nothing. The gate already said why, at warn.
+  if (decision === 'unverifiable') return null;
 
   let floors: Map<string, number>;
   try {
@@ -801,7 +798,6 @@ async function seedsTheAskerMayRead(
     inScope: inScope.length,
     outOfScope,
     policy: 'joined',
-    durable,
   };
 }
 
@@ -837,7 +833,7 @@ async function gatherCommunityHistory(
     GRAINE_HISTORY_BUNDLE_MAX_SEEDS
   );
   if (share === null || isUndecided(share)) return share;
-  const { seeds, inScope, outOfScope, policy, durable } = share;
+  const { seeds, inScope, outOfScope, policy } = share;
   const truncated = inScope > GRAINE_HISTORY_BUNDLE_MAX_SEEDS;
   console.info(
     `[GRAINE] sending ${seeds.length} of ${inScope} seed(s) this key group may read as history to ${frame.sender}` +
@@ -855,12 +851,11 @@ async function gatherCommunityHistory(
   // NOT when a row was withheld for its salon's ROSTER: a salon this device has not listed yet may
   // turn out to be the asker's, and a durable "nothing" would close that past for the roster. NOR
   // when the cap cut the list: the floors judged only the first sessions, and the rest may be the
-  // asker's. NOR when the gate could not check the admission (`durable: false`): a moment's failure
-  // is not a fact about the asker's roster.
+  // asker's. (An admission the gate could not check never reaches here: it is answered by silence.)
   let holdsNothing = false;
   if (seeds.length === 0) {
     const rows = await storage.countGraineSessionsForWorkspace(frame.workspaceId);
-    holdsNothing = rows === held.length && outOfScope === 0 && !truncated && durable;
+    holdsNothing = rows === held.length && outOfScope === 0 && !truncated;
     if (rows !== held.length) {
       console.warn(
         `[GRAINE] not answering ${frame.sender}'s history ask in community ${frame.workspaceId.slice(0, 8)}: ` +
@@ -870,7 +865,6 @@ async function gatherCommunityHistory(
       const why = [
         outOfScope > 0 ? `${outOfScope} seed(s) withheld for their salon's roster` : null,
         truncated ? `more than ${GRAINE_HISTORY_BUNDLE_MAX_SEEDS} seed(s) in scope` : null,
-        durable ? null : 'their admission could not be checked',
       ].filter((reason): reason is string => reason !== null);
       console.info(
         `[GRAINE] not answering ${frame.sender}'s history ask in community ${frame.workspaceId.slice(0, 8)}: ` +

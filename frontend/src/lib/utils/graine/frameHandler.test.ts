@@ -2326,11 +2326,13 @@ describe('the past goes only to an admission this device can verify (section 25)
     info.mockRestore();
   });
 
-  it('a SESSIONS repair the gate cannot check sends no decline - nothing the requester records', async () => {
-    // `unverifiable` on the repair path: the floored-away session is in NEITHER list, and with
-    // nothing else to say no bundle leaves - so the requester records no "not held" from this
-    // answerer, and its next render asks again.
+  it('answers a SESSIONS repair the gate cannot check with SILENCE - no floored seed, nothing recorded', async () => {
+    // `unverifiable` on the repair path, for a session SPANNING the member's arrival. A floored
+    // seed would be lasting at the requester (the rows below its floor are asked of nobody), so a
+    // passing read failure would cost a member who may be proven part of that session for good.
+    // Nothing leaves - neither the seed nor a decline - and the requester asks again next start.
     listWorkspaceMembers.mockRejectedValue(new Error('offline'));
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
     const sendMessage = wireAnswerer();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
@@ -2338,6 +2340,9 @@ describe('the past goes only to an admission this device can verify (section 25)
     await handleDistributionFrame(ask('sessions'));
 
     expect(sendMessage).not.toHaveBeenCalled();
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(parkedAskCount()).toBe(0);
+    expect(warn.mock.calls.flat().join(' ')).toContain('cannot verify');
     warn.mockRestore();
     info.mockRestore();
   });
@@ -2393,9 +2398,7 @@ describe('the past goes only to an admission this device can verify (section 25)
     warn.mockRestore();
   });
 
-  it('floors, and never claims "nothing", when the admission cannot be CHECKED', async () => {
-    // `unverifiable`: answered as `joined` - the member's floor - but an empty hand is not a fact
-    // about the asker's roster, so no durable "nothing here for you" leaves on a moment's failure.
+  it('answers a HISTORY ask the gate cannot check with SILENCE - neither a floored seed nor "nothing"', async () => {
     listWorkspaceMembers.mockRejectedValue(new Error('offline'));
     graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
     const sendMessage = wireAnswerer();
@@ -2403,15 +2406,9 @@ describe('the past goes only to an admission this device can verify (section 25)
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     await handleDistributionFrame(ask('history'));
-    const seeds = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds;
-    expect(seeds?.map((x) => Number(x.firstIndex))).toEqual([4]);
 
-    // The same failure with nothing after the arrival: silence, never "nothing".
-    graineHistoryFloor.mockResolvedValue({});
-    const silent = wireAnswerer();
-    await handleDistributionFrame(ask('history'));
-    expect(silent).not.toHaveBeenCalled();
-    expect(info.mock.calls.flat().join(' ')).toContain('their admission could not be checked');
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
     warn.mockRestore();
     info.mockRestore();
   });
