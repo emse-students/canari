@@ -55,11 +55,18 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     where: jest.fn().mockReturnThis(),
     execute: jest.fn().mockResolvedValue({}),
   };
+  /**
+   * The `dm_seat_evictions` row the advance's transaction reads under the seat lock - none unless a
+   * test says an eviction committed after the claims were read.
+   */
+  let txEvictionRow: { generation: number; owedDeparture: number | null } | null = null;
   const transaction = jest.fn(async (cb: (m: unknown) => Promise<void>) =>
     cb({
       // The seat lock's `pg_advisory_xact_lock` and the eviction record: a no-op here, a real queue
       // and a real table in the interleaving cases below.
-      query: jest.fn().mockResolvedValue([]),
+      query: jest.fn(async (sql: string) =>
+        sql.includes('FROM dm_seat_evictions') && txEvictionRow ? [txEvictionRow] : []
+      ),
       getRepository: (entity: unknown) => {
         if (entity === Group) return { update: groupUpdate, find: txGroupFind };
         // A Welcome carried by the commit is written in the same callback as the advance.
@@ -1783,8 +1790,31 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
         afterEach(() => {
           fetchSpy.mockRestore();
+          txEvictionRow = null;
           if (previous === undefined) delete process.env.INTERNAL_SECRET;
           else process.env.INTERNAL_SECRET = previous;
+        });
+
+        /**
+         * THE ANSWER IS READ BEFORE THE LOCK, SO AN EVICTION MAY COMMIT AFTER IT. The target's claim
+         * is taken before social-service is asked and re-read under the seat lock the advance holds,
+         * which is the lock the eviction takes: one that committed in between moved the generation,
+         * and the whole commit is refused before the epoch moves.
+         */
+        it('refuses the whole commit when the target is evicted after social-service answered', async () => {
+          keyGroup();
+          social(200, { entitled: true });
+          const sent = fanOut();
+          txEvictionRow = { generation: 1, owedDeparture: null };
+
+          await expect(withWelcome()).resolves.toEqual({
+            accepted: false,
+            currentEpoch: 5,
+            reason: 'welcome_target_not_member',
+          });
+          expect(groupUpdate).not.toHaveBeenCalled();
+          expect(txQueuedRepo.save).not.toHaveBeenCalled();
+          expect(sent).not.toHaveBeenCalled();
         });
 
         it('stores the Welcome when social-service entitles the target', async () => {

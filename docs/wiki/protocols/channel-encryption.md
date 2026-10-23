@@ -593,6 +593,15 @@ window with a durable row and a lock:
   entitled, evicted since, or departing is `ADMIT_REFUSED`. The group's epoch is read first, so a
   commit on another epoch is answered `epoch_mismatch` without asking anyone; the distinct people are
   then asked in parallel. Unanswered is a 503 for the whole commit, before the epoch moves.
+- **The Welcome store and the key-group eviction take the same seat lock.** A key group has no roster
+  row in chat-delivery, so a Welcome's target is asked of social-service (`resolveWelcomeTarget`)
+  against a claim read before the question. Both stores re-read that claim under the seat lock - a
+  sent Welcome in `enqueueForLiveGroup` (shared), a commit-carried one in the advance's transaction -
+  and refuse `welcome_target_not_member` (`reason=evicted_since_claim` or `departure_in_progress`)
+  when an eviction overtook it. The target's `pending` row is written in that same transaction
+  (`ensurePendingSeat`), so an eviction either runs wholly before the store or deletes what it wrote.
+  Evictions and removals end the device rows and the queue through `endDeviceMemberships`, under the
+  lock.
 - **One departure function, two evictions, a named outcome.** Every departure in social-service -
   `leaveWorkspace`, `kickFromWorkspace` and the account erasure (`removeFromWorkspace`, the community's
   group and every private salon naming the person), `leaveChannel`, `removeMemberFromChannel`,

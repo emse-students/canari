@@ -3207,8 +3207,12 @@ export class MessagingService {
    * then deletes the stored Welcome with the membership ({@link endDeviceMemberships}). Read after
    * the group row and before any write - the order every membership writer takes.
    *
-   * A KEY-DISTRIBUTION GROUP HAS NO SEAT HERE: its roster is social-service's, and its target is
-   * checked by the entitlement read in {@link resolveWelcomeTarget}, so this answers `true`.
+   * A KEY-DISTRIBUTION GROUP HAS NO ROSTER ROW HERE: its roster is social-service's, asked in
+   * {@link resolveWelcomeTarget} against a claim read before the question. The caller holds the
+   * group's seat lock, the one an eviction takes, and the claim is re-read under it
+   * ({@link seatClaimHolds}): an eviction that committed after the answer, or a departure still in
+   * progress, refuses the store; one that comes after waits for this transaction, then deletes
+   * the stored Welcome with the seats.
    *
    * @returns false when the seat is gone, logged; the caller rolls its transaction back.
    */
@@ -3219,7 +3223,22 @@ export class MessagingService {
     traceId: string,
     tag: string
   ): Promise<boolean> {
-    if (target.keyGroup) return true;
+    if (target.keyGroup) {
+      if (!target.claim) {
+        this.logger.error(
+          `[${tag}][${traceId}] REJECT welcome_target_not_member group=${groupId} ` +
+            `target=${sanitizeLogValue(target.userId)} - a key-group Welcome reached the store with no seat claim`
+        );
+        return false;
+      }
+      const refusal = await seatClaimHolds(m, target.claim);
+      if (refusal === null) return true;
+      this.logger.warn(
+        `[${tag}][${traceId}] REJECT welcome_target_not_member group=${groupId} ` +
+          `target=${sanitizeLogValue(target.userId)} reason=${refusal} - evicted after the entitlement answer`
+      );
+      return false;
+    }
     const seat = await m.getRepository(GroupMember).findOne({
       where: { groupId, userId: target.userId },
       lock: { mode: 'pessimistic_read' },
@@ -3266,6 +3285,11 @@ export class MessagingService {
       return { refused: 'welcome_target_unknown' };
     }
     const scope = distributionScopeOf(group);
+    // A key group's answer is taken against a CLAIM read before the question, so the store can tell
+    // whether an eviction committed after it ({@link lockWelcomeSeat}).
+    const claim = scope
+      ? await claimSeat(this.groupRepo.manager, groupId, deviceInfo.userId)
+      : null;
     const admissible = scope
       ? await isEntitledToDistributionGroup(scope, deviceInfo.userId, traceId)
       : await this.isOnRoster(groupId, deviceInfo.userId);
@@ -3276,7 +3300,7 @@ export class MessagingService {
       );
       return { refused: 'welcome_target_not_member' };
     }
-    return { userId: deviceInfo.userId, claim: null };
+    return { userId: deviceInfo.userId, claim };
   }
 
   /** The queued row of a Welcome, as both doors that store one write it. */
@@ -3408,33 +3432,6 @@ export class MessagingService {
       `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`
     );
     await this.deliverWelcome(queuedWelcome, traceId);
-
-    // Ensure a DeviceGroupMembership row EXISTS, and never demote one that is already active.
-    // INSERT ... ON CONFLICT guarantees record creation even when no prior invitation existed
-    // (bootstrap case: brand-new group, no pending record). A plain UPDATE WHERE status='pending'
-    // would touch 0 rows in that case, leaving the device without a record ->
-    // processPendingInvitations would incorrectly kick it.
-    //
-    // **AN EXISTING ROW IS NEVER TOUCHED.** The conflict clause used to overwrite `status` with the
-    // literal `'pending'` - and `skipUpdateIfNoValuesChanged` does not protect a row whose value
-    // CHANGES - so a Welcome to an `active` device DEMOTED it out of the fan-out. Then it overwrote
-    // `kickedAt` with null, which let a Welcome undo a kick no commit had answered: a kicked device
-    // is refused at the commit gate, and a Welcome is bytes, not an Add. The Add that answers a
-    // kick is the admitting commit, which clears `kickedAt` itself (`validateCommit`), and
-    // `activateDeviceMembership` clears it on activation.
-    await this.deviceGroupRepo
-      .createQueryBuilder()
-      .insert()
-      .into(DeviceGroupMembership)
-      .values({
-        deviceId: targetDeviceId,
-        groupId: safeGroupId,
-        userId: deviceInfo.userId,
-        status: 'pending' as const,
-        kickedAt: null,
-      })
-      .orIgnore()
-      .execute();
 
     // THE ROUTING SET IS NOT WRITTEN HERE, AND THE `sadd` THAT USED TO BE ON THIS LINE IS THE
     // REASON THIS FUNCTION COULD LEAVE SQL AND REDIS DISAGREEING.
@@ -4379,7 +4376,9 @@ export class MessagingService {
       // recipients were read with no lock, so an eviction may have deleted a seat and its queued
       // frames since; holding the lock shared, no eviction runs until these rows are written, and the
       // re-read below drops a seat already gone. Sends into one group never wait for each other.
-      if (seats && rows.length > 0) await takeSharedSeatLock(manager, groupId);
+      // The Welcome store and the key-group eviction take the same seat lock: the target's seat is
+      // re-read under it, and the pending row is written under it.
+      if ((seats && rows.length > 0) || welcome) await takeSharedSeatLock(manager, groupId);
       const [group] = await manager.getRepository(Group).find({
         where: { id: groupId },
         select: {
@@ -4436,8 +4435,49 @@ export class MessagingService {
         );
       }
       if (kept.length === 0) return [];
-      return manager.getRepository(QueuedMessage).save(kept);
+      const saved = await manager.getRepository(QueuedMessage).save(kept);
+      if (welcome) await this.ensurePendingSeat(manager, groupId, welcome);
+      return saved;
     });
+  }
+
+  /**
+   * Ensures the Welcome's target device has a membership row, in the transaction `m` that stores
+   * the Welcome and holds the seat lock - so an eviction cannot run between the two and leave a
+   * pending row behind for a person it just cut off.
+   *
+   * INSERT ... ON CONFLICT guarantees record creation even when no prior invitation existed
+   * (bootstrap case: brand-new group, no pending record). A plain UPDATE WHERE status='pending'
+   * would touch 0 rows in that case, leaving the device without a record ->
+   * processPendingInvitations would incorrectly kick it.
+   *
+   * **AN EXISTING ROW IS NEVER TOUCHED.** The conflict clause used to overwrite `status` with the
+   * literal `'pending'` - and `skipUpdateIfNoValuesChanged` does not protect a row whose value
+   * CHANGES - so a Welcome to an `active` device DEMOTED it out of the fan-out. Then it overwrote
+   * `kickedAt` with null, which let a Welcome undo a kick no commit had answered: a kicked device
+   * is refused at the commit gate, and a Welcome is bytes, not an Add. The Add that answers a
+   * kick is the admitting commit, which clears `kickedAt` itself (`validateCommit`), and
+   * `activateDeviceMembership` clears it on activation.
+   */
+  private async ensurePendingSeat(
+    m: EntityManager,
+    groupId: string,
+    target: WelcomeSeat
+  ): Promise<void> {
+    await m
+      .getRepository(DeviceGroupMembership)
+      .createQueryBuilder()
+      .insert()
+      .into(DeviceGroupMembership)
+      .values({
+        deviceId: target.deviceId,
+        groupId,
+        userId: target.userId,
+        status: 'pending' as const,
+        kickedAt: null,
+      })
+      .orIgnore()
+      .execute();
   }
 
   /**

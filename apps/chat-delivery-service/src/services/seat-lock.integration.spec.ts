@@ -34,7 +34,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
-import { claimSeat, seatClaimHolds, withSeatLock } from '../utils/seat-eviction';
+import { claimSeat, seatClaimHolds, withSeatLock, type SeatClaim } from '../utils/seat-eviction';
 
 const URL = process.env.DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -57,7 +57,10 @@ interface Seams {
     tag: string,
     traceId: string,
     sealed: undefined,
-    opts: { seats?: { exempt: ReadonlySet<string> }; welcome?: unknown }
+    opts: {
+      seats?: { exempt: ReadonlySet<string> };
+      welcome?: { userId: string; deviceId: string; keyGroup: boolean; claim: SeatClaim | null };
+    }
   ): Promise<QueuedMessage[]>;
   restoreRoutes(
     groupId: string,
@@ -134,6 +137,32 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     );
     return Number(row.n);
   };
+  const seatsOf = async (who: { userId: string }): Promise<number> => {
+    const [row]: { n: string }[] = await q(
+      `SELECT count(*) AS n FROM dm_device_group_memberships WHERE "groupId" = $1 AND "userId" = $2`,
+      [GROUP, who.userId]
+    );
+    return Number(row.n);
+  };
+  /** A key-group Welcome to `who`, stored against `claim` as `sendWelcome` stores one. */
+  const storeWelcome = (who: { userId: string; deviceId: string }, claim: SeatClaim) =>
+    seams().enqueueForLiveGroup(
+      [
+        ds.getRepository(QueuedMessage).create({
+          recipientId: who.userId,
+          deviceId: who.deviceId,
+          senderId: SENDER.userId,
+          groupId: GROUP,
+          proto: 'd2VsY29tZQ==',
+          isWelcome: true,
+        }),
+      ],
+      GROUP,
+      'WELCOME',
+      'it',
+      undefined,
+      { welcome: { userId: who.userId, deviceId: who.deviceId, keyGroup: true, claim } }
+    );
   const frameFor = (who: { userId: string; deviceId: string }) =>
     ds.getRepository(QueuedMessage).create({
       recipientId: who.userId,
@@ -328,5 +357,38 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     } finally {
       await release(evicting);
     }
+  });
+
+  it('a key-group Welcome stored against a claim an eviction overtakes waits for it, and stores nothing', async () => {
+    // The claim is read, social-service answers, and an eviction commits before the store.
+    await q(`DELETE FROM dm_device_group_memberships WHERE "userId" = $1`, [PEER.userId]);
+    const claim = await claimSeat(ds.manager, GROUP, PEER.userId);
+    const evicting = await holder('exclusive');
+    try {
+      await evicting.query(
+        `INSERT INTO dm_seat_evictions ("groupId", "userId", "generation") VALUES ($1, $2, 1)`,
+        [GROUP, PEER.userId]
+      );
+      const storing = storeWelcome(PEER, claim);
+      await parked(1);
+      await evicting.query('COMMIT');
+
+      await expect(storing).rejects.toMatchObject({
+        response: { error: 'welcome_target_not_member' },
+      });
+      expect(await queuedFor(PEER)).toBe(0);
+      expect(await seatsOf(PEER)).toBe(0);
+    } finally {
+      await release(evicting);
+    }
+  });
+
+  it('a key-group Welcome whose claim still holds is stored with its pending row', async () => {
+    await q(`DELETE FROM dm_device_group_memberships WHERE "userId" = $1`, [PEER.userId]);
+    const claim = await claimSeat(ds.manager, GROUP, PEER.userId);
+
+    await expect(storeWelcome(PEER, claim)).resolves.toHaveLength(1);
+    expect(await queuedFor(PEER)).toBe(1);
+    expect(await seatsOf(PEER)).toBe(1);
   });
 });
