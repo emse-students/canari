@@ -907,18 +907,16 @@ export class PushController {
    * the same social-service entitlement as the app's own join - see
    * {@link MessagingService.readKeyGroupBaseForPush}.
    *
-   * Auth: PushSecret (no JWT - app may be killed).
+   * Auth: PushSecret (no JWT - app may be killed), proven ONCE by `PushSecretGuard` - the handler
+   * does not verify it again, which would be a second database read for the same answer.
    */
   @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
   @Throttle({ default: { limit: KEY_GROUP_PUSH_LIMIT_PER_MINUTE, ttl: 60_000 } })
   @Post('mls/push/key-group-base')
-  async getKeyGroupBasePush(
-    @Headers('authorization') authHeader: string,
-    @Body() body: { userId: string; deviceId: string; groupId: string }
-  ) {
+  async getKeyGroupBasePush(@Body() body: { userId: string; deviceId: string; groupId: string }) {
+    // The PushSecret of `userId:deviceId` is proven by `PushSecretGuard`, first on this route.
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
-    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
     return this.messagingService.readKeyGroupBaseForPush(groupId, userId, deviceId);
   }
@@ -928,13 +926,12 @@ export class PushController {
    * external commit into a key group is taken here; everything else about it is `validateCommit`'s
    * - see {@link MessagingService.submitKeyGroupJoinForPush}.
    *
-   * Auth: PushSecret (no JWT - app may be killed).
+   * Auth: PushSecret (no JWT - app may be killed), proven ONCE by `PushSecretGuard`.
    */
   @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
   @Throttle({ default: { limit: KEY_GROUP_PUSH_LIMIT_PER_MINUTE, ttl: 60_000 } })
   @Post('mls/push/key-group-join')
   async submitKeyGroupJoinPush(
-    @Headers('authorization') authHeader: string,
     @Body()
     body: {
       userId: string;
@@ -945,9 +942,9 @@ export class PushController {
       groupInfo?: string;
     }
   ) {
+    // The PushSecret of `userId:deviceId` is proven by `PushSecretGuard`, first on this route.
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
-    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
     return this.messagingService.submitKeyGroupJoinForPush(
       {
         groupId: body.groupId ?? '',

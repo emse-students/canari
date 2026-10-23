@@ -164,6 +164,7 @@ import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache'
 import { adoptOrphanedMirrorEntries, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
 import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
 import { appendLog } from '$lib/utils/sessionLog';
+import { Log } from '$lib/utils/Log';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
 import { handleHistoryRequest, processPendingInvitations } from '$lib/utils/chat/actions';
@@ -1383,8 +1384,9 @@ export async function loginImpl(
     mlsService.setDistributionGroupStore(storageSettled.value);
     await mlsService.hydrateDistributionGroups();
     // The key groups the push service joined while the app was shut (channel-encryption section
-    // 25): their trees are in the state just loaded, their registry rows are not - until this.
-    await takeKeyGroupPushJoins(mlsService, (line) => console.log(line));
+    // 26): their trees are in the state just loaded, their registry rows are not - until this.
+    // Info level: one line per ledger entry at start, each a decision a device reading must name.
+    await takeKeyGroupPushJoins(mlsService, (line) => Log.i('LOGIN', line));
     stopIfSignedOut('distribution-groups');
 
     // Notify only on genuine private browsing (blocked / ephemeral storage).

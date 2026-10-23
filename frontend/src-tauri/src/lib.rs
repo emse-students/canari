@@ -923,14 +923,31 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
 // compare-and-swap install are `mobile::key_group_join`'s. Every string crosses as a JNI string,
 // and the state bytes as the one byte array the caller already read.
 
+/// The install's native cache key a ledger call was handed, or the error that refuses the call: the
+/// ledger is sealed under it and is never read or written without it.
+#[cfg(target_os = "android")]
+fn key_group_join_ledger_key(
+    env: &mut jni::JNIEnv,
+    cache_key_b64: &jni::objects::JString,
+) -> Result<native_cache::CacheKey, String> {
+    let b64: String = env
+        .get_string(cache_key_b64)
+        .map_err(|e| e.to_string())?
+        .into();
+    native_cache::platform_key(&b64)
+        .ok_or_else(|| "no native cache key - the ledger is never written in the clear".to_string())
+}
+
 /// Claims one push-join attempt at a key group: `granted`, `granted-unless-base:<epoch>`,
-/// `attempted:<state>`, `full`, or `error`.
+/// `attempted:<state>`, `full`, or `error`. `cacheKeyB64` seals the ledger, as for
+/// `nativeStoreGraineSeeds`; without it the answer is `error` and nothing is attempted.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGroupJoinClaim<'a>(
     mut env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
     files_dir: jni::objects::JString<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     use mobile::key_group_join::{claim, Claim};
@@ -939,8 +956,9 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
             .get_string(&files_dir)
             .map_err(|e| e.to_string())?
             .into();
+        let key = key_group_join_ledger_key(&mut env, &cache_key_b64)?;
         let gid: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
-        Ok(match claim(std::path::Path::new(&dir), &gid)? {
+        Ok(match claim(std::path::Path::new(&dir), &key, &gid)? {
             Claim::Granted => "granted".to_string(),
             Claim::GrantedUnlessBaseAt(epoch) => format!("granted-unless-base:{epoch}"),
             Claim::AlreadyAttempted(state) => format!("attempted:{state}"),
@@ -957,13 +975,14 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
 
 /// Settles a push-join attempt. `state` is `joined` (`a` = scope kind, `b` = scope id), `refused`,
 /// `lost` or `retryable` (`a` = the reason token), or `deferred` (`a` = the reason, `b` = the base
-/// epoch). Returns whether the ledger was written.
+/// epoch). `cacheKeyB64` seals the ledger, as for the claim. Returns whether the ledger was written.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGroupJoinSettle(
     mut env: jni::JNIEnv,
     _service: jni::objects::JObject,
     files_dir: jni::objects::JString,
+    cache_key_b64: jni::objects::JString,
     group_id: jni::objects::JString,
     state: jni::objects::JString,
     a: jni::objects::JString,
@@ -975,6 +994,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
             .get_string(&files_dir)
             .map_err(|e| e.to_string())?
             .into();
+        let key = key_group_join_ledger_key(&mut env, &cache_key_b64)?;
         let gid: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
         let state: String = env.get_string(&state).map_err(|e| e.to_string())?.into();
         let a: String = env.get_string(&a).map_err(|e| e.to_string())?.into();
@@ -995,7 +1015,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
             },
             other => return Err(format!("unknown settlement '{other}'")),
         };
-        settle(std::path::Path::new(&dir), &gid, &settlement)
+        settle(std::path::Path::new(&dir), &key, &gid, &settlement)
     })();
     match result {
         Ok(()) => 1,

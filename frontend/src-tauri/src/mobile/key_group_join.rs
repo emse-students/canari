@@ -38,13 +38,19 @@ use crate::concurrency::{
     background_write_mls_bin_if_unchanged_and_cold, foreground_is_active, live_manager_in_process,
     mls_bin_digest,
 };
+use crate::native_cache::{exclude_from_backup, open_file, seal_file, CacheKey, Opened, Purpose};
 
-/// The ledger of joins attempted from a push, in the app data directory.
-pub const LEDGER_FILE: &str = "key_group_push_joins.json";
+/// The ledger of joins attempted from a push, in the app data directory. SEALED at rest under the
+/// install's native cache key ([`Purpose::KeyGroupJoinLedger`]): it names key groups, their state and
+/// the salon scope the server answered - metadata the app's own stores seal - in a file the push
+/// service must read and write with the app shut. No key, no ledger: a claim is refused rather than
+/// written in the clear. The sign-out sweep removes it with `mls.bin`.
+pub const LEDGER_FILE: &str = crate::commands::storage::KEY_GROUP_PUSH_JOIN_LEDGER_FILE;
 /// The OS lock that orders every ledger edit - the push lane and the app's take alike.
 const LEDGER_LOCK_FILE: &str = "key_group_push_joins.lock";
 /// The sealed post-join state, waiting for the server's answer: `digest (32) || sealed state`.
-pub const STAGED_STATE_FILE: &str = "mls.bin.keygroup-join";
+/// Sealed under the device key like `mls.bin` itself, and removed with it at sign-out.
+pub const STAGED_STATE_FILE: &str = crate::commands::storage::STAGED_KEY_GROUP_JOIN_FILE;
 /// The most groups the ledger names. A capacity, not a clock: a full ledger refuses new attempts
 /// until the app takes it, and says so.
 pub const LEDGER_CAPACITY: usize = 64;
@@ -86,10 +92,13 @@ pub enum Settlement {
     Deferred { reason: String, base_epoch: u64 },
 }
 
-/// Runs `edit` on the ledger map under the ledger's OS lock, writing it back by rename when `edit`
-/// says it changed. An absent or unparsable ledger reads as empty (the unparsable one is said).
+/// Runs `edit` on the ledger map under the ledger's OS lock, writing it back SEALED, by rename, when
+/// `edit` says it changed. An absent ledger reads as empty; one that does not open under `key`, or
+/// does not parse, reads as empty too and is said at error level - it can only be damage, since the
+/// key never rotates and no build ever wrote this file in the clear.
 fn with_ledger<R>(
     data_dir: &Path,
+    key: &CacheKey,
     edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> (R, bool),
 ) -> Result<R, String> {
     std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
@@ -103,37 +112,49 @@ fn with_ledger<R>(
     crate::commands::push::lock_exclusive(&lock)
         .map_err(|e| format!("lock {LEDGER_LOCK_FILE}: {e}"))?;
     let path = data_dir.join(LEDGER_FILE);
-    let mut map = match std::fs::read_to_string(&path) {
-        Ok(c) => match serde_json::from_str::<serde_json::Value>(&c) {
-            Ok(serde_json::Value::Object(m)) => m,
-            other => {
-                log::warn!(
-                    "[KG_PUSH_JOIN] ledger unparsable ({}) - read as empty",
-                    other
-                        .err()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "not an object".into())
-                );
-                serde_json::Map::new()
-            }
-        },
+    let mut map = match std::fs::read(&path) {
+        Ok(bytes) => read_ledger(key, &bytes).unwrap_or_else(|why| {
+            log::error!("[KG_PUSH_JOIN] ledger unreadable ({why}) - read as empty");
+            serde_json::Map::new()
+        }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
         Err(e) => return Err(format!("read {LEDGER_FILE}: {e}")),
     };
     let (result, changed) = edit(&mut map);
     if changed {
+        let plain = serde_json::Value::Object(map).to_string();
+        let sealed = seal_file(key, Purpose::KeyGroupJoinLedger, plain.as_bytes());
         let tmp = data_dir.join(format!("{LEDGER_FILE}.tmp"));
-        std::fs::write(&tmp, serde_json::Value::Object(map).to_string())
-            .map_err(|e| e.to_string())?;
+        std::fs::write(&tmp, sealed).map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+        // A new inode: the backup exclusion does not travel with the name.
+        exclude_from_backup(&path);
     }
     Ok(result)
 }
 
+/// Opens and parses the ledger's bytes. Only the sealed envelope is a ledger: this file never
+/// existed in the clear in any shipped build, so there is no older format to read.
+fn read_ledger(
+    key: &CacheKey,
+    bytes: &[u8],
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let plain = match open_file(key, Purpose::KeyGroupJoinLedger, bytes) {
+        Ok(Opened::Sealed(plain)) => plain,
+        Ok(Opened::Plaintext(_)) => return Err("not sealed".into()),
+        Err(e) => return Err(e.to_string()),
+    };
+    match serde_json::from_slice::<serde_json::Value>(&plain) {
+        Ok(serde_json::Value::Object(m)) => Ok(m),
+        Ok(_) => Err("not an object".into()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Claims one attempt at `group_id`: [`Claim::Granted`] writes it `attempting` BEFORE anything is
 /// fetched, so a process that dies inside the attempt leaves a claim no later push will repeat.
-pub fn claim(data_dir: &Path, group_id: &str) -> Result<Claim, String> {
-    with_ledger(data_dir, |map| {
+pub fn claim(data_dir: &Path, key: &CacheKey, group_id: &str) -> Result<Claim, String> {
+    with_ledger(data_dir, key, |map| {
         if let Some(entry) = map.get(group_id) {
             let state = entry
                 .get("state")
@@ -164,8 +185,13 @@ pub fn claim(data_dir: &Path, group_id: &str) -> Result<Claim, String> {
 }
 
 /// Records how the attempt at `group_id` ended - see [`Settlement`].
-pub fn settle(data_dir: &Path, group_id: &str, settlement: &Settlement) -> Result<(), String> {
-    with_ledger(data_dir, |map| {
+pub fn settle(
+    data_dir: &Path,
+    key: &CacheKey,
+    group_id: &str,
+    settlement: &Settlement,
+) -> Result<(), String> {
+    with_ledger(data_dir, key, |map| {
         let entry = match settlement {
             Settlement::Joined {
                 scope_kind,
@@ -203,8 +229,8 @@ pub struct TakenJoin {
 
 /// Takes the whole ledger and deletes it: from now on the app's own join owns every group in it.
 /// Called by the app at start-up, before the drain (`take_key_group_push_joins`).
-pub fn take_all(data_dir: &Path) -> Result<Vec<TakenJoin>, String> {
-    let taken = with_ledger(data_dir, |map| {
+pub fn take_all(data_dir: &Path, key: &CacheKey) -> Result<Vec<TakenJoin>, String> {
+    let taken = with_ledger(data_dir, key, |map| {
         let mut out = Vec::with_capacity(map.len());
         for (group_id, entry) in map.iter() {
             let field = |k: &str| entry.get(k).and_then(|v| v.as_str()).map(str::to_string);
@@ -471,6 +497,9 @@ mod tests {
         [7u8; 32]
     }
 
+    /// The install's native cache key the ledger is sealed under.
+    const K: CacheKey = [3u8; 32];
+
     /// A key group held by `alice` (who seals a seed frame on it), and `phone`'s sealed `mls.bin`
     /// holding nothing - the phone that never loaded the community.
     struct Fixture {
@@ -708,17 +737,18 @@ mod tests {
     #[test]
     fn the_ledger_grants_one_attempt_per_group_and_the_app_takes_it_whole() {
         let dir = temp_dir("ledger");
-        assert_eq!(claim(&dir, "g1").unwrap(), Claim::Granted);
+        assert_eq!(claim(&dir, &K, "g1").unwrap(), Claim::Granted);
         // A second push for the same group while the first is unsettled - or after the process died.
         assert_eq!(
-            claim(&dir, "g1").unwrap(),
+            claim(&dir, &K, "g1").unwrap(),
             Claim::AlreadyAttempted("attempting".into())
         );
         // A retryable outcome removes the claim; a later push may try again.
-        settle(&dir, "g1", &Settlement::Retryable("no-base".into())).unwrap();
-        assert_eq!(claim(&dir, "g1").unwrap(), Claim::Granted);
+        settle(&dir, &K, "g1", &Settlement::Retryable("no-base".into())).unwrap();
+        assert_eq!(claim(&dir, &K, "g1").unwrap(), Claim::Granted);
         settle(
             &dir,
+            &K,
             "g1",
             &Settlement::Joined {
                 scope_kind: "workspace".into(),
@@ -726,12 +756,13 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(claim(&dir, "g2").unwrap(), Claim::Granted);
-        settle(&dir, "g2", &Settlement::Refused("not-entitled".into())).unwrap();
+        assert_eq!(claim(&dir, &K, "g2").unwrap(), Claim::Granted);
+        settle(&dir, &K, "g2", &Settlement::Refused("not-entitled".into())).unwrap();
         // A prepare failed on the base at epoch 4: claimed again, with the epoch to skip.
-        assert_eq!(claim(&dir, "g3").unwrap(), Claim::Granted);
+        assert_eq!(claim(&dir, &K, "g3").unwrap(), Claim::Granted);
         settle(
             &dir,
+            &K,
             "g3",
             &Settlement::Deferred {
                 reason: "epoch-mismatch".into(),
@@ -739,14 +770,18 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(claim(&dir, "g3").unwrap(), Claim::GrantedUnlessBaseAt(4));
+        assert_eq!(
+            claim(&dir, &K, "g3").unwrap(),
+            Claim::GrantedUnlessBaseAt(4)
+        );
         // That claim is an attempt like any other: a second push meanwhile is not granted.
         assert_eq!(
-            claim(&dir, "g3").unwrap(),
+            claim(&dir, &K, "g3").unwrap(),
             Claim::AlreadyAttempted("attempting".into())
         );
         settle(
             &dir,
+            &K,
             "g3",
             &Settlement::Deferred {
                 reason: "base-unchanged".into(),
@@ -755,11 +790,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            claim(&dir, "g2").unwrap(),
+            claim(&dir, &K, "g2").unwrap(),
             Claim::AlreadyAttempted("refused".into())
         );
 
-        let mut taken = take_all(&dir).unwrap();
+        let mut taken = take_all(&dir, &K).unwrap();
         taken.sort_by(|a, b| a.group_id.cmp(&b.group_id));
         assert_eq!(
             taken,
@@ -788,19 +823,56 @@ mod tests {
             ]
         );
         // Taken means gone: the app's own join owns these groups now.
-        assert!(take_all(&dir).unwrap().is_empty());
-        assert_eq!(claim(&dir, "g2").unwrap(), Claim::Granted);
+        assert!(take_all(&dir, &K).unwrap().is_empty());
+        assert_eq!(claim(&dir, &K, "g2").unwrap(), Claim::Granted);
+    }
+
+    /// THE LEDGER IS SEALED AT REST: its group ids and salon scopes never reach the disk in the
+    /// clear, and a file that does not open under the key - another key, damage, or a plaintext
+    /// one - is read as empty and replaced sealed at the next write.
+    #[test]
+    fn the_ledger_is_sealed_at_rest_and_opens_under_its_key_only() {
+        let dir = temp_dir("sealed");
+        assert_eq!(claim(&dir, &K, "kg-secret-group").unwrap(), Claim::Granted);
+        settle(
+            &dir,
+            &K,
+            "kg-secret-group",
+            &Settlement::Joined {
+                scope_kind: "workspace".into(),
+                scope_id: "salon-secret".into(),
+            },
+        )
+        .unwrap();
+        let on_disk = std::fs::read(dir.join(LEDGER_FILE)).unwrap();
+        assert!(crate::native_cache::is_sealed_file(&on_disk));
+        let text = String::from_utf8_lossy(&on_disk);
+        assert!(!text.contains("kg-secret-group") && !text.contains("salon-secret"));
+
+        // Under another key it reads as empty - never as a ledger that granted nothing.
+        assert_eq!(
+            claim(&dir, &[9u8; 32], "kg-secret-group").unwrap(),
+            Claim::Granted
+        );
+
+        // A plaintext ledger was never written by a shipped build: it is not read as one.
+        std::fs::write(dir.join(LEDGER_FILE), r#"{"kg-plain":{"state":"refused"}}"#).unwrap();
+        assert_eq!(claim(&dir, &K, "kg-plain").unwrap(), Claim::Granted);
+        assert!(crate::native_cache::is_sealed_file(
+            &std::fs::read(dir.join(LEDGER_FILE)).unwrap()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn a_full_ledger_refuses_a_new_group_and_keeps_answering_for_the_old_ones() {
         let dir = temp_dir("full");
         for i in 0..LEDGER_CAPACITY {
-            assert_eq!(claim(&dir, &format!("g{i}")).unwrap(), Claim::Granted);
+            assert_eq!(claim(&dir, &K, &format!("g{i}")).unwrap(), Claim::Granted);
         }
-        assert_eq!(claim(&dir, "one-more").unwrap(), Claim::LedgerFull);
+        assert_eq!(claim(&dir, &K, "one-more").unwrap(), Claim::LedgerFull);
         assert_eq!(
-            claim(&dir, "g0").unwrap(),
+            claim(&dir, &K, "g0").unwrap(),
             Claim::AlreadyAttempted("attempting".into())
         );
     }

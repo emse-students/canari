@@ -499,7 +499,19 @@ pub(crate) fn take_key_group_push_joins(app: tauri::AppHandle) -> Vec<serde_json
                 return vec![];
             }
         };
-        match crate::mobile::key_group_join::take_all(&data_dir) {
+        // The ledger is sealed under the install's cache key: without it, it stays where it is for
+        // a start that can read it (`app_cache_key` has logged the absence).
+        let Ok(key) = crate::native_cache::app_cache_key(&app) else {
+            // Only an accusation when there IS a ledger to take (never on iOS, which writes none).
+            if data_dir
+                .join(crate::mobile::key_group_join::LEDGER_FILE)
+                .exists()
+            {
+                log::error!("[KG_PUSH_JOIN] ledger not taken: the native cache key is unreadable");
+            }
+            return vec![];
+        };
+        match crate::mobile::key_group_join::take_all(&data_dir, &key) {
             Ok(taken) => {
                 log::info!("[KG_PUSH_JOIN] ledger taken: {} entry/entries", taken.len());
                 taken

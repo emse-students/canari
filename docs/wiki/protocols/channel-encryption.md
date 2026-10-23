@@ -3998,6 +3998,10 @@ and again after each resume reload): a `joined` group the loaded MLS state reall
 group until its community loads) - never over a mapping the registry already holds; every other
 entry is left to the community load, which joins the ordinary way.
 
+The ledger is sealed at rest under the install's native cache key, and the staged state under the
+device key; both leave with `mls.bin` at sign-out
+([mobile](../frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
+
 ### What the client checks before committing
 
 - the seed frame's clear MLS header names the group the push names (`frame-group-mismatch`);

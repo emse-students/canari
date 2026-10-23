@@ -2,7 +2,8 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ForbiddenException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { PushSecretGuard } from '../guards/push-secret.guard';
 import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
@@ -58,12 +59,12 @@ describe('PushController - key-group join from a push', () => {
     controller = module.get(PushController);
   });
 
-  it('serves the base for a valid PushSecret', async () => {
+  it('serves the base for the device the guard authenticated', async () => {
     const answer = { scope: { kind: 'workspace', id: 'ws-1' }, welcomeOwed: false, base: null };
     readKeyGroupBaseForPush.mockResolvedValue(answer);
 
     await expect(
-      controller.getKeyGroupBasePush('PushSecret sekret', {
+      controller.getKeyGroupBasePush({
         userId: 'u1',
         deviceId: 'd1',
         groupId: 'kg-1',
@@ -72,22 +73,44 @@ describe('PushController - key-group join from a push', () => {
     expect(readKeyGroupBaseForPush).toHaveBeenCalledWith('kg-1', 'u1', 'd1');
   });
 
-  it('reads no base without the right PushSecret', async () => {
-    await expect(
-      controller.getKeyGroupBasePush('PushSecret wrong', {
-        userId: 'u1',
-        deviceId: 'd1',
-        groupId: 'kg-1',
-      })
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(readKeyGroupBaseForPush).not.toHaveBeenCalled();
-  });
+  /**
+   * THE PUSHSECRET IS PROVEN ONCE, BY `PushSecretGuard`, and the handlers do not read it again. So
+   * the door is the guard: first on both routes, and refusing the body's ids without their secret.
+   */
+  it.each(['getKeyGroupBasePush', 'submitKeyGroupJoinPush'] as const)(
+    '%s reads or submits nothing without the right PushSecret - the guard refuses it first',
+    async (name) => {
+      const handler = Object.getOwnPropertyDescriptor(PushController.prototype, name)?.value as (
+        ...args: unknown[]
+      ) => unknown;
+      expect(Reflect.getMetadata(GUARDS_METADATA, handler)[0]).toBe(PushSecretGuard);
+
+      const guard = new PushSecretGuard(pushTokenRepo as never);
+      const ctx = (authorization: string) =>
+        ({
+          switchToHttp: () => ({
+            getRequest: () => ({
+              headers: { authorization },
+              body: { userId: 'u1', deviceId: 'd1', groupId: 'kg-1' },
+            }),
+          }),
+        }) as unknown as ExecutionContext;
+      await expect(guard.canActivate(ctx('PushSecret wrong'))).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
+      await expect(guard.canActivate(ctx(''))).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(guard.canActivate(ctx('PushSecret sekret'))).resolves.toBe(true);
+      expect(pushTokenRepo.findOne).toHaveBeenCalledWith({
+        where: { userId: 'u1', deviceId: 'd1' },
+      });
+    }
+  );
 
   it('submits the commit as the authenticated device, and nothing else from the body', async () => {
     submitKeyGroupJoinForPush.mockResolvedValue({ accepted: true, newEpoch: 8 });
 
     await expect(
-      controller.submitKeyGroupJoinPush('PushSecret sekret', {
+      controller.submitKeyGroupJoinPush({
         userId: 'u1',
         deviceId: 'd1',
         groupId: 'kg-1',
@@ -107,18 +130,5 @@ describe('PushController - key-group join from a push', () => {
       },
       'u1'
     );
-  });
-
-  it('submits nothing without the right PushSecret', async () => {
-    await expect(
-      controller.submitKeyGroupJoinPush('', {
-        userId: 'u1',
-        deviceId: 'd1',
-        groupId: 'kg-1',
-        baseEpoch: 7,
-        proto: 'AAA=',
-      })
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(submitKeyGroupJoinForPush).not.toHaveBeenCalled();
   });
 });

@@ -2407,15 +2407,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     // The ledger, the crypto and the compare-and-swap install live in `mobile/key_group_join.rs`;
     // what each answer means is [KeyGroupPushJoin]; the orchestration is [joinKeyGroupFromPush].
 
-    /** Claims one attempt at [groupId]: `granted`, `attempted:<state>`, `full`, or `error`. */
-    external fun nativeKeyGroupJoinClaim(filesDir: String, groupId: String): String
+    /**
+     * Claims one attempt at [groupId]: `granted`, `attempted:<state>`, `full`, or `error`. The
+     * ledger is sealed under [cacheKeyB64]; an empty key answers `error` and nothing is written.
+     */
+    external fun nativeKeyGroupJoinClaim(filesDir: String, cacheKeyB64: String, groupId: String): String
 
     /**
      * Settles an attempt: [state] is `joined` ([a] = scope kind, [b] = scope id), `refused`, `lost`
-     * or `retryable` ([a] = the reason token). Returns whether the ledger was written.
+     * or `retryable` ([a] = the reason token). Sealed under [cacheKeyB64], as for the claim.
+     * Returns whether the ledger was written.
      */
     external fun nativeKeyGroupJoinSettle(
         filesDir: String,
+        cacheKeyB64: String,
         groupId: String,
         state: String,
         a: String,
@@ -4901,7 +4906,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // process makes - the lane is the push service's single writer.
             Log.i(TAG, "handleChannelMessage: key group ${seedGroupId?.take(8)} absent -> join from the push queued channel=$channelId")
             val copy = data.toMap()
-            runSerializedWithWakeLock("key_group_join", 90_000L) { joinKeyGroupFromPush(copy) }
+            runSerializedWithWakeLock("key_group_join", 90_000L) { joinKeyGroupFromPush(cacheKey, copy) }
         }
         if (!openable || seedHeld) return
 
@@ -5003,11 +5008,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * before this device's join epoch, which a joiner cannot open. The senders' sessions rotate on
      * the epoch change, so the NEXT salon push carries a frame this device can open.
      */
-    private fun joinKeyGroupFromPush(data: Map<String, String>) {
+    private fun joinKeyGroupFromPush(cacheKey: String, data: Map<String, String>) {
         val groupId = data["seedGroupId"]?.takeIf { it.isNotEmpty() } ?: return
         val frame = data["seedFrame"]?.takeIf { it.isNotEmpty() } ?: return
         val senderId = data["senderId"] ?: ""
         val tag = groupId.take(8)
+        // The ledger is sealed under the install's cache key: without it, no claim is written in
+        // the clear - so no join is attempted, and the app joins at its next foreground.
+        if (cacheKey.isEmpty()) {
+            Log.w(TAG, "joinKeyGroupFromPush: native cache key absent -> no join group=$tag")
+            return
+        }
         // The foreground app owns `mls.bin` and joins every key group at load; a second writer is
         // the lost update the single-writer rule forbids. The native install re-checks this.
         if (MainActivity.isInForeground) {
@@ -5023,7 +5034,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
 
         val claim = try {
-            KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, groupId))
+            KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, cacheKey, groupId))
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "joinKeyGroupFromPush: native library not loaded: ${e.message}")
             return
@@ -5059,7 +5070,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             is KeyGroupPushJoin.Settlement.Retryable -> settlement.reason to ""
             is KeyGroupPushJoin.Settlement.Deferred -> settlement.reason to settlement.baseEpoch.toString()
         }
-        val written = nativeKeyGroupJoinSettle(filesDir, groupId, settlement.token, a, b)
+        val written = nativeKeyGroupJoinSettle(filesDir, cacheKey, groupId, settlement.token, a, b)
         val level = when (settlement) {
             is KeyGroupPushJoin.Settlement.Joined -> Log.INFO
             is KeyGroupPushJoin.Settlement.Retryable -> Log.INFO
