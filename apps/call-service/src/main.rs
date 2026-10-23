@@ -993,7 +993,7 @@ async fn ws_handler(
             (StatusCode::UNAUTHORIZED, "Invalid token").into_response()
         }
         Err(TokenRejection::Invalid(e)) => {
-            error!("JWT validation failed: {}", e);
+            warn!("WebSocket upgrade refused: token rejected ({:?})", e.kind());
             (StatusCode::UNAUTHORIZED, "Invalid token").into_response()
         }
     }

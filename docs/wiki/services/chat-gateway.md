@@ -60,7 +60,7 @@ Token is extracted in this priority order:
 1. Cookie `canari_ws_token`
 2. Query parameter `token=`
 
-If the JWT is invalid or absent, the connection is rejected with code `4401`.
+If the JWT is invalid or absent, the upgrade is refused with HTTP `401`.
 
 **Only an ACCESS token opens a socket** (`decode_access_claims` in `src/models.rs`). core-service
 signs its access token and its refresh token with the same `JWT_SECRET` and HS256, and tells them
