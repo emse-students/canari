@@ -13,6 +13,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { Log } from '$lib/utils/Log';
 import type { SharedFileEntry } from '$lib/stores/incomingShare.svelte';
+import { conversationIdFromShareTarget } from '$lib/sharing/shareTargetsNative';
 
 /** Deletes each copy unread; a copy that cannot be deleted is said, never thrown. */
 export async function discardSharedFiles(paths: string[], reason: string): Promise<void> {
@@ -38,6 +39,12 @@ export interface SharedManifest {
    * than the current epoch was made in a session that has since signed out.
    */
   epoch: number;
+  /**
+   * The conversation the member picked among the share sheet's suggestions (sharing lot S5), from
+   * the shortcut id `IncomingShare.kt` carried; null when none, or not of the suggestion shape. A
+   * HINT only: the picker preselects it only if the signed-in account holds that conversation.
+   */
+  target: string | null;
 }
 
 /**
@@ -70,5 +77,6 @@ export function parseSharedManifest(raw: string): SharedManifest | null {
     files,
     refused: typeof record.refused === 'number' && record.refused > 0 ? record.refused : 0,
     epoch: typeof record.epoch === 'number' && record.epoch > 0 ? record.epoch : 0,
+    target: conversationIdFromShareTarget(record.target),
   };
 }
