@@ -28,6 +28,25 @@ filter bar is gone ([reels](reels.md#the-canareels-entry---an-icon-beside-the-ta
 The publisher's picture, name and link (`PostAuthorAvatar`, `postAuthorName`, `postAuthorHref`)
 and the text renderer (`PostMarkdown`) are shared by the card and the reel viewer's overlay.
 
+**The tab row collapses like Instagram's header (member report, 2026-10-22: the tabs were reachable
+only at the very top).** The wrapper in `routes/posts/+page.svelte` is `sticky top-0` in
+`.page-scroll-wrap` (the one scroller, at every width, so desktop behaves the same) and slides out
+with `-translate-y-full` when `tabsShown` is false: a transform on one boolean, so nothing reflows
+and the infinite scroll's position is untouched. The direction is read from that container's
+`scrollTop` by `nextScrollDirection` ([`utils/scrollDirection.ts`](../../../../frontend/src/lib/utils/scrollDirection.ts)),
+a pure step with an 8 px dead zone measured from where the reader turned; the row is always shown
+at the top, and `scrollTop` is clamped to the maximum so a bottom bounce is not an upward scroll.
+The handler is passive and logs nothing per event. `motion-reduce` drops the slide, `inert` keeps
+the hidden row out of the tab order, and **the row never hides while focus is inside it**
+(`focusin`/`focusout` drive `tabsFocused`): `inert` on a focused row would drop that focus to the
+body. The direction is **seeded at the container's `scrollTop` at mount**
+(`initialScrollDirection(top)`), not at 0, so a page restored mid-scroll does not read its whole
+offset as one scroll down and hide the row unasked. **While a search replaces the feed** the row's
+content is hidden and the wrapper is neither `sticky` nor padded, so no empty opaque band sits over
+the results. Read by code and unit test only: no phone has looked at it (the tab swipe, #1223, is a
+horizontal gesture on the same container and is not touched). **Owed ONE iPhone reading** (review,
+2026-10-23): the row when the page header unmounts with the keyboard open.
+
 ## An anonymous poll stores a tally and no voters (2026-09-30)
 
 A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creation like a form's
@@ -1431,6 +1450,12 @@ its own click's propagation. Two clicks within `GESTURE.DOUBLE_TAP_MS` (250) and
 `GESTURE.DOUBLE_TAP_SLOP_PX` (50) are a double, decided by `isDoubleTap` through
 `createTapDisambiguator` - the arithmetic the media viewer's zoom and the message bubble's heart
 already share, not a third copy. A third quick tap belongs to the same gesture (`quietAfterDouble`).
+**The gap is measured between the events' `timeStamp`s - when each tap HAPPENED - never with a
+clock read in the handler** (2026-10-22): on a busy phone the second click waits in the queue behind
+the first one's handling and render, and a handler-time read counted that work into the 250 ms, so a
+real double tap read as two singles. The message bubble had the same read (`Date.now()`) and takes
+the same fix; the media viewer already used `timeStamp`. `doubleTapLike.test.ts` and
+`MessageBubble.doubleTap.svelte.test.ts` queue the second click behind a 300 ms first handler.
 
 - **On text, the header, a poll's question, a reel in the viewer: no single tap is held.** The first
   click goes on to its target at once. On text it does nothing; on a reel it toggles the player's

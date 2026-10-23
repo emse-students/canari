@@ -33,6 +33,8 @@ class NotificationService: UNNotificationServiceExtension {
   private static let mlsBinFile = "mls.bin"
   private static let pushContextFile = "push_context.json"
   private static let pushSecretFile = "push_secret.txt"
+  /// Present while the app is in the foreground (`CanariSetAppGroupForegroundFlag`, canari_ios.mm).
+  static let appInForegroundFile = "app_in_foreground"
 
   /// The alias of the install's native cache key (Rust `native_cache`, the only copy of the
   /// design), which seals `graine_seeds.json` and the push cache. Spelled in `native_cache.rs`,
@@ -670,7 +672,64 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
+    Self.announceOwnDevicesAdded(json, ctx: ctx, source: "decrypt")
     return json
+  }
+
+  /// "A new device was added to your account" (user decision 2026-10-22), from a commit this
+  /// extension merged in memory - never from a server message.
+  ///
+  /// `json` is a native decrypt answer; its `ownDeviceAdded` array holds the keys Rust found to be
+  /// this account's owner alerts (`mobile/device_notice.rs`). They are claimed in the ledger the app
+  /// shares in the App Group (`canari_native_claim_device_notices`), so a push replaying the same
+  /// commit, or the app having shown it already, raises nothing. One local notification for the
+  /// keys this call claimed; the app's in-app alert names the device. Android twin:
+  /// `CanariFirebaseMessagingService.announceOwnDevicesAdded`.
+  private static func announceOwnDevicesAdded(_ json: String?, ctx: PushContext, source: String) {
+    guard let json = json, let data = json.data(using: .utf8),
+      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let keys = dict["ownDeviceAdded"] as? [String], !keys.isEmpty
+    else { return }
+    guard let dir = appGroupDir(),
+      let keysData = try? JSONSerialization.data(withJSONObject: keys),
+      let keysJson = String(data: keysData, encoding: .utf8)
+    else {
+      NSLog("[CanariNSE] \(source): device(s) added to this account - App Group unavailable, not announced")
+      return
+    }
+    // IN THE FOREGROUND THE APP TELLS IT (its in-app alert), as on Android: nothing is posted and
+    // nothing claimed, so the app's own claim stays the first. The app keeps the flag file in the
+    // App Group (`CanariSetAppGroupForegroundFlag`); a flag a crash left behind costs this one
+    // notification, never the in-app alert.
+    if FileManager.default.fileExists(atPath: dir.appendingPathComponent(appInForegroundFile).path) {
+      NSLog("[CanariNSE] \(source): device(s) added to this account - the app is in the foreground, it tells")
+      return
+    }
+    guard let raw = canari_native_claim_device_notices(dir.path, keysJson) else {
+      NSLog("[CanariNSE] \(source): device-notice claim returned nothing - not announced")
+      return
+    }
+    let claimedJson = String(cString: raw)
+    canari_free_string(raw)
+    let claimed = (try? JSONSerialization.jsonObject(with: Data(claimedJson.utf8))) as? [String] ?? []
+    guard !claimed.isEmpty else {
+      NSLog("[CanariNSE] \(source): device(s) added to this account were already announced")
+      return
+    }
+    let content = UNMutableNotificationContent()
+    content.title = localized("notif.device.added.title", locale: ctx.locale)
+    content.body = localized("notif.device.added.body", locale: ctx.locale)
+    content.sound = .default
+    // One identifier: a second announcement replaces the first rather than stacking.
+    let request = UNNotificationRequest(
+      identifier: "canari-new-device", content: content, trigger: nil)
+    UNUserNotificationCenter.current().add(request) { error in
+      if let error = error {
+        NSLog("[CanariNSE] \(source): new-device notification NOT raised: \(error)")
+      } else {
+        NSLog("[CanariNSE] \(source): \(claimed.count) new device(s) on this account - notified")
+      }
+    }
   }
 
   /// Reads the current epoch, fetches the missing ordered commits, and applies them in
@@ -721,6 +780,7 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
+    Self.announceOwnDevicesAdded(json, ctx: ctx, source: "catchup")
     return json
   }
 

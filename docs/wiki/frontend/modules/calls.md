@@ -1542,6 +1542,24 @@ posted if the app leaves the screen while the call still rings, dropped when the
 If a banner still shows in the foreground on the next reading, it is not this path - see
 [backlog](../../backlog.md#p3---an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix-2026-10-19).
 
+### One call screen on every platform (2026-10-23)
+
+**The request** (user): *"la parite, au moins en apparence, sur toutes les plateformes pour les appels. Un affichage plein ecran avec le nom, la photo et les boutons pour decrocher/decliner ... comme une application d'appel (Messenger, WhatsApp)."*
+
+**The audit found the structure already there** (`CallOverlay` is full screen with safe-area padding, name, avatar, decline/accept, mute, hang-up, timer, on web and in both apps, because the apps embed the same frontend). What was missing was the LOOK, and the three surfaces speaking one language:
+
+| Moment | In-app screen (web, Android, iPhone) | Android native ring (CallStyle + full-screen intent) | iPhone native ring |
+|---|---|---|---|
+| Incoming | name, photo, "Appel entrant", **Refuser (red, left) - Accepter (green, right)** | the system CallStyle: Decline left, Answer right | generic alert until the native ring (another work package) ships; CallKit's own screen, once it does, is decline left, accept right |
+| Outgoing | name, photo, **"Appel..." / "Calling..."** (was "Sonnerie..." / "Ringing..."), mute, hang-up | - | - |
+| In call | name, photo, `mm:ss`, mute, camera, speaker (apps only), hang-up | the ongoing CallStyle with the same "Calling..." text while dialling (it reads the same `call_ringing_label`) | - |
+
+What changed: the other person's photo, blown up, blurred and dimmed, is the backdrop of an audio screen (the SAME `Avatar` component, so one cache and one fallback; with no photo it is the dark initials tile; hidden from assistive tech; absent over a video picture). The avatar is larger (128 px, 176 px from `md`), the name is `text-3xl`, and the accept and decline buttons take two tokens, `--color-call-accept` and `--color-call-decline`, fixed in both themes like `cn-scrim`. An incoming ring after a notification tap is the same screen: every call opens full screen, on any route. Calls are 1:1 (a group has no call), so there is no group screen to draw. No control depends on the keyboard, and `motion-safe` gates the ringing halo.
+
+`CallOverlay.svelte.test.ts` ("the screen every platform shows") pins the name, the backdrop, decline-before-accept DOM order, the tokens, "Calling..." and the absence of Accept on an outgoing call.
+
+**Rendered in Chromium** with a stand-in `CallService` on a public route (no estate, no account, so the photo is the initials tile): [incoming at 390x844](assets/call-screen-incoming-390.png), [in call at 390x844](assets/call-screen-live-390.png), [calling at 1280x800](assets/call-screen-calling-1280.png) (the desktop screen is the whole window, as on Messenger web). **Owed to a phone:** a REAL photo behind the blur on the Mi 9T and the iPhone (WebKit's `blur-3xl` on a scaled element is the cost to read), the safe-area on the notch, and the Android speaker button in the screenshot's place.
+
 ### Ringing, announcing, hearing
 
 - **The ring is an `alertdialog` with focus on Accept** (`preventScroll`); once answered it is a

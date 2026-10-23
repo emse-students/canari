@@ -108,6 +108,7 @@ import { canSendInGroup } from '$lib/utils/chat/groupUsability';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { measureRestoreShortfall } from '$lib/utils/chat/restoreShortfall';
 import { graineRepairHoldObserver, setGraineRuntime } from '$lib/utils/graine/runtime';
+import { clearParkedAsks } from '$lib/utils/graine/parkedAsks';
 import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
 import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
 import { sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
@@ -207,6 +208,7 @@ import {
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
+import { registerDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 
 /**
  * Unregisters this session's presence listener. Module-level because the presence store outlives
@@ -1723,6 +1725,15 @@ export async function loginImpl(
         onBulkIngestEnd: (phase) => endUi(phase),
       });
     }
+    // The new-device notices consume the device events from here on, and drain what is pending.
+    registerDeviceNotices(mlsService, {
+      getUserId: () => ctx.getUserId(),
+      getMyDeviceId: () => ctx.getMyDeviceId(),
+      conversations: cb.conversations,
+      storedConversation: (groupId) => storageSettled.value.getConversation(groupId),
+      addMessageToChat: (senderId, content, contactName, options) =>
+        cb.addMessageToChat(senderId, content, contactName, options),
+    });
     endStartupCatchupPhase();
 
     /**
@@ -2899,13 +2910,19 @@ export function tearDownLiveSession(
     finalWrite = Promise.resolve();
   }
 
+  // THE SERVER-SIDE DEREGISTRATION OF A LIVE SESSION, and only that. The device deletes its own push
+  // registration at every sign-out regardless (`endPushRegistration`, run by `clearAuth`), and the
+  // server ends the device's push token itself when it ends the session (logout and every
+  // revocation, core-service) - so this call is a third, redundant path, kept for a live session.
   if (reason === 'logout') {
     const tokenForPushCleanup = ctx.getAuthToken();
     const deviceForPushCleanup = ctx.getMyDeviceId();
     if (isRefreshCredentialProvenDead()) {
-      // A DEAD SESSION ENDING: the server already refused this session's credential, so the
-      // deregistration would only earn a refusal - known here, so it is not asked.
-      cb.log('[LOGOUT] Push token left registered - the session is already dead on the server.');
+      // A DEAD SESSION ENDING: the server already refused this session's credential, so this call
+      // would only earn a refusal. The device's own deletion still runs from `clearAuth`.
+      cb.log(
+        '[LOGOUT] Server push deregistration skipped - the session is already dead; the device deletes its token.'
+      );
     } else if (tokenForPushCleanup && deviceForPushCleanup) {
       void stopPushService(ctx.getHistoryBaseUrl(), tokenForPushCleanup, deviceForPushCleanup);
     }
@@ -2942,6 +2959,9 @@ export function tearDownLiveSession(
   setCallSystemMessageContext(null);
   // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.
   setGraineRuntime(null);
+  // So are the seed asks parked for a drain (sender ids, request ids); the MLS service's destroy
+  // settles its own drain waiters.
+  clearParkedAsks();
   ctx.getCallService()?.setChatNotifier(null);
   resetSiblingCallWarning();
   return finalWrite;

@@ -672,15 +672,36 @@
    * conversation renders no messages at all (WP-EMPTYVIEW-1). So the read side clamps against the
    * current length; `windowStart` stays the state pagination writes.
    */
+  /** What makes a conversation a new ENTRY for this pane (compared with `lastConversationKey`). */
+  function entryKeyOf(c: Conversation): string {
+    return `${c.id}-${c.contactName}`;
+  }
+
+  /**
+   * The conversation on screen has not been ENTERED yet: the entry effect below has not run for it,
+   * so `windowStart` still belongs to the previous conversation, or is the initial 0. Rendering
+   * from that start mounted the WHOLE thread on a first mount (0 = from the oldest message) and
+   * whatever window the last conversation had on a switch - one synchronous pass over every row,
+   * thrown away by the entry frame a moment later. Until the entry runs, the window IS the entry
+   * frame.
+   */
+  const awaitingEntry = $derived(
+    conversation ? entryKeyOf(conversation) !== lastConversationKey : false
+  );
   let renderWindow = $derived(
-    resolveRenderWindow(
-      windowStart,
-      messageGroups.length,
-      // The 20-group floor belongs to the entry frame alone: any other time a list replaced by a
-      // shorter one (WP-EMPTYVIEW-1) must settle on a full window, not on a first frame that nothing
-      // widens.
-      entering ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
-    )
+    awaitingEntry
+      ? {
+          start: entryWindowStart(messageGroups.length, ENTRY_FIRST_FRAME_GROUPS),
+          end: messageGroups.length,
+        }
+      : resolveRenderWindow(
+          windowStart,
+          messageGroups.length,
+          // The 20-group floor belongs to the entry frame alone: any other time a list replaced by a
+          // shorter one (WP-EMPTYVIEW-1) must settle on a full window, not on a first frame that
+          // nothing widens.
+          entering ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
+        )
   );
   let windowEnd = $derived(renderWindow.end);
   let visibleMessageGroups = $derived(messageGroups.slice(renderWindow.start, renderWindow.end));
@@ -935,7 +956,7 @@
 
   $effect(() => {
     const c = conversation;
-    const convoKey = c ? `${c.id}-${c.contactName}` : '';
+    const convoKey = c ? entryKeyOf(c) : '';
     const messageCount = c?.messages.length ?? 0;
     const catchupActive = isLoadingHistory || isCatchingUpMessages;
 

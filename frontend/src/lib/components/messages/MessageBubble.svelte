@@ -465,7 +465,8 @@
       return;
     }
     e.stopPropagation();
-    bubbleTaps.tap({ x: e.clientX, y: e.clientY, t: Date.now() });
+    // When the tap happened, not when it was handled: see `doubleTapLike`'s click handler.
+    bubbleTaps.tap({ x: e.clientX, y: e.clientY, t: e.timeStamp });
   }
 
   function confirmDelete() {

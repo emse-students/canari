@@ -95,6 +95,12 @@ vi.mock('$lib/utils/users/displayName', () => ({
   resolveDisplayNames: vi.fn().mockResolvedValue((id: string) => id),
 }));
 
+/** The admission this device signs for an invitee (channel-encryption section 25). */
+const signDirectAdmission = vi.fn();
+vi.mock('$lib/utils/graine/admissionIssue', () => ({
+  signDirectAdmission: (...args: unknown[]) => signDirectAdmission(...args),
+}));
+
 const ensureCommunityDistributionGroup = vi.fn().mockResolvedValue(true);
 vi.mock('$lib/utils/graine/distributionGroup', () => ({
   ensureCommunityDistributionGroup: (...args: unknown[]) =>
@@ -1480,6 +1486,44 @@ describe('useChannelWorkspaces - the membership notice', () => {
     const [channelId, , , , , options] = sendEncryptedChannelMessage.mock.calls[0];
     expect(channelId).toBe('channel_c1');
     expect(options).toEqual({ silent: true });
+  });
+
+  // A member hands the newcomer the past only on a proof it can check: the admission this device
+  // signs travels WITH the invitation and is stored on the newcomer's membership row.
+  it('sends the admission this device signed with the invitation (channel-encryption section 25)', async () => {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([makeChannelDto('c1', 'general')]);
+    signDirectAdmission.mockResolvedValue('dm91Y2hlcg');
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    await api.loadChannelWorkspacesFromBackend(ctx);
+
+    await api.inviteMemberToChannel('channel_c1', 'Newcomer', 'member', ctx);
+
+    expect(signDirectAdmission).toHaveBeenCalledWith('ws1', 'newcomer');
+    expect(inviteToChannel).toHaveBeenCalledWith(
+      'c1',
+      expect.objectContaining({ targetUserId: 'newcomer', admissionVoucher: 'dm91Y2hlcg' })
+    );
+  });
+
+  it('still invites, and says so, when the admission could not be signed', async () => {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([makeChannelDto('c1', 'general')]);
+    signDirectAdmission.mockRejectedValue(new Error('no messaging layer'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    await api.loadChannelWorkspacesFromBackend(ctx);
+
+    await api.inviteMemberToChannel('channel_c1', 'newcomer', 'member', ctx);
+
+    expect(inviteToChannel).toHaveBeenCalledWith(
+      'c1',
+      expect.not.objectContaining({ admissionVoucher: expect.anything() })
+    );
+    expect(error.mock.calls.flat().join(' ')).toContain('NOT signed');
+    error.mockRestore();
   });
 
   // An ordinary invitation names no role: the server grants the community's base role, whatever

@@ -7,8 +7,8 @@
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import { getToken } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
-  import { FileX, Link, Check } from '@lucide/svelte';
-  import { copyPublicShareLink } from '$lib/utils/copyShareLink';
+  import { FileX, Share2 } from '@lucide/svelte';
+  import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import { page } from '$app/state';
@@ -39,14 +39,22 @@
 
   const userId = $derived(currentUserId() ?? '');
   let authToken = $state('');
-  let copiedLink = $state(false);
+  /**
+   * The header's "Partager" opens the post's share sheet, the one its menu and the reel rail open
+   * (user, 2026-10-23) - loaded on the first open, as there.
+   */
+  let ShareSheet = $state<
+    typeof import('$lib/components/posts/PostShareSheet.svelte').default | null
+  >(null);
+  let shareOpen = $state(false);
 
-  function copyPostLink() {
-    const id = post?.id;
-    if (!id) return;
-    void copyPublicShareLink(`/posts/${id}`);
-    copiedLink = true;
-    setTimeout(() => (copiedLink = false), 2000);
+  function openShareSheet() {
+    import('$lib/components/posts/PostShareSheet.svelte')
+      .then((mod) => {
+        ShareSheet = mod.default;
+        shareOpen = true;
+      })
+      .catch((e: unknown) => Log.d('postPage', `the share sheet did not load: ${String(e)}`));
   }
 
   $effect(() => {
@@ -68,16 +76,10 @@
       {#if post}
         <button
           type="button"
-          onclick={copyPostLink}
-          class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors {copiedLink
-            ? 'text-green-ok bg-green-50 dark:bg-green-950/20'
-            : 'text-text-muted hover:text-text-main hover:bg-cn-border/30'}"
+          onclick={openShareSheet}
+          class="text-text-muted hover:text-text-main hover:bg-cn-border/30 inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors"
         >
-          {#if copiedLink}
-            <Check size={13} />{m.post_link_copied()}
-          {:else}
-            <Link size={13} />{m.post_share_label()}
-          {/if}
+          <Share2 size={13} />{m.post_share_label()}
         </button>
       {/if}
     {/snippet}
@@ -121,5 +123,9 @@
       <h3 class="text-text-main mb-1 text-lg font-bold">{m.post_not_found_title()}</h3>
       <p class="text-text-muted text-sm">{m.post_not_found_desc()}</p>
     </div>
+  {/if}
+
+  {#if ShareSheet && post}
+    <ShareSheet open={shareOpen} postId={post.id} onClose={() => (shareOpen = false)} />
   {/if}
 </PageContainer>

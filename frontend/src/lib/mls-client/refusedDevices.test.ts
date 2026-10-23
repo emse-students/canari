@@ -1,6 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { DeviceTrustRefusedError, type DevicePin } from './deviceTrust';
-import { forgetRefusedDevicesOf, isRefusedDevice, recordRefusedDevice } from './refusedDevices';
+import {
+  forgetRefusedDevicesOf,
+  isRefusedDevice,
+  listRefusedDevices,
+  recordRefusedDevice,
+  setRefusedDeviceListener,
+} from './refusedDevices';
 
 const own = { userId: 'me', deviceId: 'my-dev' };
 const pin = (reaffirmations: number): DevicePin => ({
@@ -64,5 +70,46 @@ describe('refusedDevices', () => {
     );
     forgetRefusedDevicesOf(own);
     expect(localStorage.length).toBe(0);
+  });
+
+  it('tells its listener of a recorded refusal only, and lists what it remembers', async () => {
+    const listener = vi.fn();
+    const mls = mlsWith(pin(0));
+    setRefusedDeviceListener(listener);
+    try {
+      await recordRefusedDevice(
+        own,
+        new DeviceTrustRefusedError('identity-mismatch', 'peer', 'd0'),
+        mls
+      );
+      await recordRefusedDevice(own, changedKey('Me', 'old'), mls);
+      await recordRefusedDevice(own, changedKey('peer', 'unpinned'), mlsWith(null));
+      expect(listener.mock.calls).toEqual([['me:old']]);
+      expect(listRefusedDevices(own)).toEqual(['me:old']);
+    } finally {
+      setRefusedDeviceListener(null);
+    }
+  });
+
+  it('stops listing a refusal once it is lifted', async () => {
+    await recordRefusedDevice(own, changedKey(), mlsWith(pin(1)));
+    expect(listRefusedDevices(own)).toEqual(['peer:d1']);
+    await isRefusedDevice(own, 'peer', 'd1', mlsWith(pin(2)));
+    expect(listRefusedDevices(own)).toEqual([]);
+  });
+
+  it('a throwing listener does not undo the refusal', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mls = mlsWith(pin(0));
+    setRefusedDeviceListener(() => {
+      throw new Error('ui');
+    });
+    try {
+      expect(await recordRefusedDevice(own, changedKey(), mls)).toBe(true);
+      expect(await isRefusedDevice(own, 'peer', 'd1', mls)).toBe(true);
+      expect(error).toHaveBeenCalled();
+    } finally {
+      setRefusedDeviceListener(null);
+    }
   });
 });

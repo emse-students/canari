@@ -2519,6 +2519,8 @@ Both Android and the iOS NSE run the same ladder when an encrypted MLS message p
 5. `ABSENT` — **nothing is waited for**, and the push falls through to the fallback below. On Android a frame whose Welcome is QUEUED on the push lane never reaches this step: it is queued again behind that Welcome (`WELCOMES_ON_LANE`, [channel-encryption §20](../protocols/channel-encryption.md#how-it-is-built)). What this step was until 2026-09-28 - three decrypts 1.8 s apart on both platforms, betting that another engine joined the group meanwhile - was a clock nobody had seen win, and on Android it sat in front of the very Welcome it waited for (NOTIF-21). Deleted on both at the user's word (*"Supprime ce délai"*).
 6. If everything fails, Android enqueues `MlsBackgroundWorker` and shows the generic fallback notification (unless the push is silent, in which case it returns quietly). The iOS NSE cannot enqueue work from the extension, so it shows the fallback directly.
 
+**Every answer of this ladder may carry `ownDeviceAdded`** - the keys of the "a new device was added to your account" alerts the commits it merged in memory produced. Both platforms claim them in a shared marker ledger and raise one local notification for the keys they claimed (`announceOwnDevicesAdded` in Kotlin and in the NSE); see [mls-protocol](../protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day).
+
 This order matters because a silent commit push advances the epoch but cannot persist state while the app is closed; the next message push therefore looks like an epoch gap on a group that is already joined. Running catch-up first for local groups avoids the old ~9.6 s retry loop.
 
 ##### The Android half of it is ONE FUNCTION, COMPILED TWICE (2026-09-22)
@@ -3759,6 +3761,65 @@ The 2026-09-06 measurement (a notification posted by the WebView carried no acti
 **The principle is decided, not to be re-opened** (the user accepted it 2026-08-26): zero-tap signs the new device in with no second factor, Google says the API "does not handle multi-factor authentication", and Canari has 2FA. Accepted because a restored session authenticates, it does not decrypt: Keystore material is non-exportable, the MLS device key does not travel, and the new device still enrols as a new MLS client ([backup](backup.md)).
 
 **Three traps for the build:** (1) the logout half is a requirement - Play requires deleting the restore key on sign-out, so a Tauri command down to `ClearCredentialStateRequest(TYPE_CLEAR_RESTORE_CREDENTIAL)`, run on the paths that log out WITHOUT a gesture too (401/403, revoked session); (2) the library was `1.7.0-alpha03` - check for a stable line before starting; (3) `E2eeUnavailableException` is expected (no screen lock or no Google backup), handled by retrying with `isCloudBackupEnabled = false`, a second path that is logged at a level that accuses with its rate measured.
+
+## A sign-out ends this device's push registration (2026-10-22)
+
+The device half of the guarantee on
+[sessions](../sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22). It runs
+at EVERY sign-out from `clearAuth` (`endPushRegistration`), independent of the session, the
+network, the tab's registration marker and the app shell.
+
+**What the native side kept per account, and what a sign-out now does with it:**
+
+| Material | Where | At sign-out |
+|---|---|---|
+| FCM token | FCM / `fcm_token.txt` + prefs | deleted natively (`FirebaseMessaging.deleteToken`, `-[FIRMessaging deleteTokenWithCompletion:]`), mirror removed, a fresh token fetched for the next sign-in |
+| PushKit (VoIP) token | `voip_token.txt` | removed; PushKit hands a fresh one at the next launch |
+| push secret | `pending_push_secret.txt`, Android Keystore-wrapped prefs, iOS Keychain, App Group `push_secret.txt` | all four erased |
+| `push_context.json` (`baseUrl`, bearer `pushToken`) | data dir, App Group copy | reduced to `userId`, `deviceId`, `locale` (allowlist); App Group copy removed |
+| `mls.bin`, device key, `graine_seeds.json`, FCM cache | data dir / Keystore / App Group | kept - a sign-out keeps the local state; without a `baseUrl` no background reader loads a context, so nothing decrypts with them |
+
+**Two durable marks** (`push_registration.rs` writes both; names shared with
+`PushRegistrationEnd.kt` and `canari_push.mm`):
+
+- `push_signed_out` - no account owns this install's pushes. `onMessageReceived` (Android) and
+  `CanariHandleFcmData` (iOS app) drop every push while it exists; `write_push_secret` - the
+  server answering a registration - removes it.
+- `push_token_deletion_owed` - the OS token has not been deleted yet (offline sign-out). Removed by
+  the native side once FCM confirmed the deletion. While it exists, `MainActivity.onCreate`, the
+  boot receiver and `CanariSyncFcmTokenIfApnsReady` complete the deletion instead of mirroring the
+  old token, and `startPushService` calls `complete_owed_push_token_deletion` and registers NOTHING
+  until it answers true - the token of the account that left is never registered for the next.
+
+Both marks survive the factory wipe of a revoked device (`KEPT_AT_TOP_LEVEL` in `storage.rs`),
+which runs right after that device's sign-out wrote them.
+
+**One deletion at a time.** The sign-out, `startPushService`'s check and an activation can owe the
+deletion at once. Each platform runs it under one process-wide lock - `OwedTokenDeletion`
+(`push/OwedTokenDeletion.kt`, tested in `android-tests`) on Android, `@synchronized` on iOS - reads
+the mark again inside it, and fetches and mirrors the fresh token inside it too, so the mirror always
+names the live token. On iOS the fresh token is fetched only once APNs has answered (the APNs callback
+fetches it otherwise), and `CanariSyncFcmTokenIfApnsReady` completes an owed deletion only after its
+APNs guard, so a cold start never waits on APNs; `startPushService` completes it on its own before
+any registration either way. On Android, the sign-out's erasure of the push secret and every adoption
+of `pending_push_secret.txt` into the Keystore hold `PushSecretKeystore.handoffLock`, so an adoption
+cannot store a secret after the sign-out cleared it.
+
+`push_signed_out` is lifted only once EVERY copy of a new secret is written (`write_push_secret`), and
+a secret the app could not store fails the registration (`secret-not-stored`): it is not counted, and
+the next attempt registers again. While signed out, the iOS PushKit handler reports any VoIP push to
+CallKit - Apple requires it - as a placeholder with no caller and ends it at once.
+
+The native background paths that could re-register a token (`onNewToken`, the boot receiver,
+`CanariPersistFcmToken`) need a push context and a secret, so after a sign-out they do nothing; they
+now look for the secret only once a context exists, so a signed-out device does not log a Keystore
+fault it does not have.
+
+**What no code here can do.** The iOS Notification Service Extension cannot suppress an alert
+without the filtering entitlement: a push already in flight is drawn with the server's fallback
+text, never decrypted (its context and secret are gone). Proven by compiling on Android
+(`compileArm64DebugKotlin`) and by Rust tests of the file half; the iOS half compiles only in CI, and
+both halves run only on hardware.
 
 ## One row arriving through the push, the pull and the socket (measured 2026-09-08 to 2026-10-06)
 

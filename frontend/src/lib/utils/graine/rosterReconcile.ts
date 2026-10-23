@@ -4,6 +4,7 @@ import { isGraineReady, requireGraineRuntime } from './runtime';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { observeAdmissionState } from './admissionGate';
 
 /**
  * Making a departure move the community's distribution-group epoch.
@@ -114,12 +115,15 @@ export async function reconcileDistributionGroupRoster(
     // community's is its membership; a private salon's is the people who may open it - which is a
     // strictly smaller set, and reading the community's for a salon would re-authorise, at every
     // pass, every leaf the salon had just removed.
-    rosterUserIds =
-      scope.kind === 'workspace'
-        ? (await channelService.listWorkspaceMembers(scope.workspaceId)).map((m) => m.userId)
-        : (await channelService.listMembers(scope.channelId, 'channel')).map((m) =>
-            String(m.userId)
-          );
+    if (scope.kind === 'workspace') {
+      const rows = await channelService.listWorkspaceMembers(scope.workspaceId);
+      rosterUserIds = rows.map((m) => m.userId);
+      await recordAdmissionState(scope.workspaceId, groupId, rows, log);
+    } else {
+      rosterUserIds = (await channelService.listMembers(scope.channelId, 'channel')).map((m) =>
+        String(m.userId)
+      );
+    }
   } catch (e) {
     log(
       `[GRAINE] could not compare ${scopeLabel(scope)} with its distribution group: ${String(e)} - nobody removed`
@@ -164,4 +168,25 @@ export async function reconcileDistributionGroupRoster(
     `[GRAINE] ${scopeLabel(scope)} distribution group is now at epoch ${mlsService.getEpoch(groupId)} - the next send mints a session they cannot open`
   );
   return diff.strayUserIds;
+}
+
+/**
+ * The community sync is where the admission ledger's ROOTS are fixed (channel-encryption section
+ * 25), at the first one after the proof existed. Removals are not recorded here: the MLS layer
+ * records them at merge time (`removalEpochs`). Never fails the reconciliation -
+ * a ledger left unfed only means the next sync or the next check records it - but says so.
+ */
+async function recordAdmissionState(
+  workspaceId: string,
+  groupId: string,
+  rows: Parameters<typeof observeAdmissionState>[2],
+  log: (message: string) => void
+): Promise<void> {
+  try {
+    await observeAdmissionState(workspaceId, groupId, rows);
+  } catch (e) {
+    log(
+      `[GRAINE] admission state of community ${workspaceId.slice(0, 8)} not recorded at this sync: ${String(e)}`
+    );
+  }
 }
