@@ -193,7 +193,7 @@ challenges, and its sign-in fails against the older server until it reads `/api/
 **Removal condition:** `minClientVersion` at or above the first stable carrying the client half, on
 both estates with both stores serving it, AND the warning silent on production for a week. Then the
 branch becomes a 400, which is what makes PKCE REQUIRED rather than offered. It also needs the
-redirect hardening in [backlog](backlog.md#p2---the-mobile-sign-in-returns-through-a-custom-scheme-pkce-binds-the-code-not-the-app)
+redirect hardening in [backlog](backlog.md#p2---the-mobile-sign-in-returns-through-a-custom-scheme-pkce-binds-the-code-not-the-app-2026-10-23)
 to close what PKCE alone does not.
 
 ### No date yet - the exclusions route answered without `withheld`, by a server older than 2026-10-22
