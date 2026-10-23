@@ -82,6 +82,11 @@ describe('MembersController - membership intervals and the exclusions read', () 
       getRepository: (entity: unknown) => ({
         delete: (where: unknown) => {
           txDeletes.push({ entity, where });
+          if (entity === DeviceGroupMembership) {
+            order.push('devices-deleted');
+            const { userId } = where as { userId: string };
+            deviceRows = deviceRows.filter((d) => d.userId !== userId);
+          }
           return Promise.resolve({ affected: 1 });
         },
         update: (where: Record<string, unknown>) => {
@@ -144,7 +149,16 @@ describe('MembersController - membership intervals and the exclusions read', () 
         find: intervalFind,
         transaction: (fn: (m: unknown) => Promise<unknown>) => fn(healTx),
       },
-      transaction: (fn: (m: unknown) => Promise<unknown>) => fn(txManager),
+      // A failed transaction rolls back: the device rows it deleted are there again.
+      transaction: async (fn: (m: unknown) => Promise<unknown>) => {
+        const before = [...deviceRows];
+        try {
+          return await fn(txManager);
+        } catch (e) {
+          deviceRows = before;
+          throw e;
+        }
+      },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -397,10 +411,28 @@ describe('MembersController - membership intervals and the exclusions read', () 
   it('a removal deletes the live row AND closes the interval in one transaction', async () => {
     await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
 
-    expect(txDeletes).toEqual([{ entity: GroupMember, where: { groupId: 'g-1', userId: 'bob' } }]);
+    expect(txDeletes).toContainEqual({
+      entity: GroupMember,
+      where: { groupId: 'g-1', userId: 'bob' },
+    });
     expect(txUpdates).toHaveLength(1);
     expect(txUpdates[0].entity).toBe(GroupMembershipInterval);
     expect(txUpdates[0].where).toMatchObject({ groupId: 'g-1', userId: 'bob' });
+  });
+
+  it('a removal takes the Welcomes still queued for the removed person, in the same transaction', async () => {
+    // A queued Welcome is pulled by its device whatever the roster says: left behind, it would let
+    // the removed person enter the epoch it was built for and read what members seal there.
+    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+
+    expect(txDeletes).toContainEqual({
+      entity: QueuedMessage,
+      where: { recipientId: 'bob', groupId: 'g-1', isWelcome: true },
+    });
+    expect(txDeletes).toContainEqual({
+      entity: DeviceGroupMembership,
+      where: { userId: 'bob', groupId: 'g-1' },
+    });
   });
 
   it("a removal by ANOTHER member names the removed person's devices as parting, before their rows go", async () => {
@@ -417,10 +449,10 @@ describe('MembersController - membership intervals and the exclusions read', () 
       'bob:b2',
       'alice'
     );
-    expect(order).toEqual(['parting-recorded', 'devices-deleted', 'interval-closed']);
+    expect(order).toEqual(['parting-recorded', 'interval-closed', 'devices-deleted']);
   });
 
-  it('a crash after the device rows went still leaves the entry - a retry could not re-derive it', async () => {
+  it('a crash rolls the whole removal back, and the entry written before it is still there', async () => {
     failTx = true;
 
     await expect(controller.removeGroupMember('g-1', 'bob', 'alice', undefined)).rejects.toThrow(
@@ -433,11 +465,12 @@ describe('MembersController - membership intervals and the exclusions read', () 
       'bob:b2',
       'alice'
     );
-    // The retry finds no device rows to derive an entry from - which is why it was written first.
-    redis.hset.mockClear();
+    // The device rows went in the same transaction, so they are back, and a retry writes the same
+    // entry again - which is idempotent - before it removes them for good.
+    expect(deviceRows.filter((d) => d.userId === 'bob')).toHaveLength(2);
     failTx = false;
     await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
-    expect(redis.hset).not.toHaveBeenCalled();
+    expect(deviceRows.filter((d) => d.userId === 'bob')).toHaveLength(0);
   });
 
   it('a self-leave makes no commit, and names nobody as parting', async () => {

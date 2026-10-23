@@ -656,6 +656,89 @@ refusals by reason with a sample of group ids, and `fetchPendingMessages` report
 `waitForMessageQueueIdle`** - the rows are enqueued, not handled, so what was refused is only known
 once the queue has drained. Silent when there is nothing to say.
 
+### The background Welcome answers what happened, and the phone installs only an acceptance (2026-10-22)
+
+A killed Android phone answers a `welcome_request_pending` push from its `mls.bin`
+(`processWelcomeRequestBackground` in `CanariFirebaseMessagingService.kt`, Rust
+`prepare_welcome_background_with_key` / `install_staged_welcome` / `discard_staged_welcome` in
+`mobile/background.rs`). Read on the Mi 9T on 2026-10-22: the phone had been shut while its group moved
+from epoch 1 to 3, built its add on base 1, the gate refused it (`epoch_mismatch`), the route answered
+`201`, and the phone logged "Welcome sent". Worse, it had merged the add into `mls.bin` before the
+answer, so it held an epoch nobody else had and could not read the group's next message.
+
+- **The route's answer is typed.** `201 {status: 'accepted', newEpoch}` after the gate accepted;
+  `409 {status: 'rejected', reason, currentEpoch?}` otherwise. The phone classifies
+  the body's `status` token (`push/BackgroundWelcomeAnswer.kt`), so it reads a pre-2026-10-22 server
+  (`201 {status: 'rejected'}`, `201 {status: 'done'}`) correctly too.
+- **The phone stages, and installs only an acceptance** - the foreground's order since C7. The post-add
+  state is sealed beside `mls.bin` with the digest of the bytes it was built from, installed by a
+  compare-and-swap on `accepted`, and deleted on anything else. A transport failure or a 5xx is
+  `unknown`: not installed, because installing a refusal is the fork this exists to prevent.
+- **No catch-up and no retry.** The background never applies the group's commits to `mls.bin` (the
+  foreground's replay owns that, and what it does around a commit); a stale phone is refused, and the
+  request is left to the foreground or another member. An `epoch_mismatch` whose server epoch is
+  AHEAD of the base (never a base at or past a lagging counter) is recorded in
+  `welcome_request_stale.json` against the digest of `mls.bin`, so the newcomer's re-ask every 60 s is
+  not answered again from the same bytes; any write to `mls.bin` lifts it. A refused TARGET
+  (`welcome_target_unknown` / `welcome_target_not_member`) is remembered the same way, for that target
+  alone (`{group}|{userId:deviceId}`), so a holder does not commit and get refused on every ask; a
+  target admitted later is answered from the next bytes, or by another holder or the foreground. Deleting the MLS state
+  (`remove_mls_state_in`) sweeps the memo, its `.tmp` and every staged `mls.bin.welcome-*` with it,
+  since a staged file holds that state's epoch secrets - and deletes `mls.bin` after them, so a sweep
+  that fails part-way leaves the state intact for the next reset to finish; the owner record
+  (`mls.owner` and its `.tmp`) goes after `mls.bin`, so a failed removal never leaves a state nobody
+  is named for.
+- **The newcomer heals on its own cadence**: `requestReAdd` re-asks every 60 s while its app is open
+  (external join first, then `welcome_request`), so it joins as soon as a base is published again or a
+  member with a current state answers. A shut, stale phone alone never serves it.
+- **The base of the new epoch travels with the commit** (COMM-22), as the foreground's does: the
+  prepare exports it (`add_members_bulk_with_base`), the phone sends it as `groupInfo`, and
+  `validateCommit` publishes it in the advance's own transaction. So an accepted background add never
+  leaves the published base one epoch behind, whether or not the phone's install then succeeds.
+- **An accepted commit always has its Welcome.** The route hands the Welcome to `validateCommit`
+  (`ValidateCommitBody.welcome`), which holds its target to `sendWelcome`'s bar (a registered device,
+  on the roster or entitled by social-service) BEFORE the epoch moves - a refusal is a typed
+  `welcome_target_unknown` / `welcome_target_not_member` 409 - and writes the Welcome row in the
+  advance's own transaction, then delivers it from that row. The Welcome used to be queued by a second
+  call after the advance; when that failed, the newcomer sat in the tree with no Welcome, every holder
+  then answered it `already-member`, and nothing durable recovered it. A failed realtime delivery now
+  costs nothing: the row is the delivery, and the device takes it on its next pull.
+  `welcome` is the background route's alone: `POST /mls/commit` hands the gate an allowlist of the
+  fields `submitCommit` sends (`foregroundCommitBody` in `messaging.controller.ts`), so a foreground
+  body carrying one stores nothing. And **every path that ends a device's membership deletes the
+  Welcomes still queued for it, in the transaction that ends it**, through one helper,
+  `endDeviceMemberships` (`utils/group-membership.ts`): a device pulls its queue whatever the roster
+  says, so a Welcome left behind would let it enter the epoch it was built for. The paths: a removal
+  or self-leave (`removeGroupMember`), a key-group eviction - community kick, leave, salon removal -
+  (`evictFromDistributionGroup`, whole queue), account erasure (`deleteUserData`, whole queue), a
+  deleted, revoked or collected device (`purgeDeviceFootprint`, whole queue), and the three device
+  routes `DELETE device-memberships/...` and `force_leave`. Deliberately NOT: a kick back to
+  `pending` and the cron's purge of a stale pending seat, where the person stays on the roster and a
+  queued Welcome is the Add the device is owed. The helper refuses an empty or missing `userId`, and
+  an empty `deviceId` or `groupId` when the scope names one, because a criterion left out of a delete
+  widens it to every row.
+- **A removal and a Welcome store serialise on the target's roster row.** `addGroupMember` and
+  `removeGroupMember` write `dm_group_members` first, then the membership interval, then the device
+  rows and (on a removal) the queued Welcomes. Two transactions that take the same rows in the same
+  order wait for each other instead of deadlocking (`members.controller.lock-order.spec.ts` reads
+  that order off the SQL the real TypeORM builder generates, via `testing/recordingDataSource.ts`;
+  it cannot run two live sessions, so it proves the order and not the wait). Both Welcome stores -
+  `validateCommit`'s transaction and `sendWelcome`'s `enqueueForLiveGroup` - re-read the target's
+  `dm_group_members` row `FOR SHARE` after the group row and before writing (`lockWelcomeSeat`).
+  If the removal committed first, the row is gone and the store is refused `welcome_target_not_member`
+  with nothing written. If the store got there first, the removal waits on that lock, then deletes
+  the Welcome it just stored. A key-distribution group has no roster row on this side (social-service
+  holds its roster), so its target is checked by the entitlement read instead.
+- **The commit is fanned out once.** `validateCommit` fans an accepted commit out itself; the route used
+  to broadcast it a second time.
+- **What the phone does with the answer is decided in `BackgroundWelcomeAnswer.apply`**, behind a
+  `StagedWelcome` seam the JVM tests drive: an install that finds the MLS state lock busy never ran, so
+  the staged file is deleted there and the line says `lock busy`.
+- **What is left open:** an acceptance whose install is refused (the foreground started and wrote
+  `mls.bin` inside the round trip) leaves the server one commit ahead of this device, logged
+  `ACCEPTED AND NOT INSTALLED`; the device then recovers through the usual ladder. iOS has no
+  background re-add (its branch was unreachable and is deleted).
+
 ### A roster seat is not a key, and only a Welcome tells the two apart
 
 `addGroupMember` writes a `dm_device_group_memberships` row with `status: 'pending'` for **every**
@@ -1114,7 +1197,7 @@ those groups' first pages itself, which is the path every group took before the 
 | DELETE | `/api/mls/push/release-add-lock` | PushSecret | Release add-lock |
 | GET | `/api/mls/push/key-package` | PushSecret | Get key package for background service |
 | POST | `/api/mls/push/commits` | PushSecret | Replayable commits since `sinceEpoch`, for the in-memory catch-up of a device whose app is killed |
-| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit` - a commit this route cannot validate is not broadcast |
+| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit`, which records the commit, stores its Welcome in the same transaction, fans the commit out and delivers the Welcome from its row. **The answer is typed** ([background Welcome](#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)): `201 {status: 'accepted', newEpoch}`, or `409 {status: 'rejected', reason, currentEpoch?}` with `reason` one of `epoch_mismatch`, `concurrent_commit`, `not_a_member`, `welcome_target_unknown`, `welcome_target_not_member` |
 | POST | `/api/mls/push/send` | PushSecret | Send message from background service |
 | POST | `/api/mls/push/broadcast-test` | JWT | Test push to all devices of caller |
 | POST | `/api/mls/push/unavailable` | JWT | A device reporting that it CANNOT obtain a push token (writes nothing - see below) |

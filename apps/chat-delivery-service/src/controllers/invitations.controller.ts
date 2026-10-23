@@ -39,6 +39,7 @@ import { activeRevocationWhere } from '../utils/revocation';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { endDeviceMemberships, type DepartureScope } from '../utils/group-membership';
 
 /** Device-group membership management: pending invitations, status updates, kick-stale. */
 @Controller()
@@ -68,6 +69,16 @@ export class InvitationsController {
 
   private makeTraceId(scope: string): string {
     return `${scope}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+
+  /**
+   * Ends the device memberships `scope` names with the Welcomes still queued for them, in one
+   * transaction - the departure routes of this controller all end a device's place in a group.
+   */
+  private endMemberships(scope: DepartureScope) {
+    return this.deviceGroupRepo.manager.transaction((manager) =>
+      endDeviceMemberships(manager, scope, 'welcomes')
+    );
   }
 
   /** Caller must belong to the group unless they are a global admin. */
@@ -608,7 +619,8 @@ export class InvitationsController {
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
 
-    const result = await this.deviceGroupRepo.delete({
+    // The row and the Welcomes still queued for it, in ONE transaction ({@link endDeviceMemberships}).
+    const ended = await this.endMemberships({
       userId: safeUserId,
       deviceId: safeDeviceId,
       groupId: safeGroupId,
@@ -618,9 +630,9 @@ export class InvitationsController {
     await this.redis.srem(`group:members:${safeGroupId}`, `${safeUserId}:${safeDeviceId}`);
 
     this.logger.log(
-      `[DEL_MEMBERSHIP] user=${safeUserId} device=${safeDeviceId} group=${safeGroupId} affected=${result.affected ?? 0}`
+      `[DEL_MEMBERSHIP] user=${safeUserId} device=${safeDeviceId} group=${safeGroupId} affected=${ended.memberships} welcomesDropped=${ended.queued}`
     );
-    return { status: 'deleted', affected: result.affected ?? 0 };
+    return { status: 'deleted', affected: ended.memberships };
   }
 
   /**
@@ -639,7 +651,8 @@ export class InvitationsController {
     const safeUserId = sanitizeQueryValue(headerUserId ?? '', 'userId');
     const safeDeviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
 
-    const result = await this.deviceGroupRepo.delete({
+    // The row and the Welcomes still queued for it, in ONE transaction ({@link endDeviceMemberships}).
+    const ended = await this.endMemberships({
       userId: safeUserId,
       deviceId: safeDeviceId,
       groupId: safeGroupId,
@@ -648,9 +661,9 @@ export class InvitationsController {
     await this.redis.srem(`group:members:${safeGroupId}`, `${safeUserId}:${safeDeviceId}`);
 
     this.logger.log(
-      `[FORCE_LEAVE] user=${safeUserId} device=${safeDeviceId} group=${safeGroupId} affected=${result.affected ?? 0}`
+      `[FORCE_LEAVE] user=${safeUserId} device=${safeDeviceId} group=${safeGroupId} affected=${ended.memberships} welcomesDropped=${ended.queued}`
     );
-    return { ok: true, affected: result.affected ?? 0 };
+    return { ok: true, affected: ended.memberships };
   }
 
   /**
@@ -672,10 +685,9 @@ export class InvitationsController {
     });
     const groupIds = [...new Set(memberships.map((m) => m.groupId))];
 
-    const result = await this.deviceGroupRepo.delete({
-      userId: safeUserId,
-      deviceId: safeDeviceId,
-    });
+    // Every row of the device and the Welcomes still queued for it, in ONE transaction
+    // ({@link endDeviceMemberships}).
+    const ended = await this.endMemberships({ userId: safeUserId, deviceId: safeDeviceId });
 
     const memberKey = `${safeUserId}:${safeDeviceId}`;
     for (const gid of groupIds) {
@@ -683,8 +695,8 @@ export class InvitationsController {
     }
 
     this.logger.log(
-      `[DEL_ALL_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} affected=${result.affected ?? 0} redisGroupsCleaned=${groupIds.length}`
+      `[DEL_ALL_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} affected=${ended.memberships} welcomesDropped=${ended.queued} redisGroupsCleaned=${groupIds.length}`
     );
-    return { status: 'deleted', affected: result.affected ?? 0 };
+    return { status: 'deleted', affected: ended.memberships };
   }
 }

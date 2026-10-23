@@ -38,6 +38,7 @@ import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import {
   ensureGroupMember,
+  endDeviceMemberships,
   endGroupMembership,
   exclusionWindows,
   openMissingIntervals,
@@ -765,19 +766,25 @@ export class MembersController {
       }
     }
 
-    // Remove all per-device memberships for this user in the group: from here on no application
-    // frame is queued for them, and no frame they send is accepted.
-    const deviceMembershipDelete = await this.deviceGroupRepo.delete({
-      groupId: safeGroupId,
-      userId: safeUserId,
+    // The device rows, the Welcomes still queued for them, the live row and the open interval go in
+    // ONE transaction. Without the device rows no application frame is queued for them and no frame
+    // they send is accepted; the interval is what makes this removal hold against a later re-add
+    // (user, 2026-10-14); and a Welcome left behind would let the removed person enter the epoch it
+    // was built for ({@link endDeviceMemberships}) - a self-leave makes no commit that would undo it.
+    //
+    // THE ROSTER ROW FIRST, THEN THE DEVICE ROWS - the order `addGroupMember` takes them in, so an
+    // add and a removal of the same person wait for each other instead of deadlocking; and the
+    // order a Welcome store re-checks the seat in (`validateCommit`, `sendWelcome`), so a store
+    // racing this removal either commits first and is deleted here, or finds no seat.
+    const { devices, ended } = await this.dataSource.transaction(async (manager) => {
+      const ended = await endGroupMembership(manager, safeGroupId, safeUserId);
+      const devices = await endDeviceMemberships(
+        manager,
+        { userId: safeUserId, groupId: safeGroupId },
+        'welcomes'
+      );
+      return { devices, ended };
     });
-
-    // The live row goes and the membership interval closes in ONE transaction: the interval is what
-    // makes this removal hold against a later re-add (user, 2026-10-14), so a removal that deleted
-    // the row and not the interval would be a removal a re-add silently undoes.
-    const ended = await this.dataSource.transaction((manager) =>
-      endGroupMembership(manager, safeGroupId, safeUserId)
-    );
     if (ended.deleted > 0 && ended.closed === 0) {
       // A member with no open interval: enrolled by a writer running pre-030 code during the deploy
       // that applied the migration. Their exclusion window starts nowhere, so a re-add will NOT
@@ -795,7 +802,7 @@ export class MembersController {
     }
 
     this.logger.log(
-      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0} intervalClosed=${ended.closed}`
+      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${devices.memberships} intervalClosed=${ended.closed} queuedWelcomesDropped=${devices.queued}`
     );
     return { status: 'removed' };
   }
