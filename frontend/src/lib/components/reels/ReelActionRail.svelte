@@ -164,14 +164,14 @@
         <!-- A tap outside closes it: a button, so the viewer's swipe leaves it alone too. -->
         <button
           type="button"
-          class="pointer-events-auto fixed inset-0 z-40 cursor-default"
+          class="pointer-events-auto fixed inset-0 z-(--z-popover-scrim) cursor-default"
           tabindex="-1"
           aria-hidden="true"
           onclick={() => closeDrawer(false)}
           data-reel-rail-drawer-dismiss
         ></button>
         <div
-          class="pointer-events-none absolute inset-x-0 bottom-full z-50 mb-2 flex justify-center"
+          class="pointer-events-none absolute inset-x-0 bottom-full z-(--z-popover) mb-2 flex justify-center"
         >
           <div
             bind:this={drawerEl}
