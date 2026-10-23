@@ -40,7 +40,8 @@ export const LIVE_KEY_ENCRYPTION_SECRET_ENV = 'LIVE_KEY_ENCRYPTION_SECRET';
 /** The key version every new seal is written with, and the only one that opens. */
 export const LIVE_KEY_VERSION = 1;
 
-const PURPOSE = 'live-key';
+/** The HKDF purpose of the live key's sealing key, distinct from every other secret-box use. */
+export const LIVE_KEY_PURPOSE = 'live-key';
 const logger = new Logger('LiveKeyAtRest');
 
 /** Why a live's stored key could not be read - a CODE, never prose a caller would parse. */
@@ -76,7 +77,7 @@ export function storedLiveKeyColumns(alias?: string): string {
 }
 
 /** The additional authenticated data: the live and the version, so neither can be swapped. */
-function context(liveId: string, version: number): string {
+export function liveKeyContext(liveId: string, version: number): string {
   return `live:${liveId.toLowerCase()}:v${version}`;
 }
 
@@ -96,8 +97,8 @@ export function sealLiveKey(
   try {
     return {
       liveKeyCiphertext: sealSecret(
-        PURPOSE,
-        context(liveId, LIVE_KEY_VERSION),
+        LIVE_KEY_PURPOSE,
+        liveKeyContext(liveId, LIVE_KEY_VERSION),
         keyHex,
         LIVE_KEY_ENCRYPTION_SECRET_ENV
       ),
@@ -125,22 +126,22 @@ function unavailable(liveId: string, reason: LiveKeyUnavailableReason): LiveKeyU
  * at ERROR. A row still in the previous format answers its plaintext, at WARN (see the file head).
  */
 export function openLiveKey(liveId: string, stored: StoredLiveKey): string {
-  if (stored.liveKeyCiphertext === null) {
-    if (stored.liveKey !== null && LIVE_KEY_HEX_RE.test(stored.liveKey)) {
+  if (stored.liveKeyCiphertext == null) {
+    if (stored.liveKey != null && LIVE_KEY_HEX_RE.test(stored.liveKey)) {
       logger.warn(
         `[LIVE_KEY] live ${liveId} still holds its key in the previous, plaintext form - ` +
           `the live sweep seals it`
       );
       return stored.liveKey;
     }
-    throw unavailable(liveId, stored.liveKey === null ? 'absent' : 'malformed');
+    throw unavailable(liveId, stored.liveKey == null ? 'absent' : 'malformed');
   }
   if (stored.liveKeyVersion !== LIVE_KEY_VERSION) throw unavailable(liveId, 'unknown-version');
   let opened: string;
   try {
     opened = openSecret(
-      PURPOSE,
-      context(liveId, stored.liveKeyVersion),
+      LIVE_KEY_PURPOSE,
+      liveKeyContext(liveId, stored.liveKeyVersion),
       stored.liveKeyCiphertext,
       LIVE_KEY_ENCRYPTION_SECRET_ENV
     );

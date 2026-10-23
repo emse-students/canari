@@ -1360,7 +1360,9 @@ export class LivesService implements OnModuleDestroy {
           if (changed === 1) {
             outcome.sealed += 1;
           } else {
+            // Excluded like a failure, so the loop ends by construction whatever the row became.
             this.logger.debug(`[LIVE_KEY] ${row.id} was sealed or deleted meanwhile`);
+            skipped.push(row.id);
           }
         } catch (e) {
           // `sealLiveKey` logs its own typed refusal; anything else is the database's.

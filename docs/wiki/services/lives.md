@@ -107,8 +107,8 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | `GET /api/lives` | any member | the open lives the caller may watch ([the rule of a post](#who-may-watch-the-rule-of-a-post)), newest first, at most 50, **no key** |
 | `GET /api/lives/rules` | any member | `{ version, acceptedVersion, acceptedAt }`: the first-live rules the caller must have accepted, and what they did accept ([moderation](#moderation-wp-l8-server-half)) |
 | `GET /api/lives/standing` | any member | the CALLER's own `{ cutsOnRecord, suspendedUntil, withdrawnAt }` ([the ladder](#the-strike-ladder-wp-l8b)), so the pre-live screen can say why a start would be refused before it is pressed |
-| `POST /api/lives` `{ key, associationId?, acceptedRulesVersion? }` | any member (L1) | `201` the live with its key. `400 LIVE_KEY_INVALID` (not 64 lower-case hex), `400 LIVE_ASSOCIATION_INVALID`, `403 LIVE_MUTED`, `403 LIVE_ASSOCIATION_FORBIDDEN` (no `POST_AS_ASSO` there), `403 LIVE_RULES_NOT_ACCEPTED` (with `rulesVersion`), `403 LIVE_BROADCAST_WITHDRAWN`, `403 LIVE_BROADCAST_SUSPENDED` (with `suspendedUntil`), `409 LIVE_ALREADY_OPEN`, `429 LIVE_START_RATE` (6 starts in the hour) |
-| `GET /api/lives/:id` | a member who may watch | `{ id, broadcasterId, associationId, startedAt, lastSegmentAt, nextIndex, key }`, `no-store`. Takes a SEAT ([below](#the-viewer-cap-wp-l4)): `503 LIVE_FULL` (with `viewerCap`) past the cap, `503 LIVE_SEATS_UNAVAILABLE` when the seat count does not answer |
+| `POST /api/lives` `{ key, associationId?, acceptedRulesVersion? }` | any member (L1) | `201` the live with its key. `400 LIVE_KEY_INVALID` (not 64 lower-case hex), `400 LIVE_ASSOCIATION_INVALID`, `403 LIVE_MUTED`, `403 LIVE_ASSOCIATION_FORBIDDEN` (no `POST_AS_ASSO` there), `403 LIVE_RULES_NOT_ACCEPTED` (with `rulesVersion`), `403 LIVE_BROADCAST_WITHDRAWN`, `403 LIVE_BROADCAST_SUSPENDED` (with `suspendedUntil`), `409 LIVE_ALREADY_OPEN`, `429 LIVE_START_RATE` (6 starts in the hour), `503 LIVE_KEY_SEALING_UNAVAILABLE` (no secret to seal the key: nothing written, [the key at rest](#the-live-key-at-rest)) |
+| `GET /api/lives/:id` | a member who may watch | `{ id, broadcasterId, associationId, startedAt, lastSegmentAt, nextIndex, key }`, `no-store`. Takes a SEAT ([below](#the-viewer-cap-wp-l4)): `503 LIVE_FULL` (with `viewerCap`) past the cap, `503 LIVE_SEATS_UNAVAILABLE` when the seat count does not answer, `503 LIVE_KEY_UNAVAILABLE` when the stored key does not open ([the key at rest](#the-live-key-at-rest)) |
 | `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }], viewers }` - the newest 10, or from `from` on; `viewers` is [how many watch](#the-viewer-count-2026-10-21), a number and never a name; `no-store` (the live edge: the shortest cache is none, and the answer is per viewer); renews the seat, same two 503s |
 | `DELETE /api/lives/:id/seat` | any member | `204`: the caller's seat on that live goes back to the cap now. Idempotent, no watch check (a viewer may always give back what it holds); `503 LIVE_SEATS_UNAVAILABLE` |
 | `PUT /api/lives/:id/segments/:index` raw `application/octet-stream` | the broadcaster | `{ index, name, nextIndex }`. `409 LIVE_SEGMENT_OUT_OF_ORDER` (with `nextIndex`), `409 LIVE_SEGMENT_CONFLICT` (a stored index sent with other bytes), `409 LIVE_SEGMENT_IN_PROGRESS` (that index is still storing: retry, the repeat then answers), `409 LIVE_SEGMENT_RESERVATION_LOST` (its reservation was taken over as abandoned), `413` over 4 MiB, `413 LIVE_BUDGET_EXHAUSTED`, `429 LIVE_SEGMENT_TOO_FAST`, `429` from nginx (no `code`), `400 LIVE_SEGMENT_EMPTY`, `503 LIVE_STORE_UNAVAILABLE` (nothing recorded, the index released), `503 LIVE_INGEST_BUSY` |
@@ -324,6 +324,8 @@ all, and nobody has measured that path.
 | --- | --- | --- |
 | `503 { code: 'LIVE_FULL', viewerCap }` | every seat is held | "live complet", and may retry later; `viewerCap` is the number to name |
 | `503 { code: 'LIVE_SEATS_UNAVAILABLE' }` | Redis did not answer (an `error` line) | a failure to retry - **never** "complet": Redis down refuses rather than seats everybody, because an uncounted audience is the overrun the cap prevents |
+| `503 { code: 'LIVE_KEY_UNAVAILABLE' }` | the stored key does not open ([the key at rest](#the-live-key-at-rest), an ERROR line naming the reason) | a failure to retry (`unavailable`), never "complet" and never terminal |
+| `503 { code: 'LIVE_KEY_SEALING_UNAVAILABLE' }` | on a START: no secret to seal the key with, nothing written | a failure to retry (`unavailable`) |
 
 **THE CAP HOLDS FOR AN HONEST CLIENT ONLY.** A seat is taken by the key read and the manifest poll;
 the segment fetch is unauthenticated and checks no seat (that is what lets nginx cache it). So a
@@ -477,10 +479,14 @@ keeps only `"liveKeyCiphertext"` + `"liveKeyVersion"`:
   beside this one, seals new lives under it, and keeps the old one until the last row of the old
   version is purged - an hour after its live's start at most, plus the purge. Rotating the secret IN
   PLACE makes every open live answer 503 until it ends; do it with no live on air.
-- **Rollback**: the previous release reads only `"liveKey"`, so a live started under this one is
-  unwatchable by it (key served null) and its reported lines cannot be checked, until that live ends.
-  Nothing to undo in the schema, and a plaintext is never restored. The same holds for the seconds of
-  the rolling deploy when both releases answer.
+- **The overlap deploy and a rollback**: social-service is `canari.deploy.replace: overlap`, so for
+  the seconds both releases answer - and after a rollback, until the live ends - the OLD release
+  reads only `"liveKey"`. For every live the new sweep has already sealed it serves **`key: null`**
+  (unwatchable through it) and answers a chat-line report **`400 LIVE_CHAT_REPORT_MISMATCH`** (the
+  line does not open with a null key). The new sweep seals lives ALREADY OPEN too, not only new
+  ones, so this reaches a live that was on air before the deploy. Nothing to undo in the schema, and
+  a plaintext is never restored. Dev only today: `LIVE_ENABLED` is false in production, so no live
+  is open there for either release to serve.
 - **What it does not protect**: social-service still holds the key (C12: the seal protects against
   the store and the database's readers, never against social-service), and a database copy taken
   WITH the environment opens everything. The previous plaintext column is dropped once production

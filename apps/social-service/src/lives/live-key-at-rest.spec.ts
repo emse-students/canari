@@ -1,8 +1,11 @@
 import { Logger, ServiceUnavailableException } from '@nestjs/common';
-import { SECRET_BOX_ENV } from '../common/secret-box';
+import { LYDIA_BUSINESS_KEY_PURPOSE } from '../associations/associations.service';
+import { openSecret, SECRET_BOX_ENV, SecretBoxOpenError } from '../common/secret-box';
 import {
   LIVE_KEY_ENCRYPTION_SECRET_ENV,
+  LIVE_KEY_PURPOSE,
   LIVE_KEY_VERSION,
+  liveKeyContext,
   LiveKeyUnavailableError,
   isLiveKeySealingConfigured,
   openLiveKey,
@@ -75,14 +78,28 @@ describe('live-key-at-rest', () => {
     );
   });
 
-  it('does not open under another secret - the Lydia one included', () => {
+  it('does not open under another secret', () => {
     const row = stored(LIVE_A);
     process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV] = 'another-throwaway-secret-0123456789abcdef';
     expect(reasonOf(() => openLiveKey(LIVE_A, row))).toBe('does-not-open');
+  });
+
+  it('does not open under the Lydia purpose, even when both variables hold the SAME secret', () => {
+    const shared = 'live-key-throwaway-secret-0123456789abcdef';
     const lydiaBefore = process.env[SECRET_BOX_ENV];
     try {
-      process.env[SECRET_BOX_ENV] = 'live-key-throwaway-secret-0123456789abcdef';
-      expect(reasonOf(() => openLiveKey(LIVE_A, row))).toBe('does-not-open');
+      process.env[SECRET_BOX_ENV] = shared;
+      process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV] = shared;
+      const row = stored(LIVE_A);
+      const ctx = liveKeyContext(LIVE_A, LIVE_KEY_VERSION);
+      // The control: the same secret, context and env open it under the live-key purpose...
+      expect(
+        openSecret(LIVE_KEY_PURPOSE, ctx, row.liveKeyCiphertext as string, SECRET_BOX_ENV)
+      ).toBe(KEY);
+      // ...so the purpose alone is what refuses it under the Lydia one.
+      expect(() =>
+        openSecret(LYDIA_BUSINESS_KEY_PURPOSE, ctx, row.liveKeyCiphertext as string, SECRET_BOX_ENV)
+      ).toThrow(SecretBoxOpenError);
     } finally {
       if (lydiaBefore === undefined) delete process.env[SECRET_BOX_ENV];
       else process.env[SECRET_BOX_ENV] = lydiaBefore;

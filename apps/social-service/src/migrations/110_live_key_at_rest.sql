@@ -24,13 +24,22 @@
 -- The CHECKs: a row holds exactly ONE form of its key, and a ciphertext always names its version.
 -- Every existing row (plaintext, no ciphertext) satisfies both.
 --
--- ROLLBACK: the previous release reads only "liveKey", so a live started under this release is
--- unwatchable by it (the key served is null) and its reported chat lines cannot be checked, until
--- that live ends - an hour at most. Nothing to undo in the schema: the columns are additive, the
--- previous code never names them, and a plaintext is never restored (that would undo the point).
+-- THE OVERLAP DEPLOY AND A ROLLBACK: social-service is `canari.deploy.replace: overlap`, so while both
+-- releases answer - and after a rollback, until the live ends (an hour at most) - the OLD release
+-- reads only "liveKey". For every live the new sweep has already sealed it serves `key: null` and
+-- answers a chat-line report 400 LIVE_CHAT_REPORT_MISMATCH. The new sweep seals lives ALREADY OPEN
+-- too, so this reaches a live on air before the deploy. Dev only today (LIVE_ENABLED is false in
+-- production). Nothing to undo in the schema: the columns are additive, the previous code never
+-- names them, and a plaintext is never restored (that would undo the point).
+--
+-- LOCK: the ALTERs take ACCESS EXCLUSIVE on `lives`, which every segment and manifest reads, so the
+-- migration gives up after 5 s rather than queue every live request behind a long transaction; the
+-- deploy then fails loudly and a re-run is safe (idempotent below).
 --
 -- Idempotent for CD: IF NOT EXISTS, and catalogue checks scoped to the current schema.
 -- 110: 106-109 are taken by open pull requests (#2265, #2273, #2258, #2284).
+
+SET lock_timeout = '5s';
 
 ALTER TABLE lives ADD COLUMN IF NOT EXISTS "liveKeyCiphertext" text NULL;
 ALTER TABLE lives ADD COLUMN IF NOT EXISTS "liveKeyVersion" smallint NULL;

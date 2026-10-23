@@ -221,7 +221,7 @@ async function refusal(p: Promise<unknown>): Promise<{ status: number; code?: st
   throw new Error('expected a refusal, got an answer');
 }
 
-maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
+maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () => {
   const schema = `lives_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
