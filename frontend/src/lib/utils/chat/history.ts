@@ -1158,8 +1158,8 @@ export async function replayConversationHistory(params: {
           }
 
           const parsed = decodeAppMessage(decryptedBytes);
-          // Verified by mls-core against the frame's MLS sender, like a live frame (setupMessageHandler).
-          const authorship = recordAuthorship(decryptedBytes, id);
+          // Kept only on mls-core's `verified`, like a live frame (setupMessageHandler).
+          const authorship = recordAuthorship(decryptedBytes, id, batchResult.author);
 
           const serverMs = parseServerTimestampMs(msg.timestamp);
           const envelope = parsed ? appMsgToEnvelope(parsed, serverMs) : null;

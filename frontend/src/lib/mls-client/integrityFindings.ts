@@ -8,7 +8,7 @@
  * - `forged-history`: a history bundle relayed a message, an edit, a deletion or a reaction whose
  *   author signature does not verify (`$lib/crypto/messageAuthorship`). The entry is refused.
  *
- * The UI comes later. Today each finding is an ERROR line, a bounded in-memory record a diagnostic
+ * The UI comes later. Today each finding is a line (ERROR when proven, warn when not), a bounded in-memory record a diagnostic
  * screen can read, and ONE report to the server per distinct finding per session
  * (`POST mls/integrity-finding`, `[INTEGRITY]`), since a client console is collected nowhere.
  *
@@ -28,6 +28,12 @@ export interface IntegrityFinding {
   peer: string;
   /** A short fixed code (`fork`, `unproven`, `contradiction`, `message`, `edit`, ...), never prose. */
   detail: string;
+  /**
+   * Whether the finding is ESTABLISHED (`true`: a proven fork, a contradiction, a forged signature)
+   * or only seen (`false`: a fork mls-core could not attribute). It picks the level, here as in
+   * mls-core (ERROR / warn) and on the server - a typed field, so no reader decides it from `detail`.
+   */
+  proven: boolean;
 }
 
 /**
@@ -65,10 +71,14 @@ export async function drainForkFindings(
     return 0;
   }
   for (const f of findings) {
-    noteIntegrityFinding(
-      { kind: 'fork', groupId: f.groupId, epoch: f.epoch, peer: f.peer, detail: f.kind },
-      log
-    );
+    noteIntegrityFinding({
+      kind: 'fork',
+      groupId: f.groupId,
+      epoch: f.epoch,
+      peer: f.peer,
+      detail: f.kind,
+      proven: f.kind !== 'unproven',
+    });
   }
   return findings.length;
 }
@@ -100,18 +110,16 @@ export function resetIntegrityFindings(): void {
 }
 
 /**
- * Records a finding, logs it at ERROR, and reports it once per session. A report that fails is
- * logged and dropped: the record and the line stay, and the next session reports it again.
+ * Records a finding, logs it - at ERROR when `proven`, at warn when not, the levels mls-core uses
+ * (`fork_check.rs`) - and reports it once per session. A report that fails is logged and dropped:
+ * the record and the line stay, and the next session reports it again.
  */
-export function noteIntegrityFinding(
-  finding: IntegrityFinding,
-  log: (msg: string) => void = console.error
-): void {
+export function noteIntegrityFinding(finding: IntegrityFinding): void {
   recorded.push({ ...finding, at: Date.now() });
   if (recorded.length > MAX_RECORDED) recorded.shift();
-  log(
-    `[INTEGRITY] ${finding.kind} in ${finding.groupId.slice(0, 8)}…${finding.epoch !== undefined ? ` at epoch ${finding.epoch}` : ''} - ${finding.peer} (${finding.detail})`
-  );
+  const line = `[INTEGRITY] ${finding.kind} in ${finding.groupId.slice(0, 8)}...${finding.epoch !== undefined ? ` at epoch ${finding.epoch}` : ''} - ${finding.peer} (${finding.detail})`;
+  if (finding.proven) console.error(line);
+  else console.warn(line);
   const key = `${finding.kind}|${finding.groupId}|${finding.epoch ?? ''}|${finding.peer}|${finding.detail}`;
   if (!reporter || reported.has(key)) return;
   reported.add(key);

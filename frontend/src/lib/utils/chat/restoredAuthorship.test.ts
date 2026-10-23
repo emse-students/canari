@@ -43,6 +43,24 @@ describe('a restored message', () => {
     expect(verdict).toMatchObject({ kind: 'verified', content: helloContent, timestamp: SENT_AT });
   });
 
+  it('is not verified when its signed bytes carry no timestamp - the relayer would set its date', async () => {
+    const { alice, keys } = await cast();
+    const undated = { messageId: 'm-1', text: { content: 'hello' } };
+    const authorship = await signedBy(alice, GROUP, undated);
+    const relayed = { id: 'm-1', senderId: 'alice', content: helloContent, timestamp: 42 };
+    const verdict = await vetRestoredMessage(
+      keys,
+      GROUP,
+      { ...relayed, authorship },
+      'mallory',
+      silent
+    );
+    expect(verdict.kind).toBe('unverified');
+    // Its author relaying it vouches for it, as for a row with no proof at all.
+    const own = await vetRestoredMessage(keys, GROUP, { ...relayed, authorship }, 'alice', silent);
+    expect(own.kind).toBe('relayer-is-author');
+  });
+
   it('is never verified when a member forges another member message', async () => {
     const { mallory, keys } = await cast();
     const authorship = await signedBy(mallory, GROUP, HELLO, { claim: 'alice:dev-a' });

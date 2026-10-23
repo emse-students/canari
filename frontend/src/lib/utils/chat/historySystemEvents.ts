@@ -500,10 +500,13 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           console.error(
             `[AUTHORSHIP] REFUSED a replayed ${what} ${id.slice(0, 8)} relayed by ${senderNorm.slice(0, 8)} in ${conversationId.slice(0, 8)}…: ${why}`
           );
-          noteIntegrityFinding(
-            { kind: 'forged-history', groupId: conversationId, peer: senderNorm, detail: what },
-            logReplay
-          );
+          noteIntegrityFinding({
+            kind: 'forged-history',
+            groupId: conversationId,
+            peer: senderNorm,
+            detail: what,
+            proven: true,
+          });
         };
         const vetted = await vetBundle(
           ctx.authorKeys,

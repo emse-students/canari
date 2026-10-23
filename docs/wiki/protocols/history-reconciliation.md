@@ -1219,8 +1219,31 @@ authenticated. The archive replay of `edit_message` and `delete_message` frames 
 **A refusal is loud.** Every refused entry is an ERROR line and an integrity finding
 ([`integrityFindings.ts`](../../../frontend/src/lib/mls-client/integrityFindings.ts)), reported once
 per session to `POST mls/integrity-finding`. The route accepts a report only from a member of the
-group; it logs the authenticated reporter as a fact and the peer as `claimedPeer`, at ERROR, and an
-`unproven` fork at warn as mls-core does. The UI for findings comes later.
+group; it logs the authenticated reporter as a fact and the peer as `claimedPeer`. The level is read
+from the report's typed `proven` boolean, never from its free-text `detail`: `false` (an `unproven`
+fork) is a warn, as in mls-core and on the client; `true`, or no boolean, is ERROR. The UI for
+findings comes later.
+
+**Only mls-core's verdict records a proof.** Both bindings hand `author` (`unsigned`, `verified`,
+`refused`) beside each decrypted plaintext, and `recordAuthorship` keeps a proof on `verified` alone.
+It never re-derives the answer from the bytes: protobufjs skips a group field (wire types 3 and 4)
+that mls-core's parser does not read, so the two can disagree on whether a plaintext ends with a
+field 14, and only mls-core checked the signature.
+
+**A verified row needs a signed timestamp.** A proof whose signed `AppMessage` carries no `sentAt`
+is treated like no proof (marked, or vouched for when its author relays it): verified, the row would
+otherwise carry the relayer's timestamp under the author's name.
+
+**What the fork claim makes visible.** The fork check's claim
+([mls-protocol](mls-protocol.md#fork-detection-a-signed-epoch-fingerprint-in-every-application-frame-2026-10-22))
+sits in the `PrivateMessage` authenticated data, which MLS authenticates but does not encrypt. It
+carries the sender's `userId:deviceId`, a 16-byte epoch fingerprint and a signature, readable by
+everything that handles the frame's bytes: the delivery service and its stored queue and archive
+rows, every member device that receives or fetches the frame, and the push providers (FCM, APNs)
+when the frame is inlined in a notification. The delivery service already records the sending user
+and device beside each frame, and a push payload already names the sending user (`senderId`); the
+device id in a push payload is what the claim adds there. The author proof of this section is inside
+the ciphertext and adds nothing visible.
 
 ### Reactions
 

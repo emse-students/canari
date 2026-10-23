@@ -11,7 +11,12 @@ import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verif
 import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 import type { ForkFinding } from '$lib/mls-client/integrityFindings';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
-import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type {
+  DecryptedApplication,
+  GraineRunReading,
+  MlsBatchProcessResult,
+} from '$lib/mls-client/IMlsService';
+import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import {
   loadAndInitWasm,
   migrateLegacyMlsStateBlob,
@@ -1354,14 +1359,15 @@ export class WebMlsService extends BaseMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     envelope?: EnvelopeSender
-  ): Promise<Uint8Array | null> {
+  ): Promise<DecryptedApplication | null> {
     const result = this.client.process_incoming_message_with_sender(groupId, messageBytes) as {
       data: Uint8Array;
       sender: string | null;
+      author: AuthorVerdict;
     } | null;
     if (!result) return null;
     assertVerifiedSender(groupId, envelope, result.sender);
-    return result.data;
+    return { plaintext: result.data, author: result.author };
   }
 
   /** Single WASM crossing for an ordered page of ciphertexts (history catch-up / fallback path). */

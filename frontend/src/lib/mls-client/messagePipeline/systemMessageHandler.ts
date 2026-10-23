@@ -990,10 +990,13 @@ export async function handleSystemEvent(
         log(
           `[AUTHORSHIP] REFUSED a restored ${what} ${id.slice(0, 8)} relayed by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}…: ${why}`
         );
-        noteIntegrityFinding(
-          { kind: 'forged-history', groupId: convoKey, peer: senderNorm, detail: what },
-          log
-        );
+        noteIntegrityFinding({
+          kind: 'forged-history',
+          groupId: convoKey,
+          peer: senderNorm,
+          detail: what,
+          proven: true,
+        });
       };
 
       // 0) The conversation's own state - read watermarks and the shared history floor - which

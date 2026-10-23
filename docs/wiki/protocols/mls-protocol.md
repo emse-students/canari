@@ -393,7 +393,10 @@ every application frame carries, in the MLS `PrivateMessage`'s authenticated dat
 
 **Why the AAD and not the ciphertext.** A member on the other branch of a fork cannot decrypt the
 frame at all, so a fingerprint inside the ciphertext would only ever reach members that agree - a
-check that can never fire. The AAD is readable before the decrypt, on exactly the arm that fails.
+check that can never fire. The AAD is readable before the decrypt, on exactly the arm that fails -
+and so by everything that handles the frame's bytes; who that is, and what the `userId:deviceId` in
+it adds, is stated in
+[history-reconciliation](history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22).
 
 **The verdicts** (`mls-core/src/fork_check.rs`), judged on the same-epoch refusal and on success:
 

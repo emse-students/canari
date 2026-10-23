@@ -107,17 +107,33 @@ export function splitAuthorProof(
 }
 
 /**
+ * What mls-core established about a decrypted frame's proof (`AuthorVerdict::code` in
+ * `mls-core/src/authorship.rs`), handed over beside the plaintext by both bindings.
+ */
+export type AuthorVerdict = 'unsigned' | 'verified' | 'refused';
+
+/**
  * The proof of a frame THIS DEVICE JUST DECRYPTED, to keep beside its message - or `undefined` when
- * the frame carried none. mls-core leaves a proof in the plaintext only when it verified it against
- * the leaf MLS authenticated the frame with (it strips and accuses otherwise), so nothing is checked
- * again here. Never call this on bytes that did not come out of an MLS decrypt.
+ * mls-core did not verify one. ONLY THE VERDICT DECIDES: mls-core checked the proof against the leaf
+ * MLS authenticated the frame with, and this parser is not the one it used - protobufjs skips a
+ * group field mls-core does not read, so these bytes can show a trailer mls-core never saw and
+ * called `unsigned`. On `verified` the split below only locates the bytes mls-core already proved.
+ * Never call this on bytes that did not come out of an MLS decrypt.
  */
 export function recordAuthorship(
   decrypted: Uint8Array,
-  groupId: string
+  groupId: string,
+  verdict: AuthorVerdict | undefined
 ): RecordedAuthorship | undefined {
+  if (verdict !== 'verified') return undefined;
   const split = splitAuthorProof(decrypted);
-  if (!split) return undefined;
+  if (!split) {
+    // mls-core found the trailer and this parser does not: the two disagree on the same bytes.
+    console.error(
+      `[AUTHORSHIP] mls-core verified a proof in ${groupId.slice(0, 8)}... that this parser cannot find - nothing recorded`
+    );
+    return undefined;
+  }
   return { body: toBase64(split.body), proof: toBase64(split.proof), group: groupId };
 }
 

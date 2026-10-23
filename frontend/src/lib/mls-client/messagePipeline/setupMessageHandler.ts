@@ -638,11 +638,12 @@ async function handleWelcome({
       if (buf?.msgs.length) {
         for (const msg of buf.msgs) {
           try {
-            const decBytes = await mlsService.processIncomingMessage(joinedGroupId, msg.content, {
+            const dec = await mlsService.processIncomingMessage(joinedGroupId, msg.content, {
               userId: msg.sender,
               deviceId: msg.deliveryMeta?.senderDeviceId,
               path: 'welcome-replay',
             });
+            const decBytes = dec?.plaintext ?? null;
             // THE BUFFER SPENDS A GENERATION LIKE EVERY OTHER PATH, and recorded nothing until
             // 2026-09-07. These are frames that arrived BEFORE the Welcome and were held; the shared
             // archive holds the same rows, so a replay walked them later, MLS refused the spent
@@ -651,8 +652,8 @@ async function handleWelcome({
             noteFrameConsumed(userId, joinedGroupId, msg.content);
             if (decBytes) {
               const appMsg = decodeAppMessage(decBytes);
-              // Verified by mls-core like any live frame - see the live path below.
-              const authorship = recordAuthorship(decBytes, joinedGroupId);
+              // Kept only on mls-core's `verified`, like any live frame - see the live path below.
+              const authorship = recordAuthorship(decBytes, joinedGroupId, dec?.author);
               if (
                 appMsg &&
                 !refusesAddressedNonAnswer(appMsg, msg.deliveryMeta, joinedGroupId, msg.sender)
@@ -1046,11 +1047,12 @@ async function handleKnownGroup({
   };
 
   try {
-    const decrypted = await mlsService.processIncomingMessage(groupId, content, {
+    const opened = await mlsService.processIncomingMessage(groupId, content, {
       userId: sender,
       deviceId: deliveryMeta?.senderDeviceId,
       path: 'live',
     });
+    const decrypted = opened?.plaintext ?? null;
 
     // Persist: immediate for commits (epoch advanced), deferred for application messages.
     if (isCommit) {
@@ -1128,10 +1130,10 @@ async function handleKnownGroup({
     const liveAuthor = liveProofOfAuthor(sender, deliveryMeta, msg.system?.event);
     if (liveAuthor) retryPullsOwedTo(liveAuthor, deps);
 
-    // THE AUTHOR'S SIGNATURE, KEPT WITH WHAT IT PROVES. mls-core left it in the plaintext only
-    // because it verified it against this frame's MLS sender, so a history bundle this device writes
-    // later can prove the message, edit, deletion or reaction to a reader that never saw the frame.
-    const authorship = recordAuthorship(decrypted, groupId);
+    // THE AUTHOR'S SIGNATURE, KEPT WITH WHAT IT PROVES - and only on mls-core's `verified`, which
+    // checked it against this frame's MLS sender. A history bundle this device writes later can then
+    // prove the message, edit, deletion or reaction to a reader that never saw the frame.
+    const authorship = recordAuthorship(decrypted, groupId, opened?.author);
 
     if (msg.text || msg.reply || msg.media) {
       const envelope = appMsgToEnvelope(msg, deliveryMeta?.queuedCreatedAt);

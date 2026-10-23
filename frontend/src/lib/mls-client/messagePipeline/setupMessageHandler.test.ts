@@ -3,6 +3,7 @@ vi.mock('$lib/utils/hex', () => ({
   saveMlsStateEncrypted: vi.fn().mockResolvedValue(undefined),
   purgeLegacyPlainMlsState: vi.fn().mockResolvedValue(undefined),
   fromBase64: vi.fn(() => new Uint8Array([1])),
+  toBase64: vi.fn((bytes: Uint8Array) => `b64:${bytes.length}`),
 }));
 
 vi.mock('$lib/proto/codec', () => ({
@@ -995,7 +996,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       mls.getLocalGroups = vi.fn().mockReturnValue([]);
       mls.processWelcome = vi.fn().mockResolvedValue(undefined);
       mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
-      mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([7]));
+      mls.processIncomingMessage = vi
+        .fn()
+        .mockResolvedValue({ plaintext: new Uint8Array([7]), author: 'unsigned' });
       setupMessageHandler(deps as any);
       const onMsg = mls.onMessage.mock.calls[0][0];
       const frame = new Uint8Array([5, 5]);
@@ -1159,7 +1162,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // leafIdentity.ts `canonicalUserId`, as the replay and MLS read it: 'Élise' keeps its 'É'.
     const deps = baseDeps();
     const mls = deps.mlsService as any;
-    mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([9, 9]));
+    mls.processIncomingMessage = vi
+      .fn()
+      .mockResolvedValue({ plaintext: new Uint8Array([9, 9]), author: 'unsigned' });
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
     setupMessageHandler(deps as any);
     const onMsg = mls.onMessage.mock.calls[0][0] as (
@@ -1186,7 +1191,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     } as any);
     const deps = baseDeps();
     const mls = deps.mlsService as any;
-    mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([9, 9]));
+    mls.processIncomingMessage = vi
+      .fn()
+      .mockResolvedValue({ plaintext: new Uint8Array([9, 9]), author: 'unsigned' });
     // The group must be in getLocalGroups() to be processed (WASM = source of truth).
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
     setupMessageHandler(deps as any);
@@ -1214,6 +1221,40 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
   });
 
   /**
+   * ONLY MLS-CORE'S VERDICT KEEPS A PROOF. A group field (wire types 3 and 4) ahead of a field 14:
+   * mls-core reads no group, finds no trailer and answers `unsigned`, while protobufjs skips the
+   * group and would find one. Recorded, it would be relayed in this device's bundles as proven.
+   */
+  describe('the author proof of a live frame is kept on the verdict alone', () => {
+    const body = new Uint8Array([0x0a, 0x02, 0x0a, 0x00]);
+    const proof = new Uint8Array([0x08, 0x01, 0x12, 0x03, 0x61, 0x3a, 0x62, 0x1a, 0x01, 0x00]);
+    const plaintext = new Uint8Array([...body, 0x7b, 0x7c, 0x72, proof.length, ...proof]);
+
+    async function deliver(author: 'unsigned' | 'verified') {
+      const deps = baseDeps();
+      const mls = deps.mlsService as any;
+      mls.processIncomingMessage = vi.fn().mockResolvedValue({ plaintext, author });
+      mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0];
+      // A frame of its own per case: the same bytes twice would be dropped as already processed.
+      const frame = new Uint8Array([author === 'verified' ? 0x51 : 0x52, 0x2a]);
+      await onMsg('peer', frame, groupId, false, undefined, false);
+      return vi.mocked(deps.addMessageToChat).mock.calls[0][3] as Record<string, unknown>;
+    }
+
+    it('records nothing for a frame mls-core called unsigned, whatever its bytes end with', async () => {
+      expect((await deliver('unsigned')).authorship).toBeUndefined();
+    });
+
+    it('records the proof mls-core verified', async () => {
+      expect((await deliver('verified')).authorship).toEqual(
+        expect.objectContaining({ group: groupId })
+      );
+    });
+  });
+
+  /**
    * A PIN CHANGE MOVES THE KEY UNDER A HANDLER THAT LIVES ON. The handler is set up once per login
    * and nothing rebuilds it; `performPinChange` re-seals the store and calls `setDeviceKey`. It used
    * to capture the key as a value, so every message written after the change was sealed under the
@@ -1238,7 +1279,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
         deviceKey: () => currentKey,
       });
       const mls = deps.mlsService as any;
-      mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([7]));
+      mls.processIncomingMessage = vi
+        .fn()
+        .mockResolvedValue({ plaintext: new Uint8Array([7]), author: 'unsigned' });
       mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
       setupMessageHandler(deps as any);
       const onMsg = mls.onMessage.mock.calls[0][0];
@@ -1298,7 +1341,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     vi.mocked(codec.decodeAppMessage).mockReturnValueOnce(null);
     const deps = baseDeps();
     const mls = deps.mlsService as any;
-    mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([9, 9]));
+    mls.processIncomingMessage = vi
+      .fn()
+      .mockResolvedValue({ plaintext: new Uint8Array([9, 9]), author: 'unsigned' });
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
     setupMessageHandler(deps as any);
     const onMsg = mls.onMessage.mock.calls[0][0] as (

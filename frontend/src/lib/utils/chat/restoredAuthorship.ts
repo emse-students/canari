@@ -150,10 +150,21 @@ export async function vetRestoredMessage(
     }
     // A proven edit: the original is verified here, and the merge applies the signed edit to it.
   }
+  const signedAt = envelope.options.timestamp?.getTime();
+  if (signedAt === undefined) {
+    // NO SIGNED DATE: verified, the row would carry the relayer's timestamp under the author's
+    // name. So it proves no more than a row with no proof - its author relaying it still vouches.
+    log(
+      `[AUTHORSHIP] restored ${entry.id.slice(0, 8)} is signed without a timestamp - not verified`
+    );
+    return vouched
+      ? { kind: 'relayer-is-author' }
+      : { kind: 'unverified', why: 'the signed message carries no timestamp' };
+  }
   return {
     kind: 'verified',
     content: envelope.content,
-    timestamp: envelope.options.timestamp?.getTime() ?? entry.timestamp,
+    timestamp: signedAt,
     authorship: entry.authorship,
   };
 }

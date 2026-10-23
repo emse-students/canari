@@ -416,7 +416,7 @@ impl MlsManager {
                     verdict => record_fork_verdict(verdict, fork_findings),
                 }
                 log::error!(
-                    "MLS decryption failed at exactly its own epoch, so no redelivery can help:                     group={} msg_epoch={} group_epoch={} err={:?}",
+                    "MLS decryption failed at exactly its own epoch, so no redelivery can help:                      group={} msg_epoch={} group_epoch={} err={:?}",
                     group_id,
                     msg_epoch,
                     group_epoch,

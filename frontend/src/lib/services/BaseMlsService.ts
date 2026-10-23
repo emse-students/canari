@@ -53,6 +53,7 @@ import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
   BaseRefreshOutcome,
+  DecryptedApplication,
   IncomingDeliveryMeta,
 } from '$lib/mls-client/IMlsService';
 import type { SkippedDevice, SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
@@ -4365,10 +4366,14 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<Uint8Array | null> {
     let plaintext: Uint8Array | null;
     try {
-      plaintext = await this.processIncomingMessage(groupId, ciphertext, {
-        userId: sender,
-        path: 'distribution',
-      });
+      // A key-group frame relays no history, so its author verdict has no use here.
+      plaintext =
+        (
+          await this.processIncomingMessage(groupId, ciphertext, {
+            userId: sender,
+            path: 'distribution',
+          })
+        )?.plaintext ?? null;
     } catch (e) {
       // REFUSED FOR ITS SENDER, BUT DECRYPTED: the generation is spent all the same (WP-G2-1b).
       if (e instanceof SenderMismatchError) {
@@ -5259,7 +5264,7 @@ export abstract class BaseMlsService implements IMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     envelope?: EnvelopeSender
-  ): Promise<Uint8Array | null>;
+  ): Promise<DecryptedApplication | null>;
   abstract exportSecret(
     groupId: string,
     label: string,

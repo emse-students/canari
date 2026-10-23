@@ -206,8 +206,9 @@ export class MessagingController {
    *
    * WHAT IS ESTABLISHED AND WHAT IS CLAIMED. The reporter is the authenticated user and device and a
    * MEMBER of the group (anyone else is refused, 403) - those are facts. The `peer` it names is only
-   * its claim, and logged as `claimedPeer`. The level follows the client's own: an `unproven` fork
-   * (one it could not attribute) is a warn, as in mls-core; the rest are ERROR.
+   * its claim, and logged as `claimedPeer`. The level follows the client's own, read from the TYPED
+   * `proven` field and never from `detail` (free text): `proven: false` (a fork it could not
+   * attribute) is a warn, as in mls-core; `true` is ERROR, and so is a report carrying no boolean.
    */
   @UseGuards(ThrottlerGuard, HeaderAuthGuard)
   @Post('mls/integrity-finding')
@@ -221,6 +222,7 @@ export class MessagingController {
       epoch?: unknown;
       peer?: unknown;
       detail?: unknown;
+      proven?: unknown;
     }
   ): Promise<{ recorded: true }> {
     const reporter = `${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)}`;
@@ -245,10 +247,12 @@ export class MessagingController {
         : Number.isSafeInteger(body.epoch) && (body.epoch as number) >= 0
           ? String(body.epoch)
           : 'invalid';
+    const proven = typeof body.proven === 'boolean' ? String(body.proven) : 'invalid';
     const line =
       `[INTEGRITY] kind=${kind} reporter=${reporter} group=${sanitizeLogValue(groupId)} ` +
-      `epoch=${epoch} claimedPeer=${sanitizeLogValue(body.peer)} detail=${sanitizeLogValue(body.detail)}`;
-    if (body.detail === 'unproven') this.logger.warn(line);
+      `epoch=${epoch} claimedPeer=${sanitizeLogValue(body.peer)} proven=${proven} ` +
+      `detail=${sanitizeLogValue(body.detail)}`;
+    if (body.proven === false) this.logger.warn(line);
     else this.logger.error(line);
     return { recorded: true };
   }

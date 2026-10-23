@@ -54,11 +54,12 @@ describe('MessagingController - POST mls/integrity-finding', () => {
         epoch: 7,
         peer: 'bob:dev-b',
         detail: 'fork',
+        proven: true,
       })
     ).resolves.toEqual({ recorded: true });
 
     expect(error).toHaveBeenCalledWith(
-      '[INTEGRITY] kind=fork reporter=alice:web-alice-1 group=g-1234 epoch=7 claimedPeer=bob:dev-b detail=fork'
+      '[INTEGRITY] kind=fork reporter=alice:web-alice-1 group=g-1234 epoch=7 claimedPeer=bob:dev-b proven=true detail=fork'
     );
   });
 
@@ -69,9 +70,35 @@ describe('MessagingController - POST mls/integrity-finding', () => {
       epoch: 7,
       peer: 'bob:dev-b',
       detail: 'unproven',
+      proven: false,
     });
     expect(error).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('detail=unproven'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('proven=false detail=unproven'));
+  });
+
+  it('takes the level from the typed `proven` field, never from the free-text detail', async () => {
+    await controller.reportIntegrityFinding('alice', 'web-alice-1', {
+      kind: 'forged-history',
+      groupId: 'g-1234',
+      peer: 'mallory',
+      detail: 'unproven',
+      proven: true,
+    });
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('proven=true detail=unproven'));
+  });
+
+  it('prints a report with no valid `proven` at ERROR, and says it is invalid', async () => {
+    await controller.reportIntegrityFinding('alice', 'web-alice-1', {
+      kind: 'fork',
+      groupId: 'g-1234',
+      epoch: 7,
+      peer: 'bob:dev-b',
+      detail: 'fork',
+      proven: 'no',
+    });
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('proven=invalid'));
   });
 
   it('refuses a reporter that is not a member of the group', async () => {
@@ -93,9 +120,10 @@ describe('MessagingController - POST mls/integrity-finding', () => {
       groupId: 'g-1234',
       peer: 'mallory',
       detail: 'signature',
+      proven: true,
     });
     expect(error).toHaveBeenCalledWith(
-      '[INTEGRITY] kind=forged-history reporter=alice:web-alice-1 group=g-1234 epoch=none claimedPeer=mallory detail=signature'
+      '[INTEGRITY] kind=forged-history reporter=alice:web-alice-1 group=g-1234 epoch=none claimedPeer=mallory proven=true detail=signature'
     );
   });
 

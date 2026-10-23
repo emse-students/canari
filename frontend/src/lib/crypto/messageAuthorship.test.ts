@@ -46,7 +46,7 @@ describe('splitting a decrypted plaintext', () => {
     const split = splitAuthorProof(plaintext);
     expect(split && hex(split.body)).toBe(hex(body));
     expect(split && hex(split.proof)).toBe(hex(proof));
-    expect(recordAuthorship(plaintext, GROUP)).toEqual({
+    expect(recordAuthorship(plaintext, GROUP, 'verified')).toEqual({
       body: toBase64(body),
       proof: toBase64(proof),
       group: GROUP,
@@ -54,8 +54,32 @@ describe('splitting a decrypted plaintext', () => {
   });
 
   it('records nothing for an unsigned frame or bytes that are not protobuf', () => {
-    expect(recordAuthorship(encodeAppMessage(HELLO), GROUP)).toBeUndefined();
-    expect(recordAuthorship(new Uint8Array([0xff, 0xff, 0xff]), GROUP)).toBeUndefined();
+    expect(recordAuthorship(encodeAppMessage(HELLO), GROUP, 'unsigned')).toBeUndefined();
+    expect(recordAuthorship(new Uint8Array([0xff, 0xff, 0xff]), GROUP, 'unsigned')).toBeUndefined();
+  });
+});
+
+describe('recording a decrypted frame takes the verdict mls-core gave it', () => {
+  // A group field (wire types 3 and 4) before a field 14: mls-core's parser reads no group, so it
+  // finds no trailer and answers `unsigned` - while protobufjs skips the group and DOES find one.
+  // The two parsers disagree; only the verdict decides what is kept.
+  function withGroupField(): Uint8Array {
+    const body = encodeAppMessage(HELLO);
+    const proof = canari.AuthorProof.encode({
+      version: 1,
+      author: 'someone:else',
+      signature: new Uint8Array(64),
+    }).finish();
+    const group = [0x7b, 0x7c]; // field 15 start-group, end-group
+    return new Uint8Array([...body, ...group, 0x72, proof.length, ...proof]);
+  }
+
+  it('keeps no proof mls-core did not verify, even one this parser would find', () => {
+    const plaintext = withGroupField();
+    expect(splitAuthorProof(plaintext)).not.toBeNull();
+    expect(recordAuthorship(plaintext, GROUP, 'unsigned')).toBeUndefined();
+    expect(recordAuthorship(plaintext, GROUP, 'refused')).toBeUndefined();
+    expect(recordAuthorship(plaintext, GROUP, undefined)).toBeUndefined();
   });
 });
 
