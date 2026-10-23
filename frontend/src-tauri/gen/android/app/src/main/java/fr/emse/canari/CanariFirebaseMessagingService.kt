@@ -2403,7 +2403,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         keyPackageB64: String,
     ): String
 
-    // --- A key group joined from a salon push (channel-encryption section 25) ------------------
+    // --- A key group joined from a salon push (channel-encryption section 26) ------------------
     // The ledger, the crypto and the compare-and-swap install live in `mobile/key_group_join.rs`;
     // what each answer means is [KeyGroupPushJoin]; the orchestration is [joinKeyGroupFromPush].
 
@@ -4867,7 +4867,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // mirror already holds costs a file read; the frame costs an MLS load under the state lock,
         // so it is opened only for a session this device has not seen - the first message of it.
         // Set when the frame's key group is not on this device at all: the push joins it once the
-        // banner below is up (channel-encryption section 25), never before - a join is seconds.
+        // banner below is up (channel-encryption section 26), never before - a join is seconds.
         var keyGroupAbsent = false
         val framed = openable && !graineSeedHeld(cacheKey, channelId, sessionId) &&
             openSeedFrame(cacheKey, data, channelId, sessionId, onAbsent = { keyGroupAbsent = true })
@@ -4984,7 +4984,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     /**
      * Joins the salon key group a push named and this device holds no seat in (channel-encryption
-     * section 25, decided by the user 2026-10-22: "Oui, rejoindre au push").
+     * section 26, decided by the user 2026-10-22: "Oui, rejoindre au push").
      *
      * The same external commit the app makes when it loads the community, through the same server
      * gate - the entitlement is asked of social-service on BOTH round trips, and an unanswered ask is

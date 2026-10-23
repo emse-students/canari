@@ -8,7 +8,7 @@ import { adoptKeyGroupPushJoins, type KeyGroupPushJoin } from './keyGroupPushJoi
 
 /**
  * What the app does with the key groups a shut phone joined from a push (channel-encryption
- * section 25). The ledger is a CLAIM and the loaded MLS state is the FACT: only a group both say
+ * section 26). The ledger is a CLAIM and the loaded MLS state is the FACT: only a group both say
  * was joined reaches the registry, and every other entry is left to the community load, which
  * joins it the ordinary way.
  */

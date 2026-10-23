@@ -2,7 +2,7 @@ package fr.emse.canari.push
 
 /**
  * WHAT EACH ANSWER OF A KEY-GROUP JOIN FROM A PUSH MEANS, AS PURE FUNCTIONS (channel-encryption
- * section 25, decided by the user 2026-10-22: "Oui, rejoindre au push").
+ * section 26, decided by the user 2026-10-22: "Oui, rejoindre au push").
  *
  * A salon push whose seed frame names a key group this phone holds no seat in used to be said and
  * dropped ([SeedFrameLadder]'s ABSENT branch): the phone waited for the app to be opened, and every

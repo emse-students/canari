@@ -1391,7 +1391,7 @@ Shipped in `v0.18.28`; what is left is readings, one decision, three test rows a
   The iPhone: `NOTIF-20`'s NSE half ([channel-encryption §19](protocols/channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)).
 - **P1 - DECIDED BY THE USER 2026-10-22 (*"Oui, rejoindre au push"*) AND BUILT: a shut Android
   phone joins a salon's key group from the push; iOS joins at the next foreground**
-  ([channel-encryption section 25](protocols/channel-encryption.md#25-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)).
+  ([channel-encryption section 26](protocols/channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)).
   Owed: the Mi 9T reading (generic banner, `settled joined`, the next push readable,
   `[KEY_GROUP_PUSH_JOIN] ... registered` at the next start) and the iPhone reading (the join at the
   next foreground). The original question: should a phone join a salon's key group from the PUSH, as

@@ -1,7 +1,7 @@
 //! `parse_message_group_id` reads the group a framed message names, in clear, without a key.
 //!
 //! A shut phone joins a key group from a salon push only when the seed frame the push carries is a
-//! frame OF the group the push names (channel-encryption section 25) - so the reader must answer
+//! frame OF the group the push names (channel-encryption section 26) - so the reader must answer
 //! for both framings a group carries (an application PrivateMessage, a commit PublicMessage) and
 //! refuse what is not a framed protocol message at all.
 use mls_core::MlsManager;

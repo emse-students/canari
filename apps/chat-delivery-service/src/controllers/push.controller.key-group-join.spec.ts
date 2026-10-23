@@ -15,7 +15,7 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
 
 /**
- * The two PushSecret doors a killed app joins a key group through (channel-encryption section 25).
+ * The two PushSecret doors a killed app joins a key group through (channel-encryption section 26).
  * What they decide is `MessagingService`'s (`messaging.key-group-push-join.spec.ts`); what is only
  * true of the doors is that nothing is read or submitted without the device's PushSecret, and that
  * the committer is the device the secret authenticated - never a body field.

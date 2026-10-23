@@ -4,7 +4,7 @@
  * THE KEY-GROUP PUSH ROUTES ARE RATE-LIMITED PER USER, AFTER THE GUARD THAT PROVES THE USER.
  *
  * Every other commit path counts per account; a shut phone's external commit into a key group
- * (channel-encryption section 25) must too. Pinned: both routes carry `PushSecretGuard` then
+ * (channel-encryption section 26) must too. Pinned: both routes carry `PushSecretGuard` then
  * `PushSecretThrottlerGuard`, in that order; the limit is `KEY_GROUP_PUSH_LIMIT_PER_MINUTE`; the
  * guard lets exactly that many through in one window and answers the next with a 429; one user's
  * quota is not another's; and a request whose PushSecret fails is refused before it is counted.

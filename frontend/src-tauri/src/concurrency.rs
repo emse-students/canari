@@ -194,7 +194,7 @@ fn live_manager_flag() -> &'static AtomicBool {
 /// a backgrounded app keeps its manager in memory with the guard expired. If that manager holds a
 /// ratchet advance when the app comes back, the resume reload is refused (`LiveAhead`) and the
 /// live state is persisted OVER the file - erasing whatever a background engine wrote meanwhile.
-/// The key-group join from a push (channel-encryption section 25) is the one background write
+/// The key-group join from a push (channel-encryption section 26) is the one background write
 /// that can be deferred to the app without losing anything, so it refuses here.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn live_manager_in_process() -> bool {
@@ -346,7 +346,7 @@ pub(crate) fn mls_bin_digest(bytes: &[u8]) -> [u8; 32] {
 /// active, or a foreground operation in flight) and leaves one lost update open, named in
 /// `docs/wiki/durable-rules.md`: a background engine writing back a blob that changed since it
 /// loaded it. Every background path so far finishes in seconds, under `MlsStateLock`, without a
-/// network round trip. A key-group join from a push (channel-encryption section 25) does not: it
+/// network round trip. A key-group join from a push (channel-encryption section 26) does not: it
 /// holds its loaded state across TWO round trips to the server, and the foreground can start,
 /// checkpoint and stop again inside that span - after which the guard reads "inactive" and the
 /// write would erase what the foreground did. So this write compares the file's CURRENT bytes with

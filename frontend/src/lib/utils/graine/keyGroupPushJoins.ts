@@ -1,6 +1,6 @@
 /**
  * THE KEY GROUPS A SHUT PHONE JOINED FROM A PUSH, HANDED TO THE APP AT ITS START
- * (channel-encryption section 25, decided by the user 2026-10-22).
+ * (channel-encryption section 26, decided by the user 2026-10-22).
  *
  * Android's push service joins a community's key group when a salon push names one this device
  * holds no seat in, and installs the new tree into `mls.bin` itself. What it cannot write is the

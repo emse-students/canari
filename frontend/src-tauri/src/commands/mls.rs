@@ -60,7 +60,7 @@ pub(crate) async fn initialiser_mls(
     //
     // EITHER WAY THE FOREGROUND IS MARKED BEFORE ANY BYTES ARE TRUSTED, and the disk read happens
     // under the write lock: a background engine (a key-group join from a push, channel-encryption
-    // section 25) then either wrote before this read or sees the mark and gives up - never lands
+    // section 26) then either wrote before this read or sees the mark and gives up - never lands
     // between the read and this manager's first persist, which would erase it.
     let encrypted_state = match (encrypted_state, opts.state_on_disk) {
         (None, Some(true)) => {

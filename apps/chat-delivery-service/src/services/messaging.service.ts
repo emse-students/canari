@@ -2970,7 +2970,7 @@ export class MessagingService {
 
   /**
    * The external-join base of a KEY GROUP, for a shut phone that received a salon push sealed on a
-   * key group it holds no seat in (channel-encryption section 25, decided by the user 2026-10-22).
+   * key group it holds no seat in (channel-encryption section 26, decided by the user 2026-10-22).
    *
    * THE SAME GATE AS THE APP'S OWN JOIN, NEVER A SECOND ONE. The app reads this base through
    * social-service with a session; a killed app has none, so it authenticates with its PushSecret

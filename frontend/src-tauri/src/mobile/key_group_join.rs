@@ -1,4 +1,4 @@
-//! A shut phone joins a community salon's key group from the PUSH (channel-encryption section 25,
+//! A shut phone joins a community salon's key group from the PUSH (channel-encryption section 26,
 //! decided by the user 2026-10-22: "Oui, rejoindre au push").
 //!
 //! A member whose phone never LOADED a community holds no seat in its key group, so every salon push

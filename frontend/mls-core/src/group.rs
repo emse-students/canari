@@ -141,7 +141,7 @@ impl MlsManager {
     /// [`Self::parse_message_epoch`]: both PrivateMessage and PublicMessage carry it in clear.
     ///
     /// What a shut phone checks before it joins a key group from a push (channel-encryption
-    /// section 25): the seed frame the salon message carries must be a frame OF the group the push
+    /// section 26): the seed frame the salon message carries must be a frame OF the group the push
     /// names, or the push is not a reason to join that group. Returns None for anything that is not
     /// a framed protocol message (a Welcome, a GroupInfo, garbage).
     pub fn parse_message_group_id(message_bytes: &[u8]) -> Option<String> {

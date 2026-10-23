@@ -11,7 +11,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * A shut phone joining a salon's key group from a push (channel-encryption section 25), as the
+ * A shut phone joining a salon's key group from a push (channel-encryption section 26), as the
  * table of what each server and native answer means. What these pin is the rule the whole seam
  * rests on: only the server ANSWERING (a 403, a 400, an inconsistent push) is a refusal; an answer
  * that never came, a 503 or a status nobody expects claims nothing, and a later push may try again.

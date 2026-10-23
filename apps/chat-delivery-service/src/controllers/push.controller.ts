@@ -903,7 +903,7 @@ export class PushController {
 
   /**
    * The external-join base of a key group, for a phone whose app is killed and that just received a
-   * salon push sealed on a key group it holds no seat in (channel-encryption section 25). Gated by
+   * salon push sealed on a key group it holds no seat in (channel-encryption section 26). Gated by
    * the same social-service entitlement as the app's own join - see
    * {@link MessagingService.readKeyGroupBaseForPush}.
    *

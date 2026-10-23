@@ -478,7 +478,7 @@ pub(crate) fn read_and_clear_read_watermarks(app: tauri::AppHandle) -> Vec<serde
 }
 
 /// Takes the ledger of key-group joins the push service attempted while the app was shut, and
-/// deletes it (channel-encryption section 25, `mobile::key_group_join`).
+/// deletes it (channel-encryption section 26, `mobile::key_group_join`).
 ///
 /// Called once at start-up, BEFORE the key-group registry is restored and before the drain: a group
 /// joined from a push is in `mls.bin` and in no registry row, and a key group the registry does not

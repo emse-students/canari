@@ -21,7 +21,7 @@ pub mod device_notice;
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub mod graine;
 
-// A shut phone joining a salon's key group from the push (channel-encryption section 25). The
+// A shut phone joining a salon's key group from the push (channel-encryption section 26). The
 // ledger is read by the app on iOS too (it is empty there: only Android joins).
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub mod key_group_join;

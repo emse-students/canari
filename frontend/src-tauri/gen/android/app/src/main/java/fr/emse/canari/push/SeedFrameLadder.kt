@@ -13,7 +13,7 @@ package fr.emse.canari.push
  * device does not hold is not a join in flight to wait for - it is a device missing from its own
  * community's key group, the defect `reportSingleHolderGroups` watches. Sleeping 5.4 s on the
  * channel lane would buy nothing but a later generic banner, so it is said, and not waited on -
- * and since section 25 the caller is TOLD, and joins the group itself once the banner is up.
+ * and since section 26 the caller is TOLD, and joins the group itself once the banner is up.
  *
  * Compiled by the JVM test project too, so nothing here may import Android - see
  * [PushRecoveryLadder] for why that is the guard and not a style rule.
@@ -30,7 +30,7 @@ object SeedFrameLadder {
      * @param catchUp the commit catch-up, `null` when it could not produce an outcome
      * @param log every branch says which one it took
      * @param onAbsent told when the key group is not on this device, so the caller can join it
-     *   from the push once its banner is up (channel-encryption section 25) - never waited on here
+     *   from the push once its banner is up (channel-encryption section 26) - never waited on here
      */
     fun <T> open(
         initial: T,

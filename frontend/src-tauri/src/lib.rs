@@ -918,7 +918,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
     }
 }
 
-// ─── A key group joined from a salon push (channel-encryption section 25) ────────────────────
+// ─── A key group joined from a salon push (channel-encryption section 26) ────────────────────
 // The orchestration (two PushSecret round trips) is Kotlin's; the ledger, the crypto and the
 // compare-and-swap install are `mobile::key_group_join`'s. Every string crosses as a JNI string,
 // and the state bytes as the one byte array the caller already read.

@@ -1202,7 +1202,7 @@ class NotificationService: UNNotificationServiceExtension {
         NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=local -> commit catch-up")
         json = catchupJson(ctx: ctx, groupId: groupId, senderId: frameSender, protoB64: frame) ?? json
       case .absent:
-        // Channel-encryption section 25: Android joins the key group from this push; the extension
+        // Channel-encryption section 26: Android joins the key group from this push; the extension
         // reads a MIRROR of the app's MLS state and never writes it, so it cannot. The banner stays
         // generic and the app joins the group at its next foreground (its community load).
         NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=absent -> this device is not in the salon's key group; the extension does not join, the app joins at its next foreground")

@@ -1714,7 +1714,7 @@
           };
           await globalSession.ensureMls().reloadStateFromDisk();
           stepDone('reload');
-          // The push-join ledger is the warm process's too (channel-encryption section 25): taken
+          // The push-join ledger is the warm process's too (channel-encryption section 26): taken
           // right after the reload, so a group joined while away is registered before the drain.
           await takeKeyGroupPushJoins(globalSession.ensureMls(), (line) => console.log(line));
           stepDone('key-group-joins');

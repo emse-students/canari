@@ -3956,7 +3956,7 @@ handler; an old link joins and reads from arrival; a member's add gives the past
 rooted member gets the past; a kicked member re-added with their old voucher reads from arrival; the
 `admission is not proven` line on the answerer for an unproven newcomer.
 
-## 25. A shut phone joins a salon's key group from the push - DECIDED BY THE USER 2026-10-22
+## 26. A shut phone joins a salon's key group from the push - DECIDED BY THE USER 2026-10-22
 
 **The gap.** A member's seat in a key group is committed by an admitter's Welcome
 ([section 20](#20-whoever-admits-a-newcomer-welcomes-them---decided-by-the-user-2026-09-27)) or by
