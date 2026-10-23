@@ -31,7 +31,7 @@ describe('deviceRecoveryCode', () => {
     expect(localStorage.getItem(ACCOUNT_KEY.backupRecoveryCode(USER))).toBeNull();
     expect((await deviceRecoveryCode(USER, KEY_A, log)).origin).toBe('new');
 
-    await first.keep();
+    await first.keep(KEY_A);
     const second = await deviceRecoveryCode(USER, KEY_A, log);
     expect(second.origin).toBe('kept');
     expect(hex(second.bytes)).toBe(hex(first.bytes));
@@ -39,7 +39,7 @@ describe('deviceRecoveryCode', () => {
 
   it('never stores the code in the clear', async () => {
     const code = await deviceRecoveryCode(USER, KEY_A, log);
-    await code.keep();
+    await code.keep(KEY_A);
     const stored = localStorage.getItem(ACCOUNT_KEY.backupRecoveryCode(USER))!;
     expect(stored).not.toContain(hex(code.bytes));
     expect(stored).not.toContain(btoa(String.fromCharCode(...code.bytes)));
@@ -47,10 +47,21 @@ describe('deviceRecoveryCode', () => {
 
   it('replaces, and says so, a code the device key does not open', async () => {
     const first = await deviceRecoveryCode(USER, KEY_A, log);
-    await first.keep();
+    await first.keep(KEY_A);
     const after = await deviceRecoveryCode(USER, KEY_B, log);
     expect(after.origin).toBe('replaced');
     expect(hex(after.bytes)).not.toBe(hex(first.bytes));
+  });
+
+  it('seals a code under the key held when the save returns, so a key change during the export does not replace it', async () => {
+    // The export started under KEY_A; the move to the hardware-held key ran during the save and
+    // re-sealed every store (there was no code yet). The code is kept under the session's key NOW.
+    const started = await deviceRecoveryCode(USER, KEY_A, log);
+    expect(started.origin).toBe('new');
+    await started.keep(KEY_B);
+    const next = await deviceRecoveryCode(USER, KEY_B, log);
+    expect(next.origin).toBe('kept');
+    expect(hex(next.bytes)).toBe(hex(started.bytes));
   });
 
   it('replaces an entry this build did not write', async () => {
@@ -62,7 +73,7 @@ describe('deviceRecoveryCode', () => {
 describe('resealDeviceRecoveryCode', () => {
   it('moves the code to the new device key, so the same code survives a key change', async () => {
     const first = await deviceRecoveryCode(USER, KEY_A, log);
-    await first.keep();
+    await first.keep(KEY_A);
     await resealDeviceRecoveryCode(USER, KEY_A, KEY_B, log);
     const after = await deviceRecoveryCode(USER, KEY_B, log);
     expect(after.origin).toBe('kept');
@@ -71,7 +82,7 @@ describe('resealDeviceRecoveryCode', () => {
 
   it('is idempotent, as a resumed key change needs it to be', async () => {
     const first = await deviceRecoveryCode(USER, KEY_A, log);
-    await first.keep();
+    await first.keep(KEY_A);
     await resealDeviceRecoveryCode(USER, KEY_A, KEY_B, log);
     const once = localStorage.getItem(ACCOUNT_KEY.backupRecoveryCode(USER));
     await resealDeviceRecoveryCode(USER, KEY_A, KEY_B, log);
@@ -97,7 +108,7 @@ describe('the backup owed after the move to the hardware-held key', () => {
 
 it("goes with the account's other keys when the account is deleted", async () => {
   const code = await deviceRecoveryCode(USER, KEY_A, log);
-  await code.keep();
+  await code.keep(KEY_A);
   noteBackupOwedAfterKeyMove(USER);
   const swept = accountLocalStorageKeysIn(localStorage, USER);
   expect(swept).toContain(ACCOUNT_KEY.backupRecoveryCode(USER));

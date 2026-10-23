@@ -128,6 +128,31 @@ fn run_guarded_store(
     }
 }
 
+/// What one unattended plugin read MEANS for the at-rest key. ONLY a resolved `keyBytes: null` is
+/// "absent" (`Ok(None)`) - the plugin answers that for `errSecItemNotFound` / no stored entry alone.
+/// A rejected call (a locked keychain, an entitlement error, a decrypt failure) stays an `Err`, and
+/// so does an entry that is not 32 base64 bytes: `settle_scheme`, `prepare` and the guarded write
+/// revert a marker or write a new key on "absent", so a failure read as absent would destroy the
+/// only copy of a hardware-held key.
+fn unattended_read_outcome(
+    plugin: Result<Option<String>, String>,
+) -> Result<Option<[u8; 32]>, String> {
+    let Some(b64) = plugin.map_err(|e| {
+        log::error!("[KEYSTORE] unattended read failed (not 'absent'): {e}");
+        e
+    })?
+    else {
+        return Ok(None);
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .map_err(|e| format!("entry is not base64: {e}"))?;
+    let key: [u8; 32] = bytes
+        .try_into()
+        .map_err(|b: Vec<u8>| format!("entry holds {} bytes, not 32", b.len()))?;
+    Ok(Some(key))
+}
+
 impl<R: Runtime> PluginDeviceKeyStore<R> {
     fn data_dir(&self) -> Result<std::path::PathBuf, KeyEntryError> {
         tauri::Manager::path(&self.app)
@@ -138,23 +163,15 @@ impl<R: Runtime> PluginDeviceKeyStore<R> {
     /// Reads one entry with NO biometric sheet, telling "nothing there" (`Ok(None)`) from "could not
     /// read" (`Err`) - the difference `at_rest_key::settle_scheme` stands on.
     pub fn read_unattended(&self, alias: &str) -> Result<Option<[u8; 32]>, String> {
-        let resp = self
-            .app
-            .keystore()
-            .get_key_bytes_unattended(tauri_plugin_keystore::GetKeyBytesUnattendedRequest {
-                alias: alias.to_string(),
-            })
-            .map_err(|e| e.to_string())?;
-        let Some(b64) = resp.key_bytes else {
-            return Ok(None);
-        };
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(b64.trim())
-            .map_err(|e| format!("entry is not base64: {e}"))?;
-        let key: [u8; 32] = bytes
-            .try_into()
-            .map_err(|b: Vec<u8>| format!("entry holds {} bytes, not 32", b.len()))?;
-        Ok(Some(key))
+        unattended_read_outcome(
+            self.app
+                .keystore()
+                .get_key_bytes_unattended(tauri_plugin_keystore::GetKeyBytesUnattendedRequest {
+                    alias: alias.to_string(),
+                })
+                .map(|resp| resp.key_bytes)
+                .map_err(|e| e.to_string()),
+        )
     }
 
     /// THE ONE KEYSTORE WRITE. Asks the at-rest guard first: a guarded entry takes only the key its
@@ -273,6 +290,21 @@ mod tests {
     use std::cell::{Cell, RefCell};
 
     const K: [u8; 32] = [5u8; 32];
+
+    /// A failed keychain read (iOS `errSecInteractionNotAllowed`, `-34018`; an Android decrypt
+    /// failure) reaches Rust as a rejected call, and must stay an error: read as "absent" it would
+    /// revert a migrating marker or let a new key overwrite the only copy of the old one.
+    #[test]
+    fn only_a_resolved_null_is_absent_and_a_failed_read_stays_an_error() {
+        use base64::Engine as _;
+        assert_eq!(unattended_read_outcome(Ok(None)), Ok(None));
+        let b64 = base64::engine::general_purpose::STANDARD.encode(K);
+        assert_eq!(unattended_read_outcome(Ok(Some(b64))), Ok(Some(K)));
+        assert!(unattended_read_outcome(Err("OSStatus -25308".into())).is_err());
+        assert!(unattended_read_outcome(Ok(Some("not base64!".into()))).is_err());
+        let short = base64::engine::general_purpose::STANDARD.encode([1u8; 16]);
+        assert!(unattended_read_outcome(Ok(Some(short))).is_err());
+    }
 
     /// An entry in memory, counting writes.
     struct Entry {

@@ -278,6 +278,17 @@ describe('device key keystore encoding (raw bytes at rest, base64 on the wire)',
     expect(body()).not.toMatch(pattern);
   });
 
+  it('the iOS unattended read answers "absent" for errSecItemNotFound only, and throws otherwise', () => {
+    // No gate here compiles Swift, so the shape is pinned: a locked keychain or an entitlement
+    // error read as "absent" would revert a migrating marker or overwrite a hardware-held key.
+    const body = functionBody(keystoreSwift, /@objc public func getKeyBytesUnattended/, /\n {2}}/);
+    expect(body.match(/NSNull\(\)/g)).toHaveLength(1);
+    expect(body).toMatch(
+      /if status == errSecItemNotFound \{\s*invoke\.resolve\(\["keyBytes": NSNull\(\)\]\)/
+    );
+    expect(body).toMatch(/throw NSError\(\s*domain: NSOSStatusErrorDomain, code: Int\(status\)/);
+  });
+
   it("MlsDeviceKeyStore's one writer refuses an MLS device key alias", () => {
     // It writes the install's native cache key; the device key goes through the guarded bridge.
     expect(deviceKeyStoreKt).not.toMatch(/fun store\(/);

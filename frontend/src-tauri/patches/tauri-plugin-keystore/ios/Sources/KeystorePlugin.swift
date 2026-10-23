@@ -209,7 +209,11 @@ class KeystorePlugin: Plugin {
   /// Secure Enclave, and Apple caps any reuse of that proof at 5 minutes, so a 12h window can only
   /// be honoured by reading the copy that carries no access control. The user chose that trade-off
   /// knowingly; picking "every time" in Settings keeps every read on `getKeyBytes` above.
-  /// Returns `{"keyBytes": null}` when the item is absent (a device enrolled before WP-SEC-1).
+  /// Returns `{"keyBytes": null}` ONLY when the item is absent (`errSecItemNotFound`). Every other
+  /// non-success status - `errSecInteractionNotAllowed` before the first unlock, `-34018` on an
+  /// entitlement hiccup - THROWS with its OSStatus (2026-10-22): the at-rest key's settle, prepare
+  /// and read treat "absent" as a fact that reverts a marker or writes a new key, so a transient
+  /// failure read as "absent" would destroy the only copy of a hardware-held key.
   @objc public func getKeyBytesUnattended(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(GetKeyBytesUnattendedRequest.self)
 
@@ -223,12 +227,14 @@ class KeystorePlugin: Plugin {
 
     var item: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &item)
-    guard status == errSecSuccess, let data = item as? Data else {
-      if status != errSecItemNotFound {
-        NSLog("[KeystorePlugin] getKeyBytesUnattended: bg item read failed (status=\(status))")
-      }
+    if status == errSecItemNotFound {
       invoke.resolve(["keyBytes": NSNull()])
       return
+    }
+    guard status == errSecSuccess, let data = item as? Data else {
+      NSLog("[KeystorePlugin] getKeyBytesUnattended: ERROR bg item read failed (status=\(status))")
+      throw NSError(
+        domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
     }
     invoke.resolve(["keyBytes": data.base64EncodedString()])
   }

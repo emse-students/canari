@@ -14,7 +14,6 @@ use mls_core::MlsManager;
 
 use super::proto_fields::extract_full_message_info;
 use super::push_text::PushLanguage;
-use crate::concurrency::background_write_mls_bin;
 
 /// Decodes a base64 device key and loads the MLS manager from the encrypted `mls.bin` bytes.
 ///
@@ -742,6 +741,29 @@ pub fn discard_staged_welcome(files_dir: &Path, group_id: &str, memo: RefusalMem
     }
 }
 
+/// Writes a background engine's new state ONLY over the very `mls.bin` it loaded
+/// ([`crate::concurrency::background_write_mls_bin_if_unchanged`]) - the one write every background
+/// engine makes.
+///
+/// **THE FOREGROUND GUARD ALONE LET AN OLD KEY BACK IN.** An engine loads the bytes and the key, then
+/// works; the foreground can meanwhile re-seal `mls.bin` under another key (the move to the
+/// hardware-held key, a PIN change) and go to the background, which drops the guard at once. A plain
+/// write then put back the state under the key that no longer opens it. Any foreground write changes
+/// the bytes, so the compare refuses it - under the same lock every `mls.bin` writer takes. The
+/// refusal is an error: a send batch is discarded and re-encrypted at the next drain, a Welcome stays
+/// for the foreground.
+fn write_over_loaded_state(files_dir: &Path, loaded: &[u8], data: &[u8]) -> Result<(), String> {
+    crate::concurrency::background_write_mls_bin_if_unchanged(
+        &files_dir.join("mls.bin"),
+        &crate::concurrency::mls_bin_digest(loaded),
+        data,
+    )
+    .map_err(|e| {
+        log::error!("[BG_STATE] mls.bin NOT written: {e}");
+        format!("write mls.bin: {e}")
+    })
+}
+
 /// Applies an MLS Welcome received in the background (receiver side).
 /// Key-based variant: uses the pre-derived device key (base64) instead of the PIN.
 pub fn process_welcome_background_with_key(
@@ -777,8 +799,7 @@ pub fn process_welcome_background_with_key(
     let enc = manager
         .save_encrypted_with_key(&key)
         .map_err(|e| e.to_string())?;
-    let mls_path = files_dir.join("mls.bin");
-    background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
+    write_over_loaded_state(files_dir, state_bytes, &enc)?;
     log::info!(
         "[BG_JOIN] joined group via Welcome: {group_id} (mls.bin {} bytes)",
         enc.len()
@@ -866,8 +887,7 @@ pub fn send_messages_background_with_key(
     let enc = manager
         .save_encrypted_with_key(&key)
         .map_err(|e| e.to_string())?;
-    let mls_path = files_dir.join("mls.bin");
-    background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
+    write_over_loaded_state(files_dir, state_bytes, &enc)?;
     log::info!(
         "[BG_SEND] batch encrypted {encrypted}/{} (mls.bin {} bytes, 1 load, 1 save)",
         entries.len(),
@@ -1235,7 +1255,7 @@ mod tests {
     }
 
     /// A temp directory of its own, so the `mls.bin` each test writes is its own.
-    /// `send_messages_background_with_key` writes `mls.bin` through `background_write_mls_bin`,
+    /// `send_messages_background_with_key` writes `mls.bin` through `write_over_loaded_state`,
     /// which refuses while the PROCESS-global foreground guard is up - and other modules' tests
     /// raise it. So every test here that sends holds the shared serialiser and clears the guard,
     /// or it fails whenever a foreground test runs beside it.
@@ -1310,7 +1330,7 @@ mod tests {
         let (alice, mut bob, group_id) = joined_pair("batch");
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(7)).expect("key");
         let state_bytes = alice.save_encrypted_with_key(&key).expect("encrypt state");
-        let dir = temp_dir("batch");
+        let dir = dir_holding("batch", &state_bytes);
 
         let plaintexts: Vec<Vec<u8>> = (0..5).map(|i| format!("msg-{i}").into_bytes()).collect();
         let entries: Vec<OutboxEntry> = plaintexts
@@ -1375,7 +1395,7 @@ mod tests {
         let (alice, mut bob, group_id) = joined_pair("isolate");
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(9)).expect("key");
         let state_bytes = alice.save_encrypted_with_key(&key).expect("encrypt state");
-        let dir = temp_dir("isolate");
+        let dir = dir_holding("isolate", &state_bytes);
 
         let entries = vec![
             entry("ok-1", &group_id, b"first"),
@@ -1416,6 +1436,40 @@ mod tests {
                 .expect("decrypt second")
                 .expect("application message"),
             b"second"
+        );
+    }
+
+    /// THE OLD KEY NEVER COMES BACK. A drain loaded `mls.bin` under the key the PIN derived; the
+    /// foreground then re-sealed it under the hardware-held key (or a new PIN's) and went to the
+    /// background, so the foreground guard is down. The drain's write must be refused - it would put
+    /// back a state the key now in the keystore does not open - and the re-sealed file must survive.
+    #[test]
+    fn a_drain_never_writes_over_a_state_re_sealed_since_it_loaded() {
+        let _fg = quiet_foreground();
+        let (alice, _bob, group_id) = joined_pair("reseal");
+        let old_key = decode_base64_to_32_bytes(&key_b64(31)).expect("old key");
+        let new_key = decode_base64_to_32_bytes(&key_b64(32)).expect("new key");
+        let loaded = alice.save_encrypted_with_key(&old_key).expect("seal old");
+        let dir = dir_holding("reseal", &loaded);
+        let re_sealed = alice.save_encrypted_with_key(&new_key).expect("seal new");
+        std::fs::write(dir.join("mls.bin"), &re_sealed).expect("foreground re-seal");
+
+        let out = send_messages_background_with_key(
+            &dir,
+            &loaded,
+            &key_b64(31),
+            "reseal-alice",
+            "dev-a",
+            &[entry("id-0", &group_id, b"late")],
+        );
+        assert!(
+            out.is_err(),
+            "the drain must not persist over a re-sealed state"
+        );
+        assert_eq!(
+            std::fs::read(dir.join("mls.bin")).expect("mls.bin"),
+            re_sealed,
+            "the state under the new key survives"
         );
     }
 
@@ -1490,7 +1544,7 @@ mod tests {
         let (alice, bob, group_id) = joined_pair("graine");
         let key = decode_base64_to_32_bytes(&key_b64(11)).expect("key");
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
-        let dir = temp_dir("graine");
+        let dir = dir_holding("graine", &alice_state);
 
         let seed = [42u8; 32];
         let frame = endorsed_seed_frame(&alice, "graine-alice", "sess-abc", &seed);
@@ -1559,7 +1613,7 @@ mod tests {
         let frame = endorsed_seed_frame(&alice, "graine-ahead-alice", "sess-new", &seed);
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
         let out = send_messages_background_with_key(
-            &temp_dir("graine-ahead"),
+            &dir_holding("graine-ahead", &alice_state),
             &alice_state,
             &key_b64(13),
             "graine-ahead-alice",
@@ -1613,7 +1667,7 @@ mod tests {
         let key = decode_base64_to_32_bytes(&key_b64(seed)).expect("key");
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
         let out = send_messages_background_with_key(
-            &temp_dir(tag),
+            &dir_holding(tag, &alice_state),
             &alice_state,
             &key_b64(seed),
             &format!("{tag}-alice"),
@@ -1667,7 +1721,7 @@ mod tests {
         let frame =
             super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
         let out = send_messages_background_with_key(
-            &temp_dir(tag),
+            &dir_holding(tag, &alice_state),
             &alice_state,
             &key_b64(19),
             &format!("{tag}-alice"),
@@ -1772,7 +1826,7 @@ mod tests {
             let key = decode_base64_to_32_bytes(&key_b64(20 + n)).expect("key");
             let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
             let out = send_messages_background_with_key(
-                &temp_dir(&format!("{tag}-{n}")),
+                &dir_holding(&format!("{tag}-{n}"), &alice_state),
                 &alice_state,
                 &key_b64(20 + n),
                 &alice_id,

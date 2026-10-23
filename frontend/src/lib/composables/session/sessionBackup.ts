@@ -34,6 +34,7 @@ export async function exportBackupImpl(
       storage: ctx.getStorage()!,
       userId: ctx.getUserId(),
       deviceKeyB64: ctx.getDeviceKey(),
+      currentDeviceKey: () => ctx.getDeviceKey(),
       myDeviceId: ctx.getMyDeviceId(),
       log,
     });

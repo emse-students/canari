@@ -36,8 +36,13 @@ export type RecoveryCodeOrigin =
 export interface DeviceRecoveryCode {
   bytes: Uint8Array;
   origin: RecoveryCodeOrigin;
-  /** Stores a `new` or `replaced` code once the file sealed with it exists. A no-op for `kept`. */
-  keep: () => Promise<void>;
+  /**
+   * Stores a `new` or `replaced` code once the file sealed with it exists, sealed under the device key
+   * the session holds NOW - not the one the export started under: a key change that ran during the
+   * save (the move to the hardware-held key) re-sealed every store, and a code written under the old
+   * key would read as `replaced` at the next export. A no-op for `kept`, which that change re-sealed.
+   */
+  keep: (currentDeviceKeyB64: string) => Promise<void>;
 }
 
 /** The stored shape: AES-GCM under the device key, base64. */
@@ -117,9 +122,13 @@ export async function deviceRecoveryCode(
   return {
     bytes,
     origin,
-    keep: async () => {
-      await writeSealed(store, userId, bytes, deviceKeyB64);
-      log('[BACKUP_CODE] the device recovery code is stored');
+    keep: async (currentDeviceKeyB64) => {
+      await writeSealed(store, userId, bytes, currentDeviceKeyB64);
+      log(
+        currentDeviceKeyB64 === deviceKeyB64
+          ? '[BACKUP_CODE] the device recovery code is stored'
+          : '[BACKUP_CODE] the device recovery code is stored under the device key that replaced it during the export'
+      );
     },
   };
 }

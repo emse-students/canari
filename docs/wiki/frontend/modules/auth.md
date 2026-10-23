@@ -537,7 +537,9 @@ bits need no key stretching.
 **One code per device** (`crypto/deviceRecoveryCode.ts`): generated at the device's first export
 and kept in `localStorage`, SEALED under the device key - never in the clear, since on a phone a
 plaintext code beside the app's files would let a copy of them open every backup. It is kept only
-once a file was saved with it, so a cancelled save leaves no code nobody saw. Every device key change
+once a file was saved with it, so a cancelled save leaves no code nobody saw - and sealed under the
+key the session holds when the save returns, so a re-key that ran during the save does not make the
+next export call it replaced. Every device key change
 re-seals it with the stores (`moveDeviceRecoveryCode` in `performPinChange` and
 `moveSealedStoresOnly`; never fatal, idempotent for a resumed change). A stored code the key no
 longer opens - a reset, an eviction - is replaced at the next export, and the panel says the earlier
@@ -551,6 +553,21 @@ it" dismissal, and reads a file's header to ask for the code BEFORE an import (`
 v2 files are still read, and open only where the exporting key is the session's - so a v2 file
 exported before a phone's migration no longer opens on that phone after it.
 
+**A key change and the background engines** (2026-10-23). A push or a drain loads `mls.bin` and the
+key, then works; the re-key (or a PIN change) can re-seal the file meanwhile and the app go to the
+background, which drops the foreground guard at once. Every background write of `mls.bin` therefore
+compares the file with the bytes the engine loaded, under the lock every writer takes
+(`write_over_loaded_state`, `background_write_mls_bin_if_unchanged`): a state loaded under the old
+key never lands over one re-sealed under the new. The native seed mirror and push cache are sealed
+under the install's own cache key, not the device key, so a re-key does not touch them.
+
+**A failed keychain read is an error, never "no key".** The unattended read answers absent for the
+platform's not-found status ONLY (`errSecItemNotFound` on iOS); any other status - a locked device's
+interaction refusal, an entitlement error - is an error carrying its status
+(`keystore_bridge.rs`, `unattended_read_outcome`), so the marker logic never reverts a migration or
+replaces a key it merely could not read. The explicit reset forgets the marker only once the
+account's database was cleared (`forgetAtRestMarkerOnceDataIsGone`), as the account deletion does.
+
 **Account restore (WP-RESTORE-1, #2065)** restores a server session, never keys: a restored phone is
 a device that is born, or migrated, onto its own hardware-held key, and needs nothing from this page.
 
@@ -559,7 +576,9 @@ long the storage gate is held by the re-key); PIN change; a push readable with t
 the migration; a backup exported, then imported with its code on the other phone; a second export
 showing the same code; the new-backup notice after an upgrade with data, and its absence on a fresh
 install; "stay signed in" across a restart; biometric unlock after the migration. **No gate compiles
-the iOS side** (`KeystorePlugin.swift`, `canari_ios.mm`): it is owed a build on the Mac runner.
+the iOS side** (`KeystorePlugin.swift`, `canari_ios.mm`): it is owed a build on the Mac runner, and
+one iPhone reading of the unattended read's status handling (a push with the phone locked before its
+first unlock must log the status and refuse, never report the key absent).
 Android's Kotlin was compiled locally (`:app:compileArm64DebugKotlin`,
 `:tauri-plugin-keystore:compileDebugKotlin`).
 

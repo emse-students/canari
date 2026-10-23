@@ -32,6 +32,7 @@ import {
   readHardwareHeldKey,
   tauriHardwareKeyPort,
   type AtRestKeyScheme,
+  type HardwareKeyPort,
 } from '$lib/crypto/hardwareHeldKey';
 import {
   finishMigrationAtUnlock,
@@ -442,6 +443,32 @@ export function savedStateFailure(
 // ── Exported functions ────────────────────────────────────────────────────────
 
 /**
+ * THE EXPLICIT RESET, and the only path that frees a hardware-held key's keystore entry: the marker
+ * goes ONLY once this account's database was cleared, so the next PIN unlock may store a new key
+ * there. A database that survived keeps its marker - and with it the guard over the only key that
+ * opens it - exactly as the account deletion does (`accountLocalWipe.ts`).
+ */
+export async function forgetAtRestMarkerOnceDataIsGone(
+  databaseCleared: boolean,
+  userId: string,
+  port: Pick<HardwareKeyPort, 'forget'>,
+  log: (msg: string) => void
+): Promise<void> {
+  if (!databaseCleared) {
+    log(
+      '[SECURITY] ERROR: the local database was not cleared - the at-rest key marker is KEPT, so its key stays guarded'
+    );
+    return;
+  }
+  try {
+    await port.forget(userId);
+    log('[SECURITY] At-rest key marker forgotten - the keystore entry is free again.');
+  } catch (e) {
+    log(`[SECURITY] ERROR: the at-rest key marker could not be forgotten: ${String(e)}`);
+  }
+}
+
+/**
  * Wipes all local MLS state, device ID, and stored DB for the given user.
  * Called when the server signals that this device has been revoked.
  */
@@ -472,9 +499,11 @@ export async function resetDeviceAsFreshImpl(
     localStorage.removeItem(key);
   }
 
+  let databaseCleared = false;
   try {
     const storageToClear = await getStorage(userIdToReset);
     await storageToClear.clear();
+    databaseCleared = true;
     await storageToClear.close();
   } catch (e) {
     // Best-effort cleanup: continue even if local DB is not accessible - but never silently, since
@@ -482,16 +511,13 @@ export async function resetDeviceAsFreshImpl(
     console.warn('[SECURITY] could not clear the local database:', e);
   }
 
-  // THE EXPLICIT RESET, and the only path that frees a hardware-held key's keystore entry: the
-  // marker goes once this account's data is gone, so the next PIN unlock may store a new key there.
-  // Before this, the at-rest guard refuses every write and delete of that entry (`at_rest_key.rs`).
   if (hardwareHeldKeyApplies()) {
-    try {
-      await tauriHardwareKeyPort.forget(userIdToReset);
-      cb.log('[SECURITY] At-rest key marker forgotten - the keystore entry is free again.');
-    } catch (e) {
-      cb.log(`[SECURITY] ERROR: the at-rest key marker could not be forgotten: ${String(e)}`);
-    }
+    await forgetAtRestMarkerOnceDataIsGone(
+      databaseCleared,
+      userIdToReset,
+      tauriHardwareKeyPort,
+      cb.log
+    );
   }
 
   // The session's OWN handle. `getStorage` shares one open store per user, so when the wipe targets
