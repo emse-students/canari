@@ -191,14 +191,25 @@ Traps found while writing this, each measured on authentik 2026.8.0:
 Authentik acts as the OIDC **Provider**; Canari's [`core-service`](../services/core-service.md) acts as the **Relying Party**:
 
 ```
-Browser → Authentik /authorize (PKCE + state)
+Browser → Authentik /authorize (PKCE S256 + state)
   → User authenticates (login/password, SSO)
   → Redirect to /auth/callback?code=...&state=...
-  → Browser POSTs code to core-service
-  → core-service exchanges code for tokens (server-side)
+  → Browser POSTs code + PKCE verifier to core-service
+  → core-service exchanges code + verifier for tokens (server-side)
   → core-service upserts user in PostgreSQL (sub = userId)
   → Returns { access_token (JWT HS256, 15 min), refresh (HttpOnly cookie, 7d) }
 ```
+
+core-service forwards the `code_verifier` when the client sends one and publishes `oidcPkce: true` in
+`GET /api/version`, which is what a client reads before it sends a challenge: a challenged code
+redeemed without its verifier is refused by authentik, so the server half ships first
+([legacy-compatibility](../legacy-compatibility.md#no-date-yet---an-oidc-callback-with-no-pkce-verifier)).
+What authentik does with the pair is MEASURED, not assumed: `test-pkce.py`, run by
+`test-blueprints.sh` on a throwaway instance, authorizes through `miconnect-canari-local` and redeems
+the code the way core-service does. On 2026.8.0 (2026-10-23) a challenged code with no verifier and
+with a wrong one answer `400 invalid_grant`, the right verifier answers `200` with an id_token, and a
+verifier sent for an unchallenged code answers `400 invalid_grant`. core-service turns any refusal
+into a `401` (`auth.controller.spec.ts`).
 
 The user's `sub` claim from Authentik becomes the canonical `userId` across all Canari services (`findOrCreateFromOidc` uses `userinfo.sub` as the primary key).
 
