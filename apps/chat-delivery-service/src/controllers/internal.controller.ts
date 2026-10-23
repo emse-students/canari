@@ -34,6 +34,7 @@ import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
+import { parseSessionId } from '../utils/session-id';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { endDeviceMemberships } from '../utils/group-membership';
 import { MessagingService } from '../services/messaging.service';
@@ -201,8 +202,9 @@ export class InternalController {
   }
 
   /**
-   * Ends one device's push registration because the server ended that device's SESSION - called by
-   * core-service at `/api/auth/logout` and at every revocation of a session it can name a device for.
+   * Ends the push registration an ended SESSION made - called by core-service's outbox
+   * (`SessionPushEndService`) for every session it deletes that named a device: the logout, an owner
+   * revoking a device, "sign out everywhere else", and a refresh-token replay.
    *
    * THE SERVER HALF OF "A SIGN-OUT ENDS THE DEVICE'S PUSH REGISTRATION". The device deletes its own
    * token too (`push_registration.rs`), and each half stands alone: this one holds for a device that
@@ -211,21 +213,54 @@ export class InternalController {
    * paths authenticated by that secret (`refresh-token`, `fetch-proto`, ...) are refused from here on
    * - `refresh-token` only ever UPDATES a row, so it cannot bring one back.
    *
-   * Idempotent: a device with no row answers `removed: 0`, which is the ordinary second call.
+   * BY SESSION, NOT BY DEVICE. A row carries the session that registered it (migration 037), and only
+   * the row `sessionId` names is deleted - so a re-sign-in on the same device, whose registration
+   * rewrote the row with its own session, is never removed by the old session's end, whichever of
+   * the two reaches the server first. A row registered before the column (or with an access token
+   * minted before the `sid` claim) holds NULL and is deleted only when `unbound=end`: core-service
+   * says so when no live session of the account names the device, which is the only case in which
+   * that row cannot belong to a session still signed in. Such rows disappear as devices register
+   * again; nothing backfills them.
+   *
+   * Idempotent: an answer of `removed: 0` is the ordinary second call, and the success the outbox
+   * waits for. 2xx only when the delete ran, so the caller's retry stops on the truth.
    */
   @Delete('push/users/:userId/devices/:deviceId')
   async endDevicePushRegistration(
     @Headers('x-internal-secret') headerSecret: string,
     @Param('userId') userIdRaw: string,
-    @Param('deviceId') deviceIdRaw: string
+    @Param('deviceId') deviceIdRaw: string,
+    @Query('sessionId') sessionIdRaw: string | undefined,
+    @Query('unbound') unboundRaw: string | undefined
   ): Promise<{ removed: number }> {
     this.assertInternalSecret(headerSecret);
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     const deviceId = sanitizeQueryValue(deviceIdRaw, 'deviceId');
-    const result = await this.pushTokenRepo.delete({ userId, deviceId });
+    const sessionId = parseSessionId(sessionIdRaw, 'sessionId');
+    if (!sessionId) {
+      // The caller names the session it ended, always: a delete by device alone is what could reach
+      // a newer session's registration.
+      this.logger.warn(
+        `[PUSH_SESSION_END] REFUSED user=${userId.slice(0, 8)} device=${deviceId} - no sessionId`
+      );
+      throw new BadRequestException('sessionId is required');
+    }
+    if (unboundRaw !== 'end' && unboundRaw !== 'keep') {
+      throw new BadRequestException("unbound must be 'end' or 'keep'");
+    }
+    const endUnbound = unboundRaw === 'end';
+    const result = await this.pushTokenRepo.delete(
+      endUnbound
+        ? [
+            { userId, deviceId, sessionId },
+            { userId, deviceId, sessionId: IsNull() },
+          ]
+        : { userId, deviceId, sessionId }
+    );
     const removed = result.affected ?? 0;
     this.logger.log(
-      `[PUSH_SESSION_END] user=${userId.slice(0, 8)} device=${deviceId} removed=${removed}`
+      `[PUSH_SESSION_END] user=${userId.slice(0, 8)} device=${deviceId} ` +
+        `session=${sessionId.slice(0, 8)} unbound=${unboundRaw} removed=${removed}`
     );
     return { removed };
   }

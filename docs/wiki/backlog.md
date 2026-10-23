@@ -444,28 +444,6 @@ Measure first: the maximum number of commits per user per minute on production o
 (`mls_commit_log`, grouped by sender device and minute). Set the limit above that maximum, then add a
 test that the route answers `429` past it and never below it.
 
-## P2 - A push registration is not bound to the session that made it (2026-10-22) - DECIDED: build it (user, 2026-10-23)
-
-A session that ends ends its device's push registration on both sides since 2026-10-22
-([sessions](sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
-The server half is ONE internal call per ended session, deleting by `(userId, deviceId)`. Two
-reliability properties need a schema change. **The user said yes on 2026-10-23**: the migration and
-the outbox below are built as their own pull request, after this one:
-
-- **Durability.** The server-side ending is single-shot: a failed call is logged at error and not
-  retried.
-- **Precision.** The delete is keyed on the device, not on the registration the ended session made,
-  so its order against a re-sign-in on the same device is not fixed by construction.
-
-**The design to build.** Migration on chat-delivery: `push_token."sessionId" uuid NULL`, written by
-`POST /mls/push/register` from the access token's session claim (if the access token does not carry
-`sid`, core-service adds it); the internal route deletes `WHERE "sessionId" = :sid`. Rows registered
-before the column carry NULL and are rewritten at their next registration - no backfill. Migration on
-core-service: an outbox `session_push_endings (sessionId, userId, deviceId, createdAt, attempts,
-lastError)` written in the SAME transaction as the session delete and drained like
-`account_erasure_jobs` until chat-delivery answers 2xx. Together these make a session's end and its
-push ending one durable fact.
-
 ## P3 - A refused membership report is silent on the client (2026-10-22)
 
 A report of `active` now promotes an existing seat only, and is refused (`403 NOT_A_MEMBER`, with

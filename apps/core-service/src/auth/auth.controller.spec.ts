@@ -247,6 +247,29 @@ describe('AuthController sessions', () => {
       expect(cookie.jti).toBe('jti-2');
     });
 
+    it('mints an access token naming the session it was refreshed from', async () => {
+      sessions.rotate.mockResolvedValue({
+        status: 'rotated',
+        tokenId: 'jti-2',
+        expiresAt: new Date(Date.now() + 1000),
+      });
+      const req = makeReq({
+        cookies: {
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-1',
+            jti: 'jti-1',
+          }),
+        },
+      });
+
+      const body = await controller.refreshToken(req, makeRes().res);
+
+      const access = jwt.verify(body.access_token, JWT_SECRET) as { sub: string; sid?: string };
+      expect(access).toEqual(expect.objectContaining({ sub: 'user-1', sid: 'sid-1' }));
+    });
+
     it('refuses a replayed token and clears the cookie', async () => {
       sessions.rotate.mockResolvedValue({ status: 'replayed' });
 
@@ -557,6 +580,17 @@ describe('AuthController sessions', () => {
       expect(body.id_token).toBe('h.idtoken.s');
     });
 
+    it('mints an access token naming the session the sign-in opened', async () => {
+      authentikAnswers();
+      const body = await callbackController().oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      const access = jwt.verify(body.access_token, JWT_SECRET) as { sid?: string };
+      expect(access.sid).toBe('sid-new');
+    });
+
     /**
      * `users.id` IS the OIDC subject: a sign-in while the erasure is still running would recreate
      * the account under the same id, and the erasure's next pass would delete what it then wrote.
@@ -848,6 +882,31 @@ describe('AuthController sessions', () => {
       expect(out.headers['X-Logged-In']).toBe('true');
       expect(out.headers['X-User-Id']).toBe('user-1');
       expect(out.headers['X-Global-Admin']).toBe('true');
+    });
+
+    it('hands nginx the session the access token names, and nothing for a token minted before the claim', async () => {
+      const withSid = makeRes();
+      await controller.verify(
+        makeReq({ bearer: jwt.sign({ sub: 'user-1', sid: 'sid-1' }, JWT_SECRET) }),
+        withSid.res
+      );
+      expect(withSid.headers['X-Session-Id']).toBe('sid-1');
+
+      const withoutSid = makeRes();
+      await controller.verify(makeReq({ bearer: signAccess('user-1') }), withoutSid.res);
+      expect(withoutSid.headers['X-Logged-In']).toBe('true');
+      expect(withoutSid.headers['X-Session-Id']).toBe('');
+    });
+
+    it('names no session for a refresh token used as a bearer token', async () => {
+      const out = makeRes();
+      await controller.verify(
+        makeReq({
+          bearer: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-1', jti: 'j' }),
+        }),
+        out.res
+      );
+      expect(out.headers['X-Session-Id']).toBe('');
     });
   });
 });

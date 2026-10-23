@@ -362,20 +362,37 @@ device it cannot claim.
 **After any sign-out, the device stops being a push destination for the account that left - on
 both sides, and neither depends on the other.**
 
-**Server.** Every path in `AuthSessionsService` that deletes a session naming a device ends that
-device's push registration: `revoke` (the logout), `revokeOwned` (the owner revoking a device),
-`revokeOthers`, and the replay that revokes in `rotate`. The device is taken from the deleted row
-(`DELETE ... RETURNING` for `revokeOthers`) - `auth_sessions."deviceId"` is the only join between a
-login and a device - and
-`SessionPushEndService` calls chat-delivery-service's
-`DELETE /api/internal/push/users/:userId/devices/:deviceId` with `INTERNAL_SECRET`. Deleting the
-`push_token` row removes the destination AND the push secret on it, so every PushSecret-authenticated
-background path is refused from then on, and `refresh-token` only ever updates a row, so nothing on
-the device can bring it back. Two exceptions, both because the device's registration belongs to a
-LIVE session: a device another live session of the same account still names keeps it, and
-`bindDevice`'s strays never end it (they name the very device being bound). The call is not awaited
-by the logout - a slow chat-delivery must not make the client read "the server did NOT revoke" -
-and a failure is logged at error with `[PUSH_SESSION_END]`.
+**Server.** Every path in `AuthSessionsService` that deletes a session naming a device ends the
+push registration THAT SESSION made: `revoke` (the logout), `revokeOwned` (the owner revoking a
+device), `revokeOthers`, and the replay that revokes in `rotate`. Two facts make it exact and durable
+by construction:
+
+- **The registration names its session.** An access token carries `sid`, the session it was minted
+  for (`signAccessToken`); `/api/auth/verify` answers it as `X-Session-Id`, nginx forwards it on every
+  authenticated location (and empties a client's own), and `POST /mls/push/register` stores it in
+  `push_token."sessionId"` (chat-delivery migration 037) on every registration, null included. The
+  internal `DELETE /api/internal/push/users/:userId/devices/:deviceId?sessionId=&unbound=` deletes
+  the row THAT session wrote, so a re-sign-in on the same device - whose registration rewrote the row
+  with its own session - is never removed by the old session's end, whichever reaches the server
+  first. A row written before the column, or with an access token minted before the claim, holds
+  NULL; it is deleted only with `unbound=end`, which core-service sends when no live session of the
+  account names the device. Such rows disappear as devices register again - there is no backfill.
+- **The ending is part of the session's deletion.** The same transaction that deletes the session
+  writes one `session_push_endings` row (core-service migration 016) per ended session that named a
+  device - `auth_sessions."deviceId"` is the only join between a login and a device, taken from the
+  deleted row (`DELETE ... RETURNING` for `revokeOthers`). A failure rolls both back.
+  `SessionPushEndService` drains the outbox exactly as `AccountErasureService` drains
+  `account_erasure_jobs` ([account-erasure](account-erasure.md)): right after the commit, unawaited -
+  a slow chat-delivery never turns a logout into a refusal - and every 60 s, a claim under
+  `FOR UPDATE SKIP LOCKED` with a lease, one call per row with `INTERNAL_SECRET`, the row deleted
+  once chat-delivery answers 2xx (`removed: 0` is a success: the second call of an idempotent end),
+  and anything else kept with its attempts and last error and retried with backoff (30 s doubling,
+  6 h cap), each failure logged at ERROR with `[PUSH_SESSION_END]`, its attempts and its age.
+
+Deleting the `push_token` row removes the destination AND the push secret on it, so every
+PushSecret-authenticated background path is refused from then on, and `refresh-token` only ever
+updates a row, so nothing on the device can bring it back. `bindDevice`'s strays never record an
+ending: they name the very device being bound, whose registration is the live session's.
 
 **Device.** `clearAuth` - which every sign-out calls - runs `endPushRegistration`
 (`PushNotificationService.ts`) whatever happened before: a dead credential, a refused network, no
@@ -388,14 +405,12 @@ native handlers instead of shown. The mechanism, and the two durable marks it le
 
 **What each side guarantees on its own.** The device's deletion of its OS token makes FCM refuse
 that token, and the dispatcher drops the row at the next send (`registration-token-not-registered`).
-The server's deletion needs nothing from the device. The server-side ending is single-shot: a failed
-call is logged at error and not retried; making it durable is tracked in
-[backlog](backlog.md#p2---a-push-registration-is-not-bound-to-the-session-that-made-it-2026-10-22---decided-build-it-user-2026-10-23).
+The server's deletion needs nothing from the device, and is recorded with the session's own
+deletion, so a chat-delivery that is down delays it and never loses it.
 
-**Scope.** A delete keyed on `(userId, deviceId)` cannot reach another account's registration.
-Within one account, its order against a re-sign-in on the same device is guaranteed only once a
-registration is bound to the session that made it - a schema change the user approved on
-2026-10-23, built next ([backlog](backlog.md#p2---a-push-registration-is-not-bound-to-the-session-that-made-it-2026-10-22---decided-build-it-user-2026-10-23)). A session
+**Scope.** The delete is keyed on the account, the device AND the session, so it cannot reach another
+account's registration nor a newer session's of the same device. A session that never named a device
+(it never reached `bindDevice`) records no ending: the route is addressed by device. A session
 that EXPIRES (7 idle days, `deleteExpired`) is not a revocation and leaves the push registration as
 it is - **decided by the user, 2026-10-23: only an explicit sign-out (or a revocation) ends it, never
 an expiry alone**, so an idle phone keeps its notifications, as WhatsApp's does.

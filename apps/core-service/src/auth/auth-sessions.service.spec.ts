@@ -113,6 +113,24 @@ class FakeRepo {
   createQueryBuilder(): FakeQueryBuilder {
     return new FakeQueryBuilder(this);
   }
+
+  /**
+   * The transaction a revocation runs: every repository it asks for is this one, and a callback
+   * that throws restores the rows it saw, as a rollback would.
+   */
+  get manager(): { transaction: <T>(cb: (m: unknown) => Promise<T>) => Promise<T> } {
+    return {
+      transaction: async <T>(cb: (m: unknown) => Promise<T>): Promise<T> => {
+        const snapshot = [...this.rows];
+        try {
+          return await cb({ getRepository: () => this });
+        } catch (e) {
+          this.rows = snapshot;
+          throw e;
+        }
+      },
+    };
+  }
 }
 
 const UPDATE_WHERE = 'id = :id AND "tokenId" = :presented AND "expiresAt" > :now';
@@ -198,18 +216,28 @@ class FakeQueryBuilder {
   }
 }
 
-/** Records every device whose push registration the service asked to end. */
+/** Records every push ending the service queued, and every drain it started after a commit. */
 function makeService(): {
   service: AuthSessionsService;
   repo: FakeRepo;
-  endDevice: jest.Mock<Promise<boolean>, [string, string, string]>;
+  enqueue: jest.Mock;
+  drain: jest.Mock;
+  queued: () => string[];
 } {
   const repo = new FakeRepo();
-  const endDevice = jest.fn<Promise<boolean>, [string, string, string]>(() =>
-    Promise.resolve(true)
+  const enqueue = jest.fn(
+    (_manager: unknown, ended: Array<{ deviceId?: string | null }>, _cause: string) =>
+      Promise.resolve(ended.filter((row) => !!row.deviceId).length)
   );
-  const service = new AuthSessionsService(repo as never, { endDevice } as never);
-  return { service, repo, endDevice };
+  const drain = jest.fn(() => Promise.resolve());
+  const service = new AuthSessionsService(repo as never, { enqueue, drain } as never);
+  const queued = () =>
+    enqueue.mock.calls.flatMap(([, ended, cause]) =>
+      (ended as Array<{ id: string; userId: string; deviceId?: string | null }>)
+        .filter((row) => !!row.deviceId)
+        .map((row) => `${row.userId}/${row.deviceId}/${row.id}/${cause}`)
+    );
+  return { service, repo, enqueue, drain, queued };
 }
 
 describe('AuthSessionsService', () => {
@@ -420,7 +448,7 @@ describe('AuthSessionsService', () => {
     });
   });
 
-  describe('a session that ends takes its device push registration with it', () => {
+  describe('a session that ends records its push ending in the same transaction', () => {
     /** Opens a session of `userId` bound to `deviceId`. */
     async function boundSession(
       service: AuthSessionsService,
@@ -432,51 +460,48 @@ describe('AuthSessionsService', () => {
       return opened.sessionId;
     }
 
-    it('logout ends the push registration of the device the session named', async () => {
-      const { service, endDevice } = makeService();
+    it('logout records the ending of the session it deleted, then drains', async () => {
+      const { service, queued, drain } = makeService();
       const sid = await boundSession(service, 'user-1', 'phone-1');
 
       await service.revoke(sid);
-      await service.pushEndsSettled();
 
-      expect(endDevice).toHaveBeenCalledTimes(1);
-      expect(endDevice).toHaveBeenCalledWith('user-1', 'phone-1', 'logout');
+      expect(queued()).toEqual([`user-1/phone-1/${sid}/logout`]);
+      expect(drain).toHaveBeenCalledTimes(1);
     });
 
-    it('the owner revoking a device ends that device push registration', async () => {
-      const { service, endDevice } = makeService();
+    it('the owner revoking a device records that session ending', async () => {
+      const { service, queued } = makeService();
       const sid = await boundSession(service, 'user-1', 'phone-1');
 
       await expect(service.revokeOwned('user-1', sid)).resolves.toBe(true);
-      await service.pushEndsSettled();
 
-      expect(endDevice).toHaveBeenCalledWith('user-1', 'phone-1', 'revoked-by-owner');
+      expect(queued()).toEqual([`user-1/phone-1/${sid}/revoked-by-owner`]);
     });
 
-    it('a refused revocation of someone else session ends nothing', async () => {
-      const { service, endDevice } = makeService();
+    it('a refused revocation of someone else session records nothing', async () => {
+      const { service, queued, drain } = makeService();
       const sid = await boundSession(service, 'user-2', 'phone-2');
 
       await expect(service.revokeOwned('user-1', sid)).resolves.toBe(false);
-      await service.pushEndsSettled();
 
-      expect(endDevice).not.toHaveBeenCalled();
+      expect(queued()).toEqual([]);
+      expect(drain).not.toHaveBeenCalled();
     });
 
-    it('revoking the other sessions ends their devices and keeps the caller device', async () => {
-      const { service, endDevice } = makeService();
+    it('revoking the other sessions records each one, and never the kept session', async () => {
+      const { service, queued } = makeService();
       const keep = await boundSession(service, 'user-1', 'phone-1');
-      await boundSession(service, 'user-1', 'laptop-1');
+      const laptop = await boundSession(service, 'user-1', 'laptop-1');
       await boundSession(service, 'user-2', 'phone-2');
 
       await service.revokeOthers('user-1', keep);
-      await service.pushEndsSettled();
 
-      expect(endDevice.mock.calls.map(([u, d]) => `${u}/${d}`)).toEqual(['user-1/laptop-1']);
+      expect(queued()).toEqual([`user-1/laptop-1/${laptop}/revoked-others`]);
     });
 
-    it('a replayed refresh token, which revokes the session, ends its device push registration', async () => {
-      const { service, repo, endDevice } = makeService();
+    it('a replayed refresh token, which revokes the session, records its ending', async () => {
+      const { service, repo, queued } = makeService();
       const opened = await service.create('user-1');
       await service.bindDevice('user-1', opened.sessionId, 'phone-1');
       // Two rotations: the original token is now neither current nor inside the grace window.
@@ -487,58 +512,53 @@ describe('AuthSessionsService', () => {
       await expect(service.rotate(opened.sessionId, opened.tokenId)).resolves.toEqual({
         status: 'replayed',
       });
-      await service.pushEndsSettled();
 
       expect(repo.rows).toHaveLength(0);
-      expect(endDevice).toHaveBeenCalledWith('user-1', 'phone-1', 'replay');
+      expect(queued()).toEqual([`user-1/phone-1/${opened.sessionId}/replay`]);
     });
 
-    it('a session that never named a device has no push registration to end', async () => {
-      const { service, endDevice } = makeService();
+    it('a session that never named a device has nothing to end, and starts no drain', async () => {
+      const { service, queued, drain } = makeService();
       const opened = await service.create('user-1');
 
       await service.revoke(opened.sessionId);
-      await service.pushEndsSettled();
 
-      expect(endDevice).not.toHaveBeenCalled();
+      expect(queued()).toEqual([]);
+      expect(drain).not.toHaveBeenCalled();
     });
 
-    it('a device another live session still names keeps its registration', async () => {
-      // A re-sign-in on the same device whose new row is already bound: the device's pushes now
-      // belong to that session, and ending the old one must not end them.
-      const { service, repo, endDevice } = makeService();
-      const old = await service.create('user-1');
-      const current = await service.create('user-1');
-      repo.rows.find((r) => r.id === old.sessionId)!.deviceId = 'phone-1';
-      repo.rows.find((r) => r.id === current.sessionId)!.deviceId = 'phone-1';
-
-      await service.revoke(old.sessionId);
-      await service.pushEndsSettled();
-
-      expect(endDevice).not.toHaveBeenCalled();
+    it('a logout of a session already gone records nothing', async () => {
+      const { service, enqueue } = makeService();
+      await service.revoke('00000000-0000-4000-8000-000000000000');
+      expect(enqueue.mock.calls.every(([, ended]) => (ended as unknown[]).length === 0)).toBe(true);
     });
 
-    it('binding a device revokes its strays without ending the device registration', async () => {
-      const { service, endDevice } = makeService();
+    it('binding a device revokes its strays without recording an ending', async () => {
+      const { service, queued } = makeService();
       await boundSession(service, 'user-1', 'phone-1');
       await boundSession(service, 'user-1', 'phone-1');
-      await service.pushEndsSettled();
 
-      expect(endDevice).not.toHaveBeenCalled();
+      expect(queued()).toEqual([]);
     });
 
-    it('a failing push end never fails the revocation', async () => {
-      const { service, repo, endDevice } = makeService();
-      endDevice.mockRejectedValue(new Error('chat-delivery down'));
+    it('an ending that cannot be recorded rolls the session delete back - both or neither', async () => {
+      const { service, repo, enqueue, drain } = makeService();
       const sid = await boundSession(service, 'user-1', 'phone-1');
-      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      enqueue.mockRejectedValueOnce(new Error('relation does not exist'));
+
+      await expect(service.revoke(sid)).rejects.toThrow('relation does not exist');
+
+      expect(repo.rows.map((r) => r.id)).toEqual([sid]);
+      expect(drain).not.toHaveBeenCalled();
+    });
+
+    it('the revocation never waits for chat-delivery: the drain runs after the commit, unawaited', async () => {
+      const { service, repo, drain } = makeService();
+      drain.mockReturnValue(new Promise(() => undefined));
+      const sid = await boundSession(service, 'user-1', 'phone-1');
 
       await expect(service.revoke(sid)).resolves.toBeUndefined();
-      await service.pushEndsSettled();
-
       expect(repo.rows).toHaveLength(0);
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('not ended'));
-      error.mockRestore();
     });
   });
 
