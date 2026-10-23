@@ -357,6 +357,49 @@ can name a device, and a holder who never unlocks MLS never names one at all - w
 stolen cookie takes. The settings panel gives such a row its own entry instead of hiding it under a
 device it cannot claim.
 
+## A session that ends takes its device's push registration with it (2026-10-22)
+
+**After any sign-out, the device stops being a push destination for the account that left - on
+both sides, and neither depends on the other.**
+
+**Server.** Every path in `AuthSessionsService` that deletes a session naming a device ends that
+device's push registration: `revoke` (the logout), `revokeOwned` (the owner revoking a device),
+`revokeOthers`, and the replay that revokes in `rotate`. The device is taken from the deleted row
+(`DELETE ... RETURNING` for `revokeOthers`) - `auth_sessions."deviceId"` is the only join between a
+login and a device - and
+`SessionPushEndService` calls chat-delivery-service's
+`DELETE /api/internal/push/users/:userId/devices/:deviceId` with `INTERNAL_SECRET`. Deleting the
+`push_token` row removes the destination AND the push secret on it, so every PushSecret-authenticated
+background path is refused from then on, and `refresh-token` only ever updates a row, so nothing on
+the device can bring it back. Two exceptions, both because the device's registration belongs to a
+LIVE session: a device another live session of the same account still names keeps it, and
+`bindDevice`'s strays never end it (they name the very device being bound). The call is not awaited
+by the logout - a slow chat-delivery must not make the client read "the server did NOT revoke" -
+and a failure is logged at error with `[PUSH_SESSION_END]`.
+
+**Device.** `clearAuth` - which every sign-out calls - runs `endPushRegistration`
+(`PushNotificationService.ts`) whatever happened before: a dead credential, a refused network, no
+registration marker in the tab, no app shell. Through `end_push_registration`
+(`src-tauri/src/commands/push_registration.rs`) the OS token is deleted natively, the push secret
+erased, `push_context.json` reduced to the device's identity (`userId`, `deviceId`, `locale` - an
+allowlist), and the iOS extension's copies removed; a push still in flight is then dropped by the
+native handlers instead of shown. The mechanism, and the two durable marks it leaves, are on
+[mobile](frontend/mobile.md#a-sign-out-ends-this-devices-push-registration-2026-10-22).
+
+**What each side guarantees on its own.** The device's deletion of its OS token makes FCM refuse
+that token, and the dispatcher drops the row at the next send (`registration-token-not-registered`).
+The server's deletion needs nothing from the device. The server-side ending is single-shot: a failed
+call is logged at error and not retried; making it durable is tracked in
+[backlog](backlog.md#p2---a-push-registration-is-not-bound-to-the-session-that-made-it-2026-10-22---decided-build-it-user-2026-10-23).
+
+**Scope.** A delete keyed on `(userId, deviceId)` cannot reach another account's registration.
+Within one account, its order against a re-sign-in on the same device is guaranteed only once a
+registration is bound to the session that made it - a schema change the user approved on
+2026-10-23, built next ([backlog](backlog.md#p2---a-push-registration-is-not-bound-to-the-session-that-made-it-2026-10-22---decided-build-it-user-2026-10-23)). A session
+that EXPIRES (7 idle days, `deleteExpired`) is not a revocation and leaves the push registration as
+it is - **decided by the user, 2026-10-23: only an explicit sign-out (or a revocation) ends it, never
+an expiry alone**, so an idle phone keeps its notifications, as WhatsApp's does.
+
 ## A dead session sends the user to `/login` carrying where they were going (2026-10-09)
 
 A post push tapped from a KILLED app whose session had been deleted server-side landed on a bare

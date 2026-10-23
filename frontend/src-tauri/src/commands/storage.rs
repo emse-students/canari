@@ -525,6 +525,11 @@ const KEPT_AT_TOP_LEVEL: &[&str] = &[
     "databases",
     "lib",
     "no_backup",
+    // The sign-out's two push marks (`push_registration.rs`). A revoked device is wiped right after
+    // its sign-out wrote them, and the wipe must not undo the sign-out: without them the deletion
+    // of the OS push token is no longer owed, and a push that still arrives is no longer dropped.
+    crate::commands::push_registration::SIGNED_OUT_FILE,
+    crate::commands::push_registration::DELETION_OWED_FILE,
     // Shared with Firebase - emptied by prefix, not wholesale.
     "files",
     "shared_prefs",
@@ -1351,6 +1356,31 @@ mod tests {
         assert!(dir.join("app_textures/x").exists());
         assert!(dir.join("databases/x").exists());
         assert!(!dir.join("graine_seeds.json").exists(), "ours was kept");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A revoked device is signed out and then wiped. The wipe keeps the sign-out's two push marks:
+    /// the OS token deletion stays owed until the native side completes it, and a push that still
+    /// arrives stays dropped until a new registration is answered.
+    #[test]
+    fn keeps_the_marks_a_sign_out_wrote_for_the_push_registration() {
+        use crate::commands::push_registration::{DELETION_OWED_FILE, SIGNED_OUT_FILE};
+        let dir = temp_dir("push-marks");
+        file(&dir, SIGNED_OUT_FILE);
+        file(&dir, DELETION_OWED_FILE);
+        file(&dir, "push_context.json");
+
+        wipe_app_data(&dir).unwrap();
+
+        assert!(
+            dir.join(SIGNED_OUT_FILE).exists(),
+            "the signed-out mark was wiped"
+        );
+        assert!(
+            dir.join(DELETION_OWED_FILE).exists(),
+            "the owed deletion was wiped"
+        );
+        assert!(!dir.join("push_context.json").exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 

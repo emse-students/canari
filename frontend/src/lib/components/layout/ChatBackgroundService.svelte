@@ -120,7 +120,7 @@
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
   import IncomingShareHost from './IncomingShareHost.svelte';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
-  import { CALLS_ENABLED } from '$lib/features';
+  import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
   import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
@@ -876,11 +876,13 @@
   /**
    * Warns when another device of the same account is already in a call.
    */
-  function checkSiblingCallWarning() {
-    // One /api/calls/sibling-status request fires per session start. While calls are held off it
-    // could only ever report a legacy device, and it would say so in a toast about a call this
-    // client cannot join - a request and a line that are both pure noise.
-    if (!CALLS_ENABLED) return;
+  async function checkSiblingCallWarning() {
+    // One /api/calls/sibling-status request fires per session start. While calls are held off - by
+    // this build or by the server's kill switch - it could only ever report a legacy device, and it
+    // would say so in a toast about a call this client cannot join: pure noise.
+    // Awaited until /api/version has answered: at session start the switch reads `off` by default,
+    // and skipping on that would silence the check for the whole session.
+    if (!(await callsAvailableAnswered())) return;
     const deviceId = globalSession.myDeviceId;
     if (!deviceId || globalSession.callState !== 'idle') return;
     void warnIfSiblingDeviceInCall(deviceId);
@@ -1226,7 +1228,7 @@
         // every later expiry of the same process - no sign-out, no redirect, a dead session left up.
         _sessionExpiredHandled = false;
         dismissAuthPrompts();
-        checkSiblingCallWarning();
+        void checkSiblingCallWarning();
         overrides.onMlsReady?.();
       },
       onSessionExpired: handleSessionExpired,
@@ -1749,7 +1751,7 @@
             sessionCb(),
             `resume prepared in ${Math.round(performance.now() - resumeStart)} ms: ${steps.join(', ')} ms`
           );
-          checkSiblingCallWarning();
+          void checkSiblingCallWarning();
         })();
       }
     };
