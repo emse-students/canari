@@ -1102,6 +1102,16 @@ export interface IMlsService {
    */
   isGroupDrained(groupId: string): boolean;
   /**
+   * Resolves the first time {@link isGroupDrained} holds for `groupId` - at once when it holds now.
+   *
+   * AN EVENT, NEVER A POLL: it is re-checked only where a piece of that evidence can change - the
+   * scheduler finishing a frame of the group, and a pull ending. Never await it inside a frame of
+   * the group itself: that frame is the group's current work, so the group cannot be drained until
+   * it returns. A caller chains on it instead (the admission gate's parked asks, section 25). Never
+   * rejects; a session that ends first leaves it pending, with its holder.
+   */
+  whenGroupDrained(groupId: string): Promise<void>;
+  /**
    * Tells the service the local conversation store is now authoritative.
    *
    * A frame that arrived before the restore finished was left in the server queue with nothing to

@@ -1500,17 +1500,73 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** @inheritdoc */
   isGroupDrained(groupId: string): boolean {
-    const drained =
-      this.mailboxEmptiedByAPull &&
-      !this.pendingPullInFlight &&
-      this.isWsOpen() &&
-      this.messageScheduler.isGroupIdle(groupId);
+    const drained = this.groupDrainedNow(groupId);
     if (!drained) {
       console.debug(
         `[QUEUE] group ${groupId.slice(0, 8)} not known drained: pulled=${this.mailboxEmptiedByAPull} pulling=${Boolean(this.pendingPullInFlight)} socket=${this.isWsOpen()} idle=${this.messageScheduler.isGroupIdle(groupId)}`
       );
     }
     return drained;
+  }
+
+  /** {@link isGroupDrained}'s evidence, read silently - the waiters re-read it on every event. */
+  private groupDrainedNow(groupId: string): boolean {
+    return (
+      this.mailboxEmptiedByAPull &&
+      !this.pendingPullInFlight &&
+      this.isWsOpen() &&
+      this.messageScheduler.isGroupIdle(groupId)
+    );
+  }
+
+  /** Waiters of {@link whenGroupDrained}, by group. */
+  private readonly groupDrainedWaiters = new Map<string, Array<() => void>>();
+
+  /** Groups whose scheduler idleness is already being waited for, so it is armed once per group. */
+  private readonly groupDrainedArmed = new Set<string>();
+
+  /** @inheritdoc */
+  whenGroupDrained(groupId: string): Promise<void> {
+    if (this.groupDrainedNow(groupId)) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiters = this.groupDrainedWaiters.get(groupId) ?? [];
+      waiters.push(resolve);
+      this.groupDrainedWaiters.set(groupId, waiters);
+      this.armGroupDrained(groupId);
+    });
+  }
+
+  /**
+   * Waits for the scheduler to finish `groupId`'s frames, then re-reads the evidence. Armed ONLY
+   * while the group still has frames: an idle group waiting on the pull or the socket is woken by
+   * the pull's end instead, and re-arming on an idle group would resolve at once, for ever.
+   */
+  private armGroupDrained(groupId: string): void {
+    if (this.groupDrainedArmed.has(groupId) || this.messageScheduler.isGroupIdle(groupId)) return;
+    this.groupDrainedArmed.add(groupId);
+    void this.messageScheduler.waitUntilGroupIdle(groupId).then(() => {
+      this.groupDrainedArmed.delete(groupId);
+      this.wakeGroupDrainedWaiters('group idle');
+    });
+  }
+
+  /**
+   * Resolves every {@link whenGroupDrained} waiter whose group now reads drained, and re-arms the
+   * others whose group has frames again. Called where the evidence can change: a group's frames
+   * done, a pull ended.
+   */
+  private wakeGroupDrainedWaiters(cause: string): void {
+    for (const [groupId, waiters] of this.groupDrainedWaiters) {
+      if (!this.groupDrainedNow(groupId)) {
+        this.armGroupDrained(groupId);
+        continue;
+      }
+      this.groupDrainedWaiters.delete(groupId);
+      console.debug(
+        `[QUEUE] group ${groupId.slice(0, 8)} drained (${cause}) - waking ${waiters.length} waiter(s)`
+      );
+      for (const resolve of waiters) resolve();
+    }
   }
 
   private async settleMailbox(): Promise<void> {
@@ -2133,6 +2189,9 @@ export abstract class BaseMlsService implements IMlsService {
       if (this.pendingPullInFlight === announced) this.pendingPullInFlight = null;
     }
     await this.settleMailbox();
+    // THE PULL'S END IS AN EVENT FOR `whenGroupDrained`: a group that went idle before the mailbox
+    // was listed whole reads drained only now (the start-up sync runs before the first full pull).
+    this.wakeGroupDrainedWaiters('pull ended');
     // Every frame refused for lack of a conversation row before this pull started has now been
     // listed AND handled - read, or refused again under a later mark - so the gap healer stops
     // holding live frames behind it (`refusedBacklogIsQueued`). A pull that died half-way proves

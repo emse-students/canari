@@ -13,7 +13,7 @@ import { workspaceScope } from '$lib/mls-client/distributionScope';
 import { toBase64 } from '$lib/utils/hex';
 import { ACCOUNT_KEY } from '../accountLocalKeys';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
-import { historyVisibilityFor, requireGraineRuntime } from './runtime';
+import { historyVisibilityFor, isGraineReady, requireGraineRuntime } from './runtime';
 
 /**
  * WHO MAY BE HANDED A COMMUNITY'S PAST: a member whose admission THIS DEVICE can verify, from what
@@ -37,7 +37,9 @@ import { historyVisibilityFor, requireGraineRuntime } from './runtime';
  *   had is a newcomer without one. NO REMOVAL SEEN IS "UNKNOWN", NOT PROOF OF CONTINUITY: a member
  *   who arrived after a commit never merged it.
  * - OBSERVATIONS (its ledger): where (the community key group's epoch) and when (its own clock)
- *   this device FIRST SAW each voucher on the roster.
+ *   this device FIRST SAW each voucher on the roster - only on a DRAINED key group, and driven by
+ *   the drain (`whenGroupDrained`). An ask decided before it is `unobserved`, parked, and decided
+ *   again by that drain (`parkedAsks.ts`): the answer waits for the key group to catch up.
  * - VERIFIED ADMISSIONS (its ledger): a voucher counts when its signer was admitted WHERE THIS
  *   DEVICE FIRST SAW IT - a root, or admitted by a voucher placed before, with no removal in
  *   between - never at the place the signer wrote, which a removed signer could backdate. So a
@@ -68,6 +70,16 @@ export const ADMISSION_PROOF_SINCE = Date.parse('2026-10-22T00:00:00.000Z');
 
 /** What the answer to one asker may carry: everything held, or only from their arrival on. */
 export type PastPolicy = GraineHistoryVisibility;
+
+/**
+ * The gate's answer: a {@link PastPolicy}, or `unobserved` - the asker is not proven YET because a
+ * voucher on the roster waits for the key group to drain before this device may observe it. Not a
+ * refusal: the caller parks the ask and decides it again once the group drains (`parkedAsks.ts`).
+ */
+export type PastDecision = PastPolicy | 'unobserved';
+
+/** Whether an admission is proven, not proven, or not decidable until the key group drains. */
+export type AdmissionVerdict = 'proven' | 'unproven' | 'unobserved';
 
 /** What this device recorded about one community. */
 interface CommunityAdmissions {
@@ -154,16 +166,18 @@ export function communityKeyGroupOf(mlsService: IMlsService, workspaceId: string
  *
  * `joined` when the community is set to it, or when it shares its past and the asker's admission is
  * not proven, or cannot be checked (fail-closed, at warn). `shared` only for a proven admission.
+ * `unobserved` when the admission is not proven only because the key group has not drained on this
+ * device since a voucher appeared - the caller waits for that drain rather than answering.
  */
-export async function pastPolicyFor(frame: DistributionFrame): Promise<PastPolicy> {
+export async function pastPolicyFor(frame: DistributionFrame): Promise<PastDecision> {
   if (historyVisibilityFor(frame.workspaceId) === 'joined') return 'joined';
-  let proven: boolean;
+  let verdict: AdmissionVerdict;
   try {
     // The COMMUNITY's key group, whichever group the ask arrived on: a private salon's own group
     // holds that salon's members and its own removals, and neither says who the community admitted.
     const { mlsService } = requireGraineRuntime('cannot check an admission');
     const keyGroupId = communityKeyGroupOf(mlsService, frame.workspaceId);
-    proven = await admissionProven(frame.workspaceId, keyGroupId, frame.sender);
+    verdict = await admissionVerdict(frame.workspaceId, keyGroupId, frame.sender);
   } catch (e) {
     console.warn(
       `[GRAINE] cannot verify ${frame.sender}'s admission to community ${frame.workspaceId.slice(0, 8)} - ` +
@@ -171,7 +185,14 @@ export async function pastPolicyFor(frame: DistributionFrame): Promise<PastPolic
     );
     return 'joined';
   }
-  if (!proven) {
+  if (verdict === 'unobserved') {
+    console.info(
+      `[GRAINE] ${frame.sender}'s admission to community ${frame.workspaceId.slice(0, 8)} waits for its key group ` +
+        `to drain on this device: a voucher on the roster is not observed yet`
+    );
+    return 'unobserved';
+  }
+  if (verdict === 'unproven') {
     // A decision, not a loss: the member reads from their arrival on, and a fresh link or an
     // admin's add gives them the rest.
     console.info(
@@ -202,13 +223,53 @@ export async function observeAdmissionState(
   await serialized(async () => {
     const ledger = readLedger(self);
     const rooted = await recordRoots(ledger, mlsService, workspaceId, keyGroupId, roster);
-    const observed = recordObservations(
+    const { changed, deferred } = recordObservations(
       ledger.communities[workspaceId],
       mlsService,
       keyGroupId,
       roster
     );
-    if (rooted || observed) writeLedger(self, ledger);
+    if (rooted || changed) writeLedger(self, ledger);
+    if (deferred > 0) observeWhenDrained(mlsService, workspaceId, keyGroupId);
+  });
+}
+
+/**
+ * Communities (`workspaceId|keyGroupId`) whose observation already waits for a drain, per MLS
+ * service: a session that ends takes its pending waits with it, and the next one arms its own.
+ */
+const observationsAwaitingDrain = new WeakMap<IMlsService, Set<string>>();
+
+/**
+ * THE DRAIN DRIVES THE OBSERVATION: a sync that found the key group not drained - the start-up sync
+ * runs before the first full pull - observes again the moment it drains, from a fresh roster. Once
+ * per community however many syncs deferred; a drain that finds it busy again re-arms it.
+ */
+function observeWhenDrained(mls: IMlsService, workspaceId: string, keyGroupId: string): void {
+  const key = `${workspaceId}|${keyGroupId}`;
+  let waiting = observationsAwaitingDrain.get(mls);
+  if (!waiting) observationsAwaitingDrain.set(mls, (waiting = new Set()));
+  if (waiting.has(key)) return;
+  waiting.add(key);
+  const armedFor = waiting;
+  void mls.whenGroupDrained(keyGroupId).then(async () => {
+    armedFor.delete(key);
+    if (!isGraineReady() || requireGraineRuntime('cannot observe admissions').mlsService !== mls) {
+      console.info(
+        `[GRAINE] key group ${keyGroupId.slice(0, 8)} drained after its session ended - nothing observed`
+      );
+      return;
+    }
+    console.info(
+      `[GRAINE] key group ${keyGroupId.slice(0, 8)} drained - observing the admission vouchers of community ${workspaceId.slice(0, 8)}`
+    );
+    try {
+      await observeAdmissionState(workspaceId, keyGroupId);
+    } catch (e) {
+      console.warn(
+        `[GRAINE] could not observe the admission vouchers of community ${workspaceId.slice(0, 8)} after its key group drained: ${String(e)}`
+      );
+    }
   });
 }
 
@@ -216,20 +277,22 @@ export async function observeAdmissionState(
  * Records, for each voucher the roster carries that this device has not seen yet, WHERE and WHEN it
  * first saw it: the community key group's epoch now, and its own clock now. Forgets the vouchers the
  * roster no longer carries, so the record stays the roster's size; seen again later, such a voucher
- * is observed anew, later - which grants less, never more. @returns whether the ledger changed.
+ * is observed anew, later - which grants less, never more.
+ *
+ * @returns whether the ledger changed, and how many vouchers wait for the key group to drain.
  */
 function recordObservations(
   community: CommunityAdmissions,
   mls: IMlsService,
   keyGroupId: string,
   roster: Map<string, RosterRow>
-): boolean {
+): { changed: boolean; deferred: number } {
   const before = community.observed ?? {};
   const after: Record<string, Observation> = {};
   // AN OBSERVATION IS A CLAIM ABOUT THE KEY GROUP'S STATE, so it is made only on a state with no
   // commit still held for this device: a removal waiting in the mailbox would otherwise be observed
-  // as not yet happened. Not drained, nothing new is observed - the voucher simply does not admit
-  // until a later pass, which is a sync or an ask on a drained group.
+  // as not yet happened. Not drained, nothing new is observed: the caller waits for the drain
+  // (`observeWhenDrained`, a parked ask) and the voucher does not admit before it.
   const drained = mls.isGroupDrained(keyGroupId);
   let added = 0;
   let deferred = 0;
@@ -259,31 +322,45 @@ function recordObservations(
       `[GRAINE] ${deferred} admission voucher(s) not observed yet: key group ${keyGroupId.slice(0, 8)} is not drained on this device`
     );
   }
-  return added > 0 || dropped > 0;
+  return { changed: added > 0 || dropped > 0, deferred };
 }
 
 /**
  * Whether `subject`'s admission to `workspaceId` is proven to THIS device - see the module comment.
- *
- * @param keyGroupId The community's key group: its tree, its pins and its removals.
- * @throws When the roster or the tree cannot be read: an admission nobody can check is not a
- *   proven one, and the caller fails closed.
+ * {@link admissionVerdict}, read as a yes or no: `unobserved` is not proven.
  */
 export async function admissionProven(
   workspaceId: string,
   keyGroupId: string,
   subject: string
 ): Promise<boolean> {
+  return (await admissionVerdict(workspaceId, keyGroupId, subject)) === 'proven';
+}
+
+/**
+ * `subject`'s admission to `workspaceId` as THIS device can judge it now: `proven`, `unproven`, or
+ * `unobserved` when it is not proven and some voucher on the roster waits for the key group to drain
+ * before this device may observe it - which may prove it, along the chain or directly.
+ *
+ * @param keyGroupId The community's key group: its tree, its pins and its removals.
+ * @throws When the roster or the tree cannot be read: an admission nobody can check is not a
+ *   proven one, and the caller fails closed.
+ */
+export async function admissionVerdict(
+  workspaceId: string,
+  keyGroupId: string,
+  subject: string
+): Promise<AdmissionVerdict> {
   const { userId: self, mlsService } = requireGraineRuntime('cannot check an admission');
   const who = canonicalUserId(subject);
-  if (who === canonicalUserId(self)) return true;
+  if (who === canonicalUserId(self)) return 'proven';
 
   const roster = rosterByUser(await channels().listWorkspaceMembers(workspaceId));
   if (!roster.has(who)) {
     console.info(
       `[GRAINE] ${who} is not on the roster of community ${workspaceId.slice(0, 8)} - no admission to prove`
     );
-    return false;
+    return 'unproven';
   }
 
   const removalsCache = new Map<string, Promise<AdmissionPlace[]>>();
@@ -302,7 +379,7 @@ export async function admissionProven(
     const ledger = readLedger(self);
     await recordRoots(ledger, mlsService, workspaceId, keyGroupId, roster);
     const community = ledger.communities[workspaceId];
-    recordObservations(community, mlsService, keyGroupId, roster);
+    const { deferred } = recordObservations(community, mlsService, keyGroupId, roster);
     await verifyRosterVouchers(
       community,
       mlsService,
@@ -316,7 +393,8 @@ export async function admissionProven(
     // A root counts NOW only while the roster still shows the arrival it was rooted with: one who
     // left and came back has a new row, and needs a voucher like anybody new.
     const rootHolds = community.roots[who] === roster.get(who)?.joinedAt;
-    return admittedAt(community, await removals(who), who, 'now', rootHolds);
+    if (admittedAt(community, await removals(who), who, 'now', rootHolds)) return 'proven';
+    return deferred > 0 ? 'unobserved' : 'unproven';
   });
 }
 

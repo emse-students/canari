@@ -15,7 +15,7 @@ import {
   sameDeviceIdentity,
 } from '$lib/mls-client/leafIdentity';
 import { setGraineRuntime } from './runtime';
-import { admissionProven, observeAdmissionState } from './admissionGate';
+import { admissionProven, admissionVerdict, observeAdmissionState } from './admissionGate';
 
 /**
  * The admission gate against a server that lies (channel-encryption section 25): it may publish a
@@ -59,6 +59,15 @@ let leaves: string[] = [];
 let epoch = 5;
 /** Whether this device has merged everything the server holds for the key group (`isGroupDrained`). */
 let drained = true;
+/** Who waits on `whenGroupDrained` - woken by {@link drainNow}, as the MLS layer's events wake them. */
+let drainWaiters: Array<() => void> = [];
+/** The key group drains: `isGroupDrained` holds, and every `whenGroupDrained` waiter is woken. */
+function drainNow() {
+  drained = true;
+  const woken = drainWaiters;
+  drainWaiters = [];
+  for (const wake of woken) wake();
+}
 /**
  * The MLS layer's pins (`pinnedSignatureKeys`, #2268): the keys it saw for a device in a signed
  * tree. carol:dev-c is pinned; a device the server invents is not.
@@ -92,6 +101,7 @@ beforeEach(() => {
   leaves = ['alice:alice-laptop', 'carol:dev-c'];
   epoch = 5;
   drained = true;
+  drainWaiters = [];
   published = { kind: 'keys', keys: [] };
   pins.clear();
   pins.set('carol:dev-c', pin([CAROL_PK]));
@@ -116,6 +126,8 @@ function installRuntime(userId: string) {
       },
       getEpoch: () => epoch,
       isGroupDrained: () => drained,
+      whenGroupDrained: () =>
+        drained ? Promise.resolve() : new Promise<void>((wake) => drainWaiters.push(wake)),
       pinnedSignatureKeys: async (user: string, deviceId: string) =>
         pins.get(canonicalIdentity(`${user}:${deviceId}`) ?? '') ?? null,
       removalEpochs: async (_g: string, user: string) =>
@@ -399,6 +411,32 @@ describe('a signer counts as of when THIS device first observed the voucher, not
     drained = true;
     leaves = ['alice:alice-laptop', 'newcomer:dev-n'];
     expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(false);
+  });
+
+  it('at start-up, observes a voucher the moment the first full pull drains the key group', async () => {
+    leaves.push('newcomer:dev-n');
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await voucher('newcomer', carol, CAROL_SECRET),
+      }),
+    ]);
+    // The start-up sync runs before the first pull has listed the mailbox.
+    drained = false;
+    await observeAdmissionState('ws-1', KG);
+    expect(await admissionVerdict('ws-1', KG, 'newcomer')).toBe('unobserved');
+
+    // The pull empties the mailbox: the observation follows the drain, with no sync and no ask.
+    const info = vi.mocked(console.info);
+    drainNow();
+    await vi.waitFor(() =>
+      expect(info.mock.calls.flat().join(' ')).toContain('admission vouchers observed')
+    );
+
+    // Recorded: a later undrained moment no longer matters to this voucher.
+    drained = false;
+    expect(await admissionVerdict('ws-1', KG, 'newcomer')).toBe('proven');
   });
 
   it('refuses a voucher that claims a place after the one this device first saw it at', async () => {

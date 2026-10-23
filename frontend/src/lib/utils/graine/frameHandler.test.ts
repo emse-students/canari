@@ -26,6 +26,7 @@ import {
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { handleDistributionFrame } from './frameHandler';
+import { clearParkedAsksForTests, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
 import {
   graineRepairHoldObserver,
   holdGraineRepairs,
@@ -200,6 +201,7 @@ function graineMls(extra: Record<string, unknown> = {}) {
     getEpoch: () => 5,
     // Every group drained: a held commit is admissionGate.test.ts's row.
     isGroupDrained: () => true,
+    whenGroupDrained: async () => undefined,
     pinnedSignatureKeys: async () => null,
     removalEpochs: async (groupId: string, userId: string) =>
       departuresByGroup.get(groupId)?.get(userId) ?? [],
@@ -2061,6 +2063,112 @@ describe('the past goes only to an admission this device can verify (section 25)
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     info.mockRestore();
+  });
+
+  /**
+   * THE ASK ARRIVES ON THE KEY GROUP, SO IT IS THAT GROUP'S CURRENT WORK: the gate run inside it never
+   * sees the group drained, and a voucher not observed before the ask would stay unobserved until a
+   * restart. The ask is parked instead and decided again by the drain that follows it.
+   */
+  describe('an ask that arrives before its voucher could be observed', () => {
+    let drained = false;
+    let drainWaiters: Array<() => void> = [];
+    beforeEach(() => {
+      drained = false;
+      drainWaiters = [];
+    });
+    afterEach(() => clearParkedAsksForTests());
+
+    /** The answerer, with its key group not drained until {@link drainNow}. */
+    function wireUndrainedAnswerer() {
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      setGraineRuntime({
+        storage: {
+          getGraineSession: async (id: string) => community.find((c) => c.sessionId === id) ?? null,
+          saveGraineSession: async () => undefined,
+          getGraineSessionsForWorkspace: async () => community,
+          countGraineSessionsForWorkspace: async () => community.length,
+        } as unknown as IStorage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({
+          sendMessage,
+          isGroupDrained: () => drained,
+          whenGroupDrained: () =>
+            drained ? Promise.resolve() : new Promise<void>((wake) => drainWaiters.push(wake)),
+        }),
+      });
+      return sendMessage;
+    }
+    function drainNow() {
+      drained = true;
+      const woken = drainWaiters;
+      drainWaiters = [];
+      for (const wake of woken) wake();
+    }
+
+    it('answers a newcomer who asked at once, after the drain, with no restart', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      // Inside the ask's own frame: nothing observed, nothing answered, nothing refused.
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(parkedAskCount()).toBe(1);
+
+      drainNow();
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds?.map((x) => x.sessionId)).toEqual(['s-1']);
+      expect(parkedAskCount()).toBe(0);
+      info.mockRestore();
+    });
+
+    it('keeps refusing after the drain a voucher whose signer was removed before the observation', async () => {
+      // carol was removed at epoch 4; this device observes at epoch 5.
+      departuresByGroup.set('g-1', new Map([['carol', [4]]]));
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      expect(parkedAskCount()).toBe(1);
+
+      drainNow();
+      await vi.waitFor(() =>
+        expect(info.mock.calls.flat().join(' ')).toContain('not sending history to newcomer')
+      );
+      const said = info.mock.calls.flat().join(' ');
+      expect(said).toContain('deciding 1 parked ask(s) again');
+      expect(said).toContain(
+        'its signer carol was not admitted here when this device first saw it'
+      );
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(parkedAskCount()).toBe(0);
+      info.mockRestore();
+    });
+
+    it('keeps one ask per asking device, and drops the oldest past the bound, out loud', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      await handleDistributionFrame(ask('history'));
+      expect(parkedAskCount()).toBe(1);
+
+      for (let i = 0; i < MAX_PARKED_ASKS; i += 1) {
+        await handleDistributionFrame({ ...ask('history'), senderDeviceId: `newcomer-${i}` });
+      }
+      expect(parkedAskCount()).toBe(MAX_PARKED_ASKS);
+      expect(warn.mock.calls.flat().join(' ')).toContain(
+        'DROPPED the parked ask of newcomer:newcomer-web'
+      );
+      info.mockRestore();
+      warn.mockRestore();
+    });
   });
 
   it('hands nothing over, out loud, when the roster cannot be read', async () => {

@@ -3807,15 +3807,22 @@ admissions, per account) and its MLS layer (pins and departures):
   when (this device's clock) this device first saw it. An observation is made only while the key
   group is DRAINED on this device (`isGroupDrained`): the last pull listed the whole mailbox, no pull
   is running, the socket is open, and nothing of the group is queued, parked or being applied.
-  Otherwise nothing new is observed, and the voucher does not admit until a later pass finds the
-  group drained. In practice that pass is a community sync: an ask on the community's own group is
-  read while that group's frame is still being applied, so it does not count as drained. A commit still held in the mailbox, a removal included, is
-  therefore never observed as not yet happened. A voucher that claims a place after the one this
-  device first saw it at is refused.
+  A commit still held in the mailbox, a removal included, is therefore never observed as not yet
+  happened. A voucher that claims a place after the one this device first saw it at is refused.
+- **The drain drives the observation** (`whenGroupDrained`, an event and not a poll: it is
+  re-checked when the scheduler finishes a frame of the group and when a pull ends). A sync that
+  found the group not drained - the start-up sync runs before the first full pull - observes again
+  the moment it drains. An ask arrives ON the key group, so it is that group's current work and can
+  never see it drained. An ask whose answer depends on a voucher not observed yet
+  (`pastPolicyFor` -> `unobserved`) is therefore PARKED in memory (`parkedAsks.ts`): one per asking
+  device and community, at most 64, the oldest dropped at warn. The drain that follows decides it
+  again and answers then; a decision that has become a refusal is answered as one, with its log.
+  **Consequence: the answer waits for the key group to catch up on the answering device.** A parked
+  ask lost with the app is acceptable: the asking device asks again at its next start.
 - **Removals**: the epochs at which a commit this device merged - live or on catch-up - removed the
-  user's last leaf from the key group (`removalEpochs`,
-  [mls-protocol](mls-protocol.md)); a device repair is one commit (`replaceMember`) and records none. No removal seen
-  means UNKNOWN, never proof that none happened.
+  user's last leaf from the key group (`removalEpochs`, [mls-protocol](mls-protocol.md)); a device
+  repair is one commit (`replaceMember`) and records none. No removal seen means UNKNOWN, never
+  proof that none happened.
 
 **A signer's key has ONE trust source**: the key the community's key-group tree holds for that
 device now, else the keys the MLS layer PINNED for it (`pinnedSignatureKeys`, the device-binding
@@ -3857,7 +3864,9 @@ disagree about a member. It returns `joined` when the community is set to it, wh
 not proven (`info`: a decision, not a loss), or when the roster or the tree cannot be read (`warn`:
 fail closed). **Not proven is never refused whole**: the answer is the one a `joined` community
 gives - nothing from before the asker's arrival, everything from it on, under the same
-server-computed floor. It judges on the COMMUNITY's key group (`communityKeyGroupOf`), whichever
+server-computed floor. It returns `unobserved` when the admission is not proven only because a
+voucher waits for the key group to drain; the answer path then parks the ask (above). It judges on
+the COMMUNITY's key group (`communityKeyGroupOf`), whichever
 group the ask arrived on: a private salon's own group holds that salon's members and its own
 removals, and neither says who the community admitted.
 
@@ -3920,17 +3929,20 @@ Merges after #2262 (salon scope) and #2264 (visibility floors). #2264 moves the 
 Tests: `graineAdmission.test.ts` (the leading `0x00`, round trips, every tampering: subject,
 community, place, signer, forged link key, an extended expiry, malformed bytes),
 `admissionGate.test.ts` (a removed signer's backdated voucher observed after the removal does not
-admit; after a ledger loss the observation restarts and grants less; a link observed after its
-expiry does not admit, one observed before does; a device the
-server publishes for a rooted member is refused; a lost signer device keeps verifying under its pin;
-a roster row with no leaf is never a root; the roots are fixed at the first sync; a removed member's
-old voucher no longer admits, a fresh one does, a repaired device keeps its admission; a former
-bureau's voucher observed before they left still admits, one signed after its signer's removal does not; any pinned key
-verifies, but a pin re-learned after a prune does not prove a signer), `frameHandler.test.ts`
-(both answer paths floor an unproven
-newcomer; direct, link and chained admissions hand the past; copied, foreign or forged vouchers do
-not; the creator is a root; an unreadable roster fails closed), `rosterReconcile.test.ts` (the sync
-feeds the ledger), `inviteFragment.test.ts`, `historyOverlayStack.test.ts` and
+admit; nothing is observed while a commit is held; a start-up sync observes once the first pull
+drains the group; after a ledger loss the observation restarts and grants less; a link observed
+after its expiry does not admit, one observed before does; a device the server publishes for a
+rooted member is refused; a lost signer device keeps verifying under its pin; a roster row with no
+leaf is never a root; the roots are fixed at the first sync; a removed member's old voucher no
+longer admits, a fresh one does, a repaired device keeps its admission; a former bureau's voucher
+observed before they left still admits, one signed after its signer's removal does not; any pinned
+key verifies, but a pin re-learned after a prune does not prove a signer), `frameHandler.test.ts`
+(both answer paths floor an unproven newcomer; direct, link and chained admissions hand the past;
+copied, foreign or forged vouchers do not; a newcomer who asks at once is answered after the drain,
+with no restart; a voucher whose signer was removed before the observation stays refused after it;
+one parked ask per device, bounded; the creator is a root; an unreadable roster fails closed),
+`BaseMlsService.groupDrained.test.ts` (the drained fact and its event), `rosterReconcile.test.ts`
+(the sync feeds the ledger), `inviteFragment.test.ts`, `historyOverlayStack.test.ts` and
 `appLinkNavigation.test.ts` (the fragment), `useChannelWorkspaces.svelte.test.ts`,
 `channel.service.spec.ts` and `mls-device-guard.spec.ts`. **Owed on the rig** (proposed
 COMM-26..31): a fresh link with its fragment gives the past, on the web and through the app's link

@@ -26,6 +26,7 @@ export function createMlsServiceStub(
     removalEpochs: vi.fn().mockResolvedValue([]),
     // Default: every group drained - a test about a held commit overrides it.
     isGroupDrained: vi.fn().mockReturnValue(true),
+    whenGroupDrained: vi.fn().mockResolvedValue(undefined),
     addMembersBulk: vi.fn().mockResolvedValue({
       addedDeviceIds: [],
       skipped: [],
