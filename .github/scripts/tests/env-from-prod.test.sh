@@ -43,7 +43,9 @@ for n in $names; do
   printf '%s=value-of-%s\n' "$n" "$n" >>"$snapshot"
 done
 # The three that matter here, with values that must not survive.
-sed -i '/^LYDIA_ENV=/d;/^LYDIA_PROVIDER_TOKEN=/d;/^LYDIA_PROVIDER_PRIVATE_TOKEN=/d' "$snapshot"
+# (grep and mv rather than `sed -i`, whose in-place flag differs between GNU and BSD sed.)
+grep -vE '^(LYDIA_ENV|LYDIA_PROVIDER_TOKEN|LYDIA_PROVIDER_PRIVATE_TOKEN)=' "$snapshot" >"$snapshot.new"
+mv "$snapshot.new" "$snapshot"
 {
   printf 'LYDIA_ENV=production\n'
   printf 'LYDIA_PROVIDER_TOKEN=SECRET-PUBLIC-PAIR\n'

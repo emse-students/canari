@@ -36,7 +36,11 @@ it reads `production`; anything else (a typo included) is the homologation sandb
 it from the GitHub secret `LYDIA_ENV` (manifest row `required`); **`render-env.sh` accepts only
 `production` for the production estate (user, 2026-10-23)** and refuses a deploy without it or with
 any other word, so pointing production at the sandbox takes a deliberate edit of `allowed_values()` in
-a pull request, never a secret typed by hand. Until that row existed, production's `.env` kept
+a pull request, never a secret typed by hand. **When it is checked matters:** on a stable, `serve-prod`
+runs only after BOTH stores took the version (`release.yml`: it `needs` `android` and `ios`), so a
+missing or mistyped secret found by the render would surface AFTER the store submission. The release
+`preflight` job therefore checks the secret is exactly `production` for a stable, before anything is
+published (the value is never printed; the render stays the second guard). Until that row existed, production's `.env` kept
 `infrastructure/.env.example`'s `homologation` - the compose default `${LYDIA_ENV:-production}` never
 applies, because the template always sets the key. Dev skips the row and pins `LYDIA_ENV: homologation`
 as a literal in `docker-compose.dev.yml`, with the sandbox pair in `DEV_LYDIA_*`
