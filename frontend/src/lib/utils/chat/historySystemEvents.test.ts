@@ -4,6 +4,7 @@ import { applyReplaySystemEvent, type HistoryRow } from './historySystemEvents';
 import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
 import { envelopeBodyText, mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
+import { keySource } from '$lib/crypto/messageAuthorship.testKit';
 
 /** A signature as mls-core left it on a replayed frame - opaque here, only carried. */
 const SIGNED: RecordedAuthorship = { body: 'Ym9keQ==', proof: 'cHJvb2Y=', group: 'group-1' };
@@ -100,6 +101,8 @@ async function replay(
     },
     messageReactions: new Map(),
     reactionUpdates: sinks.reactionUpdates,
+    authorKeys: keySource({}),
+    rowPatches: new Map(),
     deletedMessages: sinks.deletedMessages,
     editedMessages: sinks.editedMessages,
     readWatermarkUpdates: sinks.readWatermarkUpdates,

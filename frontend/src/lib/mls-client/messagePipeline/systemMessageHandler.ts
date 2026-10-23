@@ -9,7 +9,7 @@ import {
   channelInviteMessageId,
 } from '$lib/envelope';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
+import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { clearMessageControlRefusals } from '$lib/utils/chat/controlRefusals.svelte';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
@@ -27,17 +27,9 @@ import { parseHistoryStateKey } from '$lib/utils/chat/historyStateKey';
 import { answerAfterMailboxDrained, noteCoverageShortfall } from '$lib/utils/chat/historyReconcile';
 import { owedPullTicket } from '$lib/utils/chat/historyOverheardPull';
 import { dropOwnExcludedMessages } from '$lib/utils/chat/historyEntitlement';
-import {
-  vetRestoredDelete,
-  vetRestoredEdit,
-  vetRestoredMessage,
-  vetRestoredReactions,
-  type RestoredDeleteVerdict,
-  type RestoredEditVerdict,
-} from '$lib/utils/chat/restoredAuthorship';
+import { mergeVettedRow, vetBundle } from '$lib/utils/chat/bundleVetting';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { noteIntegrityFinding } from '$lib/mls-client/integrityFindings';
-import type { MessageReaction } from '$lib/types';
 import {
   boundAddressedMessages,
   parseHistoryRequestId,
@@ -999,75 +991,6 @@ export async function handleSystemEvent(
         );
       };
 
-      // A HELD ROW IS UPGRADED BY PROOF, AND BY NOTHING ELSE. Every held id used to be skipped, so
-      // the first copy of a message this device saw - unsigned, from a third party, hence MARKED -
-      // stood for ever against a later copy carrying its author's signature. A marked row now takes
-      // a copy whose proof verifies here (body and time from the signed bytes, the mark cleared); a
-      // row that is not marked is never replaced, whatever a copy carries. Returns the upgraded ids.
-      const upgradeUnverifiedRows = async (
-        bundle: BundleMsg[],
-        heldIds: Set<string>
-      ): Promise<Set<string>> => {
-        const upgraded = new Map<
-          string,
-          { content: string; timestamp: number; authorship: RecordedAuthorship }
-        >();
-        const rows = new Map(
-          (conversations.get(convoKey)?.messages ?? []).map((row) => [row.id, row])
-        );
-        for (const b of bundle) {
-          const row = rows.get(b.id);
-          if (!heldIds.has(b.id) || !b.authorship || upgraded.has(b.id)) continue;
-          if (!row?.restoredUnverified || row.isDeleted) continue;
-          const verdict = await vetRestoredMessage(mlsService, convoKey, b, senderNorm, log);
-          if (verdict.kind === 'forged') refuseForged('message', b.id, verdict.why);
-          if (verdict.kind !== 'verified') continue;
-          upgraded.set(b.id, {
-            content: verdict.content,
-            timestamp: verdict.timestamp,
-            authorship: verdict.authorship,
-          });
-        }
-        const c = conversations.get(convoKey);
-        if (upgraded.size === 0 || !c) return new Set();
-        conversations.set(convoKey, {
-          ...c,
-          messages: c.messages.map((row) => {
-            const up = upgraded.get(row.id);
-            if (!up) return row;
-            // The edit state goes with the unproven body: a verified EDITED message carries its
-            // signed edit, which step 2 applies to this original as to any held row.
-            const {
-              restoredUnverified: _mark,
-              isEdited: _edited,
-              editedAt: _editedAt,
-              ...rest
-            } = row;
-            return { ...rest, content: up.content, timestamp: new Date(up.timestamp) };
-          }),
-        });
-        log(
-          `[AUTHORSHIP] ${upgraded.size} held unverified message(s) in ${convoKey.slice(0, 8)}… proven by a copy relayed by ${senderNorm.slice(0, 8)} - upgraded`
-        );
-        for (const [id, up] of upgraded) {
-          try {
-            await storage?.updateMessage(
-              id,
-              {
-                content: up.content,
-                timestamp: up.timestamp,
-                authorship: up.authorship,
-                restoredUnverified: false,
-              },
-              deviceKey()
-            );
-          } catch (e) {
-            log(`[AUTHORSHIP] upgrade of ${id.slice(0, 8)} not persisted: ${String(e)}`);
-          }
-        }
-        return new Set(upgraded.keys());
-      };
-
       // 0) The conversation's own state - read watermarks and the shared history floor - which
       //    travels ONCE for the whole conversation rather than once per message. Merged before
       //    anything else so the unread recount in step 3 sees it, and merged even for an empty
@@ -1118,71 +1041,92 @@ export async function handleSystemEvent(
           msgs.filter((m) => !existingIds.has(m.id)),
           { mlsService, log }
         );
-        // 1) Add only the genuinely new messages. The add-path (AddMessageToChatOptions) cannot
-        //    carry reactions/tombstones, so that metadata is merged in step 2 for new AND existing
-        //    messages alike.
-        //
-        //    EACH ONE ON ITS AUTHOR'S SIGNATURE OR ITS RELAYER'S OWN WORD (`restoredAuthorship`).
-        //    A signed message is taken from the signed bytes - content and time - whatever the
-        //    relayer wrote beside them; an unsigned one from somebody else is kept and MARKED; a
-        //    forged one is refused.
-        const toAdd: Array<{
-          senderId: string;
-          content: string;
-          messageId: string;
-          timestamp: Date;
-          serverTimestamp?: number;
-          authorship?: RecordedAuthorship;
-          restoredUnverified?: boolean;
-        }> = [];
-        let unverified = 0;
-        // ONE ROW PER ID, AND THE PROVEN COPY WINS. A bundle may carry an id twice; whichever copy
-        // came first used to be the one added, so an unsigned copy could stand for a signed one.
-        const toAddIndex = new Map<string, number>();
-        for (const m of fresh ?? []) {
-          const verdict = await vetRestoredMessage(mlsService, convoKey, m, senderNorm, log);
-          if (verdict.kind === 'forged') {
-            refuseForged('message', m.id, verdict.why);
-            continue;
-          }
-          const earlier = toAddIndex.get(m.id);
-          // A later copy replaces an earlier one only when it is proven and the earlier is marked.
-          if (
-            earlier !== undefined &&
-            (verdict.kind !== 'verified' || !toAdd[earlier].restoredUnverified)
-          ) {
-            continue;
-          }
-          if (earlier !== undefined) unverified -= 1;
-          if (verdict.kind === 'unverified') unverified += 1;
-          const entry = {
-            senderId: canonicalUserId(m.senderId),
-            content: verdict.kind === 'verified' ? verdict.content : m.content,
-            messageId: m.id,
-            timestamp: new Date(verdict.kind === 'verified' ? verdict.timestamp : m.timestamp),
-            // The secondary sort key. Dropping it here - the replay path keeps it - left two
-            // messages sharing a client timestamp in an order that changed on every reload.
-            ...(typeof m.serverTimestamp === 'number'
-              ? { serverTimestamp: m.serverTimestamp }
-              : {}),
-            // Kept whenever it was not refused - also when it could not be checked NOW - so this
-            // device relays it on and a later reader can still prove it.
-            ...(m.authorship ? { authorship: m.authorship } : {}),
-            ...(verdict.kind === 'unverified' ? { restoredUnverified: true } : {}),
-          };
-          if (earlier !== undefined) {
-            toAdd[earlier] = entry;
-          } else {
-            toAddIndex.set(m.id, toAdd.length);
-            toAdd.push(entry);
-          }
-        }
-        if (unverified > 0) {
+        // 1) WHAT THE BUNDLE MAY DO, decided by the ONE rule every bundle goes through, live or
+        //    replayed from the archive (`bundleVetting.ts`): each message on its author's signature
+        //    or its relayer's own word, a held MARKED row upgraded by a proof, and what each entry
+        //    may change on its row - reactions, a tombstone, an edit. Decided before any write
+        //    because a signature check is asynchronous and the merge below is not. An addressed
+        //    answer to an ask (`addOnly`) changes only the rows it adds or upgrades.
+        const heldRows = new Map(
+          (conversations.get(convoKey)?.messages ?? []).map((row) => [row.id, row])
+        );
+        const vettedBundle = await vetBundle(
+          mlsService,
+          convoKey,
+          {
+            entries: msgs,
+            fresh: fresh ?? [],
+            held: heldRows,
+            relayer: senderNorm,
+            mutateHeld: !addOnly,
+          },
+          log,
+          refuseForged
+        );
+        if (vettedBundle.unverified > 0) {
           log(
-            `[AUTHORSHIP] ${unverified} restored message(s) in ${convoKey.slice(0, 8)}… relayed by ${senderNorm.slice(0, 8)} carry no author proof - kept, marked unverified`
+            `[AUTHORSHIP] ${vettedBundle.unverified} restored message(s) in ${convoKey.slice(0, 8)}… relayed by ${senderNorm.slice(0, 8)} carry no author proof - kept, marked unverified`
           );
         }
-        const upgradedIds = await upgradeUnverifiedRows(msgs, existingIds);
+
+        // 2) The upgrades, in memory and at rest. The edit state goes with the unproven body: a
+        //    verified EDITED message carries its signed edit, which step 4 applies to this original
+        //    as to any held row.
+        const upgrades = vettedBundle.upgrades;
+        const beforeUpgrade = conversations.get(convoKey);
+        if (upgrades.size > 0 && beforeUpgrade) {
+          conversations.set(convoKey, {
+            ...beforeUpgrade,
+            messages: beforeUpgrade.messages.map((row) => {
+              const up = upgrades.get(row.id);
+              if (!up) return row;
+              const {
+                restoredUnverified: _mark,
+                isEdited: _edited,
+                editedAt: _editedAt,
+                ...rest
+              } = row;
+              return { ...rest, content: up.content, timestamp: new Date(up.timestamp) };
+            }),
+          });
+          log(
+            `[AUTHORSHIP] ${upgrades.size} held unverified message(s) in ${convoKey.slice(0, 8)}… proven by a copy relayed by ${senderNorm.slice(0, 8)} - upgraded`
+          );
+          for (const [id, up] of upgrades) {
+            try {
+              await storage?.updateMessage(
+                id,
+                {
+                  content: up.content,
+                  timestamp: up.timestamp,
+                  authorship: up.authorship,
+                  restoredUnverified: false,
+                },
+                deviceKey()
+              );
+            } catch (e) {
+              log(`[AUTHORSHIP] upgrade of ${id.slice(0, 8)} not persisted: ${String(e)}`);
+            }
+          }
+        }
+
+        // 3) Add only the genuinely new messages. The add-path (AddMessageToChatOptions) cannot
+        //    carry reactions/tombstones, so that metadata is merged in step 4 for new AND existing
+        //    messages alike. A signed message is taken from the signed bytes - content and time -
+        //    whatever the relayer wrote beside them.
+        const toAdd = vettedBundle.fresh.map(({ entry: m, verdict }) => ({
+          senderId: canonicalUserId(m.senderId),
+          content: verdict.kind === 'verified' ? verdict.content : m.content,
+          messageId: m.id,
+          timestamp: new Date(verdict.kind === 'verified' ? verdict.timestamp : m.timestamp),
+          // The secondary sort key. Dropping it here - the replay path keeps it - left two
+          // messages sharing a client timestamp in an order that changed on every reload.
+          ...(typeof m.serverTimestamp === 'number' ? { serverTimestamp: m.serverTimestamp } : {}),
+          // Kept whenever it was not refused - also when it could not be checked NOW - so this
+          // device relays it on and a later reader can still prove it.
+          ...(m.authorship ? { authorship: m.authorship } : {}),
+          ...(verdict.kind === 'unverified' ? { restoredUnverified: true } : {}),
+        }));
         if (toAdd.length > 0) {
           // NAMES ITS CONVERSATION AND ITS SENDER, like the pin line above it. This said
           // "from the inviting peer" and nothing else - wrong twice on a device rejoining forty
@@ -1208,162 +1152,32 @@ export async function handleSystemEvent(
           }
         }
 
-        // 2) Merge transport-carried state (reactions, delete/edit) onto the conversation
-        //    messages - both the ones just added and any that already existed. An addressed answer
-        //    to an ask (`addOnly`) touches only the messages it just added.
-        const addedIds = new Set([...toAdd.map((t) => t.messageId), ...upgradedIds]);
-        const bundleById = new Map(
-          (addOnly ? msgs.filter((m) => addedIds.has(m.id)) : msgs).map((m) => [m.id, m])
-        );
-        // WHAT EACH ENTRY MAY CHANGE, decided before the merge because a signature check is
-        // asynchronous and the merge below is not. Only the shapes a third party could forge are
-        // vetted - reactions, a tombstone, an edited body - each against the rows held NOW.
-        const vetted = new Map<
-          string,
-          {
-            reactions?: MessageReaction[];
-            del?: RestoredDeleteVerdict;
-            edit?: RestoredEditVerdict;
-          }
-        >();
-        const held = conversations.get(convoKey);
-        const heldById = new Map((held?.messages ?? []).map((row) => [row.id, row]));
-        for (const b of bundleById.values()) {
-          const row = heldById.get(b.id);
-          if (!row) continue;
-          const target = { id: row.id, senderId: row.senderId ?? '', content: row.content };
-          const decision: {
-            reactions?: MessageReaction[];
-            del?: RestoredDeleteVerdict;
-            edit?: RestoredEditVerdict;
-          } = {};
-          if (Array.isArray(b.reactions) && b.reactions.length > 0) {
-            const outcome = await vetRestoredReactions(
-              mlsService,
-              convoKey,
-              row.id,
-              b.reactions,
-              senderNorm,
-              log
-            );
-            if (outcome.forged > 0) refuseForged('reaction', row.id, `${outcome.forged} forged`);
-            decision.reactions = outcome.kept;
-          }
-          if (b.isDeleted === true && !row.isDeleted) {
-            decision.del = await vetRestoredDelete(
-              mlsService,
-              convoKey,
-              target,
-              b,
-              senderNorm,
-              log
-            );
-            if (decision.del.kind === 'forged') refuseForged('delete', row.id, decision.del.why);
-          }
-          if (b.isEdited === true && !row.isDeleted) {
-            decision.edit = await vetRestoredEdit(mlsService, convoKey, target, b, senderNorm, log);
-            if (decision.edit.kind === 'forged') refuseForged('edit', row.id, decision.edit.why);
-          }
-          vetted.set(row.id, decision);
-        }
+        // 4) Merge what step 1 allowed onto the conversation's rows (`mergeVettedRow`).
         const c = conversations.get(convoKey);
         if (c) {
           const changedIds = new Set<string>();
-          // The rows whose BODY the author's own bundle replaced - written at rest below.
+          // The rows whose BODY an edit replaced - written at rest below.
           const bodyEditedIds = new Set<string>();
           // The proofs a merge took, written at rest with the change they prove.
           const editProofs = new Map<string, RecordedAuthorship>();
           const deleteProofs = new Map<string, RecordedAuthorship>();
           const nextMessages = c.messages.map((existing) => {
-            const b = bundleById.get(existing.id);
-            if (!b) return existing;
-            const decision = vetted.get(existing.id) ?? {};
-            let next = existing;
-            // reactions: merged pair by pair, larger timestamp wins. This used to seed from the
-            // bundle ONLY when we held none, so a removal never reached a device holding a stale
-            // placement and the two never converged (D3). Only the pairs vetted above: the
-            // relayer's own, or another member's with that member's signature.
-            if (decision.reactions && decision.reactions.length > 0) {
-              const merged = mergeReactions(
-                messageReactions.get(existing.id) ?? next.reactions ?? [],
-                decision.reactions
-              );
-              if (merged) {
-                next = { ...next, reactions: merged };
-                messageReactions.set(existing.id, merged);
-                changedIds.add(existing.id);
-              }
-            }
-            // A deletion REPLACES the body. Setting the flag and keeping the text put the original
-            // plaintext of a deleted message straight back on disk, where the tombstone was
-            // supposed to be the only thing left of it (D5). And only on the author's word: the
-            // relayer IS the author, or the author's signed deletion rides with it. Any member's
-            // bundle used to erase any member's message here.
-            if (b.isDeleted === true && !next.isDeleted && decision.del?.kind === 'apply') {
-              next = { ...next, isDeleted: true, content: m.chat_system_message_deleted() };
-              if (decision.del.deleteProof) deleteProofs.set(existing.id, decision.del.deleteProof);
-              changedIds.add(existing.id);
-            }
-            // THE AUTHOR'S SIGNED EDIT, from whoever relays it: the body and the time come from the
-            // signed frame, ordered by `editSupersedes` exactly as the live path orders them.
-            if (
-              decision.edit?.kind === 'apply' &&
-              !next.isDeleted &&
-              editSupersedes(
-                { editedAt: decision.edit.editedAt, content: decision.edit.content },
-                next
-              )
-            ) {
-              next = {
-                ...next,
-                content: decision.edit.content,
-                isEdited: true,
-                editedAt: new Date(decision.edit.editedAt),
-              };
-              editProofs.set(existing.id, decision.edit.editProof);
-              bodyEditedIds.add(existing.id);
-              changedIds.add(existing.id);
-            }
-            // THE EDITED BODY, AND ONLY FROM ITS AUTHOR. A device that missed an `edit_message`
-            // frame used to keep the PRE-EDIT text under an "edited" marker, because this merge
-            // never wrote a body. Taking ANY peer's body on a date comparison would let one member
-            // rewrite another's message here: `editSupersedes` decides which of two edits wins,
-            // never who may edit, and a bundle's sender is whoever answered the history request.
-            // So the body is taken only when the answering peer IS the message's author - the same
-            // check the live `edit_message` path makes with `mutationIsAuthorised` - and ordered by
-            // `editSupersedes` exactly as that path orders it. Every other case stays as narrow as
-            // it was; anything wider needs the author's own signed edit on the wire.
-            if (
-              decision.edit?.kind === 'relayer' &&
-              b.isEdited === true &&
-              !next.isDeleted &&
-              typeof b.content === 'string' &&
-              b.content !== next.content &&
-              typeof b.editedAt === 'number' &&
-              b.editedAt > 0 &&
-              canonicalUserId(existing.senderId ?? '') === canonicalUserId(senderNorm) &&
-              editSupersedes({ editedAt: b.editedAt, content: b.content }, next)
-            ) {
-              next = {
-                ...next,
-                content: b.content,
-                isEdited: true,
-                editedAt: new Date(b.editedAt),
-              };
-              bodyEditedIds.add(existing.id);
-              changedIds.add(existing.id);
-            }
-            if (b.isEdited === true && !next.isEdited) {
-              next = { ...next, isEdited: true };
-              changedIds.add(existing.id);
-            }
-            // The edit time, which only the bundle can supply: the sender's own edit is never
-            // echoed back over MLS, so a device restored this way has no other source for it.
-            if (typeof b.editedAt === 'number' && b.editedAt > 0 && next.editedAt == null) {
-              next = { ...next, editedAt: new Date(b.editedAt) };
-              changedIds.add(existing.id);
-            }
-            return next;
+            const vetted = vettedBundle.decisions.get(existing.id);
+            if (!vetted) return existing;
+            const merged = mergeVettedRow(
+              existing,
+              vetted.entry,
+              vetted.decision,
+              senderNorm,
+              messageReactions.get(existing.id)
+            );
+            if (!merged.changed) return existing;
+            changedIds.add(existing.id);
+            if (merged.reactions) messageReactions.set(existing.id, merged.reactions);
+            if (merged.bodyEdited) bodyEditedIds.add(existing.id);
+            if (merged.editProof) editProofs.set(existing.id, merged.editProof);
+            if (merged.deleteProof) deleteProofs.set(existing.id, merged.deleteProof);
+            return merged.next;
           });
           // 3) Recount the unread badge against our own watermark, which step 0 may have just
           //    advanced. Step 1 went through the add-path, which counts EVERY incoming message as

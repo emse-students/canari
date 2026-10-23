@@ -1150,14 +1150,18 @@ conversation the proof was signed in: a row can move between conversations (a me
 and a proof checked against the wrong group would read as a forgery. A deletion purges the original
 bytes and keeps only the author's signed tombstone.
 
-**Relayed and checked.** `serializeForBundle` relays the proofs; `restoredAuthorship.ts` decides each
-entry ([`messageAuthorship.ts`](../../../frontend/src/lib/crypto/messageAuthorship.ts) does the
-crypto, with a shared vector against the Rust side):
+**Relayed and checked, one rule for every way a bundle arrives.** `serializeForBundle` relays the
+proofs; `restoredAuthorship.ts` decides each entry
+([`messageAuthorship.ts`](../../../frontend/src/lib/crypto/messageAuthorship.ts) does the crypto,
+with a shared vector against the Rust side). `bundleVetting.ts` (`vetBundle`, `mergeVettedRow`) is
+the one orchestration, used by the live handler (`systemMessageHandler.ts`) AND by the archive
+replay (`historySystemEvents.ts`), which sees a bundle an older build wrote durably: the same
+verdicts, marker, vouching rule and upgrade, only the writes batched per page:
 
 | Entry | Taken when | Otherwise |
 | --- | --- | --- |
 | message | the author's proof verifies and names this id and this author - content and timestamp are then read from the SIGNED bytes, never from the relayer's fields; or the relayer IS the author | no proof, or a proof signed in another conversation: kept, drawn normally and MARKED `restoredUnverified` (a small "non verifie" under the bubble, explained on tap - never hidden); a proof an anchored pin contradicts, or a malformed one: REFUSED |
-| edit, deletion | the author's signed event names this message; or the relayer is the author | dropped, never applied on a third party's word |
+| edit, deletion | the author's signed event names this message; or the relayer is the author | dropped, never applied on a third party's word - nor its "edited" flag and time, which are taken on the same grounds as the edit, or onto a row already marked |
 | reaction | the reactor's signed frame proves exactly this state; or the relayer is the reactor | dropped |
 
 **"The relayer is the author" holds only for a row the relayer vouches for.** A row a device holds
@@ -1200,7 +1204,7 @@ valid under none of its keys is `forged`, as is a malformed proof.
 **An edited message is verified only with its edit.** The signed bytes are the ORIGINAL body. A
 restored message marked edited whose edit is not proven by the author's signed `edit_message` keeps
 the relayed (edited) body and is marked unverified - a retracted text never comes back looking
-authenticated. The history replay stores the signed edit and deletion like the live path does.
+authenticated. The archive replay of `edit_message` and `delete_message` frames stores their signed proofs like the live path, and a replayed bundle goes through the same `bundleVetting.ts` as a live one.
 
 **A refusal is loud.** Every refused entry is an ERROR line and an integrity finding
 ([`integrityFindings.ts`](../../../frontend/src/lib/mls-client/integrityFindings.ts)), reported once

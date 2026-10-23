@@ -1,6 +1,8 @@
 import type { HistoryPage } from '$lib/mls-client/historyTypes';
 import { fromBase64 } from '$lib/utils/hex';
 import type { IStorage, StoredMessage } from '$lib/db';
+import type { StoredMessagePatch } from '$lib/db/types';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
@@ -709,6 +711,9 @@ export async function replayConversationHistory(params: {
     // the main message batch write (reactions reference messages from previous
     // sessions that are already in DB).
     const reactionUpdates = new Map<string, MessageReaction[]>(); // msgId → final state
+    // What a replayed history_bundle changed on a held row (an upgrade, a vetted tombstone or
+    // edit), merged onto the stored row in the same post-save pass.
+    const rowPatches = new Map<string, StoredMessagePatch>();
     // delete_message / edit_message events from history: collected here and persisted
     // to DB after the main batch save so the DB reload in loadExistingConversations
     // reflects the correct state without a second network round-trip.
@@ -1032,6 +1037,8 @@ export async function replayConversationHistory(params: {
               setConversation,
               messageReactions,
               reactionUpdates,
+              authorKeys: mlsService,
+              rowPatches,
               deletedMessages,
               editedMessages,
               readWatermarkUpdates,
@@ -1270,6 +1277,17 @@ export async function replayConversationHistory(params: {
           ...(prev?.editedAt || pm.editedAt ? { editedAt: prev?.editedAt ?? pm.editedAt } : {}),
           ...((pm.reactions ?? []).length > 0 ? { reactions: pm.reactions } : {}),
           ...(pm.serverTimestamp != null ? { serverTimestamp: pm.serverTimestamp } : {}),
+          // The authors' signatures and the unverified mark, at rest with the row, so this device
+          // relays the proofs in its own bundles and shows the mark after a reload. A tombstone
+          // keeps only its own proof - the original bytes go with the body.
+          ...(pm.authorship && !(prev?.isDeleted || pm.isDeleted)
+            ? { authorship: pm.authorship }
+            : {}),
+          ...(pm.editProof && !(prev?.isDeleted || pm.isDeleted)
+            ? { editProof: pm.editProof }
+            : {}),
+          ...(pm.deleteProof ? { deleteProof: pm.deleteProof } : {}),
+          ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
         };
       });
       await storage.saveMessages(toStore, deviceKey());
@@ -1300,7 +1318,11 @@ export async function replayConversationHistory(params: {
     // All of them need the post-batch-save DB state and touch independent fields,
     // so they can be merged and written back in a single saveMessages call.
     const needsPostUpdate =
-      storage && (reactionUpdates.size > 0 || deletedMessages.size > 0 || editedMessages.size > 0);
+      storage &&
+      (reactionUpdates.size > 0 ||
+        rowPatches.size > 0 ||
+        deletedMessages.size > 0 ||
+        editedMessages.size > 0);
     if (needsPostUpdate) {
       try {
         const allMessages = await storage!.getMessages(id, deviceKey());
@@ -1308,6 +1330,10 @@ export async function replayConversationHistory(params: {
         const updatesById = new Map<string, StoredMessage>();
 
         for (const m of allMessages) {
+          // First, what a replayed bundle was allowed to change (bundleVetting.ts): the mutations
+          // below then apply on top of it.
+          const patch = rowPatches.get(m.id);
+          if (patch) updatesById.set(m.id, mergeStoredMessage(m, patch));
           if (reactionUpdates.has(m.id)) {
             updatesById.set(m.id, {
               ...(updatesById.get(m.id) ?? m),
