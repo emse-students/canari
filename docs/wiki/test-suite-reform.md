@@ -232,11 +232,11 @@ change failing.
   case count, same pass set, and the list of moved files in the PR.
 
 **Built 2026-10-18 (draft PR `chore/tests-t4-node-env`).** `vitest.config.ts` says
-`environment: 'node'`, and the **379** files (2026-10-23) that need a DOM say so on their own first line:
+`environment: 'node'`, and the **380** files (2026-10-24) that need a DOM say so on their own first line:
 `// @vitest-environment happy-dom`. The population was SEEDED from `--environment=node` runs, never
 guessed: 149 plain test files (the first whole-suite run) and 150 of the 179 `*.svelte.test.ts` (a
 second run of those alone; the other 29 pass under node and now run there), plus 3 that `main` added
-before the merge and that the node default turned red at once, as designed. The merge of 2026-10-23 seeded 70 more the same way, from one whole-suite run under node: every one failed on a missing DOM global or on an assertion over a `typeof window` arm, none on a timeout. Of the 150, 142 failed
+before the merge and that the node default turned red at once, as designed. The merge of 2026-10-23 seeded 70 more the same way, from one whole-suite run under node: every one failed on a missing DOM global or on an assertion over a `typeof window` arm, none on a timeout. One more passed its tests under node and still read `localStorage` AFTER them (16 unhandled rejections on CI): a seeding run must read the unhandled errors too, not only the failed tests. Of the 150, 142 failed
 on a missing global and 8 on an ASSERTION - code that branches on `typeof window` took its other arm
 (`useChannelWorkspaces`, `.offlineWrites`, `useConversations.currentConvoScope`,
 `feedPaintIdentity`, `signedFeedUrl`, `displayName.reactive`, `displayNames`, `memberOrder`). Both
