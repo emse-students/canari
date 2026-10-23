@@ -10,7 +10,7 @@ use crate::state::{
     PendingDb,
 };
 use mls_core::pending_submission::PendingSubmissionRead;
-use mls_core::{DecryptErrorKind, DeviceKeyStore, MlsManager};
+use mls_core::{DecryptErrorKind, MlsManager};
 use std::sync::Mutex;
 
 /// The two situational inputs of [`initialiser_mls`], grouped so the command keeps a workable
@@ -1405,17 +1405,23 @@ pub(crate) async fn actualiser_cle_keystore_avec_devicekey(
     device_id: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let alias = format!("mls_device_key_{user_id}_{device_id}");
-    let keystore = PluginDeviceKeyStore::new(app);
+    let alias = crate::commands::at_rest_key::device_key_alias(&user_id, &device_id);
+    let keystore = PluginDeviceKeyStore::new(app.clone());
 
     let key_bytes = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
         .map_err(|e| format!("invalid device_key_b64: {e}"))?;
 
+    // Through the at-rest guard, and READ BACK (`store_guarded`): a guard refusal is RETURNED, not
+    // skipped - the caller (a key change) must not move data while the unattended unlock points
+    // elsewhere - and so is a write the platform did not keep.
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        keystore.store_device_key(&key_bytes, &alias).map_err(|e| {
-            log::warn!("[DEVICEKEY_CHANGE] Failed to refresh keystore key: {e}");
-            e
-        })
+        keystore
+            .store_guarded(&key_bytes, &alias)
+            .map(|_| ())
+            .map_err(|e| {
+                log::warn!("[DEVICEKEY_CHANGE] The keystore did not take the key: {e}");
+                e.to_string()
+            })
     })
     .await
     .map_err(|e| e.to_string())?

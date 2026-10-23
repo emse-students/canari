@@ -392,8 +392,8 @@ FOREGROUND only. Android runs four engines against one ratchet - foreground Taur
 JNI and the native outbox drain `send_messages_background_with_key` - and the drain loads `mls.bin`,
 encrypts every queued entry and saves, without ever asking what the foreground has emitted but not
 yet checkpointed. Two things hold it back and both are visibility-shaped rather than fact-shaped:
-`background_write_mls_bin` refuses while `foreground_is_active()`, which is a 30-second deadline
-released deliberately on `hidden`; and `reloadStateFromDisk`, the one thing that re-syncs the
+`background_write_mls_bin_if_unchanged` refuses while `foreground_is_active()`, which is a 30-second deadline
+released deliberately on `hidden` (and, since 2026-10-23, over a file that changed since the drain loaded it); and `reloadStateFromDisk`, the one thing that re-syncs the
 foreground to a background advance, has exactly one caller - the RESUME branch of
 `visibilitychange`. An app that is backgrounded and stays alive has released the guard, still holds
 a live in-memory client, and will not reload until a resume that may never come.

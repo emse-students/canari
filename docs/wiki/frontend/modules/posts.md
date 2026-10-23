@@ -153,12 +153,18 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   vertical clip became a strip between black bands over a grey one. Now `preparePostMedia` records
   a video's `width`/`height` at upload (the on-device encoder's own output since R2,
   [video-preparation](../video-preparation.md)), so `PostContent` reserves the box
-  at the clip's own shape; the video FILLS it (`object-cover`, cropped only by the
-  `--media-max-height` ceiling - a clip's subject is in its middle, unlike a poster's text, and the
-  whole frame is one tap away) and plays muted on its own (`InlineVideo`, rule in
+  at the clip's own shape; the video is CONTAINED in it (`object-contain`: the WHOLE
+  frame at the clip's own ratio, never cropped - user, 2026-10-22, a portrait clip past the
+  `--media-max-height` ceiling used to lose its top and bottom). The bands the ceiling leaves on the
+  sides are a blurred copy of the clip's own first frame, the picture post's backdrop
+  (`BlurredBackdrop`): `InlineVideo` draws the frame it already decoded ONCE into a 48 px canvas
+  (`captureVideoFrame`) - no second `<video>`, no second stream, one `drawImage` and a few hundred
+  bytes - and until it exists the box is the neutral `bg-cn-surface` under the usual poster. A reel
+  goes through the SAME box (`singleMedia`), with a 9:16 fallback when it carries no dimensions. The
+  square gallery cell still crops (`videoFit="cover"`, its shape being the point). It plays muted on its own (`InlineVideo`, rule in
   [durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts)).
   The download lives in the viewer. A video posted before this carries no dimensions and keeps the
-  4:3 box, filled the same way. Measured on the Mi 9T: a 1080 x 2340 clip in a 402 x 567 box,
+  4:3 box, contained the same way. Measured on the Mi 9T: a 1080 x 2340 clip in a 402 x 567 box,
   playing, looping, silent at every start until its button is pressed, then audible on every video
   at once; the viewer opening PAUSES the feed's video and closing it resumes it - before that rule
   the two played together, sound on both.
@@ -401,8 +407,9 @@ explicit-type-then-mime fallback:
 **The reservation also carries a CEILING, and that is the half that keeps a feed scrollable.** The
 ratio is clamped to `[0.25, 4]`, which still allows a box four times the card's width - about two
 phone screens of a single picture - so `mediaAspectStyle` emits `max-height: var(--media-max-height)`
-(80svh, defined once in `app.css`) alongside the `aspect-ratio`. Past the ceiling the media is
-CROPPED rather than shrunk. **The crop is CENTRED** (`object-cover object-center`): the ceiling was
+(80svh, defined once in `app.css`) alongside the `aspect-ratio`. Past the ceiling a PICTURE or a
+VIDEO is no longer cropped: both are contained over a blurred backdrop (see the video paragraph
+above). **The crop below is the one that remains - the gallery cell's, and it is CENTRED** (`object-cover object-center`): the ceiling was
 first shipped with a top anchor, on the argument that a screenshot or an infographic says what it
 has to say at the top - but a post attachment is overwhelmingly a photograph, whose subject is in
 the middle, and a top anchor reads as a bug on one. The full frame is one tap away in the viewer,
