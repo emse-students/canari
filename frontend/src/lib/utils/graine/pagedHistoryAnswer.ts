@@ -20,17 +20,27 @@
  * In `localStorage` per account, like `historyAnswered.ts`: a few bytes, survives a restart. A
  * storage that refuses is logged and read as no record - the reading that asks nothing more than
  * before this existed.
+ *
+ * **The page numbers are UNTRUSTED.** The history ask goes out on the shared key group, so any member
+ * - or a buggy client - can answer it with any `requestId`, `pageIndex` and `pageCount`. So a count
+ * above {@link GRAINE_BUNDLE_MAX_PAGES} or an index outside it is refused ({@link historyPageFault}),
+ * and the record belongs to the FIRST answer recorded: its sender and its count. A page from anyone
+ * else, or with another count, is refused and said - otherwise one forged "page 1 of 1" would close
+ * the record and cancel the one re-ask an honest answer that lost a page has earned.
  */
 
+import { GRAINE_BUNDLE_MAX_PAGES } from '$lib/crypto/graineConstants';
 import { ACCOUNT_KEY } from '../accountLocalKeys';
 import { forgetWorkspaceRecord } from './workspaceRecords';
 
 /** One community's history ask and what arrived of its answer. */
 interface PagedHistoryRecord {
   requestId: string;
-  /** 0 until a paged answer's first page arrives. */
+  /** Who sent the first page recorded - `null` until one arrives. Every later page must match. */
+  sender: string | null;
+  /** 0 until a paged answer's first page arrives; never above {@link GRAINE_BUNDLE_MAX_PAGES}. */
   pageCount: number;
-  /** The page indexes absorbed, sorted. */
+  /** The page indexes absorbed, sorted, each below `pageCount`. */
   received: number[];
   /** This community was already re-asked once for an incomplete answer. */
   reasked: boolean;
@@ -38,16 +48,41 @@ interface PagedHistoryRecord {
 
 type Records = Record<string, PagedHistoryRecord>;
 
+/** A page count a record may hold: `0` (no paged answer yet) or a count {@link historyPageFault} admits. */
+function isPageCount(n: unknown): n is number {
+  return Number.isInteger(n) && (n as number) >= 0 && (n as number) <= GRAINE_BUNDLE_MAX_PAGES;
+}
+
 function isRecord(value: unknown): value is PagedHistoryRecord {
   if (!value || typeof value !== 'object') return false;
   const r = value as Partial<PagedHistoryRecord>;
+  // The stored count is checked against the cap too: it is read back at every start, and a record
+  // naming a count no answerer writes is malformed, never a length to walk.
   return (
     typeof r.requestId === 'string' &&
-    typeof r.pageCount === 'number' &&
+    (r.sender === null || typeof r.sender === 'string') &&
+    isPageCount(r.pageCount) &&
     Array.isArray(r.received) &&
-    r.received.every((n) => typeof n === 'number') &&
+    r.received.length <= r.pageCount &&
+    r.received.every((n) => Number.isInteger(n) && n >= 0 && n < (r.pageCount as number)) &&
     typeof r.reasked === 'boolean'
   );
+}
+
+/**
+ * Why the numbering `pageIndex` of `pageCount` cannot come from an honest answerer - or `null` when
+ * it can. `pageCount` 0 is an answer of one message, whose index means nothing. Shared with the
+ * absorb line (`frameHandler.ts`), which says it once; a page this names is never recorded here.
+ */
+export function historyPageFault(pageIndex: number, pageCount: number): string | null {
+  if (pageCount === 0) return null;
+  if (!Number.isInteger(pageCount) || pageCount < 0 || pageCount > GRAINE_BUNDLE_MAX_PAGES) {
+    return `a page count of ${pageCount}, above the ${GRAINE_BUNDLE_MAX_PAGES} any answer can fill`;
+  }
+  if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= pageCount) {
+    return `page index ${pageIndex} outside its ${pageCount} page(s)`;
+  }
+  return null;
 }
 
 function readAll(userId: string): Records {
@@ -111,7 +146,7 @@ export function noteHistoryAsked(
   const records = readAll(userId);
   const previous = records[workspaceId];
   const reasked = reask || (previous?.reasked ?? false);
-  records[workspaceId] = { requestId, pageCount: 0, received: [], reasked };
+  records[workspaceId] = { requestId, sender: null, pageCount: 0, received: [], reasked };
   writeAll(userId, records);
   return () => {
     const now = readAll(userId);
@@ -123,19 +158,40 @@ export function noteHistoryAsked(
 }
 
 /**
- * Records that a bundle answering `requestId` was absorbed. Anything but our history ask is ignored.
- * An answer of one message (`pageCount` 0) and the last missing page both close the record.
+ * Records that a bundle answering `requestId`, sent by `sender`, was absorbed. Anything but our
+ * history ask is ignored. An answer of one message (`pageCount` 0) and the last missing page both
+ * close the record.
+ *
+ * Refused, and never recorded: a numbering {@link historyPageFault} names (the absorb line already
+ * warned of it), and once a page is recorded, a page from another sender or with another count -
+ * the record is the first answer's, so a second answer can neither close nor reshape it.
  */
 export function noteHistoryPage(
   userId: string,
   workspaceId: string,
   requestId: string,
+  sender: string,
   pageIndex: number,
   pageCount: number
 ): void {
   const records = readAll(userId);
   const record = records[workspaceId];
   if (!record || record.requestId !== requestId) return;
+  const fault = historyPageFault(pageIndex, pageCount);
+  if (fault !== null) {
+    console.debug(
+      `[GRAINE] not recording ${sender}'s page of history request ${requestId} in community ${workspaceId.slice(0, 8)}: ${fault}`
+    );
+    return;
+  }
+  if (record.sender !== null && (sender !== record.sender || pageCount !== record.pageCount)) {
+    console.warn(
+      `[GRAINE] REFUSED a page of history request ${requestId} in community ${workspaceId.slice(0, 8)}: ` +
+        `${sender} says ${pageCount === 0 ? 'one message' : `${pageCount} page(s)`}, ` +
+        `the answer recorded is ${record.sender}'s in ${record.pageCount} - its seeds are absorbed, the record is not touched`
+    );
+    return;
+  }
   if (pageCount === 0) {
     delete records[workspaceId];
     writeAll(userId, records);
@@ -143,14 +199,21 @@ export function noteHistoryPage(
   }
   const received = new Set(record.received);
   received.add(pageIndex);
-  const whole = Array.from({ length: pageCount }, (_, i) => i).every((i) => received.has(i));
+  // Every index here is below `pageCount` (checked above, and by `isRecord` for the stored ones), so
+  // the set is whole exactly when it holds `pageCount` of them - no walk over an untrusted length.
+  const whole = received.size === pageCount;
   if (whole) {
     console.debug(
       `[GRAINE] the history answer of community ${workspaceId.slice(0, 8)} arrived whole: ${pageCount} page(s) of request ${requestId}`
     );
     delete records[workspaceId];
   } else {
-    records[workspaceId] = { ...record, pageCount, received: [...received].sort((a, b) => a - b) };
+    records[workspaceId] = {
+      ...record,
+      sender,
+      pageCount,
+      received: [...received].sort((a, b) => a - b),
+    };
   }
   writeAll(userId, records);
 }
@@ -163,10 +226,10 @@ export function noteHistoryPage(
 export function incompleteHistoryPages(userId: string, workspaceId: string): number[] | null {
   const record = readAll(userId)[workspaceId];
   if (!record || record.pageCount === 0 || record.reasked) return null;
+  // Bounded: `readAll` reads a stored count above GRAINE_BUNDLE_MAX_PAGES as no record at all.
   const received = new Set(record.received);
-  const missing = Array.from({ length: record.pageCount }, (_, i) => i).filter(
-    (i) => !received.has(i)
-  );
+  const missing: number[] = [];
+  for (let i = 0; i < record.pageCount; i++) if (!received.has(i)) missing.push(i);
   return missing.length > 0 ? missing : null;
 }
 

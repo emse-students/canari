@@ -25,7 +25,7 @@ import { forgetAskedSession, noteHistoryHeldNothing, noteSeedUnavailable } from 
 import { seedFromWire, storedV2From, storedV2Of, toWireSeed, type IncomingSeed } from './wireSeed';
 import { checkSeedEndorsement, type EndorsementSource } from './endorsement';
 import { pageGraineBundle } from './bundlePages';
-import { noteHistoryPage } from './pagedHistoryAnswer';
+import { historyPageFault, noteHistoryPage } from './pagedHistoryAnswer';
 
 /**
  * What a frame arriving on a community's distribution group MEANS.
@@ -790,17 +790,18 @@ async function gatherCommunityHistory(
 
 /**
  * Where a bundle sits in its answer, for the absorb line: empty for an answer of one message, and
- * `page 2/5 of request r` otherwise. The numbers are READ, never acted on - every seed is stored on
- * its own, so a page needs nothing from the others - which is why a numbering that cannot be true
- * is said and the page still absorbed.
+ * `page 2/5 of request r` otherwise. Every seed is stored on its own, so a page needs nothing from
+ * the others: a numbering that cannot be true ({@link historyPageFault}) is said HERE, once, and the
+ * page still absorbed - but never counted toward this device's history answer (`noteHistoryPage`).
  */
 function pageNote(frame: DistributionFrame, bundle: canari.GraineBundleMsg.$Properties): string {
   const count = Number(bundle.pageCount ?? 0);
   if (count === 0) return '';
   const index = Number(bundle.pageIndex ?? 0);
-  if (index >= count) {
+  const fault = historyPageFault(index, count);
+  if (fault !== null) {
     console.warn(
-      `[GRAINE] ${frame.sender} sent page ${index + 1} of ${count} for request ${String(bundle.requestId ?? '')} in community ${frame.workspaceId.slice(0, 8)} - a numbering no answerer writes; its seeds are absorbed like any others`
+      `[GRAINE] ${frame.sender} numbered a bundle for request ${String(bundle.requestId ?? '')} in community ${frame.workspaceId.slice(0, 8)} with ${fault} - a numbering no answerer writes; its seeds are absorbed like any others, the page is not counted`
     );
   }
   return ` - page ${index + 1}/${count} of request ${String(bundle.requestId ?? '')}`;
@@ -873,6 +874,7 @@ async function absorbSeedBundle(
     requireGraineRuntime('cannot record a history page').userId,
     frame.workspaceId,
     String(bundle.requestId ?? ''),
+    frame.sender,
     Number(bundle.pageIndex ?? 0),
     Number(bundle.pageCount ?? 0)
   );

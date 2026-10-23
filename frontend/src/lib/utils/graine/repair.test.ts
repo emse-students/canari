@@ -684,8 +684,8 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
     // page was then recovered only session by session, its rows hidden until each repair landed.
     await requestCommunityHistory('ws-1');
     const { requestId } = sentAsk(0);
-    noteHistoryPage('alice', 'ws-1', requestId, 0, 3);
-    noteHistoryPage('alice', 'ws-1', requestId, 2, 3);
+    noteHistoryPage('alice', 'ws-1', requestId, 'bob', 0, 3);
+    noteHistoryPage('alice', 'ws-1', requestId, 'bob', 2, 3);
     heldSessions = [{ sessionId: 's-1' } as never];
 
     restart();
@@ -696,7 +696,7 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
     );
 
     // Its answer arrives in part too: the one re-ask is spent, nothing asks a third time.
-    noteHistoryPage('alice', 'ws-1', sentAsk(1).requestId, 1, 3);
+    noteHistoryPage('alice', 'ws-1', sentAsk(1).requestId, 'bob', 1, 3);
     restart();
     await requestCommunityHistory('ws-1');
     expect(sendMessage).toHaveBeenCalledTimes(2);
@@ -705,7 +705,7 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
   it('asks nothing more at the next start when every page of the answer arrived', async () => {
     await requestCommunityHistory('ws-1');
     const { requestId } = sentAsk(0);
-    for (const page of [1, 0]) noteHistoryPage('alice', 'ws-1', requestId, page, 2);
+    for (const page of [1, 0]) noteHistoryPage('alice', 'ws-1', requestId, 'bob', page, 2);
     heldSessions = [{ sessionId: 's-1' } as never];
 
     restart();

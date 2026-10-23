@@ -256,6 +256,17 @@ a time, as each row fails to open. For a HISTORY answer the loss is also recorde
 - it marks each page absorbed only after its seeds are stored;
 - it closes on the last page.
 
+**The page numbers are untrusted.** The history ask goes out on the shared key group, so any member
+(or a buggy client) can answer it with any `page_index` and `page_count`, a `uint32` each. The
+receiver never allocates by them. A `page_count` above `GRAINE_BUNDLE_MAX_PAGES` is refused. That cap
+equals `GRAINE_HISTORY_BUNDLE_MAX_SEEDS`, because every page carries at least one entry and an answer
+carries at most that many. An index outside its count is refused too: its seeds are absorbed and the
+absorb line warns once, but the page is not recorded. The record also belongs to the FIRST answer
+recorded, meaning its sender and its count. A page from another sender, or with another count
+(a forged "page 1 of 1" or "one message" included), is refused with a warning. Without that, one
+forged page could close the record and cancel the re-ask. A stored count above the cap is read back
+as no record.
+
 At the next start `requestCommunityHistory`, which otherwise asks only while no seed is held, asks
 ONCE more when that record names missing pages. That re-ask is spent only when it is sent, so an ask
 that finds nobody online keeps it. A second incomplete answer is left to the per-session repair. The

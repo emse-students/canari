@@ -83,6 +83,22 @@ export const GRAINE_NATIVE_MIRROR_SESSIONS_PER_CHANNEL = 20;
 export const GRAINE_HISTORY_BUNDLE_MAX_SEEDS = 8000;
 
 /**
+ * Ceiling on the `page_count` of one answer that a RECEIVER believes - the most pages an honest
+ * answerer can write, derived rather than chosen.
+ *
+ * `pageGraineBundle` puts at least one entry (a seed or a declined session id) on every page, and an
+ * answer carries at most {@link GRAINE_HISTORY_BUNDLE_MAX_SEEDS} entries: a history answer at most
+ * that many seeds and no decline, a named request at most that many ids split between seeds and
+ * declines (`gatherNamedSessions` reads only the first {@link GRAINE_HISTORY_BUNDLE_MAX_SEEDS}). So no
+ * honest answer has more pages than that, and in practice it has about eleven.
+ *
+ * The count arrives as a `uint32` from ANY member of the key group, and the receiver walks and
+ * stores page numbers up to it (`pagedHistoryAnswer.ts`) - so a count above this is refused, never
+ * allocated by.
+ */
+export const GRAINE_BUNDLE_MAX_PAGES = GRAINE_HISTORY_BUNDLE_MAX_SEEDS;
+
+/**
  * Ceiling on ONE bundle message, in bytes of the encoded `AppMessage` handed to MLS - so an answer
  * larger than this is sent as several pages (`GraineBundleMsg.page_index` / `page_count`).
  *

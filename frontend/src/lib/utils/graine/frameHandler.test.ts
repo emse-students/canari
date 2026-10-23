@@ -1565,6 +1565,31 @@ describe('a bundle answering our own request (WP-33)', () => {
       localStorage.clear();
     });
 
+    it('absorbs a page numbered past its count, says so ONCE, and never counts it toward our history ask', async () => {
+      localStorage.clear();
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      noteHistoryAsked('alice', 'ws-1', 'r-p', false);
+
+      await handleDistributionFrame(pageFrame([await v2SeedFor('chan-1', 's-a', 0)], 0, 3));
+      await handleDistributionFrame(pageFrame([await v2SeedFor('chan-2', 's-b', 0)], 5, 3));
+      await handleDistributionFrame(
+        pageFrame([await v2SeedFor('chan-3', 's-c', 0)], 0, 0xffffffff)
+      );
+
+      expect(saved.map((s) => s.sessionId).sort()).toEqual(['s-a', 's-b', 's-c']);
+      expect(incompleteHistoryPages('alice', 'ws-1')).toEqual([1, 2]);
+      const numbering = warn.mock.calls
+        .flat()
+        .filter((l) => String(l).includes('no answerer writes'));
+      expect(numbering).toHaveLength(2);
+      debug.mockRestore();
+      warn.mockRestore();
+      localStorage.clear();
+    });
+
     it('treats a duplicated page as what it is - nothing new stored, no salon re-read', async () => {
       const { storage, saved } = fakeStorage();
       wire(storage);
@@ -1636,7 +1661,7 @@ describe('a bundle answering our own request (WP-33)', () => {
       await handleDistributionFrame(pageFrame([await v2SeedFor('chan-1', 's-a', 0)], 4, 2));
 
       expect(saved.map((s) => s.sessionId)).toEqual(['s-a']);
-      expect(warn.mock.calls.flat().join(' ')).toContain('page 5 of 2');
+      expect(warn.mock.calls.flat().join(' ')).toContain('page index 4 outside its 2 page(s)');
       warn.mockRestore();
     });
   });
