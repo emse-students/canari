@@ -945,7 +945,8 @@ export class MembersController {
     // The caller's arrival for `for` is the start of their CURRENT stretch - the open interval, from
     // its recorded admission when one preceded the enrolment. Not their first arrival: a caller who
     // left and came back did not witness what was added while they were out. No open interval
-    // answers `for` for nobody.
+    // answers `for` for nobody - including a caller with device rows but no open interval (admitted,
+    // not yet enrolled): `for` answers nobody until their enrolment opens one, the safe direction.
     const current = (byUser.get(caller) ?? []).find((r) => r.leftAt === null);
     const callerArrival = current ? stretchStart(current) : Infinity;
     const forCounted = forUser

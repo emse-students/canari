@@ -23,6 +23,12 @@
 -- recorded), so the release that carries this file IS the application.
 --
 -- Additive and idempotent: ADD COLUMN IF NOT EXISTS, and the backfill writes only a NULL column.
+--
+-- LOCK TIMEOUT: ADD COLUMN takes ACCESS EXCLUSIVE on `dm_group_membership_intervals`, which every
+-- history answer reads. Waiting behind a long transaction would stall them all behind the queued
+-- lock request, so the migration gives up instead; the deploy then fails loudly and a re-run is safe
+-- (idempotent above). Asserted by `migrations.lock-timeout.spec.ts`.
+SET lock_timeout = '5s';
 
 ALTER TABLE dm_group_membership_intervals
     ADD COLUMN IF NOT EXISTS "admittedAt" TIMESTAMP NULL;
