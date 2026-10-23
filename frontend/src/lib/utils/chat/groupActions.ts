@@ -1,6 +1,5 @@
 import { DELIVERY, addressedHistoryAnswer } from '$lib/mls-client/frameDelivery';
 import { AddressedUnsupportedError } from '$lib/mls-client/mlsDeliveryApi';
-import { classifyRemoveError } from '$lib/mls-client/mlsRemoveError';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -24,6 +23,18 @@ import {
 } from './historyManifest';
 import { holdsGroupState } from './groupUsability';
 import { groupSkippedByReason, type SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
+import { isDeviceTrustRefusal } from '$lib/mls-client/deviceTrust';
+
+/**
+ * The trust refusals this session already reported, as `deviceId|reason` - a sweep re-derives the
+ * same refusal at every pass, and an error repeated at each one is a line its reader learns to skip.
+ */
+const reportedSkippedRefusals = new Set<string>();
+
+/** Test seam: forgets which skipped-package refusals were already reported. */
+export function resetReportedSkippedRefusals(): void {
+  reportedSkippedRefusals.clear();
+}
 
 /**
  * Reports (log + `console.warn`) devices skipped by `addMembersBulk` because their KeyPackage
@@ -45,6 +56,27 @@ export function warnSkippedKeyPackages(
   // ONE LINE PER CAUSE: an expired package (wait for its owner to reconnect) and a bad signature
   // (a defect) want opposite fixes, and a count collapsed them.
   for (const { reason, deviceIds } of groupSkippedByReason(skipped)) {
+    // A REFUSED IDENTITY OR KEY IS NOT A STALE PACKAGE: republishing cannot lift it, because the
+    // package named another device or a key this device never pinned for it (`deviceTrust.ts`).
+    if (isDeviceTrustRefusal(reason)) {
+      // Said once per device and reason per session; a repeat goes to `debug`.
+      const fresh = deviceIds.filter((id) => !reportedSkippedRefusals.has(`${id}|${reason}`));
+      if (fresh.length === 0) {
+        console.debug(
+          `${tag}[TRUST] KeyPackage ${reason} again for ${deviceIds.join(', ')} on ${groupId} (already reported)`
+        );
+        continue;
+      }
+      for (const id of fresh) reportedSkippedRefusals.add(`${id}|${reason}`);
+      log(
+        `${tag} ${fresh.length} device(s) REFUSED (${reason}): ${fresh.join(', ')} - not invited; nothing proves the package is that device's.`
+      );
+      console.error(
+        `${tag}[TRUST] KeyPackage ${reason} for ${fresh.length} device(s) on ${groupId}:`,
+        fresh
+      );
+      continue;
+    }
     log(
       `${tag} ${deviceIds.length} device(s) skipped (KeyPackage ${reason}): ${deviceIds.join(', ')} - not invited, republish a fresh KeyPackage.`
     );
@@ -461,121 +493,6 @@ export async function isGroupActiveOnServer(
   } catch {
     return null;
   }
-}
-
-/**
- * Unified handler for a `DuplicateSignature` error raised by `addMember`:
- * the device's old KeyPackage is still in the MLS tree (local state lost).
- * Kicks the stale leaf and resets the status to pending so the device can
- * resend a `welcome_request` with a fresh KeyPackage.
- *
- * Do not check status='active' to decide whether to skip: `sendWelcome` marks
- * the device active optimistically before it processes the Welcome. A device
- * that has lost its state will always be 'active' server-side.
- */
-export async function handleDuplicateLeafError(params: {
-  mlsService: IMlsService;
-  groupId: string;
-  targetUserId: string;
-  targetDeviceId: string;
-  userId: string;
-  deviceKeyB64: string;
-  log: (msg: string) => void;
-}): Promise<void> {
-  const { mlsService, groupId, targetUserId, targetDeviceId, userId, deviceKeyB64, log } = params;
-
-  log(`[MLS] DuplicateSignature: kicking stale leaf for ${targetDeviceId.slice(0, 12)}...`);
-  await kickStaleLeaf(groupId, targetUserId, targetDeviceId, mlsService, log);
-  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
-}
-
-/**
- * Removes the stale leaf of a device from the MLS tree AND its routing row (best-effort, never throws).
- *
- * Wraps removeMemberDevice + kickStaleDevice to avoid duplication.
- *
- * **BEST-EFFORT IS NOT THE SAME AS SILENT, AND THIS USED TO BE BOTH.** Neither call could throw, so
- * a kick that removed nothing left no trace of its own: the only evidence was the
- * `DuplicateSignature` produced later by whatever the caller did next, under a different tag - one
- * symptom standing in for two unrelated causes. And the closing line asserted the removal
- * unconditionally, so a reader following `[KICK] ... removed` had no way to learn the leaf was still
- * sitting in the tree. Both failures are reported now; neither is promoted to a throw, because the
- * callers' fall-through is deliberate (see below).
- *
- * **THE TWO HALVES ARE REPORTED SEPARATELY BECAUSE THEY ARE DIFFERENT FACTS.** The tree decides who
- * can read the group, the routing row decides who the delivery service ships to, and they fail
- * independently: a tree cleaned while the routing row survives, or the reverse, are different
- * estates needing different repairs. One line saying "partially" without naming which half would
- * leave the reader exactly where the silence did.
- *
- * **AND THEY ARE ORDERED, WHICH THEY WERE NOT UNTIL 2026-09-04.** The routing row is cleared ONLY
- * when the tree is genuinely without the leaf. Both calls used to run unconditionally, so a refused
- * Remove still wrote `pending` - a destructive write made before its own prerequisite was known to
- * hold, which is the invariant `f46e7660` established for the function next door, needed here for
- * the third time in this area.
- *
- * That was tolerable while `pending` meant "wait for a member" and cost only a delay. It is not any
- * more: since the same day, a `pending` row with no queued Welcome and no add lock tells the device
- * to STOP waiting and join by external commit. So clearing the row over a leaf that is still in the
- * tree now asks that device to add a SECOND leaf beside the first, which is the duplicate-leaf race
- * of 2026-08-26 arrived at from the other side - **the repair would manufacture the fault it exists
- * to clean up.** Fixing the requester's half is what made this half load-bearing, which is why the
- * two are one entry in `docs/wiki/backlog.md` and not two.
- *
- * "Nothing to remove" is NOT a refusal and must not be read as one - a tree that never held the leaf
- * is the outcome this function wants. `MlsError::NoSuchMember` carries that as a TYPE and
- * `classifyRemoveError` is the only thing that reads it; before it existed both outcomes were one
- * OpenMLS string, and telling them apart meant matching prose.
- */
-export async function kickStaleLeaf(
-  groupId: string,
-  targetUserId: string,
-  targetDeviceId: string,
-  mlsService: IMlsService,
-  log: (msg: string) => void
-): Promise<void> {
-  const deviceIdentity = `${targetUserId}:${targetDeviceId}`;
-  // The remove is staged then validated server-side (runCommitTransaction): a server rejection
-  // clears the staged commit without advancing the local epoch, so there is no fork to surface -
-  // the remove is genuinely best-effort. Rung-1 replay heals any lag on the next sync. Other
-  // errors (leaf already absent, etc.) are equally best-effort.
-  let treeCleared = true;
-  try {
-    await mlsService.removeMemberDevice(groupId, [deviceIdentity]);
-  } catch (e) {
-    // A leaf that was never there is the state this function wants, so it counts as cleared. Every
-    // other failure leaves the leaf in the tree, and forbids the write below.
-    treeCleared = classifyRemoveError(e) === 'already-absent';
-    log(
-      treeCleared
-        ? `[KICK] Leaf ${deviceIdentity} was already absent from ${groupId}'s tree - nothing to remove`
-        : `[KICK] Leaf ${deviceIdentity} still in ${groupId}'s tree - remove refused: ${String(e).slice(0, 120)}`
-    );
-  }
-
-  // THE ORDER IS THE FIX: see this function's docblock. A pending row over a live leaf is an
-  // invitation to add a second one.
-  let routingCleared = false;
-  if (treeCleared) {
-    routingCleared = true;
-    await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch((e: unknown) => {
-      routingCleared = false;
-      log(
-        `[KICK] Routing row for ${deviceIdentity} still listed on ${groupId} - clear refused: ${String(e).slice(0, 120)}`
-      );
-    });
-  } else {
-    log(
-      `[KICK] Routing row for ${deviceIdentity} on ${groupId} left ALONE on purpose - the leaf is` +
-        ` still in the tree, and clearing the row would ask that device to add a second one`
-    );
-  }
-
-  log(
-    treeCleared && routingCleared
-      ? `[KICK] Stale leaf ${deviceIdentity} removed from ${groupId}`
-      : `[KICK] Stale leaf ${deviceIdentity} only PARTIALLY removed from ${groupId} - tree=${treeCleared ? 'cleared' : 'still present'}, routing=${routingCleared ? 'cleared' : 'still listed'}`
-  );
 }
 
 /**

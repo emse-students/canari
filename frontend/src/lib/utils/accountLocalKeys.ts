@@ -31,6 +31,11 @@ export const ACCOUNT_KEY = {
    * is the prefix `wasmPrefetch.ts` and `deviceReset.ts` enumerate.
    */
   deviceId: (userId: string) => `mls_device_id_${userId}`,
+  /**
+   * `BaseMlsService.retireAbandonedDevices`: this install's OWN previous device ids, abandoned by a
+   * rotation and not yet confirmed deleted on the server - a JSON array, emptied as each delete lands.
+   */
+  retiringDeviceIds: (userId: string) => `mls_retiring_device_ids_${userId}`,
   /** `deviceKeyGate.ts`: the device-key change epoch. */
   deviceKeyEpoch: (userId: string) => `canari-device-key-epoch:${userId}`,
   /** `conversations.ts`: the archived conversation ids (lower-cased, as it always was). */
@@ -93,6 +98,11 @@ export const ACCOUNT_KEY = {
   notReadySince: (userId: string, groupId: string) => `mls_not_ready_since:${userId}:${groupId}`,
   /** `WebMlsService` / `TauriMlsService`: the name this device announces for the account. */
   deviceName: (userId: string, deviceId: string) => `device-name:${userId}:${deviceId}`,
+  /**
+   * `refusedDevices.ts`: the devices THIS device refused for a changed key, never fetched again - a
+   * JSON array of `userId:deviceId`, keyed by this device because the pins are its own.
+   */
+  refusedDevices: (userId: string, deviceId: string) => `mls_refused_devices:${userId}:${deviceId}`,
 } as const;
 
 /** The Tauri store (`@tauri-apps/plugin-store`) that mirrors {@link ACCOUNT_KEY}`.lastActive`. */
@@ -121,6 +131,7 @@ function exactKeys(userId: string): string[] {
   return [
     ACCOUNT_KEY.sendRatchetLedger(userId),
     ACCOUNT_KEY.deviceId(userId),
+    ACCOUNT_KEY.retiringDeviceIds(userId),
     ACCOUNT_KEY.deviceKeyEpoch(userId),
     ACCOUNT_KEY.archivedConversations(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),
@@ -146,6 +157,7 @@ function keyPrefixes(userId: string): string[] {
     ACCOUNT_KEY.historyAudit(userId, ''),
     ACCOUNT_KEY.notReadySince(userId, ''),
     ACCOUNT_KEY.deviceName(userId, ''),
+    ACCOUNT_KEY.refusedDevices(userId, ''),
   ];
 }
 

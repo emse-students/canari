@@ -36,16 +36,18 @@ use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::display_names::store_display_names;
 use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share};
 use crate::commands::mls::{
-    actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
-    creer_groupe, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
-    exporter_secret, generer_key_packages_et_persister, graine_member_signature_key, graine_run,
-    graine_session_keypair, graine_sign_with_device_credential, graine_sign_with_session_key,
-    graine_verify_signature, groupe_actif, initialiser_mls, key_package_a_clef_privee,
-    lister_groupes, lister_identites_membres, obtenir_epoch, oublier_groupe, oublier_key_packages,
-    recenser_key_packages, recevoir_message_bytes, recevoir_messages_batch,
-    recuperer_cle_session_mls, rejoindre_par_commit_externe, retirer_membres,
+    actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit,
+    cles_signature_epinglees, confirmer_commit, creer_groupe, envoyer_message_bytes,
+    epoques_departs, exporter_group_info, exporter_ratchet_tree, exporter_secret,
+    feuille_portant_cle, generer_key_packages_et_persister, graine_member_signature_key,
+    graine_run, graine_session_keypair, graine_sign_with_device_credential,
+    graine_sign_with_session_key, graine_verify_signature, groupe_actif, initialiser_mls,
+    key_package_a_clef_privee, lister_groupes, lister_identites_membres, obtenir_epoch,
+    oublier_groupe, oublier_key_packages, prendre_evenements_appareils, recenser_key_packages,
+    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
+    rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
     retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
-    trailer_welcome,
+    trailer_welcome, verifier_key_package,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::discard_picked_file;
@@ -60,8 +62,8 @@ use crate::commands::push::{
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, delete_user_database, get_installer_package,
     get_local_storage_usage, get_native_flags, load_mls_state, mls_foreground_heartbeat,
-    mls_state_owner, mls_state_size, pause_mls_foreground, recharger_mls_au_resume,
-    remove_native_flag, save_mls_state, set_native_flag,
+    mls_state_absent, mls_state_owner, mls_state_size, pause_mls_foreground,
+    recharger_mls_au_resume, remove_native_flag, save_mls_state, set_native_flag,
 };
 
 // ─── JNI functions (Android background push) ──────────────────────────────
@@ -659,6 +661,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepa
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
+    requester: jni::objects::JString<'a>,
     key_package_b64: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> Result<serde_json::Value, String> {
@@ -676,6 +679,10 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepa
             .map_err(|e| e.to_string())?
             .into();
         let group_id_str: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
+        let requester_str: String = env
+            .get_string(&requester)
+            .map_err(|e| e.to_string())?
+            .into();
         let kp_b64: String = env
             .get_string(&key_package_b64)
             .map_err(|e| e.to_string())?
@@ -687,8 +694,11 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepa
             &key_b64_str,
             &user_id_str,
             &device_id_str,
-            &group_id_str,
-            &kp_b64,
+            &mobile::background::WelcomeRequest {
+                group_id: &group_id_str,
+                requester: &requester_str,
+                key_package_b64: &kp_b64,
+            },
         ))
     })();
 
@@ -1283,6 +1293,12 @@ pub fn run() {
             key_package_a_clef_privee,
             oublier_key_packages,
             ajouter_membres_bulk,
+            verifier_key_package,
+            feuille_portant_cle,
+            cles_signature_epinglees,
+            remplacer_appareil,
+            epoques_departs,
+            prendre_evenements_appareils,
             lister_identites_membres,
             retirer_membres,
             retirer_membres_par_appareil,
@@ -1311,6 +1327,7 @@ pub fn run() {
             delete_mls_state,
             load_mls_state,
             mls_state_size,
+            mls_state_absent,
             mls_state_owner,
             store_push_secret,
             clear_app_data,
