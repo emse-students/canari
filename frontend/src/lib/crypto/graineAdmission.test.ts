@@ -52,8 +52,14 @@ async function direct(
 }
 
 async function linkGrant() {
-  return mintInviteLinkGrant('ws-1', signer, place, 1_800_000_000_000, webCryptoEngine, (m) =>
-    webCryptoEngine.signWithSessionKey(DEVICE_SECRET, m)
+  return mintInviteLinkGrant(
+    'ws-1',
+    signer,
+    place,
+    1_800_000_000_000,
+    1_900_000_000_000,
+    webCryptoEngine,
+    (m) => webCryptoEngine.signWithSessionKey(DEVICE_SECRET, m)
   );
 }
 
@@ -66,6 +72,7 @@ describe('the statements a device signs', () => {
         signer,
         place,
         issuedAt: 0,
+        expiresAt: 0,
         linkPublicKey: new Uint8Array(32),
       }),
       encodeLinkRedemption('w', 's', new Uint8Array(32)),
@@ -146,6 +153,22 @@ describe('a link voucher', () => {
     expect(await voucherSignaturesHold(back, DEVICE_PK, webCryptoEngine)).toBe(true);
   });
 
+  it('carries its expiry through the fragment and the voucher, and does not verify once extended', async () => {
+    const grant = decodeInviteLinkGrant(encodeInviteLinkGrant(await linkGrant()));
+    expect(grant.expiresAt).toBe(1_900_000_000_000);
+    const voucher = decodeAdmissionVoucher(
+      encodeAdmissionVoucher(await redeemInviteLinkGrant(grant, 'newcomer', webCryptoEngine))
+    );
+    expect(voucher.kind === 'link' && voucher.expiresAt).toBe(1_900_000_000_000);
+    expect(
+      await voucherSignaturesHold(
+        { ...voucher, expiresAt: 2_000_000_000_000 } as typeof voucher,
+        DEVICE_PK,
+        webCryptoEngine
+      )
+    ).toBe(false);
+  });
+
   it('does not verify once moved to another person or another place', async () => {
     const voucher = await redeemInviteLinkGrant(await linkGrant(), 'newcomer', webCryptoEngine);
     expect(
@@ -162,8 +185,14 @@ describe('a link voucher', () => {
 
   it('does not verify when the link key is not one the signer stood behind', async () => {
     const real = await linkGrant();
-    const forged = await mintInviteLinkGrant('ws-1', signer, place, 1, webCryptoEngine, (m) =>
-      webCryptoEngine.signWithSessionKey(OTHER_SECRET, m)
+    const forged = await mintInviteLinkGrant(
+      'ws-1',
+      signer,
+      place,
+      1,
+      1_900_000_000_000,
+      webCryptoEngine,
+      (m) => webCryptoEngine.signWithSessionKey(OTHER_SECRET, m)
     );
     // A forger's own link key, under the real link's device signature.
     const voucher = await redeemInviteLinkGrant(

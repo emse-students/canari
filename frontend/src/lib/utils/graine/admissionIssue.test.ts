@@ -33,6 +33,7 @@ it('names the newcomer canonically, however the session spells them', async () =
     { userId: 'carol', deviceId: 'dev-c' },
     { keyGroupId: 'kg-1', epoch: 7 },
     1_800_000_000_000,
+    1_900_000_000_000,
     webCryptoEngine,
     (m) => webCryptoEngine.signWithSessionKey(DEVICE_SECRET, m)
   );

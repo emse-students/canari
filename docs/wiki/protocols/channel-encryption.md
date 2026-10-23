@@ -3803,6 +3803,8 @@ admissions, per account) and its MLS layer (pins and departures):
   A roster row with no leaf is never a root, and a root counts now only while the roster still
   shows the arrival it was rooted with.
 - **Verified admissions**: each voucher that held, at the place it was signed.
+- **Observations**: for each voucher on the roster, where (the community key group's epoch) and
+  when (this device's clock) this device first saw it.
 - **Removals**: the epochs at which a commit this device merged - live or on catch-up - removed the
   user's last leaf from the key group (`removalEpochs`,
   [mls-protocol](mls-protocol.md)); a device repair is one commit (`replaceMember`) and records none. No removal seen
@@ -3818,13 +3820,29 @@ signer verified only under one is unproven: the newcomer reads from arrival on. 
 gate and the voucher compare - roster rows, leaves, subject, signer - is in the one canonical form of
 `leafIdentity.ts` (`canonicalUserId`, Rust's `to_ascii_lowercase`), never a plain `toLowerCase`.
 
-A voucher is bound to a PLACE: the key group its signer held and that group's epoch. It admits when
-its signer was admitted AT THAT PLACE - a root, or admitted by an earlier voucher - with no removal of
-the signer in between. A member is admitted now when some admission of theirs has no removal after
-it. So a voucher from a member of a former bureau still admits after they leave, one signed after
-its signer's removal does not, and a removed member who comes back with the voucher they had is a
-newcomer without one. Places in two key groups cannot be ordered, and the reading that hands
-nothing over is taken.
+A voucher carries a PLACE its signer wrote: a key group and that group's epoch. The newcomer's
+admission starts there, so a removal of the newcomer after it ends it. The SIGNER is judged
+elsewhere: at the place where THIS device first observed the voucher (decided by the user,
+2026-10-23). The device records, durably and per voucher, the community key group's epoch when it
+first saw the voucher on the roster (`observed` in its ledger, written at every community sync and
+every check). The voucher admits when its signer was admitted at that observed place - a root, or
+admitted by an earlier voucher - with no removal of the signer in between. A member is admitted now
+when some admission of theirs has no removal after it.
+
+So:
+- A voucher from a member of a former bureau still admits after they leave, provided this device saw
+  it before they left.
+- A voucher first observed after its signer's removal does not admit, whatever place it claims - a
+  removed signer cannot backdate one.
+- A removed member who comes back with the voucher they had is a newcomer without one.
+- Places in two key groups cannot be ordered, and the reading that hands nothing over is taken.
+
+**The cost, accepted by the user: a device that saw a voucher late grants less past, never more.**
+A device that joined the community after the signer left, or whose ledger was lost, observes every
+voucher anew, now. It then refuses the vouchers whose signer has since been removed: those newcomers
+read from their arrival on when this device answers. Another device that saw the voucher in time
+still hands them the past. The record holds only the vouchers on the current roster; one that leaves
+the roster and comes back is observed again, later.
 
 `pastPolicyFor(frame)` is THE gate, and both answer paths call it - the HISTORY bundle
 (`gatherCommunityHistory`) and the SESSIONS repair (`gatherNamedSessions`) - so the two cannot
@@ -3845,7 +3863,7 @@ then the bytes; `be64` a u64 big-endian integer.
 
 ```text
 A = lp("canari-graine-admit-direct-v1") || lp(workspaceId) || lp(subject) || lp(signerUser) || lp(signerDevice) || lp(keyGroupId) || be64(epoch) || be64(issuedAt)
-L = lp("canari-graine-admit-link-v1")   || lp(workspaceId) || lp(signerUser) || lp(signerDevice) || lp(keyGroupId) || be64(epoch) || lp(linkPublicKey) || be64(issuedAt)
+L = lp("canari-graine-admit-link-v1")   || lp(workspaceId) || lp(signerUser) || lp(signerDevice) || lp(keyGroupId) || be64(epoch) || lp(linkPublicKey) || be64(issuedAt) || be64(expiresAt)
 R = lp("canari-graine-admit-redeem-v1") || lp(workspaceId) || lp(subject) || lp(linkPublicKey)
 ```
 
@@ -3858,6 +3876,14 @@ R = lp("canari-graine-admit-redeem-v1") || lp(workspaceId) || lp(subject) || lp(
   sign-in (never in `returnTo`), and the newcomer signs `R` with the secret. The voucher carries `L`'s
   fields and both signatures, and verifies with no secret. An admission through a link is placed
   where the link was signed, however late it is used.
+- **A link's grant expires** (decided by the user, 2026-10-23). `expiresAt` is the invite link's own
+  expiry, or 30 days after signing (`LINK_GRANT_DEFAULT_LIFETIME_MS`) when the link has none. It is
+  signed into `L`, so no holder of the fragment can extend it. A member counts a link voucher only
+  if it first observed that voucher no later than `expiresAt`. The only reference for an instant is
+  this device's own clock: the key group's epochs order commits, not time. The clock is read once,
+  at the first observation, and recorded with it. It bounds the link from above and decides nothing
+  else. A device whose clock runs fast refuses a link early; one whose clock runs slow accepts it
+  late.
 - **The voucher** (`canari-graine-admission-v1`, base64url, at most 4096 characters) is stored in
   `channel_members."admissionVoucher"` (migration `107`) and served on the roster with `isCreator`.
   The server checks its alphabet and length and nothing else: it cannot verify it, and need not.
@@ -3872,8 +3898,8 @@ R = lp("canari-graine-admit-redeem-v1") || lp(workspaceId) || lp(subject) || lp(
 - A device that first syncs a community after the cut records its roots from the members present
   then.
 - A member whose every device left the tree needs a fresh admission for the past.
-- An invite link is a bearer proof: whoever holds the full link, `#` part included, can be admitted
-  with the past. Share it as you would the community itself.
+- An invite link is a bearer proof until its grant expires: whoever holds the full link, `#` part
+  included, can be admitted with the past. Share it as you would the community itself.
 - A newcomer admitted by an older client, or through a link without its `#` part, reads from their
   arrival on until re-admitted.
 
@@ -3885,11 +3911,14 @@ Merges after #2262 (salon scope) and #2264 (visibility floors). #2264 moves the 
 #2263 (rotation on a new user) and #2255 (paging) touch neither the gate nor the voucher.
 
 Tests: `graineAdmission.test.ts` (the leading `0x00`, round trips, every tampering: subject,
-community, place, signer, forged link key, malformed bytes), `admissionGate.test.ts` (a device the
+community, place, signer, forged link key, an extended expiry, malformed bytes),
+`admissionGate.test.ts` (a removed signer's backdated voucher observed after the removal does not
+admit; after a ledger loss the observation restarts and grants less; a link observed after its
+expiry does not admit, one observed before does; a device the
 server publishes for a rooted member is refused; a lost signer device keeps verifying under its pin;
 a roster row with no leaf is never a root; the roots are fixed at the first sync; a removed member's
 old voucher no longer admits, a fresh one does, a repaired device keeps its admission; a former
-bureau's voucher still admits, one signed after its signer's removal does not; any pinned key
+bureau's voucher observed before they left still admits, one signed after its signer's removal does not; any pinned key
 verifies, but a pin re-learned after a prune does not prove a signer), `frameHandler.test.ts`
 (both answer paths floor an unproven
 newcomer; direct, link and chained admissions hand the past; copied, foreign or forged vouchers do

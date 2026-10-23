@@ -36,10 +36,15 @@ import { historyVisibilityFor, requireGraineRuntime } from './runtime';
  *   placed before a removal no longer admits: a removed member who comes back with the voucher they
  *   had is a newcomer without one. NO REMOVAL SEEN IS "UNKNOWN", NOT PROOF OF CONTINUITY: a member
  *   who arrived after a commit never merged it.
- * - VERIFIED ADMISSIONS (its ledger): a voucher counts when its signer was admitted AT THE PLACE IT
- *   WAS SIGNED - a root, or admitted by a voucher placed before, with no removal in between - so a
- *   voucher from a member who has since left still admits, and one signed after their removal does
- *   not. Each one verified is recorded, so the chain survives its signers leaving the roster.
+ * - OBSERVATIONS (its ledger): where (the community key group's epoch) and when (its own clock)
+ *   this device FIRST SAW each voucher on the roster.
+ * - VERIFIED ADMISSIONS (its ledger): a voucher counts when its signer was admitted WHERE THIS
+ *   DEVICE FIRST SAW IT - a root, or admitted by a voucher placed before, with no removal in
+ *   between - never at the place the signer wrote, which a removed signer could backdate. So a
+ *   voucher from a member who has since left still admits if it was seen before they left, and a
+ *   device that saw it late grants less, never more (user, 2026-10-23). A link voucher counts only
+ *   if first seen before the expiry signed into it. Each one verified is recorded, so the chain
+ *   survives its signers leaving the roster.
  *
  * Anything else - a newcomer through a link that carried no fragment, an admission by an older
  * client, a voucher that does not verify, a ledger that cannot be built - is answered as `joined`:
@@ -70,6 +75,20 @@ interface CommunityAdmissions {
   roots: Record<string, number>;
   /** Admissions this device verified, at the place each voucher was signed. */
   admissions: Record<string, AdmissionPlace[]>;
+  /**
+   * When THIS device first saw each voucher the roster carries (keyed by the stored voucher): the
+   * community key group's place then, and this device's clock then. A signer is judged at the
+   * observed place, never at the place they wrote; a link's expiry against the observed instant.
+   * Absent in a ledger written before observations existed - read as none observed yet.
+   */
+  observed?: Record<string, Observation>;
+}
+
+/** Where and when this device first saw one voucher. */
+interface Observation {
+  place: AdmissionPlace;
+  /** This device's wall clock then - an upper bound for a link's expiry, deciding nothing else. */
+  at: number;
 }
 
 /** The whole ledger of one account on this device. */
@@ -182,10 +201,50 @@ export async function observeAdmissionState(
   const roster = rosterByUser(rows ?? (await channels().listWorkspaceMembers(workspaceId)));
   await serialized(async () => {
     const ledger = readLedger(self);
-    if (await recordRoots(ledger, mlsService, workspaceId, keyGroupId, roster)) {
-      writeLedger(self, ledger);
-    }
+    const rooted = await recordRoots(ledger, mlsService, workspaceId, keyGroupId, roster);
+    const observed = recordObservations(
+      ledger.communities[workspaceId],
+      mlsService,
+      keyGroupId,
+      roster
+    );
+    if (rooted || observed) writeLedger(self, ledger);
   });
+}
+
+/**
+ * Records, for each voucher the roster carries that this device has not seen yet, WHERE and WHEN it
+ * first saw it: the community key group's epoch now, and its own clock now. Forgets the vouchers the
+ * roster no longer carries, so the record stays the roster's size; seen again later, such a voucher
+ * is observed anew, later - which grants less, never more. @returns whether the ledger changed.
+ */
+function recordObservations(
+  community: CommunityAdmissions,
+  mls: IMlsService,
+  keyGroupId: string,
+  roster: Map<string, RosterRow>
+): boolean {
+  const before = community.observed ?? {};
+  const after: Record<string, Observation> = {};
+  let added = 0;
+  for (const row of roster.values()) {
+    if (!row.voucher) continue;
+    const seen = before[row.voucher];
+    if (seen) {
+      after[row.voucher] = seen;
+      continue;
+    }
+    after[row.voucher] = { place: { keyGroupId, epoch: mls.getEpoch(keyGroupId) }, at: Date.now() };
+    added += 1;
+  }
+  const dropped = Object.keys(before).filter((voucher) => !(voucher in after)).length;
+  community.observed = after;
+  if (added > 0 || dropped > 0) {
+    console.info(
+      `[GRAINE] admission vouchers observed at key-group epoch ${mls.getEpoch(keyGroupId)}: ${added} new, ${dropped} no longer on the roster`
+    );
+  }
+  return added > 0 || dropped > 0;
 }
 
 /**
@@ -228,6 +287,7 @@ export async function admissionProven(
     const ledger = readLedger(self);
     await recordRoots(ledger, mlsService, workspaceId, keyGroupId, roster);
     const community = ledger.communities[workspaceId];
+    recordObservations(community, mlsService, keyGroupId, roster);
     await verifyRosterVouchers(
       community,
       mlsService,
@@ -287,22 +347,43 @@ async function verifyRosterVouchers(
   roster: Map<string, RosterRow>,
   removals: Removals
 ): Promise<void> {
-  const pending = new Map<string, { voucher: AdmissionVoucher; encoded: string }>();
+  const pending = new Map<
+    string,
+    { voucher: AdmissionVoucher; encoded: string; observed: Observation }
+  >();
   for (const [user, row] of roster) {
     if (!row.voucher) continue;
     const voucher = readVoucher(workspaceId, user, row.voucher);
-    if (voucher && !holdsAdmission(community, user, voucher.place)) {
-      pending.set(user, { voucher, encoded: row.voucher });
+    if (!voucher || holdsAdmission(community, user, voucher.place)) continue;
+    const observed = community.observed?.[row.voucher];
+    if (!observed) {
+      // recordObservations ran on this same roster just before: a voucher it did not record is a
+      // defect of the ledger, never a reason to judge the signer where they claimed to be.
+      console.error(
+        `[GRAINE] admission voucher of ${user} in community ${workspaceId.slice(0, 8)} has no observation - not counted`
+      );
+      continue;
     }
+    const why = observationRefuses(voucher, observed);
+    if (why) {
+      console.info(
+        `[GRAINE] admission voucher of ${user} in community ${workspaceId.slice(0, 8)} not counted: ${why}`
+      );
+      continue;
+    }
+    pending.set(user, { voucher, encoded: row.voucher, observed });
   }
   let moved = true;
   while (moved && pending.size > 0) {
     moved = false;
-    for (const [user, { voucher, encoded }] of pending) {
+    for (const [user, { voucher, encoded, observed }] of pending) {
       const signer = canonicalUserId(voucher.signer.userId);
+      // THE SIGNER IS JUDGED WHERE THIS DEVICE FIRST SAW THE VOUCHER, never at the place the signer
+      // wrote into it: a removed signer could write any place, but not make this device have seen
+      // the voucher before their removal.
       if (
         signer !== canonicalUserId(self) &&
-        !admittedAt(community, await removals(signer), signer, voucher.place, true)
+        !admittedAt(community, await removals(signer), signer, observed.place, true)
       ) {
         continue;
       }
@@ -312,12 +393,25 @@ async function verifyRosterVouchers(
       moved = true;
     }
   }
-  for (const [user, { voucher }] of pending) {
+  for (const [user, { voucher, observed }] of pending) {
     console.info(
       `[GRAINE] admission voucher of ${user} in community ${workspaceId.slice(0, 8)} not counted: ` +
-        `its signer ${voucher.signer.userId} was not admitted here at epoch ${voucher.place.epoch}`
+        `its signer ${voucher.signer.userId} was not admitted here when this device first saw it (epoch ${observed.place.epoch})`
     );
   }
+}
+
+/**
+ * Why a voucher cannot count given when this device first saw it, or `null`: a link observed after
+ * the expiry signed into it. This device's clock is the only reference an instant can be compared
+ * with - the key group's epochs order commits, not time - so it bounds the link and decides nothing
+ * else.
+ */
+function observationRefuses(voucher: AdmissionVoucher, observed: Observation): string | null {
+  if (voucher.kind === 'link' && observed.at > voucher.expiresAt) {
+    return `its invite link had expired when this device first saw it`;
+  }
+  return null;
 }
 
 /** Whether `user` already has an admission recorded at exactly `place`. */

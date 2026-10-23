@@ -1929,6 +1929,8 @@ describe('the past goes only to an admission this device can verify (section 25)
       carolDevice,
       { keyGroupId: 'g-1', epoch: 5 },
       1_800_000_000_000,
+      // An expiry no run of this suite reaches - the expiry itself is admissionGate.test.ts's row.
+      4_000_000_000_000,
       webCryptoEngine,
       (m) => webCryptoEngine.signWithSessionKey(CAROL_DEVICE_SECRET, m)
     );

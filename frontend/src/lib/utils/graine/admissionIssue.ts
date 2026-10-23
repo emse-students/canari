@@ -3,6 +3,7 @@ import {
   encodeAdmissionVoucher,
   encodeDirectAdmission,
   encodeInviteLinkGrant,
+  LINK_GRANT_DEFAULT_LIFETIME_MS,
   mintInviteLinkGrant,
   redeemInviteLinkGrant,
 } from '$lib/crypto/graineAdmission';
@@ -69,16 +70,29 @@ export async function signDirectAdmission(
  * It carries a SECRET - whoever holds it can admit anyone with a proof - so it lives only in the
  * URL's fragment, which a browser never sends to a server.
  *
+ * @param linkExpiresAt The invite link's own expiry (ISO, as the server returns it), or `null` for a
+ *   link that never expires - its grant then admits for {@link LINK_GRANT_DEFAULT_LIFETIME_MS}.
  * @returns The fragment, without its `#`.
  */
-export async function mintInviteFragment(workspaceId: string): Promise<string> {
+export async function mintInviteFragment(
+  workspaceId: string,
+  linkExpiresAt: string | null
+): Promise<string> {
   const { mlsService, userId } = requireGraineRuntime('cannot stand behind an invite link');
   const signer = { userId, deviceId: mlsService.getDeviceId() };
+  const issuedAt = Date.now();
+  const expiresAt =
+    linkExpiresAt === null ? issuedAt + LINK_GRANT_DEFAULT_LIFETIME_MS : Date.parse(linkExpiresAt);
+  if (!Number.isFinite(expiresAt)) {
+    // The display fails rather than signing a grant whose end nobody chose.
+    throw new Error(`the invite link's expiry is not a date: ${linkExpiresAt}`);
+  }
   const grant = await mintInviteLinkGrant(
     workspaceId,
     signer,
     admissionPlaceNow(mlsService, workspaceId),
-    Date.now(),
+    issuedAt,
+    expiresAt,
     mlsService.graineSignatureEngine(),
     (message) => mlsService.signWithDeviceCredential(message)
   );

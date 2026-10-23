@@ -506,7 +506,7 @@
       // sends to a server. A link without it still admits, with no past - so failing to mint it
       // fails the display rather than handing out the weaker link silently.
       const { mintInviteFragment } = await import('$lib/utils/graine/admissionIssue');
-      const fragment = await mintInviteFragment(workspaceDbId);
+      const fragment = await mintInviteFragment(workspaceDbId, invite.expiresAt ?? null);
       shareInvite = invite;
       shareLink = `${publicAppUrl(`/c/join/${invite.token}`)}#${fragment}`;
       try {

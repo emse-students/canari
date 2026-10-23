@@ -3,6 +3,8 @@ import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEn
 import {
   encodeAdmissionVoucher,
   encodeDirectAdmission,
+  mintInviteLinkGrant,
+  redeemInviteLinkGrant,
   type AdmissionPlace,
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
@@ -318,14 +320,22 @@ describe('a removal the MLS layer recorded at merge ends the admissions before i
   });
 });
 
-describe('a signer counts as of signing, not as of now', () => {
-  it('a voucher from a member of the old bureau still admits after they leave', async () => {
+describe('a signer counts as of when THIS device first observed the voucher, not as of now', () => {
+  it('a voucher from a member of the old bureau, observed before they left, still admits', async () => {
     listWorkspaceMembers.mockResolvedValue([member('alice'), member('carol')]);
     await observeAdmissionState('ws-1', KG);
     const signedBefore = await voucher('newcomer', carol, CAROL_SECRET, {
       keyGroupId: KG,
       epoch: 5,
     });
+    // This device's sync sees the newcomer's row, voucher included, at epoch 6.
+    epoch = 6;
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', AFTER_THE_PROOF, { admissionVoucher: signedBefore }),
+    ]);
+    await observeAdmissionState('ws-1', KG);
 
     // carol leaves the community at epoch 7: off the roster, out of the tree.
     departures.set('carol', [7]);
@@ -337,6 +347,50 @@ describe('a signer counts as of signing, not as of now', () => {
     ]);
 
     expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
+  });
+
+  it('a removed signer BACKDATING a voucher to before their removal admits nobody', async () => {
+    listWorkspaceMembers.mockResolvedValue([member('alice'), member('carol')]);
+    await observeAdmissionState('ws-1', KG);
+    // carol is removed at epoch 7; her pinned key still signs, and she writes epoch 5 into it.
+    departures.set('carol', [7]);
+    epoch = 9;
+    leaves = ['alice:alice-laptop', 'newcomer:dev-n'];
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await voucher('newcomer', carol, CAROL_SECRET, {
+          keyGroupId: KG,
+          epoch: 5,
+        }),
+      }),
+    ]);
+
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(false);
+  });
+
+  it('after a ledger loss, the observation restarts: a late-seeing device grants less, never more', async () => {
+    listWorkspaceMembers.mockResolvedValue([member('alice'), member('carol')]);
+    await observeAdmissionState('ws-1', KG);
+    const genuine = await voucher('newcomer', carol, CAROL_SECRET, { keyGroupId: KG, epoch: 5 });
+    leaves.push('newcomer:dev-n');
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', AFTER_THE_PROOF, { admissionVoucher: genuine }),
+    ]);
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
+
+    // carol is removed at epoch 7 and back at 8, still a root. While the ledger holds, the voucher
+    // was observed at epoch 5, before her removal, and admits.
+    departures.set('carol', [7]);
+    epoch = 8;
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
+
+    // The ledger is lost: every voucher is observed anew, NOW - after carol's removal - so hers no
+    // longer admits on this device. Less past on a device that saw late, never more.
+    localStorage.clear();
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(false);
   });
 
   it('a voucher signed after the signer was removed admits nobody', async () => {
@@ -358,6 +412,51 @@ describe('a signer counts as of signing, not as of now', () => {
     ]);
 
     expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(false);
+  });
+});
+
+describe('an invite link admits only until the expiry signed into it', () => {
+  /** The instant this device first observes the voucher - its own clock, an upper bound only. */
+  const OBSERVED_AT = 1_800_000_000_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(OBSERVED_AT);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A link carol's device showed, expiring at `expiresAt`, redeemed by the newcomer. */
+  async function linkVoucher(expiresAt: number) {
+    const grant = await mintInviteLinkGrant(
+      'ws-1',
+      carol,
+      { keyGroupId: KG, epoch: 5 },
+      OBSERVED_AT - 1000,
+      expiresAt,
+      webCryptoEngine,
+      (m) => webCryptoEngine.signWithSessionKey(CAROL_SECRET, m)
+    );
+    return encodeAdmissionVoucher(await redeemInviteLinkGrant(grant, 'newcomer', webCryptoEngine));
+  }
+
+  async function provenWith(admissionVoucher: string) {
+    leaves.push('newcomer:dev-n');
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', AFTER_THE_PROOF, { admissionVoucher }),
+    ]);
+    return admissionProven('ws-1', KG, 'newcomer');
+  }
+
+  it('admits through a link observed before its expiry', async () => {
+    expect(await provenWith(await linkVoucher(OBSERVED_AT + 60_000))).toBe(true);
+  });
+
+  it('does not admit through a link first observed after its expiry', async () => {
+    expect(await provenWith(await linkVoucher(OBSERVED_AT - 1))).toBe(false);
   });
 });
 

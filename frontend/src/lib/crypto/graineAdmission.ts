@@ -42,6 +42,12 @@ const INVITE_GRANT_LABEL = 'canari-graine-invite-v1';
 /** An Ed25519 secret in the 32-byte seed form the engine mints. */
 const LINK_SECRET_BYTES = 32;
 
+/**
+ * How long an invite link's grant admits when the link itself never expires: 30 days (user,
+ * 2026-10-23). The fragment is a bearer proof, and one that never ends is one nobody can take back.
+ */
+export const LINK_GRANT_DEFAULT_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+
 const KIND_DIRECT = 1;
 const KIND_LINK = 2;
 
@@ -95,6 +101,8 @@ export interface LinkAdmissionVoucher {
   place: AdmissionPlace;
   /** When `L` was signed - the signer's claim, bound into `L`. */
   issuedAt: number;
+  /** Until when the link admits (ms since the epoch), signed into `L` - see {@link InviteLinkGrant}. */
+  expiresAt: number;
   linkPublicKey: Uint8Array;
   /** The signer device's credential signature over `L`. */
   linkSignature: Uint8Array;
@@ -110,6 +118,13 @@ export interface InviteLinkGrant {
   signer: AdmissionSigner;
   place: AdmissionPlace;
   issuedAt: number;
+  /**
+   * Until when the link admits (ms since the epoch): the invite link's own expiry, or
+   * {@link LINK_GRANT_DEFAULT_LIFETIME_MS} after `issuedAt` when the link has none. Signed into `L`,
+   * so no holder of the fragment can extend it; a member compares it with the instant IT first
+   * observed the voucher.
+   */
+  expiresAt: number;
   linkPublicKey: Uint8Array;
   linkSignature: Uint8Array;
   linkSecret: Uint8Array;
@@ -135,10 +150,13 @@ export function encodeDirectAdmission(
 
 /**
  * `L = lp(label) || lp(workspaceId) || lp(signerUser) || lp(signerDevice) || lp(keyGroupId) ||
- * be64(epoch) || lp(linkPublicKey) || be64(issuedAt)`.
+ * be64(epoch) || lp(linkPublicKey) || be64(issuedAt) || be64(expiresAt)`.
  */
 export function encodeLinkAdmission(
-  v: Pick<InviteLinkGrant, 'workspaceId' | 'signer' | 'place' | 'issuedAt' | 'linkPublicKey'>
+  v: Pick<
+    InviteLinkGrant,
+    'workspaceId' | 'signer' | 'place' | 'issuedAt' | 'expiresAt' | 'linkPublicKey'
+  >
 ): Uint8Array {
   const out = new GraineFieldWriter();
   out.field(utf8(ADMISSION_LINK_LABEL));
@@ -148,6 +166,7 @@ export function encodeLinkAdmission(
   writePlace(out, v.place);
   out.field(sized('linkPublicKey', v.linkPublicKey, GRAINE_PUBLIC_KEY_BYTES));
   out.u64(instant(v.issuedAt));
+  out.u64(instant(v.expiresAt));
   return out.bytes();
 }
 
@@ -168,25 +187,34 @@ export function encodeLinkRedemption(
 /**
  * Mints the grant an invite link carries: a fresh link key pair, `L` signed by THIS device's
  * credential key (`signWithDevice`). Nothing is stored - every display of a link may mint its own,
- * and every one of them is valid on its own.
+ * and every one of them is valid on its own, until `expiresAt`.
  */
 export async function mintInviteLinkGrant(
   workspaceId: string,
   signer: AdmissionSigner,
   place: AdmissionPlace,
   issuedAt: number,
+  expiresAt: number,
   engine: GraineSignatureEngine,
   signWithDevice: (message: Uint8Array) => Promise<Uint8Array>
 ): Promise<InviteLinkGrant> {
   const { secret, publicKey } = await engine.newSessionKeyPair();
   const linkSignature = await signWithDevice(
-    encodeLinkAdmission({ workspaceId, signer, place, issuedAt, linkPublicKey: publicKey })
+    encodeLinkAdmission({
+      workspaceId,
+      signer,
+      place,
+      issuedAt,
+      expiresAt,
+      linkPublicKey: publicKey,
+    })
   );
   return {
     workspaceId,
     signer,
     place,
     issuedAt,
+    expiresAt,
     linkPublicKey: publicKey,
     linkSignature,
     linkSecret: secret,
@@ -210,6 +238,7 @@ export async function redeemInviteLinkGrant(
     signer: grant.signer,
     place: grant.place,
     issuedAt: grant.issuedAt,
+    expiresAt: grant.expiresAt,
     linkPublicKey: grant.linkPublicKey,
     linkSignature: grant.linkSignature,
     redemptionSignature,
@@ -265,6 +294,7 @@ export function encodeAdmissionVoucher(voucher: AdmissionVoucher): string {
   if (voucher.kind === 'direct') {
     out.field(sized('signature', voucher.signature, GRAINE_SIGNATURE_BYTES));
   } else {
+    out.u64(instant(voucher.expiresAt));
     out.field(sized('linkPublicKey', voucher.linkPublicKey, GRAINE_PUBLIC_KEY_BYTES));
     out.field(sized('linkSignature', voucher.linkSignature, GRAINE_SIGNATURE_BYTES));
     out.field(sized('redemptionSignature', voucher.redemptionSignature, GRAINE_SIGNATURE_BYTES));
@@ -301,6 +331,7 @@ export function decodeAdmissionVoucher(encoded: string): AdmissionVoucher {
       signer,
       place,
       issuedAt,
+      expiresAt: r.u64(),
       linkPublicKey: r.sized(GRAINE_PUBLIC_KEY_BYTES),
       linkSignature: r.sized(GRAINE_SIGNATURE_BYTES),
       redemptionSignature: r.sized(GRAINE_SIGNATURE_BYTES),
@@ -324,6 +355,7 @@ export function encodeInviteLinkGrant(grant: InviteLinkGrant): string {
   out.field(text('signer.deviceId', grant.signer.deviceId));
   writePlace(out, grant.place);
   out.u64(instant(grant.issuedAt));
+  out.u64(instant(grant.expiresAt));
   out.field(sized('linkPublicKey', grant.linkPublicKey, GRAINE_PUBLIC_KEY_BYTES));
   out.field(sized('linkSignature', grant.linkSignature, GRAINE_SIGNATURE_BYTES));
   out.field(sized('linkSecret', grant.linkSecret, LINK_SECRET_BYTES));
@@ -339,6 +371,7 @@ export function decodeInviteLinkGrant(fragment: string): InviteLinkGrant {
     signer: { userId: r.string(), deviceId: r.string() },
     place: r.place(),
     issuedAt: r.u64(),
+    expiresAt: r.u64(),
     linkPublicKey: r.sized(GRAINE_PUBLIC_KEY_BYTES),
     linkSignature: r.sized(GRAINE_SIGNATURE_BYTES),
     linkSecret: r.sized(LINK_SECRET_BYTES),
