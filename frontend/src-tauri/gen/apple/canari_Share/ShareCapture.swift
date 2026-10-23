@@ -165,7 +165,7 @@ final class ShareCapture {
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         } catch {
-            log.error("the share directory could not be made: \(error.localizedDescription, privacy: .public)")
+            log.error("the share directory could not be made: \(error.localizedDescription)")
             return .failed
         }
 
@@ -317,7 +317,7 @@ final class ShareCapture {
                 url = URL(dataRepresentation: data, relativeTo: nil)
             }
             guard let found = url else {
-                self.log.warning("attachment \(index) refused: its link is unreadable (\(error?.localizedDescription ?? "no item", privacy: .public))")
+                self.log.warning("attachment \(index) refused: its link is unreadable (\(error?.localizedDescription ?? "no item"))")
                 return
             }
             if found.isFileURL {
@@ -344,7 +344,8 @@ final class ShareCapture {
                 text = String(data: data, encoding: .utf8)
             }
             if text == nil {
-                self.log.warning("attachment \(index) refused: its text is unreadable (\(error?.localizedDescription ?? "not text", privacy: .public))")
+                let reason = error?.localizedDescription ?? "no text"
+                self.log.warning("attachment \(index) refused: its text is unreadable (\(reason))")
             }
         }
         done.wait()
@@ -362,7 +363,7 @@ final class ShareCapture {
         let progress = provider.loadFileRepresentation(forTypeIdentifier: typeId) { url, error in
             defer { done.signal() }
             guard let url = url else {
-                self.log.warning("file \(index) refused: no file representation (\(error?.localizedDescription ?? "none", privacy: .public))")
+                self.log.warning("file \(index) refused: no file representation (\(error?.localizedDescription ?? "none"))")
                 return
             }
             // The file exists only until this handler returns, so it is copied HERE.
@@ -429,7 +430,7 @@ final class ShareCapture {
             return (["path": target.path, "name": name, "mime": mime, "size": total], total)
         } catch {
             try? FileManager.default.removeItem(at: target)
-            log.warning("file \(index) refused: \(error.localizedDescription, privacy: .public)")
+            log.warning("file \(index) refused: \(error.localizedDescription)")
             return nil
         }
     }
@@ -500,7 +501,7 @@ final class ShareCapture {
             do {
                 try FileManager.default.removeItem(at: claimed)
             } catch {
-                log.warning("the claimed manifest was not deleted: \(error.localizedDescription, privacy: .public)")
+                log.warning("the claimed manifest was not deleted: \(error.localizedDescription)")
             }
         }
         guard let data = try? Data(contentsOf: claimed),
@@ -521,7 +522,7 @@ final class ShareCapture {
             let data = try JSONSerialization.data(withJSONObject: payload)
             try data.write(to: staging)
         } catch {
-            log.error("the share manifest could not be written: \(error.localizedDescription, privacy: .public)")
+            log.error("the share manifest could not be written: \(error.localizedDescription)")
             return false
         }
         if rename(staging.path, target) == 0 {
@@ -537,7 +538,7 @@ final class ShareCapture {
             try FileManager.default.removeItem(at: dir)
             log.debug("\(why, privacy: .public): share directory deleted")
         } catch {
-            log.warning("\(why, privacy: .public): share directory not deleted: \(error.localizedDescription, privacy: .public)")
+            log.warning("\(why, privacy: .public): share directory not deleted: \(error.localizedDescription)")
         }
     }
 

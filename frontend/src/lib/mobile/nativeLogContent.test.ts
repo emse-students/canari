@@ -49,6 +49,7 @@ const TREES: { dir: string; lang: Lang; ext: string }[] = [
     ext: '.kt',
   },
   { dir: join(SRC_TAURI, 'gen/apple/canari_NSE'), lang: 'swift', ext: '.swift' },
+  { dir: join(SRC_TAURI, 'gen/apple/canari_Share'), lang: 'swift', ext: '.swift' },
   { dir: join(SRC_TAURI, 'gen/apple/Sources/canari'), lang: 'objc', ext: '.mm' },
   {
     dir: join(SRC_TAURI, 'patches/tauri-plugin-keystore/ios/Sources'),
@@ -202,7 +203,8 @@ function walk(dir: string, ext: string): string[] {
 /** The log calls of each language, up to and including the opening parenthesis. */
 const CALL_START: Record<Lang, RegExp> = {
   kotlin: /\bLog\.(v|d|i|w|e|wtf|println)\s*\(/g,
-  swift: /\b(NSLog|os_log|print)\s*\(|\blogger\.(debug|info|notice|error|fault|warning)\s*\(/g,
+  swift:
+    /\b(NSLog|os_log|print)\s*\(|\b(?:logger|log)\.(debug|info|notice|error|fault|warning)\s*\(/g,
   objc: /\bNSLog\s*\(/g,
   rust: /\b(?:log::)?(trace|debug|info|warn|error)!\s*\(|\b(println|eprintln)!\s*\(/g,
 };
@@ -407,6 +409,9 @@ function valueNamesIn(expr: string): string[] {
 /** Whether an interpolated expression puts content into the line. */
 export function leaksContent(expr: string): boolean {
   if (MEASURES.test(expr)) return false;
+  // An iOS error text often quotes the file it failed on (the shared file's name), so it is
+  // content the moment it is marked public; unmarked, os.Logger redacts it in release.
+  if (/localizedDescription/.test(expr) && /privacy:\s*\.public/.test(expr)) return true;
   return valueNamesIn(expr).some((n) => CONTENT_NAMES.includes(n));
 }
 

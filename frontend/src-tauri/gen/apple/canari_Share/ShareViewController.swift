@@ -111,7 +111,7 @@ final class ShareViewController: UIViewController {
             let request = UNNotificationRequest(identifier: "canari.share.ready", content: content, trigger: nil)
             center.add(request) { error in
                 if let error = error {
-                    self.log.error("the share notification was not posted: \(error.localizedDescription, privacy: .public)")
+                    self.log.error("the share notification was not posted: \(error.localizedDescription)")
                 } else {
                     self.log.info("share notification posted")
                 }
