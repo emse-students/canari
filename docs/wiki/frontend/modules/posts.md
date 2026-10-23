@@ -1431,6 +1431,12 @@ its own click's propagation. Two clicks within `GESTURE.DOUBLE_TAP_MS` (250) and
 `GESTURE.DOUBLE_TAP_SLOP_PX` (50) are a double, decided by `isDoubleTap` through
 `createTapDisambiguator` - the arithmetic the media viewer's zoom and the message bubble's heart
 already share, not a third copy. A third quick tap belongs to the same gesture (`quietAfterDouble`).
+**The gap is measured between the events' `timeStamp`s - when each tap HAPPENED - never with a
+clock read in the handler** (2026-10-22): on a busy phone the second click waits in the queue behind
+the first one's handling and render, and a handler-time read counted that work into the 250 ms, so a
+real double tap read as two singles. The message bubble had the same read (`Date.now()`) and takes
+the same fix; the media viewer already used `timeStamp`. `doubleTapLike.test.ts` and
+`MessageBubble.doubleTap.svelte.test.ts` queue the second click behind a 300 ms first handler.
 
 - **On text, the header, a poll's question, a reel in the viewer: no single tap is held.** The first
   click goes on to its target at once. On text it does nothing; on a reel it toggles the player's
