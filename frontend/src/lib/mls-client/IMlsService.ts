@@ -269,6 +269,18 @@ export class LocalStateNotReadyError extends Error {
 }
 
 /**
+ * What a pending {@link IMlsService.whenGroupDrained} rejects with when its service is destroyed
+ * (sign-out): the group will never be drained by THIS client, and a waiter left pending would hold
+ * the account that left in memory until a reload.
+ */
+export class GroupDrainAbandonedError extends Error {
+  constructor(readonly groupId: string) {
+    super(`the MLS service ended before key group ${groupId.slice(0, 8)} drained`);
+    this.name = 'GroupDrainAbandonedError';
+  }
+}
+
+/**
  * Thrown by {@link IMlsService.init} when `noFreshStart` is set and the saved local state did not
  * open under the key in hand for a reason an OLD PIN may still cure. Nothing was written.
  *
@@ -1107,8 +1119,9 @@ export interface IMlsService {
    * AN EVENT, NEVER A POLL: it is re-checked only where a piece of that evidence can change - the
    * scheduler finishing a frame of the group, and a pull ending. Never await it inside a frame of
    * the group itself: that frame is the group's current work, so the group cannot be drained until
-   * it returns. A caller chains on it instead (the admission gate's parked asks, section 25). Never
-   * rejects; a session that ends first leaves it pending, with its holder.
+   * it returns. A caller chains on it instead (the admission gate's parked asks, section 25).
+   *
+   * @throws {GroupDrainAbandonedError} (as a rejection) when the service is destroyed first.
    */
   whenGroupDrained(groupId: string): Promise<void>;
   /**

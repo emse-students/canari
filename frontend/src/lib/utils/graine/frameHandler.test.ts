@@ -26,7 +26,9 @@ import {
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { handleDistributionFrame } from './frameHandler';
-import { clearParkedAsksForTests, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
+import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
+import { BaseMlsService } from '$lib/services/BaseMlsService';
+import type { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
   graineRepairHoldObserver,
   holdGraineRepairs,
@@ -2077,7 +2079,10 @@ describe('the past goes only to an admission this device can verify (section 25)
       drained = false;
       drainWaiters = [];
     });
-    afterEach(() => clearParkedAsksForTests());
+    afterEach(() => {
+      clearParkedAsks();
+      vi.restoreAllMocks();
+    });
 
     /** The answerer, with its key group not drained until {@link drainNow}. */
     function wireUndrainedAnswerer() {
@@ -2168,6 +2173,115 @@ describe('the past goes only to an admission this device can verify (section 25)
       );
       info.mockRestore();
       warn.mockRestore();
+    });
+
+    it('parks a HISTORY ask and a SESSIONS repair of one device side by side, and answers both', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      await handleDistributionFrame(ask('sessions'));
+      expect(parkedAskCount()).toBe(2);
+
+      drainNow();
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+      info.mockRestore();
+    });
+
+    it('answers at once a repair naming only sessions it does not hold - "missing" needs no gate', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const repair = ask('sessions');
+      repair.plaintext = encodeAppMessage(
+        mkGraineRequest({
+          workspaceId: 'ws-1',
+          kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+          sessionIds: ['s-unknown'],
+          answererUserId: 'alice',
+          requestId: 'r-b',
+        })
+      );
+
+      await handleDistributionFrame(repair);
+
+      expect(parkedAskCount()).toBe(0);
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.missingSessionIds).toEqual(['s-unknown']);
+      warn.mockRestore();
+    });
+
+    it('forgets every parked ask at sign-out: the drain that follows answers nothing', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      await handleDistributionFrame(ask('history'));
+      expect(parkedAskCount()).toBe(1);
+
+      clearParkedAsks();
+      setGraineRuntime(null);
+      expect(parkedAskCount()).toBe(0);
+
+      drainNow();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(sendMessage).not.toHaveBeenCalled();
+      info.mockRestore();
+    });
+
+    /**
+     * THE JUNCTION, with no hand-fired drain: the ask is applied by the REAL scheduler of a real
+     * service, parks inside its own frame, and the scheduler finishing that frame is what answers it.
+     */
+    it('answers through the real scheduler: the ask parks in its frame, the frame ending answers it', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      abstract class Harness extends BaseMlsService {}
+      const svc = new (Harness as unknown as new (platform: 'web' | 'tauri') => BaseMlsService)(
+        'web'
+      );
+      // The last pull emptied the mailbox and the socket is open: only the scheduler decides.
+      Object.assign(svc, { mailboxEmptiedByAPull: true, isWsOpen: () => true });
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      setGraineRuntime({
+        storage: {
+          getGraineSession: async (id: string) => community.find((c) => c.sessionId === id) ?? null,
+          saveGraineSession: async () => undefined,
+          getGraineSessionsForWorkspace: async () => community,
+          countGraineSessionsForWorkspace: async () => community.length,
+        } as unknown as IStorage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({
+          sendMessage,
+          isGroupDrained: (g: string) => svc.isGroupDrained(g),
+          whenGroupDrained: (g: string) => svc.whenGroupDrained(g),
+        }),
+      });
+      const scheduler = (svc as unknown as { messageScheduler: MlsPerGroupScheduler })
+        .messageScheduler;
+      scheduler.enqueue({
+        senderId: 'newcomer',
+        ciphertext: new Uint8Array(1),
+        groupId: 'g-1',
+        isWelcome: false,
+        isCommit: false,
+      });
+
+      await scheduler.drain(async () => {
+        await handleDistributionFrame(ask('history'));
+        // Inside the frame: parked, unanswered.
+        expect(parkedAskCount()).toBe(1);
+        expect(sendMessage).not.toHaveBeenCalled();
+      });
+
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds?.map((x) => x.sessionId)).toEqual(['s-1']);
+      expect(parkedAskCount()).toBe(0);
     });
   });
 

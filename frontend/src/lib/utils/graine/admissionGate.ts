@@ -252,7 +252,14 @@ function observeWhenDrained(mls: IMlsService, workspaceId: string, keyGroupId: s
   if (waiting.has(key)) return;
   waiting.add(key);
   const armedFor = waiting;
-  void mls.whenGroupDrained(keyGroupId).then(async () => {
+  void mls.whenGroupDrained(keyGroupId).then(onDrained, (e: unknown) => {
+    // The service ended first (`GroupDrainAbandonedError`, sign-out): nothing left to observe for.
+    armedFor.delete(key);
+    console.info(
+      `[GRAINE] stopped waiting to observe community ${workspaceId.slice(0, 8)}: ${String(e)}`
+    );
+  });
+  async function onDrained(): Promise<void> {
     armedFor.delete(key);
     if (!isGraineReady() || requireGraineRuntime('cannot observe admissions').mlsService !== mls) {
       console.info(
@@ -270,7 +277,7 @@ function observeWhenDrained(mls: IMlsService, workspaceId: string, keyGroupId: s
         `[GRAINE] could not observe the admission vouchers of community ${workspaceId.slice(0, 8)} after its key group drained: ${String(e)}`
       );
     }
-  });
+  }
 }
 
 /**

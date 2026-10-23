@@ -18,7 +18,7 @@ import {
 } from './runtime';
 import { sameScope, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import { historyFloorsFor } from './historyBoundary';
-import { pastPolicyFor, type PastPolicy } from './admissionGate';
+import { pastPolicyFor } from './admissionGate';
 import { parkAsk } from './parkedAsks';
 import { mirrorGraineSeed } from './graineMirror';
 import { forgetAskedSession, noteHistoryHeldNothing, noteSeedUnavailable } from './repair';
@@ -503,19 +503,17 @@ async function answerSeedRequest(
     return;
   }
 
-  // THE GATE, ONCE PER ANSWER, for both kinds (section 25). `unobserved` is not a refusal: the asker's
-  // voucher waits for the community's key group to drain on this device, and this ask may be that
-  // group's current frame - so it is parked, never awaited here, and decided again by the drain.
-  const policy = await pastPolicyFor(frame);
-  if (policy === 'unobserved') {
+  const gathered =
+    request.kind === kinds.GRAINE_REQUEST_KIND_HISTORY
+      ? await gatherCommunityHistory(frame, storage, deviceKey())
+      : await gatherNamedSessions(frame, request, storage, deviceKey());
+  // `unobserved` is not a refusal (section 25): the asker's voucher waits for the community's key
+  // group to drain on this device, and this ask may be that group's current frame - so it is parked,
+  // never awaited here, and decided again by the drain.
+  if (gathered === UNOBSERVED) {
     parkAsk(frame, request, answerSeedRequest);
     return;
   }
-
-  const gathered =
-    request.kind === kinds.GRAINE_REQUEST_KIND_HISTORY
-      ? await gatherCommunityHistory(frame, policy, storage, deviceKey())
-      : await gatherNamedSessions(frame, request, policy, storage, deviceKey());
   // A refusal (`null`, the past withheld) is the only case answered by silence, and it is the one
   // the requester can already derive: the visibility rule is broadcast by the server, so both sides
   // know it. Everything else answers, INCLUDING an empty hand - "I hold none of these" is the fact
@@ -577,6 +575,9 @@ async function answerSeedRequest(
   );
 }
 
+/** A gather the admission gate cannot decide until the key group drains - the ask is parked. */
+const UNOBSERVED = Symbol('unobserved');
+
 /** Seeds ready to travel, what was asked for and not held, and whether more were held than fits. */
 interface GatheredSeeds {
   seeds: canari.GraineMsg.$Properties[];
@@ -608,15 +609,15 @@ interface GatheredSeeds {
  * the same rule, so the requester would walk the whole roster to arrive at the answer it was given
  * first. Silence on those ids is the honest shape - the requester already knows the rule.
  *
- * @returns `null` when nothing may be handed over at all, which the caller answers with silence.
+ * @returns `null` when nothing may be handed over at all, which the caller answers with silence;
+ *   {@link UNOBSERVED} when the gate waits for the key group to drain.
  */
 async function gatherNamedSessions(
   frame: DistributionFrame,
   request: canari.GraineRequestMsg.$Properties,
-  policy: PastPolicy,
   storage: IStorage,
   deviceKeyB64: string
-): Promise<GatheredSeeds | null> {
+): Promise<GatheredSeeds | null | typeof UNOBSERVED> {
   const wanted = (request.sessionIds ?? []).map(String).filter(Boolean);
   const truncated = wanted.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS;
 
@@ -645,8 +646,17 @@ async function gatherNamedSessions(
     );
   }
 
+  // NOTHING HELD, NOTHING TO GATE: the answer is `missing` alone under every policy (a `joined`
+  // floor over no session is an empty map, `historyFloorsFor`), so it goes now - "I hold none of
+  // these" sends the requester to the next member, and parking it would only delay that.
+  if (held.length === 0) return { seeds: [], missing, truncated };
+
   // THE PAST GOES ONLY TO AN ADMISSION THIS DEVICE CAN VERIFY (section 25): a community sharing
   // its past answers an unproven asker exactly as a `joined` one does - from their arrival on.
+  // Gated AFTER the store was read, as before section 25: the lookups above decide `missing`, which
+  // never depends on the asker's admission.
+  const policy = await pastPolicyFor(frame);
+  if (policy === 'unobserved') return UNOBSERVED;
   if (policy === 'shared') {
     return { seeds: held.map(toWireSeed), missing, truncated };
   }
@@ -706,13 +716,14 @@ async function gatherNamedSessions(
  */
 async function gatherCommunityHistory(
   frame: DistributionFrame,
-  policy: PastPolicy,
   storage: IStorage,
   deviceKeyB64: string
-): Promise<GatheredSeeds | null> {
+): Promise<GatheredSeeds | null | typeof UNOBSERVED> {
   // ONE GATE FOR BOTH PATHS (section 25): `joined` is the community's setting, or a sharing
   // community's answer to an asker whose admission this device cannot verify - which
-  // `pastPolicyFor` has already said.
+  // `pastPolicyFor` has already said. First, as before section 25: a history answer is the past.
+  const policy = await pastPolicyFor(frame);
+  if (policy === 'unobserved') return UNOBSERVED;
   if (policy === 'joined') {
     console.info(
       `[GRAINE] not sending history to ${frame.sender}: community ${frame.workspaceId.slice(0, 8)} is answered as 'joined'`

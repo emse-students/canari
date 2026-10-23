@@ -11,6 +11,7 @@ import type {
   StateLoadFailure,
 } from '$lib/mls-client';
 import {
+  GroupDrainAbandonedError,
   LocalStateNotReadyError,
   MlsDeliveryApi,
   isKeystoreKeyUnavailable,
@@ -780,6 +781,8 @@ export abstract class BaseMlsService implements IMlsService {
     // would hold its group's flight for ever and hand every later caller the same hung promise.
     this.wakeKeyPackageRoundWaiters(true);
     externalJoinFlights.get(this)?.clear();
+    // Nor a wait for a drain this client will never see (the admission gate's parked asks).
+    this.abandonGroupDrainedWaiters();
     if (this.heartbeatTimer !== null) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -1520,7 +1523,10 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /** Waiters of {@link whenGroupDrained}, by group. */
-  private readonly groupDrainedWaiters = new Map<string, Array<() => void>>();
+  private readonly groupDrainedWaiters = new Map<
+    string,
+    Array<{ resolve: () => void; reject: (e: Error) => void }>
+  >();
 
   /** Groups whose scheduler idleness is already being waited for, so it is armed once per group. */
   private readonly groupDrainedArmed = new Set<string>();
@@ -1528,9 +1534,9 @@ export abstract class BaseMlsService implements IMlsService {
   /** @inheritdoc */
   whenGroupDrained(groupId: string): Promise<void> {
     if (this.groupDrainedNow(groupId)) return Promise.resolve();
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const waiters = this.groupDrainedWaiters.get(groupId) ?? [];
-      waiters.push(resolve);
+      waiters.push({ resolve, reject });
       this.groupDrainedWaiters.set(groupId, waiters);
       this.armGroupDrained(groupId);
     });
@@ -1565,8 +1571,31 @@ export abstract class BaseMlsService implements IMlsService {
       console.debug(
         `[QUEUE] group ${groupId.slice(0, 8)} drained (${cause}) - waking ${waiters.length} waiter(s)`
       );
-      for (const resolve of waiters) resolve();
+      for (const { resolve } of waiters) resolve();
     }
+  }
+
+  /** How many {@link whenGroupDrained} waiters are pending, across groups. */
+  private pendingGroupDrainWaiters(): number {
+    let n = 0;
+    for (const waiters of this.groupDrainedWaiters.values()) n += waiters.length;
+    return n;
+  }
+
+  /**
+   * Rejects every pending {@link whenGroupDrained} waiter with {@link GroupDrainAbandonedError}: this
+   * client is ending and will drain nothing more. Called by {@link destroy}.
+   */
+  private abandonGroupDrainedWaiters(): void {
+    const pending = this.pendingGroupDrainWaiters();
+    if (pending > 0) {
+      console.info(`[QUEUE] destroy - ${pending} drain waiter(s) abandoned`);
+    }
+    for (const [groupId, waiters] of this.groupDrainedWaiters) {
+      for (const { reject } of waiters) reject(new GroupDrainAbandonedError(groupId));
+    }
+    this.groupDrainedWaiters.clear();
+    this.groupDrainedArmed.clear();
   }
 
   private async settleMailbox(): Promise<void> {
@@ -2166,6 +2195,14 @@ export abstract class BaseMlsService implements IMlsService {
           console.error(
             `[PENDING] Pending fetch failed after ${fetched} message(s) - ${where}:`,
             e
+          );
+        }
+        // WHAT THIS FAILURE HOLDS UP, made visible: a drain waiter (a parked seed ask, an admission
+        // observation) is woken only by a pull that ENDS whole, so it waits for the next one.
+        const waiting = this.pendingGroupDrainWaiters();
+        if (waiting > 0) {
+          console.info(
+            `[PENDING] ${waiting} drain waiter(s) (parked seed asks, admission observations) wait for a pull that completes`
           );
         }
       }

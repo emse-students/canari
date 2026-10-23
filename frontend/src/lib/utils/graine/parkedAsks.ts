@@ -11,9 +11,10 @@ import { communityKeyGroupOf } from './admissionGate';
  * and a newcomer who asks the moment they join would meet `unobserved` every time. Such an ask is not
  * a refusal: it is parked here, in memory, and decided again by the drain that follows it.
  *
- * - ONE PER ASKING DEVICE AND COMMUNITY: a device that asks again replaces its earlier ask.
+ * - ONE PER ASKING DEVICE, COMMUNITY AND KIND: a device that asks again replaces its earlier ask.
  * - BOUNDED ({@link MAX_PARKED_ASKS}): past the bound the oldest ask is dropped, at warn.
- * - IN MEMORY: an ask lost with the app is asked again by its device at its next start.
+ * - IN MEMORY: an ask lost with the app is asked again by its device at its next start. Forgotten at
+ *   sign-out ({@link clearParkedAsks}).
  * - RE-DECIDED, NEVER ASSUMED: the drain re-runs the whole answer, gate included. A decision that has
  *   become a refusal (a signer removed before the observation, a link expired) is answered as that
  *   refusal, which the answer path logs.
@@ -68,10 +69,12 @@ export function parkAsk(
     for (const [key] of stale) parked.delete(key);
     console.info(`[GRAINE] dropped ${stale.length} parked ask(s) of an earlier session`);
   }
-  const key = `${frame.workspaceId}|${frame.sender}:${frame.senderDeviceId ?? ''}`;
+  // BY KIND TOO: a HISTORY ask and a SESSIONS repair from one device are two questions, and the
+  // later one must not erase the earlier.
+  const key = `${frame.workspaceId}|${frame.sender}:${frame.senderDeviceId ?? ''}|${request.kind ?? ''}`;
   if (parked.delete(key)) {
     console.info(
-      `[GRAINE] ${frame.sender}:${frame.senderDeviceId} asked again in community ${frame.workspaceId.slice(0, 8)} - its parked ask is replaced`
+      `[GRAINE] ${frame.sender}:${frame.senderDeviceId} asked again (kind ${request.kind}) in community ${frame.workspaceId.slice(0, 8)} - its parked ask is replaced`
     );
   }
   parked.set(key, { frame, request, keyGroupId, answer, session });
@@ -89,7 +92,16 @@ export function parkAsk(
   );
   if (armed.get(keyGroupId) === session) return;
   armed.set(keyGroupId, session);
-  void mlsService.whenGroupDrained(keyGroupId).then(() => releaseParked(keyGroupId, session));
+  void mlsService.whenGroupDrained(keyGroupId).then(
+    () => releaseParked(keyGroupId, session),
+    (e: unknown) => {
+      // The service ended (`GroupDrainAbandonedError`): sign-out already forgot these asks.
+      if (armed.get(keyGroupId) === session) armed.delete(keyGroupId);
+      console.info(
+        `[GRAINE] stopped waiting for key group ${keyGroupId.slice(0, 8)} to drain: ${String(e)}`
+      );
+    }
+  );
 }
 
 /**
@@ -129,8 +141,15 @@ export function parkedAskCount(): number {
   return parked.size;
 }
 
-/** Forgets every parked ask and every armed wait - between tests, which share this module. */
-export function clearParkedAsksForTests(): void {
+/**
+ * Forgets every parked ask and every armed wait: called at sign-out, next to `setGraineRuntime(null)`,
+ * so no sender id or request of the account that left stays in memory until a reload. The MLS
+ * service's own drain waiters are settled by its `destroy`.
+ */
+export function clearParkedAsks(): void {
+  if (parked.size > 0) {
+    console.info(`[GRAINE] forgetting ${parked.size} parked ask(s): the session ended`);
+  }
   parked.clear();
   armed.clear();
 }

@@ -3815,10 +3815,14 @@ admissions, per account) and its MLS layer (pins and departures):
   the moment it drains. An ask arrives ON the key group, so it is that group's current work and can
   never see it drained. An ask whose answer depends on a voucher not observed yet
   (`pastPolicyFor` -> `unobserved`) is therefore PARKED in memory (`parkedAsks.ts`): one per asking
-  device and community, at most 64, the oldest dropped at warn. The drain that follows decides it
-  again and answers then; a decision that has become a refusal is answered as one, with its log.
+  device, community and kind, at most 64, the oldest dropped at warn. The drain that follows decides
+  it again and answers then; a decision that has become a refusal is answered as one, with its log.
   **Consequence: the answer waits for the key group to catch up on the answering device.** A parked
-  ask lost with the app is acceptable: the asking device asks again at its next start.
+  ask lost with the app is acceptable: the asking device asks again at its next start. A SESSIONS
+  repair naming only seeds this device does not hold is answered at once (`missing` does not depend
+  on the admission). A failed pull wakes nothing - only a pull that ends whole does - and says how
+  many drain waiters it holds up. Sign-out forgets the parked asks (`clearParkedAsks`), and the MLS
+  service's `destroy` rejects its pending drain waiters (`GroupDrainAbandonedError`).
 - **Removals**: the epochs at which a commit this device merged - live or on catch-up - removed the
   user's last leaf from the key group (`removalEpochs`, [mls-protocol](mls-protocol.md)); a device
   repair is one commit (`replaceMember`) and records none. No removal seen means UNKNOWN, never

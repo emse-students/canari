@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
+import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
 import type { MlsPerGroupScheduler, MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 
 /** @see BaseMlsService.deliveryIdentity.test.ts - same reason the cast is what instantiates the base. */
@@ -148,6 +149,7 @@ describe('whenGroupDrained', () => {
       },
     });
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     let drained = false;
     void svc.whenGroupDrained('g-1').then(() => {
       drained = true;
@@ -157,5 +159,23 @@ describe('whenGroupDrained', () => {
     await Promise.resolve();
 
     expect(drained).toBe(false);
+    // The wait is visible: the failed pull says what it holds up.
+    expect(info.mock.calls.flat().join(' ')).toContain(
+      '1 drain waiter(s) (parked seed asks, admission observations) wait for a pull that completes'
+    );
+  });
+
+  it('is rejected, typed, when the service is destroyed - no waiter outlives sign-out', async () => {
+    const svc = liveService();
+    Object.assign(svc, { destroyPlatformResources: () => undefined });
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const waiting = svc.whenGroupDrained('g-1');
+
+    svc.destroy();
+
+    await expect(waiting).rejects.toBeInstanceOf(GroupDrainAbandonedError);
+    expect(
+      (svc as unknown as { pendingGroupDrainWaiters(): number }).pendingGroupDrainWaiters()
+    ).toBe(0);
   });
 });
