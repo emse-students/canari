@@ -612,7 +612,7 @@ describe('AuthController sessions', () => {
 
     /**
      * `users.id` IS the subject, and every comparison downstream lowercases ASCII letters only: a
-     * subject outside printable ASCII, or holding a ':', is refused before any account is made.
+     * subject outside visible ASCII (whitespace included), or holding a ':', is refused before any account is made.
      */
     it.each(['Élise', 'alice:dev'])(
       'refuses a subject that is not a mintable user id (%s), before any account is made',

@@ -74,7 +74,7 @@ describe('handleSystemEvent - delete_message ownership', () => {
   });
 
   it('folds ASCII letters only, as the replay and MLS do (leafIdentity.ts canonicalUserId)', async () => {
-    // A user id is printable ASCII by construction (core-service `users/user-id.ts`); the one
+    // A user id is visible ASCII without ':' by construction (core-service `users/user-id.ts`); the one
     // canonical form agrees with the live path, so 'Élise' and 'élise' stay two users everywhere.
     const ctx = makeCtx('élise', 'Élise');
     await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
