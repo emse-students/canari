@@ -351,9 +351,167 @@ pub fn decrypt_media_blob(raw_key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Optio
     }
 }
 
-/// Creates an MLS Welcome for a new device from the background (app may be killed).
-/// Key-based variant: uses the pre-derived device key (base64) instead of the PIN.
-pub fn create_welcome_background_with_key(
+// The staged-state prefix and the stale ledger are named where `mls.bin`'s deletion sweeps them.
+use crate::commands::storage::{STAGED_WELCOME_PREFIX, STALE_WELCOME_LEDGER_FILE};
+/// The most groups the stale ledger names. A capacity, not a clock: a full ledger is emptied before
+/// the next entry, which costs each forgotten group ONE more refused answer and nothing else.
+pub const STALE_WELCOME_LEDGER_CAPACITY: usize = 64;
+
+/// The file a prepared Welcome stages its post-add state in, beside `mls.bin`, one per group so two
+/// requests for two groups answered at once never install each other's state:
+/// `digest of the loaded mls.bin (32) || sealed post-add state`.
+fn staged_welcome_path(files_dir: &Path, group_id: &str) -> std::path::PathBuf {
+    let tag = hex(&crate::concurrency::mls_bin_digest(group_id.as_bytes())[..8]);
+    files_dir.join(format!("{STAGED_WELCOME_PREFIX}{tag}"))
+}
+
+/// Writes a staged file by rename from a temporary of ITS OWN name, so two groups staged at once
+/// never share a temporary.
+fn write_staged(path: &Path, data: &[u8]) -> Result<(), String> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    std::fs::write(&tmp, data).map_err(|e| format!("write staged state: {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename staged state: {e}"))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Runs `edit` on the stale ledger under the process-wide `mls.bin` write lock (every FCM thread
+/// shares that process), writing it back by rename when `edit` says it changed. An absent or
+/// unparsable ledger reads as empty, and the unparsable one is said.
+fn with_stale_ledger<R>(
+    files_dir: &Path,
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> (R, bool),
+) -> Result<R, String> {
+    let _guard = crate::concurrency::mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    let path = files_dir.join(STALE_WELCOME_LEDGER_FILE);
+    let mut map = match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(serde_json::Value::Object(m)) => m,
+            _ => {
+                log::warn!("[BG_WELCOME] stale ledger unparsable - read as empty");
+                serde_json::Map::new()
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(e) => return Err(format!("read {STALE_WELCOME_LEDGER_FILE}: {e}")),
+    };
+    let (result, changed) = edit(&mut map);
+    if changed {
+        let tmp = files_dir.join(format!("{STALE_WELCOME_LEDGER_FILE}.tmp"));
+        std::fs::write(&tmp, serde_json::Value::Object(map).to_string())
+            .map_err(|e| format!("write {STALE_WELCOME_LEDGER_FILE}: {e}"))?;
+        std::fs::rename(&tmp, &path)
+            .map_err(|e| format!("rename {STALE_WELCOME_LEDGER_FILE}: {e}"))?;
+    }
+    Ok(result)
+}
+
+/// Whether the server already refused, as stale, a Welcome for `group_id` built from THESE
+/// `mls.bin` bytes - and so whether answering again could only be refused again.
+///
+/// A PROOF, NOT A CLOCK. The gate's answer is a function of the base the commit was built on and
+/// of the group's epoch, and the server's epoch only moves forward: the same bytes build a commit on
+/// the same base, which the gate refuses again. Any write to `mls.bin` - the foreground's
+/// checkpoint, a background Welcome received, an outbox drain - changes the digest and lifts the
+/// entry, so the device answers again as soon as it holds anything new. Until then the newcomer's
+/// re-ask cadence (`requestReAdd`, every 60 s while its app is open) costs this phone one file read
+/// per ask instead of an add-lock, a key-package fetch, a load, a commit and a refusal.
+pub fn welcome_request_known_stale(files_dir: &Path, state_bytes: &[u8], group_id: &str) -> bool {
+    let digest = hex(&crate::concurrency::mls_bin_digest(state_bytes));
+    let known = with_stale_ledger(files_dir, |map| {
+        let known = map
+            .get(group_id)
+            .and_then(|e| e.get("digest"))
+            .and_then(|d| d.as_str())
+            == Some(digest.as_str());
+        (known, false)
+    });
+    match known {
+        Ok(known) => known,
+        Err(e) => {
+            log::warn!("[BG_WELCOME] stale ledger unreadable ({e}) - answered as not known");
+            false
+        }
+    }
+}
+
+/// The ledger key of a refused TARGET of `group_id`, beside the group's own (stale) entry.
+fn refused_target_key(group_id: &str, target: &str) -> String {
+    format!("{group_id}|{target}")
+}
+
+/// Whether a Welcome for `target` (`userId:deviceId`) in `group_id`, built from THESE `mls.bin`
+/// bytes, was already refused - and if so the token saying why: `stale-epoch-known` (the base was
+/// behind the server, whoever the target) or `target-refused-known` (the server refused this
+/// target: `welcome_target_unknown` / `welcome_target_not_member`).
+///
+/// The same proof as [`welcome_request_known_stale`]: any write to `mls.bin` lifts both. A target
+/// the server admits after the refusal - a grant, a re-registration - is answered from the next
+/// bytes this phone holds, or by any other holder or the foreground, which keep no such memo.
+pub fn welcome_request_known_refused(
+    files_dir: &Path,
+    state_bytes: &[u8],
+    group_id: &str,
+    target: &str,
+) -> Option<&'static str> {
+    if welcome_request_known_stale(files_dir, state_bytes, group_id) {
+        return Some("stale-epoch-known");
+    }
+    let digest = hex(&crate::concurrency::mls_bin_digest(state_bytes));
+    let key = refused_target_key(group_id, target);
+    let known = with_stale_ledger(files_dir, |map| {
+        let known = map
+            .get(&key)
+            .and_then(|e| e.get("digest"))
+            .and_then(|d| d.as_str())
+            == Some(digest.as_str());
+        (known, false)
+    });
+    match known {
+        Ok(true) => Some("target-refused-known"),
+        Ok(false) => None,
+        Err(e) => {
+            log::warn!("[BG_WELCOME] stale ledger unreadable ({e}) - answered as not known");
+            None
+        }
+    }
+}
+
+/// A refusal of [`prepare_welcome_background_with_key`], as the token the native callers branch on.
+fn welcome_refused(reason: &str) -> serde_json::Value {
+    log::warn!("[BG_WELCOME] prepare refused reason={reason}");
+    refused(reason)
+}
+
+/// Builds the Welcome and the commit that add `key_package_b64` to `group_id`, and STAGES the state
+/// they produce beside `mls.bin`. Nothing is written to `mls.bin` here.
+///
+/// Answers `{"ok": true, "welcome", "ratchetTree", "commit", "groupInfo", "baseEpoch"}` (base64;
+/// `groupInfo` is the external-join base of the epoch the commit creates, published by the route
+/// in the advance's own transaction - COMM-22), or
+/// `{"ok": false, "reason"}` with one of: `foreground-active`, `stale-epoch-known`,
+/// `key-package-unreadable`, `state-unreadable`, `group-not-held`, `already-member`, `add-failed`,
+/// `stage-failed`.
+///
+/// **THE ADD IS INSTALLED ONLY ONCE THE SERVER ACCEPTS IT** ([`install_staged_welcome`]), the order
+/// the foreground has followed since C7 (stage, submit, merge on accept). This path used to merge and
+/// write first: a phone killed while its group moved on answered from its old epoch, the gate refused
+/// the commit as `epoch_mismatch`, and `mls.bin` was left holding an add nobody else applied - an
+/// epoch of its own, from which it could read no further message of the group, and a tree in which
+/// the newcomer already sat (`ALREADY_MEMBER` on the next request). Read on the Mi 9T, 2026-10-22.
+///
+/// **IT DOES NOT CATCH UP FIRST, ON PURPOSE.** The background never applies the group's commits to
+/// `mls.bin` (the catch-up in [`decrypt_push_message_with_commits_with_key`] is read-only): the
+/// foreground's commit replay owns that, with everything it does around a commit. A stale phone's
+/// answer is refused by the gate, discarded, and recorded so the same bytes are not offered again
+/// ([`discard_staged_welcome`]).
+pub fn prepare_welcome_background_with_key(
     files_dir: &Path,
     state_bytes: &[u8],
     key_b64: &str,
@@ -361,52 +519,228 @@ pub fn create_welcome_background_with_key(
     device_id: &str,
     group_id: &str,
     key_package_b64: &str,
-) -> Result<serde_json::Value, String> {
-    let kp_bytes = STANDARD
-        .decode(key_package_b64.trim())
-        .map_err(|e| format!("base64 decode key_package: {e}"))?;
-
-    let (mut manager, key) = load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id)?;
-
-    let base_epoch = manager.get_epoch(group_id).map_err(|e| e.to_string())?;
-
+) -> serde_json::Value {
+    let short: String = group_id.chars().take(8).collect();
+    log::info!("[BG_WELCOME] prepare group={short}");
+    // The foreground answers welcome_requests itself, and owns the state while it runs.
+    if crate::concurrency::foreground_is_active() {
+        return welcome_refused("foreground-active");
+    }
+    if welcome_request_known_stale(files_dir, state_bytes, group_id) {
+        return welcome_refused("stale-epoch-known");
+    }
+    let Ok(kp_bytes) = STANDARD.decode(key_package_b64.trim()) else {
+        return welcome_refused("key-package-unreadable");
+    };
+    let (mut manager, key) =
+        match load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id) {
+            Ok(pair) => pair,
+            Err(e) => {
+                log::error!("[BG_WELCOME] mls.bin unreadable with the device key: {e}");
+                return welcome_refused("state-unreadable");
+            }
+        };
+    let base_epoch = match manager.get_epoch(group_id) {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("[BG_WELCOME] group={short} not held: {e}");
+            return welcome_refused("group-not-held");
+        }
+    };
     log::debug!(
-        "[BG_WELCOME] add_member group={group_id} kp_len={} base_epoch={base_epoch}",
+        "[BG_WELCOME] add_member group={short} kp_len={} base_epoch={base_epoch}",
         kp_bytes.len()
     );
-    let (commit, welcome_opt) = manager
-        .add_member(group_id, &kp_bytes)
-        .map_err(|e| e.to_string())?;
-
-    let welcome = welcome_opt.ok_or_else(|| "add_member returned no welcome bytes".to_string())?;
-
-    // Stage-only add (C7-A). This background path cannot do the interactive validate-then-merge
-    // round-trip (the app may be killed); it is serialized by the add-lock like the bootstrap path,
-    // so merge immediately and export the post-merge ratchet tree the new member joins with.
-    manager
+    // `_with_base`: the external-join base of the epoch this commit CREATES travels with it, as the
+    // foreground's does (COMM-22) - only the committer can export it, and only now.
+    let (commit, welcome, group_info) =
+        match manager.add_members_bulk_with_base(group_id, &[kp_bytes.as_slice()]) {
+            Ok(((commit, Some(welcome), _, _), group_info)) => (commit, welcome, group_info),
+            Ok(((_, None, _, skipped), _)) => {
+                log::error!(
+                    "[BG_WELCOME] add produced no welcome group={short} skipped={}",
+                    skipped.len()
+                );
+                return welcome_refused("add-failed");
+            }
+            Err(mls_core::MlsError::AlreadyMember(who)) => {
+                log::warn!("[BG_WELCOME] {who} already sits in the tree of group={short}");
+                return welcome_refused("already-member");
+            }
+            Err(e) => {
+                log::error!("[BG_WELCOME] add_member failed group={short}: {e}");
+                return welcome_refused("add-failed");
+            }
+        };
+    // The post-add state the new member joins: merged IN MEMORY, sealed, and staged.
+    let staged = manager
         .merge_pending_commit_for(group_id)
-        .map_err(|e| e.to_string())?;
-    let ratchet_tree = manager
-        .export_ratchet_tree_for(group_id)
-        .map_err(|e| e.to_string())?;
-
-    let enc = manager
-        .save_encrypted_with_key(&key)
-        .map_err(|e| e.to_string())?;
-    let mls_path = files_dir.join("mls.bin");
-    background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
+        .map_err(|e| e.to_string())
+        .and_then(|()| {
+            manager
+                .export_ratchet_tree_for(group_id)
+                .map_err(|e| e.to_string())
+        })
+        .and_then(|tree| {
+            manager
+                .save_encrypted_with_key(&key)
+                .map(|sealed| (tree, sealed))
+                .map_err(|e| e.to_string())
+        });
+    let (ratchet_tree, sealed) = match staged {
+        Ok(pair) => pair,
+        Err(e) => {
+            log::error!("[BG_WELCOME] post-add state not sealed group={short}: {e}");
+            return welcome_refused("stage-failed");
+        }
+    };
+    let mut file = Vec::with_capacity(32 + sealed.len());
+    file.extend_from_slice(&crate::concurrency::mls_bin_digest(state_bytes));
+    file.extend_from_slice(&sealed);
+    if let Err(e) = write_staged(&staged_welcome_path(files_dir, group_id), &file) {
+        log::error!("[BG_WELCOME] post-add state not staged group={short}: {e}");
+        return welcome_refused("stage-failed");
+    }
     log::info!(
-        "[BG_WELCOME] mls.bin updated ({} bytes) for group={group_id}",
-        enc.len()
+        "[BG_WELCOME] staged group={short} base_epoch={base_epoch} ({} bytes) - mls.bin untouched until the server accepts",
+        sealed.len()
     );
-
-    Ok(serde_json::json!({
+    serde_json::json!({
         "ok": true,
         "welcome": STANDARD.encode(&welcome),
         "ratchetTree": STANDARD.encode(&ratchet_tree),
         "commit": STANDARD.encode(&commit),
+        "groupInfo": STANDARD.encode(&group_info),
         "baseEpoch": base_epoch,
-    }))
+    })
+}
+
+/// Installs the state [`prepare_welcome_background_with_key`] staged for `group_id` - called ONLY
+/// after the server answered `accepted` - and deletes the staged file whatever happens.
+///
+/// Installed only over the very `mls.bin` it was built from
+/// ([`crate::concurrency::background_write_mls_bin_if_unchanged`]). Answers `{"ok": true}`, or
+/// `{"ok": false, "reason": "not-staged" | "install-refused"}`. The second means the server holds a
+/// commit this device does not, and the caller must say so loudly: the foreground's replay will meet
+/// this device's own commit, and the device recovers through the usual ladder.
+pub fn install_staged_welcome(files_dir: &Path, group_id: &str) -> serde_json::Value {
+    let short: String = group_id.chars().take(8).collect();
+    let path = staged_welcome_path(files_dir, group_id);
+    let file = match std::fs::read(&path) {
+        Ok(f) if f.len() > 32 => f,
+        Ok(_) => {
+            log::error!("[BG_WELCOME] install group={short}: staged state truncated");
+            let _ = std::fs::remove_file(&path);
+            return refused("not-staged");
+        }
+        Err(e) => {
+            log::error!("[BG_WELCOME] install group={short}: no staged state ({e})");
+            return refused("not-staged");
+        }
+    };
+    if let Err(e) = std::fs::remove_file(&path) {
+        log::warn!("[BG_WELCOME] staged state of group={short} not deleted: {e}");
+    }
+    let mut digest = [0u8; 32];
+    digest.copy_from_slice(&file[..32]);
+    match crate::concurrency::background_write_mls_bin_if_unchanged(
+        &files_dir.join("mls.bin"),
+        &digest,
+        &file[32..],
+    ) {
+        Ok(()) => {
+            log::info!(
+                "[BG_WELCOME] installed group={short} ({} bytes)",
+                file.len() - 32
+            );
+            serde_json::json!({ "ok": true })
+        }
+        Err(e) => {
+            log::error!("[BG_WELCOME] ACCEPTED AND NOT INSTALLED group={short}: {e}");
+            let mut out = refused("install-refused");
+            out["error"] = serde_json::Value::String(e);
+            out
+        }
+    }
+}
+
+/// What a discarded Welcome's refusal leaves in the stale ledger, so the same `mls.bin` bytes do not
+/// answer a request the server will refuse again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalMemo<'a> {
+    /// A refusal that says nothing about the next request: a racing commit, a removed requester, an
+    /// answer nobody read.
+    Nothing,
+    /// `epoch_mismatch`: recorded for the whole group, and only when `server_epoch > base_epoch`.
+    Stale { base_epoch: u64, server_epoch: u64 },
+    /// `welcome_target_unknown` / `welcome_target_not_member`: recorded for this target alone
+    /// (`userId:deviceId`).
+    TargetRefused { target: &'a str },
+}
+
+/// Deletes the state staged for `group_id` - the server refused the commit, or its answer was not
+/// an acceptance - and records what `memo` says against the bytes the commit was built from, so they
+/// are not offered again ([`welcome_request_known_refused`]).
+pub fn discard_staged_welcome(files_dir: &Path, group_id: &str, memo: RefusalMemo<'_>) {
+    let short: String = group_id.chars().take(8).collect();
+    let path = staged_welcome_path(files_dir, group_id);
+    let digest = std::fs::read(&path)
+        .ok()
+        .filter(|f| f.len() > 32)
+        .map(|f| hex(&f[..32]));
+    match std::fs::remove_file(&path) {
+        Ok(()) => log::info!("[BG_WELCOME] discarded the staged state of group={short}"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log::warn!("[BG_WELCOME] discard group={short}: nothing was staged")
+        }
+        Err(e) => log::warn!("[BG_WELCOME] staged state of group={short} not deleted: {e}"),
+    }
+    let Some(digest) = digest else {
+        return;
+    };
+    let (key, entry, said) = match memo {
+        RefusalMemo::Nothing => return,
+        RefusalMemo::Stale {
+            base_epoch,
+            server_epoch,
+        } => {
+            // ONLY A BASE BEHIND THE SERVER IS STALE. A base at or ahead of the server's counter (a
+            // phone ahead of a lagging counter) is a refusal the same bytes may not meet again, so it
+            // is not remembered: the memo must never hold back an answer that could later be valid.
+            if server_epoch <= base_epoch {
+                log::warn!(
+                    "[BG_WELCOME] group={short} refused at base {base_epoch} with the server at {server_epoch} - not behind, not recorded"
+                );
+                return;
+            }
+            (
+                group_id.to_string(),
+                serde_json::json!({ "digest": digest, "baseEpoch": base_epoch, "serverEpoch": server_epoch }),
+                format!("stale: base {base_epoch}, server {server_epoch}"),
+            )
+        }
+        RefusalMemo::TargetRefused { target } => (
+            refused_target_key(group_id, target),
+            serde_json::json!({ "digest": digest, "targetRefused": true }),
+            "its target refused".to_string(),
+        ),
+    };
+    let recorded = with_stale_ledger(files_dir, |map| {
+        if !map.contains_key(&key) && map.len() >= STALE_WELCOME_LEDGER_CAPACITY {
+            log::warn!(
+                "[BG_WELCOME] stale ledger full ({STALE_WELCOME_LEDGER_CAPACITY}) - emptied before recording group={short}"
+            );
+            map.clear();
+        }
+        map.insert(key, entry);
+        ((), true)
+    });
+    match recorded {
+        Ok(()) => log::info!(
+            "[BG_WELCOME] group={short} recorded {said} - not answered again from these bytes"
+        ),
+        Err(e) => log::warn!("[BG_WELCOME] stale ledger not written for group={short}: {e}"),
+    }
 }
 
 /// Applies an MLS Welcome received in the background (receiver side).
@@ -1531,5 +1865,428 @@ mod tests {
             parse_outbox_entries_json(r#"[{"groupId":"g"}]"#).is_err(),
             "a missing proto is a malformed entry, not an empty one"
         );
+    }
+
+    // --- The background Welcome: staged, installed on acceptance, discarded on refusal ------------
+
+    /// A shut phone (`alice`) in a group that moved on without it: `bob` admitted `dave`, so the
+    /// group is one epoch past alice's `mls.bin`. Returns alice's stale sealed state, the commit that
+    /// moved the group, carol's key package (the newcomer asking for a Welcome) and the group id.
+    fn shut_phone_behind_its_group(
+        tag: &str,
+        key_seed: u8,
+    ) -> (Vec<u8>, MlsManager, Vec<u8>, String, String) {
+        let (alice, mut bob, gid) = joined_pair(tag);
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(key_seed)).expect("key");
+        let stale = alice.save_encrypted_with_key(&key).expect("seal alice");
+        let dave = MlsManager::load_or_create(&format!("{tag}-dave"), "dev-d", None).unwrap();
+        let (moved, _) = bob
+            .add_member(&gid, &dave.generate_key_package().unwrap())
+            .expect("bob adds dave");
+        bob.merge_pending_commit_for(&gid).expect("bob merges");
+        let carol = MlsManager::load_or_create(&format!("{tag}-carol"), "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+        (stale, bob, moved, kp, gid)
+    }
+
+    /// A data directory holding `state` as its `mls.bin`, as the phone's would.
+    fn dir_holding(name: &str, state: &[u8]) -> std::path::PathBuf {
+        let dir = temp_dir(name);
+        for entry in std::fs::read_dir(&dir).expect("read temp dir").flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+        std::fs::write(dir.join("mls.bin"), state).expect("write mls.bin");
+        dir
+    }
+
+    /// THE DEFECT READ ON THE MI 9T, 2026-10-22. The phone answered from its old epoch and the gate
+    /// refused the commit - and `mls.bin` already held the add, merged before the answer. The group's
+    /// next message was then unreadable (`same-epoch refusal`): the phone had made an epoch of its
+    /// own. Against the function this replaced, the last assertion fails.
+    #[test]
+    fn a_refused_background_welcome_leaves_mls_bin_able_to_follow_its_group() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, mut bob, moved, kp, gid) = shut_phone_behind_its_group("refused", 41);
+        let dir = dir_holding("refused", &stale);
+
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(41),
+            "refused-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        assert_eq!(prepared["baseEpoch"], 1, "built on the stale base");
+        assert_eq!(
+            std::fs::read(dir.join("mls.bin")).unwrap(),
+            stale,
+            "nothing is written to mls.bin before the server answers"
+        );
+
+        // The server refused it as stale (epoch_mismatch, server at 2).
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 1,
+                server_epoch: 2,
+            },
+        );
+
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(41)).unwrap();
+        let on_disk = std::fs::read(dir.join("mls.bin")).unwrap();
+        let mut back =
+            MlsManager::load_with_key("refused-alice", "dev-a", Some(on_disk), &key).unwrap();
+        back.process_incoming_message(&gid, &moved)
+            .expect("the group's commit applies");
+        let next = bob.send_message(&gid, b"after").unwrap();
+        assert_eq!(
+            back.process_incoming_message(&gid, &next)
+                .expect("the phone reads the group's next message"),
+            Some(b"after".to_vec())
+        );
+    }
+
+    /// The accepted half: the staged state is installed, and it is the state the newcomer joined.
+    #[test]
+    fn an_accepted_background_welcome_installs_the_state_the_newcomer_joined() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("accepted");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(42)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("accepted", &state);
+        let mut carol = MlsManager::load_or_create("accepted-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(42),
+            "accepted-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        let installed = install_staged_welcome(&dir, &gid);
+        assert_eq!(installed["ok"], true, "installed: {installed}");
+
+        let mut back = MlsManager::load_with_key(
+            "accepted-alice",
+            "dev-a",
+            Some(std::fs::read(dir.join("mls.bin")).unwrap()),
+            &key,
+        )
+        .unwrap();
+        assert_eq!(back.get_epoch(&gid).unwrap(), 2, "the add is installed");
+        let welcome = STANDARD
+            .decode(prepared["welcome"].as_str().unwrap())
+            .unwrap();
+        let tree = STANDARD
+            .decode(prepared["ratchetTree"].as_str().unwrap())
+            .unwrap();
+        carol
+            .process_welcome(&welcome, Some(&tree))
+            .expect("carol joins");
+        let hello = back.send_message(&gid, b"welcome carol").unwrap();
+        assert_eq!(
+            carol.process_incoming_message(&gid, &hello).unwrap(),
+            Some(b"welcome carol".to_vec()),
+            "the installed state and the newcomer's are one epoch"
+        );
+        assert!(
+            install_staged_welcome(&dir, &gid)["reason"] == "not-staged",
+            "the staged file is consumed by its install"
+        );
+    }
+
+    /// COMM-22 on the background path: the prepare exports the external-join base of the epoch its
+    /// commit creates, so the route publishes it with the advance. Without it the published base
+    /// stays one epoch behind and an external joiner is refused as stale.
+    #[test]
+    fn a_prepared_welcome_carries_the_base_of_the_epoch_it_creates() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("base");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(48)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("base", &state);
+        let carol = MlsManager::load_or_create("base-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(48),
+            "base-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        let base = STANDARD
+            .decode(
+                prepared["groupInfo"]
+                    .as_str()
+                    .expect("the base travels with the commit"),
+            )
+            .unwrap();
+
+        let mut erin = MlsManager::load_or_create("base-erin", "dev-e", None).unwrap();
+        let (joined, _commit) = erin
+            .join_by_external_commit(&base)
+            .expect("an external joiner builds on the published base");
+        assert_eq!(joined, gid);
+        assert_eq!(
+            erin.get_epoch(&gid).unwrap(),
+            3,
+            "the base is the epoch the add creates (2), and the join moves it to 3"
+        );
+    }
+
+    /// An acceptance that arrives after `mls.bin` moved installs nothing over the newer file.
+    #[test]
+    fn an_install_refuses_an_mls_bin_that_moved_since_it_was_loaded() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("moved");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(43)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("moved", &state);
+        let carol = MlsManager::load_or_create("moved-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(43),
+            "moved-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(prepared["ok"], true);
+
+        std::fs::write(dir.join("mls.bin"), b"a newer state").unwrap();
+        let installed = install_staged_welcome(&dir, &gid);
+
+        assert_eq!(installed["reason"], "install-refused");
+        assert_eq!(
+            std::fs::read(dir.join("mls.bin")).unwrap(),
+            b"a newer state"
+        );
+    }
+
+    /// The settlement of a stale refusal: the same bytes are not offered again, and any write to
+    /// `mls.bin` lifts it - a proof, not a clock.
+    #[test]
+    fn a_stale_refusal_is_not_answered_again_from_the_same_bytes() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("ledger", 44);
+        let dir = dir_holding("ledger", &stale);
+
+        let first = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(44),
+            "ledger-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(first["ok"], true);
+        assert!(!welcome_request_known_stale(&dir, &stale, &gid));
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 1,
+                server_epoch: 2,
+            },
+        );
+        assert!(welcome_request_known_stale(&dir, &stale, &gid));
+
+        let again = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(44),
+            "ledger-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(again["reason"], "stale-epoch-known");
+        assert!(
+            !welcome_request_known_stale(&dir, b"any other mls.bin", &gid),
+            "new bytes are answered again"
+        );
+        assert!(
+            !welcome_request_known_stale(&dir, &stale, "another-group"),
+            "and only this group is known stale"
+        );
+    }
+
+    /// A phone AHEAD of a lagging server counter is not stale: the counter can reach its base, and
+    /// a later answer from the same bytes may then be valid. Only `server > base` is recorded.
+    #[test]
+    fn a_refusal_from_a_base_ahead_of_the_server_records_nothing() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("ahead", 49);
+        let dir = dir_holding("ahead", &stale);
+        let first = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(49),
+            "ahead-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(first["ok"], true);
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 3,
+                server_epoch: 2,
+            },
+        );
+        assert!(!welcome_request_known_stale(&dir, &stale, &gid));
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 2,
+                server_epoch: 2,
+            },
+        );
+        assert!(
+            !welcome_request_known_stale(&dir, &stale, &gid),
+            "equal is not stale either"
+        );
+    }
+
+    /// A refusal that says nothing about the next request records nothing.
+    #[test]
+    fn a_racing_or_membership_refusal_records_nothing() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("race", 45);
+        let dir = dir_holding("race", &stale);
+        let first = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(45),
+            "race-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(first["ok"], true);
+        discard_staged_welcome(&dir, &gid, RefusalMemo::Nothing);
+        assert!(!welcome_request_known_stale(&dir, &stale, &gid));
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), stale);
+    }
+
+    /// A refused TARGET (`welcome_target_unknown` / `welcome_target_not_member`) is remembered like a
+    /// stale base, against the bytes the refused commit was built from: a holder does not commit and
+    /// get refused again on each of the newcomer's asks. Keyed to that target alone - another
+    /// newcomer of the same group is still answered - and lifted by any write to `mls.bin`.
+    #[test]
+    fn a_refused_target_is_not_answered_again_from_the_same_bytes() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("target", 51);
+        let dir = dir_holding("target", &stale);
+        let first = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(51),
+            "target-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(first["ok"], true);
+        assert_eq!(
+            welcome_request_known_refused(&dir, &stale, &gid, "carol:phone-c"),
+            None
+        );
+
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::TargetRefused {
+                target: "carol:phone-c",
+            },
+        );
+
+        assert_eq!(
+            welcome_request_known_refused(&dir, &stale, &gid, "carol:phone-c"),
+            Some("target-refused-known")
+        );
+        assert_eq!(
+            welcome_request_known_refused(&dir, &stale, &gid, "dave:phone-d"),
+            None,
+            "another target of the same group is still answered"
+        );
+        assert_eq!(
+            welcome_request_known_refused(&dir, b"any other mls.bin", &gid, "carol:phone-c"),
+            None,
+            "new bytes are answered again"
+        );
+        assert!(
+            !welcome_request_known_stale(&dir, &stale, &gid),
+            "a refused target says nothing about the group's epoch"
+        );
+    }
+
+    /// The foreground answers welcome_requests itself and owns the state while it runs.
+    #[test]
+    fn no_welcome_is_prepared_while_the_foreground_runs() {
+        let _s = crate::concurrency::test_support::serialise();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("fg", 46);
+        let dir = dir_holding("fg", &stale);
+        crate::concurrency::mark_foreground_active();
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(46),
+            "fg-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        crate::concurrency::mark_foreground_inactive();
+        assert_eq!(out["reason"], "foreground-active");
+    }
+
+    /// A newcomer already in the tree is a typed refusal, never an `add-failed` read from prose.
+    #[test]
+    fn a_newcomer_already_in_the_tree_is_refused_by_its_type() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, bob, gid) = joined_pair("member");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(47)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("member", &state);
+        let kp = STANDARD.encode(bob.generate_key_package().unwrap());
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(47),
+            "member-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(out["reason"], "already-member", "{out}");
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
     }
 }

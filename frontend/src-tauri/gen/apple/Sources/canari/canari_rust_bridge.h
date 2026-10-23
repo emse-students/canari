@@ -80,16 +80,6 @@ unsigned char *canari_native_decrypt_media(
 
 void canari_free_bytes(unsigned char *ptr, size_t len);
 
-char *canari_native_create_welcome_background(
-    const char *files_dir,
-    const unsigned char *state_ptr,
-    size_t state_len,
-    const char *device_key_b64,
-    const char *user_id,
-    const char *device_id,
-    const char *group_id,
-    const char *key_package_b64);
-
 int canari_native_process_welcome_background(
     const char *files_dir,
     const unsigned char *state_ptr,
