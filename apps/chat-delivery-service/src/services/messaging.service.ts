@@ -63,6 +63,13 @@ import {
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import {
+  SHARED_PAYLOAD_WRITES_ENV,
+  materializeDeliveries,
+  readSharedPayloadWrites,
+  saveWithSharedPayload,
+  sharesPayload,
+} from '../utils/queued-payload';
+import {
   deleteGroupOwnedRows,
   deleteGroupRedisKeys,
   totalGroupOwnedRows,
@@ -633,6 +640,14 @@ export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
   /** Per-device count of sends that found no push token - see `sendFcmForQueued`. */
   private readonly noPushTokenRepeats = new RepeatCounter();
+  /**
+   * Whether a key-group fan-out is written as ONE shared payload. Read once at boot; OFF until a
+   * release after the one that ships the readers turns it on - see `readSharedPayloadWrites`.
+   */
+  private readonly sharedPayloadWrites = readSharedPayloadWrites(
+    process.env[SHARED_PAYLOAD_WRITES_ENV],
+    this.logger
+  );
 
   constructor(
     @InjectRepository(QueuedMessage)
@@ -3918,6 +3933,19 @@ export class MessagingService {
       }
       // An empty batch is a liveness check alone (an emptied roster, see `sendMessage`).
       if (rows.length === 0) return [];
+      // A KEY-GROUP FAN-OUT STORES ITS CIPHERTEXT ONCE, under the same lock and in the same
+      // transaction as its records, so the group cannot end between the two and the collector never
+      // sees a payload without them (`utils/queued-payload.ts`).
+      // ONLY WHILE THE WRITER'S SWITCH IS ON: off, every fan-out is the inline per-seat write, the
+      // shape an image older than the readers can still serve (`readSharedPayloadWrites`).
+      if (this.sharedPayloadWrites && sharesPayload(group, rows)) {
+        // Expected on every key-group fan-out, so debug: `QUEUED count=` already reports the send.
+        this.logger.debug(
+          `[${tag}][${traceId}] SHARED_PAYLOAD group=${groupId} records=${rows.length} ` +
+            `bytes=${rows[0].proto?.length ?? 0} - one stored copy instead of ${rows.length}`
+        );
+        return saveWithSharedPayload(manager, groupId, rows);
+      }
       return manager.getRepository(QueuedMessage).save(rows);
     });
   }
@@ -4472,11 +4500,18 @@ export class MessagingService {
     while (!done) {
       const qb = this.queuedMessageRepo
         .createQueryBuilder('q')
+        // The payload in the SAME statement as the record - see `PAYLOAD_RELATION`.
+        .leftJoinAndSelect('q.payload', 'payload')
         .where('q.recipientId = :userId', { userId: safeUserId })
         .andWhere('q.deviceId = :deviceId', { deviceId: safeDeviceId })
         .orderBy('q.createdAt', 'ASC')
-        .skip(offset)
-        .take(PENDING_FETCH_CHUNK_ROWS);
+        // Two records of one device can share a `createdAt` (one transaction, one `now()`): the id
+        // makes the order total, or OFFSET paging could hand one row twice and skip another.
+        .addOrderBy('q.id', 'ASC')
+        // SQL `OFFSET`/`LIMIT`, not `skip`/`take`: with a join TypeORM turns `skip`/`take` into a
+        // DISTINCT-ids query plus a second read, and a many-to-one join cannot multiply rows.
+        .offset(offset)
+        .limit(PENDING_FETCH_CHUNK_ROWS);
 
       if (after?.trim()) {
         qb.andWhere('q.createdAt > :after', { after: new Date(after) });
@@ -4486,8 +4521,14 @@ export class MessagingService {
       const chunk = await qb.getMany();
       if (chunk.length === 0) break;
       offset += chunk.length;
+      // Materialised BEFORE the byte budget is measured: a record pointing at a shared payload
+      // stores no `proto`, and a page sized on the stored bytes alone would hand over megabytes it
+      // believed were nothing - the 2026-08-13 failure this budget exists to prevent. A record whose
+      // payload is missing is withheld there, never served empty; `offset` above counts it anyway,
+      // because it is still a row of the table this pages over.
+      const served = materializeDeliveries(chunk, this.logger, traceId);
 
-      for (const row of chunk) {
+      for (const row of served) {
         const size = row.proto?.length ?? 0;
         const last = messages[messages.length - 1];
         const sameInstant = last !== undefined && +row.createdAt === +last.createdAt;

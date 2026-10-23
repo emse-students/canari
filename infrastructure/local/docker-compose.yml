@@ -145,6 +145,9 @@ services:
       CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
       # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
       CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
+      # The key-group shared-payload WRITER (migration 034), off as on both estates; set it true
+      # here to exercise the writer locally.
+      QUEUED_PAYLOAD_SHARED_WRITES: ${QUEUED_PAYLOAD_SHARED_WRITES:-false}
       TURN_URL: ${TURN_URL:-turn:host.docker.internal:3478?transport=udp}
       TURN_USERNAME: ${TURN_USERNAME:-user}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-password}

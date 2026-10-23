@@ -130,7 +130,12 @@ path leaf names its committer (the server now refuses one that does not). A new 
 (D5, decided 2026-10-22); a new device of a present user continues, by an Add or an external
 commit alike; (2) bound the bundle in bytes and page it, after measuring what the gateway and
 the queue accept; (3) a key-group frame stored once per group, not once per seat (31 copies per
-payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
+payload, 883 MB of the 1.5 GB queue): BUILT 2026-10-22, draft PR, for the next stable (user). It
+ships the READERS with migration 034 and the writer OFF (`QUEUED_PAYLOAD_SHARED_WRITES=false`).
+Owed: the user's yes to apply migration 034; then, once that stable is in production, a pull
+request turning the writer on in the release after it; then one re-measure of the queue's bytes
+([chat-delivery](services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)).
+Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
 
 ## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)

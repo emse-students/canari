@@ -34,6 +34,7 @@ import {
   sanitizeQueryValue,
 } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
+import { PAYLOAD_RELATION, materializeDeliveries } from '../utils/queued-payload';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
@@ -399,9 +400,14 @@ export class PushController {
 
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
-    const queued = await this.queuedMessageRepo.findOne({
+    const found = await this.queuedMessageRepo.findOne({
       where: { id: messageId, recipientId: userId, deviceId },
+      relations: PAYLOAD_RELATION,
     });
+    // A key-group record stores its ciphertext once, in `queued_payload`: put it back on the row. A
+    // record whose payload is missing is withheld (accused at error there) and answered as absent,
+    // never as a frame - the phone hands an empty answer nothing to decrypt and nothing to ACK.
+    const [queued] = found ? materializeDeliveries([found], this.logger, 'fetch-proto') : [];
     if (!queued) {
       // Already ACKed or non-existent - return empty (no error to avoid retry loops).
       return { proto: '', ratchetTree: '' };
