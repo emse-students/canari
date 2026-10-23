@@ -20,6 +20,7 @@ import { DataSource } from 'typeorm';
 import { AuthSession } from './entities/auth-session.entity';
 import { AuthSessionsService } from './auth-sessions.service';
 import { SessionPushEndService } from './session-push-end.service';
+import { ACCESS_TOKEN_TTL_SECONDS, CREDENTIAL_SKEW_SECONDS } from './token-lifetimes';
 
 jest.mock('axios');
 
@@ -36,7 +37,7 @@ maybe('the push-ending outbox against PostgreSQL', () => {
   let ds: DataSource;
   let outbox: SessionPushEndService;
   let sessions: AuthSessionsService;
-  const axios = jest.requireMock('axios') as { delete: jest.Mock };
+  const axios = jest.requireMock('axios') as { delete: jest.Mock; get: jest.Mock };
 
   beforeAll(async () => {
     const admin = new DataSource({ type: 'postgres', url: URL });
@@ -70,7 +71,8 @@ maybe('the push-ending outbox against PostgreSQL', () => {
   beforeEach(async () => {
     await ds.query(`DELETE FROM session_push_endings`);
     await ds.query(`DELETE FROM auth_sessions`);
-    axios.delete = jest.fn();
+    axios.delete = jest.fn().mockResolvedValue({ data: { removed: 0 } });
+    axios.get = jest.fn().mockResolvedValue({ data: { registered: false, sessionId: null } });
   });
 
   async function boundSession(userId: string, deviceId: string): Promise<string> {
@@ -126,7 +128,7 @@ maybe('the push-ending outbox against PostgreSQL', () => {
     expect(await outboxRows()).toEqual([]);
   });
 
-  it('retries after a transport failure, deletes after a 2xx, and a second drain is harmless', async () => {
+  it('retries after a transport failure, keeps the row for a final pass, and ends it after', async () => {
     const sid = await boundSession('user-1', 'phone-1');
     axios.delete.mockRejectedValueOnce(
       Object.assign(new Error('refused'), { code: 'ECONNREFUSED' })
@@ -140,14 +142,25 @@ maybe('the push-ending outbox against PostgreSQL', () => {
     await outbox.drain();
     expect(axios.delete).toHaveBeenCalledTimes(1);
 
+    // A 2xx while an access token of the session can still be valid: kept, due when they expire.
     await dueNow();
     await outbox.drain();
     expect(axios.delete).toHaveBeenCalledTimes(2);
-    expect(axios.delete.mock.calls[1][1].params).toEqual({ sessionId: sid, unbound: 'end' });
+    expect(axios.delete.mock.calls[1][0]).toContain(`/sessions/${sid}`);
+    const [kept] = await ds.query(
+      `SELECT extract(epoch FROM "nextAttemptAt" - "endedAt")::int AS gap FROM session_push_endings`
+    );
+    expect(kept.gap).toBe(ACCESS_TOKEN_TTL_SECONDS + CREDENTIAL_SKEW_SECONDS);
+
+    // Once those tokens have expired, the final pass ends it for good.
+    await ds.query(`UPDATE session_push_endings SET "endedAt" = now() - interval '2 hours'`);
+    await dueNow();
+    await outbox.drain();
+    expect(axios.delete).toHaveBeenCalledTimes(3);
     expect(await outboxRows()).toEqual([]);
 
     await outbox.drain();
-    expect(axios.delete).toHaveBeenCalledTimes(2);
+    expect(axios.delete).toHaveBeenCalledTimes(3);
   });
 
   it('revoking the others records one ending per session RETURNING named, never the kept one', async () => {
@@ -155,32 +168,57 @@ maybe('the push-ending outbox against PostgreSQL', () => {
     const keep = await boundSession('user-1', 'phone-1');
     const laptop = await boundSession('user-1', 'laptop-1');
     await boundSession('user-2', 'phone-2');
-    const orphan = await sessions.create('user-1');
+    const tab = await sessions.create('user-1');
 
     await expect(sessions.revokeOthers('user-1', keep)).resolves.toBe(2);
 
     const rows = await outboxRows();
-    expect(rows.map((r) => r.sessionId)).toEqual([laptop]);
-    expect(rows.map((r) => r.sessionId)).not.toContain(orphan.sessionId);
+    expect(rows.map((r) => r.sessionId).sort()).toEqual([laptop, tab.sessionId].sort());
+    expect(rows.map((r) => r.sessionId)).not.toContain(keep);
   });
 
-  it('a live session naming the device keeps an unbound registration', async () => {
+  it('a session that registered before it named its device is ended by session alone', async () => {
+    const opened = await sessions.create('user-1');
+    await sessions.revoke(opened.sessionId);
+    await outbox.drain();
+
+    expect(axios.get).not.toHaveBeenCalled();
+    expect(axios.delete.mock.calls[0][0]).toContain(`/sessions/${opened.sessionId}`);
+    expect(axios.delete.mock.calls[0][1].params).toBeUndefined();
+  });
+
+  it("the device's last session ends a row a dead session left on it", async () => {
+    const dead = '0d0d0d0d-0000-4000-8000-0000000000d1';
+    const sid = await boundSession('user-1', 'phone-1');
+    axios.get.mockResolvedValue({ data: { registered: true, sessionId: dead } });
+
+    await sessions.revoke(sid);
+    await outbox.drain();
+
+    expect(axios.delete.mock.calls[0][1].params).toEqual({ device: 'phone-1', ifBoundTo: dead });
+  });
+
+  it("leaves the device's row to the live session that holds it", async () => {
     const old = await sessions.create('user-1');
     const current = await sessions.create('user-1');
-    // Two live sessions naming one device: the window before the current one's binding purges.
-    await ds.query(`UPDATE auth_sessions SET "deviceId" = 'phone-1' WHERE id IN ($1, $2)`, [
+    await ds.query(`UPDATE auth_sessions SET "deviceId" = 'phone-1' WHERE id = $1`, [
       old.sessionId,
-      current.sessionId,
     ]);
-    axios.delete.mockResolvedValue({ data: { removed: 0 } });
+    axios.get.mockResolvedValue({ data: { registered: true, sessionId: current.sessionId } });
 
     await sessions.revoke(old.sessionId);
     await outbox.drain();
 
-    expect(axios.delete.mock.calls[0][1].params).toEqual({
-      sessionId: old.sessionId,
-      unbound: 'keep',
-    });
+    expect(axios.delete.mock.calls[0][1].params).toBeUndefined();
+  });
+
+  it('a 400 drops the row after one accusation', async () => {
+    const sid = await boundSession('user-1', 'phone-1');
+    axios.delete.mockRejectedValue(Object.assign(new Error('bad'), { response: { status: 400 } }));
+
+    await sessions.revoke(sid);
+    await outbox.drain();
+
     expect(await outboxRows()).toEqual([]);
   });
 });

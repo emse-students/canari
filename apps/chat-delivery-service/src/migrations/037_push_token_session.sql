@@ -9,12 +9,12 @@
 --
 -- Nullable, and NO BACKFILL: no record says which session wrote an existing row. Such a row keeps
 -- NULL until its device registers again (every app start re-registers when the token or the locale
--- changed, and every sign-in does), and only for a NULL row does the end-of-session route fall back
--- to the device - when core-service says no live session names that device. A row registered with
--- an access token minted before `sid` existed (an hour at most after the deploy) also stores NULL.
+-- changed, and every sign-in does). A row registered with an access token minted before `sid`
+-- existed (an hour at most after the deploy) also stores NULL. A NULL row, or one bound to a session
+-- that is gone, is ended with the device's next deliberate session end, by compare-and-delete.
 --
--- No index: the delete is scoped by ("userId", "deviceId"), which the unique index already serves,
--- and a device holds one row.
+-- No index: a device holds one row, an account a handful, and every delete is scoped by "userId"
+-- first (the unique ("userId", "deviceId") index leads with it).
 --
 -- LOCK TIMEOUT: ADD COLUMN takes ACCESS EXCLUSIVE on `push_token`, which every send reads to find its
 -- destinations. Waiting behind a long transaction would stall them behind the queued lock request, so

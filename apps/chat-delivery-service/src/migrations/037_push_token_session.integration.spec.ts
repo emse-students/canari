@@ -2,9 +2,9 @@
 
 /**
  * MIGRATION 037 AND THE END-OF-SESSION DELETE AGAINST A REAL POSTGRESQL: the column lands on an empty
- * and on a populated `push_token`, replays as a no-op, and the delete by session - TypeORM's
- * translation of the controller's criteria, including the OR of the `unbound=end` arm - removes the
- * ended session's row and never a newer registration of the same device.
+ * and on a populated `push_token`, replays as a no-op, and the end-of-session deletes - by session,
+ * and the device's stale row by compare-and-delete, including a NULL binding - remove what the ended
+ * session left and never a newer registration of the same device.
  *
  * GATED ON `CHAT_DELIVERY_IT_DATABASE_URL`: skipped without it, and run by the `boot-nest-apps` job in
  * `ci.yml` against the database the boot just used. It needs no existing schema: it builds
@@ -62,6 +62,7 @@ maybe('migration 037 (push_token.sessionId) against PostgreSQL', () => {
     });
     await ds.initialize();
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
 
     controller = Object.create(InternalController.prototype) as InternalController;
     Object.assign(controller, {
@@ -123,32 +124,61 @@ maybe('migration 037 (push_token.sessionId) against PostgreSQL', () => {
     await insert('user-1', 'phone-1', NEW_SID);
 
     await expect(
-      controller.endDevicePushRegistration(SECRET, 'user-1', 'phone-1', OLD_SID, 'end')
+      controller.endSessionPushRegistration(SECRET, 'user-1', OLD_SID, undefined, undefined)
     ).resolves.toEqual({ removed: 0 });
     expect(await rows()).toEqual([{ deviceId: 'phone-1', sessionId: NEW_SID }]);
 
     await expect(
-      controller.endDevicePushRegistration(SECRET, 'user-1', 'phone-1', NEW_SID, 'keep')
+      controller.endSessionPushRegistration(SECRET, 'user-1', NEW_SID, undefined, undefined)
     ).resolves.toEqual({ removed: 1 });
     expect(await rows()).toEqual([]);
   });
 
-  it('an unbound row goes only when the caller says no live session names the device', async () => {
+  it('a session that registered before it named its device is ended by session alone', async () => {
+    await ds.query(MIGRATION);
+    await insert('user-1', 'phone-1', OLD_SID);
+    await expect(
+      controller.endSessionPushRegistration(SECRET, 'user-1', OLD_SID, undefined, undefined)
+    ).resolves.toEqual({ removed: 1 });
+    expect(await rows()).toEqual([]);
+  });
+
+  it("a device's row left by a dead session goes with the device's last session, by compare-and-delete", async () => {
+    await ds.query(MIGRATION);
+    // Bound to a session that is gone; the device's live session never registered.
+    await insert('user-1', 'phone-1', OLD_SID);
+    const read = await controller.readDevicePushBinding(SECRET, 'user-1', 'phone-1');
+    expect(read).toEqual({ registered: true, sessionId: OLD_SID });
+
+    await expect(
+      controller.endSessionPushRegistration(SECRET, 'user-1', NEW_SID, 'phone-1', OLD_SID)
+    ).resolves.toEqual({ removed: 1 });
+    expect(await rows()).toEqual([]);
+  });
+
+  it('a registration written after the binding was read is never reached', async () => {
+    await ds.query(MIGRATION);
+    await insert('user-1', 'phone-1', null);
+    // Read: unbound. Then a new sign-in registers before the delete lands.
+    await ds.query(`UPDATE push_token SET "sessionId" = $1`, [NEW_SID]);
+
+    await expect(
+      controller.endSessionPushRegistration(SECRET, 'user-1', OLD_SID, 'phone-1', 'none')
+    ).resolves.toEqual({ removed: 0 });
+    expect(await rows()).toEqual([{ deviceId: 'phone-1', sessionId: NEW_SID }]);
+  });
+
+  it('an unbound row is ended only for its own account, and a second end is harmless', async () => {
     await ds.query(MIGRATION);
     await insert('user-1', 'phone-1', null);
     await insert('user-2', 'phone-1', null);
 
     await expect(
-      controller.endDevicePushRegistration(SECRET, 'user-1', 'phone-1', OLD_SID, 'keep')
-    ).resolves.toEqual({ removed: 0 });
-    await expect(
-      controller.endDevicePushRegistration(SECRET, 'user-1', 'phone-1', OLD_SID, 'end')
+      controller.endSessionPushRegistration(SECRET, 'user-1', OLD_SID, 'phone-1', 'none')
     ).resolves.toEqual({ removed: 1 });
-    // Another account's row of the same device string is never reached.
     expect(await rows()).toEqual([{ deviceId: 'phone-1', sessionId: null }]);
-    // A second end of the same session is the ordinary retry, and harmless.
     await expect(
-      controller.endDevicePushRegistration(SECRET, 'user-1', 'phone-1', OLD_SID, 'end')
+      controller.endSessionPushRegistration(SECRET, 'user-1', OLD_SID, 'phone-1', 'none')
     ).resolves.toEqual({ removed: 0 });
   });
 });

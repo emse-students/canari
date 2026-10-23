@@ -77,7 +77,7 @@ export class PushToken {
   /**
    * The core-service session whose access token made this registration (migration 037) - the `sid`
    * claim, forwarded by nginx as `X-Session-Id`. Ending that session deletes exactly this row
-   * (`DELETE /api/internal/push/users/:userId/devices/:deviceId?sessionId=`), so a later
+   * (`DELETE /api/internal/push/users/:userId/sessions/:sessionId`), so a later
    * registration by a re-sign-in on the same device, which rewrites it, is never removed by the old
    * session's end.
    *

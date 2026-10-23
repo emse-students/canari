@@ -27,13 +27,16 @@ describe('InternalController - a session end ends the device push registration',
   const SECRET = 'internal-secret-for-tests';
 
   let controller: InternalController;
-  let pushTokenRepo: { delete: jest.Mock };
+  let pushTokenRepo: { delete: jest.Mock; findOne: jest.Mock };
   let previousSecret: string | undefined;
 
   beforeEach(async () => {
     previousSecret = process.env.INTERNAL_SECRET;
     process.env.INTERNAL_SECRET = SECRET;
-    pushTokenRepo = { delete: jest.fn().mockResolvedValue({ affected: 1 }) };
+    pushTokenRepo = {
+      delete: jest.fn().mockResolvedValue({ affected: 1 }),
+      findOne: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [InternalController],
@@ -56,6 +59,7 @@ describe('InternalController - a session end ends the device push registration',
 
     controller = module.get(InternalController);
     jest.spyOn(controller['logger'], 'log').mockImplementation(() => undefined);
+    jest.spyOn(controller['logger'], 'debug').mockImplementation(() => undefined);
     Object.defineProperty(controller, 'secret', { value: SECRET, writable: true });
   });
 
@@ -66,73 +70,82 @@ describe('InternalController - a session end ends the device push registration',
   });
 
   const SID = '0f0f0f0f-0000-4000-8000-00000000a1b2';
+  const OLD = '0e0e0e0e-0000-4000-8000-00000000a1b2';
 
-  it('removes the row the ended session registered, and only that one', async () => {
+  it('removes the row the ended session registered, by session alone when no device is named', async () => {
     await expect(
-      controller.endDevicePushRegistration(SECRET, 'user-1', 'dev-1', SID, 'keep')
+      controller.endSessionPushRegistration(SECRET, 'user-1', SID, undefined, undefined)
     ).resolves.toEqual({ removed: 1 });
-    expect(pushTokenRepo.delete).toHaveBeenCalledWith({
+    expect(pushTokenRepo.delete).toHaveBeenCalledTimes(1);
+    expect(pushTokenRepo.delete).toHaveBeenCalledWith({ userId: 'user-1', sessionId: SID });
+  });
+
+  it("also removes the device's row, only while it is bound to exactly what core-service read", async () => {
+    await controller.endSessionPushRegistration(SECRET, 'user-1', SID, 'dev-1', OLD);
+    expect(pushTokenRepo.delete).toHaveBeenNthCalledWith(2, {
       userId: 'user-1',
       deviceId: 'dev-1',
-      sessionId: SID,
+      sessionId: OLD,
+    });
+
+    await controller.endSessionPushRegistration(SECRET, 'user-1', SID, 'dev-1', 'none');
+    expect(pushTokenRepo.delete).toHaveBeenNthCalledWith(4, {
+      userId: 'user-1',
+      deviceId: 'dev-1',
+      sessionId: IsNull(),
     });
   });
 
-  it('also removes a row registered before rows named a session, when told no live session names the device', async () => {
-    await controller.endDevicePushRegistration(SECRET, 'user-1', 'dev-1', SID, 'end');
-    expect(pushTokenRepo.delete).toHaveBeenCalledWith([
-      { userId: 'user-1', deviceId: 'dev-1', sessionId: SID },
-      { userId: 'user-1', deviceId: 'dev-1', sessionId: IsNull() },
-    ]);
-  });
-
-  it('answers zero for a device with no registration - the second call of an idempotent end', async () => {
+  it('answers zero when nothing is left - the second call of an idempotent end', async () => {
     pushTokenRepo.delete.mockResolvedValue({ affected: 0 });
     await expect(
-      controller.endDevicePushRegistration(SECRET, 'user-1', 'dev-1', SID, 'keep')
+      controller.endSessionPushRegistration(SECRET, 'user-1', SID, undefined, undefined)
     ).resolves.toEqual({ removed: 0 });
   });
 
-  it('refuses a call that names no session, rather than deleting by device', async () => {
-    jest.spyOn(controller['logger'], 'warn').mockImplementation(() => undefined);
-    for (const sid of [undefined, '', '   ']) {
-      await expect(
-        controller.endDevicePushRegistration(SECRET, 'user-1', 'dev-1', sid, 'end')
-      ).rejects.toBeInstanceOf(BadRequestException);
-    }
-    expect(pushTokenRepo.delete).not.toHaveBeenCalled();
-  });
-
-  it('refuses a session id that is not one, and an unstated unbound policy', async () => {
+  it('refuses a session id that is not one, and a device without its binding', async () => {
     await expect(
-      controller.endDevicePushRegistration(SECRET, 'user-1', 'dev-1', 'not-a-uuid', 'end')
+      controller.endSessionPushRegistration(SECRET, 'user-1', 'not-a-uuid', undefined, undefined)
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
-      controller.endDevicePushRegistration(SECRET, 'user-1', 'dev-1', SID, undefined)
+      controller.endSessionPushRegistration(SECRET, 'user-1', SID, 'dev-1', undefined)
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      controller.endSessionPushRegistration(SECRET, 'user-1', SID, undefined, OLD)
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      controller.endSessionPushRegistration(SECRET, 'user-1', SID, 'dev-1', 'garbage')
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(pushTokenRepo.delete).not.toHaveBeenCalled();
   });
 
   it('refuses a caller without the internal secret, and deletes nothing', async () => {
     await expect(
-      controller.endDevicePushRegistration('wrong', 'user-1', 'dev-1', SID, 'end')
+      controller.endSessionPushRegistration('wrong', 'user-1', SID, undefined, undefined)
     ).rejects.toBeInstanceOf(ForbiddenException);
     await expect(
-      controller.endDevicePushRegistration(
-        undefined as unknown as string,
-        'user-1',
-        'dev-1',
-        SID,
-        'end'
-      )
+      controller.readDevicePushBinding('wrong', 'user-1', 'dev-1')
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(pushTokenRepo.delete).not.toHaveBeenCalled();
   });
 
-  it('refuses an id outside the allowlist rather than deleting by it', async () => {
+  it('refuses a device id outside the allowlist rather than deleting by it', async () => {
     await expect(
-      controller.endDevicePushRegistration(SECRET, 'user-1', 'dev 1; drop', SID, 'end')
+      controller.endSessionPushRegistration(SECRET, 'user-1', SID, 'dev 1; drop', 'none')
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(pushTokenRepo.delete).not.toHaveBeenCalled();
+  });
+
+  it('reads the binding of a device registration, and says when there is none', async () => {
+    pushTokenRepo.findOne.mockResolvedValueOnce({ id: 'r', sessionId: OLD });
+    await expect(controller.readDevicePushBinding(SECRET, 'user-1', 'dev-1')).resolves.toEqual({
+      registered: true,
+      sessionId: OLD,
+    });
+    pushTokenRepo.findOne.mockResolvedValueOnce(null);
+    await expect(controller.readDevicePushBinding(SECRET, 'user-1', 'dev-1')).resolves.toEqual({
+      registered: false,
+      sessionId: null,
+    });
   });
 });

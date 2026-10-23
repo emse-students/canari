@@ -1,9 +1,12 @@
 /// <reference types="jest" />
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 
 import {
   AuthSessionsService,
+  DEVICE_ID_PATTERN,
   ROTATION_GRACE_SECONDS,
   SESSION_TTL_SECONDS,
   SWEEP_INTERVAL_MS,
@@ -225,17 +228,16 @@ function makeService(): {
   queued: () => string[];
 } {
   const repo = new FakeRepo();
-  const enqueue = jest.fn(
-    (_manager: unknown, ended: Array<{ deviceId?: string | null }>, _cause: string) =>
-      Promise.resolve(ended.filter((row) => !!row.deviceId).length)
+  const enqueue = jest.fn((_manager: unknown, ended: unknown[], _cause: string) =>
+    Promise.resolve(ended.length)
   );
   const drain = jest.fn(() => Promise.resolve());
   const service = new AuthSessionsService(repo as never, { enqueue, drain } as never);
   const queued = () =>
     enqueue.mock.calls.flatMap(([, ended, cause]) =>
-      (ended as Array<{ id: string; userId: string; deviceId?: string | null }>)
-        .filter((row) => !!row.deviceId)
-        .map((row) => `${row.userId}/${row.deviceId}/${row.id}/${cause}`)
+      (ended as Array<{ id: string; userId: string; deviceId?: string | null }>).map(
+        (row) => `${row.userId}/${row.deviceId ?? 'unnamed'}/${row.id}/${cause}`
+      )
     );
   return { service, repo, enqueue, drain, queued };
 }
@@ -493,11 +495,17 @@ describe('AuthSessionsService', () => {
       const { service, queued } = makeService();
       const keep = await boundSession(service, 'user-1', 'phone-1');
       const laptop = await boundSession(service, 'user-1', 'laptop-1');
+      const tab = await service.create('user-1');
       await boundSession(service, 'user-2', 'phone-2');
 
       await service.revokeOthers('user-1', keep);
 
-      expect(queued()).toEqual([`user-1/laptop-1/${laptop}/revoked-others`]);
+      expect(queued().sort()).toEqual(
+        [
+          `user-1/laptop-1/${laptop}/revoked-others`,
+          `user-1/unnamed/${tab.sessionId}/revoked-others`,
+        ].sort()
+      );
     });
 
     it('a replayed refresh token, which revokes the session, records its ending', async () => {
@@ -517,14 +525,14 @@ describe('AuthSessionsService', () => {
       expect(queued()).toEqual([`user-1/phone-1/${opened.sessionId}/replay`]);
     });
 
-    it('a session that never named a device has nothing to end, and starts no drain', async () => {
+    it('a session that never named a device is still recorded: it may have registered before it did', async () => {
       const { service, queued, drain } = makeService();
       const opened = await service.create('user-1');
 
       await service.revoke(opened.sessionId);
 
-      expect(queued()).toEqual([]);
-      expect(drain).not.toHaveBeenCalled();
+      expect(queued()).toEqual([`user-1/unnamed/${opened.sessionId}/logout`]);
+      expect(drain).toHaveBeenCalledTimes(1);
     });
 
     it('a logout of a session already gone records nothing', async () => {
@@ -625,6 +633,30 @@ describe('AuthSessionsService', () => {
 
       await expect(service.bindDevice('user-1', opened.sessionId, 'web-c-d')).resolves.toBe(true);
       expect(repo.rows[0].deviceId).toBe('web-c-d');
+    });
+
+    it('refuses an identifier chat-delivery-service would refuse to address', async () => {
+      // A session naming it would record push endings that a 400 refuses for ever.
+      const { service, repo } = makeService();
+      const opened = await service.create('user-1');
+
+      for (const bad of ['dev 1', 'dev/1', 'dev+1', 'dev;1']) {
+        await expect(service.bindDevice('user-1', opened.sessionId, bad)).resolves.toBe(false);
+      }
+      await expect(service.bindDevice('user-1', opened.sessionId, 'web-a:b@c.d_1')).resolves.toBe(
+        true
+      );
+      expect(repo.rows[0].deviceId).toBe('web-a:b@c.d_1');
+    });
+
+    it('holds the device id contract chat-delivery-service holds', () => {
+      const contract = JSON.parse(
+        readFileSync(
+          join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'device-id.json'),
+          'utf8'
+        )
+      ) as { pattern: string };
+      expect(DEVICE_ID_PATTERN.source).toBe(contract.pattern);
     });
 
     it('refuses an empty or oversized identifier rather than truncating it', async () => {

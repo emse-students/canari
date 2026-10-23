@@ -57,8 +57,12 @@ export interface SessionSummary {
   deviceId: string | null;
 }
 
-/** Longest device identifier the column accepts. Anything longer is a client bug, not a device. */
-const MAX_DEVICE_ID_LENGTH = 128;
+/**
+ * The device ids a session may name: what chat-delivery-service accepts on every route that names a
+ * device (`libs/contracts/device-id.json`, asserted by both sides' specs), within the column's 128
+ * characters. A session naming anything else would record push endings no retry could deliver.
+ */
+export const DEVICE_ID_PATTERN = /^[a-zA-Z0-9_.:@-]{1,128}$/;
 
 /**
  * Server-side store backing the refresh cookie.
@@ -287,9 +291,10 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
    */
   async bindDevice(userId: string, sessionId: string, deviceId: string): Promise<boolean> {
     const trimmed = deviceId.trim();
-    if (!trimmed || trimmed.length > MAX_DEVICE_ID_LENGTH) {
+    if (!DEVICE_ID_PATTERN.test(trimmed)) {
       this.logger.warn(
-        `Device binding refused sid=${sessionId} user=${userId}: unusable device id (${trimmed.length} chars)`
+        `Device binding refused sid=${sessionId} user=${userId}: unusable device id ` +
+          `(${trimmed.length} chars, outside libs/contracts/device-id.json)`
       );
       return false;
     }
