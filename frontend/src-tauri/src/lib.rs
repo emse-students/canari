@@ -661,6 +661,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepa
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
+    requester: jni::objects::JString<'a>,
     key_package_b64: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> Result<serde_json::Value, String> {
@@ -678,6 +679,10 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepa
             .map_err(|e| e.to_string())?
             .into();
         let group_id_str: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
+        let requester_str: String = env
+            .get_string(&requester)
+            .map_err(|e| e.to_string())?
+            .into();
         let kp_b64: String = env
             .get_string(&key_package_b64)
             .map_err(|e| e.to_string())?
@@ -689,8 +694,11 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepa
             &key_b64_str,
             &user_id_str,
             &device_id_str,
-            &group_id_str,
-            &kp_b64,
+            &mobile::background::WelcomeRequest {
+                group_id: &group_id_str,
+                requester: &requester_str,
+                key_package_b64: &kp_b64,
+            },
         ))
     })();
 
