@@ -1,5 +1,5 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
-import type { AddMessageToChatOptions, Conversation } from '$lib/types';
+import type { AddMessageToChatOptions, Conversation, ConversationLifecycle } from '$lib/types';
 import type { SvelteMap } from 'svelte/reactivity';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
@@ -33,6 +33,8 @@ export interface DeviceNoticeSession {
   getUserId: () => string;
   getMyDeviceId: () => string;
   conversations: SvelteMap<string, Conversation>;
+  /** The durable conversation row of a group (`IStorage.getConversation`). */
+  storedConversation: (groupId: string) => Promise<{ lifecycle: ConversationLifecycle } | null>;
   addMessageToChat: (
     senderId: string,
     content: string,
@@ -201,6 +203,7 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
       isDistributionGroup: (groupId) => mls.isDistributionGroup(groupId),
       conversations: session.conversations,
       localGroups: () => mls.getLocalGroups(),
+      storedConversation: session.storedConversation,
       memberIdentities: (groupId) => mls.getGroupMemberIdentities(groupId),
       addMessageToChat: session.addMessageToChat,
       resolveDisplayNames,

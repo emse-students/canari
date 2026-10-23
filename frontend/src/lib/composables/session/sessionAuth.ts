@@ -1729,6 +1729,7 @@ export async function loginImpl(
       getUserId: () => ctx.getUserId(),
       getMyDeviceId: () => ctx.getMyDeviceId(),
       conversations: cb.conversations,
+      storedConversation: (groupId) => storageSettled.value.getConversation(groupId),
       addMessageToChat: (senderId, content, contactName, options) =>
         cb.addMessageToChat(senderId, content, contactName, options),
     });

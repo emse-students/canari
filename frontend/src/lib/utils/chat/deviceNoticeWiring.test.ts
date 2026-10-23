@@ -79,6 +79,7 @@ describe('unregisterDeviceNotices - sign-out', () => {
       getUserId: () => 'alice',
       getMyDeviceId: () => 'phone-a',
       conversations: new SvelteMap(),
+      storedConversation: vi.fn(async () => null),
       addMessageToChat: vi.fn(),
     });
     expect(setDeviceEventConsumer).toHaveBeenLastCalledWith(expect.any(Function));

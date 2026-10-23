@@ -1,6 +1,6 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
-import type { AddMessageToChatOptions } from '$lib/types';
+import type { AddMessageToChatOptions, ConversationLifecycle } from '$lib/types';
 import {
   CONTACT_NEW_DEVICE_WINDOW_MS,
   deviceEventAudience,
@@ -74,6 +74,13 @@ export interface DeviceNoticeContext {
    * where a contact line is owed, whether or not its conversation row is loaded yet.
    */
   localGroups: () => string[];
+  /**
+   * The group's conversation row in the DURABLE store (`IStorage.getConversation`), `null` when
+   * there is none. It decides whether a held group with no row loaded yet is a conversation the
+   * line is owed to: a key group never has one, a deleted conversation has lost it, and a removed
+   * one is read-only - none of them may keep a line owed.
+   */
+  storedConversation: (groupId: string) => Promise<{ lifecycle: ConversationLifecycle } | null>;
   /**
    * Every leaf identity of a group's tree, read locally (`IMlsService.getGroupMemberIdentities`);
    * throws when this device does not hold the group.
@@ -301,6 +308,9 @@ export async function deliverDeviceEvents(
   if (events.length === 0 && undecided.length === 0 && owedLines.length === 0) return;
   // One tree read per conversation per delivery, whatever the number of events (not reactive).
   const trees: Record<string, Promise<string[]>> = {};
+  // Read before the retry: a retry that settles or expires every owed line leaves nothing parked,
+  // and the stored copy must still lose them.
+  const hadOwedLines = owedLines.length > 0;
   await retryOwedLines(ctx, trees);
   // The events a previous delivery could not decide come first, oldest first.
   const retried = undecided;
@@ -374,7 +384,9 @@ export async function deliverDeviceEvents(
   if (old > 0) {
     console.log(`[DEVICE_NOTICE] ${old} device(s) seen for the first time here are not new`);
   }
-  if (retried.length > 0 || undecided.length > 0 || owedLines.length > 0) writeStored(boundAccount);
+  if (retried.length > 0 || undecided.length > 0 || hadOwedLines || owedLines.length > 0) {
+    writeStored(boundAccount);
+  }
   if (claimed.length > 0 && ctx.claimNative) {
     try {
       await ctx.claimNative(claimed);
@@ -443,10 +455,13 @@ async function writeContactLines(
     written++;
     console.log(`[DEVICE_NOTICE] contact line written in ${groupId.slice(0, 8)}...`);
   }
-  // A HELD group with no row yet (the start-up drain may run before the rows load) is a line still
-  // owed if the contact sits in its tree - the MLS state, not the row list, says where they are.
+  // A HELD group with no row loaded yet (the start-up drain may run before the rows load) is a line
+  // still owed if its DURABLE row says it is a live conversation and the contact sits in its tree.
+  // The durable row, not `isDistributionGroup`: that set is session-local and may not name a key
+  // group yet at start-up, and a deleted conversation's lingering state is in no set at all.
   for (const groupId of held) {
-    if (ctx.conversations.has(groupId) || ctx.isDistributionGroup(groupId)) continue;
+    if (ctx.conversations.has(groupId)) continue;
+    if (!(await isLiveStoredConversation(groupId, ctx))) continue;
     if ((await holdsContact(groupId)) === false) continue;
     owed = true;
     console.debug(`[DEVICE_NOTICE] ${groupId.slice(0, 8)}... has no row yet - its line stays owed`);
@@ -458,6 +473,30 @@ async function writeContactLines(
 }
 
 /**
+ * Whether the durable store holds a live (not removed) conversation row for `groupId`. A store that
+ * cannot be read establishes nothing, so the group counts as live and its line stays owed - bounded
+ * by the contact window like every owed line.
+ */
+async function isLiveStoredConversation(
+  groupId: string,
+  ctx: DeviceNoticeContext
+): Promise<boolean> {
+  try {
+    const row = await ctx.storedConversation(groupId);
+    if (row === null) {
+      console.debug(`[DEVICE_NOTICE] ${groupId.slice(0, 8)}... has no stored row - no line owed`);
+      return false;
+    }
+    return row.lifecycle !== 'removed';
+  } catch (e) {
+    console.warn(
+      `[DEVICE_NOTICE] stored row of ${groupId.slice(0, 8)}... unreadable, its line stays owed: ${String(e)}`
+    );
+    return true;
+  }
+}
+
+/**
  * Settles one contact device after a pass of {@link writeContactLines}: LINED for good when no line
  * is owed any more, otherwise kept (durably, bounded) for the next delivery - which every hand-over
  * of the MLS layer is, an empty one included. A line is never marked written before it was.
@@ -465,7 +504,14 @@ async function writeContactLines(
 function settleContactLine(line: OwedLine, owed: boolean): void {
   owedLines = owedLines.filter((o) => o.key !== line.key);
   if (owed) {
-    owedLines = [...owedLines, line].slice(-MAX_UNDECIDED_DEVICE_EVENTS);
+    const kept = [...owedLines, line];
+    const dropped = kept.length - MAX_UNDECIDED_DEVICE_EVENTS;
+    if (dropped > 0) {
+      console.warn(
+        `[DEVICE_NOTICE] ${dropped} owed contact line(s) dropped unwritten - more than ${MAX_UNDECIDED_DEVICE_EVENTS} are owed`
+      );
+    }
+    owedLines = kept.slice(-MAX_UNDECIDED_DEVICE_EVENTS);
     return;
   }
   lined = [...lined, line.key].slice(-MAX_ANNOUNCED_DEVICE_KEYS);

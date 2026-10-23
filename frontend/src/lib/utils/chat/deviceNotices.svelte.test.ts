@@ -44,6 +44,24 @@ const TREES: Record<string, string[]> = {
   'dm-carol': ['alice:phone-a', 'carol:p'],
 };
 
+/**
+ * The conversation rows in the DURABLE store: a key group never has one (it is joined by external
+ * commit and its frames never reach the conversation pipeline), nor does a salon's MLS-less row here.
+ */
+const STORED_ROWS: Record<string, { lifecycle: 'active' | 'pending' | 'removed' }> = {
+  'dm-1': { lifecycle: 'active' },
+  'group-1': { lifecycle: 'active' },
+  'group-no-bob': { lifecycle: 'active' },
+  'dm-carol': { lifecycle: 'active' },
+};
+
+/** What the store holds for the bound account after a delivery. */
+const storedNotices = () =>
+  JSON.parse(localStorage.getItem(ACCOUNT_KEY.deviceNotices('alice')) ?? '{}') as {
+    lined?: string[];
+    owedLines?: unknown[];
+  };
+
 const DAY = 24 * 3600_000;
 const NOW = 100 * DAY;
 /** This device enrolled ten days ago. */
@@ -69,6 +87,7 @@ function makeCtx(over: Partial<DeviceNoticeContext> = {}) {
     isDistributionGroup: (g) => g === 'community-key',
     conversations,
     localGroups: () => Object.keys(TREES),
+    storedConversation: async (g) => STORED_ROWS[g] ?? null,
     memberIdentities: vi.fn(async (g: string) => {
       const tree = TREES[g];
       if (!tree) throw new Error(`group ${g} not held`);
@@ -178,6 +197,44 @@ describe('deliverDeviceEvents - the contact line', () => {
     conversations.set('dm-1', { conversationType: 'direct', messages: [] });
     await deliverDeviceEvents([], ctx);
     expect(addMessageToChat).not.toHaveBeenCalled();
+    // The drop is durable: a reload must not resurrect the line it just expired.
+    expect(storedNotices().owedLines).toEqual([]);
+  });
+
+  // WHERE A LINE IS OWED IS DECIDED FROM THE DURABLE CONVERSATION ROW, not from a session-local
+  // set: at start-up a key group may not be named yet, and a deleted conversation's state may
+  // linger in the held groups - neither will ever get a row, so neither may keep a line owed.
+  it('owes nothing for a held group with no stored row (unnamed key group) or a removed one', async () => {
+    const { ctx, addMessageToChat, conversations } = makeCtx({
+      isDistributionGroup: () => false,
+      localGroups: () => [...Object.keys(TREES), 'dm-removed'],
+      memberIdentities: vi.fn(async (g: string) =>
+        g === 'dm-removed' ? ['alice:phone-a', 'bob:phone-1'] : TREES[g]
+      ),
+      storedConversation: async (g) =>
+        g === 'dm-removed' ? { lifecycle: 'removed' } : (STORED_ROWS[g] ?? null),
+    });
+    conversations.delete('community-key');
+    await deliverDeviceEvents([event()], ctx);
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['dm-1', 'group-1']);
+    expect(storedNotices().owedLines).toEqual([]);
+    expect(storedNotices().lined).toHaveLength(1);
+  });
+
+  it('warns with the count, never the ids, when the owed lines overflow their bound', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx, conversations } = makeCtx();
+    conversations.clear();
+    const events = Array.from({ length: 66 }, (_, i) =>
+      event({ keyFingerprint: i.toString(16).padStart(4, '0') })
+    );
+    await deliverDeviceEvents(events, ctx);
+    const overflow = warn.mock.calls.map((c) => String(c[0])).filter((l) => /owed/.test(l));
+    expect(overflow).toHaveLength(2);
+    expect(overflow[0]).toMatch(/1 owed contact line/);
+    for (const line of overflow) expect(line).not.toMatch(/bob|web-2/);
+    expect(storedNotices().owedLines).toHaveLength(64);
+    warn.mockRestore();
   });
 
   it('writes nothing for a pinned re-add, a member joining, or a joined-tree key change', async () => {

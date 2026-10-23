@@ -792,10 +792,14 @@ that consumes them next.
   the private conversations. Never in a channel row or a key group. Written once per device and
   key, durably (`lined`, the last 256), not only against the messages a conversation has loaded.
   A device is LINED only once no line is still owed: a group this device holds
-  (`getLocalGroups`) with the contact in its tree but no row yet - the start-up drain may run
-  before the rows load - or whose tree is unreadable keeps the line OWED (`owedLines`, durable,
-  64 at most), retried at each hand-over without asking the evidence again, and dropped past the
-  7-day contact window.
+  (`getLocalGroups`) with the contact in its tree but no row loaded yet - the start-up drain may
+  run before the rows load - or whose tree is unreadable keeps the line OWED (`owedLines`, durable,
+  64 at most, an overflow warned with its count), retried at each hand-over without asking the
+  evidence again, and dropped past the 7-day contact window (the drop is persisted too). A held
+  group with no row loaded is owed only if the DURABLE store holds a live row for it
+  (`IStorage.getConversation`, lifecycle not `removed`): a key group never has one, and the
+  session-local `isDistributionGroup` may not name it yet at start-up; a deleted conversation's
+  lingering state has lost its row.
 - **A reset device re-added in one commit** (`replaceMember`) under a key a member never saw for it
   reads to that member as "added a device": it is a device under a key they never saw, which is
   what the line says. Defensible, and deliberate - the line never claims the device id is new. A
