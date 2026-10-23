@@ -37,14 +37,14 @@
     "typeorm": "^1.1.2"
   },
   "devDependencies": {
-    "@nestjs/cli": "^12.0.8",
-    "@nestjs/schematics": "^12.0.7",
+    "@nestjs/cli": "^12.0.9",
+    "@nestjs/schematics": "^12.0.9",
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.3.0",
     "@types/node": "^26.6.5",
     "jest": "^30.5.2",
-    "oxfmt": "^0.73.0",
-    "oxlint": "^1.88.0",
+    "oxfmt": "^0.74.0",
+    "oxlint": "^1.89.0",
     "oxlint-tsgolint": "^7.0.2004",
     "ts-jest": "^29.4.15",
     "ts-node": "^10.9.2",
