@@ -219,10 +219,13 @@ whole_number() {
 # A value the service reads as ONE OF A FEW WORDS. core-service maps any LYDIA_ENV other than
 # `production` to the sandbox base URL, so a typo such as `prod` would silently send production's
 # Provider pair to the sandbox. Prints the accepted words, space-separated, or nothing when the key
-# is free-form.
+# is free-form. The list belongs to an ENVIRONMENT: production accepts `production` and nothing
+# else (user, 2026-10-23), so pointing it at the sandbox needs a deliberate edit of this function,
+# in a pull request, rather than a secret typed by hand. (Dev skips the row; its compose pins the
+# sandbox as a literal.)
 allowed_values() {
-  case "$1" in
-  LYDIA_ENV) printf 'production homologation' ;;
+  case "$1:$2" in
+  LYDIA_ENV:prod) printf 'production' ;;
   esac
 }
 
@@ -304,7 +307,7 @@ while IFS=$'\t' read -r key prod dev source note; do
     continue
   fi
 
-  allowed="$(allowed_values "$key")"
+  allowed="$(allowed_values "$key" "$ENVIRONMENT")"
   accepted=0
   for word in $allowed; do
     if [ "$value" = "$word" ]; then accepted=1; fi

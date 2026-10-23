@@ -40,7 +40,7 @@
 # production's .env kept the template's `LYDIA_ENV=homologation` and core-service addressed Lydia's
 # sandbox whatever pair production held - the compose default `${LYDIA_ENV:-production}` never
 # applied, because the template always sets the key. It is `required` in production (and must read
-# `production` or `homologation`, refused by render-env.sh otherwise) and `skip` in dev, where the
+# `production`, the only word render-env.sh accepts there - user, 2026-10-23) and `skip` in dev, where the
 # compose literal is the only value that counts.
 #
 # Push is NOT that, and the three APNs rows were `skip` by an oversight that this file made visible:

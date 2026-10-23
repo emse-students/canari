@@ -31,15 +31,36 @@ not map onto it were removed rather than faked. The provider mapping and the cre
 [`plans/stripe-to-lydia-migration.md`](../../../../plans/stripe-to-lydia-migration.md) (archived).
 
 **Which Lydia the credentials address is `LYDIA_ENV`, and each estate sets it differently (2026-10-23).**
-`lydia-payment-provider.ts` uses `https://lydia-app.com` only for the exact word `production` and the
-homologation sandbox for anything else. Production renders it from the GitHub secret `LYDIA_ENV`
-(manifest row `required`); `render-env.sh` refuses a production deploy without it, or with any value
-but `production` or `homologation`, so production holds its Provider pair against the Lydia it names.
-Until that row existed, production's `.env` kept `infrastructure/.env.example`'s `homologation` - the
-compose default `${LYDIA_ENV:-production}` never applies, because the template always sets the key.
-Dev skips the row and pins `LYDIA_ENV: homologation` as a literal in `docker-compose.dev.yml`, with
-the sandbox pair in `DEV_LYDIA_*` ([dev-environment](../../infrastructure/dev-environment.md)). The
-setting above still decides whether payments are live at all.
+`lydia-payment-provider.ts` trims and lowercases the value and uses `https://lydia-app.com` only when
+it reads `production`; anything else (a typo included) is the homologation sandbox. Production renders
+it from the GitHub secret `LYDIA_ENV` (manifest row `required`); **`render-env.sh` accepts only
+`production` for the production estate (user, 2026-10-23)** and refuses a deploy without it or with
+any other word, so pointing production at the sandbox takes a deliberate edit of `allowed_values()` in
+a pull request, never a secret typed by hand. Until that row existed, production's `.env` kept
+`infrastructure/.env.example`'s `homologation` - the compose default `${LYDIA_ENV:-production}` never
+applies, because the template always sets the key. Dev skips the row and pins `LYDIA_ENV: homologation`
+as a literal in `docker-compose.dev.yml`, with the sandbox pair in `DEV_LYDIA_*`
+([dev-environment](../../infrastructure/dev-environment.md)). A LOCAL estate built from a production
+dump gets `LYDIA_ENV=homologation` and EMPTY Provider tokens (`env-from-prod.sh`): production's pair
+moves real money and must not sit on a laptop.
+
+**What this does and does not decide.** The platform setting above (`payment_provider`) already read
+`lydia` in production before this change, so it never kept production inert: the sandbox base URL did
+(a request issued there moves no money). With `LYDIA_ENV=production` and the production pair, an
+association whose Business is linked and validated takes real payments, and the setting STAYS `lydia`
+(user, 2026-10-23).
+
+**Rolling back to a release BEFORE this one is a trap.** An older `render-env.sh` and manifest do not
+know `LYDIA_ENV`, and the older `verify-secrets` does not check it, so the rollback deploy re-renders the
+template's `homologation` and the core addresses the sandbox with the production tokens, in silence.
+After such a rollback: set `LYDIA_ENV=production` in the production `.env` and recreate the core-service
+by hand (the container alone, through the compose file the deploy uses). The same recreate with
+`LYDIA_ENV=homologation` is the way back to the sandbox, where the production pair then fails loudly
+with Lydia's "Provider inconnu" (code 104) instead of moving money.
+
+GitHub masks the word `production` in the logs of a run that reads this secret, because it is a
+secret: expect `***` where the value would print; the render's error line names the key and the
+accepted word, not the value.
 
 ## Where a provider's name may appear, and where it may not
 

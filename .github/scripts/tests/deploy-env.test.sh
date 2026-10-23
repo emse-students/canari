@@ -556,12 +556,16 @@ else
 fi
 
 out="$TMP/prod-lydiaenv-homologation.env"
+# PRODUCTION ACCEPTS ONLY `production` (user, 2026-10-23): the sandbox is reachable from production by
+# an edit of allowed_values() in a pull request, never by a secret typed by hand.
 # shellcheck disable=SC2046
-render prod "$out" $(prod_env | grep -v '^LYDIA_ENV=') LYDIA_ENV=homologation >/dev/null
-if [ -f "$out" ] && grep -q '^LYDIA_ENV=homologation$' "$out"; then
-  pass "production may be pointed at the sandbox, but only by saying so"
+render prod "$out" $(prod_env | grep -v "^LYDIA_ENV=") LYDIA_ENV=homologation >"$TMP/prod-lydiaenv-homologation.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with LYDIA_ENV=homologation, which the user decided it never accepts"
+elif grep -q "LYDIA_ENV is set for the prod environment to \"homologation\", which is not one of: production" "$TMP/prod-lydiaenv-homologation.log"; then
+  pass "production refuses LYDIA_ENV=homologation, naming the key and the only word it accepts"
 else
-  fail "production refused an explicit LYDIA_ENV=homologation"
+  fail "production refused LYDIA_ENV=homologation without naming it"
 fi
 
 out="$TMP/prod-nolydiaenv.env"
@@ -580,8 +584,8 @@ out="$TMP/prod-badlydiaenv.env"
 render prod "$out" $(prod_env | grep -v '^LYDIA_ENV=') LYDIA_ENV=prod >"$TMP/prod-badlydiaenv.log" || true
 if [ -f "$out" ]; then
   fail "production rendered with LYDIA_ENV=prod, which core-service reads as the sandbox"
-elif grep -q 'LYDIA_ENV is set for the prod environment to "prod", which is not one of: production homologation' "$TMP/prod-badlydiaenv.log"; then
-  pass "a LYDIA_ENV that is neither production nor homologation fails the production render, naming the key"
+elif grep -q 'LYDIA_ENV is set for the prod environment to "prod", which is not one of: production' "$TMP/prod-badlydiaenv.log"; then
+  pass "a LYDIA_ENV that is other than production fails the production render, naming the key"
 else
   fail "production refused a bogus LYDIA_ENV without naming it"
 fi
