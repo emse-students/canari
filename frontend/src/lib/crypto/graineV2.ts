@@ -119,7 +119,7 @@ export interface GraineSignatureCheck {
  * shared vector in `graineV2.test.ts` and in that file pins the two together.
  */
 export function packGraineSignatureChecks(checks: readonly GraineSignatureCheck[]): Uint8Array {
-  const out = new Writer();
+  const out = new GraineFieldWriter();
   out.u32(checks.length);
   for (const check of checks) {
     out.field(check.publicKey);
