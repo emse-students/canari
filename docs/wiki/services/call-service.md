@@ -48,7 +48,9 @@ Token extraction order (same pattern as [`chat-gateway`](chat-gateway.md)):
 1. Cookie `canari_ws_token`
 2. Query parameter `token=` (Tauri mobile fallback)
 
-JWT HS256 validation against `JWT_SECRET`.
+JWT HS256 validation against `JWT_SECRET`, and only an ACCESS token is accepted
+(`decode_access_claims`): a token whose `type` claim is anything but `"access"` - the refresh token
+says `"refresh"` - is refused, as in [chat-gateway](chat-gateway.md#websocket-authentication).
 
 ### Signal frames
 
