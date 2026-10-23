@@ -15,7 +15,6 @@ use mls_core::MlsManager;
 
 use super::proto_fields::extract_full_message_info;
 use super::push_text::PushLanguage;
-use crate::concurrency::background_write_mls_bin;
 
 /// Decodes a base64 device key and loads the MLS manager from the encrypted `mls.bin` bytes.
 ///
@@ -375,6 +374,27 @@ fn write_staged(path: &Path, data: &[u8]) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("rename staged state: {e}"))
 }
 
+/// Stages `file` for `group_id` ONLY while `mls.bin` is still the file the Welcome was built from,
+/// under the write lock every `mls.bin` writer takes: a foreground write that landed since (a
+/// checkpoint, a key change's re-seal) makes the staging a state the install would refuse, so it is
+/// refused HERE, before the commit goes to the server - never after the server accepted it.
+fn stage_over_loaded_state(
+    files_dir: &Path,
+    loaded: &[u8; 32],
+    group_id: &str,
+    file: &[u8],
+) -> Result<(), String> {
+    let _held = crate::concurrency::mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    let current = std::fs::read(files_dir.join("mls.bin"))
+        .map_err(|e| format!("re-read mls.bin before staging: {e}"))?;
+    if &crate::concurrency::mls_bin_digest(&current) != loaded {
+        return Err("mls.bin changed since the Welcome was built - not staged".to_string());
+    }
+    write_staged(&staged_welcome_path(files_dir, group_id), file)
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -559,6 +579,8 @@ pub fn prepare_welcome_background_with_key(
                 return welcome_refused("state-unreadable");
             }
         };
+    // The events already waiting in the state are not this Add's; only those after them are.
+    let events_before = manager.pending_device_events().len();
     let base_epoch = match manager.get_epoch(group_id) {
         Ok(e) => e,
         Err(e) => {
@@ -628,10 +650,11 @@ pub fn prepare_welcome_background_with_key(
             return welcome_refused("stage-failed");
         }
     };
+    let loaded = crate::concurrency::mls_bin_digest(state_bytes);
     let mut file = Vec::with_capacity(32 + sealed.len());
-    file.extend_from_slice(&crate::concurrency::mls_bin_digest(state_bytes));
+    file.extend_from_slice(&loaded);
     file.extend_from_slice(&sealed);
-    if let Err(e) = write_staged(&staged_welcome_path(files_dir, group_id), &file) {
+    if let Err(e) = stage_over_loaded_state(files_dir, &loaded, group_id, &file) {
         log::error!("[BG_WELCOME] post-add state not staged group={short}: {e}");
         return welcome_refused("stage-failed");
     }
@@ -639,14 +662,26 @@ pub fn prepare_welcome_background_with_key(
         "[BG_WELCOME] staged group={short} base_epoch={base_epoch} ({} bytes) - mls.bin untouched until the server accepts",
         sealed.len()
     );
-    serde_json::json!({
+    // The device this Add admitted may be a new device of THIS account - the phone serving its own
+    // account's new laptop. Its events ride in the STAGED state, so they reach `mls.bin` (and the
+    // app's notices) only with an accepted install, and vanish with a discard. The keys go to the
+    // caller for the local notification (`ownDeviceAdded`, as on the decrypt paths), which it raises
+    // only once the server ACCEPTED the commit.
+    let pending = manager.pending_device_events();
+    let added = &pending[events_before.min(pending.len())..];
+    let own_alerts = super::device_notice::owner_alert_keys_of(added, user_id, device_id);
+    let mut answer = serde_json::json!({
         "ok": true,
         "welcome": STANDARD.encode(&welcome),
         "ratchetTree": STANDARD.encode(&ratchet_tree),
         "commit": STANDARD.encode(&commit),
         "groupInfo": STANDARD.encode(&group_info),
         "baseEpoch": base_epoch,
-    })
+    });
+    if !own_alerts.is_empty() {
+        answer["ownDeviceAdded"] = serde_json::json!(own_alerts);
+    }
+    answer
 }
 
 /// Installs the state [`prepare_welcome_background_with_key`] staged for `group_id` - called ONLY
@@ -777,6 +812,29 @@ pub fn discard_staged_welcome(files_dir: &Path, group_id: &str, memo: RefusalMem
     }
 }
 
+/// Writes a background engine's new state ONLY over the very `mls.bin` it loaded
+/// ([`crate::concurrency::background_write_mls_bin_if_unchanged`]) - the one write every background
+/// engine makes.
+///
+/// **THE FOREGROUND GUARD ALONE LET AN OLD KEY BACK IN.** An engine loads the bytes and the key, then
+/// works; the foreground can meanwhile re-seal `mls.bin` under another key (the move to the
+/// hardware-held key, a PIN change) and go to the background, which drops the guard at once. A plain
+/// write then put back the state under the key that no longer opens it. Any foreground write changes
+/// the bytes, so the compare refuses it - under the same lock every `mls.bin` writer takes. The
+/// refusal is an error: a send batch is discarded and re-encrypted at the next drain, a Welcome stays
+/// for the foreground.
+fn write_over_loaded_state(files_dir: &Path, loaded: &[u8], data: &[u8]) -> Result<(), String> {
+    crate::concurrency::background_write_mls_bin_if_unchanged(
+        &files_dir.join("mls.bin"),
+        &crate::concurrency::mls_bin_digest(loaded),
+        data,
+    )
+    .map_err(|e| {
+        log::error!("[BG_STATE] mls.bin NOT written: {e}");
+        format!("write mls.bin: {e}")
+    })
+}
+
 /// Applies an MLS Welcome received in the background (receiver side).
 /// Key-based variant: uses the pre-derived device key (base64) instead of the PIN.
 pub fn process_welcome_background_with_key(
@@ -812,8 +870,7 @@ pub fn process_welcome_background_with_key(
     let enc = manager
         .save_encrypted_with_key(&key)
         .map_err(|e| e.to_string())?;
-    let mls_path = files_dir.join("mls.bin");
-    background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
+    write_over_loaded_state(files_dir, state_bytes, &enc)?;
     log::info!(
         "[BG_JOIN] joined group via Welcome: {group_id} (mls.bin {} bytes)",
         enc.len()
@@ -905,8 +962,7 @@ pub fn send_messages_background_with_key(
     let enc = manager
         .save_encrypted_with_key(&key)
         .map_err(|e| e.to_string())?;
-    let mls_path = files_dir.join("mls.bin");
-    background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
+    write_over_loaded_state(files_dir, state_bytes, &enc)?;
     log::info!(
         "[BG_SEND] batch encrypted {encrypted}/{} (mls.bin {} bytes, 1 load, 1 save)",
         entries.len(),
@@ -1012,6 +1068,36 @@ pub fn decrypt_push_message_with_key(
         return refused("state-unreadable");
     };
 
+    let answer = decrypt_loaded(&mut manager, frame, language);
+    with_owner_alerts(answer, &mut manager, user_id, device_id)
+}
+
+/// Adds `ownDeviceAdded` - the keys of the "a new device was added to your account" alerts the
+/// commits this push path merged in memory produced (`device_notice::owner_alert_keys`) - to a
+/// push-decrypt answer, WHATEVER the answer is: a control frame, a message, a refusal after the
+/// catch-up applied its commits. Absent when there are none. The native caller claims the keys in
+/// the shared ledger and raises one local notification for those it claimed.
+fn with_owner_alerts(
+    mut answer: serde_json::Value,
+    manager: &mut MlsManager,
+    user_id: &str,
+    device_id: &str,
+) -> serde_json::Value {
+    let keys = super::device_notice::owner_alert_keys(manager, user_id, device_id);
+    if !keys.is_empty() {
+        if let Some(obj) = answer.as_object_mut() {
+            obj.insert("ownDeviceAdded".to_string(), serde_json::json!(keys));
+        }
+    }
+    answer
+}
+
+/// The body of [`decrypt_push_message_with_key`] once the state is loaded.
+fn decrypt_loaded(
+    manager: &mut MlsManager,
+    frame: &PushFrame<'_>,
+    language: PushLanguage,
+) -> serde_json::Value {
     let app = match manager.process_incoming_message_with_sender(frame.group_id, frame.ciphertext) {
         Ok(Some(app)) => app,
         Ok(None) => {
@@ -1029,7 +1115,7 @@ pub fn decrypt_push_message_with_key(
         }
     };
 
-    classify_verified(&manager, frame.group_id, frame.sender_id, app, language)
+    classify_verified(manager, frame.group_id, frame.sender_id, app, language)
 }
 
 /// Refuses a decrypted frame whose envelope names another sender than the one MLS verified, then
@@ -1252,19 +1338,22 @@ pub fn decrypt_push_message_with_commits_with_key(
         }
     }
 
-    let app = match manager.process_incoming_message_with_sender(frame.group_id, frame.ciphertext) {
-        Ok(Some(app)) => app,
+    let answer = match manager
+        .process_incoming_message_with_sender(frame.group_id, frame.ciphertext)
+    {
+        Ok(Some(app)) => {
+            classify_verified(&manager, frame.group_id, frame.sender_id, app, language)
+        }
         Ok(None) => {
             log::debug!("[PushBG] key-based catch-up: control frame applied, nothing to render");
-            return refused("control-frame");
+            refused("control-frame")
         }
         Err(e) => {
             log::error!("[PushBG] key-based catch-up decrypt failed: {e}");
-            return refused_by_mls(&e);
+            refused_by_mls(&e)
         }
     };
-
-    classify_verified(&manager, frame.group_id, frame.sender_id, app, language)
+    with_owner_alerts(answer, &mut manager, user_id, device_id)
 }
 
 #[cfg(test)]
@@ -1277,7 +1366,7 @@ mod tests {
     }
 
     /// A temp directory of its own, so the `mls.bin` each test writes is its own.
-    /// `send_messages_background_with_key` writes `mls.bin` through `background_write_mls_bin`,
+    /// `send_messages_background_with_key` writes `mls.bin` through `write_over_loaded_state`,
     /// which refuses while the PROCESS-global foreground guard is up - and other modules' tests
     /// raise it. So every test here that sends holds the shared serialiser and clears the guard,
     /// or it fails whenever a foreground test runs beside it.
@@ -1352,7 +1441,7 @@ mod tests {
         let (alice, mut bob, group_id) = joined_pair("batch");
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(7)).expect("key");
         let state_bytes = alice.save_encrypted_with_key(&key).expect("encrypt state");
-        let dir = temp_dir("batch");
+        let dir = dir_holding("batch", &state_bytes);
 
         let plaintexts: Vec<Vec<u8>> = (0..5).map(|i| format!("msg-{i}").into_bytes()).collect();
         let entries: Vec<OutboxEntry> = plaintexts
@@ -1417,7 +1506,7 @@ mod tests {
         let (alice, mut bob, group_id) = joined_pair("isolate");
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(9)).expect("key");
         let state_bytes = alice.save_encrypted_with_key(&key).expect("encrypt state");
-        let dir = temp_dir("isolate");
+        let dir = dir_holding("isolate", &state_bytes);
 
         let entries = vec![
             entry("ok-1", &group_id, b"first"),
@@ -1471,6 +1560,40 @@ mod tests {
                 Some((0, _))
             ),
             "exactly one author proof follows the body"
+        );
+    }
+
+    /// THE OLD KEY NEVER COMES BACK. A drain loaded `mls.bin` under the key the PIN derived; the
+    /// foreground then re-sealed it under the hardware-held key (or a new PIN's) and went to the
+    /// background, so the foreground guard is down. The drain's write must be refused - it would put
+    /// back a state the key now in the keystore does not open - and the re-sealed file must survive.
+    #[test]
+    fn a_drain_never_writes_over_a_state_re_sealed_since_it_loaded() {
+        let _fg = quiet_foreground();
+        let (alice, _bob, group_id) = joined_pair("reseal");
+        let old_key = decode_base64_to_32_bytes(&key_b64(31)).expect("old key");
+        let new_key = decode_base64_to_32_bytes(&key_b64(32)).expect("new key");
+        let loaded = alice.save_encrypted_with_key(&old_key).expect("seal old");
+        let dir = dir_holding("reseal", &loaded);
+        let re_sealed = alice.save_encrypted_with_key(&new_key).expect("seal new");
+        std::fs::write(dir.join("mls.bin"), &re_sealed).expect("foreground re-seal");
+
+        let out = send_messages_background_with_key(
+            &dir,
+            &loaded,
+            &key_b64(31),
+            "reseal-alice",
+            "dev-a",
+            &[entry("id-0", &group_id, b"late")],
+        );
+        assert!(
+            out.is_err(),
+            "the drain must not persist over a re-sealed state"
+        );
+        assert_eq!(
+            std::fs::read(dir.join("mls.bin")).expect("mls.bin"),
+            re_sealed,
+            "the state under the new key survives"
         );
     }
 
@@ -1545,7 +1668,7 @@ mod tests {
         let (alice, bob, group_id) = joined_pair("graine");
         let key = decode_base64_to_32_bytes(&key_b64(11)).expect("key");
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
-        let dir = temp_dir("graine");
+        let dir = dir_holding("graine", &alice_state);
 
         let seed = [42u8; 32];
         let frame = endorsed_seed_frame(&alice, "graine-alice", "sess-abc", &seed);
@@ -1614,7 +1737,7 @@ mod tests {
         let frame = endorsed_seed_frame(&alice, "graine-ahead-alice", "sess-new", &seed);
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
         let out = send_messages_background_with_key(
-            &temp_dir("graine-ahead"),
+            &dir_holding("graine-ahead", &alice_state),
             &alice_state,
             &key_b64(13),
             "graine-ahead-alice",
@@ -1668,7 +1791,7 @@ mod tests {
         let key = decode_base64_to_32_bytes(&key_b64(seed)).expect("key");
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
         let out = send_messages_background_with_key(
-            &temp_dir(tag),
+            &dir_holding(tag, &alice_state),
             &alice_state,
             &key_b64(seed),
             &format!("{tag}-alice"),
@@ -1755,7 +1878,7 @@ mod tests {
         let frame =
             super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
         let out = send_messages_background_with_key(
-            &temp_dir(tag),
+            &dir_holding(tag, &alice_state),
             &alice_state,
             &key_b64(19),
             &format!("{tag}-alice"),
@@ -1860,7 +1983,7 @@ mod tests {
             let key = decode_base64_to_32_bytes(&key_b64(20 + n)).expect("key");
             let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
             let out = send_messages_background_with_key(
-                &temp_dir(&format!("{tag}-{n}")),
+                &dir_holding(&format!("{tag}-{n}"), &alice_state),
                 &alice_state,
                 &key_b64(20 + n),
                 &alice_id,
@@ -2147,6 +2270,35 @@ mod tests {
             std::fs::read(dir.join("mls.bin")).unwrap(),
             b"a newer state"
         );
+    }
+
+    /// A foreground write that lands between the build and the staging (a checkpoint, a key move's
+    /// re-seal) refuses the staging, so the commit never reaches the server.
+    #[test]
+    fn a_welcome_is_not_staged_over_a_file_that_moved_while_it_was_built() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("nostage");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(55)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("nostage", &state);
+        std::fs::write(dir.join("mls.bin"), b"written by the foreground").unwrap();
+        let carol = MlsManager::load_or_create("nostage-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(55),
+            "nostage-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "nostage-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(prepared["reason"], "stage-failed");
+        assert_eq!(install_staged_welcome(&dir, &gid)["reason"], "not-staged");
     }
 
     /// The settlement of a stale refusal: the same bytes are not offered again, and any write to
@@ -2445,5 +2597,162 @@ mod tests {
         assert_eq!(out["reason"], "signature-key-changed", "{out}");
         assert!(!staged_welcome_path(&dir, &gid).exists());
         assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+    }
+
+    /// User decision 2026-10-22: the owner's phone is told, even shut, when a device joins the
+    /// account. A commit adding one reaches it as a control frame (Android) or inside a catch-up
+    /// (both platforms), and BOTH answers carry the alert's key - whatever else they say.
+    #[test]
+    fn a_commit_adding_an_own_device_carries_the_owner_alert_on_both_push_paths() {
+        let tag = "own-device";
+        let (mut alice, bob, group_id) = joined_pair(tag);
+        let key = decode_base64_to_32_bytes(&key_b64(23)).expect("key");
+        let bob_behind = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+
+        // alice serves the welcome request of bob's new laptop.
+        let laptop = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-laptop", None)
+            .expect("laptop load_or_create");
+        let kp = laptop.generate_key_package().expect("laptop key package");
+        let (commit, _w, _a, _s) = alice
+            .add_members_bulk(&group_id, &[&kp])
+            .expect("add the laptop");
+        alice.merge_pending_commit_for(&group_id).expect("merge");
+
+        let as_control_frame = decrypt_push_message_with_key(
+            &bob_behind,
+            &key_b64(23),
+            &format!("{tag}-bob"),
+            "dev-b",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-alice"),
+                ciphertext: &commit,
+            },
+            PushLanguage::French,
+        );
+        assert_eq!(as_control_frame["reason"], "control-frame");
+        let keys = as_control_frame["ownDeviceAdded"]
+            .as_array()
+            .expect("the alert rides on the refusal");
+        assert_eq!(keys.len(), 1, "{as_control_frame}");
+        assert!(keys[0]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("{tag}-bob:dev-laptop|")));
+
+        // The catch-up: the commit replayed in memory, then a message decrypted at the new epoch.
+        let frame =
+            super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
+        let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let out = send_messages_background_with_key(
+            &dir_holding(tag, &alice_state),
+            &alice_state,
+            &key_b64(23),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &[entry("m-1", &group_id, &frame)],
+        )
+        .expect("alice encrypts");
+        let info = decrypt_push_message_with_commits_with_key(
+            &bob_behind,
+            &key_b64(23),
+            &format!("{tag}-bob"),
+            "dev-b",
+            &[commit],
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-alice"),
+                ciphertext: &ciphertexts_of(&out)[0],
+            },
+            PushLanguage::French,
+        );
+        assert_eq!(info["ok"], true, "{info}");
+        assert_eq!(info["ownDeviceAdded"], as_control_frame["ownDeviceAdded"]);
+
+        // A contact's phone merging the same commit has no owner alert.
+        let contact = decrypt_push_message_with_key(
+            &alice_state,
+            &key_b64(23),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-alice"),
+                ciphertext: &ciphertexts_of(&out)[0],
+            },
+            PushLanguage::French,
+        );
+        assert!(contact.get("ownDeviceAdded").is_none(), "{contact}");
+    }
+
+    /// The phone serving its own account's new device in the background names it for the local
+    /// notification, and the event reaches `mls.bin` - where the app takes it for the in-app alert -
+    /// ONLY with the accepted install: a discarded Add leaves no event for anyone to announce.
+    #[test]
+    fn a_background_add_of_an_own_device_reaches_the_app_only_once_accepted() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let tag = "own-welcome";
+        let (alice, _bob, gid) = joined_pair(tag);
+        let key = decode_base64_to_32_bytes(&key_b64(29)).expect("key");
+        let state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let laptop = MlsManager::load_or_create(&format!("{tag}-alice"), "dev-laptop", None)
+            .expect("laptop");
+        let kp = STANDARD.encode(laptop.generate_key_package().expect("kp"));
+        let requester = format!("{tag}-alice:dev-laptop");
+        let prepare = |dir: &Path| {
+            prepare_welcome_background_with_key(
+                dir,
+                &state,
+                &key_b64(29),
+                &format!("{tag}-alice"),
+                "dev-a",
+                &WelcomeRequest {
+                    group_id: &gid,
+                    requester: &requester,
+                    key_package_b64: &kp,
+                },
+            )
+        };
+        let owner_events = |dir: &Path| {
+            let saved = std::fs::read(dir.join("mls.bin")).expect("mls.bin");
+            let mut reloaded =
+                MlsManager::load_with_key(&format!("{tag}-alice"), "dev-a", Some(saved), &key)
+                    .expect("reload");
+            reloaded
+                .take_device_events()
+                .into_iter()
+                .filter(|e| e.is_owner_alert(&format!("{tag}-alice"), "dev-a"))
+                .count()
+        };
+
+        // Refused by the server: discarded, and nothing for the app to announce.
+        let refused_dir = dir_holding(&format!("{tag}-refused"), &state);
+        let out = prepare(&refused_dir);
+        assert_eq!(
+            out["ownDeviceAdded"].as_array().map(Vec::len),
+            Some(1),
+            "{out}"
+        );
+        discard_staged_welcome(&refused_dir, &gid, RefusalMemo::Nothing);
+        assert_eq!(
+            owner_events(&refused_dir),
+            0,
+            "a discarded Add announces nothing"
+        );
+
+        // Accepted: installed, and the event is the app's.
+        let accepted_dir = dir_holding(&format!("{tag}-accepted"), &state);
+        let out = prepare(&accepted_dir);
+        let keys = out["ownDeviceAdded"]
+            .as_array()
+            .expect("named for the notice");
+        assert_eq!(keys.len(), 1, "{out}");
+        assert!(keys[0]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("{requester}|")));
+        assert_eq!(install_staged_welcome(&accepted_dir, &gid)["ok"], true);
+        assert_eq!(owner_events(&accepted_dir), 1, "the installed Add's event");
     }
 }

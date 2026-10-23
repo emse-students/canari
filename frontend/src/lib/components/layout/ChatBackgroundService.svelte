@@ -28,6 +28,7 @@
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
+    withholdsResetForUnreadKey,
     isVaultRefusal,
     type LoginErrorCode,
     provesLocalStateExists,
@@ -359,8 +360,17 @@
    * by a session.
    */
   let deviceHoldsOtherAccount = $state(false);
+  /**
+   * The last unlock could not READ the hardware-held key (`hardware_key_unreadable`): it may still
+   * exist, so the gate withholds the reset - which would erase data a retry opens - and says why. Set
+   * and cleared by every failed unlock (`applyPinFailure`), and cleared with the other flag.
+   */
+  let keyReadRefused = $state(false);
   $effect(() => {
     if (globalSession.isLoggedIn) deviceHoldsOtherAccount = false;
+  });
+  $effect(() => {
+    if (globalSession.isLoggedIn) keyReadRefused = false;
   });
   let pinLoading = $state(false);
   /** The PIN typed on the gate, bound to `PinModal` so a refusal can empty it (`refusePinAttempt`). */
@@ -432,6 +442,7 @@
       return;
     }
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
+    keyReadRefused = withholdsResetForUnreadKey(code);
     // A TYPED PIN CAN MEET ANOTHER ACCOUNT'S STATE TOO, not only a saved unlock: `mls.owner` names
     // that account when this one's key does not open `mls.bin`. Read on every path, or the keypad
     // path offered the reset the saved-unlock path withheld.
@@ -634,6 +645,7 @@
     // The refused account leaves with its session: kept, the flag withheld the reset from the NEXT
     // account's gate on this shell (the root layout outlives `/login`), which may be the owner's.
     deviceHoldsOtherAccount = false;
+    keyReadRefused = false;
     _loginInProgress = false;
     globalSession.isLoginInProgress = false;
 
@@ -707,6 +719,7 @@
    */
   async function handlePinSignOut() {
     deviceHoldsOtherAccount = false;
+    keyReadRefused = false;
     appendLog('[AUTH] Sign-out from the PIN gate - ending the session, keeping the local state.');
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
@@ -1961,6 +1974,13 @@
       pinError = m.auth_pin_reset_blocked_other_account();
       return;
     }
+    if (keyReadRefused) {
+      appendLog(
+        '[PIN_RESET] REFUSED - the hardware-held key could not be read but may exist; a reset would erase data a retry opens.'
+      );
+      pinError = m.auth_pin_reset_withheld_key_unreadable();
+      return;
+    }
     pinError = '';
     pinLoading = true;
     pinStep = m.auth_pin_step_resetting();
@@ -2065,8 +2085,12 @@
   isLoading={pinLoading}
   loadingStep={pinStep}
   isFirstSetup={isFirstPinSetup}
-  onForgotPinReset={deviceHoldsOtherAccount ? undefined : handlePinReset}
-  resetWithheldNotice={deviceHoldsOtherAccount ? m.auth_pin_reset_blocked_other_account() : ''}
+  onForgotPinReset={deviceHoldsOtherAccount || keyReadRefused ? undefined : handlePinReset}
+  resetWithheldNotice={deviceHoldsOtherAccount
+    ? m.auth_pin_reset_blocked_other_account()
+    : keyReadRefused
+      ? m.auth_pin_reset_withheld_key_unreadable()
+      : ''}
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
   account={globalSession.userId}
 />

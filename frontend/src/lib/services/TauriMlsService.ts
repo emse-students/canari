@@ -34,7 +34,7 @@ import { getLocale } from '$lib/i18n';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
-import { keystoreCommand } from './keystoreCommands';
+import { DELETE_DEVICE_KEY_COMMAND } from './keystoreCommands';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
@@ -1131,9 +1131,11 @@ export class TauriMlsService extends BaseMlsService {
         deviceId: this.deviceId,
       });
     } catch (e) {
+      // Through the at-rest guard: an entry holding a phone's hardware-held key is never deleted
+      // here (its account's marker refuses it) - the change moved no data, and that key still opens it.
       console.error('[MLS][Tauri] Keystore refused the new device key - deleting its entry:', e);
-      await invoke(keystoreCommand('deleteKeyBytes'), {
-        payload: { alias: keystoreAlias(this.userId, this.deviceId) },
+      await invoke(DELETE_DEVICE_KEY_COMMAND, {
+        alias: keystoreAlias(this.userId, this.deviceId),
       }).catch((d) =>
         console.error('[MLS][Tauri] Deleting the keystore entry after a refusal failed too:', d)
       );

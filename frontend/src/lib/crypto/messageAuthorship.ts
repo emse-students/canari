@@ -12,7 +12,7 @@
  * the exact `AppMessage` bytes the author sent - which hold the message id, the author's timestamp
  * and the content - and `author` its `userId:deviceId`. The group id stops a proof being replayed
  * into another conversation. The key is the device's MLS credential key, the one Graine v2's
- * endorsement uses, and the descriptor shares Graine v2's length-prefixed encoding ({@link Writer}).
+ * endorsement uses, and the descriptor shares Graine v2's length-prefixed encoding ({@link GraineFieldWriter}).
  *
  * Protocol: `docs/wiki/protocols/history-reconciliation.md`, "Restored history carries its author's
  * signature". The shared vector in `messageAuthorship.test.ts` and `mls-core/tests/authored_frames.rs`
@@ -21,7 +21,7 @@
 
 import protobuf from 'protobufjs/minimal.js';
 import { canari } from '$lib/proto/canari.js';
-import { Writer, type GraineSignatureEngine } from '$lib/crypto/graineV2';
+import { GraineFieldWriter, type GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import type { DevicePin } from '$lib/mls-client/deviceTrust';
 import { canonicalIdentity } from '$lib/mls-client/leafIdentity';
@@ -70,7 +70,7 @@ export async function authorDescriptor(
   body: Uint8Array
 ): Promise<Uint8Array> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', body as BufferSource));
-  const out = new Writer();
+  const out = new GraineFieldWriter();
   out.field(utf8(AUTHOR_DESCRIPTOR_LABEL));
   out.field(utf8(groupId));
   out.field(utf8(author));

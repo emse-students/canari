@@ -764,11 +764,31 @@ export class MlsDeliveryApi {
     }
     if (!res.ok) return { kind: 'unanswered', detail: `HTTP ${res.status}` };
     try {
-      const d = (await res.json()) as { keys?: unknown };
+      const d = (await res.json()) as { keys?: unknown; firstSeen?: unknown };
       if (!Array.isArray(d.keys) || !d.keys.every((k) => typeof k === 'string')) {
         return { kind: 'unanswered', detail: 'a 200 with no key list in it' };
       }
-      return { kind: 'keys', keys: (d.keys as string[]).map((k) => fromBase64(k)) };
+      const keys = (d.keys as string[]).map((k) => fromBase64(k));
+      if (!Array.isArray(d.firstSeen)) return { kind: 'keys', keys };
+      // A malformed entry is dropped, never given a date: an undated key reads as OLD, the side
+      // that announces nothing.
+      const firstSeen: Array<{ key: Uint8Array; firstSeenAt: number }> = [];
+      let dropped = 0;
+      for (const entry of d.firstSeen as unknown[]) {
+        const e = entry as { signatureKey?: unknown; firstSeenAt?: unknown };
+        const at = typeof e?.firstSeenAt === 'string' ? Date.parse(e.firstSeenAt) : NaN;
+        if (typeof e?.signatureKey !== 'string' || Number.isNaN(at)) {
+          dropped++;
+          continue;
+        }
+        firstSeen.push({ key: fromBase64(e.signatureKey), firstSeenAt: at });
+      }
+      if (dropped > 0) {
+        console.error(
+          `[MLS] ${dropped} malformed key age(s) for ${deviceId.slice(0, 12)}... dropped`
+        );
+      }
+      return { kind: 'keys', keys, firstSeen };
     } catch (e) {
       return { kind: 'unanswered', detail: `unreadable body: ${String(e).slice(0, 120)}` };
     }

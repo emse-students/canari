@@ -72,6 +72,26 @@ function writeRefused(own: OwnDevice, entries: RefusedEntry[]): void {
 }
 
 /**
+ * Every device this device remembers as refused, as `userId:deviceId` (canonical, `canonicalUserId`),
+ * oldest first - what the owner's in-app notice of a refused device of their own is built from
+ * (`deviceNotices.svelte.ts`). An entry {@link isRefusedDevice} lifted is no longer listed.
+ */
+export function listRefusedDevices(own: OwnDevice): string[] {
+  return readRefused(own).map((e) => e.identity);
+}
+
+/** Who is told when a refusal is recorded; one listener, the new-device notices. */
+let refusalListener: ((identity: string) => void) | null = null;
+
+/**
+ * Registers the one listener told of every refusal {@link recordRefusedDevice} records (`null`
+ * removes it). A listener that throws is logged and costs only its own notice.
+ */
+export function setRefusedDeviceListener(listener: ((identity: string) => void) | null): void {
+  refusalListener = listener;
+}
+
+/**
  * Whether `userId:deviceId` stays refused for a changed key by this device - the caller then does
  * not fetch a KeyPackage for it at all. An entry a later fact disproves (see the module doc) is
  * LIFTED here, with a line saying why, and the device is fetched again.
@@ -102,7 +122,8 @@ export async function isRefusedDevice(
 
 /**
  * Remembers a refusal when no retry is expected to lift it (`signature-key-changed`), with the pin's
- * reaffirmation count at that moment; any other reason is left to the next sweep.
+ * reaffirmation count at that moment; any other reason is left to the next sweep. The listener
+ * ({@link setRefusedDeviceListener}) is told of the refusal.
  *
  * @returns whether the refusal was recorded.
  */
@@ -129,6 +150,13 @@ export async function recordRefusedDevice(
     `[TRUST] ${sanitizeForLog(identity)} remembered as refused - no KeyPackage is fetched for it ` +
       `until it is shown holding its pinned key or its pin goes`
   );
+  if (refusalListener) {
+    try {
+      refusalListener(identity);
+    } catch (e) {
+      console.error('[TRUST] the refused-device listener failed - no notice for this refusal:', e);
+    }
+  }
   return true;
 }
 

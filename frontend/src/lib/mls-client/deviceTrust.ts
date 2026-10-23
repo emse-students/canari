@@ -1,4 +1,4 @@
-import { canonicalUserId, deviceIdOfLeaf, userIdOfLeaf } from './leafIdentity';
+import { canonicalIdentity, canonicalUserId, deviceIdOfLeaf, userIdOfLeaf } from './leafIdentity';
 import type { SkippedKeyPackageReason } from './skippedKeyPackage';
 
 /**
@@ -53,8 +53,8 @@ export type LeafTrust = 'first-sight' | 'pinned' | 'key-changed';
  * day, and an event per admission would announce the same device again each time. An external
  * commit's own admission is recorded the same way, once the joiner's commit is merged.
  *
- * The record the new-device alert and the contact line are built from (`deviceEventAudience`).
- * Taken with `IMlsService.takeDeviceEvents`.
+ * The record both new-device notices are built from - the owner's alert and a contact's "X added a
+ * device" line (`deviceNotices.svelte.ts`), handed over through `IMlsService.setDeviceEventConsumer`.
  */
 export interface DeviceEvent {
   groupId: string;
@@ -67,6 +67,34 @@ export interface DeviceEvent {
   trust: LeafTrust;
   /** The committer's verified identity; `null` for a key change found in a joined tree. */
   addedBy: string | null;
+  /**
+   * Whether the admitted device's user already had a leaf in the tree before the commit: the commit
+   * gave a member another device, rather than bringing a new member in with theirs. Absent on an
+   * event recorded before the field existed, which is never announced.
+   */
+  memberAlreadyPresent?: boolean;
+}
+
+/**
+ * Whether an event is "a device was added" at all - the twin of `DeviceEvent::announces_new_device`
+ * in Rust, held to the same table (`mls-core/tests/fixtures/device_notices.json`):
+ * - a signed commit admitted it (`addedBy`; a changed key found in a joined tree is no admission);
+ * - a `pinned` key is the SAME device coming back - a resync, a heal, a kick and re-add under the
+ *   same key - and is never announced;
+ * - a first sight is announced only for a user who was already in the conversation: a member joining
+ *   with their devices is the member-added line, not one line per device;
+ * - a key other than the pinned one is announced wherever it appears, since nothing proves it.
+ */
+export function announcesNewDevice(event: DeviceEvent): boolean {
+  if (event.addedBy === null) return false;
+  switch (event.trust) {
+    case 'key-changed':
+      return true;
+    case 'first-sight':
+      return event.memberAlreadyPresent === true;
+    case 'pinned':
+      return false;
+  }
 }
 
 /**
@@ -75,17 +103,20 @@ export interface DeviceEvent {
  *   the app and as a local notification, whatever kind of group the commit came from;
  * - `contact-line`: everyone else, as a discreet "X added a device" line, in PRIVATE conversations
  *   only (a 1:1 or a group). Never in a community or salon key group, where it would be noise;
- * - `none`: not an admission (a changed key found in a joined tree names no committer), or a
- *   contact's device placed in a community key group.
+ * - `none`: not a new device ({@link announcesNewDevice}: a pinned re-add, a member joining, a
+ *   changed key found in a joined tree), the processing device itself, or a contact's device placed
+ *   in a community key group.
  *
  * THE KIND OF GROUP IS A PLACEMENT, NOT A FILTER ON WHAT IS RECORDED. The MLS layer records every
  * new device whatever group admitted it - it cannot tell a key group from a conversation, and the
  * first sight of a contact's new device is often in a community they share. The caller asks this
- * rule once per conversation it might write the line in, so a device first seen in a community
- * still reaches the private conversations shared with its owner.
+ * rule once per conversation it might write the line in (`deliverDeviceEvents`), so a device first
+ * seen in a community still reaches the private conversations shared with its owner.
  *
- * THE ONE PLACE THIS RULE IS WRITTEN. The event itself comes from a signed commit this client merged
- * (`DeviceEvent`), never from a server message: a compromised server would simply not send one.
+ * THE ONE PLACE THIS RULE IS WRITTEN for the app; the background engines apply its owner half in Rust
+ * (`DeviceEvent::is_owner_alert`) against the same table. The event itself comes from a signed commit
+ * this client merged (`DeviceEvent`), never from a server message: a compromised server would simply
+ * not send one.
  */
 export type DeviceEventAudience = 'owner-alert' | 'contact-line' | 'none';
 
@@ -93,25 +124,81 @@ export type DeviceEventAudience = 'owner-alert' | 'contact-line' | 'none';
  * Applies the rule above to one event.
  *
  * @param ctx.ownUserId - the signed-in account (compared case-insensitively, as identities are).
+ * @param ctx.ownDeviceId - this device: the device that was added never alerts itself about itself.
  * @param ctx.isKeyDistributionGroup - whether the conversation the line would be written in is a
  *   community or salon key group (`IMlsService.isDistributionGroup`); `false` for a 1:1 or a group.
  */
 export function deviceEventAudience(
   event: DeviceEvent,
-  ctx: { ownUserId: string; isKeyDistributionGroup: boolean }
+  ctx: { ownUserId: string; ownDeviceId: string; isKeyDistributionGroup: boolean }
 ): DeviceEventAudience {
-  if (event.addedBy === null) return 'none';
-  if (userIdOfLeaf(event.identity) === canonicalUserId(ctx.ownUserId)) return 'owner-alert';
+  if (!announcesNewDevice(event)) return 'none';
+  // An identity that names no device (`canonicalIdentity`) announces nothing to anyone.
+  const identity = canonicalIdentity(event.identity);
+  if (identity === null) return 'none';
+  if (userIdOfLeaf(identity) === canonicalUserId(ctx.ownUserId)) {
+    return deviceIdOfLeaf(identity) === ctx.ownDeviceId ? 'none' : 'owner-alert';
+  }
   return ctx.isKeyDistributionGroup ? 'none' : 'contact-line';
 }
 
 /**
  * The key a device event is de-duplicated on: one device under one key is announced once, however
- * many groups admitted it.
+ * many groups admitted it. The identity in its canonical form (`canonicalIdentity`), so it equals
+ * Rust's `DeviceEvent::notice_key`; `null` for an identity that names no device - such an event has
+ * the audience `'none'` and is never keyed.
  */
-export function deviceEventKey(event: DeviceEvent): string {
-  // The user half is case-insensitive and the device half exact, as `identity_names` reads them.
-  return `${userIdOfLeaf(event.identity)}:${deviceIdOfLeaf(event.identity)}|${event.keyFingerprint}`;
+export function deviceEventKey(event: DeviceEvent): string | null {
+  const identity = canonicalIdentity(event.identity);
+  return identity === null ? null : `${identity}|${event.keyFingerprint}`;
+}
+
+/**
+ * The fingerprint `DeviceEvent.keyFingerprint` carries, computed from a key's bytes: the first 8
+ * bytes of its SHA-256, hex - Rust's `key_fingerprint`, held to one table
+ * (`mls-core/tests/fixtures/key_fingerprints.json`). How the app finds, among a device's published
+ * keys, the one an event names.
+ */
+export async function keyFingerprintOf(key: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', key as BufferSource));
+  return Array.from(digest.slice(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * How recently a CONTACT's key must have been first seen by the server, against the moment this
+ * device learns of it, to be "X added a device". A device a heal brings back into a conversation
+ * was registered long before; one its owner just added was registered minutes or hours before.
+ * Past it the line is not written - a missed line rather than a false one (user: notices must not
+ * become noise). The owner's alert has no such bound (`isNewToItsOwner`).
+ */
+export const CONTACT_NEW_DEVICE_WINDOW_MS = 7 * 24 * 3600_000;
+
+/**
+ * Whether a device this device just saw is NEW TO ITS OWNER - the evidence a notice needs beyond
+ * `announcesNewDevice`, because "first sight by THIS device" is not "new": a fresh install, a
+ * restore, a pin dropped by the bound, or a heal re-adding a device that was never in a tree this
+ * device holds all show old devices for the first time.
+ *
+ * The evidence is the server's first sight of the device's key (`fetchDeviceSignatureKeys`'
+ * `firstSeen`), used ONLY TO SUPPRESS a notice, never to raise one - the signed commit stays the
+ * only source of a notice:
+ * - an undated key (`null`) predates the server's key history: old, never announced;
+ * - the owner's alert needs a key first seen after THIS device enrolled (`ownEnrolledAt`, the first
+ *   sight of its own key) - an old device of the account re-added on a young device says nothing,
+ *   and a device registered since this one enrolled is announced however late this device learns
+ *   of it;
+ * - a contact's line needs both that and a key first seen within
+ *   {@link CONTACT_NEW_DEVICE_WINDOW_MS} of `learnedAt`.
+ *
+ * Unknown own enrolment announces nothing: the rule has no baseline to compare with.
+ */
+export function isNewToItsOwner(
+  keyFirstSeenAt: number | null,
+  ctx: { learnedAt: number; ownEnrolledAt: number | null; isOwnAccount: boolean }
+): boolean {
+  if (keyFirstSeenAt === null || ctx.ownEnrolledAt === null) return false;
+  if (keyFirstSeenAt < ctx.ownEnrolledAt) return false;
+  return ctx.isOwnAccount || keyFirstSeenAt >= ctx.learnedAt - CONTACT_NEW_DEVICE_WINDOW_MS;
 }
 
 /** Whether a verdict lets the package be added. */

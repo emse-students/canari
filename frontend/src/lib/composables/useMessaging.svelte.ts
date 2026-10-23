@@ -98,6 +98,7 @@ import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/outbox';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
+import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import {
   clearControlRefusal,
   clearMessageControlRefusals,
@@ -225,6 +226,8 @@ export function useMessaging() {
     forgetSalonSendsOfEndedSession();
     // The refused control actions shown are the leaving account's; its persisted list stays its own.
     forgetControlRefusals();
+    // So are the new-device alerts on screen; its unseen ones stay persisted for its next session.
+    unregisterDeviceNotices();
   }
 
   /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */

@@ -18,9 +18,19 @@ import {
 import { toBase64 } from '$lib/utils/hex';
 import { encodeGraineEndorsementV2, graineSeedCommitment } from '$lib/crypto/graineV2';
 import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEngine';
+import {
+  encodeAdmissionVoucher,
+  encodeDirectAdmission,
+  mintInviteLinkGrant,
+  redeemInviteLinkGrant,
+} from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { handleDistributionFrame } from './frameHandler';
+import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
+import { BaseMlsService } from '$lib/services/BaseMlsService';
+import type { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
+  announceGraineRepair,
   graineRepairHoldObserver,
   holdGraineRepairs,
   markCommunityListed,
@@ -61,13 +71,42 @@ vi.mock('./graineMirror', () => ({ mirrorGraineSeed: vi.fn().mockResolvedValue(u
 
 /** Where each session becomes readable for the asker - computed by the server, never here. */
 const graineHistoryFloor = vi.fn();
+/** The community's roster - arrival dates, creator mark and admission vouchers (section 25). */
+const listWorkspaceMembers = vi.fn();
 vi.mock('$lib/services/ChannelService', () => ({
   ChannelService: class {
     graineHistoryFloor(...args: unknown[]) {
       return graineHistoryFloor(...args);
     }
+    listWorkspaceMembers(...args: unknown[]) {
+      return listWorkspaceMembers(...args);
+    }
   },
 }));
+
+/** An arrival before the admission proof existed: such a member is admitted by their date. */
+const BEFORE_THE_PROOF = '2026-01-01T00:00:00.000Z';
+/** An arrival after it: such a member needs a voucher. */
+const AFTER_THE_PROOF = '2026-12-01T00:00:00.000Z';
+
+/** A roster row as `listWorkspaceMembers` serves it. */
+function member(
+  userId: string,
+  joinedAt = BEFORE_THE_PROOF,
+  extra: { isCreator?: boolean; admissionVoucher?: string | null } = {}
+) {
+  return { id: `m-${userId}`, userId, role: 'member', joinedAt, ...extra };
+}
+
+beforeEach(() => {
+  // Every member admitted before the proof existed, so every row that is not about admission sees
+  // the past handed over exactly as before. The roots a device records are per account, durable.
+  localStorage.clear();
+  listWorkspaceMembers.mockReset();
+  listWorkspaceMembers.mockResolvedValue(
+    ['alice', 'bob', 'carol', 'newcomer'].map((id) => member(id))
+  );
+});
 
 const SEED = new Uint8Array(32).fill(3);
 
@@ -136,10 +175,39 @@ async function v2SeedFor(channelId: string, sessionId: string, firstIndex: numbe
  * a device that has left it. carol:dev-c is in the tree unless a test takes her out.
  */
 const tree = new Map<string, Uint8Array>();
+/**
+ * The leaves of the community's key group, as the admission gate observes them (section 25): every
+ * member of the default roster has a device in it, so each is rooted the first time it is read.
+ */
+let leaves: string[] = [];
+/**
+ * The trees are KEYED BY GROUP, as the MLS layer's are: `leaves` and `tree` are the COMMUNITY's key
+ * group (`communityGroup`), a private salon's own group (`g-private`) holds `salonLeaves` alone.
+ * A gate that read a salon's tree as the community's would see different members here.
+ */
+let communityGroup = 'g-1';
+let salonLeaves: string[] = [];
+/** Departures per group then user (`removalEpochs`), as #2268 records them. */
+const departuresByGroup = new Map<string, Map<string, number[]>>();
 let published: DeviceSignatureKeys = { kind: 'keys', keys: [] };
 function graineMls(extra: Record<string, unknown> = {}) {
+  const leavesOf = (groupId: string) =>
+    groupId === communityGroup ? leaves : groupId === 'g-private' ? salonLeaves : [];
   return {
-    memberSignatureKey: async (_groupId: string, identity: string) => tree.get(identity) ?? null,
+    distributionGroupFor: (scope: DistributionScope) =>
+      scope.kind === 'workspace' ? communityGroup : 'g-private',
+    memberSignatureKey: async (groupId: string, identity: string) =>
+      leavesOf(groupId).includes(identity) || groupId === communityGroup
+        ? (tree.get(identity) ?? null)
+        : null,
+    getGroupMemberIdentities: async (groupId: string) => [...leavesOf(groupId)],
+    getEpoch: () => 5,
+    // Every group drained: a held commit is admissionGate.test.ts's row.
+    isGroupDrained: () => true,
+    whenGroupDrained: async () => undefined,
+    pinnedSignatureKeys: async () => null,
+    removalEpochs: async (groupId: string, userId: string) =>
+      departuresByGroup.get(groupId)?.get(userId) ?? [],
     fetchDeviceSignatureKeys: async () => published,
     graineSignatureEngine: () => webCryptoEngine,
     getDeviceId: () => 'alice-laptop',
@@ -149,6 +217,10 @@ function graineMls(extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   tree.clear();
   tree.set('carol:dev-c', CAROL_DEVICE_PK);
+  leaves = ['alice:alice-laptop', 'bob:dev-b', 'carol:dev-c', 'newcomer:newcomer-web'];
+  communityGroup = 'g-1';
+  salonLeaves = [];
+  departuresByGroup.clear();
   published = { kind: 'keys', keys: [] };
 });
 function fakeStorage(seed: StoredGraineSession[] = []) {
@@ -195,7 +267,32 @@ function wire(storage: IStorage) {
   });
 }
 
-afterEach(() => setGraineRuntime(null));
+/**
+ * Closes every repair hold a test left open. The hold depth is module state that `setGraineRuntime`
+ * deliberately keeps, since in production the MLS service closes what it opened. A test interrupted
+ * between its hold and its release (a timeout under suite load) used to leave the depth at 1, and
+ * every later test expecting an announcement then failed: one timeout became six failures. The probe
+ * is announced through the public path, and releases go on until it is delivered, which is the
+ * moment the depth is back to 0.
+ */
+function closeLeftoverHolds() {
+  let delivered = false;
+  setGraineRepairListener(() => {
+    delivered = true;
+  });
+  announceGraineRepair(['probe']);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  for (let closed = 0; !delivered; closed++) {
+    if (closed === 16) throw new Error('a repair hold could not be closed after 16 releases');
+    releaseGraineRepairs();
+  }
+  warn.mockRestore();
+}
+
+afterEach(() => {
+  closeLeftoverHolds();
+  setGraineRuntime(null);
+});
 
 describe('a seed arriving on the distribution group', () => {
   it('is stored with no counters of ours', async () => {
@@ -423,12 +520,14 @@ describe('a seed arriving on the distribution group', () => {
     const repaired: string[][] = [];
     setGraineRepairListener((ids) => repaired.push(ids));
 
-    holdGraineRepairs();
+    // Signed BEFORE the hold: 26 endorsements are the heaviest work in this file, and a test cut off
+    // by a timeout should not be cut off holding the drain open.
     const salons = ['chan-1', 'chan-2', 'chan-3'];
-    for (let i = 0; i < 26; i++) {
-      const channelId = salons[i % 3];
-      await handleDistributionFrame(frame(await v2SeedFor(channelId, `sess-${i}`, 0)));
-    }
+    const seeds = await Promise.all(
+      Array.from({ length: 26 }, (_, i) => v2SeedFor(salons[i % 3], `sess-${i}`, 0))
+    );
+    holdGraineRepairs();
+    for (const seed of seeds) await handleDistributionFrame(frame(seed));
     // Twenty-six seeds stored, nothing re-read yet: the drain still has frames to read.
     expect(repaired).toEqual([]);
 
@@ -1736,6 +1835,499 @@ describe('a seed this device already holds', () => {
   });
 });
 
+describe('the past goes only to an admission this device can verify (section 25)', () => {
+  /** dave joined after the proof existed, with no voucher, and his device is in the tree. */
+  const DAVE_DEVICE_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 200 - i);
+  let DAVE_DEVICE_PK: Uint8Array;
+  beforeAll(async () => {
+    DAVE_DEVICE_PK = await ed25519PublicKeyOf(DAVE_DEVICE_SECRET);
+  });
+  beforeEach(() => {
+    tree.set('dave:dev-d', DAVE_DEVICE_PK);
+    leaves.push('dave:dev-d');
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    // A public salon this device listed (#2262): what is withheld here is the admission alone.
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+    graineHistoryFloor.mockReset();
+  });
+
+  const community: StoredGraineSession[] = [
+    {
+      workspaceId: 'ws-1',
+      channelId: 'chan-1',
+      sessionId: 's-1',
+      senderId: 'alice',
+      seedB64: toBase64(SEED),
+      firstIndex: 0,
+      createdAt: 1,
+    },
+  ];
+
+  function wireAnswerer() {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async (id: string) => community.find((c) => c.sessionId === id) ?? null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => community,
+        countGraineSessionsForWorkspace: async () => community.length,
+      } as unknown as IStorage,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: graineMls({ sendMessage }),
+    });
+    return sendMessage;
+  }
+
+  function ask(kind: 'history' | 'sessions') {
+    return {
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'newcomer',
+      senderDeviceId: 'newcomer-web',
+      plaintext: encodeAppMessage(
+        mkGraineRequest({
+          workspaceId: 'ws-1',
+          kind:
+            kind === 'history'
+              ? canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY
+              : canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+          sessionIds: kind === 'sessions' ? ['s-1'] : [],
+          answererUserId: 'alice',
+          requestId: 'r-a',
+        })
+      ),
+    };
+  }
+
+  /** A direct voucher: `signer` admitted `subject`, signed with `secret`. */
+  async function directVoucher(
+    subject: string,
+    signer: { userId: string; deviceId: string },
+    secret: Uint8Array,
+    workspaceId = 'ws-1'
+  ) {
+    const statement = {
+      workspaceId,
+      subjectUserId: subject,
+      signer,
+      place: { keyGroupId: 'g-1', epoch: 5 },
+      issuedAt: 1_800_000_000_000,
+    };
+    return encodeAdmissionVoucher({
+      kind: 'direct',
+      ...statement,
+      signature: await webCryptoEngine.signWithSessionKey(secret, encodeDirectAdmission(statement)),
+    });
+  }
+
+  /** The roster with `newcomer` arrived after the proof existed, carrying `voucher`. */
+  function newcomerArrives(voucher: string | null) {
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('dave', AFTER_THE_PROOF),
+      member('newcomer', AFTER_THE_PROOF, { admissionVoucher: voucher }),
+    ]);
+  }
+
+  const carolDevice = { userId: 'carol', deviceId: 'dev-c' };
+
+  it('hands no past to a newcomer whose admission carries no proof, and says why', async () => {
+    newcomerArrives(null);
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    // The community SHARES its past - and this member's admission is the server's word alone.
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(info.mock.calls.flat().join(' ')).toContain('admission is not proven');
+    info.mockRestore();
+  });
+
+  it('hands the past to a newcomer a rooted member admitted directly', async () => {
+    newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+    const sendMessage = wireAnswerer();
+
+    await handleDistributionFrame(ask('history'));
+
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds?.map((x) => x.sessionId)).toEqual(['s-1']);
+  });
+
+  it('hands the past to a newcomer who followed a link a rooted member stood behind', async () => {
+    const grant = await mintInviteLinkGrant(
+      'ws-1',
+      carolDevice,
+      { keyGroupId: 'g-1', epoch: 5 },
+      1_800_000_000_000,
+      // An expiry no run of this suite reaches - the expiry itself is admissionGate.test.ts's row.
+      4_000_000_000_000,
+      webCryptoEngine,
+      (m) => webCryptoEngine.signWithSessionKey(CAROL_DEVICE_SECRET, m)
+    );
+    newcomerArrives(
+      encodeAdmissionVoucher(await redeemInviteLinkGrant(grant, 'newcomer', webCryptoEngine))
+    );
+    const sendMessage = wireAnswerer();
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds).toHaveLength(1);
+  });
+
+  it('refuses a voucher signed by a member whose own admission is not proven', async () => {
+    // dave is in the tree with a real key and signs a real voucher: the chain still has no root.
+    newcomerArrives(
+      await directVoucher('newcomer', { userId: 'dave', deviceId: 'dev-d' }, DAVE_DEVICE_SECRET)
+    );
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('accepts a chain: a voucher signed by a member who was admitted by a rooted one', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('dave', AFTER_THE_PROOF, {
+        admissionVoucher: await directVoucher('dave', carolDevice, CAROL_DEVICE_SECRET),
+      }),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await directVoucher(
+          'newcomer',
+          { userId: 'dave', deviceId: 'dev-d' },
+          DAVE_DEVICE_SECRET
+        ),
+      }),
+    ]);
+    const sendMessage = wireAnswerer();
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a voucher that admits somebody else, copied onto the newcomer row', async () => {
+    newcomerArrives(await directVoucher('dave', carolDevice, CAROL_DEVICE_SECRET));
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    info.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('refuses a voucher for another community, or one whose signature does not hold', async () => {
+    for (const voucher of [
+      await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET, 'ws-other'),
+      await directVoucher('newcomer', carolDevice, DAVE_DEVICE_SECRET),
+    ]) {
+      localStorage.clear();
+      newcomerArrives(voucher);
+      const sendMessage = wireAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(warn.mock.calls.flat().join(' ')).toContain('REFUSED admission voucher');
+      info.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it('answers an unproven repair as joined: the seed floored at the newcomer arrival', async () => {
+    newcomerArrives(null);
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('sessions'));
+
+    // They still read everything from their arrival on: the server places that floor.
+    expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
+    const seeds = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds;
+    expect(Number(seeds?.[0].firstIndex)).toBe(4);
+    info.mockRestore();
+  });
+
+  it('keeps the roots it recorded first: a later backdated arrival does not make a member rooted', async () => {
+    newcomerArrives(null);
+    wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await handleDistributionFrame(ask('history'));
+
+    // The server now claims the newcomer arrived before the proof existed.
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', BEFORE_THE_PROOF),
+    ]);
+    const sendMessage = wireAnswerer();
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('roots the creator of the community, the one member nobody else admitted', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice', AFTER_THE_PROOF),
+      member('newcomer', AFTER_THE_PROOF, { isCreator: true }),
+    ]);
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    info.mockRestore();
+  });
+
+  /**
+   * THE ASK ARRIVES ON THE KEY GROUP, SO IT IS THAT GROUP'S CURRENT WORK: the gate run inside it never
+   * sees the group drained, and a voucher not observed before the ask would stay unobserved until a
+   * restart. The ask is parked instead and decided again by the drain that follows it.
+   */
+  describe('an ask that arrives before its voucher could be observed', () => {
+    let drained = false;
+    let drainWaiters: Array<() => void> = [];
+    beforeEach(() => {
+      drained = false;
+      drainWaiters = [];
+    });
+    afterEach(() => {
+      clearParkedAsks();
+      vi.restoreAllMocks();
+    });
+
+    /** The answerer, with its key group not drained until {@link drainNow}. */
+    function wireUndrainedAnswerer() {
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      setGraineRuntime({
+        storage: {
+          getGraineSession: async (id: string) => community.find((c) => c.sessionId === id) ?? null,
+          saveGraineSession: async () => undefined,
+          getGraineSessionsForWorkspace: async () => community,
+          countGraineSessionsForWorkspace: async () => community.length,
+        } as unknown as IStorage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({
+          sendMessage,
+          isGroupDrained: () => drained,
+          whenGroupDrained: () =>
+            drained ? Promise.resolve() : new Promise<void>((wake) => drainWaiters.push(wake)),
+        }),
+      });
+      return sendMessage;
+    }
+    function drainNow() {
+      drained = true;
+      const woken = drainWaiters;
+      drainWaiters = [];
+      for (const wake of woken) wake();
+    }
+
+    it('answers a newcomer who asked at once, after the drain, with no restart', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      // Inside the ask's own frame: nothing observed, nothing answered, nothing refused.
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(parkedAskCount()).toBe(1);
+
+      drainNow();
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds?.map((x) => x.sessionId)).toEqual(['s-1']);
+      expect(parkedAskCount()).toBe(0);
+      info.mockRestore();
+    });
+
+    it('keeps refusing after the drain a voucher whose signer was removed before the observation', async () => {
+      // carol was removed at epoch 4; this device observes at epoch 5.
+      departuresByGroup.set('g-1', new Map([['carol', [4]]]));
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      expect(parkedAskCount()).toBe(1);
+
+      drainNow();
+      await vi.waitFor(() =>
+        expect(info.mock.calls.flat().join(' ')).toContain('not sending history to newcomer')
+      );
+      const said = info.mock.calls.flat().join(' ');
+      expect(said).toContain('deciding 1 parked ask(s) again');
+      expect(said).toContain(
+        'its signer carol was not admitted here when this device first saw it'
+      );
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(parkedAskCount()).toBe(0);
+      info.mockRestore();
+    });
+
+    it('keeps one ask per asking device, and drops the oldest past the bound, out loud', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      await handleDistributionFrame(ask('history'));
+      expect(parkedAskCount()).toBe(1);
+
+      for (let i = 0; i < MAX_PARKED_ASKS; i += 1) {
+        await handleDistributionFrame({ ...ask('history'), senderDeviceId: `newcomer-${i}` });
+      }
+      expect(parkedAskCount()).toBe(MAX_PARKED_ASKS);
+      expect(warn.mock.calls.flat().join(' ')).toContain(
+        'DROPPED the parked ask of newcomer:newcomer-web'
+      );
+      info.mockRestore();
+      warn.mockRestore();
+    });
+
+    it('parks a HISTORY ask and a SESSIONS repair of one device side by side, and answers both', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      await handleDistributionFrame(ask('sessions'));
+      expect(parkedAskCount()).toBe(2);
+
+      drainNow();
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+      info.mockRestore();
+    });
+
+    it('answers at once a repair naming only sessions it does not hold - "missing" needs no gate', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const repair = ask('sessions');
+      repair.plaintext = encodeAppMessage(
+        mkGraineRequest({
+          workspaceId: 'ws-1',
+          kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+          sessionIds: ['s-unknown'],
+          answererUserId: 'alice',
+          requestId: 'r-b',
+        })
+      );
+
+      await handleDistributionFrame(repair);
+
+      expect(parkedAskCount()).toBe(0);
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.missingSessionIds).toEqual(['s-unknown']);
+      warn.mockRestore();
+    });
+
+    it('forgets every parked ask at sign-out: the drain that follows answers nothing', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      await handleDistributionFrame(ask('history'));
+      expect(parkedAskCount()).toBe(1);
+
+      clearParkedAsks();
+      setGraineRuntime(null);
+      expect(parkedAskCount()).toBe(0);
+
+      drainNow();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(sendMessage).not.toHaveBeenCalled();
+      info.mockRestore();
+    });
+
+    /**
+     * THE JUNCTION, with no hand-fired drain: the ask is applied by the REAL scheduler of a real
+     * service, parks inside its own frame, and the scheduler finishing that frame is what answers it.
+     */
+    it('answers through the real scheduler: the ask parks in its frame, the frame ending answers it', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      abstract class Harness extends BaseMlsService {}
+      const svc = new (Harness as unknown as new (platform: 'web' | 'tauri') => BaseMlsService)(
+        'web'
+      );
+      // The last pull emptied the mailbox and the socket is open: only the scheduler decides.
+      Object.assign(svc, { mailboxEmptiedByAPull: true, isWsOpen: () => true });
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      setGraineRuntime({
+        storage: {
+          getGraineSession: async (id: string) => community.find((c) => c.sessionId === id) ?? null,
+          saveGraineSession: async () => undefined,
+          getGraineSessionsForWorkspace: async () => community,
+          countGraineSessionsForWorkspace: async () => community.length,
+        } as unknown as IStorage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({
+          sendMessage,
+          isGroupDrained: (g: string) => svc.isGroupDrained(g),
+          whenGroupDrained: (g: string) => svc.whenGroupDrained(g),
+        }),
+      });
+      const scheduler = (svc as unknown as { messageScheduler: MlsPerGroupScheduler })
+        .messageScheduler;
+      scheduler.enqueue({
+        senderId: 'newcomer',
+        ciphertext: new Uint8Array(1),
+        groupId: 'g-1',
+        isWelcome: false,
+        isCommit: false,
+      });
+
+      await scheduler.drain(async () => {
+        await handleDistributionFrame(ask('history'));
+        // Inside the frame: parked, unanswered.
+        expect(parkedAskCount()).toBe(1);
+        expect(sendMessage).not.toHaveBeenCalled();
+      });
+
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds?.map((x) => x.sessionId)).toEqual(['s-1']);
+      expect(parkedAskCount()).toBe(0);
+    });
+  });
+
+  it('hands nothing over, out loud, when the roster cannot be read', async () => {
+    listWorkspaceMembers.mockRejectedValue(new Error('offline'));
+    const sendMessage = wireAnswerer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(' ')).toContain('cannot verify');
+    warn.mockRestore();
+    info.mockRestore();
+  });
+});
+
 /**
  * AN ANSWER CARRIES ONLY THE SEEDS OF THE SALONS ITS KEY GROUP MAY READ.
  *
@@ -1760,6 +2352,62 @@ describe('the salon scope of an answer', () => {
     createdAt: 1,
   });
   const held = [sessionIn(PUBLIC, 's-pub'), sessionIn(PRIVATE, 's-priv')];
+
+  beforeEach(() => {
+    // The asker is a member admitted before the proof (a root, section 25): what these rows test
+    // is the salon scope of the answer, never the admission.
+    communityGroup = 'g-community';
+    leaves.push('mallory:mallory-web');
+    // The private salon's own key group: alice and mallory only.
+    salonLeaves = ['alice:alice-laptop', 'mallory:mallory-web'];
+    listWorkspaceMembers.mockResolvedValue(
+      ['alice', 'bob', 'carol', 'mallory'].map((id) => member(id))
+    );
+  });
+
+  it("judges admission on the COMMUNITY's key group, even when the first ask arrives on a salon's", async () => {
+    // The first ledger write on this device comes from a SESSIONS ask on the private salon's own
+    // group. The roots are the community's members, never that salon's: bob, in the community and
+    // not in the salon, still gets the past when he asks on the community's group.
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await handleDistributionFrame(
+      askOn(channelScope('ws-1', PRIVATE), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['s-priv'],
+      })
+    );
+    sendMessage.mockClear();
+
+    await handleDistributionFrame({
+      ...askOn(workspaceScope('ws-1'), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
+      }),
+      sender: 'bob',
+      senderDeviceId: 'dev-b',
+    });
+
+    expect(answered(sendMessage)).toEqual(['s-pub']);
+    info.mockRestore();
+  });
+
+  it("a removal from a salon's own key group is no removal from the community", async () => {
+    // mallory once left the salon's own group (epoch 3) and is back in it; the community never
+    // removed her. Her ask on the salon's group is judged by the community's removals.
+    departuresByGroup.set('g-private', new Map([['mallory', [3]]]));
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(channelScope('ws-1', PRIVATE), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
+      })
+    );
+
+    expect(answered(sendMessage)).toEqual(['s-priv']);
+    expect(info.mock.calls.flat().join(' ')).not.toContain('not proven');
+    info.mockRestore();
+  });
 
   /** alice holds a seed of each salon; `listed` is what her community listing registered. */
   function wireAnswerer(listed: { channelId: string; isPrivate: boolean }[]) {
