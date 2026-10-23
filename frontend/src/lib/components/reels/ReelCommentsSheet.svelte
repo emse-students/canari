@@ -40,9 +40,11 @@
     /** Replaces the viewer's copy of the post: every write lands there, and the rail's count follows. */
     onChange: (next: PostEntity) => void;
     onClose: () => void;
+    /** The sheet starts sliding out (X, Escape, a tap on the reel, a drag release): the reel grows back. */
+    onClosing?: () => void;
   }
 
-  let { post, currentUserId, authToken, onChange, onClose }: Props = $props();
+  let { post, currentUserId, authToken, onChange, onClose, onClosing }: Props = $props();
 
   let sheet = $state<HTMLDivElement | null>(null);
   let commentText = $state('');
@@ -51,6 +53,8 @@
   /** How far the sheet is dragged down, px. */
   let dragY = $state(0);
   let settling = $state(false);
+  /** The sheet is sliding out (told to the viewer, whose reel grows back). */
+  let closing = $state(false);
   let afterSettle: (() => void) | null = null;
   let commentBeingReported = $state<PostComment | null>(null);
   let reportSubmitting = $state(false);
@@ -97,6 +101,17 @@
   /** Every way out but Back: the history entry goes with it, so Back is not owed twice. */
   function close() {
     overlay.dismissFromUi();
+  }
+
+  /**
+   * The X, a tap on the reel and Escape: the sheet slides out on the same snap as a drag release
+   * (`settle`) and the history entry goes once it is gone - at once with reduced motion.
+   */
+  function closeAnimated() {
+    if (closing) return;
+    closing = true;
+    onClosing?.();
+    settle(sheet?.clientHeight ?? window.innerHeight, close);
   }
 
   /** Moves the sheet to `y` with the snap transition, then `then` - at once with reduced motion. */
@@ -149,8 +164,11 @@
     console.debug(
       `[reel-comments] drag released at ${Math.round(dy)} px: ${closes ? 'close' : 'stay'}`
     );
-    if (closes) settle(height, close);
-    else settle(0);
+    if (closes) {
+      closing = true;
+      onClosing?.();
+      settle(height, close);
+    } else settle(0);
   }
 
   function onHandleCancel() {
@@ -162,7 +180,7 @@
   function onKeydown(e: KeyboardEvent) {
     if (e.key !== 'Escape' || e.defaultPrevented || commentBeingReported) return;
     e.preventDefault();
-    close();
+    closeAnimated();
   }
 
   async function handleAddComment(
@@ -208,13 +226,13 @@
     class="min-h-0 flex-1 cursor-default"
     tabindex="-1"
     aria-hidden="true"
-    onclick={close}
+    onclick={closeAnimated}
     data-reel-comments-backdrop
   ></button>
 
   <div
     bind:this={sheet}
-    class="keyboard-aware-bottom bg-cn-surface text-text-main absolute inset-x-0 bottom-0 flex h-[60dvh] max-h-[calc(var(--app-viewport-height,100dvh)-var(--safe-area-inset-top,0px)-3rem)] flex-col rounded-t-3xl pb-[var(--safe-area-inset-bottom,0px)] shadow-2xl outline-none"
+    class="motion-sheet-in keyboard-aware-bottom bg-cn-surface text-text-main absolute inset-x-0 bottom-0 flex h-[60dvh] max-h-[calc(var(--app-viewport-height,100dvh)-var(--safe-area-inset-top,0px)-3rem)] flex-col rounded-t-3xl pb-[var(--safe-area-inset-bottom,0px)] shadow-2xl outline-none"
     style:transform="translate3d(0, {dragY}px, 0)"
     style:transition={settling
       ? `transform ${GESTURE.SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`
@@ -246,7 +264,7 @@
           class="ui-icon-button rounded-full outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/10"
           aria-label={m.reels_comments_close()}
           title={m.reels_comments_close()}
-          onclick={close}
+          onclick={closeAnimated}
           data-reel-comments-close
         >
           <X size={20} strokeWidth={2.5} />

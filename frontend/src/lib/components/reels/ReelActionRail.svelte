@@ -205,7 +205,7 @@
       <button
         bind:this={heartEl}
         type="button"
-        class="ui-icon-button rounded-full outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button motion-press rounded-full outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-amber-500"
         aria-pressed={reacted}
         aria-label={heartLabel}
         aria-haspopup="menu"
@@ -236,7 +236,7 @@
     <div class="flex flex-col items-center">
       <button
         type="button"
-        class="ui-icon-button rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button motion-press rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
         aria-haspopup="dialog"
         aria-label={m.reels_rail_comments({ count: commentCount })}
         onclick={onComments}
@@ -251,7 +251,7 @@
 
     <button
       type="button"
-      class="ui-icon-button rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+      class="ui-icon-button motion-press rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
       aria-label={m.post_share_label()}
       title={m.post_share_label()}
       onclick={onSend}
