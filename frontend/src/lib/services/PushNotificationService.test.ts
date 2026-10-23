@@ -2,6 +2,7 @@
 // Vitest v4 does not support vi.mock for CJS modules like @tauri-apps/api/core.
 // We therefore stub the global object that the CJS module uses internally.
 const tauriInvokeStub = vi.fn((cmd: string) => {
+  if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
   if (cmd === 'get_fcm_token') return Promise.resolve('tok-123');
   return Promise.resolve(undefined);
 });
@@ -46,6 +47,7 @@ describe('startPushService - rotation de token FCM', () => {
   it('1er appel enregistre, ré-appel inchangé skip, ré-appel après rotation ré-enregistre', async () => {
     // 1er appel : enregistrement complet.
     tauriInvokeStub.mockImplementation((cmd: string) => {
+      if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
       if (cmd === 'get_fcm_token') return Promise.resolve('tok-123');
       return Promise.resolve(undefined);
     });
@@ -63,6 +65,7 @@ describe('startPushService - rotation de token FCM', () => {
 
     // FCM token rotated (onNewToken wrote the new one locally) -> re-call re-registers.
     tauriInvokeStub.mockImplementation((cmd: string) => {
+      if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
       if (cmd === 'get_fcm_token') return Promise.resolve('tok-456');
       return Promise.resolve(undefined);
     });
@@ -77,6 +80,7 @@ describe('startPushService - rotation de token FCM', () => {
     osPlatformStub.mockReturnValue('ios');
 
     tauriInvokeStub.mockImplementation((cmd: string) => {
+      if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
       if (cmd === 'get_fcm_token') return Promise.resolve('tok-ios');
       return Promise.resolve(undefined);
     });
@@ -106,6 +110,7 @@ describe('startPushService - rotation de token FCM', () => {
     });
 
     tauriInvokeStub.mockImplementation((cmd: string) => {
+      if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
       if (cmd === 'get_fcm_token') return Promise.resolve('tok-ipad');
       return Promise.resolve(undefined);
     });
