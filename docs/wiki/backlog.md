@@ -27,6 +27,27 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Decided by the user on 2026-10-22 - the local key on a phone is held by secure hardware
+
+On the phone apps the local at-rest key is held by the device's secure hardware, the PIN only
+unlocks it (and stays short), and backups get their own recovery secret. Web and desktop keep the
+PIN-derived key. BUILT in a draft pull request (`feat/hardware-held-local-key`); the mechanism is
+[auth](frontend/modules/auth.md#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22).
+Owed before it ships:
+
+- **Device readings, Mi 9T and iPhone**: the list is in
+  [auth](frontend/modules/auth.md#backups-get-their-own-recovery-secret) ("Owed on hardware"),
+  including the iOS build no gate here compiles.
+- **Decided (user, 2026-10-22): notifications stay complete on a locked phone, and the PIN is
+  verified by the server; the hardware key protects the device's stored data. Practicality first.**
+  The four lead decisions are BUILT and recorded with their costs in
+  [auth](frontend/modules/auth.md#decisions-taken-on-2026-10-22-and-what-each-costs).
+- **`minClientVersion` follows the first release carrying the hardware-held key** once both stores
+  serve it.
+- **Two keys stay on purpose**: #2271's push-cache key is not derived from the at-rest key, because it
+  must exist before the first push and stay stable, while the at-rest key rotates (migration, recovery,
+  reset). Revisit only if #2271 lands with a design that tolerates a rotation.
+
 ## New-device notices: decided by the user on 2026-10-22 - the UI is owed
 
 No mandatory approval of a new device. The client that processes the signed change produces the

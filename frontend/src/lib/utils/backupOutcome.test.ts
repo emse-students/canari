@@ -18,6 +18,8 @@ const ALL_CODES: BackupErrorCode[] = [
   'not_a_backup',
   'too_old',
   'wrong_key',
+  'code_required',
+  'wrong_code',
   'corrupted',
   'too_large',
 ];
@@ -92,8 +94,21 @@ describe('backupImportOutcome', () => {
 
 describe('the export outcomes', () => {
   it('separates a file produced from one that was not', () => {
-    expect(backupExportOutcome().ok).toBe(true);
+    expect(backupExportOutcome('ABCD', 'new').ok).toBe(true);
+    // The code travels with the outcome so the surface can show it; a failure has none.
+    expect(backupExportOutcome('ABCD', 'new').recoveryCode).toBe('ABCD');
+    expect(backupExportFailure(new Error('x')).recoveryCode).toBeUndefined();
     expect(backupExportFailure(new Error('disk full')).ok).toBe(false);
+  });
+
+  it('says whether the code is the one the user already holds', () => {
+    // One code per device: a reused code must not read as a new one to write down, and a
+    // replacement must say the earlier files keep theirs.
+    const notes = (['new', 'kept', 'replaced'] as const).map(
+      (origin) => backupExportOutcome('ABCD', origin).codeNote
+    );
+    expect(new Set(notes).size).toBe(3);
+    for (const note of notes) expect(note).toBeTruthy();
   });
 
   it('never puts the raw cause in front of the user', () => {

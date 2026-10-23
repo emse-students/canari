@@ -1,9 +1,9 @@
 //! Tauri commands for the push context (FCM, VoIP, cache, outbox mirror).
 
-use mls_core::DeviceKeyStore;
 use tauri::Manager;
 
-use crate::keystore_bridge::PluginDeviceKeyStore;
+use crate::commands::at_rest_key::GuardRefusal;
+use crate::keystore_bridge::{KeyEntryError, PluginDeviceKeyStore};
 use crate::native_cache::{open_file, open_line, seal_file, CacheKey, Opened, Purpose};
 
 /// Checks that the Android Keystore can read the push secret (flag written by CanariApplication).
@@ -1293,10 +1293,9 @@ pub(crate) fn read_and_clear_pending_call_accept(app: tauri::AppHandle) -> Optio
 /// (see `$lib/crypto/deviceKey`), which is the ONLY value that can decrypt `mls.bin`
 /// (`[nonce (12) || ciphertext]`, ChaCha20-Poly1305 direct).
 ///
-/// The key is also mirrored into the platform keystore under
-/// `mls_device_key_{user_id}_{device_id}` so the biometric login path
-/// (`load_encrypted_with_keystore` path A) can retrieve it without the PIN. That write is
-/// best-effort: if the keystore rejects it, push still works from the JSON file.
+/// The key goes into the platform keystore under `mls_device_key_{user_id}_{device_id}`, never
+/// into the JSON (WP-SEC-1): the background push and the biometric login path
+/// (`load_encrypted_with_keystore` path A) read it there, so a failed write is returned.
 #[tauri::command]
 pub(crate) fn store_push_context(
     device_key_b64: String,
@@ -1318,13 +1317,31 @@ pub(crate) fn store_push_context(
     let key_bytes = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64.trim())
         .map_err(|e| format!("invalid device_key_b64: {e}"))?;
 
-    let alias = format!("mls_device_key_{user_id}_{device_id}");
-    let keystore = PluginDeviceKeyStore::new(app.clone());
-    // WP-SEC-1: the keystore is now the ONLY copy of the device key (no JSON fallback).
-    // A failed write means background decrypt is dead — return Err, do not log::warn!.
-    keystore
-        .store_device_key(&key_bytes, &alias)
-        .map_err(|e| format!("keystore write failed (background decrypt will not work): {e}"))?;
+    let alias = crate::commands::at_rest_key::device_key_alias(&user_id, &device_id);
+    // Through the at-rest guard (`store_guarded`): on a migrated phone the entry already holds this
+    // key and is not rewritten; during a re-key the session's OLD key is refused, because rows already
+    // sit under the new one whose only copy is this entry. A refusal is not an error here: the push
+    // context is still written, and the entry holds the key the background push needs once the
+    // re-key ends.
+    match PluginDeviceKeyStore::new(app.clone()).store_guarded(&key_bytes, &alias) {
+        Ok(_) => {}
+        // The expected answer during and after a re-key: the entry holds the key of record.
+        Err(KeyEntryError::Refused(why @ GuardRefusal::HeldKey(_))) => {
+            log::info!("[AT_REST_KEY] store_push_context: keystore left as it is - {why}")
+        }
+        // NOT expected: a marker nobody can read blocks every keystore write until a reset, and the
+        // background push of a new session may be left on an older key.
+        Err(KeyEntryError::Refused(why @ GuardRefusal::Unreadable(_))) => {
+            log::error!("[AT_REST_KEY] store_push_context: keystore write refused - {why}")
+        }
+        // WP-SEC-1: the keystore is the ONLY copy of the device key (no JSON fallback). A failed
+        // write means background decrypt is dead - returned, not logged and swallowed.
+        Err(e @ KeyEntryError::Failed(_)) => {
+            return Err(format!(
+                "keystore write failed (background decrypt will not work): {e}"
+            ))
+        }
+    }
 
     write_session_push_context(
         &data_dir,

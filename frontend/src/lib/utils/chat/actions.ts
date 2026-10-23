@@ -1,4 +1,11 @@
 import { exportBackup, importBackup } from '$lib/backup';
+import { formatRecoveryCode } from '$lib/crypto/backupRecoveryCode';
+import {
+  clearBackupOwedAfterKeyMove,
+  deviceRecoveryCode,
+  keepDeviceRecoveryCode,
+  type RecoveryCodeOrigin,
+} from '$lib/crypto/deviceRecoveryCode';
 import { fromHex, saveMlsState, hasMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
@@ -832,17 +839,34 @@ export async function discoverMissingGroups(params: {
   }
 }
 
-/** Exports the user's full backup (conversations + messages + MLS state) as a `.canari` file. In Tauri opens a folder picker; in the browser triggers an anchor download. */
+/**
+ * Exports the user's full backup (conversations + messages + MLS state) as a `.canari` file. In Tauri
+ * opens a folder picker; in the browser triggers an anchor download.
+ *
+ * The file is sealed under THIS DEVICE'S recovery code (`deviceRecoveryCode.ts`): the same code for
+ * every backup the device exports, generated at the first one and kept sealed under the device key.
+ * It is returned with where it came from, so the surface says whether it is the code the user already
+ * holds. `null` when the save was cancelled: a code for a file that does not exist is neither shown
+ * nor kept.
+ */
 export async function exportUserBackup(params: {
   storage: IStorage;
   userId: string;
   deviceKeyB64: string;
   myDeviceId: string;
   log: (msg: string) => void;
-}) {
+}): Promise<{ recoveryCode: string; codeOrigin: RecoveryCodeOrigin } | null> {
   const { storage, userId, deviceKeyB64, myDeviceId, log } = params;
   const mlsStateHex = await exportMlsStateAsHex(userId);
-  const blob = await exportBackup(storage, userId, deviceKeyB64, myDeviceId, mlsStateHex);
+  const code = await deviceRecoveryCode(userId, deviceKeyB64, log);
+  const blob = await exportBackup(
+    storage,
+    userId,
+    deviceKeyB64,
+    myDeviceId,
+    mlsStateHex,
+    code.bytes
+  );
   const date = new Date().toISOString().split('T')[0];
   const filename = `canari-backup-${userId}-${date}.canari`;
 
@@ -854,11 +878,17 @@ export async function exportUserBackup(params: {
     filename
   );
   log(saved ? `[OK] Backup exported: ${filename}` : '[..] Backup export cancelled');
+  if (!saved) return null;
+  await keepDeviceRecoveryCode(userId, code, deviceKeyB64);
+  clearBackupOwedAfterKeyMove(userId);
+  return { recoveryCode: formatRecoveryCode(code.bytes), codeOrigin: code.origin };
 }
 
 /** Imports a `.canari` backup file: decrypts conversations/messages, restores the MLS state if this is the same device, then reloads the conversation list. */
 export async function importUserBackup(params: {
   file: File;
+  /** The code shown at export; required for a v3 file. */
+  recoveryCode?: string;
   deviceKeyB64: string;
   storage: IStorage;
   myDeviceId: string;
@@ -869,6 +899,7 @@ export async function importUserBackup(params: {
 }): Promise<{ conversations: number; messages: number; isSameDevice: boolean }> {
   const {
     file,
+    recoveryCode,
     deviceKeyB64,
     storage,
     myDeviceId,
@@ -879,16 +910,23 @@ export async function importUserBackup(params: {
   } = params;
 
   const arrayBuffer = await file.arrayBuffer();
-  const { data: backup, isSameDevice } = await importBackup(
+  const {
+    data: backup,
+    isSameDevice,
+    mlsStateUsable,
+  } = await importBackup(
     new Uint8Array(arrayBuffer),
     deviceKeyB64,
     storage,
-    myDeviceId
+    myDeviceId,
+    recoveryCode
   );
 
   if (isSameDevice) {
     const existingMlsState = await hasMlsState(userId);
-    if (backup.mlsState && !existingMlsState) {
+    if (backup.mlsState && !existingMlsState && !mlsStateUsable) {
+      log('MLS state in the backup is sealed under another key - not restored.');
+    } else if (backup.mlsState && !existingMlsState) {
       await saveMlsState(userId, fromHex(backup.mlsState));
       log('MLS state restored (same device).');
     } else if (existingMlsState) {
