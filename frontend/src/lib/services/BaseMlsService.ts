@@ -40,12 +40,14 @@ import {
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import {
   MAX_BURN_GENERATIONS,
+  OwedSendBurnFailedError,
   commitPersisted,
   forgetSendRatchetEntries,
   noteFrameEmitted,
   resetSendRatchetLedger,
   sendRatchetDebt,
   sendRatchetEntries,
+  sendRatchetKey,
   snapshotEmitted,
 } from '$lib/mls-client/sendRatchetLedger';
 import { sealedFrameEpoch } from '$lib/mls-client/sealedFrameEpoch';
@@ -124,6 +126,7 @@ import {
 import { getToken } from '$lib/stores/auth';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import {
+  checkpointWroteNothing,
   fromBase64,
   MlsStateWriteRefusedError,
   toBase64,
@@ -161,6 +164,7 @@ import { commitRemovals, parseDeviceIdentity } from '$lib/mls-client/commitAdmit
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 import {
   CommitOutcomeUnknownError,
+  CommitStageNotSavedError,
   FollowerTabCommitError,
   composeSubmission,
   encodeIntent,
@@ -2747,6 +2751,7 @@ export abstract class BaseMlsService implements IMlsService {
     // that, from the peers' side, this device has never made.
     resetSendRatchetLedger(this.userId);
     this.owedSendBurns.clear();
+    this.unprovenSendRatchets.clear();
     // Deregister the abandoned device so other members stop generating Welcomes for a key package
     // our fresh state no longer holds (NoMatchingKeyPackage). RECORDED BEFORE IT IS ASKED, so a
     // failed delete is retried at the next published round rather than forgotten; never awaited, so
@@ -3343,6 +3348,13 @@ export abstract class BaseMlsService implements IMlsService {
   async persistCheckpoint(options?: { endsDocumentOnRefusal?: boolean }): Promise<void> {
     if (this.stateWritesEnded === true) throw new MlsStateWriteRefusedError('ended');
     const emitted = snapshotEmitted(this.userId);
+    // A RATCHET WHOSE REPAIR THIS STATE DOES NOT HOLD IS NOT DECLARED DURABLE. A burn still owed
+    // (or still running) when the count is read is not in the state this checkpoint exports, so
+    // committing `persisted = emitted` for that ratchet would erase the only record of the debt: the
+    // settle merges into the epoch, a checkpoint lands, a reload finds nothing owed and re-issues
+    // generation 0. Left out at SNAPSHOT time; a burn that lands during the write is only over-counted
+    // on the next load, which is free.
+    for (const key of this.sendRatchetsNotDurable()) delete emitted[key];
     // The replay marks are captured BEFORE the write for the same reason as `emitted`: a page
     // decrypted while the seal runs is marked in memory, and this write does not hold its advance.
     const replayMarks = snapshotPendingHistoryMarks(this.userId);
@@ -3390,10 +3402,32 @@ export abstract class BaseMlsService implements IMlsService {
    * Generations owed to an epoch the restored state has not reached yet, per group then epoch:
    * frames this device sent after a merge its last checkpoint does not hold. Filled by
    * {@link reconcileSendRatchets}, spent by {@link burnOwedOnArrival} before the first frame sealed
-   * at that epoch. In memory only, and rightly: the ledger it was read from is still on disk, so a
-   * reload before the burn rebuilds it.
+   * at that epoch, and removed only once its burn has run.
+   *
+   * In memory, and the LEDGER keeps the debt durable: a reload before the burn reads it again only
+   * because no checkpoint declared that ratchet durable meanwhile - {@link persistCheckpoint} leaves
+   * every ratchet named here out of what it commits ({@link sendRatchetsNotDurable}).
    */
   private owedSendBurns = new Map<string, Map<number, number>>();
+
+  /**
+   * Ledger keys whose epoch the load could not read, so their burn ran blind (in whatever epoch the
+   * state held) and may not have been the repair. Never declared durable this session, so the next
+   * load - which can read the epoch - judges them again; over-burning there is free.
+   */
+  private unprovenSendRatchets = new Set<string>();
+
+  /** The owed burn running for a group, which every send to that group awaits. */
+  private owedBurnInFlight = new Map<string, Promise<void>>();
+
+  /** The ledger keys a checkpoint must not declare durable: see {@link persistCheckpoint}. */
+  private sendRatchetsNotDurable(): string[] {
+    const keys = [...this.unprovenSendRatchets];
+    for (const [groupId, owed] of this.owedSendBurns) {
+      for (const epoch of owed.keys()) keys.push(sendRatchetKey(groupId, epoch));
+    }
+    return keys;
+  }
 
   /**
    * Burns whatever this device sent but never checkpointed, so the restored ratchet is back where
@@ -3416,6 +3450,7 @@ export abstract class BaseMlsService implements IMlsService {
    */
   protected async reconcileSendRatchets(): Promise<void> {
     this.owedSendBurns.clear();
+    this.unprovenSendRatchets.clear();
     if (this.freshStart) {
       resetSendRatchetLedger(this.userId);
       return;
@@ -3423,7 +3458,7 @@ export abstract class BaseMlsService implements IMlsService {
     const entries = sendRatchetEntries(this.userId);
     if (entries.length === 0) return;
 
-    const restored = new Map<string, number | 'not-held' | null>();
+    const restored = new Map<string, number | 'not-held' | 'unknown'>();
     const forget: string[] = [];
     let repaired = 0;
     for (const entry of entries) {
@@ -3435,12 +3470,24 @@ export abstract class BaseMlsService implements IMlsService {
         forget.push(entry.key);
         continue;
       }
-      if (restoredEpoch === null || restoredEpoch === undefined) continue;
-      const debt = sendRatchetDebt(entry, restoredEpoch);
+      // NO EPOCH TO JUDGE BY IS NO REASON TO SKIP THE REPAIR: the debt is burnt where the state is,
+      // as the per-group ledger always did. Right when the frames were sent in the epoch the state
+      // holds (the common case: a send not yet checkpointed); a burn moving an epoch nobody reads
+      // when they were not, which is free. What it cannot prove is that it repaired, so the key is
+      // never declared durable this session (`unprovenSendRatchets`) and the next load judges it.
+      const debt =
+        restoredEpoch === 'unknown' || restoredEpoch === undefined
+          ? sendRatchetDebt({ ...entry, epoch: null }, 0)
+          : sendRatchetDebt(entry, restoredEpoch);
+      if (restoredEpoch === 'unknown' || restoredEpoch === undefined) {
+        this.unprovenSendRatchets.add(entry.key);
+      }
       if (debt.kind === 'spent' || debt.kind === 'settled') {
         // A settled entry with an epoch keeps counting; a spent one, or a settled pre-epoch one,
         // will never be read again.
-        if (debt.kind === 'spent' || entry.epoch === null) forget.push(entry.key);
+        if (debt.kind === 'spent' || (entry.epoch === null && restoredEpoch !== 'unknown')) {
+          forget.push(entry.key);
+        }
         continue;
       }
       if (debt.clamped) {
@@ -3475,6 +3522,12 @@ export abstract class BaseMlsService implements IMlsService {
       }
     }
     forgetSendRatchetEntries(this.userId, forget);
+    const blind = [...restored.values()].filter((r) => r === 'unknown').length;
+    if (blind > 0) {
+      console.warn(
+        `[MLS] Send ledger: the restored epoch of ${blind} group(s) could not be read - their debt was burnt in whatever epoch the state holds, and stays open for the next load`
+      );
+    }
 
     // The burn moved the live ratchet and nothing durable knows it yet, so a second reload would
     // burn the same generations again. Harmless (over-shooting is free) but pointless, and the
@@ -3490,29 +3543,36 @@ export abstract class BaseMlsService implements IMlsService {
   /**
    * The epoch the restored state holds `groupId` at; `'not-held'` for a group the state does not
    * hold (left or forgotten - a later join builds a new ratchet, so its counts describe nothing);
-   * `null` when that cannot be told, which burns and forgets nothing.
+   * `'unknown'` when that cannot be told, which burns blind and forgets nothing (see
+   * {@link reconcileSendRatchets}).
    */
-  private async restoredEpochOf(groupId: string): Promise<number | 'not-held' | null> {
+  private async restoredEpochOf(groupId: string): Promise<number | 'not-held' | 'unknown'> {
     // Asked FIRST, and only of a listing known to describe the state: both platforms answer epoch
     // 0 for a group they do not hold, which would read as a real epoch.
-    if (!this.heldGroupsKnown()) return null;
+    if (!this.heldGroupsKnown()) return 'unknown';
     if (!this.getLocalGroups().includes(groupId)) return 'not-held';
     try {
       return await this.freshEpoch(groupId);
     } catch (e) {
       console.warn(
-        `[MLS] Send ledger names ${groupId.slice(0, 8)}..., whose epoch cannot be read - nothing burnt for it:`,
+        `[MLS] Send ledger names ${groupId.slice(0, 8)}..., whose epoch cannot be read - its debt is burnt blind:`,
         String(e).slice(0, 160)
       );
-      return null;
+      return 'unknown';
     }
   }
 
   /**
    * Spends what {@link reconcileSendRatchets} left owed to `groupId` at `epoch`, which the group has
    * now reached, and drops what it owed to epochs it went past without sending (their ratchets can
-   * no longer be used). Each entry is removed BEFORE its burn, so a burn that fails is never retried
-   * in a loop - it is said, and the next load reads the ledger again.
+   * no longer be used).
+   *
+   * The entry is removed only AFTER its burn has run: until then it is what keeps every checkpoint
+   * from declaring that ratchet durable. A burn that fails leaves it owed and THROWS
+   * ({@link OwedSendBurnFailedError}) - a frame sealed past it would re-use a generation the peers
+   * consumed, so the send is refused and the next one tries again.
+   *
+   * Never called directly: {@link settleOwedBurns} runs it one at a time per group.
    */
   private async burnOwedOnArrival(groupId: string, epoch: number): Promise<void> {
     const owed = this.owedSendBurns.get(groupId);
@@ -3526,22 +3586,50 @@ export abstract class BaseMlsService implements IMlsService {
     }
     const count = owed.get(epoch);
     if (count !== undefined) {
-      owed.delete(epoch);
       try {
         await this.skipSendGenerations(groupId, count);
-        console.log(
-          `[MLS] ${short}... reached epoch ${epoch}, where this device had sent ${count} frame(s) its restored state did not hold - burnt before sealing there`
-        );
-        // Shortens the window a second reload would burn again in; the ledger, unchanged, closes it.
-        scheduleOutboundMlsPersist();
       } catch (e) {
-        console.warn(
-          `[MLS] Could not burn ${count} owed generation(s) for ${short}... at epoch ${epoch}:`,
+        console.error(
+          `[MLS] Could not burn ${count} owed generation(s) for ${short}... at epoch ${epoch} - the send is refused rather than sealed over a consumed generation:`,
           String(e).slice(0, 160)
         );
+        throw new OwedSendBurnFailedError(groupId, epoch, e);
       }
+      owed.delete(epoch);
+      console.log(
+        `[MLS] ${short}... reached epoch ${epoch}, where this device had sent ${count} frame(s) its restored state did not hold - burnt before sealing there`
+      );
+      // The burn is in the live state only; the next checkpoint holds it, and from then on the
+      // ratchet may be declared durable.
+      scheduleOutboundMlsPersist();
     }
     if (owed.size === 0) this.owedSendBurns.delete(groupId);
+  }
+
+  /**
+   * Runs `groupId`'s owed burn at `epoch` (the group's current one when omitted), AFTER any burn
+   * already running for it. ONE AT A TIME PER GROUP, and every send awaits it: two sends that both
+   * found a burn owed used to race - the first removed the entry and awaited the platform, the
+   * second saw nothing owed and sealed, and only the order of two platform calls stood between that
+   * frame and a consumed generation.
+   */
+  private settleOwedBurns(groupId: string, epoch?: number): Promise<void> {
+    const before = this.owedBurnInFlight.get(groupId) ?? Promise.resolve();
+    const run = before
+      // The previous burn's failure belongs to the send that ran it; this one re-reads what is owed.
+      .catch(() => {})
+      .then(async () => {
+        if (!this.owedSendBurns.has(groupId)) return;
+        await this.burnOwedOnArrival(groupId, epoch ?? (await this.freshEpoch(groupId)));
+      });
+    this.owedBurnInFlight.set(groupId, run);
+    void run
+      .finally(() => {
+        if (this.owedBurnInFlight.get(groupId) === run) this.owedBurnInFlight.delete(groupId);
+      })
+      // Awaited by the caller, which receives the failure; this tail only ends the bookkeeping.
+      .catch(() => {});
+    return run;
   }
 
   /**
@@ -3551,15 +3639,15 @@ export abstract class BaseMlsService implements IMlsService {
    * An incoming commit is not held off by the send barrier (only this device's own are), so one can
    * move the group between the epoch read and the encrypt. A frame sealed at an epoch that still owes
    * a burn is therefore never posted: the overlap is said, the burn is spent, and the frame is sealed
-   * again. It terminates - each pass that does not return removes one owed epoch.
+   * again. It terminates - each pass that does not return removes one owed epoch, or throws.
    */
   private async sealPastOwedBurns(
     groupId: string,
     messageBytes: Uint8Array
   ): Promise<{ sealed: Uint8Array; epoch: number }> {
     for (;;) {
-      if (this.owedSendBurns.has(groupId)) {
-        await this.burnOwedOnArrival(groupId, await this.freshEpoch(groupId));
+      if (this.owedSendBurns.has(groupId) || this.owedBurnInFlight.has(groupId)) {
+        await this.settleOwedBurns(groupId);
       }
       const sealed = await this.encryptForSend(groupId, messageBytes);
       const epoch = sealedFrameEpoch(sealed);
@@ -3567,7 +3655,7 @@ export abstract class BaseMlsService implements IMlsService {
       console.error(
         `[MLS] ${groupId.slice(0, 8)}... a frame was sealed at epoch ${epoch}, which still owed a burn - an incoming commit moved the group between the burn and the encrypt; the frame is dropped unsent and sealed again`
       );
-      await this.burnOwedOnArrival(groupId, epoch);
+      await this.settleOwedBurns(groupId, epoch);
     }
   }
 
@@ -3764,12 +3852,34 @@ export abstract class BaseMlsService implements IMlsService {
         // before the next checkpoint reloaded the state from BEFORE the stage: a commit the
         // server may hold, that this device can neither merge nor resubmit.
         //
-        // A CHECKPOINT THAT THREW SENDS NOTHING, AND CLEARS NOTHING EITHER: it may have thrown
-        // after its write landed, so the stage may be on disk, and a clear reported as "failed"
-        // would be contradicted by the next reload, whose settle lands the commit. The stage is
-        // KEPT, exactly like an unanswered one, and the settle decides - after its own checkpoint,
-        // because nothing is submitted that is not on disk.
+        // A CHECKPOINT THAT THREW SENDS NOTHING. What it does with the stage depends on WHERE it
+        // threw, read from the type (`checkpointWroteNothing`):
+        //  - it stored nothing (refused, or failed before anything was stored): the commit never
+        //    left and this write did not save it, so it is CLEARED and the failure is definitive
+        //    (`CommitStageNotSavedError`) - a checkpoint that keeps failing costs each commit, not
+        //    every send of the session. An earlier checkpoint exporting after the stage may still
+        //    have saved it; a reload then holds a stage that never left, which its settle submits as
+        //    a first request and the gate decides - a commit the member asked for, never a fork;
+        //  - anything else may have thrown after its write landed, so the stage may be on disk and
+        //    a clear reported as "failed" would be contradicted by the next reload. It is KEPT,
+        //    exactly like an unanswered one, and the settle decides - after its own checkpoint.
         const unsaved = await this.checkpointStageBeforeSend(groupId, baseEpoch);
+        if (unsaved !== null && checkpointWroteNothing(unsaved)) {
+          try {
+            await this.clearPendingCommit(groupId);
+          } catch (clearErr) {
+            // Not cleared: the stage stays, so its outcome is the settle's to decide.
+            console.error(
+              `[COMMIT] ${groupId.slice(0, 8)}... could not clear the unsaved stage on ${baseEpoch}: ${String(clearErr).slice(0, 120)}`
+            );
+            this.unresolvedGroups?.add(groupId);
+            throw new CommitOutcomeUnknownError(groupId, baseEpoch, clearErr, 'its clear failed');
+          }
+          console.warn(
+            `[COMMIT] ${groupId.slice(0, 8)}... the stage on epoch ${baseEpoch} was not saved (the checkpoint stored nothing) - cleared, nothing sent`
+          );
+          throw new CommitStageNotSavedError(groupId, baseEpoch, unsaved);
+        }
         if (unsaved !== null) {
           this.unresolvedGroups?.add(groupId);
           throw new CommitOutcomeUnknownError(
@@ -3925,7 +4035,7 @@ export abstract class BaseMlsService implements IMlsService {
     } catch (e) {
       console.error(
         `[COMMIT] ${groupId.slice(0, 8)}... the commit staged on epoch ${baseEpoch} could NOT be ` +
-          `checkpointed - nothing is sent, and it is KEPT for a settle to decide: ${String(e).slice(0, 120)}`
+          `checkpointed - nothing is sent (${checkpointWroteNothing(e) ? 'nothing was stored' : 'the write may have landed'}): ${String(e).slice(0, 120)}`
       );
       return e;
     }
@@ -5101,6 +5211,14 @@ export abstract class BaseMlsService implements IMlsService {
    * always a chat group we are genuinely outside of.
    */
   async externalJoin(groupId: string): Promise<ExternalJoinOutcome> {
+    // AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as {@link runCommitTransaction}
+    // does: the tree it would join into is a copy no disk and no other tab will follow.
+    if (getTabLeadership() === 'follower') {
+      console.warn(
+        `[MLS] externalJoin ${groupId.slice(0, 8)}... refused on a follower tab - only the leader commits`
+      );
+      throw new FollowerTabCommitError(groupId);
+    }
     // ONE JOIN PER GROUP AT A TIME. The wait below can be long, so a second caller (the recovery
     // seam's own cooldown is 60 s) could otherwise start a second join of a group the first is
     // about to hold - the duplicate-leaf race. Sharing the promise gives both the same answer.

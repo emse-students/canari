@@ -174,6 +174,27 @@ export class CommitOutcomeUnknownError extends TransportFailureError {
 }
 
 /**
+ * A commit of `groupId` staged on `baseEpoch` was CLEARED before anything was sent: the checkpoint
+ * that must carry its stage to disk first failed in a way that stored nothing (`checkpointWroteNothing`
+ * - a refused write, or one that failed before anything was stored). Definitive, unlike
+ * {@link CommitOutcomeUnknownError}: the commit never left, so the group is free for the next one,
+ * and a checkpoint that keeps failing (a full quota) costs each commit, not every send of the session.
+ */
+export class CommitStageNotSavedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly baseEpoch: number,
+    readonly cause: unknown
+  ) {
+    super(
+      `the commit of ${groupId.slice(0, 8)}... staged on epoch ${baseEpoch} was cleared unsent: its ` +
+        `checkpoint stored nothing (${String(cause).slice(0, 120)})`
+    );
+    this.name = 'CommitStageNotSavedError';
+  }
+}
+
+/**
  * A commit of `groupId` was asked of a FOLLOWER tab, and refused before anything was staged.
  *
  * Only the leader tab runs this device's MLS state (`tabLeader.ts`): a follower holds a copy loaded

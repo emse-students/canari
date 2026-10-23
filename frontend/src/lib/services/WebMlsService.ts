@@ -41,6 +41,7 @@ import { getToken } from '$lib/stores/auth';
 import {
   loadMlsState,
   saveMlsState,
+  MlsCheckpointNotWrittenError,
   MlsStateWriteRefusedError,
   type MlsStateWriteLatch,
   toBase64,
@@ -964,9 +965,24 @@ export class WebMlsService extends BaseMlsService {
    *
    * And on `ended`: the latch is handed to the write and read IN ITS TRANSACTION, after this capture
    * and its off-thread seal - a refused rotation may have set it while this one was encrypting.
+   *
+   * EVERY OTHER FAILURE IS TYPED BY WHERE IT HAPPENED ({@link MlsCheckpointNotWrittenError}): the
+   * export and seal, or the IndexedDB transaction, which stores all of it or none of it. A caller
+   * deciding whether a commit's stage can be on disk reads that, never the text.
    */
   protected async writeCheckpoint(deviceKeyB64: string, latch: MlsStateWriteLatch): Promise<void> {
-    const outcome = await saveMlsState(this.userId, await this.saveState(deviceKeyB64), latch);
+    let sealed: Uint8Array;
+    try {
+      sealed = await this.saveState(deviceKeyB64);
+    } catch (e) {
+      throw new MlsCheckpointNotWrittenError('export', e);
+    }
+    let outcome: Awaited<ReturnType<typeof saveMlsState>>;
+    try {
+      outcome = await saveMlsState(this.userId, sealed, latch);
+    } catch (e) {
+      throw new MlsCheckpointNotWrittenError('store', e);
+    }
     if (outcome === 'stale' || outcome === 'collision' || outcome === 'ended')
       throw new MlsStateWriteRefusedError(outcome);
   }

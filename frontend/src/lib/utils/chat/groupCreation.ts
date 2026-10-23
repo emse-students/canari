@@ -15,6 +15,7 @@ import { buildConversationRow, isRawId } from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
 import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
+import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 
 /** Dependencies injected into all group-creation and conversation-management helpers. */
 interface GroupCreationDeps {
@@ -58,8 +59,20 @@ export type ConversationRefusal =
   | 'block-check-unavailable'
   /** The peer has never signed in, so there is no KeyPackage to add and no group to build. */
   | 'peer-has-no-device'
+  /**
+   * This tab is not the one that runs the device's MLS state, so it cannot commit
+   * (`FollowerTabCommitError`): the member must do it in the main tab.
+   */
+  | 'follower-tab'
   /** Anything the creation threw. The log carries the detail; the screen cannot use it. */
   | 'creation-failed';
+
+/**
+ * The refusal a creation's failure is reported as - read from the error's TYPE, never its text.
+ */
+function creationRefusal(e: unknown): ConversationRefusal {
+  return e instanceof FollowerTabCommitError ? 'follower-tab' : 'creation-failed';
+}
 
 /**
  * What a creation path answers.
@@ -205,6 +218,8 @@ export async function createNewGroup(
         // Save MLS state after the merged commit (crash-safety).
         await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
       } catch (e) {
+        // A follower tab can commit nothing, so the group cannot be completed here at all.
+        if (e instanceof FollowerTabCommitError) throw e;
         log(`Error syncing own devices: ${e}`);
         console.error('[GROUP] Sync own devices failed:', e);
       } finally {
@@ -272,7 +287,7 @@ export async function createNewGroup(
         // Non-blocking
       }
     }
-    return { ok: false, reason: 'creation-failed' };
+    return { ok: false, reason: creationRefusal(e) };
   }
 }
 
@@ -443,6 +458,8 @@ async function processBulkAddition(
       console.warn('[SYNC] No Welcome delivered - member addition notification skipped');
     }
   } catch (e: any) {
+    // The one failure the member can act on, so it reaches them (`inviteMembersToCurrentGroup`).
+    if (e instanceof FollowerTabCommitError) throw e;
     log(`Bulk invite error: ${String(e)}`);
     console.error('[SYNC] processBulkAddition failed:', e);
   }
@@ -763,6 +780,6 @@ export async function startNewConversation(
         // Non-blocking: orphan will be cleaned up on next server-side GC
       }
     }
-    return { ok: false, reason: 'creation-failed' };
+    return { ok: false, reason: creationRefusal(_e) };
   }
 }

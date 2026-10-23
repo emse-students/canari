@@ -93,10 +93,29 @@ function write(userId: string, ledger: SendRatchetLedger): void {
 /**
  * The ledger key of `groupId`'s send ratchet AT `epoch`. A generation is a property of one epoch's
  * ratchet: a merge starts the next epoch at generation 0, so a count kept per group alone cannot say
- * which ratchet its frames spent - and a burn applied to the wrong one repairs nothing.
+ * which ratchet its frames spent - and a burn applied to the wrong one repairs nothing. Exported so a
+ * checkpoint can leave out of what it declares durable the ratchets it does not hold the repair of.
  */
-function ratchetKey(groupId: string, epoch: number): string {
+export function sendRatchetKey(groupId: string, epoch: number): string {
   return `${groupId}@${epoch}`;
+}
+
+/**
+ * A burn owed to `groupId` at `epoch` did not run, so a frame sealed now would re-use a generation
+ * the peers consumed (`SecretReuseError` on every one of them). The send is REFUSED instead; the debt
+ * stays owed, so the next send - or the next load, which reads the ledger again - burns it.
+ */
+export class OwedSendBurnFailedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly epoch: number,
+    readonly cause: unknown
+  ) {
+    super(
+      `the send ratchet of ${groupId.slice(0, 8)}... at epoch ${epoch} owes a burn that failed - nothing is sealed until it runs`
+    );
+    this.name = 'OwedSendBurnFailedError';
+  }
 }
 
 /**
@@ -123,7 +142,7 @@ function parseKey(key: string): { groupId: string; epoch: number | null } {
  */
 export function noteFrameEmitted(userId: string, groupId: string, epoch: number): void {
   const ledger = read(userId);
-  const key = ratchetKey(groupId, epoch);
+  const key = sendRatchetKey(groupId, epoch);
   ledger.emitted[key] = (ledger.emitted[key] ?? 0) + 1;
   write(userId, ledger);
 }

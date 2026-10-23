@@ -12,6 +12,7 @@ import { BaseMlsService } from './BaseMlsService';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 import {
   CommitOutcomeUnknownError,
+  CommitStageNotSavedError,
   FollowerTabCommitError,
   encodeIntent,
   type CommitIntent,
@@ -22,6 +23,7 @@ import {
 import { readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { MlsCheckpointNotWrittenError, MlsStateWriteRefusedError } from '$lib/utils/hex';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { TransportFailureError, isTransportFailure } from '$lib/utils/transportFailure';
 
@@ -322,6 +324,49 @@ describe('runCommitTransaction - the record is written by the stage, never after
     expect(c.delivery.submitCommit).not.toHaveBeenCalled();
     expect(c.state.get(G)).toMatchObject({ status: 'recorded' });
     vi.mocked(console.error).mockRestore();
+  });
+
+  /**
+   * A checkpoint that PROVES it stored nothing (refused, or failed before its write) cannot have put
+   * the stage on disk, and the commit never left: the stage is cleared and the failure is definitive.
+   * Kept unknown instead, a checkpoint that keeps failing (a full quota) blocked every send in the
+   * group for the rest of the session.
+   */
+  it.each([
+    [
+      'failed at its store',
+      () => new MlsCheckpointNotWrittenError('store', new Error('QuotaExceeded')),
+    ],
+    ['failed at its export', () => new MlsCheckpointNotWrittenError('export', new Error('seal'))],
+    ['was refused by an ended document', () => new MlsStateWriteRefusedError('ended')],
+  ])('clears the stage, definitively, when its checkpoint %s', async (_what, failure) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    persistMlsStructuralCheckpoint.mockRejectedValueOnce(failure());
+    const c = ctx(submitting({ accepted: true }));
+    await expect(run(c)).rejects.toBeInstanceOf(CommitStageNotSavedError);
+    expect(c.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
+    expect(c.state.has(G)).toBe(false);
+
+    // The group is free: the next commit is staged, saved and sent.
+    await run(c);
+    expect(c.delivery.submitCommit).toHaveBeenCalledTimes(1);
+    expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+
+  it('keeps the stage unknown when it stored nothing but its clear fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    persistMlsStructuralCheckpoint.mockRejectedValueOnce(
+      new MlsCheckpointNotWrittenError('store', new Error('QuotaExceeded'))
+    );
+    const c = ctx(submitting());
+    c.clearPendingCommit.mockRejectedValueOnce(new Error('platform gone'));
+    await expect(run(c)).rejects.toBeInstanceOf(CommitOutcomeUnknownError);
+    expect(c.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(c.state.get(G)).toMatchObject({ status: 'recorded' });
+    vi.restoreAllMocks();
   });
 
   /**

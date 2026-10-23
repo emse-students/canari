@@ -880,20 +880,33 @@ Now any crash after the send reloads the stage and its record, and the resubmiss
 connection merges or clears it. The checkpoint the kept-unresolved path used to await afterwards
 is gone: the state it wrote is already on disk.
 
-**A checkpoint that throws sends nothing and KEEPS the stage** (2026-10-23). It may have thrown after
-its write landed, so the stage may be on disk; clearing it and reporting a failure was contradicted by
-the next reload, whose settle landed the commit. It is kept, reported as `CommitOutcomeUnknownError`
-like an unanswered commit, and the settle that decides it awaits its own checkpoint before the
-resubmission: no request leaves carrying a commit that is not on disk. That settle checkpoint is paid
-only when a kept commit is settled.
+**A checkpoint that throws sends nothing, and WHERE it threw decides the stage** (2026-10-23), read
+from the type (`checkpointWroteNothing`, `utils/hex.ts`):
 
-**A follower tab does not commit** (`FollowerTabCommitError`, refused before anything is staged). Its
+- **It stored nothing** - refused by the version guard or an ended document
+  (`MlsStateWriteRefusedError`), or failed before anything was stored (`MlsCheckpointNotWrittenError`:
+  the export and seal, or the IndexedDB transaction, which stores all of it or none). The commit never
+  left and this write did not save it, so the stage is CLEARED and the failure is definitive
+  (`CommitStageNotSavedError`). Kept unknown instead, a checkpoint that keeps failing (a full quota)
+  blocked every send in the group for the rest of the session. If the clear itself fails, the stage
+  stays and the outcome is unknown.
+- **Anything else** may have thrown after its write landed (the native checkpoint is one call, so its
+  failure is always this kind), and the stage may be on disk; clearing it and reporting a failure was
+  contradicted by the next reload, whose settle landed the commit. It is kept, reported as
+  `CommitOutcomeUnknownError` like an unanswered commit, and the settle that decides it awaits its own
+  checkpoint before the resubmission: no request leaves carrying a commit that is not on disk. That
+  settle checkpoint is paid only when a kept commit is settled.
+
+**A follower tab does not commit** (`FollowerTabCommitError`, refused before anything is staged, and
+by `externalJoin` too: a join is a commit). Its
 state is a copy loaded once: the version guard refuses its writes once the leader has written, so the
 checkpoint above would fail on every follower commit; and before that checkpoint existed, a commit
 sent from a follower moved the group past the state the leader keeps, because the leader cannot read
 a commit of its own leaf back (`OwnPrivateMessage`). Commits are reached from a follower's UI
 (`groupActions.ts`, `groupCreation.ts`, `actions.ts`); refusing them by the leadership fact is the
-gate the outbox already applies to sends.
+gate the outbox already applies to sends. The member is told, by type: a creation answers the
+`follower-tab` refusal, and an invite or a removal shows the same sentence
+(`reportFollowerTabRefusal`, `conversationRefusalMessage.ts`) - do it in the main tab.
 
 **Cost: one checkpoint per commit, awaited under the MLS lock**, which blocks decrypts and sends in
 every group while it runs. The live web path is the WASM ChaCha20 seal

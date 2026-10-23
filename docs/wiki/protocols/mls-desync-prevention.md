@@ -457,6 +457,19 @@ first way deterministic.
   is burnt at once; AHEAD of it, all of `emitted` is owed THERE (the snapshot holds nothing of that
   epoch) and burnt by `burnOwedOnArrival` before the first frame sealed at it; BEHIND it, the entry is
   dead and forgotten, as are a group's entries when the state no longer holds the group.
+- An owed burn lives in memory only, so it stays OUT OF what a checkpoint declares durable until it
+  has run: `persistCheckpoint` drops every owed `group@epoch` from the counts it snapshots
+  (`sendRatchetsNotDurable`). Otherwise a checkpoint landing between the settle's merge and the first
+  send wrote the epoch without the burn and committed `persisted = emitted` for it, and the next load
+  found nothing owed and re-issued generation 0 (the final check of #2269, 2026-10-23). The entry is
+  removed only once its burn has run.
+- One owed burn at a time per group, and every send awaits it (`settleOwedBurns`): two sends used to
+  race, the second sealing while the first's burn was still in the platform. A burn that fails refuses
+  the send (`OwedSendBurnFailedError`) and stays owed for the next one.
+- When the held groups cannot be listed (`heldGroupsKnown` false) or an epoch cannot be read, there is
+  no epoch to judge by: the debt is burnt in whatever epoch the state holds, said at `warn` with the
+  number of groups, and those keys are never declared durable this session, so the next load judges
+  them again. Over-burning is free; skipping the repair was not.
 - An incoming commit is not held off by the send barrier, so the group can reach an owing epoch
   between the burn and the encrypt. `sealPastOwedBurns` reads the sealed frame's epoch and never posts
   a frame sealed at an epoch that still owes a burn: it says so at `error`, burns, and seals again.

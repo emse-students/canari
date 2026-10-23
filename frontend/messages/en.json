@@ -172,6 +172,7 @@
   "chat_modal_error_block_check_unavailable": "Could not check whether this contact can be reached. Try again in a moment.",
   "chat_modal_error_peer_has_no_device": "This contact has never signed in to Canari: they must open the app once before they can receive a message.",
   "chat_modal_error_creation_failed": "Creation failed and nothing was kept. Try again in a moment.",
+  "chat_error_follower_tab": "Canari is open in another tab: do this from that tab, or close it and reload this one.",
   "chat_modal_creation_in_progress_label": "Creating…",
   "chat_modal_community_name_label": "Club or group name",
   "chat_modal_community_name_placeholder": "ex: BDE 2026",

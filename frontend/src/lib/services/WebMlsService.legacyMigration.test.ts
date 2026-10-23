@@ -58,6 +58,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     endDocumentAfterRefusedRotation: vi.fn(),
     // A rotation drops the burns owed to epochs ahead of the state, with the ledger.
     owedSendBurns: new Map(),
+    unprovenSendRatchets: new Set(),
+    owedBurnInFlight: new Map(),
+    sendRatchetsNotDurable: WebMlsService.prototype['sendRatchetsNotDurable'],
     // Real implementations, not mocks: the fresh-start assertions below (new id persisted, old
     // device deleted) are assertions ABOUT the rotation, so stubbing it would test nothing.
     rotateDeviceIdentity: WebMlsService.prototype['rotateDeviceIdentity'],

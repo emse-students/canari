@@ -32,6 +32,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     delivery: { userId: '', deviceId: '' },
     client: null,
     owedSendBurns: new Map(),
+    unprovenSendRatchets: new Set(),
+    owedBurnInFlight: new Map(),
     stateWasExpected: false,
     restoreDeviceIdFromNative: vi.fn().mockResolvedValue(null),
     persistDeviceIdNatively: vi.fn().mockResolvedValue(undefined),
