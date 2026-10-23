@@ -11,6 +11,7 @@ import { BaseMlsService } from './BaseMlsService';
 import { DELIVERY, addressedKeyMaterial, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import { LeafRefreshUnverifiedError, readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';
 import { recordingStage } from '../../test/recordingStage';
+import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
 
 /** Any intent: the refresh only hands it on to its stage. */
 const INTENT = new Uint8Array([9]);
@@ -176,7 +177,7 @@ abstract class SendHarness extends BaseMlsService {
     return [];
   }
   protected async encryptForSend(): Promise<Uint8Array> {
-    return new Uint8Array([1]);
+    return sealedFrame(1);
   }
 }
 const Harness = SendHarness as unknown as new () => SendHarness;

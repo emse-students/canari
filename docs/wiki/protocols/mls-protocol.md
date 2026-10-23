@@ -726,17 +726,40 @@ between the stage and the first `submitCommit` (`checkpointStageBeforeSend`). Be
 after the send and before the next checkpoint reloaded the state from BEFORE the stage: the server
 might hold the commit, and the device could neither merge it nor resubmit it (it fell to rung 1 or 2).
 Now any crash after the send reloads the stage and its record, and the resubmission at the next
-connection merges or clears it. A checkpoint that fails sends nothing and clears the stage, which is
-definitive because nothing has left. The checkpoint the kept-unresolved path used to await afterwards
-is gone: the state it wrote is already on disk. **Cost: one checkpoint per commit, awaited under the
-MLS lock.** Measured with `mls-core/tests/heavy_state_checkpoint.rs` (release, desktop, 2026-10-22):
-export + seal is 0.7 ms at 5 groups, 5.5 ms at 40 and 12.3 ms at 80 (7.7 MB). On the web the
-2026-10-12 audit puts a 7.7 MB checkpoint at ~47 ms with its IndexedDB put
-([performance-audit](../frontend/performance-audit-2026-10-12.md)). On native, #1826 read a seal and
-write of median 2 ms, p95 5 ms, on a 304 KB state ([device-verification](../device-verification.md)).
-A request for durability made while a checkpoint is running waits for the NEXT one, so the worst case
-is two checkpoints. Commits are rare next to checkpoints: the fleet ceiling is ~200 commits a day
-(see the leaf-refresh interval above), against 247 checkpoints in 432 s on ONE phone after a sign-in (Mi 9T, 2026-10-13).
+connection merges or clears it. The checkpoint the kept-unresolved path used to await afterwards
+is gone: the state it wrote is already on disk.
+
+**A checkpoint that throws sends nothing and KEEPS the stage** (2026-10-23). It may have thrown after
+its write landed, so the stage may be on disk; clearing it and reporting a failure was contradicted by
+the next reload, whose settle landed the commit. It is kept, reported as `CommitOutcomeUnknownError`
+like an unanswered commit, and the settle that decides it awaits its own checkpoint before the
+resubmission: no request leaves carrying a commit that is not on disk. That settle checkpoint is paid
+only when a kept commit is settled.
+
+**A follower tab does not commit** (`FollowerTabCommitError`, refused before anything is staged). Its
+state is a copy loaded once: the version guard refuses its writes once the leader has written, so the
+checkpoint above would fail on every follower commit; and before that checkpoint existed, a commit
+sent from a follower moved the group past the state the leader keeps, because the leader cannot read
+a commit of its own leaf back (`OwnPrivateMessage`). Commits are reached from a follower's UI
+(`groupActions.ts`, `groupCreation.ts`, `actions.ts`); refusing them by the leadership fact is the
+gate the outbox already applies to sends.
+
+**Cost: one checkpoint per commit, awaited under the MLS lock**, which blocks decrypts and sends in
+every group while it runs. The live web path is the WASM ChaCha20 seal
+(`MLS_STATE_SEAL_V2_WRITER_ENABLED` is still `false`): **~196-200 ms for a 7.7 MB state in desktop
+Chrome** (seal + IndexedDB put, [performance-audit](../frontend/performance-audit-2026-10-12.md));
+the v2 WebCrypto seal's ~47 ms is not live yet. On a phone it is far more: the Mi 9T capture of
+2026-10-13 (a DEBUG build) read **~1.4-2 s per checkpoint**, with a checkpoint in flight ~93 % of the
+time after a sign-in ([community-open-slowness](../frontend/community-open-slowness-mi9t-2026-10-13.md#finding-2---after-a-sign-in-the-checkpoint-runs-93--of-the-time-and-each-one-costs-more)).
+A request for durability made while a checkpoint is running waits for the NEXT one, so one commit
+costs up to two checkpoints, and **a burst of N commits serialises to ~2N under the lock** - on that
+phone, several seconds of blocked decrypts for a handful of commits. Commits are rare next to
+checkpoints (the fleet ceiling is ~200 a day, see the leaf-refresh interval above, against 247
+checkpoints in 432 s on ONE phone after a sign-in), but the burst cost is real where commits cluster:
+a group creation adding several devices, a roster reconcile. **Owed: a release-build phone
+measurement** of a commit's checkpoint (Mi 9T and iPhone 12). Desktop native release figures
+(`mls-core/tests/heavy_state_checkpoint.rs`, 2026-10-22: export + seal 12.3 ms at 7.7 MB, without the
+file write) are a floor, not a phone.
 
 **A record that cannot be read decides nothing.** "No record" proves the commit never left; a record
 that does not decode (the crate's CBOR, or the intent inside it) proves nothing, and the bytes a

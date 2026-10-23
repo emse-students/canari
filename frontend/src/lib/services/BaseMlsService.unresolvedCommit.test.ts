@@ -12,6 +12,7 @@ import { BaseMlsService } from './BaseMlsService';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 import {
   CommitOutcomeUnknownError,
+  FollowerTabCommitError,
   encodeIntent,
   type CommitIntent,
   type OwedWelcome,
@@ -19,6 +20,7 @@ import {
   type StagedRecord,
 } from '$lib/mls-client/commitSubmission';
 import { readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';
+import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { TransportFailureError, isTransportFailure } from '$lib/utils/transportFailure';
@@ -285,15 +287,58 @@ describe('runCommitTransaction - the record is written by the stage, never after
     expect(reloaded.clearPendingCommit).not.toHaveBeenCalled();
   });
 
-  it('sends nothing, and clears, when that checkpoint fails', async () => {
-    persistMlsStructuralCheckpoint.mockRejectedValueOnce(new Error('disk full'));
+  /**
+   * A checkpoint can throw AFTER its write landed, so a stage whose checkpoint "failed" may be on
+   * disk. Cleared and reported as failed, the next reload contradicted the report: its settle landed
+   * the commit. The outcome reported and the disk now agree whatever the write did - the stage is
+   * kept and reported UNKNOWN, and the settle that decides it checkpoints before its request.
+   */
+  it('sends nothing and KEEPS the stage, reported unknown, when that checkpoint throws', async () => {
+    // The write landed, then the call threw.
+    const disk: PendingState = new Map();
+    persistMlsStructuralCheckpoint.mockImplementationOnce(async () => {
+      for (const [g, read] of c.state) disk.set(g, read);
+      throw new Error('the IPC answer was lost');
+    });
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const c = ctx(submitting());
-    await expect(run(c)).rejects.toThrow('not checkpointed');
+    await expect(run(c)).rejects.toBeInstanceOf(CommitOutcomeUnknownError);
     expect(c.delivery.submitCommit).not.toHaveBeenCalled();
-    expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
-    expect(c.state.size).toBe(0);
+    expect(c.clearPendingCommit).not.toHaveBeenCalled();
+    expect(c.state.get(G)).toMatchObject({ status: 'recorded' });
+
+    // Reloaded from that disk, the settle sends it - the outcome the caller was told is still open.
+    const reloaded = ctx(submitting({ accepted: true }), { state: new Map(disk) });
+    await reloaded.settleUnresolvedCommits();
+    expect(reloaded.mergePendingCommit).toHaveBeenCalledTimes(1);
     vi.mocked(console.error).mockRestore();
+  });
+
+  it('a settle sends no kept commit whose checkpoint still throws - it stays unknown', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const c = ctx(submitting({ accepted: true }), { state: kept() });
+    persistMlsStructuralCheckpoint.mockRejectedValue(new Error('disk full'));
+    await c.settleUnresolvedCommits([G]);
+    expect(c.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(c.state.get(G)).toMatchObject({ status: 'recorded' });
+    vi.mocked(console.error).mockRestore();
+  });
+
+  /**
+   * A follower tab's state is a copy no disk and no other tab follows, and the leader cannot read a
+   * commit of its own leaf back: committed from a follower, the group moved past what the leader
+   * keeps. Refused from leadership, before anything is staged.
+   */
+  it('stages nothing on a follower tab', async () => {
+    const leadership = await import('$lib/mls-client/tabLeader');
+    vi.spyOn(leadership, 'getTabLeadership').mockReturnValue('follower');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const c = ctx(submitting({ accepted: true }));
+    const stage = stagerOf(c);
+    await expect(run(c, stage)).rejects.toBeInstanceOf(FollowerTabCommitError);
+    expect(stage).not.toHaveBeenCalled();
+    expect(c.delivery.submitCommit).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 
   it('sends nothing and clears when the stage left no usable record', async () => {
@@ -426,7 +471,11 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     );
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
     expect(c.state.size).toBe(0);
-    expect(persistMlsStructuralCheckpoint).toHaveBeenCalledTimes(1);
+    // One before the resubmission (nothing leaves that is not on disk), one after the merge.
+    expect(persistMlsStructuralCheckpoint).toHaveBeenCalledTimes(2);
+    expect(persistMlsStructuralCheckpoint.mock.invocationCallOrder[0]).toBeLessThan(
+      c.delivery.submitCommit.mock.invocationCallOrder[0]
+    );
   });
 
   it("delivers an Add's Welcome to every device it admits - nobody else is left to send it", async () => {
@@ -453,7 +502,8 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     });
     await c.settleUnresolvedCommits();
     const merged = c.mergePendingCommitOwingWelcome.mock.invocationCallOrder[0];
-    const durable = persistMlsStructuralCheckpoint.mock.invocationCallOrder[0];
+    // [0] is the checkpoint before the resubmission; [1] is the one after the merge.
+    const durable = persistMlsStructuralCheckpoint.mock.invocationCallOrder[1];
     const sent = c.sendWelcome.mock.invocationCallOrder[0];
     const cleared = c.welcomeDelivered.mock.invocationCallOrder[0];
     expect(merged).toBeLessThan(durable);
@@ -606,7 +656,7 @@ abstract class SendHarness extends BaseMlsService {
   }
   protected async encryptForSend(groupId: string): Promise<Uint8Array> {
     this.encrypted.push(groupId);
-    return new Uint8Array([1]);
+    return sealedFrame(5, groupId);
   }
 }
 const Harness = SendHarness as unknown as new (

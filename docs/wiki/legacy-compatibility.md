@@ -91,6 +91,7 @@ REST: those rows need a count, then a migration.
 | `canari_post_feed_kind` drop (`posts/retiredFeedKind.ts`, run by the feed's `load`) | every device that ran a `1.2.9-alpha.2`/`.3` has opened the feed once on a later build | not a version question (alphas only) | one device-global `localStorage` key | 1 module + 1 call | remove with the first stable after `1.2.9` ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)) |
 | Plaintext native cache reader (`native_cache::open_file`/`open_line`, the `Plaintext` arm, and the one-pass migration) | floor >= the release carrying the at-rest seal | NO (unreleased) | `graine_seeds.json`, `fcm_message_cache*.ndjson` on devices not yet updated | 2 match arms + 3 migration functions | waits for the floor ([diary](#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal)) |
 | `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
+| Send-ledger entry with no epoch (`sendRatchetLedger.ts`, `parseKey`) | floor past the first stable carrying #2269 | NO (unreleased) | `mls_send_ledger_<user>` in `localStorage` on devices not yet updated | 1 parse branch + 1 debt arm | waits for the floor ([diary](#no-date-yet---a-send-ledger-entry-with-no-epoch-written-by-a-client-older-than-2026-10-23)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -141,6 +142,18 @@ version that CARRIES #2228 (not merely `1.2.9`: that build also declares the `fo
 knows the type), on BOTH estates, once BOTH Play AND the App Store serve that version. The switch stays
 ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
 pins it, run by someone else.
+
+### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
+
+**Site:** `parseKey` and `sendRatchetDebt` in `frontend/src/lib/mls-client/sendRatchetLedger.ts`.
+**Shim (2026-10-23):** the send ledger is keyed `<groupId>@<epoch>` since #2269
+([mls-desync-prevention](protocols/mls-desync-prevention.md#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)).
+A device updated with frames counted but not checkpointed still holds entries keyed by the group
+alone, in `localStorage`. They are read as their writer counted them, against the epoch the state is
+restored at, and forgotten once settled at a load (the burn's checkpoint commits them).
+**Removal condition:** a CLIENT FLOOR - `minClientVersion` past the first stable carrying #2269. An
+install below it keeps writing epoch-less entries; above it, each one is settled at its first load
+and gone. Then `parseKey`'s `null` epoch and its arm in `sendRatchetDebt` go.
 
 ### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 

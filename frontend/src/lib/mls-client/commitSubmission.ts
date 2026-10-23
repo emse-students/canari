@@ -154,19 +154,42 @@ export function composeSubmission(record: StagedRecord): CommitSubmission | null
  *
  * A {@link TransportFailureError} on purpose: the outcome is unknown BECAUSE no answer came back,
  * and every caller already reads that type as "retry when the server answers", never as final.
+ * `why` names the other way an outcome becomes unknown: a stage whose checkpoint threw may be on
+ * disk all the same, so it is kept and settled like an unanswered one (`runCommitTransaction`).
  */
 export class CommitOutcomeUnknownError extends TransportFailureError {
   constructor(
     readonly groupId: string,
     readonly baseEpoch: number,
-    cause: unknown
+    cause: unknown,
+    why = 'no definitive answer from the commit gate'
   ) {
     super(
       cause,
       `the commit of ${groupId.slice(0, 8)}... staged on epoch ${baseEpoch} has an UNKNOWN outcome ` +
-        `(no definitive answer from the commit gate) - kept until a resubmission answers`
+        `(${why}) - kept until a resubmission answers`
     );
     this.name = 'CommitOutcomeUnknownError';
+  }
+}
+
+/**
+ * A commit of `groupId` was asked of a FOLLOWER tab, and refused before anything was staged.
+ *
+ * Only the leader tab runs this device's MLS state (`tabLeader.ts`): a follower holds a copy loaded
+ * once, which it cannot make durable (the version guard refuses its writes once the leader has
+ * written) and which the leader never learns from - the leader cannot read a commit of its own leaf
+ * back (`OwnPrivateMessage`), so a commit sent from a follower moved the group past the state the
+ * leader keeps. Known from leadership, which is a fact here, rather than learnt from a checkpoint
+ * that fails.
+ */
+export class FollowerTabCommitError extends Error {
+  constructor(readonly groupId: string) {
+    super(
+      `a commit of ${groupId.slice(0, 8)}... was asked of a follower tab - only the leader tab ` +
+        'commits, so nothing was staged'
+    );
+    this.name = 'FollowerTabCommitError';
   }
 }
 
