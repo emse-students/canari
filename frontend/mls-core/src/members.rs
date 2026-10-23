@@ -428,17 +428,26 @@ impl MlsManager {
         key_package_bytes: &[u8],
         expected_identity: &str,
     ) -> &'static str {
-        let kp = match KeyPackageIn::tls_deserialize(&mut &key_package_bytes[..]) {
-            Ok(kp_in) => match kp_in.validate(self.provider.crypto(), ProtocolVersion::Mls10) {
-                Ok(kp) => kp,
-                Err(e) => return SkippedKeyPackageReason::from_verify(&e).as_str(),
-            },
-            Err(_) => return SkippedKeyPackageReason::Undecodable.as_str(),
-        };
-        match vet_validated(&self.device_trust, &kp, Some(expected_identity)) {
+        match self.key_package_verdict(key_package_bytes, expected_identity) {
             Ok(trust) => trust.as_str(),
             Err(reason) => reason.as_str(),
         }
+    }
+
+    /// [`Self::vet_key_package`] as a TYPE: the trust an Add would admit the package under, or the
+    /// [`SkippedKeyPackageReason`] it would skip it for - for a Rust caller that branches on it.
+    pub fn key_package_verdict(
+        &self,
+        key_package_bytes: &[u8],
+        expected_identity: &str,
+    ) -> Result<LeafTrust, SkippedKeyPackageReason> {
+        let kp = match KeyPackageIn::tls_deserialize(&mut &key_package_bytes[..]) {
+            Ok(kp_in) => kp_in
+                .validate(self.provider.crypto(), ProtocolVersion::Mls10)
+                .map_err(|e| SkippedKeyPackageReason::from_verify(&e))?,
+            Err(_) => return Err(SkippedKeyPackageReason::Undecodable),
+        };
+        vet_validated(&self.device_trust, &kp, Some(expected_identity))
     }
 
     /// Hands over every device event recorded since the last call, oldest first, and forgets them

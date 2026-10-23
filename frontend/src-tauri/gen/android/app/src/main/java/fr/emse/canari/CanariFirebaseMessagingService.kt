@@ -2340,6 +2340,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /**
      * Builds an MLS Welcome for [keyPackageB64] in group [groupId] and STAGES the post-add state
      * beside mls.bin - mls.bin itself is untouched until [nativeInstallStagedWelcome].
+     * [requester] (`userId:deviceId`) is the device the request was made for: a package whose
+     * credential names another device, or that device under an unpinned key, is refused
+     * (`identity-mismatch`, `signature-key-changed`) and nothing is staged.
      * Returns JSON: {"ok":true,"welcome","ratchetTree","commit","baseEpoch"} or
      * {"ok":false,"reason":"<token>"} (`mobile/background.rs`, `prepare_welcome_background_with_key`).
      */
@@ -2350,6 +2353,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         userId: String,
         deviceId: String,
         groupId: String,
+        requester: String,
         keyPackageB64: String,
     ): String
 
@@ -3200,7 +3204,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 JSONObject(nativePrepareWelcomeBackground(
                     filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId,
-                    groupId, keyPackage,
+                    groupId, "$requesterUserId:$requesterDeviceId", keyPackage,
                 ))
             }
             if (result == null) {

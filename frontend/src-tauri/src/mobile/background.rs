@@ -489,15 +489,30 @@ fn welcome_refused(reason: &str) -> serde_json::Value {
     refused(reason)
 }
 
-/// Builds the Welcome and the commit that add `key_package_b64` to `group_id`, and STAGES the state
-/// they produce beside `mls.bin`. Nothing is written to `mls.bin` here.
+/// One `welcome_request` this device answers: the group, the device the request was made for
+/// (`userId:deviceId`, the requester the push named), and the KeyPackage fetched FOR that device.
+pub struct WelcomeRequest<'a> {
+    pub group_id: &'a str,
+    /// The device the Welcome is for - the identity the KeyPackage's credential must name.
+    pub requester: &'a str,
+    pub key_package_b64: &'a str,
+}
+
+/// Builds the Welcome and the commit that add the request's KeyPackage to its group, and STAGES the
+/// state they produce beside `mls.bin`. Nothing is written to `mls.bin` here.
 ///
 /// Answers `{"ok": true, "welcome", "ratchetTree", "commit", "groupInfo", "baseEpoch"}` (base64;
 /// `groupInfo` is the external-join base of the epoch the commit creates, published by the route
 /// in the advance's own transaction - COMM-22), or
 /// `{"ok": false, "reason"}` with one of: `foreground-active`, `stale-epoch-known`,
 /// `key-package-unreadable`, `state-unreadable`, `group-not-held`, `already-member`, `add-failed`,
-/// `stage-failed`.
+/// `stage-failed`, or the [`mls_core::SkippedKeyPackageReason`] wire name the package is refused for
+/// (`identity-mismatch`, `signature-key-changed`, `expired`, ...).
+///
+/// **THE PACKAGE IS BOUND TO THE REQUESTER** as the foreground's Add binds it: the delivery service
+/// chose the bytes, so a package whose credential names another device, or the requester under a
+/// key this device never pinned for it, is refused before anything is staged
+/// ([`mls_core::MlsManager::key_package_verdict`], the check the Add itself then re-runs).
 ///
 /// **THE ADD IS INSTALLED ONLY ONCE THE SERVER ACCEPTS IT** ([`install_staged_welcome`]), the order
 /// the foreground has followed since C7 (stage, submit, merge on accept). This path used to merge and
@@ -517,11 +532,15 @@ pub fn prepare_welcome_background_with_key(
     key_b64: &str,
     user_id: &str,
     device_id: &str,
-    group_id: &str,
-    key_package_b64: &str,
+    request: &WelcomeRequest,
 ) -> serde_json::Value {
+    let WelcomeRequest {
+        group_id,
+        requester,
+        key_package_b64,
+    } = *request;
     let short: String = group_id.chars().take(8).collect();
-    log::info!("[BG_WELCOME] prepare group={short}");
+    log::info!("[BG_WELCOME] prepare group={short} for {requester}");
     // The foreground answers welcome_requests itself, and owns the state while it runs.
     if crate::concurrency::foreground_is_active() {
         return welcome_refused("foreground-active");
@@ -547,6 +566,21 @@ pub fn prepare_welcome_background_with_key(
             return welcome_refused("group-not-held");
         }
     };
+    // Bound to the requester BEFORE staging, typed: the refusal travels as its wire name. mls-core
+    // has already logged a substitution (`identity-mismatch`, `signature-key-changed`) at ERROR.
+    match manager.key_package_verdict(&kp_bytes, requester) {
+        Ok(trust) => log::debug!(
+            "[BG_WELCOME] key package bound to {requester} ({}) group={short}",
+            trust.as_str()
+        ),
+        Err(reason) => {
+            log::error!(
+                "[BG_WELCOME] key package fetched for {requester} refused ({}) group={short} - nothing staged",
+                reason.as_str()
+            );
+            return welcome_refused(reason.as_str());
+        }
+    }
     log::debug!(
         "[BG_WELCOME] add_member group={short} kp_len={} base_epoch={base_epoch}",
         kp_bytes.len()
@@ -554,7 +588,7 @@ pub fn prepare_welcome_background_with_key(
     // `_with_base`: the external-join base of the epoch this commit CREATES travels with it, as the
     // foreground's does (COMM-22) - only the committer can export it, and only now.
     let (commit, welcome, group_info) =
-        match manager.add_members_bulk_with_base(group_id, &[kp_bytes.as_slice()]) {
+        match manager.add_members_bulk_with_base(group_id, &[kp_bytes.as_slice()], &[requester]) {
             Ok(((commit, Some(welcome), _, _), group_info)) => (commit, welcome, group_info),
             Ok(((_, None, _, skipped), _)) => {
                 log::error!(
@@ -1938,8 +1972,11 @@ mod tests {
             &key_b64(41),
             "refused-alice",
             "dev-a",
-            &gid,
-            &kp,
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "refused-carol:dev-c",
+                key_package_b64: &kp,
+            },
         );
         assert_eq!(prepared["ok"], true, "prepared: {prepared}");
         assert_eq!(prepared["baseEpoch"], 1, "built on the stale base");
@@ -1991,8 +2028,11 @@ mod tests {
             &key_b64(42),
             "accepted-alice",
             "dev-a",
-            &gid,
-            &kp,
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "accepted-carol:dev-c",
+                key_package_b64: &kp,
+            },
         );
         assert_eq!(prepared["ok"], true, "prepared: {prepared}");
         let installed = install_staged_welcome(&dir, &gid);
@@ -2047,8 +2087,11 @@ mod tests {
             &key_b64(48),
             "base-alice",
             "dev-a",
-            &gid,
-            &kp,
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "base-carol:dev-c",
+                key_package_b64: &kp,
+            },
         );
         assert_eq!(prepared["ok"], true, "prepared: {prepared}");
         let base = STANDARD
@@ -2088,8 +2131,11 @@ mod tests {
             &key_b64(43),
             "moved-alice",
             "dev-a",
-            &gid,
-            &kp,
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "moved-carol:dev-c",
+                key_package_b64: &kp,
+            },
         );
         assert_eq!(prepared["ok"], true);
 
@@ -2118,8 +2164,11 @@ mod tests {
             &key_b64(44),
             "ledger-alice",
             "dev-a",
-            &gid,
-            &kp,
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "ledger-carol:dev-c",
+                key_package_b64: &kp,
+            },
         );
         assert_eq!(first["ok"], true);
         assert!(!welcome_request_known_stale(&dir, &stale, &gid));
@@ -2139,8 +2188,11 @@ mod tests {
             &key_b64(44),
             "ledger-alice",
             "dev-a",
-            &gid,
-            &kp,
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "ledger-carol:dev-c",
+                key_package_b64: &kp,
+            },
         );
         assert_eq!(again["reason"], "stale-epoch-known");
         assert!(
@@ -2167,8 +2219,11 @@ mod tests {
             &key_b64(49),
             "ahead-alice",
             "dev-a",
-            &gid,
-            &kp,
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "ahead-carol:dev-c",
+                key_package_b64: &kp,
+            },
         );
         assert_eq!(first["ok"], true);
         discard_staged_welcome(
@@ -2207,8 +2262,11 @@ mod tests {
             &key_b64(45),
             "race-alice",
             "dev-a",
-            &gid,
-            &kp,
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "race-carol:dev-c",
+                key_package_b64: &kp,
+            },
         );
         assert_eq!(first["ok"], true);
         discard_staged_welcome(&dir, &gid, RefusalMemo::Nothing);
@@ -2232,8 +2290,11 @@ mod tests {
             &key_b64(51),
             "target-alice",
             "dev-a",
-            &gid,
-            &kp,
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "target-carol:dev-c",
+                key_package_b64: &kp,
+            },
         );
         assert_eq!(first["ok"], true);
         assert_eq!(
@@ -2282,8 +2343,11 @@ mod tests {
             &key_b64(46),
             "fg-alice",
             "dev-a",
-            &gid,
-            &kp,
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "fg-carol:dev-c",
+                key_package_b64: &kp,
+            },
         );
         crate::concurrency::mark_foreground_inactive();
         assert_eq!(out["reason"], "foreground-active");
@@ -2305,10 +2369,81 @@ mod tests {
             &key_b64(47),
             "member-alice",
             "dev-a",
-            &gid,
-            &kp,
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "member-bob:dev-b",
+                key_package_b64: &kp,
+            },
         );
         assert_eq!(out["reason"], "already-member", "{out}");
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+    }
+
+    /// The delivery service chooses the KeyPackage the background answer is built from: one whose
+    /// credential names another device than the requester is refused, typed, and nothing is staged.
+    #[test]
+    fn a_substituted_key_package_is_refused_on_the_background_path() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("subst");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(52)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("subst", &state);
+        let mallory = MlsManager::load_or_create("subst-mallory", "dev-m", None).unwrap();
+        let kp = STANDARD.encode(mallory.generate_key_package().unwrap());
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(52),
+            "subst-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "subst-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(out["ok"], false, "{out}");
+        assert_eq!(out["reason"], "identity-mismatch", "{out}");
+        assert!(
+            !staged_welcome_path(&dir, &gid).exists(),
+            "nothing is staged"
+        );
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+    }
+
+    /// A package naming a device this phone pinned, under ANOTHER signature key, is refused: nothing
+    /// proves the change, so the background answer does not re-add it.
+    #[test]
+    fn a_key_package_under_an_unpinned_key_is_refused_on_the_background_path() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (mut alice, bob, gid) = joined_pair("rekey");
+        // bob leaves, so the request is a re-add and not an `already-member`.
+        alice
+            .remove_members_for_devices(&gid, &["rekey-bob:dev-b"])
+            .expect("remove bob");
+        alice.merge_pending_commit_for(&gid).expect("merge remove");
+        drop(bob);
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(53)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("rekey", &state);
+        let impostor = MlsManager::load_or_create("rekey-bob", "dev-b", None).unwrap();
+        let kp = STANDARD.encode(impostor.generate_key_package().unwrap());
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(53),
+            "rekey-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "rekey-bob:dev-b",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(out["reason"], "signature-key-changed", "{out}");
+        assert!(!staged_welcome_path(&dir, &gid).exists());
         assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
     }
 }
