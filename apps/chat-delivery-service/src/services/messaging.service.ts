@@ -303,6 +303,19 @@ class WelcomeSeatGone extends Error {
 }
 
 /**
+ * Thrown inside the advance's transaction when the epoch it would move is no longer the base the
+ * gate read - another commit at the same base landed first - or when the commit log already holds
+ * a commit for that base. The transaction rolls back and the commit is refused `epoch_mismatch`; a
+ * type, so the catch never reads a message.
+ */
+class EpochAdvanceLost extends Error {
+  constructor(readonly lost: 'epoch_moved' | 'log_row_exists') {
+    super(`epoch advance lost: ${lost}`);
+    this.name = 'EpochAdvanceLost';
+  }
+}
+
+/**
  * The seat a Welcome is stored for, as {@link MessagingService.lockWelcomeSeat} re-reads it. In a
  * key group, `claim` is the target's seat claim, taken before social-service was asked whether the
  * target is entitled (`utils/seat-eviction.ts`); a conversation's seat is its roster row, so null.
@@ -2236,13 +2249,23 @@ export class MessagingService {
               throw new WelcomeSeatGone();
             }
           }
-          await m.getRepository(Group).update({ id: groupId }, { activeEpoch: baseEpoch + 1 });
+          // THE ADVANCE IS CONDITIONAL ON THE BASE THE GATE READ. The gate reads the epoch outside
+          // this transaction and the advance may wait on the seat lock above, longer than the
+          // Redis lock's 5 s: two commits at one base can both pass the read. Only one can move the
+          // epoch from it - the second waits on the row, then matches nothing - so the epoch never
+          // forks, whatever a timer did.
+          const advance = await m
+            .getRepository(Group)
+            .update({ id: groupId, activeEpoch: baseEpoch }, { activeEpoch: baseEpoch + 1 });
+          if ((advance.affected ?? 0) !== 1) throw new EpochAdvanceLost('epoch_moved');
           if (newBase) {
             await this.putGroupInfo(groupId, newBase, baseEpoch + 1, m);
           }
-          // Keyed by baseEpoch: only one commit can advance from a given epoch (linearization), so
-          // ON CONFLICT DO NOTHING keeps an idempotent retry safe.
-          await m
+          // Keyed by baseEpoch: only one commit can advance from a given epoch (the update above). A
+          // row already there is another commit's for this base, and replaying it in place of this
+          // one forks every device that catches up - so the advance is refused with it, never
+          // accepted beside it.
+          const logged = await m
             .getRepository(MlsCommitLog)
             .createQueryBuilder()
             .insert()
@@ -2253,7 +2276,11 @@ export class MessagingService {
               senderDeviceId: deviceId,
             })
             .orIgnore()
+            .returning(['baseEpoch'])
             .execute();
+          if (!Array.isArray(logged.raw) || logged.raw.length !== 1) {
+            throw new EpochAdvanceLost('log_row_exists');
+          }
           // THE NEWCOMERS THIS COMMIT ADMITS, written before the fan-out below makes the new epoch
           // reachable by anyone (see `ValidateCommitBody.admits`). The insert only guarantees the
           // row; the update is guarded on `pending` so an `active` device - already routed by its
@@ -2318,6 +2345,24 @@ export class MessagingService {
             currentEpoch: group.activeEpoch,
             reason: 'welcome_target_not_member',
           };
+        }
+        // Another commit at this base got there first: nothing of this one was written.
+        if (e instanceof EpochAdvanceLost) {
+          const now = await this.groupRepo.findOne({ where: { id: groupId } });
+          const currentEpoch = now?.activeEpoch ?? group.activeEpoch;
+          if (e.lost === 'log_row_exists') {
+            this.logger.error(
+              `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} ` +
+                `activeEpoch=${currentEpoch} reason=log_row_exists - the log already holds a commit ` +
+                `for this base while the epoch still stood on it`
+            );
+          } else {
+            this.logger.warn(
+              `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} ` +
+                `activeEpoch=${currentEpoch} reason=epoch_moved - another commit at this base landed first`
+            );
+          }
+          return { accepted: false, currentEpoch, reason: 'epoch_mismatch' };
         }
         throw e;
       }
@@ -3044,11 +3089,35 @@ export class MessagingService {
     settled: boolean;
   }> {
     return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      // The deletes, then the record: the one delete order (`utils/seat-eviction.ts`).
+      const cut = await this.deleteSeats(m, groupId, userId);
       const generation = await recordSeatEviction(m, groupId, userId, departure === 'begin');
       const settled =
         departure !== 'begin' && (await settleSeatDeparture(m, groupId, userId, departure.settles));
-      const cut = await this.deleteSeats(m, groupId, userId);
       return { ...cut, generation, settled };
+    });
+  }
+
+  /**
+   * An account erasure's cut of every seat `userId` holds in `groupId`, under the seat lock: the
+   * queue, the device rows and the Redis routes ({@link deleteSeats}), then a new generation of the
+   * eviction record, so a claim or a route read taken before the erasure never writes after it.
+   * The record is KEPT by the erasure for that reason (`ACCOUNT_ERASURE_COVERAGE`).
+   *
+   * Idempotent: a retry deletes nothing more and moves the generation again, which only refuses more.
+   */
+  async eraseSeats(
+    groupId: string,
+    userId: string
+  ): Promise<{ memberships: number; queued: number; toRemove: number; generation: number }> {
+    return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      const cut = await this.deleteSeats(m, groupId, userId);
+      const generation = await recordSeatEviction(m, groupId, userId, false);
+      this.logger.log(
+        `[INTERNAL_DELETE] seats erased group=${groupId} user=${userId.slice(0, 8)} ` +
+          `memberships=${cut.memberships} queued=${cut.queued} routes=${cut.toRemove} generation=${generation}`
+      );
+      return { ...cut, generation };
     });
   }
 

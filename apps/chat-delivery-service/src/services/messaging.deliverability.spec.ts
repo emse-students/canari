@@ -225,8 +225,8 @@ describe('MessagingService - a tombstone is not a destination', () => {
 
     expect(page).toEqual([]);
     expect(purged).toEqual([
-      QueuedMessage,
       GroupMember,
+      QueuedMessage,
       DeviceGroupMembership,
       MlsCommitLog,
       MlsGroupInfo,

@@ -46,8 +46,8 @@ const TOMBSTONED = 'g-dead';
 
 /** What a purge takes, in order. A HARD delete: the group row is already gone, so the marker goes. */
 const SWEPT = [
-  QueuedMessage,
   GroupMember,
+  QueuedMessage,
   DeviceGroupMembership,
   MlsCommitLog,
   MlsGroupInfo,
@@ -64,8 +64,8 @@ const SWEPT = [
  */
 const FAKE_TABLE = new Map<unknown, string>([
   [Group, 'table_of_group'],
-  [QueuedMessage, 'table_of_queued_message'],
   [GroupMember, 'table_of_group_member'],
+  [QueuedMessage, 'table_of_queued_message'],
   [DeviceGroupMembership, 'table_of_device_membership'],
   [MlsCommitLog, 'table_of_commit_log'],
   [MlsGroupInfo, 'table_of_group_info'],

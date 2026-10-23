@@ -3,6 +3,8 @@ import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { Group } from '../entities/group.entity';
+import { takeSharedSeatLock } from './seat-eviction';
 
 /**
  * Enrols a user into a group at the user level, and leaves an enrolment that already exists
@@ -63,6 +65,64 @@ export async function ensureGroupMember(
     .execute();
 }
 
+/** What {@link writePendingSeats} did: the seats written, or why none was. */
+export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster';
+
+/**
+ * Writes `pending` device memberships for `deviceIds` of `userId` in `groupId` - the seats a member
+ * then fulfils with an Add and a Welcome - UNDER THE GROUP'S SEAT LOCK, against a re-read made
+ * under it.
+ *
+ * A pending seat read off an unlocked roster could be written after a removal or a group's end
+ * had already run, for a person no longer in it. Under the lock (shared: writers of seats never
+ * wait for each other, an eviction takes it exclusive) the group row and the roster row are read
+ * in the one order (`utils/seat-eviction.ts`), so a removal either ran before - and the roster
+ * read finds no row - or waits, then deletes what this wrote.
+ *
+ * @param enrol true for an invite acceptance, which writes the roster row itself in the same
+ *   transaction ({@link ensureGroupMember}); false for a device registration, which writes seats
+ *   only where its owner is ALREADY on the roster.
+ * @param manager a NON-transactional manager - this opens the transaction itself.
+ */
+export async function writePendingSeats(
+  manager: EntityManager,
+  groupId: string,
+  userId: string,
+  deviceIds: readonly string[],
+  enrol: boolean
+): Promise<PendingSeatsOutcome> {
+  return manager.transaction(async (m) => {
+    await takeSharedSeatLock(m, groupId);
+    const [group] = await m.getRepository(Group).find({
+      where: { id: groupId },
+      select: { id: true, deletedAt: true },
+      lock: { mode: 'pessimistic_read' },
+    });
+    if (!group || group.deletedAt) return 'group_gone';
+    if (enrol) {
+      await ensureGroupMember(m, groupId, userId);
+    } else {
+      const seat = await m.getRepository(GroupMember).findOne({
+        where: { groupId, userId },
+        lock: { mode: 'pessimistic_read' },
+      });
+      if (!seat) return 'not_on_roster';
+    }
+    if (deviceIds.length > 0) {
+      await m
+        .createQueryBuilder()
+        .insert()
+        .into(DeviceGroupMembership)
+        .values(
+          deviceIds.map((deviceId) => ({ userId, deviceId, groupId, status: 'pending' as const }))
+        )
+        .orIgnore()
+        .execute();
+    }
+    return 'written';
+  });
+}
+
 /**
  * Who a departure takes out: a person (`userId`), narrowed to one device and/or one group. An
  * omitted field widens the scope to every device or every group of that person - never further.
@@ -116,14 +176,15 @@ export async function endDeviceMemberships(
     ...(deviceId !== undefined ? { deviceId } : {}),
     ...(groupId !== undefined ? { groupId } : {}),
   };
-  const memberships = await manager
-    .getRepository(DeviceGroupMembership)
-    .delete({ userId, ...narrowing });
+  // The queue, then the device rows: the one delete order (`utils/seat-eviction.ts`).
   const queued = await manager.getRepository(QueuedMessage).delete({
     recipientId: userId,
     ...narrowing,
     ...(queue === 'welcomes' ? { isWelcome: true } : {}),
   });
+  const memberships = await manager
+    .getRepository(DeviceGroupMembership)
+    .delete({ userId, ...narrowing });
   return { memberships: memberships.affected ?? 0, queued: queued.affected ?? 0 };
 }
 

@@ -36,7 +36,6 @@ import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { sanitizeIdentityValue } from '../utils/sanitize';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { MessagingService, type ActivationOutcome } from '../services/messaging.service';
-import { SeatEviction } from '../entities/seat-eviction.entity';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 import { endDeviceMemberships } from '../utils/group-membership';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
@@ -755,15 +754,13 @@ export class InternalController {
         );
       }
 
-      // ── Multi-member groups: remove every route of this account, by prefix ──
+      // ── Multi-member groups: every seat of this account, per group, UNDER ITS SEAT LOCK ──
+      // The queue, the device rows and the routes (by prefix) go together and the eviction is
+      // recorded ({@link MessagingService.eraseSeats}): a route restored from a read taken before
+      // this waits for it, then finds no row - so a retry never leaves a route behind.
       let routes = 0;
       for (const g of multiGroups) {
-        const routed = await this.redis.smembers(`group:members:${g.id}`);
-        const toRemove = routed.filter((m) => m.startsWith(`${userId}:`));
-        if (toRemove.length > 0) {
-          await this.redis.srem(`group:members:${g.id}`, ...toRemove);
-          routes += toRemove.length;
-        }
+        routes += (await this.messagingService.eraseSeats(g.id, userId)).toRemove;
       }
       this.logger.log(
         `[INTERNAL_DELETE] removed from ${multiGroups.length} group(s) user=${who} routes=${routes}`
@@ -793,8 +790,8 @@ export class InternalController {
       manager.delete(DeviceSignatureKey, { userId }),
       manager.delete(NotificationPreference, { userId }),
       manager.delete(UserDismissedGroup, { userId }),
-      // Nothing will claim a seat for this person again, so their eviction record has no reader.
-      manager.delete(SeatEviction, { userId }),
+      // The eviction records are KEPT: deleting one resets its generation to the value a claim
+      // taken before this erasure holds (`ACCOUNT_ERASURE_COVERAGE`). They go with their group.
       // An invite link the account minted keeps working for the group; only the name goes.
       this.groupInviteRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
     ]);

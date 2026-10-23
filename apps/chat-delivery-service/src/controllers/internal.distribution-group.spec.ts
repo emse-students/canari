@@ -569,8 +569,8 @@ describe('InternalController - the community distribution group', () => {
       // remains, discovery still runs against it, and the marker still answers a live question.
       // Dropping it would show a deleted banner to the one person who had asked for silence.
       expect(purged).toEqual([
-        QueuedMessage,
         GroupMember,
+        QueuedMessage,
         DeviceGroupMembership,
         MlsCommitLog,
         MlsGroupInfo,
@@ -632,6 +632,15 @@ describe('InternalController - the community distribution group', () => {
       // already sealed for a device that was offline.
       groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
       redis.smembers.mockResolvedValue([`${USER}:web-1`, `${USER}:tauri-1`, 'u-stays:web-1']);
+      // The deletes join the lock's statements, so their order against it is one list.
+      queuedMessageRepo.delete.mockImplementationOnce(async () => {
+        seatLockQueries.push('queued-deleted');
+        return { affected: 5 };
+      });
+      deviceGroupRepo.delete.mockImplementationOnce(async () => {
+        seatLockQueries.push('devices-deleted');
+        return { affected: 2 };
+      });
 
       const result = await controller.evictFromDistributionGroup(
         'workspace',
@@ -652,11 +661,15 @@ describe('InternalController - the community distribution group', () => {
       });
       // Under the group's seat lock, the one every claimed activation also takes, and RECORDED
       // there as a departure in progress (the call before social-service's roster write).
+      // THE ONE ORDER (`utils/seat-eviction.ts`): the lock, the queue, the device rows, then the
+      // record - the order a group's end and a removal delete in too, so none waits on another's.
       expect(seatLockQueries[0]).toBe(
         'SELECT pg_advisory_xact_lock(hashtextextended($1, 0)) ["seat:g-1"]'
       );
-      expect(seatLockQueries[1]).toContain('INSERT INTO dm_seat_evictions');
-      expect(seatLockQueries[1]).toContain(`["g-1","${USER}",true]`);
+      expect(seatLockQueries[1]).toBe('queued-deleted');
+      expect(seatLockQueries[2]).toBe('devices-deleted');
+      expect(seatLockQueries[3]).toContain('INSERT INTO dm_seat_evictions');
+      expect(seatLockQueries[3]).toContain(`["g-1","${USER}",true]`);
       expect(deviceGroupRepo.delete).toHaveBeenCalledWith({ groupId: 'g-1', userId: USER });
       expect(queuedMessageRepo.delete).toHaveBeenCalledWith({
         groupId: 'g-1',

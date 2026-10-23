@@ -105,11 +105,13 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     manager: { transaction, query: jest.fn().mockResolvedValue([]) },
   };
   const groupMemberRepo = { findOne: jest.fn() };
+  // The insert answers the row it wrote (`RETURNING`); a conflict answers none.
   const commitInsertBuilder = {
     insert: jest.fn().mockReturnThis(),
     values: jest.fn().mockReturnThis(),
     orIgnore: jest.fn().mockReturnThis(),
-    execute: jest.fn().mockResolvedValue({}),
+    returning: jest.fn().mockReturnThis(),
+    execute: jest.fn().mockResolvedValue({ raw: [{ baseEpoch: 0 }] }),
   };
   const commitLogRepo = {
     createQueryBuilder: jest.fn(() => commitInsertBuilder),
@@ -251,7 +253,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(res.newEpoch).toBe(6);
       // Epoch advanced and persisted, inside the transaction.
       expect(transaction).toHaveBeenCalledTimes(1);
-      expect(groupUpdate).toHaveBeenCalledWith({ id: 'group-1' }, { activeEpoch: 6 });
+      expect(groupUpdate).toHaveBeenCalledWith(
+        { id: 'group-1', activeEpoch: 5 },
+        { activeEpoch: 6 }
+      );
       // Commit stored keyed by the epoch it advances FROM.
       expect(commitInsertBuilder.values).toHaveBeenCalledWith({
         groupId: 'group-1',
@@ -309,7 +314,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       });
       // One transaction for both writes - which is the whole claim.
       expect(transaction).toHaveBeenCalledTimes(1);
-      expect(groupUpdate).toHaveBeenCalledWith({ id: 'group-1' }, { activeEpoch: 6 });
+      expect(groupUpdate).toHaveBeenCalledWith(
+        { id: 'group-1', activeEpoch: 5 },
+        { activeEpoch: 6 }
+      );
     });
 
     it('advances the epoch alone when the committer sends no base', async () => {
@@ -334,7 +342,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       );
 
       expect(res.accepted).toBe(true);
-      expect(groupUpdate).toHaveBeenCalledWith({ id: 'group-1' }, { activeEpoch: 6 });
+      expect(groupUpdate).toHaveBeenCalledWith(
+        { id: 'group-1', activeEpoch: 5 },
+        { activeEpoch: 6 }
+      );
       expect(txInsertBuilder.values).not.toHaveBeenCalled();
       expect(txUpdateBuilder.set).not.toHaveBeenCalled();
     });
@@ -544,6 +555,57 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
       // The fan-out is the LAST step for exactly this reason: nobody is handed a commit whose
       // epoch the server did not keep.
+      expect(fanOut).not.toHaveBeenCalled();
+    });
+
+    /**
+     * THE GATE READS THE EPOCH OUTSIDE THE TRANSACTION, AND THE ADVANCE MAY WAIT ON THE SEAT LOCK.
+     * Two commits at one base that both passed the read must not both land: the advance is
+     * conditional on the base, so the second moves nothing and is refused - nothing logged, nothing
+     * fanned out.
+     */
+    it('refuses an advance whose base another commit moved while it waited', async () => {
+      groupRepo.findOne
+        .mockResolvedValueOnce({ id: 'group-1', activeEpoch: 5 })
+        .mockResolvedValue({ id: 'group-1', activeEpoch: 6 });
+      const fanOut = jest.spyOn(service, 'sendMessage');
+      groupUpdate.mockResolvedValueOnce({ affected: 0 });
+
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-1',
+            baseEpoch: 5,
+            proto: memberCommitFrame('group-1', 5n),
+            senderId: 'user-1',
+          },
+          'user-1'
+        )
+      ).resolves.toEqual({ accepted: false, currentEpoch: 6, reason: 'epoch_mismatch' });
+      expect(commitInsertBuilder.execute).not.toHaveBeenCalled();
+      expect(fanOut).not.toHaveBeenCalled();
+    });
+
+    it('refuses an advance whose base already has a logged commit, rather than logging neither', async () => {
+      // The advance and the log row say the same thing or the commit is refused: a log row from
+      // another commit at this base would be replayed in place of the one accepted.
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      const fanOut = jest.spyOn(service, 'sendMessage');
+      commitInsertBuilder.execute.mockResolvedValueOnce({ raw: [] });
+
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-1',
+            baseEpoch: 5,
+            proto: memberCommitFrame('group-1', 5n),
+            senderId: 'user-1',
+          },
+          'user-1'
+        )
+      ).resolves.toEqual({ accepted: false, currentEpoch: 5, reason: 'epoch_mismatch' });
       expect(fanOut).not.toHaveBeenCalled();
     });
   });
@@ -1636,7 +1698,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             isWelcome: true,
           })
         );
-        expect(groupUpdate).toHaveBeenCalledWith({ id: 'group-1' }, { activeEpoch: 6 });
+        expect(groupUpdate).toHaveBeenCalledWith(
+          { id: 'group-1', activeEpoch: 5 },
+          { activeEpoch: 6 }
+        );
         // Delivered FROM the stored row - its id is what lets the device ACK it - as a silent,
         // pushable Welcome, after the members have the commit.
         expect(deliver).toHaveBeenCalledWith(

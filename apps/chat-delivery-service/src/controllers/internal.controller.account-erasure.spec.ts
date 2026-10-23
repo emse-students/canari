@@ -6,6 +6,7 @@ import { NotificationPreference } from '../entities/notification-preference.enti
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { SeatEviction } from '../entities/seat-eviction.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 
 /**
@@ -69,6 +70,10 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       srem: jest.fn().mockResolvedValue(1),
       del: jest.fn(),
     };
+    // Each group's seats are cut through the one eviction, under that group's seat lock.
+    const messagingService = {
+      eraseSeats: jest.fn().mockResolvedValue({ memberships: 1, queued: 0, toRemove: 2 }),
+    };
     const controller = new InternalController(
       repos.pushToken as never,
       repos.keyPackage as never,
@@ -82,9 +87,9 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       repos.invite as never,
       repos.interval as never,
       redis as never,
-      {} as never
+      messagingService as never
     );
-    return { controller, repos, manager, redis, txDeletes };
+    return { controller, repos, manager, redis, txDeletes, messagingService };
   }
 
   it('deletes the signature keys, the notification preferences and the dismissal markers', async () => {
@@ -110,8 +115,8 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     // ...and what was queued FOR the account still goes - Welcomes included - with its device
     // rows, in one transaction (`endDeviceMemberships`).
     expect(txDeletes).toEqual([
-      { entity: DeviceGroupMembership, where: { userId: USER } },
       { entity: QueuedMessage, where: { recipientId: USER } },
+      { entity: DeviceGroupMembership, where: { userId: USER } },
     ]);
   });
 
@@ -125,8 +130,8 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     );
   });
 
-  it('cleans the routes by prefix on a RETRY, when no key package is left to name a device', async () => {
-    const { controller, redis, repos } = make({
+  it('cuts each group seat under its seat lock on a RETRY, when no key package is left to name a device', async () => {
+    const { controller, redis, repos, messagingService } = make({
       deviceGroups: ['g-distribution'],
       routed: [`${USER}:dev-1`, `${USER}:dev-2`, 'someone-else:dev-9'],
     });
@@ -135,11 +140,17 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
 
     await controller.deleteUserData(USER, SECRET);
 
-    expect(redis.srem).toHaveBeenCalledWith(
-      'group:members:g-distribution',
-      `${USER}:dev-1`,
-      `${USER}:dev-2`
-    );
+    // The rows, the queue and the routes (by prefix) go in one seat-locked eviction, which also
+    // records it - so a route restored from a read taken before cannot outlive the erasure.
+    expect(messagingService.eraseSeats).toHaveBeenCalledWith('g-distribution', USER);
+    expect(redis.srem).not.toHaveBeenCalled();
+  });
+
+  it("keeps the account's eviction records, so a seat claim taken before the erasure never passes after it", async () => {
+    const { controller, manager } = make({ deviceGroups: ['g-1'] });
+    await controller.deleteUserData(USER, SECRET);
+
+    expect(manager.delete).not.toHaveBeenCalledWith(SeatEviction, expect.anything());
   });
 
   it('answers ok on an account with nothing left, which is what the final pass meets', async () => {

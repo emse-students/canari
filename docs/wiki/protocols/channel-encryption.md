@@ -558,8 +558,20 @@ window with a durable row and a lock:
 - **The lock.** A transaction-scoped Postgres advisory lock on `seat:<groupId>`, released by the
   commit or the rollback and never by a clock. Every writer that evicts or creates a seat holds it:
   `evictFromDistributionGroup` (`evictSeats`), `removeGroupMember` (the conversation removal, its
-  roster write and its eviction record in one transaction), the commit's advance (its admits), and
-  `activateDeviceMembership` for an accepted commit's committer and a key group's publisher.
+  roster write and its eviction record in one transaction), the commit's advance (its admits), an
+  account erasure (`eraseSeats`, per group), `activateDeviceMembership` for an accepted commit's
+  committer and a key group's publisher, and the two writers of a `pending` seat - a device
+  registration and an invite acceptance (`writePendingSeats`, shared, against the group row and the
+  roster re-read under it).
+- **One order.** Every writer takes the seat lock, then the `dm_groups` row, then
+  `dm_group_members` and its interval, then `queued_message`, then `dm_device_group_memberships`, and
+  writes `dm_seat_evictions` last; a group's end (`GROUP_OWNED_TABLES`) deletes in the same order. It
+  is written once, in `utils/seat-eviction.ts`.
+- **The epoch moves from the base the gate read, or not at all.** The gate reads the epoch outside
+  the advance's transaction, and the advance may wait on the seat lock. The advance is
+  `UPDATE ... WHERE "activeEpoch" = base`: of two commits at one base, the second matches nothing and
+  is refused `epoch_mismatch`, whatever the Redis commit lock's 5 s did. A commit-log row already
+  holding that base refuses the advance too, so the log and the epoch never disagree.
 - **The claim.** Before the check that decides a seat (the roster, or
   `isEntitledToDistributionGroup` over HTTP, always outside the lock) `claimSeat` reads the row.
   Under the lock `seatClaimHolds` re-reads it - a database read only - and the seat is written only if

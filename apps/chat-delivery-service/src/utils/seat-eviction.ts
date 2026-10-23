@@ -28,6 +28,13 @@ import type { EntityManager } from 'typeorm';
  * frames under it SHARED, against a re-read of who holds a seat (`enqueueForLiveGroup`). An eviction
  * deletes all three under it, so none outlives the seat it was written for.
  *
+ * THE ONE ORDER, so no two of these writers wait on each other in a cycle: the seat lock, then the
+ * `dm_groups` row, then `dm_group_members` and its interval, then `queued_message`, then
+ * `dm_device_group_memberships`, then `dm_seat_evictions` last. A removal
+ * (`MembersController.removeGroupMember`), an eviction (`MessagingService.evictSeats`,
+ * `eraseSeats`), one device's departure (`endDeviceMemberships`) and a group's end
+ * (`GROUP_OWNED_TABLES`, which takes no seat lock and no other table first) all delete in it.
+ *
  * The lock is a Postgres transaction-scoped advisory lock: released by the commit or the rollback
  * itself, so it has no expiry and termination never rests on a clock.
  */

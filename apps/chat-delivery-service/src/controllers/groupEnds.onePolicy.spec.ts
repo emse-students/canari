@@ -45,8 +45,8 @@ const GROUP_ID = 'g-1';
 
 /** The six tables a SOFT delete sweeps. `UserDismissedGroup` is deliberately not among them. */
 const SWEPT = [
-  QueuedMessage,
   GroupMember,
+  QueuedMessage,
   DeviceGroupMembership,
   MlsCommitLog,
   MlsGroupInfo,

@@ -71,8 +71,8 @@ describe('MessagingService - purgeDeviceFootprint', () => {
 
     expect(transaction).toHaveBeenCalledTimes(1);
     expect(txDeletes).toEqual([
-      { entity: DeviceGroupMembership, where: { userId: 'bob', deviceId: 'b1' } },
       { entity: QueuedMessage, where: { recipientId: 'bob', deviceId: 'b1' } },
+      { entity: DeviceGroupMembership, where: { userId: 'bob', deviceId: 'b1' } },
     ]);
     // Never outside it, where a failure in between would leave one without the other.
     expect(deviceGroupRepo.delete).not.toHaveBeenCalled();

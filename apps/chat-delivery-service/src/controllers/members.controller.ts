@@ -736,11 +736,12 @@ export class MembersController {
     // eviction record keeps an external commit whose roster check ran before this removal from
     // writing its committer's seat after it (`utils/seat-eviction.ts`).
     //
-    // THE SEAT LOCK, THEN THE ROSTER ROW, THEN THE DEVICE ROWS - the order `addGroupMember` takes
-    // them in, so an add and a removal of the same person wait for each other instead of
-    // deadlocking; and the order a Welcome store re-checks the seat in (`validateCommit`,
-    // `sendWelcome`), so a store racing this removal either commits first and is deleted here, or
-    // finds no seat.
+    // THE ONE ORDER OF `utils/seat-eviction.ts`: the seat lock, the roster row, the queued
+    // Welcomes, the device rows, the eviction record. `addGroupMember` takes no seat lock - it writes
+    // the roster row first, then the device rows, so an add and a removal of the same person wait
+    // for each other on the roster row instead of deadlocking. A Welcome store re-checks the seat
+    // under the seat lock (`validateCommit`, `sendWelcome`), so a store racing this removal either
+    // commits first and is deleted here, or finds no seat.
     const { devices, ended, generation } = await withSeatLock(
       this.dataSource.manager,
       safeGroupId,

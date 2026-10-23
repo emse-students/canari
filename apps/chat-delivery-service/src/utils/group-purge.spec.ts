@@ -28,10 +28,15 @@ import { SeatEviction } from '../entities/seat-eviction.entity';
  * that way, silently, so the test names all nine.
  */
 describe('deleteGroupOwnedRows', () => {
-  /** Every entity a group owns. Deliberately spelled out rather than imported from the module. */
+  /**
+   * Every entity a group owns. Deliberately spelled out rather than imported from the module. IN
+   * THE ONE DELETE ORDER (`utils/seat-eviction.ts`): the roster row, the queue, the device rows, and
+   * the eviction records after them - the order a removal and an eviction take, so a group's end
+   * and either of them never wait on each other in a cycle.
+   */
   const OWNED = [
-    QueuedMessage,
     GroupMember,
+    QueuedMessage,
     DeviceGroupMembership,
     MlsCommitLog,
     MlsGroupInfo,

@@ -247,10 +247,12 @@ the posts that stay, and media deleting first would delete them under a live pos
 waits for `social` the same way (2026-10-22)**: social's part removes the person from every
 community, each removal evicts their key-group seats in chat-delivery, and that eviction writes a
 `dm_seat_evictions` row under their id. Run after social's part completed, chat-delivery's part - its
-final pass included - erases those rows whatever order the services answered in; run independently,
-a social part that succeeded late (a service down past the token expiry) would leave a row naming the
-erased id. The cost is that an account's MLS data waits for social's final pass, the account itself
-being deactivated at once. The claim is
+final pass included - cuts every remaining seat per group under that group's seat lock (`eraseSeats`:
+the queue, the device rows and the routes, then a new generation of the record). **The
+`dm_seat_evictions` rows are KEPT** (`ACCOUNT_ERASURE_COVERAGE`): a generation counter per group and
+account, no content, and deleting one resets it to the value a seat claim taken before the erasure
+holds - that claim would then pass. They go with their group. The cost of the ordering is that an
+account's MLS data waits for social's final pass, the account itself being deactivated at once. The claim is
 `FOR UPDATE SKIP LOCKED` with a lease, so several workers never run one job twice at once; a
 completion write is guarded by `"completedAt" IS NULL`, so a pass that outlived its lease cannot
 reopen a finished row. A job naming a service this build does not know fails as `UNKNOWN_SERVICE`.

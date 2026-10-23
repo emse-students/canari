@@ -53,7 +53,10 @@ export function totalGroupOwnedRows(counts: GroupOwnedRowCounts): number {
  * base was invisible to the sweep built to collect exactly that. As one array they cannot drift: a
  * table added here is swept AND discovered, or it is in neither.
  *
- * The count key travels with the entity, so the per-table report is the same list as well.
+ * The count key travels with the entity, so the per-table report is the same list as well. THE
+ * ORDER IS THE ONE DELETE ORDER (`utils/seat-eviction.ts`) - the roster row, the queue, the device
+ * rows, the eviction records last - so a group's end and a removal or an eviction racing it lock
+ * rows in the same sequence and never wait on each other in a cycle.
  * `dm_user_dismissed_groups` is deliberately absent - it is swept only by a HARD delete, and is
  * never a way to FIND a group; see {@link deleteGroupOwnedRows}.
  */
@@ -61,8 +64,8 @@ const GROUP_OWNED_TABLES: readonly {
   readonly count: keyof GroupOwnedRowCounts;
   readonly entity: EntityTarget<ObjectLiteral>;
 }[] = [
-  { count: 'queuedMessages', entity: QueuedMessage },
   { count: 'members', entity: GroupMember },
+  { count: 'queuedMessages', entity: QueuedMessage },
   { count: 'deviceMemberships', entity: DeviceGroupMembership },
   { count: 'commitLog', entity: MlsCommitLog },
   { count: 'groupInfo', entity: MlsGroupInfo },
