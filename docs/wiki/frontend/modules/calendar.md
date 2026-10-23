@@ -656,7 +656,10 @@ logged, and the export's own pre-fetch read the shell's HTML as a **200** and in
 URL - so a `resp.ok` check could never have caught it. Both sites go through `associationLogoSrc`
 now, and `calendarExport.test.ts` pins the preview's `src`. The scanner in `apiUrl.absolute.test.ts`
 was blind to it twice over: the URL is a variable, so there is no literal `/api/` to match, and the
-element is built inside an HTML string rather than bound as `src={x.logoUrl}`.
+element is built inside an HTML string rather than bound as `src={x.logoUrl}`. Because it is built
+as a string, every value it interpolates - each logo `src` included - goes through
+`escapeHtmlAttribute`, and `associationLogoSrc` draws only a path or an http(s) URL
+([associations](associations.md), "What `logoUrl` may hold").
 
 **The button.** `exportSearchablePdf` finished with `pdf.save()`, which is jsPDF's own object URL
 plus an `<a download>` click - the exact gesture `utils/fileDownload.ts` exists to replace, and the
