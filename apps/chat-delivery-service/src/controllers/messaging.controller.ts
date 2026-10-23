@@ -21,6 +21,7 @@ import {
   SendMessageBody,
   AckMessagesBody,
   clientSendRefusal,
+  ValidateCommitBody,
 } from '../services/messaging.service';
 import { sanitizeEpoch, sanitizeLogValue } from '../utils/sanitize';
 
@@ -51,22 +52,19 @@ export class MessagingController {
     return this.messagingService.sendMessage(body, authUserId);
   }
 
+  /**
+   * A client's commit, handed to the gate as the fields the web client sends (`submitCommit`) and
+   * nothing else: {@link foregroundCommitBody}. A Welcome travels WITH a commit only on the
+   * background re-add (`POST mls/push/send-welcome-and-commit`); passed through here, a raw body
+   * would store one through a door nobody declared.
+   */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/commit')
   async validateCommit(
-    @Body()
-    body: {
-      groupId: string;
-      deviceId: string;
-      baseEpoch: number;
-      proto?: string;
-      senderId?: string;
-      excludeDeviceIds?: string[];
-      groupInfo?: string;
-    },
+    @Body() body: ForegroundCommitBody,
     @Headers('x-user-id') authUserId?: string
   ) {
-    return this.messagingService.validateCommit(body, authUserId);
+    return this.messagingService.validateCommit(foregroundCommitBody(body), authUserId);
   }
 
   /**
@@ -289,7 +287,9 @@ export class MessagingController {
     @Query('limit') limitRaw?: string,
     @Query('after') after?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    // What the fetching session declares, as on its socket (history-answer-addressing, rule 6).
+    @Query('caps') caps?: string
   ): Promise<QueuedMessage[]> {
     const limit = limitRaw ? parseInt(limitRaw, 10) : 500;
     return this.messagingService.fetchMessages(
@@ -298,7 +298,8 @@ export class MessagingController {
       headerUserId,
       headerGlobalAdmin,
       Number.isFinite(limit) ? limit : 500,
-      after
+      after,
+      caps
     );
   }
 
@@ -380,4 +381,26 @@ export class MessagingController {
       senderId: callerId,
     });
   }
+}
+
+/** What `POST /mls/commit` accepts: a commit, never the Welcome only the background re-add carries. */
+export type ForegroundCommitBody = Omit<ValidateCommitBody, 'welcome'>;
+
+/**
+ * The allowlist of `POST /mls/commit`: the fields `submitCommit` sends, copied by name. Anything
+ * else in the request body - `welcome` first - never reaches the gate. An absent field stays absent.
+ */
+export function foregroundCommitBody(body: ForegroundCommitBody): ForegroundCommitBody {
+  const out: ForegroundCommitBody = {
+    groupId: body.groupId,
+    deviceId: body.deviceId,
+    baseEpoch: body.baseEpoch,
+  };
+  if (body.proto !== undefined) out.proto = body.proto;
+  if (body.senderId !== undefined) out.senderId = body.senderId;
+  if (body.excludeDeviceIds !== undefined) out.excludeDeviceIds = body.excludeDeviceIds;
+  if (body.groupInfo !== undefined) out.groupInfo = body.groupInfo;
+  if (body.admits !== undefined) out.admits = body.admits;
+  if (body.removes !== undefined) out.removes = body.removes;
+  return out;
 }

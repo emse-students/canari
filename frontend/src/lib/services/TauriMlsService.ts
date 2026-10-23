@@ -1,5 +1,4 @@
-import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
-import { tauriGraineSignatureEngine } from '$lib/mls-client/tauriGraineSignatureEngine';
+import type { GraineSignatureEngine, GraineSignatureVerdict } from '$lib/crypto/graineV2';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
 import { invoke } from '@tauri-apps/api/core';
@@ -20,11 +19,12 @@ import {
   type BatchDecryptRow,
 } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
-import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -330,11 +330,12 @@ export class TauriMlsService extends BaseMlsService {
 
     // Use the same regex as WebMlsService to avoid http:// → wss:// mismatch.
     const wsBase = this.baseUrl.replace(/^https?:/, (m) => (m === 'https:' ? 'wss:' : 'ws:'));
-    const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
-    const wsUrl = `${wsBase}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`;
-    console.log(
-      `[WS] Opening connection → ${wsBase}/api/ws?device_id=${this.deviceId}${resolvedToken ? '&token=***' : ' (no token)'}`
+    const { url: wsUrl, redacted } = gatewaySocketUrl(
+      wsBase,
+      this.deviceId,
+      resolvedToken || undefined
     );
+    console.log(`[WS] Opening connection → ${redacted}`);
 
     this.ws = await connectNativeSocket(NativeWebSocket.connect(wsUrl), NATIVE_CONNECT_TIMEOUT_MS);
     console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
@@ -485,6 +486,8 @@ export class TauriMlsService extends BaseMlsService {
             ratchetTreeBytes,
             queuedMessageId: (parsed.queuedMessageId as string) || undefined,
             queuedCreatedAt: parseServerTimestampMs(parsed.createdAt),
+            // Forwarded by the gateway since step A (history-answer-addressing, rule 4).
+            addressed: parsed.addressed === true,
           },
           'live'
         );
@@ -1559,6 +1562,11 @@ export class TauriMlsService extends BaseMlsService {
     });
   }
 
+  /** The key group's clean run at its current epoch (`graine_run`), read live under the manager lock. */
+  async graineRun(groupId: string): Promise<GraineRunReading> {
+    return invoke<GraineRunReading>('graine_run', { groupId });
+  }
+
   /** This device's credential key signs `message` (`graine_sign_with_device_credential`). */
   async signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array> {
     return new Uint8Array(
@@ -1568,7 +1576,27 @@ export class TauriMlsService extends BaseMlsService {
 
   /** The Rust engine's Ed25519 commands, the same `mls-core` code the web runs as WASM. */
   graineSignatureEngine(): GraineSignatureEngine {
-    return tauriGraineSignatureEngine();
+    return {
+      async newSessionKeyPair() {
+        const pair = await invoke<{ secret: number[]; public: number[] }>('graine_session_keypair');
+        return { secret: new Uint8Array(pair.secret), publicKey: new Uint8Array(pair.public) };
+      },
+      async signWithSessionKey(secret, message) {
+        return new Uint8Array(
+          await invoke<number[]>('graine_sign_with_session_key', {
+            secret: Array.from(secret),
+            message: Array.from(message),
+          })
+        );
+      },
+      verifySignature(publicKey, message, signature) {
+        return invoke<GraineSignatureVerdict>('graine_verify_signature', {
+          publicKey: Array.from(publicKey),
+          message: Array.from(message),
+          signature: Array.from(signature),
+        });
+      },
+    };
   }
 
   /**

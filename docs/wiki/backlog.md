@@ -48,12 +48,15 @@ so, once per session).
 The adding device pushes its whole local store to the invitee (`sendFullHistoryBundle`, up to 5
 years), which no decision ever chose. 6 of 15 live group conversations had admitted 24 later members by
 2026-10-21. Decided by the user: a newcomer reads nothing from before their arrival (WhatsApp, Signal),
-and the remove-then-re-add rule of 2026-10-14 stays. **Step C is BUILT (draft PR):** the inviter's
-push withholds the invitee's span, the receiver drops its own, group conversations only (the 1:1
-arrivals are not arrivals). **Residual of C, verbatim: a newcomer can still read pre-arrival messages
-from broadcast answers meant for others' new devices until A lands.** Owed, in order: step A's design
-page and its review, then A; then a `minClientVersion` carrying C once both stores serve it. Design and
-limits:
+and the remove-then-re-add rule of 2026-10-14 stays. Step C (the push withholds the invitee's span,
+the receiver drops its own) is on `main`. **Step A is BUILT (draft PR): every history answer, the
+push included, is addressed to the asking device and filtered on its own windows; migration `035`
+is applied by the deploy, so the user's yes is the release.** Owed, in order: the rig row GRP-ADDR-1; a `minClientVersion` carrying A
+once both stores serve it; option B, sealing the answer to the asker (X25519 in `mls-core`, an
+ephemeral key carried inside the MLS-signed request). **DECIDED by
+the user, 2026-10-22:** a reply quoting a pre-arrival message SHOWS a newcomer the quoted text;
+nothing is built for it. Design and limits:
+[history-answer-addressing](protocols/history-answer-addressing.md#decided-a-quote-of-an-earlier-message),
 [history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
 
 ## P1 - A community's past goes only to a proven admission: BUILT (draft PR), owed its migration, its readings, a client floor and one decision (2026-10-22)
@@ -87,13 +90,17 @@ predicate should follow it to the caller's current interval.
 
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 
-Every device joining a community's key group commits, and `shouldRotateGraineSession` rotates on any
+Every device joining a community's key group commits, and the outbound rotation rotated on any
 epoch change. Production: 845 sessions for 1 698 messages, and 458 seeds in the largest community's
 first 8 days. The history bundle carries every seed, about 330 bytes each in v2, so its 8 000-seed cap
 is about 2.6 MB in one MLS message. Owed, in order:
-(1) rotate on a DEPARTURE only - the identity-set comparison was refused 2026-10-22 (a leaf added
-and removed between two sends is in neither set); the design is a per-key-group clean run fed by a
-commit summary from `mls-core`, DRAFT for review: [graine-removal-tracker](protocols/graine-removal-tracker.md); (2) bound the bundle in bytes and page it, after measuring what the gateway and
+(1) rotate on a REMOVAL or a NEW USER only - BUILT 2026-10-22, draft pull request: a clean run per
+key group kept in the MLS state by `mls-core` and judged by `graineOutboundVerdict`
+([graine-removal-tracker](protocols/graine-removal-tracker.md)). Owed after merge: the rig rows and the
+production ratio named on that page, and one read-only pass proving every stored external commit's
+path leaf names its committer (the server now refuses one that does not). A new USER still rotates
+(D5, decided 2026-10-22); a new device of a present user continues, by an Add or an external
+commit alike; (2) bound the bundle in bytes and page it, after measuring what the gateway and
 the queue accept; (3) a key-group frame stored once per group, not once per seat (31 copies per
 payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
@@ -245,10 +252,85 @@ runs it or approves it explicitly); sending the DPO dossier; the DSI log-retenti
 - **The MiConnect terms hold is lifted by the lead** as soon as the three preconditions listed above are verified; the lead tells the user.
 - **The KLIPY key is not rotated.** It was read container-side for the measurement and never printed.
 
+## Decided by the user on 2026-10-22 - the app needs iOS 16
+
+- **The iOS app's minimum is iOS 16**, so the native WebView can carry the same script policy as the web (`'wasm-unsafe-eval'`, which WebKit before 16 does not know). Built in the stricter-policy pull request (#2267). **Owed before that stable:** the console reading for policy refusals on the web, the Mi 9T and the iPhone, and the check of the edge features that inject scripts into a page ([cloudflare-edge](infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)). Delete this entry when it ships.
+
 ## Seen in the 2026-10-18 web console log - two observations, none built
 
 - **Firefox disabled scroll anchoring on the `/posts` feed.** Ten consecutive sub-pixel adjustments of about 0.1667 px preceded it; rounding at a fractional device-pixel ratio is suspected. Reproduce with a `ResizeObserver` log on the feed container before changing anything.
 - **A seed asked by two phones was declined by a web device** (`holding 0 - missing ... declining`). Open observation: separate the causes by who should have held it, which needs a read of production state (private operations notes), not a client change.
+
+## P2 - A killed phone answers a background Welcome from a stale epoch, and the route reports it as sent (read on the Mi 9T, 2026-10-22)
+
+Read on the Mi 9T (debug build, frontend `2547870a7`, from `dabc36813`), on the local estate, app killed
+(no process), after one `mls_group_info` row of the group was deleted so the newcomer's external join
+found no GroupInfo and sent a `welcome_request`. Two facts, recorded separately:
+
+- **(a) The phone builds the Welcome from its stored state and the server refuses it.** The phone logged
+  `Welcome created ... baseEpoch=1` while the group was at epoch 3, so it had not applied the commits
+  that arrived while it was dead. chat-delivery logged `[BG_WELCOME] START ... baseEpoch=1`, then
+  `REJECT commit epoch_mismatch (server epoch: 3, sent base: 1) - neither Welcome nor broadcast`. No
+  commit-caller refusal appeared: the caller checks passed.
+- **(b) The route answers HTTP 201 although it sent neither Welcome nor broadcast.** The phone logged
+  `sendWelcomeAndCommit: HTTP 201` and `Welcome sent`, so a refused delivery reads as a success on the
+  device. The answer must say what happened; this part is the more urgent one.
+
+**NOT verified:** whether the newcomer recovered by itself (it was not read afterwards), and which
+phone state the reading would have had with the pending commits drained first. A second request for the
+same newcomer ended `ALREADY_MEMBER` on the phone, a duplicate that is expected. **Not fixed here:** the
+fix is native and MLS, its own work package with an adversarial review.
+
+## P3 - the group settings panel keeps listing `Membres (1)` after an add the commit admitted (seen 2026-10-22, web, dev)
+
+Adding one member from `Gestion du groupe` > `Ajouter` > `Envoyer l'invitation`: the console showed
+`add_members_bulk ... (1 key packages)`, `[COMMIT] ... admits 1 device(s) at epoch 1`, `[SYNC] Welcome -> ...
+OK` and `Members added (1/1 delivered)`, yet the panel still read `Membres (1)` with only the creator, for
+at least 30 s and after reopening it. A second add of the same person then failed with
+`ALREADY_MEMBER` (the commit had indeed landed). The panel's member list does not refresh from the
+commit it just made. **Not chased: seen once, no second observation, cause unread.**
+
+## The encryption PIN unlock on the iPhone: READ 2026-10-22, it answers - the "hang" was the rig's tap, and one P3 is left
+
+Read over WDA on the iPhone 12 (TestFlight `1.4.0 (100400003)`, `dev.canari-emse.fr`). **The first
+reading of the day wrote "unlock does not answer, no error" and was wrong about the cause.** The same
+unlock on the dev WEB client answers in about 0.5 s (`pin-check` 201, MLS ready, gate gone, no console
+error), and on the Mi 9T the same code passes within ~6 s.
+
+- **Why the iPhone looked silent: WDA's element rectangle goes stale.** The gate's layout moves when the
+  iOS keyboard shows or hides (the manual field) and when the red banner appears. The accessibility
+  tree still reported `Deverrouiller` at y=412 while the button was drawn at y~731, so `tapText` tapped
+  empty space - three times. **The rig note: tap by the DRAWN position (screenshot pixels / 3 = points),
+  and re-read the screenshot after anything that opens a keyboard or a banner; never trust a rect read
+  before the layout settled.** A stray tap of the same kind also ticked `Rester connecte`, which keeps
+  the vault key and would have made a relaunch skip the gate.
+- **What the gate said once it was really tapped:** a red banner, `Vos messages enregistres sur cet
+  appareil sont verrouilles par un autre PIN que celui-ci...` - correct, the phone held local state under
+  the PIN from before a web-side PIN reset (a reset on one device strands the others, documented in
+  [cross-client-harness-findings](cross-client-harness-findings.md)). After a PIN reset on the phone, a
+  create, a kill and a relaunch, the keypad PIN plus a tap at the drawn position passed the gate and it
+  stayed passed.
+- **P3 - on a 390x844 screen the red banner pushes the keypad down until its `0` key is clipped behind
+  the fixed `Deverrouiller` button**; the dialog scrolls, the key comes back, nothing is lost, but a
+  person sees a keypad with no zero until they scroll. Screenshots of both states were taken in the
+  session (not committed). Fix is layout only: the dialog body must reserve the height of the fixed
+  button, or the banner must not displace the keypad.
+- **Not read:** the keyboard-rise behaviour of the manual field on this phone (check W is a separate P3).
+
+## P3 - iPhone sign-in: the login page stays on a disabled "Redirection..." after the in-app sheet is cancelled (read 2026-10-22)
+
+On the iPhone (TestFlight `1.4.0`, build 100400001, `dev.canari-emse.fr`), cancelling the identity sheet
+(`Annuler`) returns to the login page with its button stuck on a disabled `Redirection...`; only a
+relaunch of the app brings the button back. Observed twice, driven over WDA; not read on a phone by hand,
+and not explained.
+
+## P3 - iPhone sign-in: iOS Password AutoFill covers the password field of the identity sheet (read 2026-10-22)
+
+On the same build, the system AutoFill card (`Se connecter ... avec le mot de passe utilise pour ...`)
+sits over the password field and the `Se connecter` button of the school's CAS page, and a tap on that
+field lands on the card, so a driven sign-in types into the wrong field. It is a property of that phone's
+settings, not of the app. A driven sign-in avoids it by moving focus with Tab and submitting with Enter;
+the page the test accounts use is the "Connexion externe (service-account)" route, not the school CAS.
 
 ## Hardware reading owed (user): one background Welcome on the Mi 9T (2026-10-22)
 
@@ -274,11 +356,16 @@ The reading has one setup and three checks:
   for the chat group FAILS for a reason other than `NotAGroupMember`** (no GroupInfo published, a stale
   base, an unreachable server; `requestReAdd` step 9 and `sendWelcomeRequest` in `recovery.ts`). A new
   login on a healthy estate does not send it: see the attempt below.
-- **Phone (logcat).** Both of these lines appear:
-  - `processWelcomeRequestBackground: Welcome created ... baseEpoch=N`;
-  - `processWelcomeRequestBackground: ✓ Welcome sent for group=... target=...`.
+- **Phone (logcat).** Both of these lines appear (their wording since the typed answer, see
+  [chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)):
+  - `processWelcomeRequestBackground: Welcome staged ... baseEpoch=N`;
+  - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - state installed`.
 
-  No `sendWelcomeAndCommit failed` line appears.
+  No `REFUSED`, `OUTCOME UNKNOWN` or `ACCEPTED AND NOT INSTALLED` line appears.
+- **The same reading with the phone STALE** (its group moved while it was shut, as on 2026-10-22):
+  the phone logs `REFUSED epoch_mismatch: built on base N, the group is at M`, the server answers 409,
+  the phone then reads the group's next message once opened, and the newcomer's next ask logs
+  `already refused as stale from this mls.bin -> not answered`.
 - **Server (chat-delivery on the local estate).** For the same group, these three lines appear:
   - `[BG_WELCOME][bg-wlc-...] START ... baseEpoch=N`;
   - `commit accepted -> activeEpoch=N+1`;
@@ -297,12 +384,9 @@ ourselves`, then external join), so no `welcome_request` was sent: no
 `processWelcomeRequestBackground` line, no `[BG_WELCOME]` line, no REJECT. **What WAS read:** FCM woke
 the swiped-away phone for four `message` pushes and it applied the external-commit control frames
 ("control frame applied - state advanced") with no error, so background control-frame handling works
-on that build. **Unreachable by the rig under its permissions:** the one state that sends the request
-needs the newcomer's GroupInfo read to fail, by deleting one `mls_group_info` row of the group on the
-local estate or by blocking `GET /api/mls/group-info/*` in the newcomer through CDP, and the
-permission layer refused the delete. **Owed to the user: allow that one local-estate delete (or the
-block) once, then about 3 minutes of reading** (the phone stays on the debug build, signed in on the
-local estate only, which is stopped).
+on that build. **READ later the same day, with the user's agreement to delete one local-estate row:** the request was
+sent and the phone answered it from a stale epoch, see the P2 above. The phone stays on the debug
+build, signed in on the local estate only, which is stopped.
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
@@ -398,11 +482,14 @@ The school applied a setting on its TEST CAS and the IP-only and user-agent-only
 
 Reuse the bench phones with screen recording to make demo videos and screenshots for the stores and for communication, from the fictional dev seed (never production). Personal data blurred frame by frame and the result reviewed before delivery; Apple and Google formats. Capture and sizes: [store-listings](store-listings.md#6-capture). Not built.
 
-## Sharing into and out of Canari - S1+S2 built, S3-S5 next (user, 2026-10-11, a priority 2026-10-21)
+## Sharing into and out of Canari - S1-S3 and S5 (Android) built, S4 in review (user, 2026-10-11, a priority 2026-10-21)
 
-Share IN on Android is built: the SEND filter, the native copy, "Envoyer a...", the composer staging.
-Next: share OUT (S3), the iOS Share Extension (S4, needs an App ID and a profile from the user), then
-the suggestions (S5). CanaRun waits. Owed: the Mi 9T reading. [sharing](frontend/sharing.md)
+Share IN on Android (S1+S2) and share OUT (S3, [share-out](frontend/share-out.md)) are built; a
+waiting share is erased at sign-out (user, 2026-10-22). The Android share-sheet suggestions (S5) are
+built too: recent conversations as direct targets, erased at sign-out, behind a setting. **S4, share
+IN on iOS**: the App ID and both profiles exist (user, 2026-10-22); the Share Extension is a draft
+pull request, and it carries the iOS suggestions next. CanaRun waits. Owed: the Mi 9T and iPhone 12
+readings. [sharing](frontend/sharing.md)
 
 ## Owed a VERIFICATION, and nothing else
 
@@ -410,6 +497,8 @@ Each of these is fixed in the tree; what is left is the measurement that would p
 about them is open work** - the story is in `CHANGELOG.md`, the mechanism on the wiki page named,
 the rule in [durable-rules](durable-rules.md). Delete the line once the measurement is taken. The
 phone passes already taken are history: [device-readings-2026-10](device-readings-2026-10.md).
+
+**The native caches sealed at rest (2026-10-22, [mobile](frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)) - built and compiled for Android, the Swift and Objective-C++ halves compiled by CI alone.** Owed on BOTH the Mi 9T and the iPhone, on an UPGRADE over a build that left plaintext files: (a) the first launch logs the key created (`NativeCacheKey: ensure: created` / `[CanariIOS] nativeCacheKey: created`) and the legacy pass (`[NATIVE_CACHE] ... now sealed`); (b) a DM and a salon message pushed with the app KILLED still show their text in the banner; (c) `graine_seeds.json` and `fcm_message_cache.ndjson` start with `CNSEAL1` / `cs1:` (`run-as` on Android, `bench_native_store list` on the iPhone) and the next start injects the cached message; (d) on the iPhone, `graine_seeds.json` and `fcm_message_cache.ndjson` read `isExcludedFromBackup` after a fresh write, in the data directory and in the App Group, while `mls.bin` and `push_context.json` do NOT. **And one rig change**: `phone.mjs graineMirrorSessions` now answers a sealed Android mirror with an error, so NOTIF-20's mirror count needs the app to answer through `bench_native_store` on Android as the iPhone rig already does.
 
 **READ 2026-10-22 on the Mi 9T: `v1.4.0-alpha.1` (SIDELOADED, what it covers).** Artefact: the release
 asset `app-universal-release.apk` of the tag (versionName `1.4.0`, versionCode `100400001`, signed by
@@ -731,7 +820,7 @@ Another tab's "Take over" makes the changing leader `releaseLeadership`, and the
 
 ## P2 - A deleted account's community keys stay on the phone in per-install files with no owner (found 2026-10-18, fourth review of #2023)
 
-`graine_seeds.json` (with its `.lock`) and `channel_keys.json` are ONE file per install and hold community keys that can decrypt history the server still stores. Neither records whose it is, so the account-deletion wipe cannot remove them (and a sign-out already leaves them, deliberately). **The minimal safe rule** is the one `delete_user_push_files` uses: remove only when an ownership proof names the deleted account, as `push_context.json` does. **Check first**: two local accounts in the same community may share entries, and whether the live account re-mirrors them from its own session decides if a per-account split or an owner field is the right cut ([auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)).
+`graine_seeds.json` (with its `.lock`) and `channel_keys.json` are ONE file per install and hold community keys that can decrypt history the server still stores. (Since 2026-10-22 the first is sealed at rest under the INSTALL's native cache key and the second is deleted at the first run ([mobile](frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)) - which changes nothing here: the install key opens the mirror for whichever account is signed in.) Neither records whose it is, so the account-deletion wipe cannot remove them (and a sign-out already leaves them, deliberately). **The minimal safe rule** is the one `delete_user_push_files` uses: remove only when an ownership proof names the deleted account, as `push_context.json` does. **Check first**: two local accounts in the same community may share entries, and whether the live account re-mirrors them from its own session decides if a per-account split or an owner field is the right cut ([auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)).
 
 ## P3 - The case-collision refusal keeps the deletion marker for ever (found 2026-10-18, fourth review of #2023)
 

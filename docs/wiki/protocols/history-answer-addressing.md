@@ -1,160 +1,211 @@
-# Addressing a history answer to the device that asked - design (step A, 2026-10-22)
+# Addressing a history answer to the device that asked - step A (2026-10-22)
 
-**Status: DESIGN ONLY, nothing is built. Revised after its opus review of 2026-10-22, whose verdict was
-REVISE with the direction kept: address first, seal later, and do not skip A.** It is step A of the P1
-"a new member of a group conversation receives its whole past". Step C is described, with the
-decision and its numbers, in
+**Status: BUILT (draft pull request), owed a rig reading.** It is step A of the P1 "a new member of a
+group conversation receives its whole past". The decision, step C and its numbers are in
 [history-reconciliation](history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
+The design was reviewed on 2026-10-22 (verdict REVISE, direction kept: address first, seal later).
+Building it changed three of its rules, and each change is stated where the rule is, with why.
 
-## The problem C leaves
+## Why answers are addressed
 
 A history answer is an MLS application message, so every member of the conversation receives it,
-whoever it is meant for. Step C made the inviter's PUSH safe: its filter adds the invitee's own
-withheld span, and every other member is entitled to a superset of that. The ANSWERS to a request
-cannot do the same. The diff (`sendHistoryBundleForIds`) and the scrollback (`sendHistoryRangeBundle`)
-answer one device, often a new device of a founding member, which is entitled to everything since
-that member arrived. Filtered for that device, the broadcast hands a newcomer messages from before
-the newcomer arrived. Filtered for the newcomer, it starves the founding member's new device. **No
-single filter is right for every reader of a broadcast, so the answer must stop being a broadcast.**
-Until it does, the residual of C stands: a newcomer can still read pre-arrival messages from broadcast
-answers meant for others' new devices.
+whoever it is meant for. Step C filtered the inviter's PUSH for the invitee. The answers to a request
+could not be filtered that way: the diff (`sendHistoryBundleForIds`) and the scrollback
+(`sendHistoryRangeBundle`) answer one device, often a new device of a founding member, which is
+entitled to everything since that member arrived, while another member of the same conversation
+may be entitled to less. **No single filter fits every reader of a broadcast, so the answer is
+addressed to the device that asked and filtered for that device alone.**
 
-## What A protects against, and what it does not
+The push is addressed the same way (rule 1): `handleWelcomeRequest` also pushes to a new device of
+a member of any age, and that push is filtered for its own reader like every other answer.
 
-**A protects against an HONEST server and an HONEST answerer, and against nothing else.** It stops
-correct software from handing a newcomer what the newcomer was never meant to read. It is not a
-confidentiality boundary:
+## The rules, as built
 
-- MLS encrypts an addressed answer for the whole group, so every member can decrypt it. A malicious
-  server can deliver an addressed answer to the newcomer as easily as to its addressee.
-- A malicious answerer can send the newcomer its plaintext history in any shape it likes. A member
-  can always leak what it holds.
-
-Making the answer unreadable to everyone but the asker is option B below, and it is the follow-up.
-
-## The proposal
-
-1. **The answer is addressed.** Both answer paths (the diff and the scrollback) send with
-   `recipientDevices = [the asking device]` (`to`, already `userId:deviceId`). **The inviter's push
-   stays a broadcast.** Nobody asked for it, so rule 5 could never accept it. It needs no address,
-   because step C already filters it for the invitee, and every other member is entitled to a
-   superset of what it carries.
-2. **The answer is filtered for its ONE reader.** The windows are the asking person's own `withheld`
-   ones (gaps plus the span before their arrival), and no longer the union of every member's. The
-   union stays only for the quote rule, which is a real broadcast (a reply reaches every member).
-3. **chat-delivery accepts an addressed frame on a conversation group**, where today it refuses one
-   outright (`messaging.service.ts`, `REJECT addressed_not_key_group`). Rules 4 to 6 below are what
-   make that safe.
-4. **The server marks an addressed row.** `queued_message` gains `addressed boolean NOT NULL DEFAULT
-   false`, and the delivery frame carries it. It is set whenever `readAddressedDevices` returned a
-   set. An addressed frame never enters the shared history stream, which is already the rule on key
-   groups.
-5. **The receiver accepts an addressed frame only as the answer to its own question.** On a
-   conversation group, a frame delivered with `addressed: true` is applied only if ALL of these hold.
-   Otherwise it is not rendered and not stored, and it is logged at **error**
-   (`[HISTORY_ADDRESSED] REFUSED`, naming the group, the sender's verified credential, the content
-   kind and which clause failed). The ACK still happens, so the row does not loop.
-   - **It is a `history_bundle`.** No other content may be addressed on a conversation.
-   - **It is SOLICITED.** The request carries a fresh `requestId`, which the asker keeps in memory as
-     outstanding for that conversation. The bundle must echo it. The id is consumed by the answer's
-     last chunk, or dropped at the device's next connection, whichever comes first. That is state,
-     never a clock: a restarted device has asked nothing, so it accepts nothing addressed.
-   - **It is BOUNDED by the request.** A pull's bundle may carry only the ids the asker named, or ids
-     inside the prefixes it named. A range bundle may carry only messages inside the window the
-     request stated (`since`). Every message's timestamp must be at or before the moment the
-     request was sent. A message outside these bounds is dropped and counted in the error line, while
-     the rest of the bundle is applied.
-   - **It may ADD messages and do NOTHING ELSE.** The broadcast path's metadata merges are barred to
-     an addressed bundle, because each one lets a single peer rewrite state the asker already holds,
-     invisibly to every other member:
-     - deletion (`isDeleted`, applied today with no author check);
-     - the conversation's `readWatermarks` and `historyFloor` (both max-merged);
-     - pins (`mergePinEntries`);
-     - reactions.
-
-     Those converge through the broadcast frames that carry them. A later work package may admit a
-     merge whose author is checked against the verified sender, but none is admitted now.
-
+1. **Every history answer is addressed** - the diff, the scrollback AND the push.
+   `sendBundleChunks` sends with `recipientDevices = [to]` (`addressedHistoryAnswer`), `to` being the
+   asking device's `userId:deviceId`. *Changed from the review, which kept the push a broadcast -
+   see above, for consistency.* An ask that carries no `requestId` (an older asker) is not answered when the server
+   routes addressed answers: the asker could not accept the answer (rule 5), and the generation it
+   costs would be skipped by every other member for nothing.
+2. **The answer is filtered for its ONE reader** (`readerHistorySelection`). The windows are the
+   reader's own `withheld` ones (gaps plus the span before their arrival), no longer the union of
+   every member's. That has a second effect: a new device of a continuous member now restores the
+   messages sent while ANOTHER member was out, which the union withheld from it (the cost
+   [history-reconciliation](history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)
+   quantified).
+   - **When the server does not name the reader** (`?for=` is answered only for a person with a
+     device added since the caller arrived), the filter is the union of every member's gaps plus the
+     ANSWERER's own `withheld` windows. That is a superset of the reader's windows, by the server's
+     own rule: a reader it does not name has every device row older than the caller's arrival, so
+     the reader arrived first and their before-arrival span is inside the caller's; and the reader's
+     gaps are in the union. It costs the reader whatever the answerer was handed before its own
+     arrival, which an honest answerer does not hold anyway. An answerer the server does not count
+     sends nothing.
+   - **A server that predates addressed answers** (the exclusions route answers no
+     `addressedAnswers: true`) gets today's broadcast: the union, plus the invitee's span on a push.
+     The behaviour of step C then stands, and it accuses once per session at error
+     ([legacy-compatibility](../legacy-compatibility.md)).
+3. **chat-delivery accepts an addressed frame on a conversation group** where it refused one
+   outright, under two conditions (`assertConversationAddressable`):
+   - the frame is TRANSPORT (`durable: false`). Every history answer is, so it reaches only devices
+     online now and never enters the history stream;
+   - **every addressed member device declared, on its live socket, that it applies rule 5** (rule 6).
+   Otherwise `400 { error: 'addressed_unsupported', devices }`. Key groups are unchanged.
+4. **The server marks an addressed row.** `queued_message.addressed` (migration `035`, which sets a
+   `lock_timeout` so it fails rather than queue every send behind a long transaction), set when the
+   send was addressed ON A CONVERSATION - the flag is what rule 5 and the gateway's edge filter (rule
+   6) act on, and a key-group seed answer is held to neither. The live frame carries it
+   (`chat:messages`, and the gateway forwards it), and so does the pull. It never enters the shared
+   history stream (already the rule).
+5. **The receiver accepts an addressed frame only as the answer to its own question**
+   (`historyAddressing.ts`). On a conversation, a frame delivered `addressed` is applied only if all
+   of these hold; otherwise it is not rendered and not stored, it is logged at **error**
+   (`[HISTORY_ADDRESSED] REFUSED`, the group, the verified sender, the content kind, the clause), and
+   it is ACKed so the row does not loop:
+   - **It is a `history_bundle`.** No other content may be addressed on a conversation
+     (`setupMessageHandler`, before any dispatch).
+   - **It is SOLICITED.** Every ask (`history_digest`, `history_pull`, `history_range`) carries a fresh
+     `requestId`, kept in memory with the bound it states; the answer echoes it. The push is
+     solicited by the receiver's own admission: processing a Welcome for the group records a `join`
+     ask. **An ask takes at most TWO answering devices** (`MAX_ANSWERERS_PER_ASK`): the rendezvous
+     elects one responder, and a re-election over a stored probe can hand the same ask to one more,
+     whose answer is held to the same bound and only adds - so it is taken, not refused. Each closes
+     the ask for itself with its chunk marked `last`; once both have, the ask is gone, and a third
+     device is refused at error, because nothing honest produces one. *Changed twice by the #2270
+     reviews: the first build consumed the ask on the FIRST answerer and dropped the second one's
+     content at error; the second let any number of answerers in.* **The answerer is the device MLS
+     verified**: the decrypt compares the envelope's sending device with the credential and refuses
+     a disagreement (`verifiedSender`), which it can do only when the envelope names one - so an
+     addressed answer naming none is refused. chat-delivery has no device in its auth context (the
+     token names a user), and binds the claim the only way it can: the route requires the caller as
+     sender with a device, and refuses a device that is not an active member of the group for that
+     authenticated user. When a last chunk was entirely withheld, no frame
+     carries `last` and the ask stays open until newer asks push it out. A page
+     reloaded between its ask and the answer refuses the answer, and the comparison runs again on
+     the next connection. *Changed from the review, which
+     dropped open asks "at the next connection": a Welcome processed in the drain of a connection
+     races that edge. The open asks are instead a bounded FIFO, 32 per conversation - state, never a
+     clock, and a restarted page has asked nothing.*
+   - **It is BOUNDED by the ask.** A pull's answer may carry only the ids it named, or ids inside
+     the slices it named; a range answer only messages inside `[since, before)`; a digest answer
+     only messages from `since` on; and every message no later than the ask plus the one-hour skew
+     margin. A message outside is dropped and counted in the error line; the rest is applied.
+   - **It may ADD messages and do nothing else.** A message the receiver already holds is not
+     touched (no deletion, reaction, edit or tombstone merge), and the conversation's read
+     watermarks, history floor and pins are not merged. The one exception is the `join` push: a
+     device that was just admitted holds none of that state, and the push is how it gets the floor,
+     the watermarks and the pins. A newly added message keeps the state it arrived with.
    On a key group the existing Graine rule is unchanged.
-6. **The server refuses to address a device that predates rule 5.**
-   - **The evidence is the device's published version.** A `key_package.deviceAppVersion` below the
-     release carrying rule 5 is refused, and so is a NULL one: a device that never said what it runs
-     is treated as the oldest. Addressing such a device on a conversation group is refused with a
-     typed `400`. The answerer then does not answer that device: it says so in its log and sends no
-     broadcast in place of the refused answer. The older device is served by older peers exactly as
-     today, and it asks again at its next connection.
-   - **The web multi-tab case.** On the web, one `deviceId` is shared by every tab of a browser
-     profile, and only the tab leader (`tabLeader.ts`) holds the socket and decrypts. A tab left open
-     on an old build can therefore remain leader while a reloaded tab publishes the new version, and
-     the server would then address a device whose decrypting code predates rule 5. So the version
-     rule 6 reads is the version of the code that DECRYPTS:
-     - the leader reports its own build when its socket authenticates, and again when leadership
-       changes hands;
-     - the server takes the LOWER of that report and the key package's version;
-     - a tab that finds a leader on an older build than its own does not wait for it. It asks the
-       leader to reload over `canari-mls-tab`, and leadership passes once the reload completes.
-   - **How long it lasts.** Rule 6 holds until `minClientVersion` passes the release carrying rule 5.
-     That floor moves only once both stores serve the reader.
+6. **The server refuses to address a device that does not apply rule 5.** *Changed from the review,
+   which compared `key_package.deviceAppVersion` against a release and had a leader tab report its
+   build.* The evidence is a CAPABILITY declared by the code that decrypts: the client opens its
+   socket with `caps=addressed-history-1` (`gatewaySocketUrl`, the one builder both socket openers
+   use). Since rule 3 makes an addressed conversation frame transport-only, its addressee is online
+   by construction, and the live sessions are exactly the code that will read it.
 
-## Why the allowlist exists, and how far rules 4-6 keep it
+   **The declaration is a CROSS-PROCESS fact** (`apps/chat-gateway/src/addressing.rs`). *Changed
+   from the #2270 review: the first build aggregated the sessions inside one gateway process, so in a
+   deploy overlap an old-build tab on one gateway and a new tab on another wrote competing presence
+   values, and the device looked addressable.* Every write is one Lua script, validated before its
+   first write so a failing one leaves nothing, and tested against the production Redis in CI
+   (`redis_it`):
+   - **one field per session** in the hash `addressing:sessions:{userId}:{deviceId}` (outside `user:*`,
+     which the presence scans match), field `{process}:{connection}`, value the capability or `-`,
+     written WITH its expiry in one command (`HSETEX`, the presence TTL), refreshed by its own session
+     only. The expiry decides LIVENESS - how long a crashed process's field lingers - never safety:
+     a lingering `-` only keeps the device unaddressable, a lingering declared field changes nothing;
+   - **a retired session is recorded as LEFT** (`addressing:left:{userId}:{deviceId}`, for one TTL)
+     before its field is removed. A field name is never reused, so it is the session's generation
+     token: a refresh in flight when its session left writes nothing, and never resurrects it;
+   - **the presence value `sessions-1`**, never written over an existing `true`. A gateway that
+     predates this writes `true` and records no field, and a current one neither overwrites nor
+     deletes that `true`, so it lasts exactly as long as the older gateway's session refreshes it -
+     the only trace of a session whose declaration nobody can read;
+   - **the presence goes with the LAST field**, asked of the shared hash inside the leave script:
+     a session on another process keeps the device online, and a leave in flight cannot delete a
+     presence that a later session wrote.
 
-**Equivocation.** On a conversation group, chat-delivery fans an application frame out to every
-active device as ONE ciphertext, and that is why it allowlists addressing to key groups. Addressing
-lets a sender show one frame to one device and keep it out of the shared stream, which is a split
-view.
+   chat-delivery addresses a device only when its presence value is `sessions-1` AND every field of
+   its hash is the capability: ANY undeclared session of the device, on any process, refuses it. So:
+   - a tab still open on an older build holds a session without the capability, and the device is
+     refused while it does - no release number, no tab-reload protocol;
+   - the native background paths never read an addressed frame: they skip every silent frame
+     (Android `handleMlsFrame`, the iOS NSE), and nothing native drains the queue.
 
-- **Visible messages: closed by rules 5 and 6.** An addressed frame that is not a solicited, bounded
-  `history_bundle` is refused by every receiver that has rule 5. Rule 6 keeps addressed frames away
-  from every receiver that lacks it.
-- **History contents: narrowed, NOT closed.** A `history_bundle` carries messages as JSON (`id`,
-  `senderId`, `content`, timestamps), restated by a peer and checked only for duplicate ids. A member
-  can already put a forged message, attributed to anyone, into a bundle broadcast to everybody.
-  Addressing adds TARGETING: a forgery could reach one device and nobody else. The solicitation and
-  bounds of rule 5 shrink that to "the answerer the server elected, inside the window the asker
-  stated, and only as messages the asker did not hold". Closing it requires binding each relayed
-  message to its original sender, either through the original MLS ciphertext and its sender
-  signature or through a per-message signature in the Graine v2 shape. That is out of scope here.
+   **The check and the PUBLISH are one script** (`ADDRESSABLE_PUBLISH_LUA`, `addressing.ts`). The
+   sender's check runs before the rows are written; the publish re-asks the same question in the
+   same atomic step, so no session registered in between receives the frame. Refused there, the row
+   stays queued and the refusal is logged at **error** (`ADDRESSED row NOT published`). *Added from
+   the #2270 re-review.*
+
+   **The PULL withholds it too.** The pending fetch carries the same `caps` the socket does, and a
+   fetch that does not declare the capability is served no addressed row - filtered in the query,
+   so the page and its cursor are untouched and the row waits for a session that can read it
+   (`WITHHELD ... addressed row(s)`, info, once per change of that device's count). *Added from the #2270
+   re-review: the queue pull is filtered like the realtime path.*
+
+   **The gateway also filters at its EDGE** (`addressed_recipients`): the pub/sub loop hands an
+   addressed frame only to the local sessions that declared the capability, and logs every one it
+   withholds at **error** (`[PubSub] ADDRESSED frame NOT delivered`).
+
+   The answerer then does not answer that device (`[HISTORY_BUNDLE] ... cannot be addressed`), and
+   sends no broadcast in its place. The older device is served by older peers exactly as before.
+
+## Why addressing was limited to key groups, and what rules 3-6 add
+
+On a conversation, chat-delivery fans an application frame out to every device as ONE ciphertext,
+so every member sees the same frames; that is why addressing was allowlisted to key groups. Rules 5
+and 6 keep that property for everything a conversation shows: an addressed frame that is not a
+solicited, bounded `history_bundle` is refused by every receiver that declares the capability, and
+rule 6 addresses no receiver that does not.
 
 ## The ratchet cost of addressing
 
-A non-recipient never sees an addressed frame, so the sender's generation counter moves ahead of what
-that member last decrypted. OpenMLS derives forward on the next frame it does see, up to the
-configured `maximum_forward_distance` (2 000, `sender_ratchet_configuration` (2000, 2000)). The
-`bundleFrame` docstring rejected addressing for exactly this reason. The numbers do not support that
-fear for history: only CONSECUTIVE addressed frames from one sender in one epoch count, because any
-broadcast frame in between resets the distance. A full push is one frame per 200 messages, so 2 000
-consecutive frames would mean a single answer carrying 400 000 messages. Graine accepted the same
-bound for its addressed answers
+A non-recipient never sees an addressed frame, so the sender's generation moves ahead of what that
+member last decrypted. OpenMLS derives forward on the next frame it does see, up to
+`maximum_forward_distance` (2 000, `sender_ratchet_config` (2000, 2000)). Only CONSECUTIVE addressed
+frames from one sender in one epoch count, because any frame the member does receive resets the
+distance. A chunk is 200 messages, so 2 000 consecutive frames would be one answer of 400 000
+messages. Graine accepted the same bound
 ([channel-encryption §23](channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)).
-That docstring changes with this work package.
+The durable rule that forbade addressing an application message is narrowed accordingly
+([durable-rules](../durable-rules.md)).
 
-## Sealing to the asker (option B) is the follow-up, and its key is decided
+## Next step
 
-Option B keeps the broadcast and makes it unreadable to everyone but the asker. It needs no server
-trust and no allowlist change, and it closes what A leaves to an honest server.
+Option B (sealing the answer to the asker) is the next step; see the [backlog](../backlog.md).
 
-**The key, decided by the review on 2026-10-22: a dedicated ephemeral X25519 key generated in
-`mls-core`, carried inside the MLS-signed request.**
+## Decided: a quote of an earlier message
 
-- **Generated in Rust.** On the web it reaches the page through WASM, and it is mirrored on Android
-  and iOS. This removes the WebCrypto question entirely: the iOS app targets iOS 14.0, and WKWebView's
-  `crypto.subtle` gained X25519 only much later.
-- **Carried inside the MLS-signed request.** The asker's signature covers the key, so the server
-  cannot swap it for one of its own.
-- **Not the leaf encryption key.** That key rotates on every commit that touches the path, and its
-  private half has no public API to open with outside MLS. Reusing an MLS key outside MLS would also
-  need a review of its own.
+**A reply quoting a message from before a member's arrival SHOWS that member the quoted text -
+decided by the user, 2026-10-22.** The quote rule stays a broadcast that reads the union of gaps
+only. Extending it to every before-arrival span would blank every quote older than the newest
+member, for everybody, and that cost was declined. Nothing is built for it.
 
-The push is untouched by B, as it is by A: it is a broadcast that step C already made safe.
+## What proves it
 
-**B is an opus work package across three platforms, after A.** It covers the WASM export and its
-native mirrors, and its rollout is a reader-first release pair. Once it ships, it can replace rules
-3 to 6, and the allowlist then returns to key groups only.
-
-## What A does not close
-
-- Anything against a malicious server or a malicious answerer (above).
-- The split view through history contents, narrowed by rule 5. It needs bound history, not
-  addressing.
-- Older clients keep pushing and broadcasting until `minClientVersion` passes the release carrying A.
-- What a newcomer has already received cannot be taken back.
+- chat-delivery: `messaging.durability.spec.ts`, `on a conversation group` - a non-addressed device
+  of the group gets no queued row and no publish; a durable or incapable addressee is refused; the
+  row and the live frame carry `addressed`.
+- chat-delivery: the same block - one undeclared session field, an older gateway's `true`, or no
+  field at all refuses the device; the publish re-checks atomically; a key-group answer is never
+  marked. `addressing.redis.spec.ts` runs the check-and-publish script against a real Redis (CI:
+  `boot-nest-apps`, refused if skipped). `messaging.pending-page.spec.ts` - a fetch that does not
+  declare the capability is served no addressed row. `migrations.lock-timeout.spec.ts` - 035 sets
+  its `lock_timeout` before it alters the table.
+- gateway: `addressing.rs` - the edge filter, the field naming; `redis_it` runs both presence
+  scripts against a real Redis (CI: `test-rust`, failing rather than skipping when unset): the
+  expiry, an older gateway's `true`, the presence going with the last session on any process, no
+  resurrection after a leave, nothing written by a refused call, concurrent sessions.
+- client: `frameDelivery.socketUrl.test.ts` - both socket openers declare the capability through
+  `gatewaySocketUrl`; `mlsDeliveryApi.pending.test.ts` - so does every page of the pull;
+  `historyAddressing.test.ts` - at most two answerers per ask.
+- client: `historyAddressing.test.ts` (the open asks, the bounds, every ask carries an id),
+  `systemMessageHandler.bundleAddressing.test.ts` (rule 5 on receipt),
+  `setupMessageHandler.addressedGate.test.ts` (only a history answer may be addressed),
+  `groupActions.historyEntitlement.test.ts` (rules 1-2, the legacy broadcast, an unroutable device),
+  `mlsDeliveryApi.addressed.test.ts` (the typed refusal, the server flag).
+- **Owed on the rig: GRP-ADDR-1** - three devices: member A's NEW device asks, newcomer C (added after
+  messages M1..Mn) is online; C must log no `[HISTORY_BUNDLE] ... received` for A's answer and hold
+  nothing before its arrival, while A's new device restores M1..Mn
+  ([cross-client-testing](../cross-client-testing.md)).

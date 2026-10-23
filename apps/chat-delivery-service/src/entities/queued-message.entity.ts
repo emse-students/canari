@@ -57,6 +57,15 @@ export class QueuedMessage {
   @Column({ nullable: true })
   ratchetTree?: string;
 
+  /**
+   * True when the sender ADDRESSED this frame to this device rather than to the whole group
+   * (`recipientDevices`). MLS still encrypts it for every member, so the receiver needs the routing
+   * fact to refuse anything but a solicited history answer (migration 035,
+   * docs/wiki/protocols/history-answer-addressing.md, rules 4-5).
+   */
+  @Column({ type: 'boolean', default: false })
+  addressed: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 }

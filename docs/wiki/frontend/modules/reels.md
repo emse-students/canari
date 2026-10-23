@@ -416,10 +416,11 @@ reel, and the server refuses a declaration over the cap, so it declares the cap
 
 ## Watching: the feed card and the full-screen viewer (C7)
 
-**In the feed a reel is a VERTICAL box** (`PostContent`): 9:16, 70 % of the screen's height, the
-video covering it. An ordinary attachment's box follows the file's ratio under the 60 % ceiling and
-cropped a phone's portrait clip into a wide strip; a reel is always portrait, so its box says so
-before the first frame. It plays muted while on screen like any feed video (`InlineVideo`), and a
+**In the feed a reel is drawn in the SAME box as any video** (`PostContent` `singleMedia`, user,
+2026-10-22): the clip's own ratio under the `--media-max-height` ceiling, the whole frame contained
+and the sides a blurred copy of its first frame; 9:16 only when the reel carries no dimensions
+([posts](posts.md)). It used to be a fixed 9:16 box 70 % of the screen high with the video covering
+it. It plays muted while on screen like any feed video (`InlineVideo`), and a
 touch opens the viewer instead of the media viewer.
 
 **A feed card fetches what its video is about to play, and gives it all back off screen (fix of

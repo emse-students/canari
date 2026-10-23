@@ -87,6 +87,24 @@ fn a_bare_leaf_is_removed_by_its_user_id() {
     assert_eq!(alice.legacy_bare_leaves(), 0);
 }
 
+/// GRAINE'S RUN READS USERS WITH THE SAME READER: a bare leaf is a PRESENT user, so a new device of
+/// that user continues the run (`graine_run.rs`, D5) - it is not a malformed leaf naming nobody.
+#[test]
+fn a_new_device_of_a_bare_leafs_user_continues_the_graine_run() {
+    let gid = "g-bare-run";
+    let mut alice = alice_in_a_group_with_a_bare_leaf(gid, "bob");
+    let run = alice.graine_run(gid).expect("run").run_id;
+    let kp = MlsManager::load_or_create("bob", "dev2", None)
+        .unwrap()
+        .generate_key_package()
+        .unwrap();
+    alice
+        .add_members_bulk_with_base(gid, &[&kp], &["bob:dev2"])
+        .expect("stage");
+    alice.merge_pending_commit_for(gid).expect("merge");
+    assert_eq!(alice.graine_run(gid).expect("run").run_id, run);
+}
+
 #[test]
 fn a_bare_leaf_is_never_pinned_and_never_removed_as_a_device() {
     let gid = "g-bare-device";

@@ -1,13 +1,13 @@
 {
   "name": "canari",
-  "version": "1.4.0-alpha.3",
+  "version": "1.4.1-alpha.1",
   "private": true,
   "description": "",
   "license": "SEE LICENSE IN ../LICENSE",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build && bun ./scripts/check-bundle-consistency.mjs && bun ./scripts/check-platform-service.mjs && bun ./scripts/check-emoji-coverage.mjs",
+    "build": "vite build && bun ./scripts/check-bundle-consistency.mjs && bun ./scripts/check-platform-service.mjs && bun ./scripts/check-emoji-coverage.mjs && bun ./scripts/check-built-csp.mjs",
     "preview": "vite preview",
     "test": "bun run paraglide:compile && bun run paraglide:compile:test && vitest run",
     "test:watch": "bun run paraglide:compile:test && vitest",
@@ -86,6 +86,7 @@
     "husky": "^9.1.7",
     "oxfmt": "^0.73.0",
     "oxlint": "^1.88.0",
+    "parse5": "7.3.0",
     "protobufjs": "^8.8.1",
     "protobufjs-cli": "^2.7.1",
     "sharp": "^0.35.5",

@@ -20,7 +20,7 @@ import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.ShortcutInfoCompat
-import androidx.core.content.pm.ShortcutManagerCompat
+import app.tauri.gallery.ConversationShortcuts
 import androidx.core.graphics.drawable.IconCompat
 import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import fr.emse.canari.push.BackgroundWelcomeAnswer
 import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
@@ -76,6 +77,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     companion object {
         const val TAG = "CanariFCM"
+
+        /**
+         * Seals one push-cache line under the install's native cache key (Rust `native_cache`).
+         * Returns null when [cacheKeyB64] is empty or unusable, and the caller then writes NOTHING.
+         * On the companion because the notification action receiver writes the cache too.
+         */
+        external fun nativeSealCacheLine(cacheKeyB64: String, line: String): String?
 
         /** The `open_graine_push` refusals that accuse somebody, rather than miss a seed. */
         private val GRAINE_V2_REFUSALS =
@@ -433,6 +441,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * small icon the corner badge, so the notification shows ONE identity. Re-published on every
          * post so a changed avatar replaces the old one; the shortcut id is stable per conversation.
          *
+         * Pushed through `ConversationShortcuts` (tauri-plugin-gallery), which RECORDS the id first
+         * so the sign-out can erase it - the shortcut carries the conversation's name and a face of
+         * this account - and bounds how many are kept (docs/wiki/frontend/sharing.md).
+         *
          * @param label the conversation's name: the group title, or the other person for a DM.
          * @return the shortcut id to hand to `setShortcutId`, or null when the platform refused
          *         (logged), in which case the caller keeps the plain large icon.
@@ -445,7 +457,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             person: Person,
             tapIntent: Intent,
         ): String? {
-            val id = "chat_$groupId"
+            val id = "${ConversationShortcuts.ID_PREFIX}$groupId"
             return try {
                 val info = ShortcutInfoCompat.Builder(context, id)
                     .setShortLabel(label.ifEmpty { context.getString(R.string.app_name) })
@@ -455,8 +467,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     .setPerson(person)
                     .setCategories(setOf("androidx.core.content.pm.SHORTCUT_CATEGORY_CONVERSATION"))
                     .build()
-                ShortcutManagerCompat.pushDynamicShortcut(context, info)
-                id
+                if (ConversationShortcuts.push(context, info)) id else null
             } catch (e: Exception) {
                 Log.e(TAG, "publishConversationShortcut: refused for group=${groupId.take(8)}: ${e.message}")
                 null
@@ -778,6 +789,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * Lives on the companion because two callers write it: the push path (an incoming message
          * decrypted while the app is dead) and the notification quick reply (an OUTGOING message
          * sent while the app is dead - see [CanariNotificationActionReceiver.handleReply]).
+         *
+         * Each line is SEALED under the install's native cache key ([NativeCacheKey],
+         * `nativeSealCacheLine`) before it touches the disk. With no key the entry is NOT written -
+         * never in the clear: the message is still on the server, and the app's sync fetches it.
          */
         internal fun appendFcmCacheEntry(
             context: Context,
@@ -786,6 +801,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             groupId: String,
         ) {
             try {
+                val sealed = nativeSealCacheLine(NativeCacheKey.retrieve(context), entry.toString())
+                if (sealed == null) {
+                    Log.e(TAG, "writeFcmCache: no cache key - entry NOT written messageId=${messageId.take(8)}")
+                    return
+                }
                 val file = File(MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }, "fcm_message_cache.ndjson")
                 CACHE_LOCK.lock()
                 try {
@@ -795,13 +815,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val kept = if (existing.size >= MAX_FCM_CACHE_ENTRIES)
                         existing.drop(existing.size - MAX_FCM_CACHE_ENTRIES + 1)
                     else existing
-                    file.writeText((kept + entry.toString()).joinToString("\n") + "\n")
+                    file.writeText((kept + sealed).joinToString("\n") + "\n")
                 } finally {
                     CACHE_LOCK.unlock()
                 }
                 Log.d(TAG, "writeFcmCache: ✓ messageId=${messageId.take(8)} groupId=${groupId.take(8)}")
-            } catch (e: Exception) {
-                Log.w(TAG, "writeFcmCache: failed: ${e.message}")
+            } catch (e: Throwable) {
+                // UnsatisfiedLinkError included: the seal is a JNI call, and an older native library
+                // has no such symbol - a crash here would take the notification with it.
+                Log.e(TAG, "writeFcmCache: failed: ${e.javaClass.simpleName}: ${e.message}")
             }
         }
 
@@ -2268,27 +2290,36 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     ): String
 
     /**
-     * Writes Graine session seeds into `graine_seeds.json`, the mirror [lookupGraineSeed] reads.
+     * Writes Graine session seeds into `graine_seeds.json`, the mirror [graineSeedHeld] asks about.
      *
      * `seedsJson` is the `seeds` array `nativeDecryptMessageWithKey` returns alongside
      * `reason=graine-key-material`: `[{channelId, sessionId, seedB64, createdAt}, ...]`. Returns
-     * how many entries were stored, or -1 when the payload could not be read at all.
+     * how many entries were stored, or -1 when the payload could not be read at all or
+     * [cacheKeyB64] is empty: the mirror is sealed under that key (Rust `native_cache`) and is
+     * never written in the clear.
      *
      * THE ONE FILE THIS PATH MAY WRITE. The background decrypt is read-only by construction - it
      * must never advance `mls.bin`, which the foreground owns - and this touches nothing else: the
      * mirror is a cache of key material the device is already entitled to, bounded per channel,
      * and rebuilt from the group's log whenever the app next runs.
      */
-    external fun nativeStoreGraineSeeds(dataDir: String, seedsJson: String): Int
+    external fun nativeStoreGraineSeeds(dataDir: String, cacheKeyB64: String, seedsJson: String): Int
+
+    /**
+     * Whether the sealed mirror under [dataDir] holds a session: 1 yes, 0 no, -1 unreadable. The
+     * question every channel path asks; the seed itself never enters the JVM.
+     */
+    external fun nativeGraineSeedHeld(dataDir: String, cacheKeyB64: String, channelId: String, sessionId: String): Int
 
     // Opens a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) against
-    // the seed mirror in `dataDir`. Rust reads the session itself and applies every rule the app
-    // applies to a row - the floor, and under a v2 session the author, the signature and the AAD
-    // (channel-encryption section 21.5) - in the one implementation all platforms share.
-    // `signatureB64` is empty when the push carried none. Returns the same JSON shape as
-    // nativeDecryptMessage, or {"ok":false,"reason":...}.
+    // the seed mirror in `dataDir`, sealed under `cacheKeyB64`. Rust reads the session itself and
+    // applies every rule the app applies to a row - the floor, and under a v2 session the author,
+    // the signature and the AAD (channel-encryption section 21.5) - in the one implementation all
+    // platforms share. `signatureB64` is empty when the push carried none. Returns the same JSON
+    // shape as nativeDecryptMessage, or {"ok":false,"reason":...}.
     external fun nativeOpenGrainePush(
         dataDir: String,
+        cacheKeyB64: String,
         channelId: String,
         sessionId: String,
         messageIndex: Int,
@@ -2310,19 +2341,54 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     ): ByteArray
 
     /**
-     * Creates an MLS Welcome package for [keyPackageB64] in group [groupId].
-     * Saves the updated MLS state to {filesDir}/mls.bin.
-     * Returns JSON: {"ok":true,"welcome":"<b64>","ratchetTree":"<b64>|null","commit":"<b64>"}
-     * or {"ok":false,"error":"..."}.
+     * Builds an MLS Welcome for [keyPackageB64] in group [groupId] and STAGES the post-add state
+     * beside mls.bin - mls.bin itself is untouched until [nativeInstallStagedWelcome].
+     * [requester] (`userId:deviceId`) is the device the request was made for: a package whose
+     * credential names another device, or that device under an unpinned key, is refused
+     * (`identity-mismatch`, `signature-key-changed`) and nothing is staged.
+     * Returns JSON: {"ok":true,"welcome","ratchetTree","commit","baseEpoch"} or
+     * {"ok":false,"reason":"<token>"} (`mobile/background.rs`, `prepare_welcome_background_with_key`).
      */
-    external fun nativeCreateWelcomeBackground(
+    external fun nativePrepareWelcomeBackground(
         filesDir: String,
         stateBytes: ByteArray,
         keyB64: String,
         userId: String,
         deviceId: String,
         groupId: String,
+        requester: String,
         keyPackageB64: String,
+    ): String
+
+    /**
+     * Installs the state staged for [groupId] - ONLY after the server answered `accepted` - over the
+     * very mls.bin it was built from. Returns {"ok":true} or {"ok":false,"reason","error"?}.
+     */
+    external fun nativeInstallStagedWelcome(filesDir: String, groupId: String): String
+
+    /**
+     * Discards the state staged for [groupId]. [staleBase] and [serverEpoch] are both >= 0 for an
+     * `epoch_mismatch` refusal, recorded for the group; -1 otherwise. [refusedTarget]
+     * (`userId:deviceId`) is non-null for a refused target, recorded for that target alone. Both
+     * are recorded against the bytes the commit was built from, so they are not offered again.
+     */
+    external fun nativeDiscardStagedWelcome(
+        filesDir: String,
+        groupId: String,
+        staleBase: Long,
+        serverEpoch: Long,
+        refusedTarget: String?,
+    )
+
+    /**
+     * Why a Welcome for [target] (`userId:deviceId`) in [groupId], built from [stateBytes], would be
+     * refused again - `stale-epoch-known` or `target-refused-known` - or "" when not known.
+     */
+    external fun nativeWelcomeRequestKnownRefused(
+        filesDir: String,
+        stateBytes: ByteArray,
+        groupId: String,
+        target: String,
     ): String
 
     /**
@@ -2578,7 +2644,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 Log.w(TAG, "social_reaction push without postId - nothing to group it under, drawn alone")
             }
-            Log.d(TAG, "showSimpleNotification: type=$msgType channel=$channel title=$title deepLink=$deepLink")
+            Log.d(TAG, "showSimpleNotification: type=$msgType channel=$channel titleChars=${title.length} deepLink=$deepLink")
             // A THREAD, because this branch now fetches a picture. Everything above is a map lookup
             // and stays here; [socialLargeIcon] may touch the disk cache, the Keystore and the
             // network, and `onMessageReceived` must return promptly or Android stops delivering to
@@ -2681,7 +2747,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val queuedMessageId = data["queuedMessageId"]
         val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
 
-        Log.d(TAG, "thread: groupId=$groupId senderName=$senderName silent=$silent inlineProto=${inlineProto != null}")
+        Log.d(TAG, "thread: groupId=$groupId named=${senderName.isNotEmpty()} silent=$silent inlineProto=${inlineProto != null}")
 
         // CROSS-DEVICE DISMISSAL, BEFORE ANY DECRYPTION.
         //
@@ -2778,7 +2844,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // string so that reading a frame stays reading a frame; this is the handler, and the
         // only place in this file that may write to the Tauri data directory.
         (outcome as? PushDecrypt.KeyMaterial)?.let { keyMaterial ->
-            absorbGraineSeeds(keyMaterial.seedsJson, groupId)
+            absorbGraineSeeds(NativeCacheKey.retrieve(this), keyMaterial.seedsJson, groupId)
             return
         }
 
@@ -2918,7 +2984,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // (bypass-DND request) instead of the regular messages channel.
         val mentionsMe = (gate as NotificationLevelGate.Decision.Alert).mentionsMe
         val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
-        Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
+        Log.d(TAG, "showNotification: groupId=$groupId bodyChars=${body.length} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
         // NOTIF-10 (b). A push refused for good means another engine consumed this generation, so
         // it holds the message and posts the real banner itself. The generic line stays as the
         // floor (nobody else is proven to post), but it is REPLACED when the real one comes, or
@@ -3062,13 +3128,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     /**
      * Handles a `welcome_request_pending` received via FCM when the app is killed.
-     * Sequence: acquire the Redis lock -> fetch the key package -> create the Welcome
-     * via JNI -> send Welcome+commit to the backend -> release the lock.
+     * Sequence: known-stale check -> acquire the Redis lock -> fetch the key package -> STAGE the
+     * Welcome via JNI -> send Welcome+commit to the backend -> install or discard the staged state
+     * by the answer's TYPE ([BackgroundWelcomeAnswer]) -> release the lock.
      *
-     * [MlsStateLock] is held ONLY during the JNI (mls.bin read + mls.bin write) so as not to
-     * block the FCM decrypt threads during the HTTP calls and the Redis retries (which can sleep
-     * 2s x 2 = 4s). Before this refactoring, MlsStateLock was held for the whole duration (~30s),
-     * making tryDecrypt time out systematically.
+     * **mls.bin IS WRITTEN ONLY AFTER THE SERVER ACCEPTS.** It used to be written before the answer:
+     * a phone killed while its group moved on answered from its old epoch, the gate refused the
+     * commit (`epoch_mismatch`), the phone logged "Welcome sent" off the 201, and its mls.bin kept an
+     * add nobody else applied - an epoch of its own (Mi 9T, 2026-10-22, docs/wiki/backlog.md).
+     *
+     * Nothing here retries. A refusal leaves the request to the foreground (which replays the group's
+     * commits at its next start) or to another member; an `epoch_mismatch` is recorded so the same
+     * mls.bin bytes are not offered again on the newcomer's next ask.
+     *
+     * [MlsStateLock] is held ONLY during the JNI calls, never across HTTP, so as not to block the FCM
+     * decrypt threads; the install is a compare-and-swap against the bytes the stage was built from.
      */
     private fun processWelcomeRequestBackground(
         groupId: String,
@@ -3084,6 +3158,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val secret = retrievePushSecret(this)
         if (secret == null) {
             Log.e(TAG, "processWelcomeRequestBackground: pushSecret absent -> abort")
+            return
+        }
+        val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
+
+        // 0. A Welcome built from these very bytes was already refused - as stale, or for this
+        //    target: answering again could only be refused again. mls.bin is replaced by rename, so
+        //    this read is whole.
+        val current = MlsContextLoader.loadMlsState(this)
+        val known = current?.let {
+            nativeWelcomeRequestKnownRefused(filesDir, it, groupId, "$requesterUserId:$requesterDeviceId")
+        }.orEmpty()
+        if (known.isNotEmpty()) {
+            Log.i(TAG, "processWelcomeRequestBackground: group=$groupId target=$requesterUserId:$requesterDeviceId already refused ($known) from this mls.bin -> not answered, left to the foreground")
             return
         }
 
@@ -3110,66 +3197,77 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             Log.d(TAG, "processWelcomeRequestBackground: keyPackage fetched (${keyPackage.length} chars)")
 
-            // 3. Create the Welcome via Rust JNI - MlsStateLock only here
-            //    (mls.bin read + Argon2 decryption + add_member + mls.bin write ~5-8s).
+            // 3. Stage the Welcome via Rust JNI - MlsStateLock only here. mls.bin is NOT written.
             // tryLock may throw InterruptedException if the FCM thread is interrupted by Android.
-            val jniLockAcquired = try {
-                MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-                Log.e(TAG, "processWelcomeRequestBackground: thread interrupted during tryLock: ${e.message}")
-                return
-            }
-            if (!jniLockAcquired) {
-                Log.w(TAG, "processWelcomeRequestBackground: MlsStateLock not acquired -> abort")
-                return
-            }
-            val result: JSONObject
-            try {
+            val result = withMlsStateLock(10) {
                 val stateBytes = MlsContextLoader.loadMlsState(this)
                 if (stateBytes == null) {
                     Log.e(TAG, "processWelcomeRequestBackground: mls.bin absent -> abort")
-                    return
+                    return@withMlsStateLock null
                 }
-                val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
-                val jsonStr = nativeCreateWelcomeBackground(
+                JSONObject(nativePrepareWelcomeBackground(
                     filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId,
-                    groupId, keyPackage,
-                )
-                result = JSONObject(jsonStr)
-            } finally {
-                MlsStateLock.LOCK.unlock()
+                    groupId, "$requesterUserId:$requesterDeviceId", keyPackage,
+                ))
             }
-
+            if (result == null) {
+                Log.w(TAG, "processWelcomeRequestBackground: not staged (MlsStateLock or mls.bin) -> abort")
+                return
+            }
             if (!result.optBoolean("ok", false)) {
-                Log.e(TAG, "processWelcomeRequestBackground: nativeCreateWelcomeBackground failed: ${result.optString("error")}")
+                // A TOKEN, never prose: `stale-epoch-known`, `already-member`, `foreground-active`, ...
+                Log.w(TAG, "processWelcomeRequestBackground: not prepared reason=${result.optString("reason", "unspecified")} group=$groupId -> nothing sent")
                 return
             }
             val welcomePayload  = result.getString("welcome")
             val ratchetTree     = result.optString("ratchetTree").takeIf { it.isNotEmpty() && it != "null" }
             val commitPayload   = result.getString("commit")
-            // Base epoch before the add: the backend validates it (validateCommit) to keep its
-            // activeEpoch counter in sync with the real epoch, otherwise foreground commits are
-            // wrongly rejected (C6). -1 if absent (old JNI) -> the backend skips validation.
-            val baseEpoch       = result.optLong("baseEpoch", -1L)
-            Log.d(TAG, "processWelcomeRequestBackground: Welcome created, commit=${commitPayload.take(16)}… baseEpoch=$baseEpoch")
+            val baseEpoch       = result.getLong("baseEpoch")
+            // The external-join base of the epoch this commit creates: published by the server in
+            // the advance's own transaction, as the foreground's commit carries it (COMM-22).
+            val groupInfo       = result.optString("groupInfo").takeIf { it.isNotEmpty() }
+            Log.d(TAG, "processWelcomeRequestBackground: Welcome staged, commit=${commitPayload.take(16)}… baseEpoch=$baseEpoch")
 
             // 4. Send Welcome + commit to the backend (HTTP) - outside MlsStateLock
-            val sent = sendWelcomeAndCommit(
+            val outcome = sendWelcomeAndCommit(
                 ctx, secret, groupId,
                 requesterUserId, requesterDeviceId,
-                welcomePayload, ratchetTree, commitPayload, baseEpoch,
+                welcomePayload, ratchetTree, commitPayload, baseEpoch, groupInfo,
             )
-            if (sent) {
-                Log.d(TAG, "processWelcomeRequestBackground: ✓ Welcome sent for group=$groupId target=$requesterUserId:$requesterDeviceId")
-            } else {
-                Log.e(TAG, "processWelcomeRequestBackground: sendWelcomeAndCommit failed for group=$groupId")
+            val line = "processWelcomeRequestBackground: group=$groupId target=$requesterUserId:$requesterDeviceId " +
+                BackgroundWelcomeAnswer.describe(outcome, baseEpoch)
+
+            // 5. Install or discard the staged state, by the answer's TYPE. The decision - including
+            //    deleting the staged file when the install finds the lock busy - is
+            //    [BackgroundWelcomeAnswer.apply], tested on the JVM; this only wires the JNI to it.
+            val staged = object : BackgroundWelcomeAnswer.StagedWelcome {
+                override fun install(): BackgroundWelcomeAnswer.InstallReport? =
+                    withMlsStateLock(10) { JSONObject(nativeInstallStagedWelcome(filesDir, groupId)) }?.let {
+                        BackgroundWelcomeAnswer.InstallReport(
+                            ok = it.optBoolean("ok", false),
+                            reason = it.optString("reason").takeIf { r -> r.isNotEmpty() },
+                            error = it.optString("error").takeIf { e -> e.isNotEmpty() },
+                        )
+                    }
+
+                override fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean) =
+                    nativeDiscardStagedWelcome(
+                        filesDir, groupId, staleBase ?: -1L, serverEpoch ?: -1L,
+                        if (targetRefused) "$requesterUserId:$requesterDeviceId" else null,
+                    )
+            }
+            val applied = BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(outcome, baseEpoch), staged)
+            val (level, suffix) = BackgroundWelcomeAnswer.report(applied, outcome)
+            when (level) {
+                BackgroundWelcomeAnswer.Level.DEBUG -> Log.d(TAG, "$line - $suffix")
+                BackgroundWelcomeAnswer.Level.WARN -> Log.w(TAG, "$line - $suffix")
+                BackgroundWelcomeAnswer.Level.ERROR -> Log.e(TAG, "$line - $suffix")
             }
         } finally {
-            // 5. Release the Redis lock in all cases
+            // 6. Release the Redis lock in all cases
             releaseAddLock(ctx, secret, groupId)
             Log.d(TAG, "processWelcomeRequestBackground: Redis lock released for group=$groupId")
-            // 6. Opportunistic: this device may also have pending messages - try to send them
+            // 7. Opportunistic: this device may also have pending messages - try to send them
             //    now that the app is awake, and notify if any remain.
             val remaining = drainOutboxBackground(this, this, ctx)
             maybeNotifyPendingSync(remaining)
@@ -3280,8 +3378,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     /**
-     * Sends the Welcome to the target device and broadcasts the commit to all group members.
-     * Returns true if the HTTP call succeeded (HTTP 201).
+     * Sends the Welcome and its commit to the backend, and answers WHAT HAPPENED, classified by the
+     * body's `status` token ([BackgroundWelcomeAnswer.classify]) - never by the status code alone,
+     * which said 201 for a refusal on the server of 2026-10-22.
      */
     private fun sendWelcomeAndCommit(
         ctx: PushContext,
@@ -3293,7 +3392,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         ratchetTree: String?,
         commitPayload: String,
         baseEpoch: Long,
-    ): Boolean {
+        groupInfo: String?,
+    ): BackgroundWelcomeAnswer.Outcome {
         return try {
             val url = URL("${ctx.baseUrl}/api/mls/push/send-welcome-and-commit")
             val body = JSONObject().apply {
@@ -3305,7 +3405,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 put("welcomePayload", welcomePayload)
                 put("ratchetTreePayload", if (ratchetTree != null) ratchetTree else JSONObject.NULL)
                 put("commitPayload", commitPayload)
-                if (baseEpoch >= 0) put("baseEpoch", baseEpoch)
+                put("baseEpoch", baseEpoch)
+                if (groupInfo != null) put("groupInfo", groupInfo)
             }.toString()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
@@ -3318,14 +3419,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             try {
                 conn.outputStream.use { it.write(body.toByteArray()) }
                 val code = conn.responseCode
-                Log.d(TAG, "sendWelcomeAndCommit: HTTP $code group=$groupId target=$targetUserId:$targetDeviceId")
-                code == 201
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val text = stream?.bufferedReader()?.use { it.readText() }
+                val json = try { text?.let { JSONObject(it) } } catch (e: Exception) { null }
+                Log.d(TAG, "sendWelcomeAndCommit: HTTP $code status=${json?.optString("status")} group=$groupId target=$targetUserId:$targetDeviceId")
+                BackgroundWelcomeAnswer.classify(
+                    code,
+                    json?.optString("status")?.takeIf { it.isNotEmpty() },
+                    json?.optString("reason")?.takeIf { it.isNotEmpty() },
+                    json?.takeIf { it.has("currentEpoch") && !it.isNull("currentEpoch") }?.optLong("currentEpoch"),
+                )
             } finally {
                 conn.disconnect()
             }
         } catch (e: Exception) {
             Log.e(TAG, "sendWelcomeAndCommit: exception: ${e.message}")
-            false
+            BackgroundWelcomeAnswer.classify(null, null, null, null)
         }
     }
 
@@ -3421,7 +3530,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *
          * **A SILENT FRAME IS NOT A WORTHLESS ONE, AND THIS IS THE ONE THAT PROVED IT.** A seed
          * minted while this device was shut arrives here and nowhere else: dropped, every message
-         * of that session shows the generic salon body for ever, because [lookupGraineSeed] has
+         * of that session shows the generic salon body for ever, because [graineSeedHeld] has
          * nothing to find and the app only rebuilds the mirror when it is next opened.
          *
          * It renders nothing - there is no message in it - so it is NOT [NothingToRender]: that
@@ -3788,7 +3897,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // there is nothing to draw. It was a `null` too, and inherited the same wasted ladder.
         val text = json.optString("text").takeIf { it.isNotEmpty() || isCall }
             ?: return PushDecrypt.NothingToRender
-        Log.d(TAG, "$where: success type=$type -> \"${text.take(60)}\"")
+        Log.d(TAG, "$where: success type=$type chars=${text.length}")
         return PushDecrypt.Message(DecryptedMessage(
             text      = text.take(200),
             messageId = json.optString("messageId"),
@@ -4557,7 +4666,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
-        Log.d(TAG, "reaction: group=${groupId.take(8)} actor=${actorId.take(8)} emoji=$emoji")
+        Log.d(TAG, "reaction: group=${groupId.take(8)} actor=${actorId.take(8)}")
         val largeIcon = (if (actorId.isNotEmpty()) fetchAvatar(actorId) else null)
             ?: generateInitialsBitmap(actorName)
 
@@ -4597,6 +4706,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
         val sessionId = data["senderSessionId"] ?: ""
+        // UNWRAPPED ONCE FOR THE WHOLE PUSH: every mirror question below, the frame's seeds and the
+        // decrypt take this one copy rather than asking the Keystore again (empty = no key).
+        val cacheKey = NativeCacheKey.retrieve(this)
         val messageIndex = data["messageIndex"]?.toIntOrNull()
         // A message index of 0 is the first message of every session, so the guard is on `null`
         // (absent or unparsable) and never on falsiness.
@@ -4614,7 +4726,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // 2026-09-28. After the join the frame opens and the first banner carries the plaintext.
         val seedGroupId = data["seedGroupId"]?.takeIf { it.isNotEmpty() }
         if (openable && seedGroupId != null && (WELCOMES_ON_LANE[seedGroupId] ?: 0) > 0 &&
-            lookupGraineSeed(channelId, sessionId) == null
+            !graineSeedHeld(cacheKey, channelId, sessionId)
         ) {
             Log.d(TAG, "handleChannelMessage: the Welcome into key group ${seedGroupId.take(8)} is queued behind this push -> re-queued after it channel=$channelId index=$messageIndex")
             runSerializedWithWakeLock("fcm_channel") { handleChannelMessage(data.toMap()) }
@@ -4624,36 +4736,33 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // THE MIRROR FIRST, THEN THE FRAME THE MESSAGE CARRIES (channel-encryption §19). A seed the
         // mirror already holds costs a file read; the frame costs an MLS load under the state lock,
         // so it is opened only for a session this device has not seen - the first message of it.
-        val framed = if (openable && lookupGraineSeed(channelId, sessionId) == null) {
-            openSeedFrame(data, channelId, sessionId)
-        } else {
-            null
-        }
+        val framed = openable && !graineSeedHeld(cacheKey, channelId, sessionId) &&
+            openSeedFrame(cacheKey, data, channelId, sessionId)
 
-        val seedB64 = if (!openable) null else framed ?: synchronized(PENDING_CHANNEL_LOCK) {
-            val seed = lookupGraineSeed(channelId, sessionId)
+        val seedHeld = openable && (framed || synchronized(PENDING_CHANNEL_LOCK) {
+            val held = graineSeedHeld(cacheKey, channelId, sessionId)
             // A COPY: the frame outlives the delivery, and FCM's map is backed by the Bundle the
             // service was handed. Eight of these at most, a few kB each.
-            if (seed == null) PENDING_CHANNEL_FRAMES[pendingKey] = PendingChannelFrame(data.toMap())
-            seed
+            if (!held) PENDING_CHANNEL_FRAMES[pendingKey] = PendingChannelFrame(data.toMap())
+            held
+        })
+        if (seedHeld) {
+            Log.i(TAG, "handleChannelMessage: seed source=${if (framed) "frame" else "mirror"} channel=$channelId session=$sessionId index=$messageIndex")
         }
-        if (seedB64 != null) {
-            Log.i(TAG, "handleChannelMessage: seed source=${if (framed != null) "frame" else "mirror"} channel=$channelId session=$sessionId index=$messageIndex")
-        }
-        if (openable && seedB64 == null) {
+        if (openable && !seedHeld) {
             // A FALLBACK IS A SIGNAL. It says the key frame lost a race it was never ordered to
             // win, and the line below is how a run tells that apart from a seed that never comes.
             Log.w(TAG, "handleChannelMessage: seed absent -> generic banner, frame HELD for its key material channel=$channelId session=$sessionId index=$messageIndex")
         }
 
-        val stamp = postChannelNotification(data, seedB64)
+        val stamp = postChannelNotification(cacheKey, data, seedHeld)
         // COUNTED, NOT ONLY LOGGED: a blind banner that reached the shade is reported once, after
         // it is up, so the fleet has a rate rather than a line on one phone. A held frame may still
         // be redrawn - `held` says so, and the reader of the count subtracts nothing by guessing.
-        if (stamp != 0L && seedB64 == null) {
-            reportBlindBanner(channelId, blindBannerMissing(data, seedB64), held = openable)
+        if (stamp != 0L && !seedHeld) {
+            reportBlindBanner(channelId, blindBannerMissing(data, seedHeld), held = openable)
         }
-        if (!openable || seedB64 != null) return
+        if (!openable || seedHeld) return
 
         if (stamp == 0L) {
             // Nothing reached the shade, so there is no line for a seed to correct and the entry
@@ -4670,19 +4779,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val arrivedMeanwhile = synchronized(PENDING_CHANNEL_LOCK) {
             PENDING_CHANNEL_FRAMES[pendingKey]?.let { frame ->
                 frame.genericStamp = stamp
-                lookupGraineSeed(channelId, sessionId)
-                    ?.also { PENDING_CHANNEL_FRAMES.remove(pendingKey) }
-            }
+                graineSeedHeld(cacheKey, channelId, sessionId)
+                    .also { if (it) PENDING_CHANNEL_FRAMES.remove(pendingKey) }
+            } == true
         }
-        if (arrivedMeanwhile != null) {
+        if (arrivedMeanwhile) {
             Log.i(TAG, "handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=$channelId index=$messageIndex")
-            postChannelNotification(data, arrivedMeanwhile, supersedes = stamp)
+            postChannelNotification(cacheKey, data, seedHeld = true, supersedes = stamp)
         }
     }
 
     /**
-     * Opens the seed frame a salon push carries and returns the seed of THIS message's session, or
-     * null - and the caller then holds the message for the seed push, as it did before §19.
+     * Opens the seed frame a salon push carries and returns whether the mirror now holds THIS
+     * message's session; false, and the caller then holds the message for the seed push, as it did
+     * before §19.
      *
      * The frame is the very MLS message the sender distributed the seed with on the salon's key
      * group, so it is decrypted exactly as that push would be - read-only, nothing persisted - and
@@ -4691,14 +4801,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * state that actually exists, never from the payload: a frame for another session opens
      * nothing for this message, and saying so is the difference between a sender bug and a race.
      *
-     * Null with no frame at all is a sender older than §19, the one population the hold is for.
+     * False with no frame at all is a sender older than §19, the one population the hold is for.
      */
-    private fun openSeedFrame(data: Map<String, String>, channelId: String, sessionId: String): String? {
+    private fun openSeedFrame(
+        cacheKey: String,
+        data: Map<String, String>,
+        channelId: String,
+        sessionId: String,
+    ): Boolean {
         val frame = data["seedFrame"]?.takeIf { it.isNotEmpty() }
         val groupId = data["seedGroupId"]?.takeIf { it.isNotEmpty() }
         if (frame == null || groupId == null) {
             Log.d(TAG, "openSeedFrame: no frame on this push (a sender older than section 19, or not inlined) channel=$channelId session=$sessionId")
-            return null
+            return false
         }
         val outcome = SeedFrameLadder.open(
             initial = tryDecrypt(null, groupId, frame, data["senderId"] ?: ""),
@@ -4714,30 +4829,31 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // else is a frame that should have opened and did not, which is why this is a warning.
             val level = if (outcome is PushDecrypt.Yielded) Log.DEBUG else Log.WARN
             Log.println(level, TAG, "openSeedFrame: frame did not yield key material outcome=${outcome.javaClass.simpleName} group=${groupId.take(8)} channel=$channelId session=$sessionId")
-            return null
+            return false
         }
-        absorbGraineSeeds(keyMaterial.seedsJson, groupId)
-        val seed = lookupGraineSeed(channelId, sessionId)
-        if (seed == null) {
+        absorbGraineSeeds(cacheKey, keyMaterial.seedsJson, groupId)
+        val held = graineSeedHeld(cacheKey, channelId, sessionId)
+        if (!held) {
             Log.e(TAG, "openSeedFrame: the frame opened and holds no seed for this message's session group=${groupId.take(8)} channel=$channelId session=$sessionId")
         }
-        return seed
+        return held
     }
 
     /**
-     * Builds and posts the banner for ONE channel push, opening its ciphertext when [seedB64] can.
+     * Builds and posts the banner for ONE channel push, opening its ciphertext when [seedHeld].
      *
      * Split out of [handleChannelMessage] because the seed can arrive AFTER the message it unlocks,
      * and the redraw that follows asks the frame exactly the same questions - the same title, the
      * same avatar, the same mention routing - with a seed in hand.
      *
-     * @param seedB64    the Graine seed for this session, or null to post the generic body.
+     * @param seedHeld   whether the mirror holds this session's seed; false posts the generic body.
      * @param supersedes the instant of the line this post replaces; see `showMessageNotification`.
      * @return the instant of the line it posted, or 0 when nothing reached the shade.
      */
     private fun postChannelNotification(
+        cacheKey: String,
         data: Map<String, String>,
-        seedB64: String?,
+        seedHeld: Boolean,
         supersedes: Long = 0L,
     ): Long {
         val res         = appLocaleContext(this)
@@ -4769,11 +4885,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Set only where the banner's body IS the decrypted text: every other branch below posts the
         // generic line, on which "Marquer comme lu" would move a receipt for an unseen message.
         var showsMessage = false
-        val body: String = if (seedB64 != null && ciphertext != null && nonce != null && messageIndex != null) {
+        val body: String = if (seedHeld && ciphertext != null && nonce != null && messageIndex != null) {
             try {
                 val json = JSONObject(
                     nativeOpenGrainePush(
                         MlsContextLoader.tauriDataDir(this).absolutePath,
+                        cacheKey,
                         channelId, sessionId, messageIndex, senderId, nonce, ciphertext,
                         data["signature"] ?: "",
                         pushCtx?.locale ?: "",
@@ -4822,7 +4939,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // The terms are APPENDED, never woven in: `watch.mjs`'s `fcm-channel-generic` rule is
             // anchored at both ends and `notif18.mjs` locates this frame by the same prefix, so a
             // suffix is the one shape that adds the discriminator without unclassifying the line.
-            val missing = blindBannerMissing(data, seedB64).joinToString(",")
+            val missing = blindBannerMissing(data, seedHeld).joinToString(",")
             Log.d(TAG, "handleChannelMessage: no seed/ciphertext -> generic notification channel=$channelId session=$sessionId missing=$missing")
             buildChannelFallbackText(res, channelName)
         }
@@ -4840,7 +4957,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val avatarBitmap = attribution.authorId?.let { fetchAvatar(it) }
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
         val title = buildChannelPushTitle(workspaceName, channelName)
-        Log.d(TAG, "handleChannelMessage: notification title=$title body=${body.take(60)} mentionsMe=$mentionsMe")
+        Log.d(TAG, "handleChannelMessage: notification posted showsMessage=$showsMessage bodyChars=${body.length} mentionsMe=$mentionsMe")
         return showMessageNotification(
             // `senderName` IS the title here: with `groupName` empty, MessagingStyle sets no
             // conversation title and the Person's name is what the banner shows. A salon has no
@@ -4861,9 +4978,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * Which of the four things a salon banner needs to show its plaintext this push lacks - the
      * terms of the generic-body log line and of the `[PUSH_BLIND]` report, from one place.
      */
-    private fun blindBannerMissing(data: Map<String, String>, seedB64: String?): List<String> =
+    private fun blindBannerMissing(data: Map<String, String>, seedHeld: Boolean): List<String> =
         listOfNotNull(
-            "seed".takeIf { seedB64 == null },
+            "seed".takeIf { !seedHeld },
             "ciphertext".takeIf { data["ciphertext"].isNullOrEmpty() },
             "nonce".takeIf { data["nonce"].isNullOrEmpty() },
             "messageIndex".takeIf { data["messageIndex"]?.toIntOrNull() == null },
@@ -4910,14 +5027,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     /**
-     * Looks up a Graine session's raw seed (base64) in `graine_seeds.json`, or null.
-     *
-     * The mirror is BOUNDED - the newest sessions per channel only - so a miss on an old session is
-     * expected and not a fault: the notification degrades to the generic body, which is the correct
-     * outcome and the same one an oversized ciphertext already produces.
-     */
-    /**
-     * Writes the seeds a silent key-material frame carried into the mirror [lookupGraineSeed] reads.
+     * Writes the seeds a silent key-material frame carried into the mirror [graineSeedHeld] reads.
      *
      * BEST EFFORT, AND IT SAYS SO WHEN IT LOSES. Nothing downstream breaks when the write fails -
      * the app rebuilds the mirror from the distribution group's log the next time it runs - but
@@ -4927,10 +5037,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * @param seedsJson The `seeds` array from the decrypt, already a JSON string.
      * @param groupId   The distribution group the frame came on, for the log only.
      */
-    private fun absorbGraineSeeds(seedsJson: String, groupId: String) {
+    private fun absorbGraineSeeds(cacheKey: String, seedsJson: String, groupId: String) {
         try {
             val stored = nativeStoreGraineSeeds(
                 MlsContextLoader.tauriDataDir(this).absolutePath,
+                cacheKey,
                 seedsJson,
             )
             // HOW MANY WERE HANDED OVER, so a writer that kept fewer ACCUSES. The native side logs
@@ -4943,12 +5054,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "absorbGraineSeeds: the native writer refused the payload group=${groupId.take(8)}")
             } else if (offered > 0 && stored < offered) {
                 Log.e(TAG, "absorbGraineSeeds: the native writer kept $stored of $offered seed(s) group=${groupId.take(8)} - the rest never reached the mirror")
-                if (stored > 0) drainPendingChannelFrames()
+                if (stored > 0) drainPendingChannelFrames(cacheKey)
             } else {
                 Log.d(TAG, "absorbGraineSeeds: stored $stored seed(s) group=${groupId.take(8)}")
                 // THE OTHER HALF OF THE ORDER-INDEPENDENCE. A seed is only useful against the
                 // messages it unlocks, and some of them may already have gone up generic.
-                drainPendingChannelFrames()
+                drainPendingChannelFrames(cacheKey)
             }
         } catch (e: Throwable) {
             // UnsatisfiedLinkError included: an older native library has no such symbol, and a
@@ -4961,7 +5072,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * Re-posts every held channel frame whose seed the mirror can now answer for.
      *
      * THE MIRROR IS ASKED, NOT THE PAYLOAD THAT WAS JUST WRITTEN. The frame carried a list of
-     * sessions and the native writer may have kept only some of them; `lookupGraineSeed` is the
+     * sessions and the native writer may have kept only some of them; `graineSeedHeld` is the
      * same question `handleChannelMessage` asks and its answer is the state that actually exists,
      * so a retry never runs against a seed that was claimed and not stored.
      *
@@ -4971,9 +5082,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * The posts happen OUTSIDE the lock: each fetches an avatar, and holding a lock the channel
      * handler needs across a network call would serialise every incoming push behind this one.
      */
-    private fun drainPendingChannelFrames() {
+    private fun drainPendingChannelFrames(cacheKey: String) {
         val ready = synchronized(PENDING_CHANNEL_LOCK) {
-            val taken = mutableListOf<Pair<PendingChannelFrame, String>>()
+            val taken = mutableListOf<PendingChannelFrame>()
             val entries = PENDING_CHANNEL_FRAMES.entries.iterator()
             while (entries.hasNext()) {
                 val frame = entries.next().value
@@ -4981,44 +5092,54 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // stamp. That path re-reads the mirror after posting, so leaving it here is not a
                 // deferral - it is the claim being made by the only caller that can make it.
                 if (frame.genericStamp == 0L) continue
-                val seed = lookupGraineSeed(
-                    frame.data["channelId"] ?: "",
-                    frame.data["senderSessionId"] ?: "",
-                ) ?: continue
-                taken.add(frame to seed)
+                if (!graineSeedHeld(
+                        cacheKey,
+                        frame.data["channelId"] ?: "",
+                        frame.data["senderSessionId"] ?: "",
+                    )
+                ) continue
+                taken.add(frame)
                 entries.remove()
             }
-            taken.sortedBy { it.first.data["messageIndex"]?.toIntOrNull() ?: 0 }
+            taken.sortedBy { it.data["messageIndex"]?.toIntOrNull() ?: 0 }
         }
         if (ready.isEmpty()) return
         Log.i(TAG, "drainPendingChannelFrames: ${ready.size} banner(s) waiting on this key material -> redrawing")
-        for ((frame, seed) in ready) {
+        for (frame in ready) {
             // PER FRAME, because one that throws must not take the others with it - the loss would
             // be a banner left reading "nouveau message" with nothing ever to correct it again.
             try {
-                postChannelNotification(frame.data, seed, supersedes = frame.genericStamp)
+                postChannelNotification(cacheKey, frame.data, seedHeld = true, supersedes = frame.genericStamp)
             } catch (e: Exception) {
                 Log.e(TAG, "drainPendingChannelFrames: redraw failed channel=${frame.data["channelId"]}: ${e.message}")
             }
         }
     }
 
-    private fun lookupGraineSeed(channelId: String, sessionId: String): String? {
-        if (sessionId.isEmpty()) return null
+    /**
+     * Whether the seed mirror holds a Graine session - asked of Rust, which alone opens the sealed
+     * file, so the seed never enters the JVM.
+     *
+     * The mirror is BOUNDED - the newest sessions per channel only - so a miss on an old session is
+     * expected and not a fault: the notification degrades to the generic body, which is the correct
+     * outcome and the same one an oversized ciphertext already produces. An unreadable mirror (-1)
+     * reads as a miss too, and Rust has said why at error level.
+     */
+    private fun graineSeedHeld(cacheKey: String, channelId: String, sessionId: String): Boolean {
+        if (sessionId.isEmpty()) return false
         return try {
-            val file = File(MlsContextLoader.tauriDataDir(this), "graine_seeds.json")
-            if (!file.exists()) {
-                Log.w(TAG, "lookupGraineSeed: graine_seeds.json absent")
-                return null
-            }
-            JSONObject(file.readText())
-                .optJSONObject(channelId)
-                ?.optJSONObject(sessionId)
-                ?.optString("seed")
-                ?.takeIf { it.isNotEmpty() }
-        } catch (e: Exception) {
-            Log.e(TAG, "lookupGraineSeed: ${e.message}")
-            null
+            val held = nativeGraineSeedHeld(
+                MlsContextLoader.tauriDataDir(this).absolutePath,
+                cacheKey,
+                channelId,
+                sessionId,
+            )
+            if (held < 0) Log.e(TAG, "graineSeedHeld: the seed mirror is unreadable channel=$channelId")
+            held == 1
+        } catch (e: Throwable) {
+            // UnsatisfiedLinkError included, as in [absorbGraineSeeds].
+            Log.e(TAG, "graineSeedHeld: ${e.message}")
+            false
         }
     }
 

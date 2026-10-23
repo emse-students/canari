@@ -8,6 +8,8 @@
   import { Log } from '$lib/utils/Log';
   import { rememberVideoPosition } from '$lib/utils/videoResume';
   import VideoPoster from './VideoPoster.svelte';
+  import BlurredBackdrop from './BlurredBackdrop.svelte';
+  import { captureVideoFrame } from '$lib/utils/videoFrameBackdrop';
 
   /**
    * A VIDEO THAT PLAYS WHERE IT IS - in the feed and in a conversation, the way Instagram's do.
@@ -59,6 +61,12 @@
      * `SegmentedStreamHandle.attach`): what it plays decides what is fetched.
      */
     onVideo?: (video: HTMLVideoElement) => (() => void) | void;
+    /**
+     * Fill the bands a CONTAINED clip leaves with a blurred copy of its own first frame, drawn once
+     * to a tiny canvas (`captureVideoFrame`) - the same backdrop a picture has. The caller's box
+     * should be `bg-cn-surface`, which is what shows until that frame exists.
+     */
+    backdrop?: boolean;
   }
 
   let {
@@ -72,6 +80,7 @@
     onMetadata,
     manualPlay = false,
     onVideo,
+    backdrop = false,
   }: Props = $props();
 
   /**
@@ -94,12 +103,24 @@
    * `#t=0.1` frame to show, and an engine slow to decode one would otherwise show a black box.
    */
   let frameReady = $state(false);
+  /** The blurred backdrop's picture: one frame of THIS element, taken once per source. */
+  let backdropUrl = $state<string | null>(null);
 
   // A new source has no frame yet - the poster comes back until it decodes one.
   $effect(() => {
     void src;
     frameReady = false;
+    backdropUrl = null;
   });
+
+  /** The first frame is decoded: show it, and take the backdrop from it if the box wants one. */
+  function onFirstFrame() {
+    frameReady = true;
+    if (backdrop && videoEl && backdropUrl === null) {
+      backdropUrl = captureVideoFrame(videoEl);
+      Log.d('VIDEO', `InlineVideo: backdrop frame taken=${backdropUrl !== null}`);
+    }
+  }
 
   // The property, not the attribute: `muted` as an attribute is only the INITIAL state. A manual
   // video is never muted by the app's answer: it does not read it, so it cannot open silent.
@@ -135,6 +156,9 @@
 </script>
 
 <div class="relative overflow-hidden {klass}">
+  {#if backdrop && backdropUrl}
+    <BlurredBackdrop src={backdropUrl} />
+  {/if}
   <!-- svelte-ignore a11y_media_has_caption -->
   <video
     bind:this={videoEl}
@@ -147,7 +171,7 @@
     disableremoteplayback={disableRemotePlayback || undefined}
     use:autoplayAction
     class={videoClass}
-    onloadeddata={() => (frameReady = true)}
+    onloadeddata={onFirstFrame}
     onloadedmetadata={onMetadata}
     onplay={() => (playing = true)}
     onpause={() => (playing = false)}

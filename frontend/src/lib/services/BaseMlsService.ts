@@ -136,6 +136,7 @@ import type {
   DistributionGapVerdict,
   DistributionGroupStore,
   ExternalJoinOutcome,
+  GraineRunReading,
 } from '$lib/mls-client/IMlsService';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
@@ -2192,6 +2193,8 @@ export abstract class BaseMlsService implements IMlsService {
                     : undefined,
                 queuedMessageId: msgId,
                 queuedCreatedAt,
+                // The row's column (migration 033): the server routed it to this device alone.
+                addressed: msg.addressed === true,
               },
               'pull'
             );
@@ -3130,6 +3133,10 @@ export abstract class BaseMlsService implements IMlsService {
 
   async getGroupExclusions(groupId: string, forUserId?: string): Promise<GroupExclusions> {
     return this.delivery.getGroupExclusions(groupId, forUserId);
+  }
+
+  async getAddressedAnswersSupported(groupId: string, forUserId?: string): Promise<boolean> {
+    return this.delivery.getAddressedAnswersSupported(groupId, forUserId);
   }
 
   async getGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {
@@ -5080,6 +5087,7 @@ export abstract class BaseMlsService implements IMlsService {
   abstract getGroupMemberIdentities(groupId: string): Promise<string[]>;
   abstract memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
   abstract leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null>;
+  abstract graineRun(groupId: string): Promise<GraineRunReading>;
   abstract graineSignatureEngine(): GraineSignatureEngine;
   abstract signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;

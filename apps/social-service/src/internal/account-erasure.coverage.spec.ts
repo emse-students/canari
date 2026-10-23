@@ -47,6 +47,8 @@ const RAW_TABLES = [
   'read_grant_journal',
   'post_audiences',
   'channel_message_client_tombstones',
+  // Migration 106's audit copy of the logo URLs it rewrote: association ids and URLs, no account.
+  'association_logo_url_rewrites',
 ];
 
 const SRC = join(__dirname, '..');

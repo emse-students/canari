@@ -13,7 +13,8 @@ vi.mock('$lib/mls-client/platformGraineSignatureEngine', async () => {
 
 /**
  * What a newcomer's device puts in the voucher it redeems: the subject in the ONE canonical form
- * (`canonicalUserId`, Rust's `to_ascii_lowercase`), the form every member compares it in.
+ * (`canonicalUserId`, Rust's `to_ascii_lowercase`), the form every member compares it in. A user
+ * id is printable ASCII without ':' (#2276), so that form lowercases its letters and nothing else.
  */
 
 const DEVICE_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 10 + i);
@@ -26,7 +27,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it('names the newcomer canonically: ASCII lowercased, a non-ASCII capital kept', async () => {
+it('names the newcomer canonically, however the session spells them', async () => {
   const grant = await mintInviteLinkGrant(
     'ws-1',
     { userId: 'carol', deviceId: 'dev-c' },
@@ -37,8 +38,8 @@ it('names the newcomer canonically: ASCII lowercased, a non-ASCII capital kept',
   );
 
   const voucher = decodeAdmissionVoucher(
-    await voucherFromInviteFragment(encodeInviteLinkGrant(grant), 'ÉLODIE')
+    await voucherFromInviteFragment(encodeInviteLinkGrant(grant), 'ELODIE')
   );
 
-  expect(voucher.subjectUserId).toBe('Élodie');
+  expect(voucher.subjectUserId).toBe('elodie');
 });

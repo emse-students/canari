@@ -362,14 +362,14 @@ describe('a signer counts as of signing, not as of now', () => {
 });
 
 describe('identities compare in their ONE canonical form (leafIdentity.ts), as Rust compares them', () => {
-  it('roots a member whose id carries a non-ASCII capital, as the tree spells it', async () => {
-    // canonicalUserId lowercases ASCII only (Rust `to_ascii_lowercase`): 'ÉLODIE' is 'Élodie' on
-    // both sides, never the 'élodie' a plain toLowerCase would make of it.
-    keys.set('ÉLODIE:dev-e', new Uint8Array(32).fill(5));
-    leaves.push('ÉLODIE:dev-e');
-    listWorkspaceMembers.mockResolvedValue([member('alice'), member('carol'), member('ÉLODIE')]);
+  it('roots a member however the roster, the tree and the ask each spell their id', async () => {
+    // A user id is printable ASCII (#2276), and canonicalUserId lowercases its letters, as Rust's
+    // `to_ascii_lowercase` does: three spellings, one member.
+    keys.set('ELODIE:dev-e', new Uint8Array(32).fill(5));
+    leaves.push('ELODIE:dev-e');
+    listWorkspaceMembers.mockResolvedValue([member('alice'), member('carol'), member('Elodie')]);
 
-    expect(await admissionProven('ws-1', KG, 'ÉLODIE')).toBe(true);
+    expect(await admissionProven('ws-1', KG, 'elodie')).toBe(true);
   });
 
   it('counts a voucher this device signed, whatever case the session spells its user in', async () => {
