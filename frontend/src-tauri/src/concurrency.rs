@@ -250,6 +250,46 @@ pub(crate) fn background_write_mls_bin(path: &std::path::Path, data: &[u8]) -> R
     write_mls_bin_atomically(path, data)
 }
 
+/// The digest a background engine takes of the `mls.bin` bytes it LOADED, so that
+/// [`background_write_mls_bin_if_unchanged`] can refuse to write over a file that moved since.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn mls_bin_digest(bytes: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).into()
+}
+
+/// [`background_write_mls_bin`], AND ONLY OVER THE FILE THE CALLER LOADED - a compare-and-swap.
+///
+/// A background engine that holds its loaded state across a network round trip - the background
+/// Welcome waits for the server's answer before it installs anything - cannot rely on the
+/// foreground guard alone: the foreground can start, checkpoint and stop again inside that span,
+/// after which the guard reads "inactive" and a plain write would erase what the foreground did.
+/// So this write compares the file's CURRENT bytes with the digest of the bytes the caller loaded,
+/// under the same write lock every `mls.bin` writer takes, and refuses on any difference.
+///
+/// A refusal is an error the caller must say out loud: the work it wanted to persist is lost.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn background_write_mls_bin_if_unchanged(
+    path: &std::path::Path,
+    loaded_digest: &[u8; 32],
+    data: &[u8],
+) -> Result<(), String> {
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    if foreground_is_active() {
+        return Err("foreground active - background mls.bin write abandoned (C1/FCM3)".to_string());
+    }
+    let current = std::fs::read(path).map_err(|e| format!("re-read mls.bin: {e}"))?;
+    if &mls_bin_digest(&current) != loaded_digest {
+        return Err(
+            "mls.bin changed since it was loaded - background write abandoned (lost update refused)"
+                .to_string(),
+        );
+    }
+    write_mls_bin_atomically(path, data)
+}
+
 /// Writes `data` to `path` atomically: write to a temporary file followed by a `rename(2)`, which
 /// is atomic on Linux/Android within the same filesystem. Guarantees a reader never sees a
 /// partially written file.

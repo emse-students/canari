@@ -1,13 +1,14 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import { getClientAppVersion } from '$lib/utils/appVersion';
+import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
 import { MLS_STATE_SEAL_V2_WRITER_ENABLED } from '$lib/mls-client/mlsStateSeal';
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
-import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
   loadAndInitWasm,
   migrateLegacyMlsStateBlob,
@@ -459,9 +460,11 @@ export class WebMlsService extends BaseMlsService {
         /* rely on canari_ws_token cookie only */
       }
     }
-    const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
-    const fullWsUrl = `${wsUrl}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`;
-    const logUrl = `${wsUrl}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam ? '&token=***' : ''}`;
+    const { url: fullWsUrl, redacted: logUrl } = gatewaySocketUrl(
+      wsUrl,
+      this.deviceId,
+      resolvedToken || undefined
+    );
 
     return new Promise((resolve, reject) => {
       console.log(`[WS] Opening connection → ${logUrl}`);
@@ -667,6 +670,8 @@ export class WebMlsService extends BaseMlsService {
             ratchetTreeBytes,
             queuedMessageId: (msg.queuedMessageId as string) || undefined,
             queuedCreatedAt: parseServerTimestampMs(msg.createdAt),
+            // Forwarded by the gateway since step A (history-answer-addressing, rule 4).
+            addressed: msg.addressed === true,
           },
           'live'
         );
@@ -1455,6 +1460,16 @@ export class WebMlsService extends BaseMlsService {
     if (!this.client)
       throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s tree`);
     return (this.client.member_signature_key(groupId, identity) as Uint8Array | undefined) ?? null;
+  }
+
+  /**
+   * WASM client wrapper - the key group's clean run at its current epoch. The run may be (re)started
+   * by this read, which dirties the state; the next checkpoint persists it with the tree.
+   */
+  async graineRun(groupId: string): Promise<GraineRunReading> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s Graine run`);
+    return this.client.graine_run(groupId) as GraineRunReading;
   }
 
   /** The WASM crate's Ed25519 free functions (`wasmGraineSignatureEngine`). */

@@ -342,6 +342,32 @@ static NSString *_Nullable CanariRetrieveDeviceKey(NSString *userId, NSString *d
   return nil;
 }
 
+// The install's native cache key (Rust `native_cache`), base64, from the shared Keychain item
+// `CanariEnsureNativeCacheKey` creates at bootstrap. @"" when absent or unreadable - which Rust
+// treats as "write nothing, read nothing sealed", never as a reason to write in the clear.
+// Swift twin: NotificationService.retrieveNativeCacheKey.
+static NSString *CanariRetrieveNativeCacheKey(void) {
+  NSDictionary *query = @{
+    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService : @"fr.emse.canari",
+    (__bridge id)kSecAttrAccount : @"mls_bg_key_canari_native_cache_key",
+    (__bridge id)kSecAttrAccessGroup : @"group.fr.emse.canari",
+    (__bridge id)kSecReturnData : @YES,
+    (__bridge id)kSecMatchLimit : (__bridge id)kSecMatchLimitOne,
+  };
+  CFTypeRef item = nil;
+  OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &item);
+  if (status == errSecSuccess && item != nil) {
+    NSData *data = (__bridge_transfer NSData *)item;
+    if (data.length == 32) {
+      // RAW key bytes, re-encoded - never read as UTF-8.
+      return [data base64EncodedStringWithOptions:0];
+    }
+  }
+  NSLog(@"[CanariPush] native cache key: ERROR unreadable (status=%d)", (int)status);
+  return @"";
+}
+
 static CanariPushContext *_Nullable CanariLoadPushContext(void) {
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
@@ -428,7 +454,41 @@ void CanariMirrorPushStateToAppGroup(void) {
            options:opts
              error:nil];
   }
+  CanariExcludeNativeCacheFilesFromBackup(container.path);
   NSLog(@"[CanariPush] mirror to App Group done");
+}
+
+void CanariExcludeNativeCacheFilesFromBackup(NSString *_Nullable dir) {
+  if (dir == nil) {
+    NSLog(@"[CanariPush] backupExclusion: directory unavailable");
+    return;
+  }
+  NSError *listErr = nil;
+  NSArray<NSString *> *names = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir
+                                                                                   error:&listErr];
+  if (names == nil) {
+    NSLog(@"[CanariPush] backupExclusion: ERROR %@ not listed: %@", dir.lastPathComponent,
+          listErr.localizedDescription);
+    return;
+  }
+  NSUInteger excluded = 0;
+  for (NSString *name in names) {
+    BOOL isCache = [name isEqualToString:kGraineSeedsFileName] ||
+                   ([name hasPrefix:@"fcm_message_cache"] && [name hasSuffix:@".ndjson"]);
+    if (!isCache) {
+      continue;
+    }
+    NSURL *url = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:name] isDirectory:NO];
+    NSError *err = nil;
+    if ([url setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:&err]) {
+      excluded++;
+    } else {
+      NSLog(@"[CanariPush] backupExclusion: ERROR %@ not excluded: %@", name,
+            err.localizedDescription);
+    }
+  }
+  NSLog(@"[CanariPush] backupExclusion: %lu cache file(s) excluded in %@", (unsigned long)excluded,
+        dir.lastPathComponent);
 }
 
 /**
@@ -937,14 +997,27 @@ static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
  * Appends one entry to the app's `fcm_message_cache.ndjson`, bounded to kMaxFcmCacheEntries.
  * Two callers write it: a push decrypted while the app was dead, and a notification quick reply
  * this device SENT while the app was dead (CanariWriteSentMessageToCache).
+ *
+ * Each line is SEALED under the install's native cache key before it touches the disk. With no key
+ * the entry is NOT written - never in the clear: the message is still on the server.
  */
 static void CanariAppendFcmCacheEntry(NSDictionary *entry, NSString *messageId) {
   NSData *entryData = [NSJSONSerialization dataWithJSONObject:entry options:0 error:nil];
   if (entryData == nil) {
+    NSLog(@"[CanariPush] writeFcmCache: JSON encoding failed");
     return;
   }
-  NSString *entryLine =
+  NSString *plainLine =
       [[NSString alloc] initWithData:entryData encoding:NSUTF8StringEncoding];
+  char *sealedPtr = canari_native_seal_cache_line(CanariRetrieveNativeCacheKey().UTF8String,
+                                                  plainLine.UTF8String);
+  if (sealedPtr == nil) {
+    NSLog(@"[CanariPush] writeFcmCache: ERROR no cache key - entry NOT written messageId=%@",
+          [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)]);
+    return;
+  }
+  NSString *entryLine = [NSString stringWithUTF8String:sealedPtr];
+  canari_free_string(sealedPtr);
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
     return;
@@ -968,6 +1041,7 @@ static void CanariAppendFcmCacheEntry(NSDictionary *entry, NSString *messageId) 
     [lines addObject:entryLine];
     NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
     [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    CanariExcludeNativeCacheFilesFromBackup(dir);
     NSLog(@"[CanariPush] writeFcmCache messageId=%@", [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)]);
   } @finally {
     [g_cacheLock unlock];
@@ -1075,6 +1149,7 @@ void CanariDrainAppGroupFcmCache(void) {
     }
     NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
     [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    CanariExcludeNativeCacheFilesFromBackup(dst);
     NSLog(@"[CanariPush] drainAppGroupFcmCache: %lu entry/entries carried over", (unsigned long)lines.count);
   } @finally {
     [g_cacheLock unlock];
@@ -1394,92 +1469,6 @@ static NSData *_Nullable CanariHttpRequest(NSString *method, NSURL *url, NSStrin
     *outStatus = (int)statusCode;
   }
   return responseData;
-}
-
-static BOOL CanariAcquireAddLock(CanariPushContext *ctx, NSString *secret, NSString *groupId) {
-  NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/acquire-add-lock",
-                                                               ctx.baseUrl]];
-  NSDictionary *payload =
-      @{@"userId" : ctx.userId, @"deviceId" : ctx.deviceId, @"groupId" : groupId};
-  NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-  int status = 0;
-  NSData *resp = CanariHttpRequest(@"POST", url, secret, body, &status);
-  NSLog(@"[CanariPush] acquireAddLock: HTTP %d group=%@", status, groupId);
-  if (status != 201 || resp == nil) {
-    return NO;
-  }
-  id json = [NSJSONSerialization JSONObjectWithData:resp options:0 error:nil];
-  return [json isKindOfClass:[NSDictionary class]] && [json[@"acquired"] boolValue];
-}
-
-static void CanariReleaseAddLock(CanariPushContext *ctx, NSString *secret, NSString *groupId) {
-  NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/release-add-lock",
-                                                               ctx.baseUrl]];
-  NSDictionary *payload =
-      @{@"userId" : ctx.userId, @"deviceId" : ctx.deviceId, @"groupId" : groupId};
-  NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-  int status = 0;
-  CanariHttpRequest(@"DELETE", url, secret, body, &status);
-  NSLog(@"[CanariPush] releaseAddLock: HTTP %d group=%@", status, groupId);
-}
-
-static NSString *_Nullable CanariFetchKeyPackage(CanariPushContext *ctx, NSString *secret,
-                                                 NSString *targetUserId, NSString *targetDeviceId) {
-  NSString *encodedReq =
-      [ctx.userId stringByAddingPercentEncodingWithAllowedCharacters:
-                       [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *encodedDev =
-      [ctx.deviceId stringByAddingPercentEncodingWithAllowedCharacters:
-                        [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *encodedTargetUser =
-      [targetUserId stringByAddingPercentEncodingWithAllowedCharacters:
-                          [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *encodedTargetDev =
-      [targetDeviceId stringByAddingPercentEncodingWithAllowedCharacters:
-                           [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *urlStr = [NSString
-      stringWithFormat:
-          @"%@/api/mls/push/key-package?requesterId=%@&deviceId=%@&targetUserId=%@&targetDeviceId=%@",
-          ctx.baseUrl, encodedReq, encodedDev, encodedTargetUser, encodedTargetDev];
-  int status = 0;
-  NSData *resp = CanariHttpRequest(@"GET", [NSURL URLWithString:urlStr], secret, nil, &status);
-  if (status != 200 || resp == nil) {
-    NSLog(@"[CanariPush] fetchKeyPackage: HTTP %d", status);
-    return nil;
-  }
-  id json = [NSJSONSerialization JSONObjectWithData:resp options:0 error:nil];
-  if (![json isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  NSString *kp = [json[@"keyPackage"] isKindOfClass:[NSString class]] ? json[@"keyPackage"] : @"";
-  return kp.length > 0 ? kp : nil;
-}
-
-static BOOL CanariSendWelcomeAndCommit(CanariPushContext *ctx, NSString *secret, NSString *groupId,
-                                       NSString *targetUserId, NSString *targetDeviceId,
-                                       NSString *welcomePayload, NSString *_Nullable ratchetTree,
-                                       NSString *commitPayload, long long baseEpoch) {
-  NSURL *url =
-      [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/send-welcome-and-commit",
-                                                     ctx.baseUrl]];
-  NSMutableDictionary *payload = [@{
-    @"userId" : ctx.userId,
-    @"deviceId" : ctx.deviceId,
-    @"groupId" : groupId,
-    @"targetUserId" : targetUserId,
-    @"targetDeviceId" : targetDeviceId,
-    @"welcomePayload" : welcomePayload,
-    @"commitPayload" : commitPayload,
-  } mutableCopy];
-  payload[@"ratchetTreePayload"] = ratchetTree.length > 0 ? ratchetTree : [NSNull null];
-  if (baseEpoch >= 0) {
-    payload[@"baseEpoch"] = @(baseEpoch);
-  }
-  NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-  int status = 0;
-  CanariHttpRequest(@"POST", url, secret, body, &status);
-  NSLog(@"[CanariPush] sendWelcomeAndCommit: HTTP %d group=%@", status, groupId);
-  return status == 201;
 }
 
 static void CanariMarkMembershipActive(CanariPushContext *ctx, NSString *secret, NSString *groupId) {
@@ -2271,99 +2260,6 @@ static NSString *_Nullable CanariInitialsImagePath(NSString *_Nullable name) {
   return path;
 }
 
-static void CanariProcessWelcomeRequestBackground(NSString *groupId, NSString *requesterUserId,
-                                                  NSString *requesterDeviceId) {
-  CanariPushContext *ctx = CanariLoadPushContext();
-  if (ctx == nil) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: push_context absent");
-    return;
-  }
-  if (ctx.deviceKeyB64.length == 0) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: deviceKeyB64 empty");
-    return;
-  }
-  NSString *secret = CanariRetrievePushSecret();
-  if (secret == nil) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: pushSecret absent");
-    return;
-  }
-
-  BOOL lockAcquired = NO;
-  for (int attempt = 0; attempt < 3; attempt++) {
-    lockAcquired = CanariAcquireAddLock(ctx, secret, groupId);
-    if (lockAcquired) {
-      break;
-    }
-    usleep(2000000);
-  }
-  if (!lockAcquired) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: Redis lock not acquired");
-    return;
-  }
-
-  @try {
-    NSString *keyPackage = CanariFetchKeyPackage(ctx, secret, requesterUserId, requesterDeviceId);
-    if (keyPackage == nil) {
-      NSLog(@"[CanariPush] processWelcomeRequestBackground: keyPackage absent");
-      return;
-    }
-
-    if (![g_mlsStateLock tryLock]) {
-      NSLog(@"[CanariPush] processWelcomeRequestBackground: MlsStateLock busy");
-      return;
-    }
-    NSDictionary *result = nil;
-    @try {
-      NSString *dir = CanariTauriDataDir();
-      NSData *stateBytes = CanariLoadMlsState();
-      if (dir == nil || stateBytes == nil) {
-        NSLog(@"[CanariPush] processWelcomeRequestBackground: mls.bin absent");
-        return;
-      }
-      char *jsonPtr = canari_native_create_welcome_background(
-          dir.UTF8String, (const unsigned char *)stateBytes.bytes, stateBytes.length,
-          ctx.deviceKeyB64.UTF8String, ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String,
-          keyPackage.UTF8String);
-      if (jsonPtr == nil) {
-        return;
-      }
-      NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
-      canari_free_string(jsonPtr);
-      id json = [NSJSONSerialization JSONObjectWithData:[jsonStr dataUsingEncoding:NSUTF8StringEncoding]
-                                                  options:0
-                                                    error:nil];
-      if ([json isKindOfClass:[NSDictionary class]]) {
-        result = json;
-      }
-    } @finally {
-      [g_mlsStateLock unlock];
-    }
-
-    if (result == nil || ![result[@"ok"] boolValue]) {
-      NSLog(@"[CanariPush] processWelcomeRequestBackground: create welcome failed");
-      return;
-    }
-
-    NSString *welcomePayload = result[@"welcome"];
-    NSString *commitPayload = result[@"commit"];
-    NSString *ratchetTree = [result[@"ratchetTree"] isKindOfClass:[NSString class]] ? result[@"ratchetTree"] : nil;
-    if ([ratchetTree isEqualToString:@"null"]) {
-      ratchetTree = nil;
-    }
-    long long baseEpoch = [result[@"baseEpoch"] respondsToSelector:@selector(longLongValue)]
-                              ? [result[@"baseEpoch"] longLongValue]
-                              : -1;
-
-    BOOL sent = CanariSendWelcomeAndCommit(ctx, secret, groupId, requesterUserId, requesterDeviceId,
-                                           welcomePayload, ratchetTree, commitPayload, baseEpoch);
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: send=%d group=%@", sent, groupId);
-  } @finally {
-    CanariReleaseAddLock(ctx, secret, groupId);
-    int remaining = CanariDrainOutboxBackground(ctx);
-    CanariMaybeNotifyPendingSync(remaining);
-  }
-}
-
 static void CanariProcessReceivedWelcomeBackground(NSString *groupId, NSString *_Nullable queuedMessageId,
                                                    NSString *_Nullable inlineProto) {
   CanariPushContext *ctx = CanariLoadPushContext();
@@ -3114,40 +3010,28 @@ static NSString *CanariBuildChannelFallbackText(NSString *channelName) {
   return [NSString stringWithFormat:CanariLocalized(@"notif.channel.message"), channelName];
 }
 
-// Looks up a Graine session's raw base64 seed in graine_seeds.json, written by the foreground.
-// Shape: { "<channelId>": { "<sessionId>": { "seed": "<b64>", "createdAt": <ms> } } }.
+// Whether graine_seeds.json (written by the foreground, sealed under the install's native cache
+// key) holds a Graine session - asked of Rust, which alone opens the file, so the seed never
+// enters Objective-C.
 //
 // The mirror is BOUNDED to the newest sessions per channel, so a miss on an old session is
 // expected and not a fault: the banner degrades to the generic body, the same outcome an
-// oversized ciphertext already produces.
-static NSString *_Nullable CanariLookupGraineSeed(NSString *channelId, NSString *sessionId) {
+// oversized ciphertext already produces. An unreadable mirror reads as a miss, and says so.
+static BOOL CanariGraineSeedHeld(NSString *channelId, NSString *sessionId) {
   if (sessionId.length == 0) {
-    return nil;
+    return NO;
   }
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
-    return nil;
+    return NO;
   }
-  NSData *raw =
-      [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"graine_seeds.json"]];
-  if (raw == nil) {
-    NSLog(@"[CanariPush] lookupGraineSeed: graine_seeds.json absent");
-    return nil;
+  int32_t held = canari_native_graine_seed_held(dir.UTF8String,
+                                                CanariRetrieveNativeCacheKey().UTF8String,
+                                                channelId.UTF8String, sessionId.UTF8String);
+  if (held < 0) {
+    NSLog(@"[CanariPush] graineSeedHeld: ERROR the seed mirror is unreadable channel=%@", channelId);
   }
-  id json = [NSJSONSerialization JSONObjectWithData:raw options:0 error:nil];
-  if (![json isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  id byChannel = ((NSDictionary *)json)[channelId];
-  if (![byChannel isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  id session = ((NSDictionary *)byChannel)[sessionId];
-  if (![session isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  id seed = ((NSDictionary *)session)[@"seed"];
-  return ([seed isKindOfClass:[NSString class]] && [(NSString *)seed length] > 0) ? seed : nil;
+  return held == 1;
 }
 
 // Decrypts a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) and shows
@@ -3191,14 +3075,12 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
 
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSString *body = nil;
-    NSString *seedB64 =
-        (ciphertext.length > 0 && nonce.length > 0 && messageIndexStr.length > 0)
-            ? CanariLookupGraineSeed(channelId, sessionId)
-            : nil;
-    if (seedB64.length > 0) {
+    BOOL seedHeld = (ciphertext.length > 0 && nonce.length > 0 && messageIndexStr.length > 0) &&
+                    CanariGraineSeedHeld(channelId, sessionId);
+    if (seedHeld) {
       // Rust reads the session from the mirror itself and applies the floor and, under a v2
       // session, the author, the signature and the AAD (channel-encryption section 21.5).
-      // `seedB64` above only says whether the mirror holds it.
+      // `seedHeld` above only says whether the mirror holds it.
       NSString *signature =
           [data[@"signature"] isKindOfClass:[NSString class]] ? data[@"signature"] : @"";
       NSString *dir = CanariTauriDataDir();
@@ -3207,7 +3089,8 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       char *jsonPtr =
           dir == nil ? nil
                      : canari_native_open_graine_push(
-                           dir.UTF8String, channelId.UTF8String, sessionId.UTF8String,
+                           dir.UTF8String, CanariRetrieveNativeCacheKey().UTF8String,
+                           channelId.UTF8String, sessionId.UTF8String,
                            (uint32_t)[messageIndexStr intValue], senderId.UTF8String,
                            nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String,
                            locale.UTF8String);
@@ -3274,8 +3157,10 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
 /**
  * Handles an ALERT frame's data while the app process runs: `willPresentNotification` (foreground)
  * and a tap. A silent frame never comes here - `CanariHandleBackgroundFrame` owns those - so the
- * `welcome_request_pending`, `isWelcome` and `process_queue` branches below, which only a silent
- * frame carries, are reached by nothing on iOS today (docs/wiki/backlog.md).
+ * `isWelcome` and `process_queue` branches below, which only a silent frame carries, are reached by
+ * nothing on iOS today (docs/wiki/backlog.md). The `welcome_request_pending` branch was the same and
+ * was deleted on 2026-10-22: it merged its add into `mls.bin` before the server answered, which
+ * Android stopped doing that day; a background re-add on iOS waits for the background-join row fix.
  */
 static void CanariHandleFcmData(NSDictionary *data) {
   if (data.count == 0) {
@@ -3321,22 +3206,6 @@ static void CanariHandleFcmData(NSDictionary *data) {
       [msgType isEqualToString:@"form_reminder"] || ([msgType isEqualToString:@"social"] && !isReaction);
   if (canari_ios_is_in_foreground() && !showsWhileForeground) {
     NSLog(@"[CanariPush] foreground actif - skip background MLS");
-    return;
-  }
-
-  if ([msgType isEqualToString:@"welcome_request_pending"]) {
-    NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
-    NSString *requesterUser =
-        [data[@"requesterUserId"] isKindOfClass:[NSString class]] ? data[@"requesterUserId"] : @"";
-    NSString *requesterDev =
-        [data[@"requesterDeviceId"] isKindOfClass:[NSString class]] ? data[@"requesterDeviceId"] : @"";
-    if (groupId.length == 0 || requesterUser.length == 0 || requesterDev.length == 0) {
-      NSLog(@"[CanariPush] welcome_request_pending: missing fields");
-      return;
-    }
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-      CanariProcessWelcomeRequestBackground(groupId, requesterUser, requesterDev);
-    });
     return;
   }
 

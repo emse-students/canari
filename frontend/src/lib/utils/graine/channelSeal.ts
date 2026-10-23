@@ -15,6 +15,7 @@ import {
   distributeGraineSeed,
   GraineDistributionUnavailableError,
   readDistributionEpoch,
+  readKeyGroupRun,
 } from './seedDistribution';
 import { reserveOutboundSlot } from './sessionManager';
 import { endorseNewSession } from './endorseSession';
@@ -226,11 +227,14 @@ export async function sealChannelMessage(
       storage,
       deviceKeyB64: deviceKey(),
       distributionEpoch,
+      readRun: () => readKeyGroupRun(mlsService, scope),
       distribute: (session) => distributeGraineSeed(mlsService, scope, session),
       endorse: (session) => endorseNewSession(mlsService, session),
     },
     { workspaceId, channelId: channel, senderId: userId }
   );
+  // A re-distributed session carries a new frame; the cache must not hand the old one back.
+  if (slot.redistributed) cacheGraineSession(slot.session);
   if (slot.minted) {
     cacheGraineSession(slot.session);
     // This device's own sessions are mirrored too: a push echoing our own salon message to our
@@ -239,7 +243,7 @@ export async function sealChannelMessage(
     await mirrorGraineSeed(slot.session);
   }
 
-  // GUARANTEED BY THE ROTATION, NOT HOPED FOR: `shouldRotateGraineSession` mints a new session for
+  // GUARANTEED BY THE ROTATION, NOT HOPED FOR: `graineOutboundVerdict` mints a new session for
   // any that lacks a frame, so reaching here without one is a broken invariant and says so.
   const frame = slot.session.distributionFrame;
   if (!frame) {
@@ -248,7 +252,7 @@ export async function sealChannelMessage(
     );
   }
 
-  // V2 BY THE SAME ROTATION: `shouldRotateGraineSession` mints anew any session this device cannot
+  // V2 BY THE SAME ROTATION: `graineOutboundVerdict` mints anew any session this device cannot
   // sign under, so a missing secret here is a broken invariant too.
   const secret = slot.session.v2?.signingSecretKeyB64;
   if (!secret) {

@@ -41,6 +41,37 @@ describe('mapKlipyItems', () => {
     expect(dropped).toBe(0);
   });
 
+  it('adds the smallest rendition only when it is really smaller than the preview', () => {
+    const { gifs } = mapKlipyItems([
+      {
+        id: 1,
+        file: {
+          xs: sized(U('x1'), 90, 50),
+          sm: sized(U('s1'), 220, 124),
+          md: sized(U('m1'), 498, 280),
+        },
+      },
+      // No xs: nothing to add.
+      { id: 2, file: { sm: sized(U('s2'), 220, 124), md: sized(U('m2'), 498, 280) } },
+      // An xs as wide as the sm is no lighter: it is not offered.
+      {
+        id: 3,
+        file: {
+          xs: sized(U('x3'), 220, 124),
+          sm: sized(U('s3'), 220, 124),
+          md: sized(U('m3'), 498, 280),
+        },
+      },
+      // The preview itself fell back to xs: it must not be offered twice.
+      { id: 4, file: { xs: sized(U('x4'), 90, 50), md: sized(U('m4'), 498, 280) } },
+    ]);
+    expect(gifs[0].tiny).toEqual({ url: U('x1'), width: 90, height: 50 });
+    expect(gifs[1].tiny).toBeUndefined();
+    expect(gifs[2].tiny).toBeUndefined();
+    expect(gifs[3].preview.url).toBe(U('x4'));
+    expect(gifs[3].tiny).toBeUndefined();
+  });
+
   it('leaves out and COUNTS a result with no declared size - it could not be laid out', () => {
     const { gifs, dropped } = mapKlipyItems([
       { id: 1, file: { sm: { gif: { url: U('a') } }, md: { gif: { url: U('b') } } } },

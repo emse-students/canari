@@ -1,6 +1,8 @@
 import { IsNull, type EntityManager } from 'typeorm';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { QueuedMessage } from '../entities/queued-message.entity';
 
 /**
  * Enrols a user into a group at the user level, and leaves an enrolment that already exists
@@ -59,6 +61,70 @@ export async function ensureGroupMember(
     .values({ groupId, userId, joinedAt: new Date(), leftAt: null })
     .orIgnore()
     .execute();
+}
+
+/**
+ * Who a departure takes out: a person (`userId`), narrowed to one device and/or one group. An
+ * omitted field widens the scope to every device or every group of that person - never further.
+ */
+export interface DepartureScope {
+  userId: string;
+  deviceId?: string;
+  groupId?: string;
+}
+
+/** `value` as an id, or a throw naming the field: never an empty, blank or absent one. */
+function requireId(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`endDeviceMemberships: ${field} must be a non-empty id`);
+  }
+  return value;
+}
+
+/**
+ * Ends the device memberships a departure names and deletes, in the SAME transaction, what is
+ * still queued for those devices: the Welcomes always (`'welcomes'`), or the whole queue of that
+ * scope when the departure takes everything (`'all'`: an eviction, a revoked device, an erased
+ * account).
+ *
+ * THE ONE IMPLEMENTATION FOR EVERY PATH THAT ENDS A DEVICE'S MEMBERSHIP. A device pulls its queue
+ * whatever the roster says (`fetchMessages`), so a Welcome left behind lets a device that is out
+ * enter the epoch the Welcome was built for, and read what members seal there until a commit
+ * removes its leaf - which a self-leave never makes. Each path deleted its own rows, and the
+ * Welcome was the row none of them named.
+ *
+ * NOT for a membership put back to `pending` (a kick, `deactivateDeviceMembership`) or a pending
+ * seat the cron purges while the person stays on the roster: a Welcome queued there IS the Add the
+ * device is owed.
+ *
+ * @param manager pass the transaction's manager, so the rows and the queue go together.
+ * @returns how many device rows and queued rows were deleted, for the caller's log line.
+ */
+export async function endDeviceMemberships(
+  manager: EntityManager,
+  scope: DepartureScope,
+  queue: 'welcomes' | 'all'
+): Promise<{ memberships: number; queued: number }> {
+  // A DELETE IS ONLY AS NARROW AS ITS FILTER, so every column the caller names must be a real id.
+  // An absent `userId`, or a named `deviceId`/`groupId` that is empty, undefined or null, is a
+  // caller's bug - refused here, before any statement exists, rather than handed to a builder that
+  // might drop the column and delete other people's rows.
+  const userId = requireId(scope.userId, 'userId');
+  const deviceId = 'deviceId' in scope ? requireId(scope.deviceId, 'deviceId') : undefined;
+  const groupId = 'groupId' in scope ? requireId(scope.groupId, 'groupId') : undefined;
+  const narrowing = {
+    ...(deviceId !== undefined ? { deviceId } : {}),
+    ...(groupId !== undefined ? { groupId } : {}),
+  };
+  const memberships = await manager
+    .getRepository(DeviceGroupMembership)
+    .delete({ userId, ...narrowing });
+  const queued = await manager.getRepository(QueuedMessage).delete({
+    recipientId: userId,
+    ...narrowing,
+    ...(queue === 'welcomes' ? { isWelcome: true } : {}),
+  });
+  return { memberships: memberships.affected ?? 0, queued: queued.affected ?? 0 };
 }
 
 /**

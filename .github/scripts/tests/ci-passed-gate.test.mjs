@@ -140,6 +140,19 @@ if (!it) {
   else bad('its pattern does not select live-seats.spec.ts - the seat scripts run nowhere');
 }
 
+console.log('the addressing scripts run against a real Redis:');
+{
+  const rust = /\n  test-rust:[\s\S]*?(?=\n  [a-z-]+:\n)/.exec(ci)?.[0] ?? '';
+  if (/image: redis:/.test(rust)) ok('test-rust runs a Redis service');
+  else bad('test-rust runs no Redis - the gateway presence scripts would run nowhere');
+  if (/GATEWAY_IT_REDIS_URL: redis:\/\//.test(rust)) ok('test-rust sets GATEWAY_IT_REDIS_URL');
+  else bad('test-rust does not set GATEWAY_IT_REDIS_URL - the gateway presence tests fail under CI');
+  const boot = /\n  boot-nest-apps:[\s\S]*?(?=\n  [a-z-]+:\n)/.exec(ci)?.[0] ?? '';
+  if (/CHAT_DELIVERY_IT_REDIS_URL: redis:\/\//.test(boot) && /addressing\.redis/.test(boot)) {
+    ok('boot-nest-apps runs addressing.redis with CHAT_DELIVERY_IT_REDIS_URL');
+  } else bad('boot-nest-apps does not run addressing.redis against Redis - the publish script runs nowhere');
+}
+
 console.log('every Redis CI runs is the one production runs:');
 {
   const prodRedis = /\n\s+image: (redis:\S+)/.exec(

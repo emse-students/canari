@@ -11,8 +11,8 @@ builds on the IN half later and is not started.
 | Lot | What | State |
 | --- | --- | --- |
 | S1+S2 | Share IN on Android: the intent filter, the native copy, the "Envoyer a..." picker, the composer staging | built (this page) |
-| S3 | Share OUT (Android + iOS): `share_text` / `share_file`, message and post menus | not started |
-| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a new signing profile (owed to the user); **the iOS conversation suggestions (`INSendMessageIntent`) are folded in here**, since they need that extension | not started |
+| S3 | Share OUT (Android + iOS): `share_text` / `share_staged`, message and post menus | built - [share-out](share-out.md) |
+| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a new signing profile; **the iOS conversation suggestions (`INSendMessageIntent`) follow it**, since they need that extension | in review - the App ID and both profiles exist (user, 2026-10-22) |
 | S5 | Conversation suggestions in the Android sheet (Direct Share / sharing shortcuts) | built (Android), [below](#share-suggestions-android---lot-s5) |
 
 ## Share IN, Android - the path
@@ -43,7 +43,9 @@ builds on the IN half later and is not started.
    never reads half of it. `read_and_clear_pending_share` (`commands/handoff.rs`, the same helper as
    the CallKit answer's `pending_call_accept.json`) hands it over exactly once: it **claims the file
    by renaming it before reading it**, so a newer manifest renamed into place meanwhile waits for
-   the next drain instead of being deleted unread. A capture replacing an undrained share claims
+   the next drain instead of being deleted unread. It answers `{ manifest, epoch }`: the manifest
+   carries the share epoch its capture started in, and an older one than the current is stale (see
+   the sign-out decision below). A capture replacing an undrained share claims
    the older manifest the same way, so each manifest has exactly one taker.
    **Nothing older is deleted until a new share is handed over**: a capture that throws or keeps
    nothing leaves the share before it intact (refusals of an all-refused share are added to the
@@ -162,9 +164,42 @@ suggestions need the Share Extension, so they are part of S4.
   readable by the server, a message is end-to-end encrypted.
 - **No server data is added.** The copies live in the app cache until the page reads them, and what
   is sent is an ordinary message.
-- **A share belongs to the device holder, not to an account**: it is memory only on the page side,
-  and a sign-out does not drop it (a session that expired at cold start would otherwise lose the
-  share the member just made).
+- **A share is ERASED AT SIGN-OUT, an account switch included (user, 2026-10-22)** - it must never
+  land in the account signed in next. This REVERSES the first decision ("a share belongs to the
+  device holder", kept so a session expired at cold start would not lose it): the user chose the
+  other risk. `clearAuthUnderway` calls `eraseIncomingShare` (`mobile/incomingShareSignOut.ts`):
+  - the page's share is dropped and its copies deleted unread (`incomingShare.drop`);
+  - a manifest not yet drained is CLAIMED through the drain's own command
+    (`read_and_clear_pending_share`) and the copies it names are deleted unread;
+  - what neither can see is closed by an ORDER, the share EPOCH (`share_epoch` in the app data
+    directory, `commands/handoff.rs`). The erase ADVANCES it first. `IncomingShare.kt` reads it when
+    a capture STARTS and stamps it on the manifest, and the drain returns the manifest with the
+    current epoch: a capture still running natively at the sign-out lands STALE, and the next drain
+    deletes it unread and offers nothing. The store is FENCED at the new epoch
+    (`incomingShare.fence`), so a drain that claimed its manifest before the sign-out and offers it
+    after is refused, its copies deleted. **The epoch fails CLOSED and never moves back**: an
+    unreadable file is an error, not 0 - the drain then offers nothing, an advance refuses rather
+    than restart the count, and a failed advance fences this process at `Infinity`. **It orders the
+    native side too**: an older capture never replaces a newer session's waiting share (captures
+    queue on one lock in no set order), a refusal count never crosses a sign-out, and the sweep at
+    the first `onCreate` drops a waiting manifest from a signed-out session, so its copies do not
+    wait on disk for the next account. A manifest the erase finds with the NEW epoch - a capture
+    started in the instant after the advance - is the next session's, and is kept;
+  - a staging in progress is checked against the sign-out generation read when the share was taken
+    (`MainChatPage`): before each file (`stageSharedFiles`' `stillWanted`, the rest deleted unread),
+    AFTER each file's preparation (`handleFilesSelected`'s, since a video re-encode takes seconds and
+    `forgetAccount` has already emptied the queues), and a share held for the session
+    (`whenSessionUp`) that is dropped or misdirected deletes its copies (`HeldSend.discard`). Nobody
+    is told - nobody is signed in to be told.
+  What is left: an unreadable claimed manifest keeps its copies until the next process start sweeps
+  what no manifest names; and a persistently unreadable epoch file disables sharing INTO Canari (accused at
+  every drain) until the app data is cleared - the price of never guessing which session a share is
+  from. Tests: `incomingShareSignOut.test.ts` (nothing left in the
+  page, on disk or as a copy; a running capture lands stale; a drain racing the sign-out cannot
+  offer), `auth.shareErase.test.ts` (both sign-out exits reach it), `incomingShare.svelte.test.ts`
+  (the fence), `useMessaging.mediaEnqueue.svelte.test.ts` (a sign-out mid-preparation stages
+  nothing), `heldSends.test.ts`, and the `share_epoch` name pinned on both sides
+  (`androidShareManifest.test.ts`).
 
 - **The confused-deputy check is narrow, and that is accepted (Master review, 2026-10-21).** It
   refuses our own authorities and the grants Canari holds; a sender holding `READ_MEDIA_*` can

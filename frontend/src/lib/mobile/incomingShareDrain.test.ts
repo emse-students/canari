@@ -1,7 +1,8 @@
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 
-import { drainNativeShare, parseSharedManifest, stageSharedFiles } from './incomingShareDrain';
+import { drainNativeShare, stageSharedFiles } from './incomingShareDrain';
+import { parseSharedManifest } from './sharedInbox';
 import { incomingShare } from '$lib/stores/incomingShare.svelte';
 
 /**
@@ -10,19 +11,21 @@ import { incomingShare } from '$lib/stores/incomingShare.svelte';
  * composer must be COUNTED, because the member was shown nothing else that would say so.
  */
 describe('parseSharedManifest', () => {
-  it('reads text, files and the refused count', () => {
+  it('reads text, files, the refused count and the capture epoch', () => {
     const parsed = parseSharedManifest(
       JSON.stringify({
         id: 'x',
         text: 'hi',
         files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
         refused: 2,
+        epoch: 5,
       })
     );
     expect(parsed).toEqual({
       text: 'hi',
       files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
       refused: 2,
+      epoch: 5,
       target: null,
     });
   });
@@ -78,11 +81,14 @@ describe('drainNativeShare', () => {
   it('offers the text and the file NAMES, and reads no bytes before staging', async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'read_and_clear_pending_share') {
-        return JSON.stringify({
-          text: 'look',
-          files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
-          refused: 1,
-        });
+        return {
+          manifest: JSON.stringify({
+            text: 'look',
+            files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
+            refused: 1,
+          }),
+          epoch: 0,
+        };
       }
       return undefined;
     });
@@ -98,7 +104,10 @@ describe('drainNativeShare', () => {
   it('hands the suggestion to the store as a hint', async () => {
     invoke.mockImplementation(async (cmd: string) =>
       cmd === 'read_and_clear_pending_share'
-        ? JSON.stringify({ text: 'look', files: [], refused: 0, target: 'c:abc' })
+        ? {
+            manifest: JSON.stringify({ text: 'look', files: [], refused: 0, target: 'c:abc' }),
+            epoch: 0,
+          }
         : undefined
     );
     await drainNativeShare();
@@ -106,9 +115,28 @@ describe('drainNativeShare', () => {
   });
 
   it('counts a corrupt manifest as one lost share', async () => {
-    invoke.mockResolvedValueOnce('{not json');
+    invoke.mockResolvedValueOnce({ manifest: '{not json', epoch: 0 });
     expect(await drainNativeShare()).toEqual({ lost: 1 });
     expect(incomingShare.pending).toBeNull();
+  });
+
+  it('deletes a manifest captured before a sign-out, offers and reports nothing of it', async () => {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'read_and_clear_pending_share'
+        ? {
+            manifest: JSON.stringify({
+              text: 'old',
+              files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
+              refused: 2,
+              epoch: 3,
+            }),
+            epoch: 4,
+          }
+        : undefined
+    );
+    expect(await drainNativeShare()).toBeNull();
+    expect(incomingShare.pending).toBeNull();
+    expect(invoke.mock.calls).toContainEqual(['discard_picked_file', { path: '/c/0_a.png' }]);
   });
 });
 
@@ -208,5 +236,32 @@ describe('stageSharedFiles', () => {
     );
     expect(onScreen).toBe('elsewhere');
     expect(stagedIn).toEqual(['chosen', 'chosen', 'chosen']);
+  });
+
+  it('stops at a sign-out: the rest is deleted unread, never staged into the ended session', async () => {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'take_picked_file' ? new ArrayBuffer(1) : undefined
+    );
+    let signedIn = true;
+    const staged: string[] = [];
+    const entry = (n: string) => ({ path: `/c/${n}`, name: n, mime: 'image/png', size: 1 });
+    const result = await stageSharedFiles(
+      [entry('a'), entry('b'), entry('c')],
+      'g',
+      limits,
+      async (file) => {
+        // Staged only because the sign-out comes after it: one DURING its preparation is refused by
+        // `handleFilesSelected`'s own `stillWanted` (useMessaging.mediaEnqueue).
+        staged.push(file.name);
+        signedIn = false;
+      },
+      () => signedIn
+    );
+    expect(staged).toEqual(['a']);
+    expect(result).toEqual({ staged: 1, lost: 0, tooLarge: [] });
+    const calls = invoke.mock.calls.filter(([cmd]) => cmd !== 'plugin:log|log');
+    expect(calls).toContainEqual(['discard_picked_file', { path: '/c/b' }]);
+    expect(calls).toContainEqual(['discard_picked_file', { path: '/c/c' }]);
+    expect(calls).not.toContainEqual(['take_picked_file', { path: '/c/b' }]);
   });
 });
