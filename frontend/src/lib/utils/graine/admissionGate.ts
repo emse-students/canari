@@ -226,12 +226,22 @@ function recordObservations(
 ): boolean {
   const before = community.observed ?? {};
   const after: Record<string, Observation> = {};
+  // AN OBSERVATION IS A CLAIM ABOUT THE KEY GROUP'S STATE, so it is made only on a state with no
+  // commit still held for this device: a removal waiting in the mailbox would otherwise be observed
+  // as not yet happened. Not drained, nothing new is observed - the voucher simply does not admit
+  // until a later pass, which is a sync or an ask on a drained group.
+  const drained = mls.isGroupDrained(keyGroupId);
   let added = 0;
+  let deferred = 0;
   for (const row of roster.values()) {
     if (!row.voucher) continue;
     const seen = before[row.voucher];
     if (seen) {
       after[row.voucher] = seen;
+      continue;
+    }
+    if (!drained) {
+      deferred += 1;
       continue;
     }
     after[row.voucher] = { place: { keyGroupId, epoch: mls.getEpoch(keyGroupId) }, at: Date.now() };
@@ -242,6 +252,11 @@ function recordObservations(
   if (added > 0 || dropped > 0) {
     console.info(
       `[GRAINE] admission vouchers observed at key-group epoch ${mls.getEpoch(keyGroupId)}: ${added} new, ${dropped} no longer on the roster`
+    );
+  }
+  if (deferred > 0) {
+    console.info(
+      `[GRAINE] ${deferred} admission voucher(s) not observed yet: key group ${keyGroupId.slice(0, 8)} is not drained on this device`
     );
   }
   return added > 0 || dropped > 0;
@@ -356,14 +371,9 @@ async function verifyRosterVouchers(
     const voucher = readVoucher(workspaceId, user, row.voucher);
     if (!voucher || holdsAdmission(community, user, voucher.place)) continue;
     const observed = community.observed?.[row.voucher];
-    if (!observed) {
-      // recordObservations ran on this same roster just before: a voucher it did not record is a
-      // defect of the ledger, never a reason to judge the signer where they claimed to be.
-      console.error(
-        `[GRAINE] admission voucher of ${user} in community ${workspaceId.slice(0, 8)} has no observation - not counted`
-      );
-      continue;
-    }
+    // Not observed yet - the key group was not drained when this roster was read, and
+    // `recordObservations` said so. Never judged where the signer claimed to be instead.
+    if (!observed) continue;
     const why = observationRefuses(voucher, observed);
     if (why) {
       console.info(
@@ -402,12 +412,21 @@ async function verifyRosterVouchers(
 }
 
 /**
- * Why a voucher cannot count given when this device first saw it, or `null`: a link observed after
- * the expiry signed into it. This device's clock is the only reference an instant can be compared
- * with - the key group's epochs order commits, not time - so it bounds the link and decides nothing
- * else.
+ * Why a voucher cannot count given where and when this device first saw it, or `null`:
+ * - a place AFTER the observation in the same key group. The observation is made only on a drained
+ *   group, so no honest signer was there yet; the newcomer's admission starts at that place, and a
+ *   later one would step over removals of the newcomer.
+ * - a link observed after the expiry signed into it. This device's clock is the only reference an
+ *   instant can be compared with - the key group's epochs order commits, not time - so it bounds the
+ *   link and decides nothing else.
  */
 function observationRefuses(voucher: AdmissionVoucher, observed: Observation): string | null {
+  if (
+    voucher.place.keyGroupId === observed.place.keyGroupId &&
+    voucher.place.epoch > observed.place.epoch
+  ) {
+    return `it claims epoch ${voucher.place.epoch}, after this device first saw it at ${observed.place.epoch}`;
+  }
   if (voucher.kind === 'link' && observed.at > voucher.expiresAt) {
     return `its invite link had expired when this device first saw it`;
   }

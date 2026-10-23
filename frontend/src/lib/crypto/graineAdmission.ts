@@ -429,7 +429,14 @@ class FieldReader {
   }
 
   string(): string {
-    return new TextDecoder('utf-8', { fatal: true }).decode(this.field());
+    const bytes = this.field();
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      // The decoder's own TypeError, classified HERE as the format error it is: a caller sorts a
+      // malformed voucher by class, and must never meet a second kind of exception for one.
+      throw new AdmissionFormatError('a text field is not UTF-8');
+    }
   }
 
   place(): AdmissionPlace {

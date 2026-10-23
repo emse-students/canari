@@ -1091,6 +1091,17 @@ export interface IMlsService {
    */
   waitForGroupQueueIdle(caller: string, groupId: string): Promise<void>;
   /**
+   * Whether this device has merged everything the server holds for `groupId`, as a FACT read now,
+   * never waited for: the last pull listed the whole mailbox, no pull is running, the socket that
+   * pull was trusted with is still open, and the scheduler holds nothing of the group (nothing
+   * queued, parked or being applied). `false` is "not known to be drained", never "behind".
+   *
+   * For a decision that must not be taken on a group state the server may still be holding commits
+   * for - the admission gate's first observation of a voucher (channel-encryption section 25). It
+   * reads the evidence {@link waitForGroupQueueIdle} and {@link waitForMessageQueueIdle} stand on.
+   */
+  isGroupDrained(groupId: string): boolean;
+  /**
    * Tells the service the local conversation store is now authoritative.
    *
    * A frame that arrived before the restore finished was left in the server queue with nothing to

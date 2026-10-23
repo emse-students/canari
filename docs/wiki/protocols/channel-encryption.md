@@ -3804,7 +3804,14 @@ admissions, per account) and its MLS layer (pins and departures):
   shows the arrival it was rooted with.
 - **Verified admissions**: each voucher that held, at the place it was signed.
 - **Observations**: for each voucher on the roster, where (the community key group's epoch) and
-  when (this device's clock) this device first saw it.
+  when (this device's clock) this device first saw it. An observation is made only while the key
+  group is DRAINED on this device (`isGroupDrained`): the last pull listed the whole mailbox, no pull
+  is running, the socket is open, and nothing of the group is queued, parked or being applied.
+  Otherwise nothing new is observed, and the voucher does not admit until a later pass finds the
+  group drained. In practice that pass is a community sync: an ask on the community's own group is
+  read while that group's frame is still being applied, so it does not count as drained. A commit still held in the mailbox, a removal included, is
+  therefore never observed as not yet happened. A voucher that claims a place after the one this
+  device first saw it at is refused.
 - **Removals**: the epochs at which a commit this device merged - live or on catch-up - removed the
   user's last leaf from the key group (`removalEpochs`,
   [mls-protocol](mls-protocol.md)); a device repair is one commit (`replaceMember`) and records none. No removal seen

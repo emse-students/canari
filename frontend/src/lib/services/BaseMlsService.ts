@@ -1498,6 +1498,21 @@ export abstract class BaseMlsService implements IMlsService {
     await this.messageScheduler.waitUntilGroupIdle(groupId);
   }
 
+  /** @inheritdoc */
+  isGroupDrained(groupId: string): boolean {
+    const drained =
+      this.mailboxEmptiedByAPull &&
+      !this.pendingPullInFlight &&
+      this.isWsOpen() &&
+      this.messageScheduler.isGroupIdle(groupId);
+    if (!drained) {
+      console.debug(
+        `[QUEUE] group ${groupId.slice(0, 8)} not known drained: pulled=${this.mailboxEmptiedByAPull} pulling=${Boolean(this.pendingPullInFlight)} socket=${this.isWsOpen()} idle=${this.messageScheduler.isGroupIdle(groupId)}`
+      );
+    }
+    return drained;
+  }
+
   private async settleMailbox(): Promise<void> {
     await this.pendingPullInFlight?.catch(() => {});
     return this.messageScheduler.waitUntilIdle();

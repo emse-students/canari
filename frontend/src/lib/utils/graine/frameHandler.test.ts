@@ -198,6 +198,8 @@ function graineMls(extra: Record<string, unknown> = {}) {
         : null,
     getGroupMemberIdentities: async (groupId: string) => [...leavesOf(groupId)],
     getEpoch: () => 5,
+    // Every group drained: a held commit is admissionGate.test.ts's row.
+    isGroupDrained: () => true,
     pinnedSignatureKeys: async () => null,
     removalEpochs: async (groupId: string, userId: string) =>
       departuresByGroup.get(groupId)?.get(userId) ?? [],

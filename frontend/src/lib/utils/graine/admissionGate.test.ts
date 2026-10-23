@@ -57,6 +57,8 @@ let MALLORY_PK: Uint8Array;
 const keys = new Map<string, Uint8Array>();
 let leaves: string[] = [];
 let epoch = 5;
+/** Whether this device has merged everything the server holds for the key group (`isGroupDrained`). */
+let drained = true;
 /**
  * The MLS layer's pins (`pinnedSignatureKeys`, #2268): the keys it saw for a device in a signed
  * tree. carol:dev-c is pinned; a device the server invents is not.
@@ -89,6 +91,7 @@ beforeEach(() => {
   keys.set('carol:dev-c', CAROL_PK);
   leaves = ['alice:alice-laptop', 'carol:dev-c'];
   epoch = 5;
+  drained = true;
   published = { kind: 'keys', keys: [] };
   pins.clear();
   pins.set('carol:dev-c', pin([CAROL_PK]));
@@ -112,6 +115,7 @@ function installRuntime(userId: string) {
         return leaf ? (keys.get(leaf) ?? null) : null;
       },
       getEpoch: () => epoch,
+      isGroupDrained: () => drained,
       pinnedSignatureKeys: async (user: string, deviceId: string) =>
         pins.get(canonicalIdentity(`${user}:${deviceId}`) ?? '') ?? null,
       removalEpochs: async (_g: string, user: string) =>
@@ -362,6 +366,50 @@ describe('a signer counts as of when THIS device first observed the voucher, not
         admissionVoucher: await voucher('newcomer', carol, CAROL_SECRET, {
           keyGroupId: KG,
           epoch: 5,
+        }),
+      }),
+    ]);
+
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(false);
+  });
+
+  it('observes nothing while a commit of the key group is still held - a pending removal included', async () => {
+    listWorkspaceMembers.mockResolvedValue([member('alice'), member('carol')]);
+    await observeAdmissionState('ws-1', KG);
+    // carol was removed at epoch 7 while this device was away: the commit waits in its mailbox,
+    // unmerged, and the roster already shows a voucher she backdated to epoch 5.
+    drained = false;
+    epoch = 6;
+    leaves = ['alice:alice-laptop', 'carol:dev-c', 'newcomer:dev-n'];
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await voucher('newcomer', carol, CAROL_SECRET, {
+          keyGroupId: KG,
+          epoch: 5,
+        }),
+      }),
+    ]);
+    await observeAdmissionState('ws-1', KG);
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(false);
+
+    // The commit is merged: the voucher is first observed now, after carol's removal.
+    departures.set('carol', [7]);
+    epoch = 7;
+    drained = true;
+    leaves = ['alice:alice-laptop', 'newcomer:dev-n'];
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(false);
+  });
+
+  it('refuses a voucher that claims a place after the one this device first saw it at', async () => {
+    leaves.push('newcomer:dev-n');
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await voucher('newcomer', carol, CAROL_SECRET, {
+          keyGroupId: KG,
+          epoch: 9,
         }),
       }),
     ]);

@@ -1,4 +1,5 @@
 import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEngine';
+import { GraineFieldWriter } from '$lib/crypto/graineV2';
 import {
   AdmissionFormatError,
   decodeAdmissionVoucher,
@@ -207,5 +208,65 @@ describe('a link voucher', () => {
     const fragment = encodeInviteLinkGrant(await linkGrant());
     expect(decodeInviteLinkGrant(`#${fragment}`).workspaceId).toBe('ws-1');
     expect(() => decodeInviteLinkGrant(fragment.slice(0, -4))).toThrow(AdmissionFormatError);
+  });
+});
+
+/**
+ * A link voucher or fragment from a build before the expiry was signed into `L` - the same layout
+ * with no `expiresAt` - is refused with the TYPED error, whatever its key bytes hold, so a caller
+ * classifies it by class and never meets another exception.
+ */
+describe('a link voucher or fragment without its expiry (an older build)', () => {
+  const base64Url = (bytes: Uint8Array) =>
+    btoa(String.fromCharCode(...bytes))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+  const utf8 = (s: string) => new TextEncoder().encode(s);
+
+  /** The head both forms share up to `issuedAt`, after their own label (and the voucher's kind). */
+  function head(out: GraineFieldWriter, withSubject: boolean) {
+    out.field(utf8('ws-1'));
+    if (withSubject) out.field(utf8('newcomer'));
+    out.field(utf8(signer.userId));
+    out.field(utf8(signer.deviceId));
+    out.field(utf8(place.keyGroupId));
+    out.u64(place.epoch);
+    out.u64(1_800_000_000_000);
+  }
+
+  const fills = [0x00, 0x01, 0x20, 0x7f, 0x80, 0xff];
+
+  it('refuses the stored voucher with AdmissionFormatError', () => {
+    for (const fill of fills) {
+      const out = new GraineFieldWriter();
+      out.field(utf8('canari-graine-admission-v1'));
+      out.u32(2);
+      head(out, true);
+      out.field(new Uint8Array(32).fill(fill));
+      out.field(new Uint8Array(64).fill(fill));
+      out.field(new Uint8Array(64).fill(fill));
+      expect(() => decodeAdmissionVoucher(base64Url(out.bytes()))).toThrow(AdmissionFormatError);
+    }
+  });
+
+  it('refuses a text field that is not UTF-8 with AdmissionFormatError, never a TypeError', () => {
+    const out = new GraineFieldWriter();
+    out.field(utf8('canari-graine-admission-v1'));
+    out.u32(2);
+    out.field(Uint8Array.of(0xc3, 0x28));
+    expect(() => decodeAdmissionVoucher(base64Url(out.bytes()))).toThrow(AdmissionFormatError);
+  });
+
+  it('refuses the fragment with AdmissionFormatError', () => {
+    for (const fill of fills) {
+      const out = new GraineFieldWriter();
+      out.field(utf8('canari-graine-invite-v1'));
+      head(out, false);
+      out.field(new Uint8Array(32).fill(fill));
+      out.field(new Uint8Array(64).fill(fill));
+      out.field(new Uint8Array(32).fill(fill));
+      expect(() => decodeInviteLinkGrant(base64Url(out.bytes()))).toThrow(AdmissionFormatError);
+    }
   });
 });
