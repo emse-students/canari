@@ -787,6 +787,24 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   }
 }
 
+/* The CanaReels heart's reaction drawer: unfolds upward from the heart (the global
+   prefers-reduced-motion rule shortens it to nothing). */
+@keyframes reelReactionDrawerIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scaleY(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+.reel-reaction-drawer {
+  transform-origin: bottom center;
+  animation: reelReactionDrawerIn 180ms ease-out;
+}
+
 @keyframes panelIn {
   from {
     opacity: 0;
