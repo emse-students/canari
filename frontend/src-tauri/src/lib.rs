@@ -765,21 +765,13 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSettl
         } else {
             Some(text(&mut env, &refused_target)?)
         };
-        let base = u64::try_from(base_epoch).map_err(|_| format!("base epoch {base_epoch}"))?;
-        let answer = if accepted != 0 {
-            mobile::background::WelcomeAnswer::Accepted
-        } else {
-            mobile::background::WelcomeAnswer::Refused(
-                match (&target, stale_base >= 0 && server_epoch >= 0) {
-                    (Some(t), _) => mobile::background::RefusalMemo::TargetRefused { target: t },
-                    (None, true) => mobile::background::RefusalMemo::Stale {
-                        base_epoch: stale_base as u64,
-                        server_epoch: server_epoch as u64,
-                    },
-                    (None, false) => mobile::background::RefusalMemo::Nothing,
-                },
-            )
-        };
+        let base = mobile::background::staged_base_from_jni(base_epoch)?;
+        let answer = mobile::background::welcome_answer_from_jni(
+            accepted != 0,
+            stale_base,
+            server_epoch,
+            target.as_deref(),
+        );
         Ok(mobile::background::settle_background_welcome(
             std::path::Path::new(&dir),
             &state,
@@ -974,6 +966,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
     entries_json: jni::objects::JString<'a>,
+    max_attempts: jni::sys::jint,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> Result<serde_json::Value, String> {
         let files_dir_str: String = env
@@ -1002,6 +995,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
             &user_id_str,
             &device_id_str,
             &entries,
+            usize::try_from(max_attempts).map_err(|_| format!("max attempts {max_attempts}"))?,
         )
     })();
 

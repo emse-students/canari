@@ -1218,12 +1218,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "drainOutboxBackground: pushSecret absent -> ${entries.size} message(s) remain queued")
                 return entries.size
             }
-            // Only this slice is encrypted, and only it can burn a generation. `deferred` is never
-            // touched by this drain.
-            val batch = entries.take(DRAIN_MAX_BATCH)
-            val deferred = entries.drop(DRAIN_MAX_BATCH)
-            Log.d(TAG, "drainOutboxBackground: ${entries.size} message(s) queued, taking ${batch.size}")
-            val ciphertexts = encryptQueuedMessages(context, service, ctx, batch)
+            // The native side ATTEMPTS at most DRAIN_MAX_BATCH entries, and only those can burn a
+            // generation. It sees the whole queue so that a group held behind an unsettled staged
+            // commit takes none of those slots: its entries stay queued and the others fill the batch.
+            Log.d(TAG, "drainOutboxBackground: ${entries.size} message(s) queued, at most $DRAIN_MAX_BATCH attempted")
+            val ciphertexts = encryptQueuedMessages(context, service, ctx, entries)
             if (ciphertexts == null) {
                 Log.w(TAG, "drainOutboxBackground: batch encrypt failed -> ${entries.size} message(s) stay queued")
                 return entries.size
@@ -1233,7 +1232,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val remaining = mutableListOf<OutboxMirrorEntry>()
             var checkpointed = 0
             var index = 0
-            for (entry in batch) {
+            for (entry in entries) {
                 index++
                 if (System.currentTimeMillis() >= deadline) {
                     // Out of budget: everything not yet attempted goes back. The next drain
@@ -1259,11 +1258,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (sentIds.size - checkpointed >= DRAIN_CHECKPOINT_EVERY) {
                     appendOutboxSent(context, sentIds.subList(checkpointed, sentIds.size))
                     checkpointed = sentIds.size
-                    rewriteOutboxMirror(context, remaining + batch.drop(index) + deferred)
+                    rewriteOutboxMirror(context, remaining + entries.drop(index))
                 }
             }
             if (sentIds.size > checkpointed) appendOutboxSent(context, sentIds.subList(checkpointed, sentIds.size))
-            val stillQueued = remaining + deferred
+            val stillQueued: List<OutboxMirrorEntry> = remaining
             rewriteOutboxMirror(context, stillQueued)
             Log.d(TAG, "drainOutboxBackground: ${sentIds.size} sent, ${stillQueued.size} remaining")
             return stillQueued.size
@@ -1314,6 +1313,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 val jsonStr = service.nativeSendMessagesBackground(
                     filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, payload.toString(),
+                    DRAIN_MAX_BATCH,
                 )
                 val json = JSONObject(jsonStr)
                 if (!json.optBoolean("ok", false)) {
@@ -1327,7 +1327,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val id = r.optString("id")
                     if (id.isEmpty()) continue
                     if (!r.optBoolean("ok", false)) {
-                        Log.d(TAG, "encryptQueuedMessages: skipped id=${id.take(8)} (${r.optString("error").take(60)}) - group not joined yet?")
+                        Log.d(TAG, "encryptQueuedMessages: kept queued id=${id.take(8)} (${r.optString("error").take(80)})")
                         continue
                     }
                     r.optString("ciphertext").takeIf { it.isNotEmpty() }?.let { out[id] = it }
@@ -2417,7 +2417,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * is a batch (WP-ANR-1).
      *
      * `entriesJson` is `[{"id":"..","groupId":"..","proto":"<b64>"}, ..]`, each `proto` being the
-     * cleartext AppMessage proto built on the TS side at compose time. Returns JSON:
+     * cleartext AppMessage proto built on the TS side at compose time. At most `maxAttempts` entries
+     * are encrypted; an entry of a group holding an unsettled staged commit is answered `ok:false`
+     * without taking one of them, and an entry past the cap gets no result. Returns JSON:
      * {"ok":true,"results":[{"id":..,"ok":true,"ciphertext":"<b64>"}|{"id":..,"ok":false,"error":..}]}
      * or {"ok":false,...} when the whole batch failed (state absent, save failed).
      */
@@ -2428,6 +2430,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         userId: String,
         deviceId: String,
         entriesJson: String,
+        maxAttempts: Int,
     ): String
 
     /**

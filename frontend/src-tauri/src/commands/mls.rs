@@ -117,6 +117,15 @@ pub(crate) async fn initialiser_mls(
         if let Err(e) = crate::commands::storage::write_mls_state_owner(&app, &user_id) {
             log::error!("[MLS] Recording the owner of mls.bin failed: {e}");
         }
+        // A stage a background Welcome left in mls.bin is reported against what was loaded.
+        match tauri::Manager::path(&app).app_data_dir() {
+            Ok(dir) => {
+                crate::commands::storage::report_background_stages(&dir, &manager);
+            }
+            Err(e) => {
+                log::warn!("[MLS] app_data_dir() failed ({e}) - background stages not reported")
+            }
+        }
 
         let mut lock = manager_state
             .lock()
@@ -728,20 +737,52 @@ pub(crate) fn trailer_welcome(
         })
 }
 
+/// What `envoyer_message_bytes` did with a frame: SEALED, or REFUSED because the group holds a staged
+/// commit nobody has settled - a TYPE, which the WebView maps to the settle that answers it.
+#[derive(Debug, PartialEq, serde::Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub(crate) enum Scellement {
+    Sealed { bytes: Vec<u8> },
+    CommitPending,
+}
+
+/// Seals `message_bytes` for `group_id` - UNLESS the group holds a staged commit.
+///
+/// **THE STATE DECIDES, NOT AN INDEX.** openmls seals at epoch N while a commit to N+1 is pending,
+/// and the server may already hold that commit (a background Welcome whose answer this device never
+/// read, installed by a resume reload). The WebView keeps an index of such groups, but an index can
+/// lag the state it describes - a reload swaps the manager under it - so the refusal is read here,
+/// under the manager lock, from the manager the frame would be sealed with.
 #[tauri::command]
 pub(crate) fn envoyer_message_bytes(
     group_id: String,
     message_bytes: Vec<u8>,
     state: tauri::State<AppState>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Scellement, String> {
     let mut lock = state
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    seal_unless_commit_pending(manager, &group_id, &message_bytes)
+}
 
+/// [`envoyer_message_bytes`] minus the Tauri state, so the refusal is tested on a real manager.
+pub(crate) fn seal_unless_commit_pending(
+    manager: &mut MlsManager,
+    group_id: &str,
+    message_bytes: &[u8],
+) -> Result<Scellement, String> {
+    if matches!(manager.has_pending_commit(group_id), Ok(true)) {
+        log::warn!(
+            "[MLS] send REFUSED in group={} - it holds a staged commit not yet settled",
+            group_id.chars().take(8).collect::<String>()
+        );
+        return Ok(Scellement::CommitPending);
+    }
     manager
-        .send_message(&group_id, &message_bytes)
+        .send_message(group_id, message_bytes)
+        .map(|bytes| Scellement::Sealed { bytes })
         .map_err(|e| e.to_string())
 }
 

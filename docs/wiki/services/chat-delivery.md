@@ -753,12 +753,25 @@ answer, so it held an epoch nobody else had and could not read the group's next 
 - **What the phone does with the answer is decided in `BackgroundWelcomeAnswer.apply`**, behind a
   `StagedWelcome` seam the JVM tests drive: a merge or a clear that finds the MLS state lock busy never
   ran, and the stage is left to the foreground (`stage left in mls.bin (lock busy)`).
+- **The state refuses what its index allows.** The WebView keeps an index of the groups holding a
+  staged commit, and a resume reload swaps the state under it. So the index is dropped BEFORE the
+  swap, and the native send (`envoyer_message_bytes`) refuses, typed, a group whose state holds a
+  staged commit (`Scellement::CommitPending`, `StagedCommitPendingError`): `sendMessage` settles it
+  and seals once more, or answers `CommitOutcomeUnknownError`. The background outbox holds such a
+  group without spending a slot of its batch (`maxAttempts` counts only the entries attempted).
+- **Every stage is traced to its end.** The prepare names the stage in `background_stages.json`; a
+  settlement by the background forgets it; the foreground's next load reports each one left
+  (`report_background_stages`): `found in the loaded state` (settled by resubmission), `already
+  merged`, or `is ABSENT from the state this foreground keeps` at ERROR.
 - **What is left open:** the foreground's checkpoint is a BLIND write (`write_mls_state_blob`). A live
   manager that never loaded the stage - a resume reload refused as `live-ahead` (which then persists
   the live state) or as an epoch regression - writes over it, and an accepted Add is then held by the
-  server and not by this device, logged `ACCEPTED AND NOT HELD`; the device recovers through the usual
-  ladder. The same write loses any background advance, not only this one; it is its own work package
-  ([backlog](../backlog.md#p2---wp-checkpoint-cas-the-foreground-checkpoint-writes-over-a-file-it-did-not-load-2026-10-23-design-owed-a-review-before-code)).
+  server and not by this device. It is SAID, not prevented: before the persist, `... ERASES` at ERROR
+  with the counts and group prefixes of the stages and later epochs the file holds; at the
+  background's answer, `ACCEPTED AND NOT HELD`; at the next load, `is ABSENT`. The device recovers
+  through the usual ladder. The same write loses any background advance, not only this one; it is its
+  own work package
+  ([backlog](../backlog.md#p2---wp-checkpoint-cas-the-foreground-checkpoint-writes-over-a-file-it-did-not-load-2026-10-23-design-one-mls-manager-per-process-owed-a-review-before-code)).
   iOS has no background re-add (its branch was unreachable and is deleted).
 
 ### A roster seat is not a key, and only a Welcome tells the two apart

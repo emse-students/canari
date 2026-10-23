@@ -351,7 +351,7 @@ pub fn decrypt_media_blob(raw_key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Optio
 }
 
 // The stale ledger is named where `mls.bin`'s deletion sweeps it.
-use crate::commands::storage::STALE_WELCOME_LEDGER_FILE;
+use crate::commands::storage::{BACKGROUND_STAGES_FILE, STALE_WELCOME_LEDGER_FILE};
 /// The most groups the stale ledger names. A capacity, not a clock: a full ledger is emptied before
 /// the next entry, which costs each forgotten group ONE more refused answer and nothing else.
 pub const STALE_WELCOME_LEDGER_CAPACITY: usize = 64;
@@ -380,37 +380,47 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Runs `edit` on the stale ledger under the process-wide `mls.bin` write lock (every FCM thread
-/// shares that process), writing it back by rename when `edit` says it changed. An absent or
-/// unparsable ledger reads as empty, and the unparsable one is said.
+/// Runs `edit` on the stale ledger ([`crate::commands::storage::with_json_ledger`]).
 fn with_stale_ledger<R>(
     files_dir: &Path,
     edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> (R, bool),
 ) -> Result<R, String> {
-    let _guard = crate::concurrency::mls_bin_write_lock()
-        .lock()
-        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
-    let path = files_dir.join(STALE_WELCOME_LEDGER_FILE);
-    let mut map = match std::fs::read_to_string(&path) {
-        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(serde_json::Value::Object(m)) => m,
-            _ => {
-                log::warn!("[BG_WELCOME] stale ledger unparsable - read as empty");
-                serde_json::Map::new()
-            }
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
-        Err(e) => return Err(format!("read {STALE_WELCOME_LEDGER_FILE}: {e}")),
-    };
-    let (result, changed) = edit(&mut map);
-    if changed {
-        let tmp = files_dir.join(format!("{STALE_WELCOME_LEDGER_FILE}.tmp"));
-        std::fs::write(&tmp, serde_json::Value::Object(map).to_string())
-            .map_err(|e| format!("write {STALE_WELCOME_LEDGER_FILE}: {e}"))?;
-        std::fs::rename(&tmp, &path)
-            .map_err(|e| format!("rename {STALE_WELCOME_LEDGER_FILE}: {e}"))?;
+    crate::commands::storage::with_json_ledger(files_dir, STALE_WELCOME_LEDGER_FILE, edit)
+}
+
+/// Records that `group_id`'s Add is staged in `mls.bin` from `base_epoch`, so the foreground's next
+/// load reports it whoever settles it ([`crate::commands::storage::report_background_stages`]).
+fn note_stage_left(files_dir: &Path, group_id: &str, base_epoch: u64) {
+    let noted =
+        crate::commands::storage::with_json_ledger(files_dir, BACKGROUND_STAGES_FILE, |map| {
+            map.insert(
+                group_id.to_string(),
+                serde_json::json!({ "baseEpoch": base_epoch }),
+            );
+            ((), true)
+        });
+    if let Err(e) = noted {
+        log::error!(
+            "[BG_WELCOME] stage of group={} not noted ({e}) - the foreground settles it, but will not report it",
+            group_id.chars().take(8).collect::<String>()
+        );
     }
-    Ok(result)
+}
+
+/// Forgets `group_id`'s stage: this engine settled it (or found it settled), so nothing is left for
+/// the foreground to report.
+fn forget_stage(files_dir: &Path, group_id: &str) {
+    let forgot =
+        crate::commands::storage::with_json_ledger(files_dir, BACKGROUND_STAGES_FILE, |map| {
+            let removed = map.remove(group_id).is_some();
+            ((), removed)
+        });
+    if let Err(e) = forgot {
+        log::warn!(
+            "[BG_WELCOME] stage of group={} not forgotten ({e}) - the foreground's load reports it settled",
+            group_id.chars().take(8).collect::<String>()
+        );
+    }
 }
 
 /// Whether the server already refused, as stale, a Welcome for `group_id` built from THESE
@@ -647,6 +657,7 @@ pub fn prepare_welcome_background_with_key(
         log::error!("[BG_WELCOME] Add not staged in mls.bin group={short}: {e}");
         return welcome_refused("stage-failed");
     }
+    note_stage_left(files_dir, group_id, base_epoch);
     log::info!(
         "[BG_WELCOME] staged in mls.bin group={short} base_epoch={base_epoch} ({} bytes) - settled on the server's answer, by this engine or the foreground",
         staged.len()
@@ -681,6 +692,44 @@ pub enum RefusalMemo<'a> {
 pub enum WelcomeAnswer<'a> {
     Accepted,
     Refused(RefusalMemo<'a>),
+}
+
+/// The staged base epoch the JNI entry was handed, as the `u64` an epoch is. A negative one is the
+/// Kotlin side's absent value reaching a call that needs a stage: it is refused as an argument
+/// error, never read as epoch 0.
+pub fn staged_base_from_jni(base_epoch: i64) -> Result<u64, String> {
+    u64::try_from(base_epoch).map_err(|_| {
+        log::error!("[BG_WELCOME] settle handed a negative base epoch ({base_epoch}) - refused");
+        format!("base epoch {base_epoch}")
+    })
+}
+
+/// The answer the JNI entry hands [`settle_background_welcome`], from its flat arguments: `accepted`
+/// merges; otherwise a refused `target` is recorded for that target alone (it wins over a stale
+/// pair), and `stale_base` / `server_epoch` both `>= 0` record a stale base for the group.
+pub fn welcome_answer_from_jni(
+    accepted: bool,
+    stale_base: i64,
+    server_epoch: i64,
+    target: Option<&str>,
+) -> WelcomeAnswer<'_> {
+    if accepted {
+        return WelcomeAnswer::Accepted;
+    }
+    WelcomeAnswer::Refused(
+        match (
+            target,
+            u64::try_from(stale_base),
+            u64::try_from(server_epoch),
+        ) {
+            (Some(target), _, _) => RefusalMemo::TargetRefused { target },
+            (None, Ok(base_epoch), Ok(server_epoch)) => RefusalMemo::Stale {
+                base_epoch,
+                server_epoch,
+            },
+            _ => RefusalMemo::Nothing,
+        },
+    )
 }
 
 /// The background Welcome being settled: its group, the commit as it was submitted (base64), and
@@ -760,18 +809,21 @@ pub fn settle_background_welcome(
                 log::info!(
                     "[BG_WELCOME] settle group={short}: already merged (epoch {e}) - the foreground settled it first"
                 );
+                forget_stage(files_dir, group_id);
                 refused("already-settled")
             }
             (WelcomeAnswer::Accepted, _) => {
                 log::error!(
                     "[BG_WELCOME] ACCEPTED AND NOT HELD group={short}: mls.bin holds neither the staged Add of base {base_epoch} nor the epoch it creates (epoch {epoch:?}) - a write that never loaded the stage replaced it"
                 );
+                forget_stage(files_dir, group_id);
                 refused("accepted-not-held")
             }
             (WelcomeAnswer::Refused(_), _) => {
                 log::info!(
                     "[BG_WELCOME] settle group={short}: the refused Add is no longer staged - the foreground settled it first"
                 );
+                forget_stage(files_dir, group_id);
                 refused("already-settled")
             }
         };
@@ -800,6 +852,7 @@ pub fn settle_background_welcome(
         return refused("left-to-foreground");
     }
     log::info!("[BG_WELCOME] settle group={short}: {verb} and written");
+    forget_stage(files_dir, group_id);
     if let WelcomeAnswer::Refused(memo) = answer {
         record_refusal(files_dir, group_id, &sealed, memo);
     }
@@ -964,6 +1017,7 @@ pub fn send_messages_background_with_key(
     user_id: &str,
     device_id: &str,
     entries: &[OutboxEntry],
+    max_attempts: usize,
 ) -> Result<serde_json::Value, String> {
     if entries.is_empty() {
         return Ok(serde_json::json!({ "ok": true, "results": [] }));
@@ -974,7 +1028,25 @@ pub fn send_messages_background_with_key(
 
     let mut results = Vec::with_capacity(entries.len());
     let mut encrypted = 0usize;
+    let mut attempted = 0usize;
+    let mut held = 0usize;
     for entry in entries {
+        // A GROUP WHOSE STAGED COMMIT IS UNSETTLED takes no slot of the batch: its entries stay
+        // queued, and the batch fills from the groups that can seal.
+        if matches!(manager.has_pending_commit(&entry.group_id), Ok(true)) {
+            held += 1;
+            results.push(serde_json::json!({
+                "id": entry.id,
+                "ok": false,
+                "error": "commit-pending: the group's staged commit is not settled - kept queued",
+            }));
+            continue;
+        }
+        if attempted >= max_attempts {
+            // Not attempted, no result: the caller keeps it queued for the next drain.
+            continue;
+        }
+        attempted += 1;
         match encrypt_one(&mut manager, entry) {
             Ok(ciphertext) => {
                 encrypted += 1;
@@ -1005,8 +1077,8 @@ pub fn send_messages_background_with_key(
         .map_err(|e| e.to_string())?;
     write_over_loaded_state(files_dir, state_bytes, &enc)?;
     log::info!(
-        "[BG_SEND] batch encrypted {encrypted}/{} (mls.bin {} bytes, 1 load, 1 save)",
-        entries.len(),
+        "[BG_SEND] batch encrypted {encrypted}/{attempted} attempted, {held} held behind a staged commit, {} left for the next drain (mls.bin {} bytes, 1 load, 1 save)",
+        entries.len() - attempted - held,
         enc.len()
     );
 
@@ -1014,17 +1086,10 @@ pub fn send_messages_background_with_key(
 }
 
 /// Encrypts a single entry against an already-loaded manager. Split out so the batch loop has one
-/// obvious failure boundary per entry.
-///
-/// **NOTHING IS SEALED IN A GROUP WHOSE STAGED COMMIT IS UNSETTLED** - a background Welcome's Add
-/// whose answer nobody read: the group may already be one epoch on. The entry stays queued, as the
-/// foreground holds its own sends until the commit is settled (`CommitOutcomeUnknownError`).
+/// obvious failure boundary per entry. The batch loop has already held back a group whose staged
+/// commit is unsettled (a background Welcome's Add whose answer nobody read): the group may be one
+/// epoch on, and the foreground holds its own sends the same way (`CommitOutcomeUnknownError`).
 fn encrypt_one(manager: &mut MlsManager, entry: &OutboxEntry) -> Result<Vec<u8>, String> {
-    if matches!(manager.has_pending_commit(&entry.group_id), Ok(true)) {
-        return Err(
-            "commit-pending: the group's staged commit is not settled - kept queued".into(),
-        );
-    }
     let proto_bytes = STANDARD
         .decode(entry.proto.trim())
         .map_err(|e| format!("base64 decode proto: {e}"))?;
@@ -1470,6 +1535,7 @@ mod tests {
             "batch-alice",
             "dev-a",
             &entries,
+            100,
         )
         .expect("batch send");
 
@@ -1502,6 +1568,7 @@ mod tests {
             "batch-alice",
             "dev-a",
             &[entry("id-5", &group_id, b"msg-5")],
+            100,
         )
         .expect("send from the reloaded state");
         let plain = bob
@@ -1534,6 +1601,7 @@ mod tests {
             "isolate-alice",
             "dev-a",
             &entries,
+            100,
         )
         .expect("batch send");
 
@@ -1585,6 +1653,7 @@ mod tests {
             "reseal-alice",
             "dev-a",
             &[entry("id-0", &group_id, b"late")],
+            100,
         );
         assert!(
             out.is_err(),
@@ -1602,7 +1671,7 @@ mod tests {
         let _fg = quiet_foreground();
         let dir = temp_dir("empty");
         let _ = std::fs::remove_file(dir.join("mls.bin"));
-        let out = send_messages_background_with_key(&dir, &[], &key_b64(3), "u", "d", &[])
+        let out = send_messages_background_with_key(&dir, &[], &key_b64(3), "u", "d", &[], 100)
             .expect("empty batch");
         assert_eq!(out["results"].as_array().expect("results").len(), 0);
         assert!(
@@ -1679,6 +1748,7 @@ mod tests {
             "graine-alice",
             "dev-a",
             &[entry("seed-1", &group_id, &frame)],
+            100,
         )
         .expect("alice encrypts the seed frame");
         let ciphertext = &ciphertexts_of(&out)[0];
@@ -1743,6 +1813,7 @@ mod tests {
             "graine-ahead-alice",
             "dev-a",
             &[entry("seed-ahead", &group_id, &frame)],
+            100,
         )
         .expect("alice encrypts the seed frame");
         let ciphertext = &ciphertexts_of(&out)[0];
@@ -1797,6 +1868,7 @@ mod tests {
             &format!("{tag}-alice"),
             "dev-a",
             &[entry("frame-1", &group_id, frame)],
+            100,
         )
         .expect("alice encrypts");
         let ciphertext = ciphertexts_of(&out)[0].clone();
@@ -1883,6 +1955,7 @@ mod tests {
             &format!("{tag}-alice"),
             "dev-a",
             &[entry("frame-1", &group_id, &frame)],
+            100,
         )
         .expect("alice encrypts");
         let ciphertext = ciphertexts_of(&out)[0].clone();
@@ -1988,6 +2061,7 @@ mod tests {
                 &alice_id,
                 "dev-a",
                 &[entry("seed", &group_id, &frame)],
+                100,
             )
             .expect("alice encrypts");
             let bob_state = bob.save_encrypted_with_key(&key).expect("encrypt bob");
@@ -2482,6 +2556,7 @@ mod tests {
             "held-alice",
             "dev-a",
             &[entry],
+            100,
         )
         .unwrap();
 
@@ -2491,6 +2566,235 @@ mod tests {
             on_disk(&dir, "held", 65).groups_with_pending_commit(),
             vec![gid]
         );
+    }
+
+    /// A HELD GROUP TAKES NO SLOT OF THE BATCH: its entries stay queued with a result, and the cap
+    /// counts only the entries the drain attempted - so a group waiting on its settlement cannot
+    /// starve the others of the batch.
+    #[test]
+    fn a_held_group_takes_no_slot_of_the_batch() {
+        let _s = quiet_foreground();
+        let (mut alice, _bob, held_gid) = joined_pair("slots");
+        let free_gid = "slots-free".to_string();
+        alice.create_group(free_gid.clone()).unwrap();
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(66)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("slots", &state);
+        let carol = MlsManager::load_or_create("slots-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+        assert_eq!(
+            prepare(&dir, &state, 66, "slots", &held_gid, &kp)["ok"],
+            true
+        );
+        let staged = std::fs::read(dir.join("mls.bin")).unwrap();
+
+        let out = send_messages_background_with_key(
+            &dir,
+            &staged,
+            &key_b64(66),
+            "slots-alice",
+            "dev-a",
+            &[
+                entry("h1", &held_gid, b"a"),
+                entry("h2", &held_gid, b"b"),
+                entry("f1", &free_gid, b"c"),
+                entry("f2", &free_gid, b"d"),
+            ],
+            1,
+        )
+        .unwrap();
+
+        let outcome: Vec<(String, bool)> = out["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["id"].as_str().unwrap().to_string(), r["ok"] == true))
+            .collect();
+        assert_eq!(
+            outcome,
+            vec![
+                ("h1".to_string(), false),
+                ("h2".to_string(), false),
+                ("f1".to_string(), true),
+            ],
+            "the held entries are answered without a slot, and the one slot seals f1: {out}"
+        );
+    }
+
+    /// A REFUSAL THAT FINDS NO STAGE says it was settled first, writes nothing, and forgets the
+    /// stage the prepare noted - nothing is left for the foreground to report.
+    #[test]
+    fn a_refused_settle_that_finds_no_stage_is_already_settled() {
+        let _s = quiet_foreground();
+        let (dir, state, _carol, kp, gid) = holder_and_newcomer("nostage", 67);
+        let prepared = prepare(&dir, &state, 67, "nostage", &gid, &kp);
+        assert_eq!(prepared["ok"], true, "{prepared}");
+        assert!(
+            stages_ledger(&dir).contains_key(&gid),
+            "the prepare notes the stage"
+        );
+        std::fs::write(dir.join("mls.bin"), &state).unwrap();
+
+        let settled = settle(
+            &dir,
+            67,
+            "nostage",
+            &gid,
+            &prepared,
+            WelcomeAnswer::Refused(RefusalMemo::Nothing),
+        );
+
+        assert_eq!(settled["reason"], "already-settled", "{settled}");
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+        assert!(stages_ledger(&dir).is_empty(), "the stage is forgotten");
+    }
+
+    /// A stage this engine settles is forgotten; one it leaves stays named for the foreground.
+    #[test]
+    fn a_stage_is_named_until_it_is_settled() {
+        let _s = quiet_foreground();
+        let (dir, state, _carol, kp, gid) = holder_and_newcomer("ledger", 68);
+        let prepared = prepare(&dir, &state, 68, "ledger", &gid, &kp);
+        assert_eq!(
+            stages_ledger(&dir).get(&gid),
+            Some(&serde_json::json!({ "baseEpoch": 1 }))
+        );
+
+        let settled = settle(&dir, 68, "ledger", &gid, &prepared, WelcomeAnswer::Accepted);
+
+        assert_eq!(settled["settled"], "merged", "{settled}");
+        assert!(stages_ledger(&dir).is_empty());
+    }
+
+    /// The foreground's load reports every stage the background left, by what it finds - and
+    /// forgets them, so each is reported once.
+    #[test]
+    fn the_foregrounds_load_reports_each_stage_it_was_left() {
+        use crate::commands::storage::{report_background_stages, StagesReport};
+        let _s = quiet_foreground();
+        let (dir, state, _carol, kp, gid) = holder_and_newcomer("report", 69);
+        assert_eq!(prepare(&dir, &state, 69, "report", &gid, &kp)["ok"], true);
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(69)).unwrap();
+        let note = || {
+            std::fs::write(
+                dir.join(BACKGROUND_STAGES_FILE),
+                serde_json::json!({ gid.clone(): { "baseEpoch": 1 } }).to_string(),
+            )
+            .unwrap();
+        };
+
+        let staged = on_disk(&dir, "report", 69);
+        assert_eq!(
+            report_background_stages(&dir, &staged),
+            StagesReport {
+                found: 1,
+                merged: 0,
+                absent: 0
+            }
+        );
+        assert!(stages_ledger(&dir).is_empty(), "reported once");
+
+        note();
+        let mut merged = on_disk(&dir, "report", 69);
+        merged.merge_pending_commit_for(&gid).unwrap();
+        assert_eq!(
+            report_background_stages(&dir, &merged),
+            StagesReport {
+                found: 0,
+                merged: 1,
+                absent: 0
+            }
+        );
+
+        note();
+        let without =
+            MlsManager::load_with_key("report-alice", "dev-a", Some(state), &key).unwrap();
+        assert_eq!(
+            report_background_stages(&dir, &without),
+            StagesReport {
+                found: 0,
+                merged: 0,
+                absent: 1
+            }
+        );
+    }
+
+    /// What keeping a live state over the file erases is counted: a stage the file holds and the
+    /// live state does not, and a group the file holds at a later epoch.
+    #[test]
+    fn a_live_persist_counts_what_it_erases() {
+        use crate::commands::storage::report_what_a_live_persist_erases;
+        let _s = quiet_foreground();
+        let (dir, state, _carol, kp, gid) = holder_and_newcomer("erase", 70);
+        assert_eq!(prepare(&dir, &state, 70, "erase", &gid, &kp)["ok"], true);
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(70)).unwrap();
+        let live = MlsManager::load_with_key("erase-alice", "dev-a", Some(state), &key).unwrap();
+        let mut file = on_disk(&dir, "erase", 70);
+
+        assert_eq!(report_what_a_live_persist_erases(&live, &file), (1, 0));
+        file.merge_pending_commit_for(&gid).unwrap();
+        assert_eq!(report_what_a_live_persist_erases(&live, &file), (0, 1));
+        assert_eq!(report_what_a_live_persist_erases(&file, &file), (0, 0));
+    }
+
+    /// THE STATE REFUSES A SEND IN A GROUP WITH A STAGED COMMIT, whatever the WebView's index says:
+    /// typed, so the send path settles rather than fails.
+    #[test]
+    fn the_foreground_send_is_refused_while_a_commit_is_staged() {
+        use crate::commands::mls::{seal_unless_commit_pending, Scellement};
+        let _s = quiet_foreground();
+        let (dir, state, _carol, kp, gid) = holder_and_newcomer("sealrefused", 71);
+        assert_eq!(
+            prepare(&dir, &state, 71, "sealrefused", &gid, &kp)["ok"],
+            true
+        );
+        let mut staged = on_disk(&dir, "sealrefused", 71);
+
+        assert_eq!(
+            seal_unless_commit_pending(&mut staged, &gid, b"hi").unwrap(),
+            Scellement::CommitPending
+        );
+        staged.merge_pending_commit_for(&gid).unwrap();
+        assert!(matches!(
+            seal_unless_commit_pending(&mut staged, &gid, b"hi").unwrap(),
+            Scellement::Sealed { .. }
+        ));
+    }
+
+    /// The JNI's flat answer: a refused target wins over a stale pair, a stale pair needs both
+    /// epochs, and a negative one is the absent value - recorded as nothing.
+    #[test]
+    fn the_jni_answer_maps_target_over_stale_and_negatives_to_nothing() {
+        assert_eq!(
+            welcome_answer_from_jni(true, 3, 4, Some("x")),
+            WelcomeAnswer::Accepted
+        );
+        assert_eq!(
+            welcome_answer_from_jni(false, 3, 4, Some("x")),
+            WelcomeAnswer::Refused(RefusalMemo::TargetRefused { target: "x" })
+        );
+        assert_eq!(
+            welcome_answer_from_jni(false, 3, 4, None),
+            WelcomeAnswer::Refused(RefusalMemo::Stale {
+                base_epoch: 3,
+                server_epoch: 4
+            })
+        );
+        for (base, server) in [(-1, 4), (3, -1), (-1, -1)] {
+            assert_eq!(
+                welcome_answer_from_jni(false, base, server, None),
+                WelcomeAnswer::Refused(RefusalMemo::Nothing)
+            );
+        }
+        assert_eq!(staged_base_from_jni(5), Ok(5));
+        assert!(staged_base_from_jni(-1).is_err(), "never read as epoch 0");
+    }
+
+    fn stages_ledger(dir: &Path) -> serde_json::Map<String, serde_json::Value> {
+        match std::fs::read(dir.join(BACKGROUND_STAGES_FILE)) {
+            Ok(bytes) => serde_json::from_slice(&bytes).unwrap(),
+            Err(_) => serde_json::Map::new(),
+        }
     }
 
     /// COMM-22 on the background path: the prepare exports the external-join base of the epoch its

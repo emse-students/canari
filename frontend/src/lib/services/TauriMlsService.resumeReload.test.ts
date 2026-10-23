@@ -8,6 +8,7 @@ vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
 
 import { TauriMlsService } from './TauriMlsService';
+import { StagedCommitPendingError } from '$lib/mls-client/commitSubmission';
 
 /**
  * The resume reload must not put a ratchet BACK, and the refusal is decided natively.
@@ -62,6 +63,21 @@ describe('TauriMlsService.reloadStateFromDisk - the resume that must not rewind 
     expect(svc.settleUnresolvedCommits).toHaveBeenCalledTimes(1);
   });
 
+  it('drops the index BEFORE the swap, so a send racing it re-reads the state', async () => {
+    const svc = makeService();
+    svc.unresolvedGroups = new Set();
+    let atSwap: Set<string> | null | undefined;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'recharger_mls_au_resume') {
+        atSwap = svc.unresolvedGroups;
+        return 'nothing-on-disk';
+      }
+      return 8;
+    });
+    await svc.reloadStateFromDisk();
+    expect(atSwap).toBeNull();
+  });
+
   it.each(['live-ahead', 'nothing-on-disk', 'epoch-regression'])(
     'settles nothing on %s - the live state, which this session already indexed, is kept',
     async (outcome) => {
@@ -112,5 +128,27 @@ describe('TauriMlsService.reloadStateFromDisk - the resume that must not rewind 
     svc._deviceKeyB64 = '';
     await svc.reloadStateFromDisk();
     expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe('TauriMlsService.encryptForSend - the state refuses a send its staged commit forbids', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+  const encrypt = (svc: ServiceInternals) =>
+    (
+      svc as unknown as { encryptForSend(g: string, b: Uint8Array): Promise<Uint8Array> }
+    ).encryptForSend('g-1', new Uint8Array([9]));
+
+  it('returns the sealed bytes', async () => {
+    invoke.mockResolvedValue({ status: 'sealed', bytes: [1, 2] });
+    await expect(encrypt(makeService())).resolves.toEqual(new Uint8Array([1, 2]));
+  });
+
+  it('throws the TYPED refusal the send path settles, when a commit is staged', async () => {
+    invoke.mockResolvedValue({ status: 'commitPending' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(encrypt(makeService())).rejects.toBeInstanceOf(StagedCommitPendingError);
+    warn.mockRestore();
   });
 });

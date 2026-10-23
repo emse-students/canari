@@ -21,7 +21,11 @@ import {
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
-import type { OwedWelcome, PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
+import {
+  StagedCommitPendingError,
+  type OwedWelcome,
+  type PendingSubmissionRead,
+} from '$lib/mls-client/commitSubmission';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
@@ -63,6 +67,9 @@ interface NativeDatedKeyPackage {
   public: number[];
   notAfterSecs: number;
 }
+
+/** What `envoyer_message_bytes` did - mirrors `Scellement` in `src-tauri/src/commands/mls.rs`. */
+type SealOutcome = { status: 'sealed'; bytes: number[] } | { status: 'commitPending' };
 
 /** What `recharger_mls_au_resume` did - mirrors `ReloadOutcome` in `src-tauri/src/commands/storage.rs`. */
 type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live-ahead';
@@ -998,6 +1005,9 @@ export class TauriMlsService extends BaseMlsService {
       console.warn('[MLS][Tauri] reloadStateFromDisk skipped - no device key in session.');
       return;
     }
+    // THE INDEX GOES BEFORE THE SWAP: a send racing the reload re-reads the state (or is refused by
+    // it natively) instead of trusting an index of the state being replaced.
+    this.forgetUnresolvedIndex();
     try {
       const outcome = await invoke<ReloadOutcome>('recharger_mls_au_resume', {
         userId: this.userId,
@@ -1548,14 +1558,23 @@ export class TauriMlsService extends BaseMlsService {
     return groupId;
   }
 
-  /** Tauri-native `invoke` wrapper - encrypts plaintext via `envoyer_message_bytes`, then POSTs the ciphertext to the delivery service. */
-  /** Native `invoke` wrapper - advances the live send ratchet. Ordering and persistence: `sendMessage`. */
+  /**
+   * Native `invoke` wrapper - advances the live send ratchet. Ordering and persistence: `sendMessage`.
+   * The native side refuses, typed, a group whose state holds a staged commit
+   * ({@link StagedCommitPendingError}): the state decides, not the session's index of it.
+   */
   protected async encryptForSend(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array> {
-    const res = await invoke<number[]>('envoyer_message_bytes', {
+    const res = await invoke<SealOutcome>('envoyer_message_bytes', {
       groupId,
       messageBytes: Array.from(messageBytes),
     });
-    return Uint8Array.from(res);
+    if (res.status === 'commitPending') {
+      console.warn(
+        `[MLS][Tauri] ${groupId.slice(0, 8)}... send refused natively: a staged commit is unsettled`
+      );
+      throw new StagedCommitPendingError(groupId);
+    }
+    return Uint8Array.from(res.bytes);
   }
 
   /** Tauri-native `invoke` wrapper - decrypts a raw MLS ciphertext via `recevoir_message_bytes`; returns null for commit or proposal frames. */
