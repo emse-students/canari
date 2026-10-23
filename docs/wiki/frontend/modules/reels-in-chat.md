@@ -650,15 +650,15 @@ reel message does, and nothing sends one until RC-4 (behind its OFF switch); the
 
 ## 13. What the writer wiring (RC-4) built, and what it did not (2026-10-18)
 
-**Draft, and OFF: `CHAT_REEL_WRITER_ENABLED = false` in `reels/chatReelWriter.ts` is the whole of its safety**, the precedent of `SEGMENTED_MEDIA_WRITER_ENABLED`. Flipping that one line needs RC-3 (#2049) wired into the queued preparation (`profile: 'chat'` and the 60 s cap, section 13), RC-5 and RC-7 shipped and the readers at the `minClientVersion` floor; a test pins it `false`.
+**Draft, and OFF: `CHAT_REEL_WRITER_ENABLED = false` in `reels/chatReelWriter.ts` is the whole of its safety**, the precedent of `SEGMENTED_MEDIA_WRITER_ENABLED`. Flipping that one line needs RC-3 (#2049) wired into the queued preparation (`profile: 'chat'` and the 60 s cap, section 14), RC-5 and RC-7 shipped and the readers at the `minClientVersion` floor; a test pins it `false`.
 
 - **The camera**: `destinationRules('chat', chatFilms)` lets a chat camera film (`photoOnly` off, the microphone asked `separate`, as the post camera does, so a refused microphone keeps the photos). `ChatArea` passes `reelMessages = !isChannel`, so **a salon never films** (its send path is RC-8's); `ChatComposer` asks `chatReelAllowed(...)`.
 - **The mark**: a video handed back by the chat camera is marked on the FILE (`markChatReelTake`, a `WeakSet` like `capturePoster.ts`), because the composers' one attachment path is `File[]`. A gallery pick is never marked.
 - **The declaration**: `prepareOneChatVideo` carries the mark onto the PREPARED file with its length; the MLS send builds `intent`, `durationMs` and `expiresAtMs` (send time + 30 days, `chatReelDeclaration`, the clock passed in) into BOTH the optimistic envelope and the outbox payload, so the tile draws at once. The ThumbHash comes from the camera's poster.
 - **The class**: the outbox uploader names `chat-reel` for a declared reel (`uploadClassFor`), `ephemeral` for everything else.
-- **Not built**: the cap and the chat encoding profile (RC-3, #2049 - the take still reads `reel-limits`' 90 s until it merges), the salon path (RC-8), push (RC-7). The raw-take store, the resumable outbox states and "Envoyer" sending at once are RC-5's (section 13) - since RC-5 a filmed take is no longer STAGED.
+- **Not built**: the cap and the chat encoding profile (RC-3, #2049 - the take still reads `reel-limits`' 90 s until it merges), the salon path (RC-8), push (RC-7). The raw-take store, the resumable outbox states and "Envoyer" sending at once are RC-5's (section 14) - since RC-5 a filmed take is no longer STAGED.
 
-## 13. What the resumable outbox (RC-5) built, and what it owes on devices (2026-10-19)
+## 14. What the resumable outbox (RC-5) built, and what it owes on devices (2026-10-19)
 
 **Draft, stacked on RC-4 (#2098), and OFF behind the same switch**: nothing creates a raw-take entry
 while `CHAT_REEL_WRITER_ENABLED` is `false`, because the chat camera cannot film. No migration: every

@@ -749,7 +749,7 @@ Each leaked session holds, for 24 h, one of the owner's 4 open sessions, up to 2
 - **Privacy:** ids only. A session id names staged ciphertext the owner can already address and nothing else, and the server checks the owner on every route.
 - **Proof:** an outbox test that cancels offline, relaunches online and sees the `DELETE`, plus one per wipe path.
 
-The mechanism and the gap are written up in [reels-in-chat](frontend/modules/reels-in-chat.md#13-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19). Not built in #2117 because it is not small: it touches the sign-out and erasure wipe paths, needs a store that survives them, and adds a sweep to sign-in.
+The mechanism and the gap are written up in [reels-in-chat](frontend/modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19). Not built in #2117 because it is not small: it touches the sign-out and erasure wipe paths, needs a store that survives them, and adds a sweep to sign-in.
 
 ## P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)
 

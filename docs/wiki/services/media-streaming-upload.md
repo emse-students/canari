@@ -199,7 +199,7 @@ outbox is the first client of these routes, for chat reels only - parts of 1 MiB
 that client: a cut costs 1 MiB, and the dev relay's 1 MiB limit is met), the CEK and session id persisted in
 the encrypted outbox row (question 5), resume from the server's status. Its part transport is `xhrUpload`,
 the WebView's own XHR on every shell (S2's decision 9.2). See
-[reels-in-chat section 13](../frontend/modules/reels-in-chat.md#13-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19). The weak-network page
+[reels-in-chat section 14](../frontend/modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19). The weak-network page
 ([offline-and-weak-network](../frontend/offline-and-weak-network.md)) owns the retry policy this reuses.
 
 ## 7. What we cannot do about the host edge
