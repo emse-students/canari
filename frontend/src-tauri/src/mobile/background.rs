@@ -374,118 +374,24 @@ fn write_staged(path: &Path, data: &[u8]) -> Result<(), String> {
 }
 
 /// Stages `file` for `group_id` ONLY while `mls.bin` is still the file the Welcome was built from,
-/// under the write lock: a foreground write that landed since (a checkpoint, a key change's re-seal)
-/// makes the staging a state nothing can install, so it is refused BEFORE the commit goes to the
-/// server - the device is never left behind a commit the server accepted.
+/// under the write lock every `mls.bin` writer takes: a foreground write that landed since (a
+/// checkpoint, a key change's re-seal) makes the staging a state the install would refuse, so it is
+/// refused HERE, before the commit goes to the server - never after the server accepted it.
 fn stage_over_loaded_state(
     files_dir: &Path,
     loaded: &[u8; 32],
     group_id: &str,
     file: &[u8],
 ) -> Result<(), String> {
-    let _held = crate::concurrency::hold_mls_bin_write_lock()?;
+    let _held = crate::concurrency::mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
     let current = std::fs::read(files_dir.join("mls.bin"))
         .map_err(|e| format!("re-read mls.bin before staging: {e}"))?;
     if &crate::concurrency::mls_bin_digest(&current) != loaded {
         return Err("mls.bin changed since the Welcome was built - not staged".to_string());
     }
     write_staged(&staged_welcome_path(files_dir, group_id), file)
-}
-
-/// Carries every Welcome staged on the `mls.bin` about to be replaced onto `new_file` - re-sealed
-/// under `key` and bound to the new bytes - when `new_file` holds the SAME state (see
-/// `concurrency::write_checkpoint_carrying_staged`). The caller holds the write lock, and the install
-/// and the discard read the staged file under it too.
-///
-/// The old file is opened with `key` (no key change: a checkpoint that changed nothing) or with
-/// `session_key` (the key the session opened with: a change). Anything else leaves the staging bound
-/// to the old file, said at ERROR or WARN - its install is then refused as it was before.
-pub(crate) fn carry_staged_welcomes(
-    _held: &std::sync::MutexGuard<'static, ()>,
-    files_dir: &Path,
-    new_file: &[u8],
-    key: &[u8; 32],
-    session_key: Option<[u8; 32]>,
-) {
-    let current = match std::fs::read(files_dir.join("mls.bin")) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-        Err(e) => {
-            log::error!("[BG_WELCOME] carry: mls.bin unreadable, no staging carried: {e}");
-            return;
-        }
-    };
-    let bound = crate::concurrency::mls_bin_digest(&current);
-    let staged: Vec<(std::path::PathBuf, Vec<u8>)> = match std::fs::read_dir(files_dir) {
-        Ok(entries) => entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with(STAGED_WELCOME_PREFIX) && !n.ends_with(".tmp"))
-            })
-            .filter_map(|path| std::fs::read(&path).ok().map(|bytes| (path, bytes)))
-            .filter(|(_, bytes)| bytes.len() > 32 && bytes[..32] == bound)
-            .collect(),
-        Err(e) => {
-            log::error!("[BG_WELCOME] carry: data directory unreadable, no staging carried: {e}");
-            return;
-        }
-    };
-    if staged.is_empty() {
-        return;
-    }
-    let opened_old = std::iter::once(*key).chain(session_key).find_map(|k| {
-        MlsManager::open_state_blob_with_key(&current, &k)
-            .ok()
-            .map(|p| (k, p))
-    });
-    let Some((old_key, old_plain)) = opened_old else {
-        log::error!(
-            "[BG_WELCOME] carry: {} staged Welcome(s) built on a state neither key opens - left; their install will be refused",
-            staged.len()
-        );
-        return;
-    };
-    let same = MlsManager::open_state_blob_with_key(new_file, key)
-        .and_then(|new_plain| MlsManager::same_persisted_state(&old_plain, &new_plain));
-    match same {
-        Ok(true) => {}
-        Ok(false) => {
-            log::warn!(
-                "[BG_WELCOME] carry: the state moved since {} Welcome(s) were staged - left; their install is refused as any lost update",
-                staged.len()
-            );
-            return;
-        }
-        Err(e) => {
-            log::error!("[BG_WELCOME] carry: states not comparable ({e}) - staging left");
-            return;
-        }
-    }
-    let new_bound = crate::concurrency::mls_bin_digest(new_file);
-    for (path, bytes) in staged {
-        let carried = MlsManager::open_state_blob_with_key(&bytes[32..], &old_key)
-            .and_then(|plain| MlsManager::encrypt_state_blob_with_key(&plain, key))
-            .map_err(|e| e.to_string())
-            .and_then(|sealed| {
-                let mut file = Vec::with_capacity(32 + sealed.len());
-                file.extend_from_slice(&new_bound);
-                file.extend_from_slice(&sealed);
-                write_staged(&path, &file)
-            });
-        match carried {
-            Ok(()) => log::info!(
-                "[BG_WELCOME] carry: staged Welcome {} carried onto the re-sealed mls.bin",
-                path.display()
-            ),
-            Err(e) => log::error!(
-                "[BG_WELCOME] carry: staged Welcome {} NOT carried ({e}) - its install will be refused",
-                path.display()
-            ),
-        }
-    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -740,18 +646,6 @@ pub fn prepare_welcome_background_with_key(
 pub fn install_staged_welcome(files_dir: &Path, group_id: &str) -> serde_json::Value {
     let short: String = group_id.chars().take(8).collect();
     let path = staged_welcome_path(files_dir, group_id);
-    // ONE STEP UNDER THE LOCK: the read, the removal and the install. A key change re-seals the
-    // staged file under this same lock (`carry_staged_welcomes`), so this reads it either wholly
-    // before the re-seal (and the compare refuses) or wholly after (and it installs).
-    let held = match crate::concurrency::hold_mls_bin_write_lock() {
-        Ok(held) => held,
-        Err(e) => {
-            log::error!("[BG_WELCOME] install group={short}: {e}");
-            let mut out = refused("install-refused");
-            out["error"] = serde_json::Value::String(e);
-            return out;
-        }
-    };
     let file = match std::fs::read(&path) {
         Ok(f) if f.len() > 32 => f,
         Ok(_) => {
@@ -769,8 +663,7 @@ pub fn install_staged_welcome(files_dir: &Path, group_id: &str) -> serde_json::V
     }
     let mut digest = [0u8; 32];
     digest.copy_from_slice(&file[..32]);
-    match crate::concurrency::background_write_if_unchanged_held(
-        &held,
+    match crate::concurrency::background_write_mls_bin_if_unchanged(
         &files_dir.join("mls.bin"),
         &digest,
         &file[32..],
@@ -811,29 +704,17 @@ pub enum RefusalMemo<'a> {
 pub fn discard_staged_welcome(files_dir: &Path, group_id: &str, memo: RefusalMemo<'_>) {
     let short: String = group_id.chars().take(8).collect();
     let path = staged_welcome_path(files_dir, group_id);
-    // Read and removed under the lock a re-seal carries the staged file under, so the re-seal never
-    // writes back a file this removed.
-    let digest = {
-        let _held = match crate::concurrency::hold_mls_bin_write_lock() {
-            Ok(held) => held,
-            Err(e) => {
-                log::error!("[BG_WELCOME] discard group={short}: {e}");
-                return;
-            }
-        };
-        let digest = std::fs::read(&path)
-            .ok()
-            .filter(|f| f.len() > 32)
-            .map(|f| hex(&f[..32]));
-        match std::fs::remove_file(&path) {
-            Ok(()) => log::info!("[BG_WELCOME] discarded the staged state of group={short}"),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                log::warn!("[BG_WELCOME] discard group={short}: nothing was staged")
-            }
-            Err(e) => log::warn!("[BG_WELCOME] staged state of group={short} not deleted: {e}"),
+    let digest = std::fs::read(&path)
+        .ok()
+        .filter(|f| f.len() > 32)
+        .map(|f| hex(&f[..32]));
+    match std::fs::remove_file(&path) {
+        Ok(()) => log::info!("[BG_WELCOME] discarded the staged state of group={short}"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log::warn!("[BG_WELCOME] discard group={short}: nothing was staged")
         }
-        digest
-    };
+        Err(e) => log::warn!("[BG_WELCOME] staged state of group={short} not deleted: {e}"),
+    }
     let Some(digest) = digest else {
         return;
     };
@@ -2244,115 +2125,8 @@ mod tests {
         );
     }
 
-    /// What `write_checkpoint_carrying_staged` does around a foreground checkpoint, without an app.
-    fn foreground_checkpoint(
-        dir: &Path,
-        new_file: &[u8],
-        key: &[u8; 32],
-        session_key: Option<[u8; 32]>,
-    ) {
-        let held = crate::concurrency::hold_mls_bin_write_lock().unwrap();
-        carry_staged_welcomes(&held, dir, new_file, key, session_key);
-        crate::concurrency::write_mls_bin_atomically(&dir.join("mls.bin"), new_file).unwrap();
-    }
-
-    /// THE KEY MOVE NEVER LEAVES THE DEVICE BEHIND ITS OWN ACCEPTED COMMIT. A Welcome is staged on
-    /// the file sealed under the PIN-derived key; the move re-seals `mls.bin` under the hardware-held
-    /// key before the server's answer; the answer is an acceptance. The staging was carried in the
-    /// re-seal's own step, so the install lands - under the NEW key, at the add's epoch - and the
-    /// newcomer and this device share it.
-    #[test]
-    fn a_key_move_during_a_staged_welcome_carries_it_and_the_accepted_add_installs() {
-        let _s = crate::concurrency::test_support::serialise();
-        crate::concurrency::mark_foreground_inactive();
-        let (alice, _bob, gid) = joined_pair("carry");
-        let old_key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(51)).unwrap();
-        let new_key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(52)).unwrap();
-        let state = alice.save_encrypted_with_key(&old_key).unwrap();
-        let dir = dir_holding("carry", &state);
-        let mut carol = MlsManager::load_or_create("carry-carol", "dev-c", None).unwrap();
-        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
-        let prepared = prepare_welcome_background_with_key(
-            &dir,
-            &state,
-            &key_b64(51),
-            "carry-alice",
-            "dev-a",
-            &gid,
-            &kp,
-        );
-        assert_eq!(prepared["ok"], true, "prepared: {prepared}");
-
-        // The move: the live manager, unchanged, re-sealed under the new key (a fresh serialisation,
-        // so not the same bytes even before the cipher).
-        let live =
-            MlsManager::load_with_key("carry-alice", "dev-a", Some(state), &old_key).unwrap();
-        let re_sealed = live.save_encrypted_with_key(&new_key).unwrap();
-        foreground_checkpoint(&dir, &re_sealed, &new_key, Some(old_key));
-
-        let installed = install_staged_welcome(&dir, &gid);
-        assert_eq!(installed["ok"], true, "installed: {installed}");
-        let mut back = MlsManager::load_with_key(
-            "carry-alice",
-            "dev-a",
-            Some(std::fs::read(dir.join("mls.bin")).unwrap()),
-            &new_key,
-        )
-        .expect("the installed state is under the NEW key");
-        assert_eq!(back.get_epoch(&gid).unwrap(), 2, "no epoch left behind");
-        let welcome = STANDARD
-            .decode(prepared["welcome"].as_str().unwrap())
-            .unwrap();
-        let tree = STANDARD
-            .decode(prepared["ratchetTree"].as_str().unwrap())
-            .unwrap();
-        carol.process_welcome(&welcome, Some(&tree)).unwrap();
-        let hello = back.send_message(&gid, b"after the move").unwrap();
-        assert_eq!(
-            carol.process_incoming_message(&gid, &hello).unwrap(),
-            Some(b"after the move".to_vec())
-        );
-    }
-
-    /// CONTROL: a foreground that MOVED the state is not carried over - installing would erase its
-    /// move - so the refusal of any lost update stands.
-    #[test]
-    fn a_checkpoint_that_moved_the_state_does_not_carry_the_staging() {
-        let _s = crate::concurrency::test_support::serialise();
-        crate::concurrency::mark_foreground_inactive();
-        let (alice, _bob, gid) = joined_pair("nocarry");
-        let old_key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(53)).unwrap();
-        let new_key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(54)).unwrap();
-        let state = alice.save_encrypted_with_key(&old_key).unwrap();
-        let dir = dir_holding("nocarry", &state);
-        let carol = MlsManager::load_or_create("nocarry-carol", "dev-c", None).unwrap();
-        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
-        let prepared = prepare_welcome_background_with_key(
-            &dir,
-            &state,
-            &key_b64(53),
-            "nocarry-alice",
-            "dev-a",
-            &gid,
-            &kp,
-        );
-        assert_eq!(prepared["ok"], true, "prepared: {prepared}");
-
-        let mut live =
-            MlsManager::load_with_key("nocarry-alice", "dev-a", Some(state), &old_key).unwrap();
-        live.send_message(&gid, b"the foreground moved on").unwrap();
-        let moved = live.save_encrypted_with_key(&new_key).unwrap();
-        foreground_checkpoint(&dir, &moved, &new_key, Some(old_key));
-
-        assert_eq!(
-            install_staged_welcome(&dir, &gid)["reason"],
-            "install-refused"
-        );
-        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), moved);
-    }
-
-    /// A foreground write that lands between the build and the staging refuses the staging, so the
-    /// commit never reaches the server.
+    /// A foreground write that lands between the build and the staging (a checkpoint, a key move's
+    /// re-seal) refuses the staging, so the commit never reaches the server.
     #[test]
     fn a_welcome_is_not_staged_over_a_file_that_moved_while_it_was_built() {
         let _s = crate::concurrency::test_support::serialise();

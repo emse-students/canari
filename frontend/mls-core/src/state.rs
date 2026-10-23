@@ -831,17 +831,6 @@ impl MlsManager {
 
     // --- E. SAVE (CBOR serialization) ---
 
-    /// Whether two serialised states hold the SAME state - compared decoded, because the bytes are
-    /// not deterministic: the storage map is an unordered `HashMap`, so one state re-serialised
-    /// differs byte for byte. What a foreground re-seal under a new key is checked against before a
-    /// background staging built on the old file is carried onto the new one.
-    pub fn same_persisted_state(a: &[u8], b: &[u8]) -> Result<bool, MlsError> {
-        let decode = |bytes: &[u8]| -> Result<PersistedState, MlsError> {
-            from_reader(bytes).map_err(|e| MlsError::Serialization(e.to_string()))
-        };
-        Ok(decode(a)? == decode(b)?)
-    }
-
     pub fn save_state(&self) -> Result<Vec<u8>, MlsError> {
         let mut cache = self.state_snapshot.borrow_mut();
         cache.get_or_build(|| self.serialize_state())

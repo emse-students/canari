@@ -263,27 +263,9 @@ pub(crate) fn background_write_mls_bin_if_unchanged(
     loaded_digest: &[u8; 32],
     data: &[u8],
 ) -> Result<(), String> {
-    let held = hold_mls_bin_write_lock()?;
-    background_write_if_unchanged_held(&held, path, loaded_digest, data)
-}
-
-/// [`mls_bin_write_lock`], taken - for a caller that must do more than one step under it (the staged
-/// Welcome's read, removal and install are one step for a re-seal that carries it).
-pub(crate) fn hold_mls_bin_write_lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
-    mls_bin_write_lock()
+    let _guard = mls_bin_write_lock()
         .lock()
-        .map_err(|_| "mls_bin write lock poisoned".to_string())
-}
-
-/// [`background_write_mls_bin_if_unchanged`] under the lock the caller already holds - the guard is
-/// asked for so nobody calls this without it.
-#[cfg(any(target_os = "android", target_os = "ios", test))]
-pub(crate) fn background_write_if_unchanged_held(
-    _held: &std::sync::MutexGuard<'static, ()>,
-    path: &std::path::Path,
-    loaded_digest: &[u8; 32],
-    data: &[u8],
-) -> Result<(), String> {
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
     if foreground_is_active() {
         return Err("foreground active - background mls.bin write abandoned (C1/FCM3)".to_string());
     }
@@ -314,34 +296,9 @@ pub(crate) fn write_mls_state_blob(app: &tauri::AppHandle, data: &[u8]) -> Resul
     // A foreground write proves the foreground is alive: refresh the guard so background engines
     // refrain from writing in parallel (C1/FCM3). Global lock held briefly around the atomic write.
     mark_foreground_active();
-    let _guard = hold_mls_bin_write_lock()?;
-    write_mls_bin_atomically(&data_dir.join("mls.bin"), data)
-}
-
-/// [`write_mls_state_blob`] for the checkpoint of the live manager - the write a device key change
-/// (the move to the hardware-held key, a PIN change) re-seals `mls.bin` with - and it CARRIES a
-/// background Welcome staged on the file it replaces, in the same step under the same lock.
-///
-/// A staged Welcome is installed only over the very bytes it was built from, once the server has
-/// accepted its commit (`mobile/background.rs`). A re-seal changes every byte, so without this the
-/// install was refused and the device left one epoch behind its own accepted commit. The staging is
-/// carried only when the new file holds the SAME state as the old one (`same_persisted_state`): a
-/// foreground that moved the state on keeps the refusal, since installing would erase that move.
-/// `session_key` is the key the session was opened with, the old key of a change.
-pub(crate) fn write_checkpoint_carrying_staged(
-    app: &tauri::AppHandle,
-    data: &[u8],
-    key: &[u8; 32],
-    session_key: Option<[u8; 32]>,
-) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    mark_foreground_active();
-    let held = hold_mls_bin_write_lock()?;
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    crate::mobile::background::carry_staged_welcomes(&held, &data_dir, data, key, session_key);
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    let _ = (&held, key, session_key);
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
     write_mls_bin_atomically(&data_dir.join("mls.bin"), data)
 }
 

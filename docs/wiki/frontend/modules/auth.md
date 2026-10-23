@@ -564,16 +564,14 @@ under the install's own cache key, not the device key, so a re-key does not touc
 
 **A background Welcome staged across a key change** (2026-10-23). The sender-side background Welcome
 stages its post-add state, bound to the bytes of the `mls.bin` it was built on, and installs it only
-once the server accepted the commit. A re-seal changes every byte, so the install was refused and the
-device left one epoch behind its own accepted commit. Settling first is not possible - only the native
-task holding the server's answer knows it - so the checkpoint CARRIES the staging in its own step,
-under the `mls.bin` write lock (`write_checkpoint_carrying_staged`, `carry_staged_welcomes`): a staged
-file bound to the file being replaced is re-sealed under the new key and bound to the new bytes, but
-only when the new file holds the SAME state (`same_persisted_state`, compared decoded since the CBOR
-map order is not deterministic). A foreground that moved the state keeps the refusal, since installing
-would erase its move. The staging itself, the install and the discard read and write the staged file
-under the same lock, and a Welcome is staged only while `mls.bin` is still the file it was built on,
-so its commit never reaches the server otherwise.
+once the server accepted the commit, and never while the foreground is active (an install under a live
+foreground would be overwritten by its in-memory manager). A key move or a PIN change is a foreground
+checkpoint, so during a pending background Welcome it behaves as any foreground open does: the
+accepted add is not installed by the background, and the foreground recovers it. Handing an accepted
+background Welcome to the foreground is a separate change. What this branch adds: a Welcome is staged
+only while `mls.bin` is still the file it was built on, checked under the `mls.bin` write lock
+(`stage_over_loaded_state`), so a foreground write that landed while it was built refuses the staging
+before its commit reaches the server.
 
 **A key that could not be read is not a key that is lost.** `hardware_key_unavailable` ("the messages
 on this phone are lost", reset offered) is thrown only for `absent` and `mismatch`; an unreadable
