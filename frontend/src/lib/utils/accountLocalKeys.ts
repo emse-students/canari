@@ -49,6 +49,12 @@ export const ACCOUNT_KEY = {
    */
   historyHeldNothing: (userId: string) => `canari_graine_history_held_nothing:v1:${userId}`,
   /**
+   * `graine/admissionGate.ts`: what this device recorded by itself about who is admitted - per
+   * community the roots and the admissions it verified. Other members' ids, written by this
+   * account's device.
+   */
+  admissionLedger: (userId: string) => `canari_graine_admission_ledger:v1:${userId}`,
+  /**
    * `salonUnsent.ts`: the PLAINTEXT of salon messages not yet sent (lower-cased, as it always was) -
    * the one key here whose content alone makes leaving it behind a leak.
    */
@@ -62,6 +68,11 @@ export const ACCOUNT_KEY = {
    * offered for Retry - message and group ids, an emoji and instants, never a message's text.
    */
   controlRefusals: (userId: string) => `canari_control_refusals:v1:${userId}`,
+  /**
+   * `deviceNotices.svelte.ts`: the "new device on your account" alerts not yet seen, and the keys
+   * already announced (`userId:deviceId|fingerprint`) - device ids and key fingerprints, no secret.
+   */
+  deviceNotices: (userId: string) => `canari_device_notices:v1:${userId}`,
   /**
    * `feedStoreEpoch.ts`: the account's stored-feed epoch. Called with `''` it is the prefix a
    * sign-out enumerates to end EVERY account's epoch.
@@ -148,10 +159,12 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.archivedConversations(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
+    ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.salonUnsent(userId),
     ACCOUNT_KEY.salonReadMarks(userId),
     ACCOUNT_KEY.dmReadMarks(userId),
     ACCOUNT_KEY.controlRefusals(userId),
+    ACCOUNT_KEY.deviceNotices(userId),
     ACCOUNT_KEY.feedStoreEpoch(userId),
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),

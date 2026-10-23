@@ -654,6 +654,88 @@ fn a_resync_or_the_removal_of_one_device_among_several_records_no_departure() {
     );
 }
 
+/// What a notice is built from (user decision 2026-10-22): a device NEW to a user who was ALREADY in
+/// the conversation is "X added a device"; a user joining with their devices is not - that is the
+/// member-added line, and announcing each of their devices would turn every new conversation into
+/// a list of somebody's phones.
+#[test]
+fn a_device_joining_its_users_conversation_is_announced_and_a_new_member_is_not() {
+    let gid = "g-notice-1";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    let mut bob2 = device("bob", "dev2");
+    alice.create_group(gid.into()).expect("create");
+
+    // bob joins the conversation: a new member, not a new device of a member.
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    let joined = alice.take_device_events();
+    assert_eq!(joined.len(), 1, "{joined:?}");
+    assert!(!joined[0].member_already_present, "{joined:?}");
+    assert!(!joined[0].announces_new_device(), "{joined:?}");
+    bob.take_device_events();
+
+    // bob adds his second device: alice merges it and announces it, and so does bob's first device.
+    let kp2 = bob2.generate_key_package().unwrap();
+    let commit = add_and_join(&mut bob, &mut bob2, gid, &kp2, "bob:dev2");
+    assert_eq!(alice.process_incoming_message(gid, &commit).unwrap(), None);
+    let events = alice.take_device_events();
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].identity, "bob:dev2");
+    assert!(events[0].member_already_present);
+    assert!(events[0].announces_new_device());
+    assert!(
+        !events[0].is_owner_alert("alice", "dev1"),
+        "a contact's device"
+    );
+    let own = bob.take_device_events();
+    assert_eq!(own.len(), 1, "{own:?}");
+    assert!(
+        own[0].is_owner_alert("BOB", "dev1"),
+        "bob's own account, any case"
+    );
+    assert!(
+        !own[0].is_owner_alert("bob", "dev2"),
+        "the added device never alerts itself about itself"
+    );
+    assert_eq!(
+        own[0].notice_key(),
+        Some(format!("bob:dev2|{}", own[0].key_fingerprint))
+    );
+}
+
+/// A device re-added under the key it was pinned with through the bulk replace path is not a new
+/// device either, and no notice can be built from it.
+#[test]
+fn a_re_add_under_the_pinned_key_is_not_announced() {
+    let gid = "g-notice-2";
+    let mut alice = device("alice", "dev1");
+    let mut carol = device("carol", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = carol.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut carol, gid, &kp, "carol:dev1");
+    let kp = bob.generate_key_package().unwrap();
+    let c = add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    carol.process_incoming_message(gid, &c).unwrap();
+    let r = remove(&mut alice, gid, "bob:dev1");
+    carol.process_incoming_message(gid, &r).unwrap();
+    carol.take_device_events();
+
+    let same = bob.generate_key_package().unwrap();
+    let ((readd, _w, added, _s), _b) = alice
+        .add_members_bulk_with_base(gid, &[&same], &["bob:dev1"])
+        .unwrap();
+    assert_eq!(added, vec![0]);
+    alice.merge_pending_commit_for(gid).unwrap();
+    carol.process_incoming_message(gid, &readd).unwrap();
+    let events = carol.take_device_events();
+    assert!(
+        events.is_empty(),
+        "a re-add under the pinned key announces nothing: {events:?}"
+    );
+}
+
 /// THE REPAIR IS ONE COMMIT: a device asking to be re-added while its leaf is still in the tree is
 /// removed and added back by a single commit, so no epoch has the user out of the tree and no
 /// departure is recorded - neither by the committer, nor live by a member, nor by one catching up.

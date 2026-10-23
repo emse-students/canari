@@ -66,8 +66,12 @@ describe('every static route resolves a title of its own', () => {
 });
 
 describe('nothing but SeoHead writes a document title', () => {
+  // Read at collection time, not inside the test: a body is charged against vitest's 5 s timeout,
+  // and under the full suite a walk of every `.svelte` file took seconds on its own.
+  const markup = allMarkup(join(ROOT, 'src'));
+
   it('no page or component renders its own <title>', () => {
-    const offenders = allMarkup(join(ROOT, 'src'))
+    const offenders = markup
       .filter(({ file }) => file !== join('lib', 'components', 'seo', 'SeoHead.svelte'))
       .filter(({ body }) => /<title[\s>]/.test(body))
       .map(({ file }) => file);
