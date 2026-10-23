@@ -64,6 +64,15 @@ const OIDC_RETURN_KEY = 'canari_oidc_return';
  * with the state, for the reason {@link setOidcEntry} gives.
  */
 const OIDC_VERIFIER_KEY = 'canari_oidc_verifier';
+/**
+ * Says that the sign-in under way sent a challenge, stored WITH the state (`localStorage` on the web,
+ * the store file in an app) and holding no secret. It exists because the web keeps the state and the
+ * verifier in two storages: a callback that lands in another browsing context - a link reopened in a
+ * new tab, an installed PWA handing off to the browser - finds the state and not the verifier. Without
+ * this marker that callback would post a challenged code with no verifier and get a bare refusal;
+ * with it, the client knows before posting that the proof is gone (see {@link OidcSignInError}).
+ */
+const OIDC_CHALLENGED_KEY = 'canari_oidc_challenged';
 /** MiConnect's id_token for the session this device signed in with - see {@link leaveSignedOut}. */
 const OIDC_ID_TOKEN_KEY = 'canari_oidc_id_token';
 const OIDC_STORE_FILE = 'oidc-state.json';
@@ -454,10 +463,12 @@ export async function startOidcLogin(
   const pkce = getAppVersionCheck()?.oidcPkce === true ? await createPkcePair() : null;
   if (pkce) {
     await setOidcEntry(OIDC_VERIFIER_KEY, pkce.verifier, sessionStorage);
+    await setOidcEntry(OIDC_CHALLENGED_KEY, 'S256');
   } else {
     // A verifier left by a sign-in that never came back must not ride this unchallenged code:
-    // MiConnect refuses a verifier sent for a code issued without a challenge.
+    // MiConnect refuses a verifier sent for a code issued without a challenge. Its marker goes too.
     await removeOidcEntry(OIDC_VERIFIER_KEY, sessionStorage);
+    await removeOidcEntry(OIDC_CHALLENGED_KEY);
   }
 
   const redirectUri = oidcRedirectUri();
@@ -501,8 +512,27 @@ export async function startOidcLogin(
 }
 
 /**
+ * Why a MiConnect sign-in failed, when the reason is one the user can act on by starting again.
+ * - `verifier-lost`: the code came back to a browsing context that does not hold the PKCE verifier
+ *   of the request that produced it (a new tab, a PWA handing off), so it was never posted.
+ * - `code-refused`: core-service answered `OIDC_PKCE_REFUSED` or `OIDC_CODE_REFUSED` - MiConnect
+ *   would not redeem the code (spent, expired, or a verifier that does not match).
+ * The message is already localized; the callback page renders it on `instanceof`, never on its text.
+ */
+export type OidcSignInFailure = 'verifier-lost' | 'code-refused';
+
+/** A sign-in failure classified where it is known - see {@link OidcSignInFailure}. */
+export class OidcSignInError extends Error {
+  constructor(readonly failure: OidcSignInFailure) {
+    super(failure === 'verifier-lost' ? m.auth_oidc_verifier_lost() : m.auth_oidc_code_refused());
+    this.name = 'OidcSignInError';
+  }
+}
+
+/**
  * Exchange the authorization code received from Authentik for internal tokens.
- * Called from the `/auth/callback` page.
+ * Called from the `/auth/callback` page. Throws {@link OidcSignInError} for a failure the user
+ * resolves by signing in again from the start.
  */
 export async function handleOidcCallback(
   code: string,
@@ -574,9 +604,19 @@ async function handleOidcCallbackUnderway(
   // Read once and spent: a code can be redeemed once, and so can the proof that goes with it. None is
   // held when the sign-in sent no challenge (a server without `oidcPkce`, or a build before PKCE), and
   // then its code carries no challenge either.
+  const challenged = (await getOidcEntry(OIDC_CHALLENGED_KEY)) !== null;
   const codeVerifier = await getOidcEntry(OIDC_VERIFIER_KEY, sessionStorage);
+  await removeOidcEntry(OIDC_CHALLENGED_KEY);
   await removeOidcEntry(OIDC_VERIFIER_KEY, sessionStorage);
-  alog(`callback pkce=${codeVerifier ? 'verifier' : 'none'}`);
+  alog(
+    `callback pkce=${codeVerifier ? 'verifier' : 'none'} challenged=${challenged ? 'yes' : 'no'}`
+  );
+  if (challenged && !codeVerifier) {
+    // The code was issued against a challenge and the verifier stayed in the browsing context that
+    // started the sign-in. MiConnect would refuse it whatever core-service does, so it is not posted.
+    console.warn('[auth] OIDC callback in a context without the PKCE verifier - not redeemed');
+    throw new OidcSignInError('verifier-lost');
+  }
 
   const redirectUri = oidcRedirectUri();
   console.debug('[auth] redirectUri:', redirectUri, 'coreUrl:', coreUrl());
@@ -597,6 +637,7 @@ async function handleOidcCallbackUnderway(
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     let message = text || `Authentication failed (${res.status})`;
+    let refusal: OidcSignInError | null = null;
     try {
       const parsed = JSON.parse(text) as {
         message?: string | { message?: string; code?: string };
@@ -617,12 +658,17 @@ async function handleOidcCallbackUnderway(
         // A permanent failure the server could not fix by retrying: only a human finishes it.
         console.warn('[auth] sign-in refused: account erasure blocked');
         message = m.auth_account_erasure_blocked();
+      } else if (code === 'OIDC_PKCE_REFUSED' || code === 'OIDC_CODE_REFUSED') {
+        // MiConnect would not redeem this code: spent, expired, or its verifier did not match.
+        console.warn(`[auth] sign-in refused by MiConnect: ${code}`);
+        refusal = new OidcSignInError('code-refused');
       } else if (nested) {
         message = nested;
       }
     } catch {
-      /* keep raw text */
+      console.debug(`[auth] OIDC callback refusal is not JSON (${res.status}), raw text kept`);
     }
+    if (refusal) throw refusal;
     throw new Error(message);
   }
 

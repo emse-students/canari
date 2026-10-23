@@ -2521,6 +2521,8 @@
   "auth_callback_missing_params": "Missing parameters in Authentik redirect.",
   "auth_callback_error_title": "Login failed",
   "auth_callback_exchange_failed": "The sign-in could not be completed.",
+  "auth_oidc_verifier_lost": "The sign-in came back to a different tab or window than the one that started it. Start it again from this page.",
+  "auth_oidc_code_refused": "MiConnect did not accept this sign-in (the link expired or was already used). Start it again from the beginning.",
   "auth_callback_retry": "Try again",
   "profile_loading": "Loading profile…",
   "profile_photo_change_label": "Change profile photo",

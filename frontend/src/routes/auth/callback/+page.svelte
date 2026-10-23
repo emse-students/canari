@@ -3,7 +3,7 @@
   import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { handleOidcCallback, getOidcReturnTo } from '$lib/stores/auth';
+  import { handleOidcCallback, getOidcReturnTo, OidcSignInError } from '$lib/stores/auth';
   import { m } from '$lib/paraglide/messages';
 
   let error = $state('');
@@ -47,7 +47,7 @@
       console.debug('[callback] goto resolved');
     } catch (e: unknown) {
       console.error('[callback] error:', e);
-      error = m.auth_callback_exchange_failed();
+      error = e instanceof OidcSignInError ? e.message : m.auth_callback_exchange_failed();
     }
   });
 </script>

@@ -46,6 +46,21 @@ that secret. What authentik refuses is measured by `infrastructure/authentik/tes
   in one tab, and the secret dies with it rather than staying readable by every tab of the origin. In
   the apps, the `oidc-state.json` plugin store, with the state, because the WebView's navigation can
   clear web storage. It is read once and removed by the callback.
+- **A callback in another browsing context fails on the client, by name.** On the web the state is in
+  `localStorage` and the verifier in `sessionStorage`, so a callback that lands in a context other
+  than the one that started the sign-in (a link reopened in a new tab, an installed PWA handing off
+  to the browser, a closed tab) passes the state check and finds no verifier. Posting that challenged
+  code would only buy MiConnect's refusal, where sign-in used to work. So `startOidcLogin` also writes
+  `canari_oidc_challenged` WITH the state (it holds no secret), and a callback that finds the mark
+  and no verifier throws `OidcSignInError('verifier-lost')` without posting; the callback page shows
+  its localized message (`auth_oidc_verifier_lost`) on `instanceof`. core-service's typed refusals
+  `OIDC_PKCE_REFUSED` / `OIDC_CODE_REFUSED` become `OidcSignInError('code-refused')` the same way.
+  **Rejected: both in `localStorage`.** That would make the cross-context callback succeed, but it
+  leaves a bearer secret readable by every tab of the origin and by anything that reads persisted
+  storage, for as long as an abandoned sign-in leaves it there - exactly what the verifier must not
+  be. Both in `sessionStorage` is rejected too: the state would then be lost in the same contexts,
+  failing with a CSRF-shaped error rather than a named one. The cost accepted: a sign-in started in
+  one context and finished in another must be started again, and it says so.
 - **What it does not close.** PKCE binds a code to a verifier, not to an app: on a phone the redirect
   is the `fr.emse.canari://callback` custom scheme, which the OS does not verify. That is the next
   step, an `https` callback on a claimed host (in the backlog).

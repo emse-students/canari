@@ -46,9 +46,11 @@ vi.mock('@tauri-apps/api/core', () => ({
 vi.stubEnv('VITE_AUTHENTIK_URL', 'https://auth.example');
 vi.stubEnv('VITE_AUTHENTIK_CLIENT_ID', 'client');
 
-const { startOidcLogin, handleOidcCallback } = await import('$lib/stores/auth');
+const { startOidcLogin, handleOidcCallback, OidcSignInError } = await import('$lib/stores/auth');
+type OidcSignInError = InstanceType<typeof OidcSignInError>;
 
 const VERIFIER_KEY = 'canari_oidc_verifier';
+const CHALLENGED_KEY = 'canari_oidc_challenged';
 
 /** The authorize URL the last sign-in opened in the in-app browser. */
 function openedAuthorizeUrl(): URL {
@@ -127,6 +129,71 @@ describe('PKCE on the MiConnect sign-in', () => {
     const body = await callbackBody(url.searchParams.get('state')!);
     expect(body).not.toHaveProperty('code_verifier');
   });
+
+  it('marks a challenged sign-in beside its state, and spends the mark with the code', async () => {
+    await startOidcLogin('/chat');
+    expect(localStorage.getItem(CHALLENGED_KEY)).toBe('S256');
+    await callbackBody(openedAuthorizeUrl().searchParams.get('state')!);
+    expect(localStorage.getItem(CHALLENGED_KEY)).toBeNull();
+    expect(sessionStorage.getItem(VERIFIER_KEY)).toBeNull();
+  });
+
+  it('does not post a challenged code that came back to a context without its verifier', async () => {
+    await startOidcLogin('/chat');
+    const state = openedAuthorizeUrl().searchParams.get('state')!;
+    // A new tab or a PWA handing off: localStorage (state + mark) is shared, sessionStorage is not.
+    sessionStorage.clear();
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) => new Response('{}', { status: 200 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const err = await handleOidcCallback('code', state).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OidcSignInError);
+    expect((err as OidcSignInError).failure).toBe('verifier-lost');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/oidc/callback'))).toBe(
+      false
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('without the PKCE verifier'));
+    expect(localStorage.getItem(CHALLENGED_KEY)).toBeNull();
+    warn.mockRestore();
+  });
+
+  it('still posts an unchallenged code from any context, and clears a stale mark', async () => {
+    env.oidcPkce = false;
+    localStorage.setItem(CHALLENGED_KEY, 'S256');
+    await startOidcLogin('/chat');
+    expect(localStorage.getItem(CHALLENGED_KEY)).toBeNull();
+    const state = openedAuthorizeUrl().searchParams.get('state')!;
+    sessionStorage.clear();
+    const body = await callbackBody(state);
+    expect(body).not.toHaveProperty('code_verifier');
+  });
+
+  it.each(['OIDC_PKCE_REFUSED', 'OIDC_CODE_REFUSED'])(
+    'turns the typed refusal %s into a localized sign-in error, not the server text',
+    async (code) => {
+      await startOidcLogin('/chat');
+      const state = openedAuthorizeUrl().searchParams.get('state')!;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({ statusCode: 401, code, message: 'MiConnect refused the code' }),
+              { status: 401 }
+            )
+        )
+      );
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const err = await handleOidcCallback('code', state).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(OidcSignInError);
+      expect((err as OidcSignInError).failure).toBe('code-refused');
+      expect((err as Error).message).not.toContain('MiConnect refused the code');
+      warn.mockRestore();
+    }
+  );
 
   it('spends the verifier with the code: a second callback has none to send', async () => {
     await startOidcLogin('/chat');
