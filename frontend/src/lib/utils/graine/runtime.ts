@@ -119,18 +119,29 @@ export function registerCommunityHistoryVisibility(
 /** Steps deferred until a community's history rule is known - see {@link whenHistoryRuleKnown}. */
 const historyRuleWaiters = new Map<string, (() => void)[]>();
 
+/** How many steps may wait for a history rule at once, across communities. */
+export const MAX_HISTORY_RULE_WAITERS = 256;
+
 /**
  * Runs `resume` once the server has stated `workspaceId`'s history rule
  * ({@link registerCommunityHistoryVisibility}) - for a step that may neither guess the rule nor
- * read the fail-closed default as a floor: a seed bundle that arrived before the community listing.
+ * read the fail-closed default as a floor: a seed bundle that arrived before the community listing,
+ * or a seed ask this device cannot answer yet (`parkedAsks.ts`).
  *
  * Event-driven, never a clock. Dropped with the session, or with the community leaving this device,
- * said out loud: what waited is then asked for again by the next start's history ask.
+ * said out loud: what waited is then asked for again by the next start's history ask. Bounded by
+ * {@link MAX_HISTORY_RULE_WAITERS}, since nothing but the rule drains it.
+ *
+ * @returns false when the bound is reached: `resume` will never run, and the caller says so.
  */
-export function whenHistoryRuleKnown(workspaceId: string, resume: () => void): void {
+export function whenHistoryRuleKnown(workspaceId: string, resume: () => void): boolean {
+  let waitingNow = 0;
+  for (const steps of historyRuleWaiters.values()) waitingNow += steps.length;
+  if (waitingNow >= MAX_HISTORY_RULE_WAITERS) return false;
   const waiting = historyRuleWaiters.get(workspaceId) ?? [];
   waiting.push(resume);
   historyRuleWaiters.set(workspaceId, waiting);
+  return true;
 }
 
 /** Drops the deferred steps of `workspaceId` (all communities with `null`), saying how many. */

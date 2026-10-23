@@ -21,7 +21,7 @@ import {
 import { sameScope, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import { applyHistoryFloors, historyFloorsFor } from './historyBoundary';
 import { pastPolicyFor } from './admissionGate';
-import { parkAsk } from './parkedAsks';
+import { parkAsk, parkAskUntilRuleKnown } from './parkedAsks';
 import { mirrorGraineSeed } from './graineMirror';
 import {
   forgetAskedSession,
@@ -521,9 +521,16 @@ async function answerSeedRequest(
     parkAsk(frame, request, answerSeedRequest);
     return;
   }
-  // A refusal (`null`: this session has not learned the community's history rule yet, or the
-  // asker's floor could not be placed) is the only case answered by silence - nothing may be handed
-  // over without it, and the requester asks again on its next start. Everything else answers,
+  // Nor is an unknown history rule: this session's listing has not stated it yet, and a floor drawn
+  // under a guess would cost a `shared` past for good - so the ask waits for the rule, parked the
+  // same way, and is decided again when the listing states it.
+  if (gathered === RULE_UNKNOWN) {
+    parkAskUntilRuleKnown(frame, request, answerSeedRequest);
+    return;
+  }
+  // A refusal (`null`: the asker's floor could not be placed) is the only case answered by silence
+  // - nothing may be handed over without it, and the requester asks again on its next start.
+  // Everything else answers,
   // INCLUDING an empty hand - "I hold none of these" is the fact
   // that sends the requester to the next member, and withholding it strands the session for good.
   if (!gathered) return;
@@ -586,6 +593,16 @@ async function answerSeedRequest(
 /** A gather the admission gate cannot decide until the key group drains - the ask is parked. */
 const UNOBSERVED = Symbol('unobserved');
 
+/** A gather that waits for this session to learn the community's history rule - parked too. */
+const RULE_UNKNOWN = Symbol('rule-unknown');
+
+/** A gather this device cannot decide yet - each one names the event the ask is parked for. */
+type Undecided = typeof UNOBSERVED | typeof RULE_UNKNOWN;
+
+function isUndecided(value: unknown): value is Undecided {
+  return value === UNOBSERVED || value === RULE_UNKNOWN;
+}
+
 /** Seeds ready to travel, what was asked for and not held, and whether more were held than fits. */
 interface GatheredSeeds {
   seeds: canari.GraineMsg.$Properties[];
@@ -618,14 +635,14 @@ interface GatheredSeeds {
  * first. Silence on those ids is the honest shape - the requester already knows the rule.
  *
  * @returns `null` when nothing may be handed over at all, which the caller answers with silence;
- *   {@link UNOBSERVED} when the gate waits for the key group to drain.
+ *   {@link UNOBSERVED} or {@link RULE_UNKNOWN} when the ask waits for an event (parked).
  */
 async function gatherNamedSessions(
   frame: DistributionFrame,
   request: canari.GraineRequestMsg.$Properties,
   storage: IStorage,
   deviceKeyB64: string
-): Promise<GatheredSeeds | null | typeof UNOBSERVED> {
+): Promise<GatheredSeeds | null | Undecided> {
   const wanted = (request.sessionIds ?? []).map(String).filter(Boolean);
   const truncated = wanted.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS;
 
@@ -645,8 +662,11 @@ async function gatherNamedSessions(
     // which is either a roster that moved under the requester or a seed lost on this side. The list
     // also TRAVELS, in the bundle, so the requester can elect somebody else instead of waiting on an
     // answer that is never coming.
+    // "Holding" counts only what this key group may read: a held seed of another roster is not one
+    // this answer can carry, and counting it would read as a seed lost on the way.
+    const holding = found.filter((s) => seedOutsideScope(s.channelId, frame.scope) === null).length;
     console.warn(
-      `[GRAINE] asked for ${wanted.length} seed(s) by ${frame.sender}, holding ${found.length} - missing ${missing.join(', ')}`
+      `[GRAINE] asked for ${wanted.length} seed(s) by ${frame.sender}, holding ${holding} this key group may read - missing ${missing.join(', ')}`
     );
   }
 
@@ -654,7 +674,7 @@ async function gatherNamedSessions(
   // one is: every honest member filters the same way, so "missing" would send the requester round
   // the whole roster.
   const share = await seedsTheAskerMayRead(frame, found, 'the seed(s) they asked for');
-  if (share === null || share === UNOBSERVED) return share;
+  if (share === null || isUndecided(share)) return share;
   return { seeds: share.seeds, missing, truncated };
 }
 
@@ -690,10 +710,10 @@ interface AskersShare {
  *    "I hold none of these" depends neither on the rule nor on the asker;
  * 2. **the cap** (`cap`, history only), on what this key group may read;
  * 3. **the community's rule, as this SESSION learned it** (`knownHistoryVisibility`). Not learned
- *    yet: SILENCE (`null`), never a floor. The fail-closed `joined` of `historyVisibilityFor` is a
- *    precaution where a seed would otherwise leave unfloored; here it would be a loss - a `shared`
- *    community's newcomer handed the floored past records the ask answered and never asks again.
- *    Silence is re-asked at the requester's next start;
+ *    yet: {@link RULE_UNKNOWN} - the caller PARKS the ask until the listing states the rule
+ *    (`parkAskUntilRuleKnown`), never a floor. The fail-closed `joined` of `historyVisibilityFor` is
+ *    a precaution where a seed would otherwise leave unfloored; here it would be a loss - a `shared`
+ *    community's newcomer handed the floored past records the ask answered and never asks again;
  * 4. **THE GATE** (`pastPolicyFor`, channel-encryption section 25): `shared` only for an admission
  *    this device can verify; `joined` when the community is set to it, or the admission is not
  *    proven; `unverifiable` when it cannot be checked (floored as `joined`, but `durable: false`, so
@@ -710,18 +730,24 @@ interface AskersShare {
  * rule or is not applying it; on a history bundle it is the ordinary pre-arrival past.
  *
  * @param cap At most this many in-scope sessions are considered (the history bundle's bound).
- * @returns `null` when the rule is unknown or the floors cannot be established - said here, and
- *   answered by the caller with silence; {@link UNOBSERVED} when the gate waits for the drain.
+ * @returns `null` when the floors cannot be established - said here, and answered by the caller
+ *   with silence; {@link UNOBSERVED} or {@link RULE_UNKNOWN} when the ask must wait for an event.
  */
 async function seedsTheAskerMayRead(
   frame: DistributionFrame,
   found: StoredGraineSession[],
   what: string,
   cap = Number.POSITIVE_INFINITY
-): Promise<AskersShare | null | typeof UNOBSERVED> {
+): Promise<AskersShare | null | Undecided> {
   const inScope = withinFrameScope(frame, found);
   const outOfScope = found.length - inScope.length;
-  const held = inScope.slice(0, cap);
+  // NEWEST FIRST, then the cap: the store's read has no order, and a cap on an arbitrary slice could
+  // keep only sessions that predate a `joined` asker's arrival - an empty, truncated answer, the same
+  // at every ask. The newest sessions are the ones a recent arrival may read.
+  const held =
+    inScope.length > cap
+      ? [...inScope].sort((a, b) => b.createdAt - a.createdAt).slice(0, cap)
+      : inScope;
   if (held.length === 0) {
     return { seeds: [], inScope: inScope.length, outOfScope, policy: null, durable: true };
   }
@@ -731,7 +757,7 @@ async function seedsTheAskerMayRead(
       `[GRAINE] not answering ${frame.sender} ${what} in community ${frame.workspaceId.slice(0, 8)} yet: ` +
         `this session has not learned its history rule, and a floor drawn without it could cost a past for good`
     );
-    return null;
+    return RULE_UNKNOWN;
   }
 
   const decision = await pastPolicyFor(frame);
@@ -800,7 +826,7 @@ async function gatherCommunityHistory(
   frame: DistributionFrame,
   storage: IStorage,
   deviceKeyB64: string
-): Promise<GatheredSeeds | null | typeof UNOBSERVED> {
+): Promise<GatheredSeeds | null | Undecided> {
   // The store answers per COMMUNITY, private salons included; the answer goes back on the key group
   // the request arrived on, so it carries only that group's salons (`seedsTheAskerMayRead`).
   const held = await storage.getGraineSessionsForWorkspace(frame.workspaceId, deviceKeyB64);
@@ -810,7 +836,7 @@ async function gatherCommunityHistory(
     'the history they asked for',
     GRAINE_HISTORY_BUNDLE_MAX_SEEDS
   );
-  if (share === null || share === UNOBSERVED) return share;
+  if (share === null || isUndecided(share)) return share;
   const { seeds, inScope, outOfScope, policy, durable } = share;
   const truncated = inScope > GRAINE_HISTORY_BUNDLE_MAX_SEEDS;
   console.info(
@@ -966,17 +992,26 @@ async function absorbSeedBundle(
   const carried = (bundle.seeds ?? []).map(seedFromWire);
   const rule = knownHistoryVisibility(frame.workspaceId);
   if (rule === null && carried.length > 0) {
-    console.info(
-      `[GRAINE] holding a bundle of ${carried.length} seed(s) from ${frame.sender} in community ` +
-        `${frame.workspaceId.slice(0, 8)} until its history rule is known`
-    );
-    whenHistoryRuleKnown(frame.workspaceId, () => {
+    const waits = whenHistoryRuleKnown(frame.workspaceId, () => {
       absorbSeedBundle(frame, bundle).catch((e: unknown) => {
         console.warn(
           `[GRAINE] the bundle from ${frame.sender} held for community ${frame.workspaceId.slice(0, 8)}'s history rule failed: ${String(e)}`
         );
       });
     });
+    if (waits) {
+      console.info(
+        `[GRAINE] holding a bundle of ${carried.length} seed(s) from ${frame.sender} in community ` +
+          `${frame.workspaceId.slice(0, 8)} until its history rule is known`
+      );
+    } else {
+      // Its seeds are not lost to the community: each row they open asks its own session by the
+      // repair path once the rule is known.
+      console.warn(
+        `[GRAINE] DROPPED a bundle of ${carried.length} seed(s) from ${frame.sender} in community ` +
+          `${frame.workspaceId.slice(0, 8)}: too many steps already wait for a history rule`
+      );
+    }
     return;
   }
   const repaired = new Set<string>();

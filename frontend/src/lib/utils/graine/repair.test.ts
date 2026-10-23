@@ -361,6 +361,30 @@ describe('requestCommunityHistory when the community past widens (joined -> shar
     expect(historyAsks().map((r) => r.answererUserId)).toEqual(['bob', 'carol']);
   });
 
+  it('asks again on a LIVE widening after every member said "nothing for you" at this epoch', async () => {
+    // No restart: the broadcast (`handleWorkspaceUpdated` -> `requestCommunityHistory`) arrives in
+    // the same session, at the same distribution epoch, as the final "nothing" reached under the
+    // floor. The in-memory "nobody could answer at this epoch" must not swallow the widened ask.
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    await requestCommunityHistory('ws-1');
+    noteHistoryHeldNothing('ws-1', 'bob', String(historyAsks()[0].requestId), 'web-bob');
+    await settle();
+    noteHistoryHeldNothing('ws-1', 'carol', String(historyAsks()[1].requestId), 'web-carol');
+    await settle();
+    expect(historyHeldNothingFinalAt('alice', 'ws-1', { groupId: 'dist-group', epoch: 7 })).toBe(
+      true
+    );
+
+    // What the broadcast does: the rule is adopted, then the seed layer is asked.
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await requestCommunityHistory('ws-1');
+
+    expect(historyAsks()).toHaveLength(3);
+    expect(info.mock.calls.flat().join(' ')).toContain('reason visibility-widened');
+    info.mockRestore();
+  });
+
   it('records no closed past from a rule the server never stated', async () => {
     heldSessions = held;
     // `ws-2`'s rule was never learned in this session: the seed layer reads `joined` for safety,

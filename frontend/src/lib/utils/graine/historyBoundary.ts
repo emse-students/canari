@@ -66,6 +66,9 @@ function channels(): ChannelService {
  */
 export const HISTORY_FLOOR_QUERY_MAX_SESSIONS = 100;
 
+/** How many floor queries one answer keeps in flight at once (see {@link historyFloorsFor}). */
+export const HISTORY_FLOOR_QUERY_CONCURRENCY = 4;
+
 /**
  * Where each held session becomes readable for `forUserId` - the floors their seeds must travel at.
  *
@@ -88,20 +91,42 @@ export async function historyFloorsFor(
 ): Promise<Map<string, number>> {
   const byChannel = new Map<string, string[]>();
   for (const session of held) {
-    byChannel.set(session.channelId, [
-      ...(byChannel.get(session.channelId) ?? []),
-      session.sessionId,
-    ]);
+    const ids = byChannel.get(session.channelId);
+    if (ids) ids.push(session.sessionId);
+    else byChannel.set(session.channelId, [session.sessionId]);
   }
 
-  const floors = new Map<string, number>();
+  const queries: { channelId: string; slice: string[] }[] = [];
   for (const [channelId, sessionIds] of byChannel) {
     for (let at = 0; at < sessionIds.length; at += HISTORY_FLOOR_QUERY_MAX_SESSIONS) {
-      const slice = sessionIds.slice(at, at + HISTORY_FLOOR_QUERY_MAX_SESSIONS);
+      queries.push({
+        channelId,
+        slice: sessionIds.slice(at, at + HISTORY_FLOOR_QUERY_MAX_SESSIONS),
+      });
+    }
+  }
+  if (queries.length > 1) {
+    console.debug(
+      `[GRAINE] placing ${held.length} history floor(s) for ${forUserId} in ${queries.length} queries, ` +
+        `${HISTORY_FLOOR_QUERY_CONCURRENCY} at a time`
+    );
+  }
+
+  // A FEW AT A TIME, NOT ONE AFTER ANOTHER: a capped history bundle can name 8000 sessions, which
+  // is 80 queries - sequential, that held the answer for 80 round trips. Bounded so one answer does
+  // not open 80 requests at once. Any refusal fails the whole (fail-closed, the caller says so).
+  const floors = new Map<string, number>();
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < queries.length) {
+      const { channelId, slice } = queries[next++];
       const answer = await channels().graineHistoryFloor(channelId, forUserId, slice);
       for (const [sessionId, floor] of Object.entries(answer)) floors.set(sessionId, floor);
     }
   }
+  await Promise.all(
+    Array.from({ length: Math.min(HISTORY_FLOOR_QUERY_CONCURRENCY, queries.length) }, worker)
+  );
   return floors;
 }
 

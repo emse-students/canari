@@ -28,6 +28,7 @@ import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { handleDistributionFrame } from './frameHandler';
 import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
+import { HISTORY_FLOOR_QUERY_CONCURRENCY } from './historyBoundary';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
 import type { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
@@ -298,6 +299,8 @@ function closeLeftoverHolds() {
 
 afterEach(() => {
   closeLeftoverHolds();
+  // Sign-out forgets parked asks next to the runtime; a test that parked one must not hand it on.
+  clearParkedAsks();
   setGraineRuntime(null);
 });
 
@@ -1406,6 +1409,40 @@ describe('a history request from a joiner (WP-34)', () => {
       info.mockRestore();
     });
 
+    it('keeps the NEWEST sessions under the cap, so a recent arrival is not handed an empty truncated answer', async () => {
+      // The store returns oldest first; only the newest session spans the asker's arrival. Capping
+      // the read as it came would drop exactly that one, at every ask.
+      const many: StoredGraineSession[] = Array.from(
+        { length: GRAINE_HISTORY_BUNDLE_MAX_SEEDS + 1 },
+        (_, i) => ({ ...community[0], sessionId: `s-${i}`, createdAt: i })
+      );
+      const newest = `s-${GRAINE_HISTORY_BUNDLE_MAX_SEEDS}`;
+      graineHistoryFloor.mockReset();
+      let inFlight = 0;
+      let peak = 0;
+      graineHistoryFloor.mockImplementation(async (_c: string, _u: string, ids: string[]) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await Promise.resolve();
+        inFlight--;
+        return ids.includes(newest) ? { [newest]: 3 } : {};
+      });
+      const sendMessage = wireWithSessions(many);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds?.map((s) => [s.sessionId, Number(s.firstIndex)])).toEqual([[newest, 3]]);
+      expect(bundle?.truncated).toBe(true);
+      // 80 floor queries, a few at a time rather than one after another.
+      expect(graineHistoryFloor).toHaveBeenCalledTimes(GRAINE_HISTORY_BUNDLE_MAX_SEEDS / 100);
+      expect(peak).toBe(HISTORY_FLOOR_QUERY_CONCURRENCY);
+      info.mockRestore();
+      debug.mockRestore();
+    });
+
     it('never says "nothing for you" when the cap cut the list before the floors judged it', async () => {
       // The floors judged only the first GRAINE_HISTORY_BUNDLE_MAX_SEEDS sessions: the ones past
       // the cap may be the asker's, and a durable "nothing" would close them for the roster.
@@ -1425,12 +1462,12 @@ describe('a history request from a joiner (WP-34)', () => {
     });
   });
 
-  it('answers with SILENCE, never a floor, when this session never learned the rule', async () => {
+  it('PARKS the ask, never a floor, until this session learns the rule - then answers it', async () => {
     // A floor drawn under a rule nobody stated is a loss, not a precaution: a `shared` community's
-    // newcomer handed the floored past records the ask answered and never asks again. Silence is
-    // re-asked at the requester's next start.
+    // newcomer handed the floored past records the ask answered and never asks again. The ask waits
+    // for the listing that states the rule, and is answered then - no restart on either side.
     graineHistoryFloor.mockReset();
-    graineHistoryFloor.mockResolvedValue({});
+    graineHistoryFloor.mockResolvedValue({ 's-1': 0, 's-2': 2 });
     const sendMessage = wireWithSessions(community);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
@@ -1438,11 +1475,37 @@ describe('a history request from a joiner (WP-34)', () => {
 
     expect(graineHistoryFloor).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(info.mock.calls.flat().join(' ')).toContain('has not learned its history rule');
+    expect(parkedAskCount()).toBe(1);
+    expect(info.mock.calls.flat().join(' ')).toContain(
+      'until this session learns its history rule'
+    );
+
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(parkedAskCount()).toBe(0);
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds?.map((s) => s.sessionId)).toEqual(['s-1', 's-2']);
     info.mockRestore();
   });
 
-  it('answers a SESSIONS ask with silence too when the rule is unknown - the same chokepoint', async () => {
+  it('keeps the asks waiting for a rule within the parked bound, the oldest dropped out loud', async () => {
+    wireWithSessions(community);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    for (let i = 0; i <= MAX_PARKED_ASKS; i++) {
+      await handleDistributionFrame({ ...historyFrame(), senderDeviceId: `newcomer-${i}` });
+    }
+
+    expect(parkedAskCount()).toBe(MAX_PARKED_ASKS);
+    expect(warn.mock.calls.flat().join(' ')).toContain(
+      'DROPPED the parked ask of newcomer:newcomer-0'
+    );
+    info.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('parks a SESSIONS ask too when the rule is unknown - the same chokepoint', async () => {
     graineHistoryFloor.mockReset();
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     setGraineRuntime({
@@ -1473,6 +1536,7 @@ describe('a history request from a joiner (WP-34)', () => {
 
     expect(graineHistoryFloor).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
+    expect(parkedAskCount()).toBe(1);
     info.mockRestore();
   });
 
@@ -2057,14 +2121,16 @@ describe('the past goes only to an admission this device can verify (section 25)
   });
 
   /**
-   * No PAST was handed to the newcomer: no answer at all, or one carrying no seed. Under #2264 a
-   * history ask answered as `joined` is floored rather than refused whole, so "not proven" shows as
-   * an answer with no pre-arrival seed - "nothing here for you" - and never as a seed.
+   * No PAST was handed to the newcomer, and it was SAID: exactly one answer, carrying no seed and
+   * "nothing here for you". Under #2264 a history ask the gate decides `joined` (not proven) is
+   * floored rather than refused whole, and the server's floor here leaves nothing - so a seed, a
+   * second answer, or a silence are all regressions this fails on.
    */
-  function expectNoPastHanded(sendMessage: ReturnType<typeof vi.fn>) {
-    for (const call of sendMessage.mock.calls) {
-      expect(decodeAppMessage(call[1])?.graineBundle?.seeds ?? []).toHaveLength(0);
-    }
+  function expectNothingForYou(sendMessage: ReturnType<typeof vi.fn>) {
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds ?? []).toHaveLength(0);
+    expect(bundle?.holdsNothing).toBe(true);
   }
 
   const community: StoredGraineSession[] = [
@@ -2161,7 +2227,7 @@ describe('the past goes only to an admission this device can verify (section 25)
     // answer is the one a `joined` community gives (#2264): floored at the newcomer's arrival, which
     // leaves nothing of what this device holds - said as "nothing here for you", never as silence.
     expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
-    expectNoPastHanded(sendMessage);
+    expectNothingForYou(sendMessage);
     expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.holdsNothing).toBe(true);
     expect(info.mock.calls.flat().join(' ')).toContain('admission is not proven');
     info.mockRestore();
@@ -2211,9 +2277,10 @@ describe('the past goes only to an admission this device can verify (section 25)
     info.mockRestore();
   });
 
-  it('stays SILENT, asking neither the gate nor a floor, when this session has not learned the rule', async () => {
-    // Unknown rule = silence comes BEFORE the gate: a floor drawn under a guessed `joined` would
-    // be a past lost for good, and the admission check would be work for an answer never sent.
+  it('PARKS before the gate when this session has not learned the rule, and gates once it has', async () => {
+    // Unknown rule comes BEFORE the gate: a floor drawn under a guessed `joined` would be a past
+    // lost for good, and the admission check would be work for an answer not sent yet. Once the
+    // listing states `shared`, the ask is decided by the gate like any other: unproven -> floored.
     forgetWorkspaceGraineState('ws-1', [], []);
     registerChannelWorkspace('chan-1', 'ws-1', false);
     newcomerArrives(null);
@@ -2226,8 +2293,52 @@ describe('the past goes only to an admission this device can verify (section 25)
     expect(sendMessage).not.toHaveBeenCalled();
     expect(graineHistoryFloor).not.toHaveBeenCalled();
     expect(listWorkspaceMembers).not.toHaveBeenCalled();
-    expect(parkedAskCount()).toBe(0);
+    expect(parkedAskCount()).toBe(1);
     expect(info.mock.calls.flat().join(' ')).toContain('has not learned its history rule');
+
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(listWorkspaceMembers).toHaveBeenCalled();
+    expectNothingForYou(sendMessage);
+    info.mockRestore();
+  });
+
+  it('RE-ADMISSION: a newcomer told "nothing for you" gets the past by the repair path once proven', async () => {
+    // "Nothing for you" is recorded by the requester for its roster version (section 24), and a
+    // voucher written onto an existing row does not move that epoch: the HISTORY ask is not asked
+    // again. What recovers the past is the REPAIR path - each row the member renders names its
+    // session and asks for it, and that ask goes through the same gate, which now proves them.
+    newcomerArrives(null);
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await handleDistributionFrame(ask('history'));
+    expectNothingForYou(sendMessage);
+
+    // Re-admitted: a rooted member's voucher is written onto the newcomer's row.
+    newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+    const repaired = wireAnswerer();
+    graineHistoryFloor.mockClear();
+    await handleDistributionFrame(ask('sessions'));
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    const seeds = decodeAppMessage(repaired.mock.calls[0][1])?.graineBundle?.seeds;
+    expect(seeds?.map((x) => [x.sessionId, Number(x.firstIndex)])).toEqual([['s-1', 0]]);
+    info.mockRestore();
+  });
+
+  it('a SESSIONS repair the gate cannot check sends no decline - nothing the requester records', async () => {
+    // `unverifiable` on the repair path: the floored-away session is in NEITHER list, and with
+    // nothing else to say no bundle leaves - so the requester records no "not held" from this
+    // answerer, and its next render asks again.
+    listWorkspaceMembers.mockRejectedValue(new Error('offline'));
+    const sendMessage = wireAnswerer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('sessions'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    warn.mockRestore();
     info.mockRestore();
   });
 
@@ -2346,7 +2457,7 @@ describe('the past goes only to an admission this device can verify (section 25)
 
     await handleDistributionFrame(ask('history'));
 
-    expectNoPastHanded(sendMessage);
+    expectNothingForYou(sendMessage);
     info.mockRestore();
   });
 
@@ -2380,7 +2491,7 @@ describe('the past goes only to an admission this device can verify (section 25)
 
     await handleDistributionFrame(ask('history'));
 
-    expectNoPastHanded(sendMessage);
+    expectNothingForYou(sendMessage);
     info.mockRestore();
     warn.mockRestore();
   });
@@ -2398,7 +2509,7 @@ describe('the past goes only to an admission this device can verify (section 25)
 
       await handleDistributionFrame(ask('history'));
 
-      expectNoPastHanded(sendMessage);
+      expectNothingForYou(sendMessage);
       expect(warn.mock.calls.flat().join(' ')).toContain('REFUSED admission voucher');
       info.mockRestore();
       warn.mockRestore();
@@ -2435,7 +2546,7 @@ describe('the past goes only to an admission this device can verify (section 25)
     const sendMessage = wireAnswerer();
     await handleDistributionFrame(ask('history'));
 
-    expectNoPastHanded(sendMessage);
+    expectNothingForYou(sendMessage);
     info.mockRestore();
   });
 
@@ -2535,7 +2646,7 @@ describe('the past goes only to an admission this device can verify (section 25)
       expect(said).toContain(
         'its signer carol was not admitted here when this device first saw it'
       );
-      expectNoPastHanded(sendMessage);
+      expectNothingForYou(sendMessage);
       expect(parkedAskCount()).toBe(0);
       info.mockRestore();
     });

@@ -1060,8 +1060,11 @@ export async function requestCommunityHistory(
     // A RE-JOINED key group skipped epochs it acknowledged unreadable: an earlier "I hold nothing"
     // is no more evidence about the past than the seeds this device holds (section 24). Nor is one
     // given while the past was closed: it said "nothing here FOR YOU", under the floor. Forgotten
-    // ONCE per widening - the walk re-enters here after each answer.
+    // ONCE per widening - the walk re-enters here after each answer. The in-memory "nobody could
+    // answer at this epoch" goes with it, for the same reason: it was reached under the floor, and
+    // a widening that arrives live (`workspace.updated`) does not move the epoch.
     forgetHistoryHeldNothing(userId, workspaceId);
+    historyUnanswerableAt.delete(workspaceId);
   }
 
   // HOLDING SOME SEEDS IS NOT HOLDING THE PAST - a member back in a community holds exactly the
