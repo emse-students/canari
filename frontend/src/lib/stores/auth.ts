@@ -32,6 +32,7 @@ import {
 } from '$lib/mobile/appSiteAssociation';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { discardSharedOut } from '$lib/sharing/shareOutCleanup';
+import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
 import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { customTabsCommand } from '$lib/services/customTabsCommands';
@@ -1156,6 +1157,9 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   void discardSharedOut('signed out');
   // And a share INTO Canari still waiting: it must never land in the account signed in next.
   void eraseIncomingShare('signed out');
+  // And the shortcuts Android holds for THIS account - the share sheet's suggestions and the
+  // notifications' conversation shortcuts, names and faces the next account must never see.
+  void eraseAccountShortcuts('signed out');
   if (!options.revokeServerSession) {
     alog('clear✓ local only - the shared cookie and credential are left to the tab that owns them');
     return;
