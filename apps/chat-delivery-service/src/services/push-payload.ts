@@ -146,6 +146,26 @@ export function apnsFallbackBody(locale?: string | null): string {
 }
 
 /**
+ * The GENERIC text of the ring alert an iPhone without a VoIP token gets over FCM, per language.
+ *
+ * Calls have no native ring on iOS (CALLS_NATIVE_RING_COMPILED is off), so this alert is the whole
+ * of what a closed iPhone is told. It names neither the caller nor the conversation: the sentence
+ * crosses Apple's and Google's servers in clear, and decision 6 keeps who-calls-whom out of any
+ * push a native layer cannot yet gate on the callee's own permission. Localized server-side from
+ * `push_token.locale`, exactly as {@link apnsFallbackBody} is.
+ */
+const INCOMING_CALL_ALERT_BODY: Record<string, string> = {
+  fr: 'Appel entrant',
+  en: 'Incoming call',
+};
+
+/** The generic incoming-call alert body for a device's language (base locale when unknown). */
+export function incomingCallAlertBody(locale?: string | null): string {
+  const key = (locale ?? '').slice(0, 2).toLowerCase();
+  return INCOMING_CALL_ALERT_BODY[key] ?? INCOMING_CALL_ALERT_BODY[BASE_LOCALE];
+}
+
+/**
  * The language whose fallback body is the LONGEST, in bytes of UTF-8.
  *
  * The inline-ciphertext budget is computed once and the payload it sizes is sent to every one of a
