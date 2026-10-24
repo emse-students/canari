@@ -4,8 +4,9 @@
 > per-sender seed the server has never held; the push path derives its key the same way on all three
 > native surfaces; a missing seed is asked for and answered; a joiner receives the history its
 > community allows; and a reaction is an encrypted message rather than a cleartext tally. What is NOT
-> done: the deletion of the server's own derivation - so `channels.masterSecret` still EXISTS,
-> unused, until WP-50/51 - and the cut itself (WP-60..62). §1 describes what the old regime did while
+> done at that date: the deletion of the server's own derivation and the cut itself. Both have
+> since landed: migration `041` dropped `channels.masterSecret` and the other server-held key
+> columns (see WP-51 below). §1 describes what the old regime did while
 > it was live, and stays as the record of why this was worth doing.
 
 **The requirement, from the user:** a community message must not be readable by the server, at the
@@ -1241,11 +1242,11 @@ key" will otherwise assume more than is true.
 **The server still decides WHO is a member, so it still decides who may enter the distribution
 group.** Entry is by external commit against a published `mls_group_info`, and eligibility is read
 from a roster the server owns. A server that wanted future seeds would not read them out of a column
-any more - it would admit a device it controls. That is a strictly better position than before (it
-buys nothing retroactive, and every commit is visible to the members in the group's log) but it is
-not nothing, and no client currently WATCHES that log for an unexpected admission. **The PAST is
-handed over on a member's signature, not on the roster** since 2026-10-22: a member gives a
-community's history only to a newcomer whose admission it can verify
+any more - it would admit a device it controls. That is a strictly better position than before (every
+commit is visible to the members in the group's log) but it is not nothing, and no client currently
+WATCHES that log for an unexpected admission. **The PAST is handed over on a member's signature, not
+on the roster** since 2026-10-22: a member gives a community's history only to a newcomer whose
+admission it can verify
 ([section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)).
 
 **`history_visibility` is a policy guarantee, never a cryptographic one.** Only a device holding a
