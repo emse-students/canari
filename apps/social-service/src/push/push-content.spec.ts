@@ -9,6 +9,7 @@ import {
   reactionTypeToEmoji,
   formOpeningSoonContent,
   formOpenContent,
+  formPaidOverCapacityContent,
   eventProposedContent,
   eventValidatedContent,
   eventRejectedContent,
@@ -22,6 +23,9 @@ import {
   repostPersonalRequestedContent,
   coorganiseProposedContent,
   liveStartedContent,
+  liveCutContent,
+  liveSuspendedContent,
+  liveWithdrawnContent,
   previewOf,
   markdownToPreviewText,
   publicMediaIconId,
@@ -61,6 +65,9 @@ describe('push content', () => {
     ['repostPersonalRequested', repostPersonalRequestedContent('BDE', 'hello')],
     ['coorganiseProposed', coorganiseProposedContent('BDE', 'Gala')],
     ['liveStarted', liveStartedContent('Claire')],
+    ['liveCut', liveCutContent()],
+    ['liveSuspended', liveSuspendedContent()],
+    ['liveWithdrawn', liveWithdrawnContent()],
   ];
 
   it.each(ALL)('%s carries a key, not only a sentence', (_name, content) => {
@@ -340,6 +347,7 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_reaction', reactionContent(ACTOR, ARG)],
     ['form_opening_soon', formOpeningSoonContent()],
     ['form_open', formOpenContent()],
+    ['form_paid_over_capacity', formPaidOverCapacityContent(ARG)],
     ['event_proposed', eventProposedContent(ACTOR, ARG)],
     ['event_validated', eventValidatedContent(ACTOR, ARG)],
     ['event_rejected', eventRejectedContent(ACTOR, ARG)],
@@ -353,6 +361,9 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_repost_personal_requested', repostPersonalRequestedContent(ACTOR, '')],
     ['social_coorganise_proposed', coorganiseProposedContent(ACTOR, '')],
     ['social_live_started', liveStartedContent(ACTOR)],
+    ['social_live_cut', liveCutContent()],
+    ['social_live_suspended', liveSuspendedContent()],
+    ['social_live_withdrawn', liveWithdrawnContent()],
   ];
 
   /**

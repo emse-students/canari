@@ -2,16 +2,17 @@
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { replaceState } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { page } from '$app/state';
   import { SvelteMap } from 'svelte/reactivity';
-  import { showToast } from '$lib/stores/toast.svelte';
   import {
     listAllProducts,
     listAssociations,
     listAllPartnerships,
+    confirmProductCheckout,
+    SocialApiError,
     type AssociationProduct,
     type Association,
     type PartnershipCard,
@@ -27,10 +28,17 @@
   import { ShoppingBag, Handshake } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { associationAccent } from '$lib/associations/accent';
+  import { customAmountLabel } from '$lib/associations/customAmountLabel';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { parseTab, tabUrl, withoutQuery } from '$lib/navigation/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
   import { Log } from '$lib/utils/Log';
+  import {
+    CHECKOUT_RETURN_PARAMS,
+    checkoutReturnTarget,
+    checkoutReturnView,
+    type CheckoutReturnView,
+  } from '$lib/shop/checkoutReturn';
 
   let products = $state<AssociationProduct[]>([]);
   let partnerships = $state<PartnershipCard[]>([]);
@@ -40,8 +48,64 @@
   let customAmounts = $state<Record<string, number>>({});
   const SHOP_TABS = ['products', 'partnerships'] as const;
   type ShopTab = (typeof SHOP_TABS)[number];
-  /** The return markers of a checkout, consumed once on arrival. */
-  const PURCHASE_MARKERS = ['purchase_success', 'purchase_cancel'] as const;
+  /** What the page says about the checkout attempt the payer came back from, if any. */
+  let checkoutReturn = $state<CheckoutReturnView | null>(null);
+  /** Ceiling on how long the page keeps asking before it says the payment is still unconfirmed. */
+  const MAX_CHECKOUT_POLLS = 10;
+  const CHECKOUT_POLL_INTERVAL_MS = 3000;
+  let destroyed = false;
+  onDestroy(() => {
+    destroyed = true;
+  });
+
+  /**
+   * Asks the server about the attempt the return URL names, while it is still open: each read has
+   * the server ask Lydia about the attempt's own request and record it if paid, so a payment whose
+   * callback was lost is still confirmed here. A 404 is an attempt that is not the reader's, or
+   * unknown; a 429 is the server's per-attempt limit on asking Lydia - an answer, not a failure.
+   */
+  async function followCheckout(target: NonNullable<ReturnType<typeof checkoutReturnTarget>>) {
+    checkoutReturn = 'checking';
+    try {
+      for (let attempt = 0; attempt < MAX_CHECKOUT_POLLS && !destroyed; attempt++) {
+        const answer = await confirmProductCheckout(
+          target.associationId,
+          target.productId,
+          target.checkoutId
+        );
+        checkoutReturn = checkoutReturnView(answer.status);
+        Log.d('shop: checkout return', answer.status);
+        if (checkoutReturn !== 'waiting') {
+          // A purchase changes what the listing says (a tier now held, a cap reached).
+          if (checkoutReturn === 'paid') products = await listAllProducts();
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, CHECKOUT_POLL_INTERVAL_MS));
+      }
+    } catch (err) {
+      if (err instanceof SocialApiError && err.status === 404) {
+        console.warn('[shop] checkout return names an attempt that is not found');
+        checkoutReturn = 'unknown';
+        return;
+      }
+      if (err instanceof SocialApiError && err.status === 429) {
+        console.info('[shop] confirmation limit reached, the payment stays awaited');
+        checkoutReturn = 'waiting';
+        return;
+      }
+      console.error('[shop] could not read the checkout attempt:', err);
+      checkoutReturn = 'waiting';
+    }
+  }
+
+  const CHECKOUT_RETURN_TEXT: Record<CheckoutReturnView, () => string> = {
+    checking: () => m.shop_return_checking(),
+    paid: () => m.shop_return_paid(),
+    waiting: () => m.shop_return_waiting(),
+    declined: () => m.shop_return_declined(),
+    notCompleted: () => m.shop_return_not_completed(),
+    unknown: () => m.shop_return_unknown(),
+  };
   // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
   let shopTab = $state<ShopTab>(parseTab(page.url.searchParams.get('tab'), SHOP_TABS, 'products'));
 
@@ -109,12 +173,19 @@
       loading = false;
     }
 
-    // The checkout return marker is consumed once. Through SvelteKit's `replaceState`, never the
-    // raw History API: a raw write erased the router's own entry state, and the open `?tab=` with it.
+    // The checkout return is consumed once. Through SvelteKit's `replaceState`, never the raw
+    // History API: a raw write erased the router's own entry state, and the open `?tab=` with it.
+    // Success and fail URLs land here alike: what the payer is told is the ATTEMPT's status, read
+    // from the server, never which of Lydia's two URLs sent them back.
     const params = page.url.searchParams;
-    if (PURCHASE_MARKERS.some((name) => params.get(name) === '1')) {
-      if (params.get('purchase_success') === '1') showToast(m.shop_purchase_success());
-      replaceState(resolve(internalPath(withoutQuery(page.url, PURCHASE_MARKERS))), page.state);
+    if (CHECKOUT_RETURN_PARAMS.some((name) => params.has(name))) {
+      const target = checkoutReturnTarget(params);
+      replaceState(
+        resolve(internalPath(withoutQuery(page.url, CHECKOUT_RETURN_PARAMS))),
+        page.state
+      );
+      if (target) void followCheckout(target);
+      else console.warn('[shop] checkout return names no attempt, nothing to confirm');
     }
   });
 
@@ -128,9 +199,7 @@
       return `${(p.amountCents / 100).toFixed(2)} ${p.currency.toUpperCase()}`;
     }
     if (p.allowCustomAmount) {
-      const min = p.customAmountMinCents ? (p.customAmountMinCents / 100).toFixed(2) : '0';
-      const max = p.customAmountMaxCents ? (p.customAmountMaxCents / 100).toFixed(2) : 'inf';
-      return m.shop_price_libre({ min, max, currency: p.currency.toUpperCase() });
+      return customAmountLabel(p);
     }
     return m.shop_price_free();
   }
@@ -199,6 +268,20 @@
     {:else if error}
       <p class="text-sm text-red-500">{error}</p>
     {:else}
+      {#if checkoutReturn}
+        <div
+          role="status"
+          data-checkout-return={checkoutReturn}
+          class="border-cn-border rounded-2xl border bg-(--cn-surface) p-4 text-sm {checkoutReturn ===
+          'paid'
+            ? 'text-emerald-700 dark:text-emerald-400'
+            : checkoutReturn === 'declined' || checkoutReturn === 'notCompleted'
+              ? 'text-amber-700 dark:text-amber-400'
+              : 'text-text-muted'}"
+        >
+          {CHECKOUT_RETURN_TEXT[checkoutReturn]()}
+        </div>
+      {/if}
       <SegmentedControl
         items={[
           { key: 'products', label: m.shop_tab_products(), icon: ShoppingBag },

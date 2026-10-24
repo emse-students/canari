@@ -1,5 +1,7 @@
 /// <reference types="jest" />
 
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import {
   categoryOfDataPush,
   isNotificationCategory,
@@ -25,6 +27,7 @@ describe('categoryOfDataPush', () => {
     ['social_live_started', 'posts'],
     ['form_opening_soon', 'forms'],
     ['form_open', 'forms'],
+    ['form_paid_over_capacity', 'forms'],
     ['event_proposed', 'events'],
     ['event_validated', 'events'],
     ['event_rejected', 'events'],
@@ -55,6 +58,36 @@ describe('categoryOfDataPush', () => {
     'never files %s: it must always go out',
     (type) => {
       expect(categoryOfDataPush({ type })).toBeNull();
+    }
+  );
+
+  /**
+   * The live moderation keys, as social-service SENDS them: read out of its `PushContentKey` union
+   * (the service boundary has no shared import), so a key renamed or misspelled there fails here
+   * rather than reaching a category by accident.
+   */
+  const LIVE_MODERATION_KEYS = [
+    'social_live_cut',
+    'social_live_suspended',
+    'social_live_withdrawn',
+  ];
+
+  it('names the live moderation keys exactly as social-service declares them', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../../../social-service/src/push/push-content.ts'),
+      'utf8'
+    );
+    const union = source.match(/export type PushContentKey =([\s\S]*?);/);
+    const declared = [...(union?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    expect(
+      declared.filter((k) => k.startsWith('social_live_') && k !== 'social_live_started')
+    ).toEqual(LIVE_MODERATION_KEYS);
+  });
+
+  it.each(LIVE_MODERATION_KEYS)(
+    'never files %s: a sanction on the reader own account always goes out',
+    (contentKey) => {
+      expect(categoryOfDataPush({ type: 'social', contentKey })).toBeNull();
     }
   );
 

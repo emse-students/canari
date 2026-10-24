@@ -55,12 +55,18 @@ export interface LiveManifest {
   lastSegmentAt: string | null;
   serverNow: string;
   segments: LiveManifestSegment[];
+  /**
+   * How many accounts watch the live: the seats it holds on the host's cap, the caller's own
+   * included, the broadcaster never. A COUNT ONLY - no answer of the API names a viewer. `null` when
+   * the broadcaster's count did not answer: show no number, never a guessed one.
+   */
+  viewers: number | null;
   /** The live chat (WP-L6), present only when the poll asked for it (`chat=1`). */
   chat?: LiveChatBlock;
 }
 
-/** The five floating reactions (C8), the server's `LIVE_REACTION_KINDS`. */
-export type LiveReactionKind = 'like' | 'love' | 'laugh' | 'happy' | 'canari';
+/** The five floating reactions (decided 2026-10-20), the server's `LIVE_REACTION_KINDS`. */
+export type LiveReactionKind = 'like' | 'laugh' | 'clap' | 'fire' | 'canari';
 
 /** One message of the chat as the poll serves it: ciphertext under the live key, base64 (C12). */
 export interface LiveChatMessageWire {
@@ -139,6 +145,28 @@ export interface LiveCutResult {
   priorCuts: number;
 }
 
+/**
+ * A broadcaster's place on the strike ladder, as the moderation queue states it (the server's
+ * `LiveStanding`, dates as ISO strings). `withdrawalDue`: enough cuts are on record and the right is
+ * not withdrawn - the decision is a moderator's.
+ */
+export interface LiveStanding {
+  cutsOnRecord: number;
+  suspendedUntil: string | null;
+  withdrawnAt: string | null;
+  withdrawalDue: boolean;
+}
+
+/** `POST /api/lives/broadcasters/:userId/withdrawal` (200, idempotent). */
+export interface LiveWithdrawalResult {
+  userId: string;
+  reason: LiveCutReason;
+  withdrawnAt: string;
+  /** False when the right had already been withdrawn: the answer is the first withdrawal's. */
+  newlyWithdrawn: boolean;
+  cutsOnRecord: number;
+}
+
 /** `POST /api/lives/:id/removed-viewers`. */
 export interface LiveRemovedViewer {
   liveId: string;
@@ -194,6 +222,9 @@ export type LiveRefusalCode =
   | 'LIVE_RULES_NOT_ACCEPTED'
   | 'LIVE_ASSOCIATION_FORBIDDEN'
   | 'LIVE_ALREADY_OPEN'
+  | 'LIVE_WITHDRAWAL_FORBIDDEN'
+  | 'LIVE_WITHDRAWAL_NOT_DUE'
+  | 'LIVE_ACCOUNT_INVALID'
   | 'LIVE_START_RATE'
   | 'LIVE_NOT_FOUND'
   | 'LIVE_ENDED'
@@ -240,7 +271,8 @@ export type LiveRefusalCode =
  *   or an ended live already purged), or a 404 on a segment fetch.
  * - `ended`: `410 LIVE_ENDED`, whose body carries `endedAt` and `endReason` (`cut`: a moderator ended it).
  * - `removed`: `403 LIVE_VIEWER_REMOVED` - the broadcaster removed this viewer.
- * - `disabled`: a `404` with no code on `/api/lives` - the `LIVE_ENABLED` guard (off on production).
+ * - `disabled`: a `404` with no code on `/api/lives` - the live guard: the `LIVE_ENABLED` deploy lock
+ *   (off on production) or the runtime kill switch `platform_config.lives_mode` set to `off`.
  * - `out-of-order`: `409 LIVE_SEGMENT_OUT_OF_ORDER` - `nextIndex` says which index the server wants.
  * - `retry-segment`: the SAME index should be sent again after a short backoff:
  *   `409 LIVE_SEGMENT_IN_PROGRESS`, `409 LIVE_SEGMENT_RESERVATION_LOST`,
@@ -258,6 +290,8 @@ export type LiveRefusalKind =
   | 'not-found'
   | 'ended'
   | 'removed'
+  | 'suspended'
+  | 'withdrawn'
   | 'disabled'
   | 'out-of-order'
   | 'retry-segment'

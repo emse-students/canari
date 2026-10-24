@@ -966,7 +966,8 @@ LOGIN PAGE TWICE.** Of its 191 modules, `ChatBackgroundService.svelte` is 16.9% 
 `CallOverlay.svelte` 7.6% - and `CallOverlay` sits beside the `CallService.ts` already counted in the
 engine chunk. Calling has been held off since 2026-09-01 with `CALLS_ENABLED = false`, and it costs
 roughly **19 KB minified on every route** while it is off. Recorded as a measurement and nothing
-more: the five switches move in ONE commit at revival, so the feature is not to be picked apart for
+more: the switches move together at revival (`CALLS_COMPILED`, and the native ring's own
+`CALLS_NATIVE_RING_COMPILED` after it since 2026-10-21), so the feature is not to be picked apart for
 bytes.
 
 **THE 216 458 B OF CSS IS NOT A FINDING.** It is the single Tailwind sheet the whole application

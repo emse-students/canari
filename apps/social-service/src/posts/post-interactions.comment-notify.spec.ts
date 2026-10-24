@@ -1,3 +1,4 @@
+import type { CommentIdentityService } from './comment-identity';
 import { Repository } from 'typeorm';
 import { PostInteractionsService } from './post-interactions.service';
 import { Post } from './entities/post.entity';
@@ -33,7 +34,11 @@ describe('PostInteractionsService.addComment notifications', () => {
       postRepo as unknown as Repository<Post>,
       notifications as unknown as PostNotificationsService,
       push as unknown as PushService,
-      {} as PostMediaRetentionService
+      {} as PostMediaRetentionService,
+      {
+        serve: jest.fn((c: unknown[]) => Promise.resolve(c)),
+        holdersOf: jest.fn(() => Promise.resolve([] as string[])),
+      } as unknown as CommentIdentityService
     );
     return { service, created, push, notifications };
   }
@@ -84,7 +89,7 @@ describe('PostInteractionsService.addComment notifications', () => {
       parentId: 'parent',
     });
     await flush();
-    const commentId = (result as { comment: { id: string } }).comment.id;
+    const commentId = (result.comment as { id: string }).id;
     const sent = push.notifyContent.mock.calls as unknown as Array<
       [string, unknown, Record<string, string>]
     >;

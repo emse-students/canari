@@ -85,6 +85,8 @@ const refusal = (kind: LiveRefusalError['kind'], status: number, viewerCap: numb
 let timers: (() => void)[];
 let liveErrors: unknown[];
 let manifestErrors: unknown[];
+/** What the next manifest answers as its viewer count. */
+let viewerCount: number | null;
 let deps: Partial<LivePlayerDeps>;
 let chatDeps: Partial<LiveChatDeps>;
 const mounted: Record<string, unknown>[] = [];
@@ -93,6 +95,7 @@ beforeEach(() => {
   timers = [];
   liveErrors = [];
   manifestErrors = [];
+  viewerCount = 1;
   videoSound.setMuted(true);
   chatDeps = {
     postMessage: vi.fn(),
@@ -123,6 +126,7 @@ beforeEach(() => {
           { index: 0, name: 'a', bytes: 1 },
           { index: 1, name: 'b', bytes: 1 },
         ],
+        viewers: viewerCount,
       };
     }),
     fetchSegment: vi.fn(async (_id: string, name: string) => new TextEncoder().encode(name).buffer),
@@ -200,6 +204,50 @@ describe('LiveViewer', () => {
     expect(document.querySelector('[data-live-badge]')).not.toBeNull();
     expect(document.querySelector('[data-live-elapsed]')?.textContent?.trim()).toBe('1:05');
     expect(document.activeElement).toBe(document.querySelector('[data-live-close]'));
+  });
+
+  it('shows HOW MANY watch - an eye and the number, the plural for a screen reader - and follows each poll', async () => {
+    await render();
+    const count = () => document.querySelector<HTMLElement>('[data-live-viewer-count]');
+    expect(count()?.getAttribute('data-live-viewer-count')).toBe('1');
+    expect(count()?.querySelector('svg')).not.toBeNull();
+    expect(count()?.textContent).toContain(m.live_viewer_count({ count: 1 }));
+    expect(count()?.getAttribute('aria-live')).toBe('off');
+    viewerCount = 7;
+    timers.shift()!();
+    await settle();
+    expect(count()?.getAttribute('data-live-viewer-count')).toBe('7');
+    expect(count()?.textContent).toContain(m.live_viewer_count({ count: 7 }));
+    // No count to show: nothing drawn, never a stale or guessed number.
+    viewerCount = null;
+    timers.shift()!();
+    await settle();
+    expect(count()).toBeNull();
+  });
+
+  it('a failed poll (reconnecting) takes the count off the screen, and the next answer brings it back', async () => {
+    await render();
+    expect(document.querySelector('[data-live-viewer-count]')).not.toBeNull();
+    manifestErrors.push(refusal('seats-unavailable', 503));
+    timers.shift()!();
+    await settle();
+    expect(stateOf()).toBe('reconnecting');
+    expect(document.querySelector('[data-live-viewer-count]')).toBeNull();
+    viewerCount = 3;
+    timers.shift()!();
+    await settle();
+    expect(
+      document.querySelector('[data-live-viewer-count]')?.getAttribute('data-live-viewer-count')
+    ).toBe('3');
+  });
+
+  it('draws no count on the end screen', async () => {
+    await render();
+    expect(document.querySelector('[data-live-viewer-count]')).not.toBeNull();
+    manifestErrors.push(refusal('ended', 410));
+    timers.shift()!();
+    await settle();
+    expect(document.querySelector('[data-live-viewer-count]')).toBeNull();
   });
 
   it('"live complet" offers a retry that plays, and never takes the reconnect line', async () => {

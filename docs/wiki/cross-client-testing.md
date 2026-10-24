@@ -15,7 +15,10 @@ Two accounts, **owner** (W1, W3, A1) and **peer** (W2). **A1 CARRIES A DEVICE CR
 JOINED TO NOTHING** - a release-signed APK was installed over the rig's debug build to verify the
 WebView fix, and the uninstall that allowed it took the enrolment and the MLS store; **a row needing
 history on that phone has to build it first**
-([device-verification](device-verification.md#before-you-start)). **Target is the LOCAL estate.** **Run order
+([device-verification](device-verification.md#before-you-start)). **W3 CARRIES A DEVICE CREATED
+2026-10-22 on the local estate** - its store was sealed under a PIN the rig no longer held, so its
+profile was deleted and the device re-enrolled (`login.mjs`, `pin.mjs`); a W3 verdict before that
+date measured another device. **Target is the LOCAL estate.** **Run order
 is the numbered ladder below, top to bottom - the only copy of that order.**
 
 **`bun rows.mjs` IS WHAT SETTLES THIS FILE, AND IT HAS CAUGHT THE BOARD WRONG FIVE TIMES.** It reads
@@ -206,6 +209,11 @@ two-device check measures**: on the LITHIUM rig, GRP-4's evictions were committe
 fleet member rather than by either driven browser. That finding outlives its ledger - it is a
 statement about the system, not a verdict - and it is why the fleet has to be enumerated before this
 rung is believed.
+
+**Owed, not yet a row: GRP-ADDR-1** (step A, [history-answer-addressing](protocols/history-answer-addressing.md#what-proves-it)),
+three devices on one group conversation: member A's NEW device asks while newcomer C, added after
+messages M1..Mn, is online. A's new device must restore M1..Mn; C must log no
+`[HISTORY_BUNDLE] ... received` for that answer and hold nothing from before its arrival.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |

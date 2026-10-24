@@ -12,6 +12,12 @@ describe('openClaimedAppLink', () => {
     expect(goto).toHaveBeenCalledWith('/posts/abc?x=1');
   });
 
+  it('keeps an invite link fragment, the admission proof the join page reads (section 25)', async () => {
+    expect(openClaimedAppLink('https://canari.emse.fr/c/join/tok#AAAAF2Nhbg-_x')).toBe(true);
+    await Promise.resolve();
+    expect(goto).toHaveBeenCalledWith('/c/join/tok#AAAAF2Nhbg-_x');
+  });
+
   it('refuses what an App Link could never have delivered', () => {
     // `fr.emse.canari://open?url=` is a URL anyone can write: it must not reach more than a link.
     expect(openClaimedAppLink('https://canari.emse.fr/auth/callback?code=1&state=2')).toBe(false);

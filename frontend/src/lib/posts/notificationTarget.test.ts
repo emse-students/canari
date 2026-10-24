@@ -31,6 +31,12 @@ describe('notificationHref', () => {
     expect(notificationHref({ type: 'form_reminder', postId: 'f1' })).toBe('/forms/f1');
   });
 
+  it("sends the organiser of a form paid over capacity to that form's RESPONSES", () => {
+    expect(notificationHref({ type: 'form_paid_over_capacity', postId: 'f1' })).toBe(
+      '/forms?responses=f1'
+    );
+  });
+
   it('sends a calendar manager to the queue, where the event can actually be validated', () => {
     // `postId` is the ASSOCIATION here, not an event, and a pending event has no page of its own.
     expect(notificationHref({ type: 'event_proposed', postId: 'assoc-1' })).toBe('/admin/agenda');
@@ -51,19 +57,26 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(22);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(25);
+    // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
+    // or a withdrawal has no page.
+    const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];
     for (const type of KNOWN_NOTIFICATION_TYPES) {
-      // `live_cut` is the one known type that goes nowhere: its live is deleted when it ends.
       const noHref =
-        type === 'repost_proposed' || type === 'coorganise_proposed' || type === 'live_cut';
+        type === 'repost_proposed' ||
+        type === 'coorganise_proposed' ||
+        liveModeration.includes(type);
       expect(notificationHref({ type, postId: 'x1' }) === null, type).toBe(noHref);
     }
   });
 
-  it('knows live_cut and gives it no link, so the row is told and inert rather than a dead /posts/<id>', () => {
-    expect(isKnownNotificationType('live_cut')).toBe(true);
-    expect(notificationHref({ type: 'live_cut', postId: 'live-1' })).toBeNull();
-  });
+  it.each(['live_cut', 'live_suspended', 'live_withdrawn'])(
+    'knows %s and gives it no link, so the row is told and inert rather than a dead /posts/<id>',
+    (type) => {
+      expect(isKnownNotificationType(type)).toBe(true);
+      expect(notificationHref({ type, postId: 'live-1' })).toBeNull();
+    }
+  );
 
   it('gives a type it has never heard of NO link, so the row can say so instead of a dead /posts/<id>', () => {
     expect(notificationHref({ type: 'something_new', postId: 'x' })).toBeNull();

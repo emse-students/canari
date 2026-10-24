@@ -28,6 +28,7 @@ import {
   type LiveReactionKind,
 } from './live.constants';
 import { LivesService, liveEnded } from './lives.service';
+import { short } from './live-log';
 
 /** A message as the poll serves it: ciphertext under the live key, base64 (C12). */
 export interface LiveChatMessageView {
@@ -87,8 +88,6 @@ const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=
 
 /** The longest base64 spelling of {@link LIVE_CHAT_SEALED_MAX_BYTES}, checked before decoding. */
 const SEALED_MAX_BASE64 = Math.ceil(LIVE_CHAT_SEALED_MAX_BYTES / 3) * 4;
-
-const short = (id: string) => id.slice(0, 8);
 
 /**
  * Checks a message body, `{ clientId, sealed }`: a uuid and the base64 of 29..928 bytes.

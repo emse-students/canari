@@ -134,6 +134,18 @@ imports `AssociationsModule`):
 | Stripe onboarding completes | `markStripeComplete` | the association **and its approved delegating children** |
 | Lydia onboarding completes | `markLydiaComplete` | same |
 | A payment delegation is approved | `approvePaymentDelegation` | the child that gained a payment route |
+| The platform `paymentProvider` is saved as active (core `PlatformService.updateConfig`), or a global admin presses **Release withheld products** (`POST /api/users/admin/platform/release-withheld-products`) | social `POST internal/payments/provider-activated` -> `releaseWithheldForAllAssociations` | every association holding a withheld product |
+
+**The platform-wide sweep answers `{ released, failed }`, and core refuses a partial one** with a 502
+whose body carries the typed code `WITHHELD_RELEASE_INCOMPLETE` and the SAVED config: the provider IS
+switched, only the release is missing, and the admin screen says exactly that (by code, never by
+message). The retry is the explicit button, never re-saving the form: the form PATCHes only what
+changed since its snapshot, so after a reload it sends no provider at all. **An orphaned withheld
+product is skipped, not failed** - `association_products` has no foreign key to `associations`,
+deleting an association leaves its products behind, and counting one as a failure would make every
+activation answer 502 forever; the skip is logged with the ids. **The canonical cotisation
+(`provisionCotisationProduct`) is withheld like any other product** when payments are not ready, so
+the same releases put it on sale.
 
 Each release re-resolves `resolvePaymentTarget` rather than trusting the event: readiness depends on
 the ACTIVE provider and on delegation, and a Stripe completion on an association that switched to

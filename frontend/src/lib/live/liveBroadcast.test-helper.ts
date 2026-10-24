@@ -106,7 +106,7 @@ export const LIMITS: LiveLimits = {
   chatMessagesPerWindow: 3,
   chatRateWindowMs: 5_000,
   chatBacklog: 50,
-  reactionKinds: ['like', 'love', 'laugh', 'happy', 'canari'],
+  reactionKinds: ['like', 'laugh', 'clap', 'fire', 'canari'],
   reactionWindowMs: 2_000,
   reactionBurstsPerWindow: 2,
   reactionTapsPerWindow: 10,

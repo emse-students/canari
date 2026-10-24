@@ -261,6 +261,8 @@ describe('refusals, typed at the throw', () => {
     [404, { message: 'Not Found', statusCode: 404 }, 'disabled'],
     [400, { code: 'LIVE_KEY_INVALID' }, 'refused'],
     [403, { code: 'LIVE_MUTED' }, 'refused'],
+    [403, { code: 'LIVE_BROADCAST_SUSPENDED' }, 'suspended'],
+    [403, { code: 'LIVE_BROADCAST_WITHDRAWN' }, 'withdrawn'],
     [409, { code: 'LIVE_ALREADY_OPEN' }, 'refused'],
     [502, { statusCode: 502 }, 'unavailable'],
   ] as const)('%i %j on the key read is %s', async (status, body, kind) => {

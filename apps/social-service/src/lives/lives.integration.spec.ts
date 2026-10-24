@@ -21,15 +21,18 @@
  *
  * Everything happens in a throwaway schema, dropped at the end.
  */
+import { createCipheriv, randomBytes } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
-import { HttpStatus, ServiceUnavailableException } from '@nestjs/common';
+import { HttpStatus, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { LIVE_ENTITIES } from './lives.module';
 import { LivesService } from './lives.service';
 import { LiveChatService } from './live-chat.service';
+import { liveChatAad } from './live-chat-seal';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
+import { LiveReportAgeScheduler } from './live-report-age.scheduler';
 import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
 import { seatMember, type LiveSeats } from './live-seats';
 import type { LivePurgeResult, LiveSegmentStore } from './live-segment-store';
@@ -65,6 +68,10 @@ const MODERATION = readFileSync(
   'utf8'
 );
 const CHAT = readFileSync(join(__dirname, '..', 'migrations', '098_live_chat.sql'), 'utf8');
+const LADDER = readFileSync(
+  join(__dirname, '..', 'migrations', '099_live_strikes_and_reported_chat_lines.sql'),
+  'utf8'
+);
 
 const ALICE = 'a'.repeat(64);
 const BOB = 'b'.repeat(64);
@@ -161,12 +168,26 @@ class MemorySeats {
   cap = Number.POSITIVE_INFINITY;
   readonly held = new Set<string>();
 
-  async take(liveId: string, viewerId: string): Promise<void> {
+  async take(liveId: string, viewerId: string): Promise<number> {
     const member = seatMember(liveId, viewerId);
     if (!this.held.has(member) && this.held.size >= this.cap) {
       throw new ServiceUnavailableException({ code: 'LIVE_FULL', viewerCap: this.cap });
     }
     this.held.add(member);
+    return this.count(liveId);
+  }
+
+  /** How many times the broadcaster's read-only count was asked. */
+  watchingCalls = 0;
+
+  async watching(liveId: string): Promise<number | null> {
+    this.watchingCalls++;
+    return this.count(liveId);
+  }
+
+  private count(liveId: string): number {
+    const prefix = seatMember(liveId, '');
+    return [...this.held].filter((m) => m.startsWith(prefix)).length;
   }
 
   async release(liveId: string, viewerId: string): Promise<void> {
@@ -193,7 +214,7 @@ async function refusal(p: Promise<unknown>): Promise<{ status: number; code?: st
   throw new Error('expected a refusal, got an answer');
 }
 
-maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
+maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
   const schema = `lives_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -288,6 +309,9 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
     await q(MODERATION);
     await q(CHAT);
     await q(CHAT);
+    // 099 references content_reports (the kept line's report), created above as core-service's.
+    await q(LADDER);
+    await q(LADDER);
     process.env.LIVE_ENABLED = 'true';
   });
 
@@ -302,6 +326,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
     await q(`DELETE FROM association_audiences`);
     await q(`DELETE FROM read_grants`);
     await q(`DELETE FROM live_cuts`);
+    await q(`DELETE FROM live_broadcast_withdrawals`);
+    await q(`DELETE FROM live_chat_reported_lines`);
     await q(`DELETE FROM content_reports`);
     await q(`DELETE FROM live_rules_acceptances`);
     // Every member accepted the first-live rules, as a member who broadcast once has (L11); the
@@ -480,6 +506,33 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
       // A viewer leaving gives its seat to the next one in - whatever case its URL spelled the id in.
       await lives.leave(BOB, live.id.toUpperCase());
       await expect(lives.get(CAROL, live.id)).resolves.toMatchObject({ id: live.id });
+    });
+
+    it('tells every poll HOW MANY watch - a number, never who - the broadcaster uncounted', async () => {
+      const live = await start();
+      await lives.get(BOB, live.id);
+      const bobs = await lives.manifest(BOB, live.id);
+      expect(bobs.viewers).toBe(1);
+      await lives.get(CAROL, live.id);
+      expect((await lives.manifest(CAROL, live.id)).viewers).toBe(2);
+      // The broadcaster's KEY read (a return from the background) shows no count, so runs none.
+      seats.watchingCalls = 0;
+      await lives.get(ALICE, live.id);
+      expect(seats.watchingCalls).toBe(0);
+      // Its manifest reads the same number as the viewers', without taking a seat.
+      const alices = await lives.manifest(ALICE, live.id);
+      expect(alices.viewers).toBe(2);
+      expect(seats.watchingCalls).toBe(1);
+      expect(seats.held.size).toBe(2);
+      // NO IDENTITY IN THE ANSWER: no viewer's id anywhere in what the broadcaster or a viewer reads.
+      expect(JSON.stringify(bobs)).not.toContain(CAROL);
+      expect(JSON.stringify(alices)).not.toContain(BOB);
+      expect(JSON.stringify(alices)).not.toContain(CAROL);
+      // A viewer who leaves, and one the broadcaster removes, leave the count at once.
+      await lives.leave(BOB, live.id);
+      expect((await lives.manifest(ALICE, live.id)).viewers).toBe(1);
+      await lives.removeViewer(ALICE, live.id, CAROL);
+      expect((await lives.manifest(ALICE, live.id)).viewers).toBe(0);
     });
 
     it('answers removed, blocked and ended BEFORE full, and frees the seat of a removed viewer', async () => {
@@ -899,7 +952,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
       const one = new DataSource({
         type: 'postgres',
         url: URL,
-        entities: LIVE_ENTITIES,
+        entities: [...LIVE_ENTITIES, ContentReport],
         synchronize: false,
         extra: { options: `-c search_path=${schema}`, max: 1 },
       });
@@ -1136,7 +1189,14 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
         [silent.id]
       );
       const report = await sweeper.sweepOnce();
-      expect(report).toEqual({ ended: 1, deleted: 1, kept: 0, orphans: 0, cutsPruned: 0 });
+      expect(report).toEqual({
+        ended: 1,
+        deleted: 1,
+        kept: 0,
+        orphans: 0,
+        cutsPruned: 0,
+        chatLinesErased: 0,
+      });
       expect(store.countFor(silent.id)).toBe(0);
       await expect(lives.get(CAROL, talking.id)).resolves.toBeDefined();
       expect(store.countFor(talking.id)).toBe(1);
@@ -1153,6 +1213,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
         kept: 0,
         orphans: 0,
         cutsPruned: 0,
+        chatLinesErased: 0,
       });
     });
 
@@ -1190,6 +1251,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
         kept: 1,
         orphans: 0,
         cutsPruned: 0,
+        chatLinesErased: 0,
       });
       expect(store.countFor(live.id)).toBe(1);
 
@@ -1200,6 +1262,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
         kept: 0,
         orphans: 0,
         cutsPruned: 0,
+        chatLinesErased: 0,
       });
       expect(store.objects.size).toBe(0);
       for (const table of ['lives', 'live_segments', 'live_removed_viewers']) {
@@ -1212,6 +1275,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
         kept: 0,
         orphans: 0,
         cutsPruned: 0,
+        chatLinesErased: 0,
       });
     });
 
@@ -1226,6 +1290,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
         kept: 1,
         orphans: 0,
         cutsPruned: 0,
+        chatLinesErased: 0,
       });
       expect(await q(`SELECT "endReason" FROM lives WHERE id = $1`, [live.id])).toEqual([
         { endReason: 'broadcaster' },
@@ -1237,6 +1302,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
         kept: 0,
         orphans: 0,
         cutsPruned: 0,
+        chatLinesErased: 0,
       });
     });
 
@@ -1357,7 +1423,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
           actorId: '',
           actorName: '',
           text: 'harassment',
-          skipPush: true,
+          // Pushed (WP-L8b), and its tap opens the notifications list: the live has no page left.
+          pushData: { target: 'notifications' },
         },
       ]);
       const [listed] = await reports().listAllReports();
@@ -1508,13 +1575,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
       expect(await body(lives.ingest(ALICE, live.id, 2, segment(2)))).toMatchObject(CUT);
     });
 
-    it('keeps a cut a year, then the sweep deletes it', async () => {
+    it('keeps a cut 90 days (owner, 2026-10-20), then the sweep deletes it', async () => {
       const live = await start();
       await lives.cut(MOD, live.id, { reason: 'spam' });
-      await q(`UPDATE live_cuts SET "cutAt" = now() - interval '364 days'`);
+      await q(`UPDATE live_cuts SET "cutAt" = now() - interval '89 days 23 hours'`);
       await sweeper.sweepOnce();
       expect(await q(`SELECT 1 FROM live_cuts`)).toHaveLength(1);
-      await q(`UPDATE live_cuts SET "cutAt" = now() - interval '366 days'`);
+      await q(`UPDATE live_cuts SET "cutAt" = now() - interval '90 days'`);
       await expect(sweeper.sweepOnce()).resolves.toMatchObject({ cutsPruned: 1 });
       expect(await q(`SELECT 1 FROM live_cuts`)).toEqual([]);
     });
@@ -1522,7 +1589,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
     it('a throw in the start prune does not skip the cut prune', async () => {
       const live = await start();
       await lives.cut(MOD, live.id, { reason: 'spam' });
-      await q(`UPDATE live_cuts SET "cutAt" = now() - interval '366 days'`);
+      await q(`UPDATE live_cuts SET "cutAt" = now() - interval '90 days'`);
       const spy = jest.spyOn(lives, 'pruneStarts').mockRejectedValueOnce(new Error('boom'));
       try {
         await expect(sweeper.sweepOnce()).resolves.toMatchObject({ cutsPruned: 1 });
@@ -1621,6 +1688,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
         kept: 0,
         orphans: 0,
         cutsPruned: 0,
+        chatLinesErased: 0,
       });
       expect(store.countFor(own.id)).toBe(0);
       await expect(lives.get(BOB, other.id)).resolves.toBeDefined();
@@ -2031,12 +2099,12 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
 
     it('AGGREGATES taps per 2 s window, leaves out my own, and holds 2 bursts / 10 taps per window', async () => {
       const live = await start();
-      await tap(BOB, live.id, { like: 2, love: 1 });
+      await tap(BOB, live.id, { like: 2, fire: 1 });
       await tap(CAROL, live.id, { like: 5 });
       await tap(DAVE, live.id, { canari: 1 });
       const sums = await chat.read(DAVE, live.id, { messagesAfter: 0, reactionsAfter: 0 });
       // One window (the live is seconds old), DAVE's own canari left out.
-      expect(sums.reactions).toEqual([{ window: 0, counts: { like: 7, love: 1 } }]);
+      expect(sums.reactions).toEqual([{ window: 0, counts: { like: 7, fire: 1 } }]);
       expect(sums.reactionsCursor).toBe(3);
 
       // BOB: a second burst fits, a third in the same 2 s does not; nor do taps past ten.
@@ -2053,8 +2121,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
     it('answers a repeated burst with its seq, and refuses other counts under the same burstId', async () => {
       const live = await start();
       const id = uuid();
-      const first = await tap(BOB, live.id, { like: 2, happy: 1 }, id);
-      await expect(tap(BOB, live.id, { happy: 1, like: 2 }, id)).resolves.toEqual(first);
+      const first = await tap(BOB, live.id, { like: 2, clap: 1 }, id);
+      await expect(tap(BOB, live.id, { clap: 1, like: 2 }, id)).resolves.toEqual(first);
       expect((await refusal(tap(BOB, live.id, { like: 3 }, id))).code).toBe(
         'LIVE_REACTION_CONFLICT'
       );
@@ -2080,6 +2148,728 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
       expect(
         await q(`SELECT 1 FROM live_chat_messages WHERE "authorId" = $1`, [CAROL])
       ).toHaveLength(1);
+    });
+  });
+  describe('the strike ladder (WP-L8b, migration 099): warning, suspension, withdrawal by staff', () => {
+    const MOD = '9'.repeat(64);
+    const reports = () =>
+      new ModerationService(ds.getRepository(ContentReport), {} as Repository<UserModeration>);
+    /** Starts a live of `who`, cuts it, and lets the purge take it - one abuse on record. */
+    const abuse = async (who = ALICE, reason = 'spam') => {
+      const live = await start(who);
+      return lives.cut(MOD, live.id, { reason });
+    };
+    /** Moves every cut of `who` back by SQL, relative to the database clock. */
+    const ageCuts = (who: string, interval: string) =>
+      q(`UPDATE live_cuts SET "cutAt" = "cutAt" - $2::interval WHERE "broadcasterId" = $1`, [
+        who,
+        interval,
+      ]);
+    /** Three cuts on record: two, then the 30-day suspension run (rows moved back), then a third. */
+    const threeAbuses = async (who: string) => {
+      await abuse(who);
+      await abuse(who);
+      await ageCuts(who, '30 days');
+      return abuse(who);
+    };
+    const body = async (p: Promise<unknown>) => {
+      try {
+        await p;
+      } catch (e) {
+        const err = e as { getStatus: () => number; getResponse: () => Record<string, unknown> };
+        return { status: err.getStatus(), ...err.getResponse() };
+      }
+      throw new Error('expected a refusal, got an answer');
+    };
+
+    it('the 1st cut is a WARNING: strike 1, the live_cut notice, and the next start allowed', async () => {
+      const cut = await abuse();
+      expect(cut).toMatchObject({
+        strike: 1,
+        consequence: 'warning',
+        priorCuts: 0,
+        standing: {
+          cutsOnRecord: 1,
+          suspendedUntil: null,
+          withdrawnAt: null,
+          withdrawalDue: false,
+        },
+      });
+      expect(bell.map((b) => b.type)).toEqual(['live_cut']);
+      await expect(start()).resolves.toBeDefined();
+    });
+
+    it('the 2nd cut SUSPENDS the right for 30 days from it: typed refusal, its own notice, then free again', async () => {
+      await abuse();
+      const second = await abuse(ALICE, 'harassment');
+      expect(second).toMatchObject({ strike: 2, consequence: 'suspended', priorCuts: 1 });
+      const until = new Date(second.cutAt.getTime() + 30 * 24 * 60 * 60_000);
+      expect(second.standing.suspendedUntil).toEqual(until);
+      expect(bell.map((b) => [b.type, b.text])).toEqual([
+        ['live_cut', 'spam'],
+        ['live_suspended', 'harassment'],
+      ]);
+      expect(await body(start())).toEqual({
+        status: HttpStatus.FORBIDDEN,
+        code: 'LIVE_BROADCAST_SUSPENDED',
+        suspendedUntil: until,
+      });
+      await expect(lives.standing(ALICE)).resolves.toEqual({
+        cutsOnRecord: 2,
+        suspendedUntil: until,
+        withdrawnAt: null,
+      });
+      // Another member is not touched by it.
+      await expect(start(BOB)).resolves.toBeDefined();
+      // 30 days on (the rows moved back, never a clock), the suspension has run: the start is free.
+      await ageCuts(ALICE, '30 days');
+      await expect(start()).resolves.toBeDefined();
+    });
+
+    it('a cut older than 90 days is FORGOTTEN by the ladder, even before the sweep prunes it', async () => {
+      await abuse();
+      await ageCuts(ALICE, '90 days');
+      const next = await abuse();
+      expect(next).toMatchObject({ strike: 1, consequence: 'warning', priorCuts: 0 });
+      await expect(start()).resolves.toBeDefined();
+    });
+
+    it('the prune of an OLDER cut never lifts a suspension it helped cause: the strike is fixed on the row', async () => {
+      await abuse();
+      await ageCuts(ALICE, '89 days');
+      await abuse();
+      // The first cut passes its 90 days and the sweep deletes it; the second keeps strike 2.
+      await ageCuts(ALICE, '1 day 1 hour');
+      await sweeper.sweepOnce();
+      expect(await q(`SELECT strike FROM live_cuts WHERE "broadcasterId" = $1`, [ALICE])).toEqual([
+        { strike: 2 },
+      ]);
+      expect((await refusal(start())).code).toBe('LIVE_BROADCAST_SUSPENDED');
+    });
+
+    it('a cut of a live ALREADY ENDED by its broadcaster counts: strike 1 unnotified, strike 2 notified as a suspension', async () => {
+      store.failPurge = true;
+      const first = await start();
+      await lives.end(ALICE, first.id);
+      await expect(lives.cut(MOD, first.id, { reason: 'spam' })).resolves.toMatchObject({
+        endReason: 'broadcaster',
+        strike: 1,
+      });
+      expect(bell).toEqual([]);
+      const second = await start();
+      await lives.end(ALICE, second.id);
+      await expect(lives.cut(MOD, second.id, { reason: 'other' })).resolves.toMatchObject({
+        strike: 2,
+        consequence: 'suspended',
+      });
+      expect(bell.map((b) => b.type)).toEqual(['live_suspended']);
+    });
+
+    it('a repeated cut answers its first strike and changes nothing', async () => {
+      const live = await start();
+      await lives.cut(MOD, live.id, { reason: 'spam' });
+      await expect(lives.cut(MOD, live.id, { reason: 'other' })).resolves.toMatchObject({
+        newlyCut: false,
+        strike: 1,
+        consequence: 'warning',
+      });
+      expect(bell).toHaveLength(1);
+    });
+
+    it('RACE: two cuts of two lives of one broadcaster at once take strikes 1 and 2, never 1 and 1', async () => {
+      store.failPurge = true;
+      const ended = await start();
+      await lives.end(ALICE, ended.id);
+      const open = await start();
+      const both = await Promise.all([
+        lives.cut(MOD, ended.id, { reason: 'spam' }),
+        lives.cut(MOD, open.id, { reason: 'spam' }),
+      ]);
+      expect(both.map((c) => c.strike).sort((a, b) => a - b)).toEqual([1, 2]);
+    });
+
+    it('RACE: a start and a suspending cut at once - the start either ran first or is refused', async () => {
+      store.failPurge = true;
+      const first = await start();
+      await lives.cut(MOD, first.id, { reason: 'spam' });
+      const ended = await start();
+      await lives.end(ALICE, ended.id);
+      const [cut, started] = await Promise.allSettled([
+        lives.cut(MOD, ended.id, { reason: 'spam' }),
+        lives.start(ALICE, { key: KEY }),
+      ]);
+      expect(cut.status).toBe('fulfilled');
+      // Either the start ran first (an answer) or after the cut (the suspension) - never another
+      // refusal, and never a deadlock: both take the standing lock before any row lock.
+      const outcome =
+        started.status === 'fulfilled'
+          ? 'started'
+          : ((await refusal(Promise.reject(started.reason))).code ?? '');
+      expect(['started', 'LIVE_BROADCAST_SUSPENDED']).toContain(outcome);
+      // Whatever the order, the NEXT start is refused: the suspension is on record.
+      await q(
+        `UPDATE lives SET "endedAt" = now(), "endReason" = 'broadcaster' WHERE "endedAt" IS NULL`
+      );
+      expect((await refusal(start())).code).toBe('LIVE_BROADCAST_SUSPENDED');
+    });
+
+    it('3 cuts on record make a withdrawal DUE; staff withdraw it, and only staff lift it', async () => {
+      // Below three, the withdrawal is refused with the count.
+      await abuse();
+      await abuse();
+      expect(await body(lives.withdraw(MOD, ALICE, { reason: 'harassment' }))).toEqual({
+        status: HttpStatus.CONFLICT,
+        code: 'LIVE_WITHDRAWAL_NOT_DUE',
+        cutsOnRecord: 2,
+        required: 3,
+      });
+      await ageCuts(ALICE, '30 days');
+      const third = await abuse();
+      expect(third).toMatchObject({
+        strike: 3,
+        consequence: 'suspended',
+        standing: { cutsOnRecord: 3, withdrawalDue: true },
+      });
+      // Nothing withdraws by itself: the account is suspended, not withdrawn.
+      expect(await q(`SELECT 1 FROM live_broadcast_withdrawals`)).toEqual([]);
+
+      const withdrawn = await lives.withdraw(MOD, ALICE.toUpperCase(), {
+        reason: 'harassment',
+        details: 'three lives in a month',
+      });
+      expect(withdrawn).toMatchObject({ userId: ALICE, newlyWithdrawn: true, cutsOnRecord: 3 });
+      expect(bell[bell.length - 1]).toEqual({
+        recipientId: ALICE,
+        type: 'live_withdrawn',
+        postId: ALICE,
+        actorId: '',
+        actorName: '',
+        text: 'harassment',
+        pushData: { target: 'notifications' },
+      });
+      await expect(lives.withdraw(MOD, ALICE, { reason: 'spam' })).resolves.toMatchObject({
+        newlyWithdrawn: false,
+        reason: 'harassment',
+      });
+      // Past the suspension, the withdrawal alone still refuses - no clock ends it.
+      await ageCuts(ALICE, '31 days');
+      expect(await body(start())).toEqual({
+        status: HttpStatus.FORBIDDEN,
+        code: 'LIVE_BROADCAST_WITHDRAWN',
+      });
+      await expect(lives.liftWithdrawal(MOD, ALICE)).resolves.toEqual({
+        userId: ALICE,
+        lifted: true,
+      });
+      await expect(lives.liftWithdrawal(MOD, ALICE)).resolves.toEqual({
+        userId: ALICE,
+        lifted: false,
+      });
+      await expect(start()).resolves.toBeDefined();
+    });
+
+    it('RACE: a withdrawal against an erasure in flight never leaves a row behind it', async () => {
+      await threeAbuses(CAROL);
+      const erasure = ds.createQueryRunner();
+      await erasure.connect();
+      await erasure.startTransaction();
+      try {
+        await runErasureStatements(
+          {
+            write: async (sql, params) =>
+              ((await erasure.query(sql, params)) as [unknown, number])[1],
+            read: async <T>(sql: string, params: unknown[]) =>
+              (await erasure.query(sql, params)) as T[],
+          },
+          LIVES_ERASURE_STATEMENTS,
+          CAROL
+        );
+        // The erasure has deleted CAROL's cuts and her (absent) withdrawal, uncommitted. The
+        // withdrawal must WAIT on those cuts rather than count them and write a row the erasure's
+        // DELETE has already passed.
+        const withdrawal = lives.withdraw(MOD, CAROL, { reason: 'spam' }).then(
+          () => 'withdrawn',
+          (e: unknown) => (e as { getResponse: () => { code: string } }).getResponse().code
+        );
+        // A proof, not a delay: wait until PostgreSQL reports a backend waiting on a lock.
+        for (;;) {
+          const [{ n }] = await q(
+            `SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE wait_event_type = 'Lock' AND datname = current_database()`
+          );
+          if (n > 0) break;
+        }
+        await erasure.commitTransaction();
+        expect(await withdrawal).toBe('LIVE_WITHDRAWAL_NOT_DUE');
+      } finally {
+        if (erasure.isTransactionActive) await erasure.rollbackTransaction();
+        await erasure.release();
+      }
+      expect(await q(`SELECT 1 FROM live_broadcast_withdrawals`)).toEqual([]);
+    });
+
+    it('refuses a withdrawal naming the erased tombstone or with no reason code', async () => {
+      expect((await refusal(lives.withdraw(MOD, DELETED_ACCOUNT, { reason: 'spam' }))).code).toBe(
+        'LIVE_ACCOUNT_INVALID'
+      );
+      expect((await refusal(lives.withdraw(MOD, ALICE, { reason: 'nope' }))).code).toBe(
+        'LIVE_CUT_REASON_INVALID'
+      );
+    });
+
+    it("the queue shows a reported live's broadcaster on the ladder", async () => {
+      await abuse();
+      const live = await start();
+      await reports().createReport({
+        reporterId: BOB,
+        contentType: 'live',
+        contentId: live.id,
+        reason: 'spam',
+      });
+      const [row] = await reports().listAllReports();
+      expect(row.live).toMatchObject({
+        broadcasterCuts: 1,
+        broadcasterStanding: { cutsOnRecord: 1, suspendedUntil: null, withdrawalDue: false },
+      });
+    });
+
+    it('an erasure deletes the withdrawal of the account and anonymises the one it decided', async () => {
+      await threeAbuses(CAROL);
+      await lives.withdraw(ALICE, CAROL, { reason: 'spam' });
+      await threeAbuses(DAVE);
+      await lives.withdraw(MOD, DAVE, { reason: 'spam' });
+      await ds.transaction((m) =>
+        runErasureStatements(
+          {
+            write: async (sql, params) => ((await m.query(sql, params)) as [unknown, number])[1],
+            read: async <T>(sql: string, params: unknown[]) => (await m.query(sql, params)) as T[],
+          },
+          LIVES_ERASURE_STATEMENTS,
+          ALICE
+        )
+      );
+      await ds.transaction((m) =>
+        runErasureStatements(
+          {
+            write: async (sql, params) => ((await m.query(sql, params)) as [unknown, number])[1],
+            read: async <T>(sql: string, params: unknown[]) => (await m.query(sql, params)) as T[],
+          },
+          LIVES_ERASURE_STATEMENTS,
+          DAVE
+        )
+      );
+      expect(await q(`SELECT "userId", "reviewerId" FROM live_broadcast_withdrawals`)).toEqual([
+        { userId: CAROL, reviewerId: DELETED_ACCOUNT },
+      ]);
+    });
+  });
+
+  describe('a reported live chat line (WP-L8b, migration 099): checked, signed, kept until handled', () => {
+    const MOD = '9'.repeat(64);
+    const SIGNING_KEY = 's'.repeat(40);
+    const keyBefore = process.env.LIVE_REPORT_SIGNING_KEY;
+    let chat: LiveChatService;
+    const reports = () =>
+      new ModerationService(ds.getRepository(ContentReport), {} as Repository<UserModeration>);
+    let n = 0;
+    const uuid = () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`;
+    /** Seals `text` exactly as the client's v1 format does (`liveChatCrypto.ts`). */
+    const seal = (liveId: string, clientId: string, authorId: string, text: string): string => {
+      const iv = randomBytes(12);
+      const c = createCipheriv('aes-256-gcm', Buffer.from(KEY, 'hex'), iv);
+      c.setAAD(liveChatAad(liveId, clientId, authorId));
+      const body = Buffer.concat([c.update(text, 'utf8'), c.final()]);
+      return Buffer.concat([iv, body, c.getAuthTag()]).toString('base64');
+    };
+    const say = async (who: string, liveId: string, text: string) => {
+      await lives.mayWatch(who, liveId);
+      const clientId = uuid();
+      return (await chat.post(who, liveId, {
+        clientId,
+        sealed: seal(liveId, clientId, who, text),
+      })) as { id: string; seq: number };
+    };
+    const reportLine = (reporterId: string, messageId: string, message: string, liveId?: string) =>
+      reports().createReport({
+        reporterId,
+        contentType: 'live_chat',
+        contentId: messageId,
+        reason: 'harassment',
+        liveId,
+        message,
+      });
+    /** The kept lines, their UTF-8 bytes decoded (the column is bytea: a NUL fits). */
+    const kept = async () =>
+      (
+        (await q(
+          `SELECT "reportId"::text, "authorId", text, seq FROM live_chat_reported_lines`
+        )) as { reportId: string; authorId: string; text: Buffer; seq: number }[]
+      ).map((k) => ({ ...k, text: k.text.toString('utf8') }));
+
+    beforeEach(() => {
+      process.env.LIVE_REPORT_SIGNING_KEY = SIGNING_KEY;
+      chat = new LiveChatService(
+        ds,
+        {
+          isUserMuted: async (userId: string) => muted.has(userId),
+        } as unknown as ModerationService,
+        lives
+      );
+    });
+    afterAll(() => {
+      if (keyBefore === undefined) delete process.env.LIVE_REPORT_SIGNING_KEY;
+      else process.env.LIVE_REPORT_SIGNING_KEY = keyBefore;
+    });
+
+    it('a viewer reports a line: the text is CHECKED against the sealed line, kept with its place, and verified in the queue', async () => {
+      await q(`UPDATE users SET "displayName" = 'Bob' WHERE id = $1`, [BOB]);
+      const live = await start();
+      const line = await say(BOB, live.id, 'une insulte 🐤');
+      const report = await reportLine(CAROL, line.id.toUpperCase(), 'une insulte 🐤', live.id);
+      expect(report).toMatchObject({
+        contentType: 'live_chat',
+        contentId: line.id,
+        reportedUserId: BOB,
+        status: 'pending',
+      });
+      expect(await kept()).toEqual([
+        { reportId: report.id, authorId: BOB, text: 'une insulte 🐤', seq: line.seq },
+      ]);
+      const [row] = await reports().listAllReports();
+      expect(row).toMatchObject({
+        contentPreview: 'une insulte 🐤',
+        liveChat: {
+          liveId: live.id,
+          messageId: line.id,
+          authorId: BOB,
+          authorName: 'Bob',
+          text: 'une insulte 🐤',
+          integrity: { content: 'verified', author: 'verified', reporter: 'verified' },
+        },
+      });
+      // Once per reporter per line, whatever the first became.
+      expect(await refusal(reportLine(CAROL, line.id, 'une insulte 🐤'))).toEqual({
+        status: HttpStatus.CONFLICT,
+        code: 'ALREADY_REPORTED',
+      });
+    });
+
+    it('a line carrying U+0000 is reportable: kept as bytes, shown and verified as the same string', async () => {
+      const live = await start();
+      const withNul = 'avant\u0000apres';
+      const line = await say(BOB, live.id, withNul);
+      await expect(reportLine(CAROL, line.id, withNul)).resolves.toMatchObject({
+        contentType: 'live_chat',
+      });
+      expect((await kept())[0].text).toBe(withNul);
+      const [row] = await reports().listAllReports();
+      expect(row.liveChat).toMatchObject({
+        text: withNul,
+        integrity: { content: 'verified', author: 'verified', reporter: 'verified' },
+      });
+    });
+
+    it('a REMOVED viewer reports what they saw before the removal, and the live itself - never a line after it', async () => {
+      const live = await start();
+      const before = await say(BOB, live.id, 'avant');
+      await lives.mayWatch(CAROL, live.id);
+      await lives.removeViewer(ALICE, live.id, CAROL);
+      const after = await say(BOB, live.id, 'apres');
+      // The removal is pinned to the first line's instant: "no later than" is the boundary, and the
+      // second line, written in a later transaction, is strictly after it.
+      await q(
+        `UPDATE live_removed_viewers SET "removedAt" =
+           (SELECT "createdAt" FROM live_chat_messages WHERE id = $1)
+          WHERE "liveId" = $2 AND "viewerId" = $3`,
+        [before.id, live.id, CAROL]
+      );
+
+      expect(await refusal(reportLine(CAROL, after.id, 'apres'))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      await expect(reportLine(CAROL, before.id, 'avant')).resolves.toMatchObject({
+        contentType: 'live_chat',
+        reportedUserId: BOB,
+      });
+      await expect(
+        reports().createReport({
+          reporterId: CAROL,
+          contentType: 'live',
+          contentId: live.id,
+          reason: 'inappropriate',
+        })
+      ).resolves.toMatchObject({ contentType: 'live', reportedUserId: ALICE });
+      // Only the removed viewer is bounded: another viewer reports the later line.
+      await expect(reportLine(DAVE, after.id, 'apres')).resolves.toMatchObject({
+        contentType: 'live_chat',
+      });
+    });
+
+    it('THE INDEX ITSELF refuses a repeat the dedup read did not see, as ALREADY_REPORTED', async () => {
+      // The dedup read is made blind, so only `content_reports_reporter_content_uniq` stands
+      // between the two saves - what two requests racing past the read meet.
+      const repo = ds.getRepository(ContentReport);
+      const blind = Object.create(repo) as Repository<ContentReport>;
+      blind.findOne = async () => null;
+      const service = new ModerationService(blind, {} as Repository<UserModeration>);
+      const logged = jest.spyOn(Logger.prototype, 'log');
+      try {
+        const live = await start();
+        const report = () =>
+          service.createReport({
+            reporterId: CAROL,
+            contentType: 'live',
+            contentId: live.id,
+            reason: 'spam',
+          });
+        await report();
+        expect(await refusal(report())).toEqual({
+          status: HttpStatus.CONFLICT,
+          code: 'ALREADY_REPORTED',
+        });
+        expect(logged.mock.calls.some(([m]) => String(m).includes('refused by the index'))).toBe(
+          true
+        );
+        expect(await q(`SELECT 1 FROM content_reports`)).toHaveLength(1);
+      } finally {
+        logged.mockRestore();
+      }
+    });
+
+    it('RACE: the same line reported twice at once is ONE report, the other ALREADY_REPORTED', async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'texte');
+      const both = await Promise.allSettled([
+        reportLine(CAROL, line.id, 'texte'),
+        reportLine(CAROL, line.id, 'texte'),
+      ]);
+      expect(both.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const [lost] = both.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      expect(await refusal(Promise.reject(lost.reason))).toEqual({
+        status: HttpStatus.CONFLICT,
+        code: 'ALREADY_REPORTED',
+      });
+      expect(await kept()).toHaveLength(1);
+    });
+
+    it('two ERASED reporters of one thing do not collide on the unique index', async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'texte');
+      await reportLine(CAROL, line.id, 'texte');
+      await reportLine(DAVE, line.id, 'texte');
+      await q(`UPDATE content_reports SET "reporterId" = $1`, [DELETED_ACCOUNT]);
+      expect(await q(`SELECT 1 FROM content_reports`)).toHaveLength(2);
+    });
+
+    it("a LONG line - past the composer's 300 characters, within what the server stores - is reportable", async () => {
+      const live = await start();
+      const long = 'é'.repeat(400) + 'x'.repeat(100);
+      const line = await say(BOB, live.id, long);
+      await expect(reportLine(CAROL, line.id, long)).resolves.toMatchObject({
+        contentType: 'live_chat',
+      });
+      expect((await kept())[0].text).toBe(long);
+      // Past what any stored line can hold, the hand-over itself is refused, before anything is read.
+      expect(await refusal(reportLine(DAVE, line.id, 'x'.repeat(901)))).toEqual({
+        status: HttpStatus.BAD_REQUEST,
+        code: 'LIVE_CHAT_REPORT_MESSAGE_INVALID',
+      });
+    });
+
+    it('REFUSES A TEXT THE AUTHOR DID NOT WRITE, and writes nothing', async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'bonjour');
+      expect(await refusal(reportLine(CAROL, line.id, 'une insulte inventée'))).toEqual({
+        status: HttpStatus.BAD_REQUEST,
+        code: 'LIVE_CHAT_REPORT_MISMATCH',
+      });
+      // A line whose ciphertext does not open under the live key is refused the same way.
+      const forged = await chat.post(BOB, live.id, {
+        clientId: uuid(),
+        sealed: Buffer.from('not a real seal'.padEnd(40)).toString('base64'),
+      });
+      expect((await refusal(reportLine(CAROL, (forged as { id: string }).id, 'x'))).code).toBe(
+        'LIVE_CHAT_REPORT_MISMATCH'
+      );
+      expect(await q(`SELECT 1 FROM content_reports`)).toEqual([]);
+      expect(await kept()).toEqual([]);
+    });
+
+    it('is no oracle: another live, no shared space, a block with the author, a hidden line - all 404 LIVE_NOT_FOUND', async () => {
+      const live = await start();
+      const other = await start(CAROL);
+      const line = await say(BOB, live.id, 'texte');
+      const notFound = { status: HttpStatus.NOT_FOUND, code: 'LIVE_NOT_FOUND' };
+      expect(await refusal(reportLine(DAVE, line.id, 'texte', other.id))).toEqual(notFound);
+      expect(await refusal(reportLine(FRANK, line.id, 'texte'))).toEqual(notFound);
+      expect(await refusal(reportLine(DAVE, uuid(), 'texte'))).toEqual(notFound);
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [BOB, EVE]);
+      expect(await refusal(reportLine(EVE, line.id, 'texte'))).toEqual(notFound);
+      await chat.hide(ALICE, false, live.id, line.id);
+      expect(await refusal(reportLine(DAVE, line.id, 'texte'))).toEqual(notFound);
+      expect(await kept()).toEqual([]);
+    });
+
+    it('refuses 503 with no signing key, before anything is written - never a line kept unsigned', async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'texte');
+      delete process.env.LIVE_REPORT_SIGNING_KEY;
+      expect(await refusal(reportLine(CAROL, line.id, 'texte'))).toEqual({
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        code: 'LIVE_REPORT_SIGNING_UNAVAILABLE',
+      });
+      expect(await q(`SELECT 1 FROM content_reports`)).toEqual([]);
+    });
+
+    it('OUTLIVES THE LIVE (the cascade stops at it) and a cut leaves its report pending', async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'texte');
+      const report = await reportLine(CAROL, line.id, 'texte');
+      await lives.cut(MOD, live.id, { reason: 'spam' });
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      expect(await q(`SELECT 1 FROM live_chat_messages`)).toEqual([]);
+      expect(await kept()).toHaveLength(1);
+      expect(await q(`SELECT status FROM content_reports WHERE id = $1`, [report.id])).toEqual([
+        { status: 'pending' },
+      ]);
+    });
+
+    it('is ERASED by the sweep once its report is handled - and only then', async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'texte');
+      const report = await reportLine(CAROL, line.id, 'texte');
+      await expect(sweeper.sweepOnce()).resolves.toMatchObject({ chatLinesErased: 0 });
+      expect(await kept()).toHaveLength(1);
+      await reports().reviewReport(report.id, MOD, 'dismissed');
+      await expect(sweeper.sweepOnce()).resolves.toMatchObject({ chatLinesErased: 1 });
+      expect(await kept()).toEqual([]);
+      const [row] = await reports().listAllReports();
+      expect(row).toMatchObject({ status: 'dismissed', contentPreview: null, liveChat: null });
+    });
+
+    it('is ERASED at the 90-day bound even UNHANDLED; the report itself stays pending', async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'texte');
+      const report = await reportLine(CAROL, line.id, 'texte');
+      await q(`UPDATE live_chat_reported_lines SET "keptAt" = now() - interval '89 days 23 hours'`);
+      await expect(sweeper.sweepOnce()).resolves.toMatchObject({ chatLinesErased: 0 });
+      await q(`UPDATE live_chat_reported_lines SET "keptAt" = now() - interval '90 days'`);
+      await expect(sweeper.sweepOnce()).resolves.toMatchObject({ chatLinesErased: 1 });
+      expect(await kept()).toEqual([]);
+      expect(await q(`SELECT status FROM content_reports WHERE id = $1`, [report.id])).toEqual([
+        { status: 'pending' },
+      ]);
+    });
+
+    it('a deleted report takes its line (the foreign key cascades)', async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'texte');
+      const report = await reportLine(CAROL, line.id, 'texte');
+      await q(`DELETE FROM content_reports WHERE id = $1`, [report.id]);
+      expect(await kept()).toEqual([]);
+    });
+
+    it('a row ALTERED in the database reads altered; a rotated key reads key-rotated', async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'texte');
+      await reportLine(CAROL, line.id, 'texte');
+      const integrity = async () => (await reports().listAllReports())[0].liveChat?.integrity;
+      expect(await integrity()).toEqual({
+        content: 'verified',
+        author: 'verified',
+        reporter: 'verified',
+      });
+      // keptAt is signed: moving it (and so the 90-day bound) reads altered.
+      await q(`UPDATE live_chat_reported_lines SET "keptAt" = "keptAt" + interval '30 days'`);
+      expect((await integrity())?.content).toBe('altered');
+      await q(`UPDATE live_chat_reported_lines SET "keptAt" = "keptAt" - interval '30 days'`);
+      expect((await integrity())?.content).toBe('verified');
+      await q(`UPDATE live_chat_reported_lines SET text = convert_to('autre chose', 'UTF8')`);
+      expect(await integrity()).toEqual({
+        content: 'altered',
+        author: 'verified',
+        reporter: 'verified',
+      });
+      // The reporter erased and the author re-attributed: the erasure does not hide the rewrite.
+      await q(`UPDATE content_reports SET "reporterId" = $1`, [DELETED_ACCOUNT]);
+      await q(`UPDATE live_chat_reported_lines SET "authorId" = $1`, [DAVE]);
+      expect(await integrity()).toEqual({
+        content: 'altered',
+        author: 'altered',
+        reporter: 'erased',
+      });
+      process.env.LIVE_REPORT_SIGNING_KEY = 'r'.repeat(40);
+      expect(await integrity()).toEqual({
+        content: 'key-rotated',
+        author: 'key-rotated',
+        reporter: 'key-rotated',
+      });
+    });
+
+    it("the AUTHOR's erasure keeps the line, anonymised, its content still verified (owner, 2026-10-20)", async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'texte');
+      await reportLine(CAROL, line.id, 'texte');
+      const erase = () =>
+        ds.transaction((m) =>
+          runErasureStatements(
+            {
+              write: async (sql, params) => ((await m.query(sql, params)) as [unknown, number])[1],
+              read: async <T>(sql: string, params: unknown[]) =>
+                (await m.query(sql, params)) as T[],
+            },
+            LIVES_ERASURE_STATEMENTS,
+            BOB
+          )
+        );
+      await erase();
+      await erase();
+      expect(await q(`SELECT 1 FROM live_chat_messages WHERE "authorId" = $1`, [BOB])).toEqual([]);
+      expect(await kept()).toEqual([
+        expect.objectContaining({ authorId: DELETED_ACCOUNT, text: 'texte' }),
+      ]);
+      expect((await reports().listAllReports())[0].liveChat?.integrity).toEqual({
+        content: 'verified',
+        author: 'erased',
+        reporter: 'verified',
+      });
+    });
+  });
+
+  describe('the 24 h alarm on the live report queue (WP-L8b item e)', () => {
+    /** A report row, its `createdAt` moved back by SQL from the database's own `now()`. */
+    const report = (contentType: string, status: string, age: string) =>
+      q(
+        `INSERT INTO content_reports ("reporterId", "contentType", "contentId", reason, status, "createdAt")
+         VALUES ($1, $2, gen_random_uuid()::text, 'spam', $3, now() - $4::interval)`,
+        [CAROL, contentType, status, age]
+      );
+
+    it('reads only the PENDING live and live_chat reports, and their age on the database clock', async () => {
+      await report('live', 'pending', '10 days'); // ten days always hold more than 24 working hours
+      await report('live_chat', 'pending', '0 seconds');
+      await report('post', 'pending', '20 days');
+      await report('live', 'reviewed', '30 days');
+      await report('live_chat', 'dismissed', '30 days');
+
+      const reading = await new LiveReportAgeScheduler(ds).reportOnce();
+      expect(reading.pending).toBe(2);
+      expect(reading.overdue).toBe(1);
+      // The `timestamp` column read back as the instant it was written: ten days, to the minute.
+      const tenDays = 10 * 24 * 3_600_000;
+      expect(reading.oldestWallMs).toBeGreaterThanOrEqual(tenDays);
+      expect(reading.oldestWallMs).toBeLessThan(tenDays + 60_000);
+    });
+
+    it('reads an empty queue on one row, with the clock', async () => {
+      await report('post', 'pending', '20 days');
+      expect(await new LiveReportAgeScheduler(ds).reportOnce()).toEqual({
+        pending: 0,
+        overdue: 0,
+        oldestWallMs: null,
+        oldestWorkingMs: null,
+      });
     });
   });
 });

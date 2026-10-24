@@ -29,6 +29,12 @@ export type IncomingDeliveryMeta = {
    * (`historyOverheardPull`), which needs exactly that proof.
    */
   channel?: DeliveryChannel;
+  /**
+   * The server routed this copy to this device alone rather than to the group
+   * (`queued_message.addressed`). On a conversation such a frame is accepted only as a solicited,
+   * bounded history answer - see `historyAddressing.ts`. Absent means a group broadcast.
+   */
+  addressed?: boolean;
 };
 
 /**
@@ -41,9 +47,11 @@ export function deliveryMetaOf(msg: {
   queuedMessageId?: string;
   senderDeviceId?: string;
   channel?: DeliveryChannel;
+  addressed?: boolean;
 }): IncomingDeliveryMeta | undefined {
   const meta: IncomingDeliveryMeta = {
     ...(msg.channel ? { channel: msg.channel } : {}),
+    ...(msg.addressed === true ? { addressed: true } : {}),
     ...(msg.queuedCreatedAt !== undefined ? { queuedCreatedAt: msg.queuedCreatedAt } : {}),
     ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),
     ...(msg.senderDeviceId ? { senderDeviceId: msg.senderDeviceId } : {}),

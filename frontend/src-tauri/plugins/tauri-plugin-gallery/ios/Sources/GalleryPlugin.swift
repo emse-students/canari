@@ -42,6 +42,58 @@ class GalleryPlugin: Plugin {
     }
   }
 
+  class ShareTextArgs: Decodable {
+    let text: String
+  }
+
+  class ShareFileArgs: Decodable {
+    let path: String
+    let mime: String
+  }
+
+  /// The system share sheet on a text: a message, a link.
+  @objc public func shareText(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(ShareTextArgs.self)
+    NSLog("[GalleryPlugin] shareText: %d chars", args.text.count)
+    presentShareSheet(invoke, items: [args.text])
+  }
+
+  /// The system share sheet on a file in the cache's `share_out/`. A file URL is shared, so the
+  /// receiving app (or Photos, for "Enregistrer l'image") reads the file itself; the type is taken
+  /// from its extension.
+  @objc public func shareFile(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(ShareFileArgs.self)
+    NSLog("[GalleryPlugin] shareFile: %@", args.mime)
+    presentShareSheet(invoke, items: [URL(fileURLWithPath: args.path)])
+  }
+
+  /// Presents `UIActivityViewController` over the app; resolved once it is shown. On an iPad it is a
+  /// popover, which must be anchored or UIKit throws: it is anchored at the centre, with no arrow.
+  private func presentShareSheet(_ invoke: Invoke, items: [Any]) {
+    DispatchQueue.main.async {
+      guard let presenter = self.manager.viewController else {
+        NSLog("[GalleryPlugin] share: no view controller to present from")
+        invoke.reject("share: no view controller", code: "noPresenter")
+        return
+      }
+      // UIKit refuses to present over a controller that is already presenting, and then never calls
+      // the completion: the promise would hang. Refused at once instead, with a code saying why.
+      if presenter.presentedViewController != nil {
+        NSLog("[GalleryPlugin] share: another sheet is already presented")
+        invoke.reject("share: another sheet is already presented", code: "busy")
+        return
+      }
+      let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
+      if let popover = sheet.popoverPresentationController {
+        popover.sourceView = presenter.view
+        popover.sourceRect = CGRect(
+          x: presenter.view.bounds.midX, y: presenter.view.bounds.midY, width: 0, height: 0)
+        popover.permittedArrowDirections = []
+      }
+      presenter.present(sheet, animated: true) { invoke.resolve() }
+    }
+  }
+
   /// This app's page in Settings, where a refused camera, microphone or photo access is given back.
   @objc public func openAppSettings(_ invoke: Invoke) {
     NSLog("[GalleryPlugin] openAppSettings")

@@ -39,7 +39,10 @@
     requiresPayment: boolean;
     /** An anonymous form cannot charge: a payment names its payer. */
     anonymous: boolean;
-    /** A public form cannot charge either: a guest has no account to charge (parked behind Lydia). */
+    /**
+     * A public form CAN charge (WP-P1): a guest pays on Lydia's page with an e-mail it types. Only
+     * its grid is narrowed - to answers, the one criterion a guest has.
+     */
     isPublic: boolean;
     /** The single price, in euros. Still the only price for a form with no grid. */
     basePrice: number;
@@ -98,13 +101,9 @@
 <FormSection title={m.form_section_payment()} icon={CreditCard}>
   <Toggle
     bind:checked={requiresPayment}
-    disabled={anonymous || isPublic}
+    disabled={anonymous}
     label={m.form_requires_payment_label()}
-    hint={anonymous
-      ? m.form_payment_disabled_anonymous()
-      : isPublic
-        ? m.form_payment_disabled_public()
-        : undefined}
+    hint={anonymous ? m.form_payment_disabled_anonymous() : undefined}
   />
 
   {#if requiresPayment}
@@ -164,6 +163,7 @@
         {formations}
         {items}
         hasCotisation={tiers.length > 0}
+        answersOnly={isPublic}
       />
     {/if}
 
@@ -207,10 +207,15 @@
             type="number"
             bind:value={cashPaymentExpiryDays}
             min="1"
+            required={isPublic}
             placeholder={m.form_cash_expiry_placeholder()}
             class="{controlClass()} sm:w-48"
           />
-          <p class={CONTROL_HINT_CLASS}>{m.form_cash_expiry_hint()}</p>
+          <!-- A public form needs a deadline (the server refuses one without): a guest's unpaid cash
+               answer holds its seat, and its visitor's place under the ceiling, until then. -->
+          <p class={CONTROL_HINT_CLASS}>
+            {isPublic ? m.form_cash_expiry_required_public() : m.form_cash_expiry_hint()}
+          </p>
         </div>
       {/if}
     </div>

@@ -13,6 +13,8 @@
 //! A COMMAND THAT READS AND DELETES A PATH THE PAGE NAMES TAKES AN ALLOWLIST, NEVER A DENYLIST: only
 //! a file under the canonical caches or temporary directory - the two places the pickers write - is
 //! touched, and `..` or a symlink cannot reach outside them because the CANONICAL path is compared.
+//! The same command reads the copies of a share INTO Canari (Android), from the one directory those
+//! are made in - see `docs/wiki/frontend/sharing.md`.
 //! See `docs/wiki/frontend/modules/chat.md` (the attachment menu).
 
 use std::path::{Path, PathBuf};
@@ -51,7 +53,37 @@ fn picker_roots<R: Runtime>(app: &AppHandle<R>) -> Vec<PathBuf> {
             Err(e) => log::warn!("[PickedFiles] {name} directory unresolved: {e}"),
         }
     }
+    // The copies Android's `IncomingShare.kt` makes of what another app shared into Canari. That
+    // directory, and NOT the whole app cache around it: the cache also holds the WebView's own files
+    // and the gallery's decrypted staging, none of which the page may read or delete by name.
+    if let Ok(inbox) = app.path().app_cache_dir().map(|d| d.join(SHARED_INBOX)) {
+        match inbox.canonicalize() {
+            Ok(d) => roots.push(d),
+            // Absent until the first share: nothing to read there, and nothing wrong.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!("[PickedFiles] shared inbox unresolved: {e}"),
+        }
+    }
     roots
+}
+
+/// The directory under the app cache that `IncomingShare.kt` copies shared streams into.
+const SHARED_INBOX: &str = "shared_inbox";
+
+/// The canonical form of `path` when it lies under a picker directory; an error (logged) otherwise.
+fn allowed_path<R: Runtime>(app: &AppHandle<R>, path: &str) -> Result<PathBuf, String> {
+    let requested = picked_path(path)?;
+    let canonical = requested
+        .canonicalize()
+        .map_err(|e| format!("picked file unreadable: {e}"))?;
+    if !is_inside_any(&canonical, &picker_roots(app)) {
+        log::error!(
+            "[PickedFiles] refused a path outside the picker directories: {}",
+            canonical.display()
+        );
+        return Err("path outside the picker directories".to_string());
+    }
+    Ok(canonical)
 }
 
 /// Reads the picker's copy at `path`, deletes it, and returns its bytes as a raw IPC body.
@@ -64,18 +96,7 @@ pub(crate) async fn take_picked_file<R: Runtime>(
     app: AppHandle<R>,
     path: String,
 ) -> Result<tauri::ipc::Response, String> {
-    let requested = picked_path(&path)?;
-    let canonical = requested
-        .canonicalize()
-        .map_err(|e| format!("picked file unreadable: {e}"))?;
-    let roots = picker_roots(&app);
-    if !is_inside_any(&canonical, &roots) {
-        log::error!(
-            "[PickedFiles] refused a path outside the picker directories: {}",
-            canonical.display()
-        );
-        return Err("path outside the picker directories".to_string());
-    }
+    let canonical = allowed_path(&app, &path)?;
     let bytes = std::fs::read(&canonical).map_err(|e| format!("picked file unreadable: {e}"))?;
     log::debug!(
         "[PickedFiles] read {} bytes from {}",
@@ -89,6 +110,20 @@ pub(crate) async fn take_picked_file<R: Runtime>(
         );
     }
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Deletes the picker's copy at `path` UNREAD: the page will not stage it (the member dropped the
+/// share, a newer one replaced it, or it is over the upload ceiling) and must not leave it on disk.
+/// The same allowlist as `take_picked_file`, so it can delete nothing that command could not.
+#[tauri::command]
+pub(crate) async fn discard_picked_file<R: Runtime>(
+    app: AppHandle<R>,
+    path: String,
+) -> Result<(), String> {
+    let canonical = allowed_path(&app, &path)?;
+    std::fs::remove_file(&canonical).map_err(|e| format!("picked file not deleted: {e}"))?;
+    log::debug!("[PickedFiles] discarded {}", canonical.display());
+    Ok(())
 }
 
 #[cfg(test)]

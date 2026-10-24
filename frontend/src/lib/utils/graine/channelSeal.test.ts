@@ -1,6 +1,7 @@
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { byNewestSession } from '$lib/db/graineCodec';
 import {
+  GraineSignatureBatchError,
   GraineSignatureError,
   encodeGraineEndorsementV2,
   graineSeedCommitment,
@@ -17,9 +18,13 @@ import {
   GraineSessionUnavailableError,
   GraineUnknownChannelError,
   GraineV1SessionNotHeldError,
+  GRAINE_SIGNATURE_BATCH_MAX,
   openChannelMessage,
+  openChannelMessagePage,
   sealChannelMessage,
+  type OpenableChannelMessage,
 } from './channelSeal';
+import { deriveMessageKeyBytes } from '$lib/crypto/graine';
 import { GraineDistributionUnavailableError } from './seedDistribution';
 import { registerChannelWorkspace, setGraineRuntime } from './runtime';
 import type { DistributionScope } from '$lib/mls-client/distributionScope';
@@ -78,6 +83,13 @@ function fakeMls(epoch: number | null) {
       // window of `ensureDistributionGroup`, and every seal below happens long after one.
       isDistributionBaseSettled: () => true,
       getEpoch: () => epoch ?? 0,
+      // One clean run per group, never moving: the rotation rule itself is pinned in
+      // `sessionManager.test.ts` and in `mls-core/tests/graine_run.rs`.
+      graineRun: async (groupId: string) => ({
+        runId: `run-${groupId}`,
+        epoch: epoch ?? 0,
+        epochFingerprint: `fp-${groupId}-${epoch ?? 0}`,
+      }),
       graineSignatureEngine: () => webCryptoEngine,
       // The endorsement of a minted session (WP-G2-5): a fixed device key stands in for the MLS
       // credential, whose own signing is `mls-core`'s and tested there.
@@ -505,5 +517,205 @@ describe('opening a v2 row', () => {
     const forged = { ...real, id: 'row-forged', ciphertext: toBase64(new Uint8Array(20)) };
     await expect(openChannelMessage(CHANNEL, forged)).rejects.toBeInstanceOf(GraineSignatureError);
     await expect(openChannelMessage(CHANNEL, real)).resolves.toBeTruthy();
+  });
+
+  /**
+   * F7: a page opened with ONE engine call answers every row exactly what the single open answers
+   * it - same plaintext, or the same typed throw with the same sentence - including the ordering
+   * facts (a forged row before the real one, a replay after the original).
+   */
+  describe('as a page, with one engine call', () => {
+    const V1_SEED = new Uint8Array(32).fill(6);
+
+    async function v1Row(index: number): Promise<OpenableChannelMessage> {
+      const key = await crypto.subtle.importKey(
+        'raw',
+        (await deriveMessageKeyBytes(V1_SEED, 'sess-v1-held', index)) as BufferSource,
+        { name: 'AES-GCM' },
+        false,
+        ['encrypt']
+      );
+      const nonce = new Uint8Array(12).fill(index);
+      const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: nonce as BufferSource },
+        key,
+        new Uint8Array([1, index]) as BufferSource
+      );
+      return {
+        id: `v1-${index}`,
+        senderId: 'carol',
+        ciphertext: toBase64(new Uint8Array(ciphertext)),
+        nonce: toBase64(nonce),
+        senderSessionId: 'sess-v1-held',
+        messageIndex: index,
+        signature: null,
+      };
+    }
+
+    /** Every kind of row a page can hold, in an order where the order matters. */
+    async function mixedPage(): Promise<OpenableChannelMessage[]> {
+      const real2 = await sealedRow(2);
+      const sig8 = (await sealedRow(8)).signature;
+      return [
+        await sealedRow(1),
+        // A forged row BEFORE the real one: refused, and the real one still claims the key.
+        { ...real2, id: 'row-forged', ciphertext: toBase64(new Uint8Array(20)) },
+        real2,
+        { ...(await sealedRow(3)), senderId: 'mallory' },
+        { ...(await sealedRow(4)), signature: 'c2ln' },
+        { ...(await sealedRow(5)), signature: null },
+        { ...(await sealedRow(6)), senderSessionId: 'sess-unknown' },
+        {
+          id: 'v1-unknown',
+          senderId: 'bob',
+          ciphertext: 'x',
+          nonce: 'y',
+          senderSessionId: 'sess-v1-missing',
+          messageIndex: 0,
+          signature: null,
+        },
+        // A replay of row 1 under another id, AFTER it.
+        { ...(await sealedRow(1)), id: 'row-replayed' },
+        // Row 9 carrying row 8's signature: a moved index.
+        { ...(await sealedRow(9)), signature: sig8 },
+        await v1Row(3),
+        { ...(await sealedRow(12)), senderSessionId: 'sess-floor' },
+        await sealedRow(13),
+      ];
+    }
+
+    async function wiredWithEngine() {
+      const v2 = await v2Session();
+      const { storage } = fakeStorage([
+        v2,
+        { ...v2, sessionId: 'sess-floor', firstIndex: 40 },
+        {
+          workspaceId: WS,
+          channelId: CHANNEL,
+          sessionId: 'sess-v1-held',
+          senderId: 'carol',
+          seedB64: toBase64(V1_SEED),
+          firstIndex: 0,
+          createdAt: 1,
+        },
+      ]);
+      const engine = {
+        ...webCryptoEngine,
+        verifySignature: vi.fn(webCryptoEngine.verifySignature),
+        verifySignatures: vi.fn(webCryptoEngine.verifySignatures),
+      };
+      const mls = {
+        ...(fakeMls(4).mls as Record<string, unknown>),
+        graineSignatureEngine: () => engine,
+      };
+      wire(storage, mls as never);
+      return engine;
+    }
+
+    function outcome(r: { ok: true; bytes: Uint8Array } | { ok: false; error: unknown }) {
+      return r.ok
+        ? { bytes: [...r.bytes] }
+        : { error: (r.error as Error).constructor.name, message: (r.error as Error).message };
+    }
+
+    it('answers each row what the single open answers it, with ONE engine call', async () => {
+      const page = await mixedPage();
+
+      const engine = await wiredWithEngine();
+      const batched = (await openChannelMessagePage(CHANNEL, page)).map(outcome);
+      expect(engine.verifySignatures).toHaveBeenCalledTimes(1);
+      expect(engine.verifySignature).not.toHaveBeenCalled();
+      // Only the rows that reached the check were in it: 1, forged 2, 2, the replay of 1, 9, 13.
+      expect(engine.verifySignatures.mock.calls[0][0]).toHaveLength(6);
+
+      setGraineRuntime(null);
+      const single: ReturnType<typeof outcome>[] = [];
+      await wiredWithEngine();
+      for (const row of page) {
+        single.push(
+          await openChannelMessage(CHANNEL, row).then(
+            (bytes) => outcome({ ok: true, bytes }),
+            (error: unknown) => outcome({ ok: false, error })
+          )
+        );
+      }
+      expect(batched).toEqual(single);
+      // And the facts themselves, so the two cannot agree on being wrong.
+      expect(batched.map((o) => ('bytes' in o ? 'ok' : o.error))).toEqual([
+        'ok',
+        'GraineSignatureError',
+        'ok',
+        'GraineAuthorMismatchError',
+        'GraineSignatureError',
+        'GraineSignatureError',
+        'GraineSessionUnavailableError',
+        'GraineV1SessionNotHeldError',
+        'GraineReplayError',
+        'GraineSignatureError',
+        'ok',
+        'GraineBelowFirstIndexError',
+        'ok',
+      ]);
+    });
+
+    it('makes no engine call for a page with nothing to verify', async () => {
+      const engine = await wiredWithEngine();
+      const out = await openChannelMessagePage(CHANNEL, [await v1Row(1), await v1Row(2)]);
+      expect(out.every((o) => o.ok)).toBe(true);
+      expect(engine.verifySignatures).not.toHaveBeenCalled();
+    });
+
+    it('splits a page larger than one batch, every verdict still landing on its own row', async () => {
+      const engine = await wiredWithEngine();
+      const rows = await Promise.all(
+        Array.from({ length: GRAINE_SIGNATURE_BATCH_MAX + 3 }, (_, i) => sealedRow(100 + i))
+      );
+      // One forged row in the second batch refuses itself only.
+      const forgedAt = GRAINE_SIGNATURE_BATCH_MAX + 1;
+      rows[forgedAt] = { ...rows[forgedAt], ciphertext: toBase64(new Uint8Array(20)) };
+      const out = await openChannelMessagePage(CHANNEL, rows);
+      expect(engine.verifySignatures).toHaveBeenCalledTimes(2);
+      expect(out.filter((o) => !o.ok)).toHaveLength(1);
+      expect(out[forgedAt].ok).toBe(false);
+      // 259 real seals: the budget is for a loaded test runner, not a claim about speed.
+    }, 30_000);
+
+    it('keeps a failed batch to its own rows: the next batch is still asked and believed', async () => {
+      const engine = await wiredWithEngine();
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const rows = await Promise.all(
+        Array.from({ length: GRAINE_SIGNATURE_BATCH_MAX + 2 }, (_, i) => sealedRow(600 + i))
+      );
+      engine.verifySignatures.mockRejectedValueOnce(new Error('bridge down'));
+      const out = await openChannelMessagePage(CHANNEL, rows);
+      expect(engine.verifySignatures).toHaveBeenCalledTimes(2);
+      expect(out.filter((o) => !o.ok)).toHaveLength(GRAINE_SIGNATURE_BATCH_MAX);
+      expect(out.slice(GRAINE_SIGNATURE_BATCH_MAX).every((o) => o.ok)).toBe(true);
+      error.mockRestore();
+    }, 30_000);
+
+    it('gives a failed engine call to every row waiting on it, and nothing else', async () => {
+      const engine = await wiredWithEngine();
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      engine.verifySignatures.mockRejectedValueOnce(new Error('bridge down'));
+      const out = await openChannelMessagePage(CHANNEL, [await sealedRow(1), await v1Row(2)]);
+      expect(out[0]).toMatchObject({ ok: false, error: new Error('bridge down') });
+      expect(out[1].ok).toBe(true);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('[GRAINE] signature batch'));
+      error.mockRestore();
+    });
+
+    it('believes no verdict from an engine that answers the wrong count', async () => {
+      const engine = await wiredWithEngine();
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      engine.verifySignatures.mockResolvedValueOnce(['valid']);
+      const out = await openChannelMessagePage(CHANNEL, [await sealedRow(1), await sealedRow(2)]);
+      expect(out.every((o) => !o.ok && o.error instanceof GraineSignatureBatchError)).toBe(true);
+      // Nor from one of the right length that holds something no engine answers.
+      engine.verifySignatures.mockResolvedValueOnce(['valid', 'ok'] as never);
+      const odd = await openChannelMessagePage(CHANNEL, [await sealedRow(3), await sealedRow(4)]);
+      expect(odd.every((o) => !o.ok && o.error instanceof GraineSignatureBatchError)).toBe(true);
+      error.mockRestore();
+    });
   });
 });

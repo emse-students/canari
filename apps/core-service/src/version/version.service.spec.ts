@@ -17,6 +17,8 @@ describe('VersionService', () => {
       minClientVersion: '0.14.0',
       maintenanceEnabled: false,
       maintenanceMessage: null,
+      callsMode: 'audio',
+      livesMode: 'on',
     }),
   } as unknown as PlatformService;
 
@@ -24,6 +26,24 @@ describe('VersionService', () => {
 
   afterEach(() => {
     delete process.env.DEPLOY_BUILD;
+  });
+
+  it('publishes the calls kill switch, so a client hides what the server would refuse', async () => {
+    const out = await service.getVersion();
+
+    expect(out.calls).toEqual({ mode: 'audio' });
+  });
+
+  it('publishes the lives kill switch, so a client hides the live surfaces the server would refuse', async () => {
+    const out = await service.getVersion();
+
+    expect(out.lives).toEqual({ mode: 'on' });
+  });
+
+  it('says it forwards a PKCE verifier, so a client challenges only a server that will redeem it', async () => {
+    const out = await service.getVersion();
+
+    expect(out.oidcPkce).toBe(true);
   });
 
   it('reports no build when the environment was not given one', async () => {

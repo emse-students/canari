@@ -22,6 +22,32 @@ vi.mock('$lib/features', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/features')>()),
   CALLS_VIDEO_ENABLED: true,
 }));
+// ...and the server's kill switch open to video (B12): `audio` hides the camera, tested below. It is
+// REACTIVE like the real store (`set` re-renders what read it), so a flip mid-call can be tested.
+const callsMode = vi.hoisted(() => {
+  const state = {
+    value: 'audio_video' as 'off' | 'audio' | 'audio_video',
+    notify: () => {},
+    set(mode: 'off' | 'audio' | 'audio_video') {
+      state.value = mode;
+      state.notify();
+    },
+  };
+  return state;
+});
+vi.mock('$lib/stores/appVersionCheck.svelte', async () => {
+  const { createSubscriber } = await import('svelte/reactivity');
+  const subscribe = createSubscriber((update) => {
+    callsMode.notify = update;
+    return () => (callsMode.notify = () => {});
+  });
+  return {
+    serverCallsMode: () => {
+      subscribe();
+      return callsMode.value;
+    },
+  };
+});
 const logs = vi.hoisted(() => [] as string[]);
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: (l: string) => logs.push(l) }));
 
@@ -109,6 +135,38 @@ describe('the ring', () => {
   it('is a plain dialog once answered', async () => {
     await render(fakeService('incall'));
     expect(screen()?.getAttribute('role')).toBe('dialog');
+  });
+});
+
+describe('the screen every platform shows (call-screen parity)', () => {
+  const text = (id: string) => document.querySelector(`[data-testid="${id}"]`)?.textContent?.trim();
+
+  it('shows the peer name, a photo backdrop and a status on a ring, with decline BEFORE accept', async () => {
+    await render(fakeService('incoming'));
+    expect(screen()?.textContent).toContain('Bob');
+    expect(text('call-status')).toBe(m.call_incoming_label());
+    const backdrop = document.querySelector('[data-testid="call-backdrop"]');
+    expect(backdrop?.getAttribute('aria-hidden')).toBe('true');
+    // Decline left, accept right: the order of Android's CallStyle ring and CallKit.
+    const decline = document.querySelector('[data-testid="call-decline"]')!;
+    const accept = document.querySelector('[data-testid="call-accept"]')!;
+    expect(decline.compareDocumentPosition(accept) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(accept.className).toContain('bg-call-accept');
+    expect(decline.className).toContain('bg-call-decline');
+  });
+
+  it('says "Calling..." on an outgoing call, with mute and hang-up and no accept', async () => {
+    await render(fakeService('calling'));
+    expect(text('call-status')).toBe(m.call_ringing_label());
+    expect(document.querySelector('[data-testid="call-mute"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="call-hang-up"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="call-accept"]')).toBeNull();
+  });
+
+  it('shows the running time in a call, with the same backdrop', async () => {
+    await render(fakeService('incall'));
+    expect(text('call-status')).toMatch(/^\d+:\d{2}(:\d{2})?$/);
+    expect(document.querySelector('[data-testid="call-backdrop"]')).not.toBeNull();
   });
 });
 
@@ -422,5 +480,44 @@ describe('a video call (lot 2)', () => {
     const camera = document.querySelector('[data-testid="call-camera"]');
     expect(camera).not.toBeNull();
     expect(camera!.closest('.gap-2')).not.toBeNull();
+  });
+
+  it('draws no camera control when the server allows audio only (calls_mode=audio)', async () => {
+    callsMode.value = 'audio';
+    try {
+      await render(fakeService('incall'));
+      expect(document.querySelector('[data-testid="call-camera"]')).toBeNull();
+    } finally {
+      callsMode.value = 'audio_video';
+    }
+  });
+
+  // THE SWITCH GATES TURNING THE CAMERA ON, NEVER OFF. The mode moves mid-call when an admin closes
+  // video; hiding the control then would leave a running camera with nothing on screen to stop it.
+  it('keeps the camera control while the camera runs when the mode drops to audio mid-call', async () => {
+    const service = fakeService('incall');
+    const camera = () => document.querySelector<HTMLButtonElement>('[data-testid="call-camera"]');
+    try {
+      await render(service);
+      cameraOn(service);
+      expect(camera()).not.toBeNull();
+
+      callsMode.set('audio');
+      flushSync();
+      expect(camera()).not.toBeNull();
+      camera()!.click();
+      expect(service.toggleVideo).toHaveBeenCalledTimes(1);
+
+      service.isVideoOff.set(true);
+      flushSync();
+      expect(camera()).toBeNull();
+
+      // The flip itself re-renders (the mock is as reactive as the store), so the pass above is real.
+      callsMode.set('audio_video');
+      flushSync();
+      expect(camera()).not.toBeNull();
+    } finally {
+      callsMode.set('audio_video');
+    }
   });
 });

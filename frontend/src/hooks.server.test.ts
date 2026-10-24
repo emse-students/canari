@@ -15,9 +15,10 @@
 import { readFileSync } from 'node:fs';
 import { handleError } from '$lib/server/handleError';
 import { preloadableAsset } from '$lib/server/preload';
-import { WASM_PRELOAD_MARKER, renderWasmPreloadScript } from '$lib/server/wasmPreload';
+import { WASM_PRELOAD_MARKER, renderWasmPreloadMeta } from '$lib/server/wasmPreload';
 import { MLS_DEVICE_ID_PREFIX } from '$lib/mls-client/wasmPrefetch';
 import { SITE } from '$lib/seo/site';
+import { inlineScripts } from '$lib/security/cspPolicy.js';
 
 // Read from the project root rather than from `import.meta.url`: under Vitest's transform that URL
 // is not a `file:` one, and `app.html` is not a module anyway - it is the artefact being asserted.
@@ -132,13 +133,41 @@ describe('a stylesheet the document already declares earns no preload header', (
 describe('the WASM preload (wasmPreload.ts) starts the download beside the JS', () => {
   const URL_HASHED = '/_app/immutable/assets/mls_wasm_bg.AbCd1234.wasm';
 
-  /** Runs the generated script against a fake browser and returns the links it appended. */
-  function run(opts: { keys: string[]; tauri?: boolean; throwsOnStorage?: boolean }) {
+  /** The one inline script of app.html that reads the marker: fixed text, so the CSP hashes it. */
+  function preloadScript(): string {
+    const scripts = inlineScripts(appHtml);
+    const found = scripts.filter((s) => s.includes('canari-wasm-preload'));
+    expect(found).toHaveLength(1);
+    return found[0];
+  }
+
+  /** The attributes of the `<meta>` the hook writes, read back the way a browser parses them. */
+  function metaAttributes(meta: string | null): Record<string, string> {
+    if (meta === null) return {};
+    const attributes: Record<string, string> = {};
+    for (const m of meta.matchAll(/([a-z-]+)="([^"]*)"/g)) {
+      attributes[m[1]] = m[2]
+        .replaceAll('&quot;', '"')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&amp;', '&');
+    }
+    return attributes;
+  }
+
+  /**
+   * Runs app.html's preload script against a fake browser whose marker is `meta` (null: the
+   * marker left unfilled, as in the native shell) and returns the links it appended.
+   */
+  function run(opts: {
+    keys: string[];
+    tauri?: boolean;
+    throwsOnStorage?: boolean;
+    meta?: string | null;
+  }) {
     const appended: Record<string, unknown>[] = [];
-    // Sliced, not regex-stripped: the wrapper is the generator's own fixed pair of tags.
-    const html = renderWasmPreloadScript(URL_HASHED);
-    expect(html.startsWith('<script>') && html.endsWith('</script>')).toBe(true);
-    const script = html.slice('<script>'.length, -'</script>'.length);
+    const attributes = metaAttributes(
+      opts.meta === undefined ? renderWasmPreloadMeta(URL_HASHED) : opts.meta
+    );
     const win: Record<string, unknown> = opts.tauri ? { __TAURI_INTERNALS__: {} } : {};
     const storage = opts.throwsOnStorage
       ? new Proxy(
@@ -151,10 +180,14 @@ describe('the WASM preload (wasmPreload.ts) starts the download beside the JS', 
         )
       : { length: opts.keys.length, key: (i: number) => opts.keys[i] ?? null };
     const doc = {
+      querySelector: (selector: string) =>
+        selector === 'meta[name="canari-wasm-preload"]'
+          ? { getAttribute: (name: string) => attributes[name] ?? null }
+          : null,
       createElement: () => ({}) as Record<string, unknown>,
       head: { appendChild: (l: Record<string, unknown>) => appended.push(l) },
     };
-    new Function('window', 'localStorage', 'document', script)(win, storage, doc);
+    new Function('window', 'localStorage', 'document', preloadScript())(win, storage, doc);
     return appended;
   }
 
@@ -162,6 +195,8 @@ describe('the WASM preload (wasmPreload.ts) starts the download beside the JS', 
     expect(appHtml).toContain(WASM_PRELOAD_MARKER);
     // A node, never a comment: the SEO marker's reason (hydration warning on a dropped comment).
     expect(WASM_PRELOAD_MARKER.startsWith('<!--')).toBe(false);
+    // The filled marker is still the element the script selects.
+    expect(renderWasmPreloadMeta(URL_HASHED)).toMatch(/^<meta name="canari-wasm-preload" /);
   });
 
   it('appends a preload link for the hashed URL when a device was enrolled', () => {
@@ -177,13 +212,24 @@ describe('the WASM preload (wasmPreload.ts) starts the download beside the JS', 
     });
   });
 
-  it('adds nothing for an anonymous profile, under Tauri, or when storage is refused', () => {
+  it('adds nothing for an anonymous profile, under Tauri, when storage is refused, or unfilled', () => {
     expect(run({ keys: ['theme', 'other'] })).toHaveLength(0);
     expect(run({ keys: [`${MLS_DEVICE_ID_PREFIX}u1`], tauri: true })).toHaveLength(0);
     expect(run({ keys: [], throwsOnStorage: true })).toHaveLength(0);
+    // The native shell: nothing fills the marker, so there is no URL to preload.
+    expect(run({ keys: [`${MLS_DEVICE_ID_PREFIX}u1`], meta: WASM_PRELOAD_MARKER })).toHaveLength(0);
   });
 
   it('uses the prefix the in-bundle prefetch uses: one predicate, two places', () => {
-    expect(renderWasmPreloadScript(URL_HASHED)).toContain(JSON.stringify(MLS_DEVICE_ID_PREFIX));
+    expect(metaAttributes(renderWasmPreloadMeta(URL_HASHED))['data-device-prefix']).toBe(
+      MLS_DEVICE_ID_PREFIX
+    );
+  });
+
+  it('carries no build-specific text in the script, so its CSP hash holds across builds', () => {
+    // The URL changes with every build of the binary; the script must not, or its hash would not
+    // be the one the policy was given (lib/security/cspPolicy.js).
+    expect(preloadScript()).not.toContain('mls_wasm_bg');
+    expect(preloadScript()).not.toContain(MLS_DEVICE_ID_PREFIX);
   });
 });

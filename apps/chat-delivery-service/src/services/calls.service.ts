@@ -6,6 +6,8 @@ import {
   Inject,
   BadRequestException,
   GoneException,
+  type OnModuleDestroy,
+  type OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -21,6 +23,44 @@ import { ApnsVoipService } from './apns-voip.service';
 import { resolveUserDisplayName } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { RefusalCode } from '../utils/refusal-codes';
+import { readCallsMode } from '../utils/calls-mode';
+import { incomingCallAlertBody } from './push-payload';
+import {
+  METER_TIMEOUT_MS,
+  TurnMeterUnavailableError,
+  TurnUsageMeter,
+} from './turn-usage-meter.service';
+
+/** The TURN budget when `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` is unset, in GB (Cloudflare's free tier is ~1000 GB). */
+export const DEFAULT_TURN_BUDGET_GB = 950;
+
+/**
+ * The month's TURN budget as configured. `default`: the variable is unset or empty. `configured`:
+ * a whole number of GB, `0` INCLUDED - the owner's decision of 2026-10-21: `0` means calls stay
+ * open but are STUN only, never relayed. `invalid`: anything else, read as 0 (the closed direction:
+ * a value nobody can read must not spend money) and logged at error wherever it is used.
+ */
+export type TurnBudget =
+  | { gb: number; source: 'default' | 'configured' }
+  | { gb: 0; source: 'invalid'; raw: string };
+
+/** Reads `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB`; see {@link TurnBudget}. */
+export function readTurnBudget(raw: string | undefined): TurnBudget {
+  const value = raw?.trim() ?? '';
+  if (value === '') return { gb: DEFAULT_TURN_BUDGET_GB, source: 'default' };
+  // Digits AND a safe integer: 400 digits pass the pattern and read as Infinity, a budget no
+  // reading can reach.
+  if (/^\d+$/.test(value) && Number.isSafeInteger(Number(value))) {
+    return { gb: Number(value), source: 'configured' };
+  }
+  return { gb: 0, source: 'invalid', raw: value };
+}
+
+/** How often the TURN meter report runs while calls are open: hourly, like the service's others. */
+const TURN_METER_REPORT_MS = 60 * 60 * 1000;
+
+/** Delay of the first report after boot, so a redeploy (more often than hourly) still reports. */
+const TURN_METER_FIRST_REPORT_MS = 60_000;
 
 /** ICE server entry returned to WebRTC clients. */
 export interface IceServerConfig {
@@ -29,10 +69,33 @@ export interface IceServerConfig {
   credential?: string;
 }
 
+/**
+ * Why `ice-servers` withheld TURN. Typed, and carried in a 200: a direct call needs no relay, so
+ * neither reason refuses the call - each only removes the relay leg.
+ * - `TURN_BUDGET_REACHED`: the month's metered relay egress reached the budget.
+ * - `TURN_METER_UNAVAILABLE`: the meter could not be read, so no budget stands behind a credential.
+ */
+/**
+ * Why TURN was withheld. `TURN_DISABLED` is CONFIGURATION (a budget of 0, or a value read as 0),
+ * never a passing state: the client must not word it as "unavailable right now".
+ */
+export type TurnUnavailableCode =
+  | 'TURN_BUDGET_REACHED'
+  | 'TURN_METER_UNAVAILABLE'
+  | 'TURN_DISABLED';
+
 /** Response shape for `GET /api/calls/ice-servers`. */
 export interface IceServersResponse {
   iceServers: IceServerConfig[];
+  /** Whether `iceServers` carries a relay; when not, the typed reason. */
+  turn: { status: 'available' } | { status: 'unavailable'; code: TurnUnavailableCode };
 }
+
+/**
+ * Cloudflare's public STUN server: free, no credential, nothing relayed. What `ice-servers` answers
+ * when TURN is withheld, so a call between two reachable devices still finds its direct path.
+ */
+const STUN_ONLY: IceServerConfig[] = [{ urls: 'stun:stun.cloudflare.com:3478' }];
 
 /** Response shape for `POST /api/calls/initiate`. */
 export interface InitiateCallResponse {
@@ -83,11 +146,12 @@ export interface SiblingCallStatusResponse {
   groupId?: string;
 }
 
+/** The ring payload keys that name the caller or the conversation: never sent to an iPhone. */
+const CALL_NAME_FIELDS: ReadonlySet<string> = new Set(['callerName', 'senderName', 'groupName']);
+
 const USER_CALL_PRESENCE_TTL_SEC = 2 * 60 * 60;
-/** Retain the monthly TURN-usage counter ~45 days so a slow month rollover never loses it early. */
-const TURN_USAGE_TTL_SEC = 45 * 24 * 60 * 60;
-/** Hard cap on counted call duration so a stale presence record can't inflate the estimate. */
-const MAX_COUNTED_CALL_SEC = 4 * 60 * 60;
+/** The longest call a room binding outlives: past it the room id names nothing. */
+const MAX_CALL_SEC = 4 * 60 * 60;
 
 /**
  * THE ring window: how long a callee may answer. The single source - the caller's timer, the
@@ -96,10 +160,10 @@ const MAX_COUNTED_CALL_SEC = 4 * 60 * 60;
 export const CALL_RING_TIMEOUT_SEC = 60;
 
 /**
- * How long a room's binding to its group lives: the ring window plus the longest call this
- * service counts. Past it the room id names nothing and `room-token` answers 410.
+ * How long a room's binding to its group lives: the ring window plus the longest call. Past it the
+ * room id names nothing and `room-token` answers 410.
  */
-const CALL_ROOM_BINDING_TTL_SEC = CALL_RING_TIMEOUT_SEC + MAX_COUNTED_CALL_SEC;
+const CALL_ROOM_BINDING_TTL_SEC = CALL_RING_TIMEOUT_SEC + MAX_CALL_SEC;
 
 function userCallPresenceKey(userId: string): string {
   return `call:user_active:${userId}`;
@@ -113,15 +177,6 @@ function callAnswerByKey(roomId: string): string {
   return `call:room:${roomId}:answer_by`;
 }
 
-/** Monthly bucket (e.g. `turn:usage:2026-06`) accumulating estimated relayed megabytes. */
-function monthlyTurnUsageKey(now: Date = new Date()): string {
-  return `turn:usage:${now.toISOString().slice(0, 7)}`;
-}
-
-/**
- * Mints short-lived TURN credentials via Cloudflare Calls.
- * Returns HTTP 503 when Cloudflare credentials are not configured.
- */
 /** What `prepareRing` hands the background fan-out. */
 interface RingPlan {
   callerId: string;
@@ -132,8 +187,10 @@ interface RingPlan {
 }
 
 @Injectable()
-export class CallsService {
+export class CallsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CallsService.name);
+  private turnMeterReportInterval: ReturnType<typeof setInterval> | null = null;
+  private turnMeterFirstReport: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     @InjectRepository(GroupMember)
@@ -141,8 +198,111 @@ export class CallsService {
     @InjectRepository(PushToken)
     private readonly pushTokenRepo: Repository<PushToken>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
-    private readonly apnsVoip: ApnsVoipService
+    private readonly apnsVoip: ApnsVoipService,
+    private readonly turnMeter: TurnUsageMeter
   ) {}
+
+  /**
+   * THE TURN METER HAS A REPORT, not only per-call error lines. A missing, revoked or mis-scoped
+   * analytics token withholds TURN from EVERY call, indefinitely, and the per-call lines appear
+   * only when someone calls - so the state is said once an hour, by the same family of hourly
+   * reports as the rest of this service (see AppController), and at ERROR when calls are open and
+   * the relay is withheld. While calls are `off` it asks nothing and says nothing: the meter is
+   * then nobody's concern, and an hourly error about it would be noise.
+   *
+   * The reading is also what STORES each closed day's total (`TurnUsageMeter`), so a day is kept
+   * even when nobody needed a relay that day.
+   */
+  onModuleInit(): void {
+    this.turnMeterFirstReport = setTimeout(() => {
+      void this.reportTurnMeter().catch((e) =>
+        this.logger.error('[CRON] reportTurnMeter failed', e)
+      );
+    }, TURN_METER_FIRST_REPORT_MS);
+    this.turnMeterReportInterval = setInterval(() => {
+      void this.reportTurnMeter().catch((e) =>
+        this.logger.error('[CRON] reportTurnMeter failed', e)
+      );
+    }, TURN_METER_REPORT_MS);
+  }
+
+  onModuleDestroy(): void {
+    if (this.turnMeterFirstReport) clearTimeout(this.turnMeterFirstReport);
+    if (this.turnMeterReportInterval) clearInterval(this.turnMeterReportInterval);
+  }
+
+  /** One line on the TURN meter's state. Public so the spec can run one report. */
+  async reportTurnMeter(now: Date = new Date()): Promise<void> {
+    const mode = await readCallsMode(this.groupMemberRepo.manager, this.logger);
+    if (mode === 'off') {
+      this.logger.debug('[TURN-METER] calls are off - the meter is not read');
+      return;
+    }
+    const budget = this.turnBudget();
+    if (budget.source === 'invalid') {
+      this.logger.error(
+        `[TURN-METER] CLOUDFLARE_TURN_MONTHLY_BUDGET_GB="${budget.raw}" is not a whole number of GB - read as 0, TURN is withheld from every call`
+      );
+      return;
+    }
+    if (budget.gb === 0) {
+      this.logger.log(
+        `[TURN-METER] the budget is 0 GB (calls_mode=${mode}) - calls are STUN only by configuration, the meter is not read`
+      );
+      return;
+    }
+    const budgetGb = budget.gb;
+    let usedBytes: number;
+    try {
+      usedBytes = await this.turnMeter.monthEgressBytes(now);
+    } catch (e) {
+      if (!(e instanceof TurnMeterUnavailableError)) throw e;
+      this.logger.error(
+        `[TURN-METER] calls are open (calls_mode=${mode}) and the meter is UNAVAILABLE: ${e.reason} - TURN is withheld from every call until it reads`
+      );
+      return;
+    }
+    const usedGb = usedBytes / 1e9;
+    const line = `[TURN-METER] ${now.toISOString().slice(0, 7)} (UTC calendar month): ${usedGb.toFixed(2)}/${budgetGb} GB metered egress (${((usedGb / budgetGb) * 100).toFixed(1)}%)`;
+    if (usedBytes >= budgetGb * 1e9) {
+      this.logger.error(`${line} - BUDGET REACHED, TURN is withheld from every call`);
+    } else {
+      this.logger.log(`${line} - TURN available`);
+    }
+  }
+
+  /**
+   * THE SERVER'S KILL SWITCH, asked on every request that STARTS or JOINS a call (B12): `initiate`,
+   * `ring`, `room-token` and `ice-servers`. Not on `ring-end` or `presence`, which stop or record a
+   * call and must keep working while one winds down. Read from the database each time, so a staff
+   * member closing calls at `/admin/platform` holds from the next request.
+   *
+   * What it cannot do: a call already connected is peer to peer, its media never touches this server,
+   * so it runs to its end; the switch stops every NEW call, every callee still to answer, and every
+   * new TURN credential. The answer is a coded 403 the client words itself (`CALLS_DISABLED`,
+   * `CALLS_VIDEO_DISABLED`), never who or why.
+   *
+   * @param wantsVideo True only for a ring that asks for video - the one request that names it.
+   */
+  private async assertCallsOpen(scope: string, userId: string, wantsVideo = false): Promise<void> {
+    const mode = await readCallsMode(this.groupMemberRepo.manager, this.logger);
+    if (mode === 'off') {
+      this.logger.log(`[call] ${scope} REFUSED user=${userId}: calls are closed (calls_mode=off)`);
+      throw new ForbiddenException({
+        code: RefusalCode.CALLS_DISABLED,
+        message: 'Calls are not available on this server.',
+      });
+    }
+    if (wantsVideo && mode !== 'audio_video') {
+      this.logger.log(
+        `[call] ${scope} REFUSED user=${userId}: video asked, calls_mode=${mode} allows audio only`
+      );
+      throw new ForbiddenException({
+        code: RefusalCode.CALLS_VIDEO_DISABLED,
+        message: 'Video calls are not available on this server.',
+      });
+    }
+  }
 
   /**
    * Verifies group membership, generates a UUID room ID, and returns a signed
@@ -156,6 +316,7 @@ export class CallsService {
    */
   async initiateCall(userId: string, groupId: string): Promise<InitiateCallResponse> {
     this.logger.debug(`[calls] initiateCall user=${userId} group=${groupId}`);
+    await this.assertCallsOpen(`initiate group=${groupId}`, userId);
 
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId },
@@ -210,6 +371,7 @@ export class CallsService {
     roomId: string
   ): Promise<{ roomToken: string }> {
     this.logger.debug(`[calls] requestRoomToken user=${userId} group=${groupId} room=${roomId}`);
+    await this.assertCallsOpen(`join-token room=${roomId}`, userId);
 
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId },
@@ -340,7 +502,9 @@ export class CallsService {
 
   /**
    * Returns ICE server configuration for an authenticated group member.
-   * Requires a valid `callId` so credentials are scoped per call session.
+   * Requires a valid `callId` so credentials are scoped per call session. 503 when TURN is not
+   * configured at all (a deployment defect); STUN only with a typed `turn.code` when the budget is
+   * spent or its meter unreadable, so a call that needs no relay still connects.
    */
   async getIceServers(
     userId: string,
@@ -348,6 +512,7 @@ export class CallsService {
     callId: string
   ): Promise<IceServersResponse> {
     this.logger.debug(`[ICE] getIceServers user=${userId} group=${groupId} call=${callId}`);
+    await this.assertCallsOpen(`ice-servers call=${callId}`, userId);
 
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId },
@@ -356,6 +521,13 @@ export class CallsService {
     if (!membership) {
       this.logger.warn(`[ICE] user ${userId} is not a member of group ${groupId}`);
       throw new ForbiddenException('Not a member of this group');
+    }
+
+    // TURN OFF BY CONFIGURATION is decided BEFORE TURN's own configuration is checked: an estate set
+    // to a budget of 0 needs no TURN secrets, and must answer STUN only rather than 503.
+    const disabled = this.turnDisabled(callId);
+    if (disabled) {
+      return { iceServers: STUN_ONLY, turn: { status: 'unavailable', code: disabled } };
     }
 
     const cloudflareToken = process.env.CLOUDFLARE_CALLS_API_TOKEN?.trim();
@@ -368,59 +540,75 @@ export class CallsService {
       throw new ServiceUnavailableException('WebRTC TURN is not configured on this server');
     }
 
-    // Refuse new TURN credentials once the monthly relay budget is reached, so we
-    // never exceed Cloudflare's free tier and incur overage. All call media is
-    // relay-only (the SFU has no public media path), so every call counts.
-    const budgetMb = this.turnBudgetGb() * 1000;
-    const usedMb = await this.getMonthlyTurnUsageMb();
-    if (usedMb >= budgetMb) {
-      this.logger.error(
-        `[ICE] Monthly TURN budget reached (${usedMb.toFixed(0)}/${budgetMb} MB) - refusing credentials`
-      );
-      throw new ServiceUnavailableException(
-        'Monthly call quota reached on this server. Try again next month.'
-      );
+    // No TURN credential is minted once the month's METERED relay egress reaches the budget, or
+    // while the meter cannot be read: no relay without a budget behind it (`TurnUsageMeter`, B7).
+    //
+    // A TYPED DEGRADATION BY DESIGN, NOT A FALLBACK. Withholding TURN is the decision the budget
+    // exists to make; refusing the whole request instead would also refuse every DIRECT call, which
+    // costs nothing and was never what the budget protects. So the answer is STUN only plus the
+    // typed reason (`turn.code`), logged at ERROR per call - the relay leg is gone and every call
+    // that needed it will fail to connect, which someone must read.
+    const withheld = await this.turnWithheld(callId);
+    if (withheld) {
+      return { iceServers: STUN_ONLY, turn: { status: 'unavailable', code: withheld } };
     }
 
-    return this.fetchCloudflareIceServers(turnKeyId, cloudflareToken);
+    // One credential per request, never shared: a TURN credential is a member's for its TTL, and
+    // handing one in flight to an unrelated member would put two people's relay on one username.
+    const { iceServers } = await this.fetchCloudflareIceServers(turnKeyId, cloudflareToken);
+    return { iceServers, turn: { status: 'available' } };
   }
 
-  /** Monthly TURN relay budget in GB (Cloudflare free tier is ~1000 GB; default leaves a margin). */
-  private turnBudgetGb(): number {
-    const v = parseInt(process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB || '950', 10);
-    return Number.isFinite(v) && v > 0 ? v : 950;
+  /** Why TURN must be withheld for this call, or null when a credential may be minted. */
+  /**
+   * `TURN_DISABLED` when the budget turns TURN off by configuration (0, or a value read as 0), else
+   * null. The meter is not asked: nothing it could say would change the answer.
+   */
+  private turnDisabled(callId: string): 'TURN_DISABLED' | null {
+    const budget = this.turnBudget();
+    if (budget.source === 'invalid') {
+      // A configuration nobody can read IS a fault: at error, every call, until someone fixes it.
+      this.logger.error(
+        `[ICE] call=${callId} TURN withheld (TURN_DISABLED): CLOUDFLARE_TURN_MONTHLY_BUDGET_GB="${budget.raw}" is not a whole number of GB - read as 0, STUN only`
+      );
+      return 'TURN_DISABLED';
+    }
+    if (budget.gb === 0) {
+      // A DECISION, NOT A FAULT: the owner set the budget to 0 to keep calls STUN only. Said per call
+      // at `log` (the call's own trail), never at error.
+      this.logger.log(
+        `[ICE] call=${callId} TURN withheld (TURN_DISABLED): the budget is 0 GB - STUN only by configuration`
+      );
+      return 'TURN_DISABLED';
+    }
+    return null;
   }
 
-  /** Conservative per-device relay bitrate (kbps, up+down) used to estimate usage. */
-  private relayKbpsPerDevice(): number {
-    const v = parseInt(process.env.CALL_RELAY_KBPS_PER_DEVICE || '3000', 10);
-    return Number.isFinite(v) && v > 0 ? v : 3000;
-  }
-
-  /** Estimated relayed MB accumulated this month (0 when unset). */
-  private async getMonthlyTurnUsageMb(): Promise<number> {
-    const raw = await this.redis.get(monthlyTurnUsageKey());
-    const v = raw ? parseFloat(raw) : 0;
-    return Number.isFinite(v) ? v : 0;
+  private async turnWithheld(callId: string): Promise<TurnUnavailableCode | null> {
+    const budget = this.turnBudget();
+    let usedBytes: number;
+    try {
+      usedBytes = await this.turnMeter.monthEgressBytes();
+    } catch (e) {
+      if (!(e instanceof TurnMeterUnavailableError)) throw e;
+      this.logger.error(
+        `[ICE] call=${callId} TURN withheld (TURN_METER_UNAVAILABLE): ${e.reason} - STUN only, a call that needs a relay will not connect`
+      );
+      return 'TURN_METER_UNAVAILABLE';
+    }
+    if (usedBytes < budget.gb * 1e9) return null;
+    this.logger.error(
+      `[ICE] call=${callId} TURN withheld (TURN_BUDGET_REACHED): ${(usedBytes / 1e9).toFixed(1)}/${budget.gb} GB metered egress this month - STUN only`
+    );
+    return 'TURN_BUDGET_REACHED';
   }
 
   /**
-   * Adds a call's estimated relayed traffic to the monthly counter. Estimated from
-   * the device's call duration × a conservative per-device bitrate (we can't read
-   * Cloudflare's exact byte count, so we overestimate to stay safely under budget).
+   * Monthly TURN relay budget in decimal GB of metered egress (Cloudflare's free allowance is 1000 GB
+   * per account; the default leaves a margin).
    */
-  private async accumulateTurnUsage(callStartMs: number): Promise<void> {
-    if (!callStartMs) return;
-    const durationSec = Math.min(
-      Math.max(0, (Date.now() - callStartMs) / 1000),
-      MAX_COUNTED_CALL_SEC
-    );
-    if (durationSec < 1) return;
-    const mb = (this.relayKbpsPerDevice() * durationSec) / 8000;
-    const key = monthlyTurnUsageKey();
-    await this.redis.incrbyfloat(key, mb);
-    await this.redis.expire(key, TURN_USAGE_TTL_SEC);
-    this.logger.debug(`[ICE] TURN usage +${mb.toFixed(1)} MB (call ${Math.round(durationSec)}s)`);
+  private turnBudget(): TurnBudget {
+    return readTurnBudget(process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB);
   }
 
   /**
@@ -444,7 +632,6 @@ export class CallsService {
         try {
           const parsed = JSON.parse(raw) as UserCallPresence;
           if (parsed.deviceId === deviceId) {
-            await this.accumulateTurnUsage(parsed.updatedAt);
             await this.redis.del(key);
             this.logger.debug(`[calls] cleared presence for user=${userId} device=${deviceId}`);
           }
@@ -499,30 +686,41 @@ export class CallsService {
   private async fetchCloudflareIceServers(
     turnKeyId: string,
     apiToken: string
-  ): Promise<IceServersResponse> {
+  ): Promise<{ iceServers: IceServerConfig[] }> {
     const ttl = parseInt(process.env.CLOUDFLARE_TURN_TTL_SECONDS || '7200', 10);
     const url = `https://rtc.live.cloudflare.com/v1/turn/keys/${turnKeyId}/credentials/generate-ice-servers`;
 
     this.logger.debug(`[ICE] Requesting Cloudflare TURN credentials (ttl=${ttl})`);
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ ttl }),
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
+    let data: { iceServers?: IceServerConfig[] };
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ttl }),
+        // Bounded like the meter's: a Cloudflare that never answers must not hold every call
+        // setup open. The signal covers the body read as well.
+        signal: AbortSignal.timeout(METER_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        this.logger.error(
+          `[ICE] Cloudflare TURN API error status=${response.status} body=${body.slice(0, 200)}`
+        );
+        throw new ServiceUnavailableException('Failed to generate TURN credentials');
+      }
+      data = (await response.json()) as { iceServers?: IceServerConfig[] };
+    } catch (e) {
+      if (e instanceof ServiceUnavailableException) throw e;
+      const timedOut = e instanceof Error && e.name === 'TimeoutError';
       this.logger.error(
-        `[ICE] Cloudflare TURN API error status=${response.status} body=${body.slice(0, 200)}`
+        `[ICE] Cloudflare TURN API ${timedOut ? `gave no answer within ${METER_TIMEOUT_MS} ms` : `unreachable: ${String(e)}`}`
       );
       throw new ServiceUnavailableException('Failed to generate TURN credentials');
     }
-
-    const data = (await response.json()) as { iceServers?: IceServerConfig[] };
     const iceServers = this.filterIceServers(data.iceServers ?? []);
 
     if (iceServers.length === 0) {
@@ -580,6 +778,7 @@ export class CallsService {
     hasVideo: boolean
   ): Promise<RingPlan | null> {
     this.logger.debug(`[ring] ringGroup caller=${callerId} group=${groupId} call=${callId}`);
+    await this.assertCallsOpen(`ring call=${callId}`, callerId, hasVideo);
     await this.assertMembership(callerId, groupId, 'ring');
     const calleeIds = await this.otherMemberIds(groupId, callerId);
     // Re-checked here and not only at `initiate`: between the two the caller's client waits on the
@@ -632,7 +831,7 @@ export class CallsService {
       const delivered =
         pt.platform === 'ios' && pt.voipToken
           ? await this.ringIosVoip(pt, dataFields)
-          : fcmReady && (await this.ringViaFcm(pt, dataFields, callerName, groupName));
+          : fcmReady && (await this.ringViaFcm(pt, dataFields));
       if (delivered) rang++;
     }
     this.logger.log(`[ring] call=${callId} group=${groupId} rang=${rang}/${tokens.length} devices`);
@@ -807,34 +1006,51 @@ export class CallsService {
 
   /**
    * FCM ring delivery: Android gets the data payload (native CallStyle notification);
-   * legacy iOS (no voipToken) gets a visible alert banner built by FCM's APNs relay.
+   * an iPhone with no voipToken gets a visible alert banner built by FCM's APNs relay.
+   *
+   * **That alert is GENERIC** (owner, 2026-10-22, calls.md B2'): until a native ring exists it is
+   * titled "Canari" and reads "Appel entrant" / "Incoming call" in the device's language, with no
+   * caller and no conversation name - neither in the alert nor in the payload keys, since FCM
+   * merges `data` into the APNs payload too. The names stay in the Android data payload, which the
+   * native layer there gates on the callee's own permission.
    */
-  private async ringViaFcm(
-    pt: PushToken,
-    dataFields: Record<string, string>,
-    callerName: string,
-    groupName: string
-  ): Promise<boolean> {
+  private async ringViaFcm(pt: PushToken, dataFields: Record<string, string>): Promise<boolean> {
+    // Names removed for iOS: `...anonymous` below and FCM's own `data` both reach the APNs payload.
+    const toIos = pt.platform === 'ios';
+    const anonymous = Object.fromEntries(
+      Object.entries(dataFields).filter(([key]) => !CALL_NAME_FIELDS.has(key))
+    );
     try {
       await getMessaging().send({
         token: pt.token,
-        data: dataFields,
+        data: toIos ? anonymous : dataFields,
         android: { priority: 'high', ttl: 60_000 },
         apns: {
           payload: {
             aps: {
               alert: {
-                title: callerName || 'Canari',
-                body: groupName
-                  ? `\u{1f4de} Appel entrant - ${groupName}`
-                  : '\u{1f4de} Appel entrant',
+                title: 'Canari',
+                body: incomingCallAlertBody(pt.locale),
               },
               sound: 'default',
               'mutable-content': 1,
             },
-            ...dataFields,
+            ...anonymous,
           },
-          headers: { 'apns-push-type': 'alert', 'apns-priority': '10' },
+          headers: toIos
+            ? {
+                'apns-push-type': 'alert',
+                'apns-priority': '10',
+                // Bounds APNs store-and-forward like Android's 60 s ttl: a phone that was off must not
+                // be handed a ring for a call long over. A DELIVERED banner is not touched by this -
+                // call_ring_end and app activation remove it. The collapse id replaces a re-sent ring.
+                'apns-expiration': String(Math.floor(Date.now() / 1000) + CALL_RING_TIMEOUT_SEC),
+                // APNs refuses a collapse id over 64 bytes (a callId may be up to 128): none then.
+                ...(Buffer.byteLength(dataFields.callId) <= 64
+                  ? { 'apns-collapse-id': dataFields.callId }
+                  : {}),
+              }
+            : { 'apns-push-type': 'alert', 'apns-priority': '10' },
         },
       });
       return true;

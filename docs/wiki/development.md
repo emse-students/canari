@@ -164,7 +164,7 @@ wrong, and each one has already shipped a bug.
   the command is the snake_case Rust fn, not the Kotlin/Swift method; and it must appear in the
   plugin's `build.rs` `COMMANDS` **and** in `permissions/default.toml`, or the IPC boundary refuses
   it even though the Rust fn exists. Build identifiers with `keystoreCommand()`;
-  `keystoreCommands.test.ts` reads the Rust sources and fails on drift.
+  `nativePluginCommands.test.ts` reads the Rust sources and fails on drift.
 - **`push_context.json` is a JSON contract across four languages** — Rust writes it; ObjC, Swift and
   Kotlin read it. Nothing checks it: the v0.11.0 `pin` → `deviceKeyB64` rename killed iOS background
   decrypt for three releases. `src/lib/mobile/pushContextFields.test.ts` is the only guard; change
@@ -376,7 +376,7 @@ The app itself is NOT in this stack: `bun run dev` serves it from the host on **
 ### Every `/api/*` request goes through nginx, and that is not a preference
 
 **nginx is where a bearer token becomes an identity.** It runs
-`auth_request /internal/auth/verify` against `core-service:3012/api/auth/verify`, then copies four
+`auth_request /internal/auth/verify` against `core-service:3012/api/auth/verify`, then copies five
 headers out of that subrequest onto the upstream request:
 
 | From the auth subrequest | Forwarded as |
@@ -385,6 +385,7 @@ headers out of that subrequest onto the upstream request:
 | `X-Logged-In` | `X-User-Logged-In` |
 | `X-Global-Admin` | `X-Global-Admin` |
 | `X-Internal-Token` | `X-Internal-Token` |
+| `X-Session-Id` | `X-Session-Id` |
 
 A service reads `X-User-Id` and nothing else; it never validates a JWT itself. So a request that
 did not pass through nginx has no identity at all, and core-service answers it

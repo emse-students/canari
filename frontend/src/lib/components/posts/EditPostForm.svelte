@@ -12,7 +12,8 @@
     type PostMediaRef,
     type UpdatePostPayload,
   } from '$lib/posts/api';
-  import { getForms, type Form } from '$lib/forms/api';
+  import { getForm, getForms, type Form } from '$lib/forms/api';
+  import { withAttachedForm } from '$lib/posts/editableForms';
   import { buildCreateFormHref } from '$lib/posts/postComposerDraft';
   import {
     listLinkableValidatedCalendarEvents,
@@ -173,7 +174,7 @@
     }
 
     try {
-      availableForms = await getForms();
+      availableForms = await withAttachedForm(await getForms(), post.attachedFormId, getForm);
     } catch (e) {
       console.error('Failed to load forms for edit', e);
     }

@@ -69,8 +69,10 @@ import {
   whenSalonSendable,
 } from '$lib/utils/graine/salonSendGate';
 import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
-import { MediaService } from '$lib/media';
+import { MediaService, refusedBeforePreparation } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
+import { chatReelDeclaration, isChatReelTake } from '$lib/reels/chatReelWriter';
+import { capturePosterOf } from '$lib/reels/capturePoster';
 import {
   applyEditToBody,
   envelopeBodyText,
@@ -98,6 +100,7 @@ import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/outbox';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
+import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import {
   clearControlRefusal,
   clearMessageControlRefusals,
@@ -225,6 +228,8 @@ export function useMessaging() {
     forgetSalonSendsOfEndedSession();
     // The refused control actions shown are the leaving account's; its persisted list stays its own.
     forgetControlRefusals();
+    // So are the new-device alerts on screen; its unseen ones stay persisted for its next session.
+    unregisterDeviceNotices();
   }
 
   /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */
@@ -1460,6 +1465,11 @@ export function useMessaging() {
             // MLS: queue the media. The flusher uploads then sends once the group is ready
             // (the optimistic message shows a skeleton + pending clock until then).
             const type = mediaTypeFromMime(entry.file.type);
+            // A chat reel's declaration, made at the send so its 30 days count from it. Empty for
+            // anything else: an ordinary attachment is encoded exactly as before.
+            const reelDeclaration = entry.reelDurationMs
+              ? chatReelDeclaration(entry.reelDurationMs / 1000, sentAt)
+              : {};
             const placeholder = serializeEnvelope(
               mkMediaEnvelope(
                 {
@@ -1474,6 +1484,7 @@ export function useMessaging() {
                   height: entry.height,
                   ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                   ...(entry.voiceNote ? { voiceNote: true } : {}),
+                  ...reelDeclaration,
                 },
                 captionForFile
               )
@@ -1506,6 +1517,7 @@ export function useMessaging() {
                   ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                   caption: captionForFile,
                   ...(entry.voiceNote ? { voiceNote: true } : {}),
+                  ...reelDeclaration,
                   fileBytes,
                 },
                 status: 'pending',
@@ -1667,7 +1679,7 @@ export function useMessaging() {
         if (prepared) readyFiles.push(prepared);
         continue;
       }
-      if (limits !== null && file.size > limits.maxPlaintextBytes) {
+      if (limits !== null && refusedBeforePreparation(file, limits)) {
         const size = (file.size / 1024 / 1024).toFixed(1);
         // TOLD the configured ceiling, COMPARED against it minus the AES-GCM tag - see
         // `uploadLimits`. Announcing the compared number would say "49 Mo" of a 50 MB server.
@@ -1720,6 +1732,18 @@ export function useMessaging() {
         const placeholder = await placeholderForImageFile(entry.file);
         if (placeholder) entry = { ...entry, placeholder };
       }
+      if (entry.reelDurationMs) {
+        // The tile's ThumbHash comes from the take's first picture, the one the camera kept.
+        const poster = capturePosterOf(file);
+        if (poster) {
+          const { placeholderForImageFile } = await import('$lib/utils/mediaPlaceholder');
+          const placeholder = await placeholderForImageFile(
+            new File([poster], 'poster.jpg', { type: poster.type })
+          );
+          if (placeholder) entry = { ...entry, placeholder };
+        }
+        ctx.log(`[MEDIA] a chat reel of ${entry.reelDurationMs} ms staged`);
+      }
       readyFiles.push(entry);
     }
     return readyFiles;
@@ -1755,7 +1779,16 @@ export function useMessaging() {
         `[MEDIA] video prepared: ${(prepared.sourceBytes / 1024 / 1024).toFixed(1)} Mo -> ` +
           `${(prepared.outputBytes / 1024 / 1024).toFixed(1)} Mo, ${prepared.width}x${prepared.height}`
       );
-      return { file: prepared.file, width: prepared.width, height: prepared.height };
+      return {
+        file: prepared.file,
+        width: prepared.width,
+        height: prepared.height,
+        // The take is prepared into a NEW file: the chat camera's mark follows it here, with the
+        // prepared length, or a reel would be sent as an ordinary video.
+        ...(isChatReelTake(file)
+          ? { reelDurationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)) }
+          : {}),
+      };
     } catch (e) {
       if (!isVideoPrepareError(e)) throw e;
       const message = videoPrepareFailureMessage(e);
@@ -1772,7 +1805,11 @@ export function useMessaging() {
   }
 
   /** Stages picked files in the pending queue, to be sent with the next message. */
-  async function handleFilesSelected(files: File[], ctx: MessagingContext) {
+  async function handleFilesSelected(
+    files: File[],
+    ctx: MessagingContext,
+    opts?: { stillWanted?: () => boolean }
+  ) {
     // The conversation the files were picked IN, read before the preparation (a video re-encode)
     // gives the member time to open another one.
     const stagedIn = ctx.selectedContact;
@@ -1782,6 +1819,12 @@ export function useMessaging() {
     }
     const readyFiles = await prepareMediaFiles(files, ctx);
     if (readyFiles.length === 0) return;
+    // ASKED AFTER THE PREPARATION, which can take seconds: a sign-out during it has already emptied
+    // the queues (`forgetAccount`), and staging now would hand this account's file to the next one.
+    if (opts?.stillWanted && !opts.stillWanted()) {
+      ctx.log(`[MEDIA] ${readyFiles.length} file(s) not staged: no longer wanted (signed out)`);
+      return;
+    }
     ctx.log(`[MEDIA] ${readyFiles.length} file(s) staged in ${stagedIn}`);
     setPendingMediaFiles(stagedIn, [...pendingMediaFilesFor(stagedIn), ...readyFiles]);
   }

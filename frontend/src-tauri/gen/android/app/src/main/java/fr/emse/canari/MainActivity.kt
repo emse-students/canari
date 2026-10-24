@@ -20,8 +20,9 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.firebase.messaging.FirebaseMessaging
+import fr.emse.canari.gesture.Edge
 import fr.emse.canari.gesture.ExclusionBand
-import fr.emse.canari.gesture.rightEdgeExclusion
+import fr.emse.canari.gesture.bandsFor
 import java.io.File
 
 class MainActivity : TauriActivity() {
@@ -94,6 +95,14 @@ class MainActivity : TauriActivity() {
             }
         super.onCreate(savedInstanceState)
         applyKeyboardInsets()
+        // Before any capture, and once per process: no page is alive yet, so nothing is staging.
+        IncomingShare.sweepOrphansOnce(this)
+        // A relaunch after a configuration change, or from the recents list, re-delivers the intent
+        // that STARTED the task: taking it again would offer the same share twice.
+        val fromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+        if (savedInstanceState == null && !fromHistory && IncomingShare.isShare(intent)) {
+            IncomingShare.capture(this, intent) { runOnUiThread { pushIncomingShare() } }
+        }
 
         // Request the notification permission natively on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -102,18 +111,26 @@ class MainActivity : TauriActivity() {
             }
         }
 
-        // Sync the FCM token to fcm_token.txt read by the Rust command get_fcm_token.
-        // Needed on restart: onNewToken is not called again when the token is unchanged.
-        FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
-            if (!token.isNullOrEmpty()) {
-                try {
-                    val dataDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }
-                    File(dataDir, "fcm_token.txt").writeText(token)
-                    getSharedPreferences(CanariFirebaseMessagingService.PREFS_NAME, MODE_PRIVATE)
-                        .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).apply()
-                    Log.i("MainActivity", "FCM token synced (${token.take(20)}…)")
-                } catch (e: Exception) {
-                    Log.w("MainActivity", "FCM token sync failed: ${e.message}")
+        // A SIGN-OUT THAT COULD NOT DELETE ITS TOKEN IS COMPLETED HERE, and the old token is not
+        // mirrored: it belongs to the account that left. The deletion fetches the fresh one.
+        if (PushRegistrationEnd.isDeletionOwed(this)) {
+            Log.i("MainActivity", "FCM token deletion owed by a sign-out - completing it")
+            val appContext = applicationContext
+            Thread({ PushRegistrationEnd.completeOwedDeletion(appContext) }, "canari-push-end").start()
+        } else {
+            // Sync the FCM token to fcm_token.txt read by the Rust command get_fcm_token.
+            // Needed on restart: onNewToken is not called again when the token is unchanged.
+            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+                if (!token.isNullOrEmpty()) {
+                    try {
+                        val dataDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }
+                        File(dataDir, "fcm_token.txt").writeText(token)
+                        getSharedPreferences(CanariFirebaseMessagingService.PREFS_NAME, MODE_PRIVATE)
+                            .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).apply()
+                        Log.i("MainActivity", "FCM token synced (${token.length} chars)")
+                    } catch (e: Exception) {
+                        Log.w("MainActivity", "FCM token sync failed: ${e.message}")
+                    }
                 }
             }
         }
@@ -174,14 +191,14 @@ class MainActivity : TauriActivity() {
         pushForeground(isInForeground)
         webView.addJavascriptInterface(ThemeBridge(), "canariTheme")
         webView.addJavascriptInterface(GestureBridge(), "canariGestures")
-        // The ongoing-call service (WP-C-BG-A) exists only in a build that places calls; the page
-        // reads an absent `canariCall` as exactly that.
+        // The ongoing-call service (WP-C-BG-A) is declared in the main manifest since the calls flip;
+        // the page reads an absent `canariCall` as a build that lost the declaration.
         CallBridge.attach(webView)
         if (CallBridge.serviceDeclared(this)) {
             webView.addJavascriptInterface(CallBridge.JsInterface(applicationContext), "canariCall")
             Log.d("MainActivity", "canariCall bridge registered (the call service is in this build)")
         }
-        webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyRightEdgeExclusion() }
+        webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyEdgeExclusions() }
     }
 
     /**
@@ -212,64 +229,70 @@ class MainActivity : TauriActivity() {
         }
     }
 
-    /** The message list's vertical span in WebView px, while a conversation is open; null otherwise. */
-    private var rightBandSpan: Pair<Int, Int>? = null
+    /**
+     * The vertical span in WebView px the page asked to exclude, per edge: the message list on the
+     * RIGHT while a conversation is open, the posts feed on the LEFT while it is shown. An absent
+     * edge has no band and keeps the system Back gesture.
+     */
+    private val bandSpans = mutableMapOf<Edge, Pair<Int, Int>>()
 
     /** What was last handed to the system, so an unchanged layout pass neither re-sets nor logs. */
-    private var appliedBand: ExclusionBand? = null
+    private var appliedBands: List<ExclusionBand> = emptyList()
 
     /**
-     * THE PAGE SAYS WHEN A CONVERSATION IS OPEN AND WHERE ITS LIST IS; NOTHING NATIVE KNOWS EITHER.
+     * THE PAGE SAYS WHICH SURFACE IS ON SCREEN AND WHERE IT IS; NOTHING NATIVE KNOWS EITHER.
      *
-     * The exclusion exists for one reason: a reply swipe started on an own bubble inside the right
-     * back-gesture inset is taken by the system and closes the conversation (Mi 9T, 2026-10-14, see
-     * `rightEdgeExclusion`). It is therefore declared ONLY while the message list is mounted, so the
-     * right-edge back swipe keeps working on every other screen. Called from a JavaScript thread.
+     * Each band exists for one swipe the system Back gesture was eating (see `edgeExclusion`): the
+     * RIGHT one for a reply swipe on an own bubble (Mi 9T, 2026-10-14), declared ONLY while the
+     * message list is mounted; the LEFT one for the feed's swipe to the camera (Mi 9T, 2026-10-21),
+     * declared ONLY while the posts feed is shown. Everywhere else both edges keep their back swipe.
+     * Called from a JavaScript thread.
      */
     private inner class GestureBridge {
         @JavascriptInterface
-        fun setRightBand(topPx: Int, bottomPx: Int) {
-            runOnUiThread {
-                rightBandSpan = Pair(topPx, bottomPx)
-                applyRightEdgeExclusion()
-            }
-        }
+        fun setRightBand(topPx: Int, bottomPx: Int) = setBand(Edge.RIGHT, Pair(topPx, bottomPx))
 
         @JavascriptInterface
-        fun clearRightBand() {
+        fun clearRightBand() = setBand(Edge.RIGHT, null)
+
+        @JavascriptInterface
+        fun setLeftBand(topPx: Int, bottomPx: Int) = setBand(Edge.LEFT, Pair(topPx, bottomPx))
+
+        @JavascriptInterface
+        fun clearLeftBand() = setBand(Edge.LEFT, null)
+
+        private fun setBand(edge: Edge, span: Pair<Int, Int>?) {
             runOnUiThread {
-                rightBandSpan = null
-                applyRightEdgeExclusion()
+                if (span == null) bandSpans.remove(edge) else bandSpans[edge] = span
+                applyEdgeExclusions()
             }
         }
     }
 
     /**
-     * Declares (or clears) the right-edge exclusion on the WebView. Runs when the page reports and on
+     * Declares (or clears) both edges' exclusions on the WebView. Runs when the page reports and on
      * every layout change of the WebView (rotation, keyboard resize), skipping an unchanged result -
-     * never per frame. `setSystemGestureExclusionRects` is API 29+ (the ViewCompat call is a no-op
-     * below), and the gesture inset reads 0 on 3-button navigation, where there is nothing to
-     * exclude. The whole list is replaced each time, so it never accumulates past Android's cap.
+     * never per frame. `setSystemGestureExclusionRects` is API 29+ (below, the call is skipped
+     * and the log says so), and the gesture inset reads 0 on 3-button navigation, where there is nothing to
+     * exclude. The whole list is replaced each time (`bandsFor` composes both edges), so it never
+     * accumulates past Android's cap of 200 dp per edge, and one edge's report never erases the other.
      */
-    private fun applyRightEdgeExclusion() {
+    private fun applyEdgeExclusions() {
         val webView = liveWebView ?: return
-        val span = rightBandSpan
-        val band = if (span == null) {
-            null
-        } else {
-            val inset = ViewCompat.getRootWindowInsets(webView)
-                ?.getInsets(WindowInsetsCompat.Type.systemGestures())?.right ?: 0
-            rightEdgeExclusion(
-                webView.width, webView.height, resources.displayMetrics.density, inset, span.first, span.second
-            )
-        }
-        if (band == appliedBand) return
-        appliedBand = band
-        Log.d("MainActivity", "right-edge gesture exclusion: span=$span -> $band")
-        ViewCompat.setSystemGestureExclusionRects(
-            webView,
-            if (band == null) emptyList() else listOf(Rect(band.left, band.top, band.right, band.bottom))
+        val insets = ViewCompat.getRootWindowInsets(webView)?.getInsets(WindowInsetsCompat.Type.systemGestures())
+        val bands = bandsFor(
+            bandSpans, insets?.left ?: 0, insets?.right ?: 0,
+            webView.width, webView.height, resources.displayMetrics.density
         )
+        if (bands == appliedBands) return
+        appliedBands = bands
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // No exclusion API below Android 10, and no gesture navigation to exclude from either.
+            Log.d("MainActivity", "gesture exclusion: spans=$bandSpans -> $bands, API < 29: not applied")
+            return
+        }
+        Log.d("MainActivity", "gesture exclusion: spans=$bandSpans -> $bands")
+        ViewCompat.setSystemGestureExclusionRects(webView, bands.map { Rect(it.left, it.top, it.right, it.bottom) })
     }
 
     /**
@@ -336,6 +359,25 @@ class MainActivity : TauriActivity() {
         super.onNewIntent(intent)
         // Keep getIntent()/deep-link getCurrent() aligned with the notification tap intent.
         setIntent(intent)
+        if (IncomingShare.isShare(intent)) {
+            IncomingShare.capture(this, intent) { runOnUiThread { pushIncomingShare() } }
+        }
+    }
+
+    /**
+     * Tells a page that is already alive that a share is waiting in `pending_share.json`. A page
+     * that is not loaded yet misses this and drains the file at mount instead - see `IncomingShare`.
+     */
+    private fun pushIncomingShare() {
+        val webView = liveWebView ?: run {
+            Log.d("MainActivity", "share ready before the WebView: the page drains it at mount")
+            return
+        }
+        try {
+            webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('canari:incoming-share'));", null)
+        } catch (e: Exception) {
+            Log.w("MainActivity", "pushIncomingShare failed, the page drains at its next resume: ${e.message}")
+        }
     }
 
     override fun onResume() {

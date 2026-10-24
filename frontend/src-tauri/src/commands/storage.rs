@@ -279,9 +279,47 @@ pub(crate) fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
     remove_mls_state_in(&data_dir)
 }
 
-/// [`delete_mls_state`] minus the `AppHandle`, so the pair it removes is tested on a real directory.
+/// The prefix of a background Welcome's staged post-add state beside `mls.bin`, one file per group
+/// (`mobile/background.rs`). It holds that state's epoch secrets, so it leaves with `mls.bin`.
+pub(crate) const STAGED_WELCOME_PREFIX: &str = "mls.bin.welcome-";
+
+/// The memo of background Welcomes the server refused as stale, keyed by the digest of `mls.bin`
+/// (`mobile/background.rs`). It describes `mls.bin`, so it leaves with it.
+pub(crate) const STALE_WELCOME_LEDGER_FILE: &str = "welcome_request_stale.json";
+
+/// [`delete_mls_state`] minus the `AppHandle`, so what it removes is tested on a real directory:
+/// `mls.bin`, its owner record, and the background Welcome files built from it - no epoch secret
+/// outlives the state it belongs to.
 fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
-    for name in ["mls.bin", MLS_STATE_OWNER_FILE] {
+    log::debug!("[MLS] removing mls.bin and what was built from it");
+    // `mls.bin` GOES AFTER WHAT WAS BUILT FROM IT: the staged files and the ledger describe it, so a
+    // sweep that fails part-way leaves the state intact and the next reset finishes the job - never
+    // staged epoch secrets, or a memo about a digest, beside no state...
+    match std::fs::read_dir(data_dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if name.to_string_lossy().starts_with(STAGED_WELCOME_PREFIX) {
+                    std::fs::remove_file(entry.path())
+                        .map_err(|e| format!("remove {}: {e}", name.to_string_lossy()))?;
+                    log::info!("[MLS] staged background Welcome state removed with mls.bin");
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("list {}: {e}", data_dir.display())),
+    }
+    // ...and the owner record AFTER it: a failed removal of `mls.bin` leaves the state with the
+    // record naming whose it is, never a state nobody is named for.
+    let stale_ledger_tmp = format!("{STALE_WELCOME_LEDGER_FILE}.tmp");
+    let owner_tmp = format!("{MLS_STATE_OWNER_FILE}.tmp");
+    for name in [
+        STALE_WELCOME_LEDGER_FILE,
+        stale_ledger_tmp.as_str(),
+        "mls.bin",
+        MLS_STATE_OWNER_FILE,
+        owner_tmp.as_str(),
+    ] {
         let path = data_dir.join(name);
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| format!("remove {name}: {e}"))?;
@@ -394,6 +432,33 @@ pub(crate) fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
     read_mls_state_blob(&app)
 }
 
+/// Whether `mls.bin` at `path` is PROVABLY absent: `Ok(true)` when the file does not exist or is
+/// empty, `Ok(false)` when it holds bytes, `Err` when the filesystem could not say.
+///
+/// THE ALLOWLIST OF A DESTRUCTIVE DECISION. A device whose id survived but whose state did not
+/// re-enrols under a new id and retires the old one; only a state KNOWN to be gone may start that.
+/// [`mls_state_size`] answers 0 on an unreadable directory too, which is right for "is there
+/// something to load" and wrong for this, so the error stays an error here.
+pub(crate) fn state_file_absent(path: &std::path::Path) -> Result<bool, String> {
+    match std::fs::metadata(path) {
+        Ok(m) => Ok(m.len() == 0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(e) => Err(format!("stat mls.bin: {e}")),
+    }
+}
+
+/// The frontend's view of [`state_file_absent`] for this install's `mls.bin`.
+#[tauri::command]
+pub(crate) fn mls_state_absent(app: tauri::AppHandle) -> Result<bool, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let absent = state_file_absent(&data_dir.join("mls.bin"));
+    log::debug!("[MLS] mls.bin provably absent: {absent:?}");
+    absent
+}
+
 /// The SIZE of {app_data_dir}/mls.bin, 0 when there is none.
 ///
 /// "Is there a saved state" is a question three call sites asked by loading the whole file: the
@@ -444,6 +509,11 @@ const KEPT_AT_TOP_LEVEL: &[&str] = &[
     "databases",
     "lib",
     "no_backup",
+    // The sign-out's two push marks (`push_registration.rs`). A revoked device is wiped right after
+    // its sign-out wrote them, and the wipe must not undo the sign-out: without them the deletion
+    // of the OS push token is no longer owed, and a push that still arrives is no longer dropped.
+    crate::commands::push_registration::SIGNED_OUT_FILE,
+    crate::commands::push_registration::DELETION_OWED_FILE,
     // Shared with Firebase - emptied by prefix, not wholesale.
     "files",
     "shared_prefs",
@@ -863,6 +933,21 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
 
+    /// Only a missing or empty file is "absent"; a file with bytes is not.
+    #[test]
+    fn state_file_absent_is_true_only_for_a_missing_or_empty_file() {
+        let dir = std::env::temp_dir().join(format!("canari-absent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mls.bin");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(state_file_absent(&path), Ok(true));
+        std::fs::write(&path, b"").unwrap();
+        assert_eq!(state_file_absent(&path), Ok(true));
+        std::fs::write(&path, b"x").unwrap();
+        assert_eq!(state_file_absent(&path), Ok(false));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A device key that is 32 bytes, base64, and constant - the reload takes it as text.
     const DEV_KEY_B64: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
@@ -1107,6 +1192,72 @@ mod tests {
         assert_eq!(read_mls_state_owner(&dir), None);
         // And it is idempotent on an install that holds neither.
         remove_mls_state_in(&dir).unwrap();
+
+        // A background Welcome's staged state and stale memo go with the state they were built
+        // from: a staged file holds that state's epoch secrets.
+        file(&dir, "mls.bin");
+        file(&dir, "mls.bin.welcome-0123456789abcdef");
+        file(&dir, "mls.bin.welcome-0123456789abcdef.tmp");
+        file(&dir, "welcome_request_stale.json");
+        file(&dir, "welcome_request_stale.json.tmp");
+        file(&dir, "unrelated.json");
+        remove_mls_state_in(&dir).unwrap();
+        assert!(!dir.join("mls.bin.welcome-0123456789abcdef").exists());
+        assert!(!dir.join("mls.bin.welcome-0123456789abcdef.tmp").exists());
+        assert!(!dir.join("welcome_request_stale.json").exists());
+        assert!(
+            !dir.join("welcome_request_stale.json.tmp").exists(),
+            "a ledger write cut before its rename leaves its tmp, which describes the same state"
+        );
+        assert!(
+            dir.join("unrelated.json").exists(),
+            "only what belongs to mls.bin"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `mls.bin` GOES AFTER THE STAGED FILES AND THE LEDGER: a sweep that fails part-way leaves the
+    /// state it was sweeping intact, never staged epoch secrets beside no state.
+    #[test]
+    fn a_sweep_that_fails_part_way_leaves_mls_bin_in_place() {
+        let dir = temp_dir("mls-sweep-order");
+        file(&dir, "mls.bin");
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        // A staged name that cannot be removed as a file: the sweep fails on it.
+        std::fs::create_dir_all(dir.join("mls.bin.welcome-fedcba9876543210")).unwrap();
+
+        assert!(remove_mls_state_in(&dir).is_err());
+        assert!(
+            dir.join("mls.bin").exists(),
+            "the state outlives a sweep that did not finish"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// THE OWNER RECORD GOES AFTER `mls.bin`: a removal of `mls.bin` that fails leaves the state
+    /// WITH its owner, never a state nobody is named for - which the gate would read like any
+    /// other account's. Its temporary goes too.
+    #[test]
+    fn a_failed_mls_bin_removal_keeps_the_owner_record() {
+        let dir = temp_dir("mls-owner-order");
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        // A `mls.bin` that cannot be removed as a file.
+        std::fs::create_dir_all(dir.join("mls.bin")).unwrap();
+        file(&dir, "welcome_request_stale.json");
+
+        assert!(remove_mls_state_in(&dir).is_err());
+        assert_eq!(read_mls_state_owner(&dir).as_deref(), Some("user-a"));
+        assert!(
+            !dir.join("welcome_request_stale.json").exists(),
+            "what was built from mls.bin still goes before it"
+        );
+
+        std::fs::remove_dir_all(dir.join("mls.bin")).unwrap();
+        file(&dir, "mls.bin");
+        file(&dir, &format!("{MLS_STATE_OWNER_FILE}.tmp"));
+        remove_mls_state_in(&dir).unwrap();
+        assert_eq!(read_mls_state_owner(&dir), None);
+        assert!(!dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp")).exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1171,6 +1322,31 @@ mod tests {
         assert!(dir.join("app_textures/x").exists());
         assert!(dir.join("databases/x").exists());
         assert!(!dir.join("graine_seeds.json").exists(), "ours was kept");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A revoked device is signed out and then wiped. The wipe keeps the sign-out's two push marks:
+    /// the OS token deletion stays owed until the native side completes it, and a push that still
+    /// arrives stays dropped until a new registration is answered.
+    #[test]
+    fn keeps_the_marks_a_sign_out_wrote_for_the_push_registration() {
+        use crate::commands::push_registration::{DELETION_OWED_FILE, SIGNED_OUT_FILE};
+        let dir = temp_dir("push-marks");
+        file(&dir, SIGNED_OUT_FILE);
+        file(&dir, DELETION_OWED_FILE);
+        file(&dir, "push_context.json");
+
+        wipe_app_data(&dir).unwrap();
+
+        assert!(
+            dir.join(SIGNED_OUT_FILE).exists(),
+            "the signed-out mark was wiped"
+        );
+        assert!(
+            dir.join(DELETION_OWED_FILE).exists(),
+            "the owed deletion was wiped"
+        );
+        assert!(!dir.join("push_context.json").exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 

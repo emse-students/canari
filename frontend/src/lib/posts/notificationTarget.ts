@@ -1,4 +1,5 @@
 import type { PostNotification } from './api';
+import { formResponsesRoute } from '$lib/forms/responsesLink';
 
 /**
  * The author's inbox of republication requests (D38b) - where a `repost_personal_requested`
@@ -25,6 +26,10 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
   switch (notif.type) {
     case 'form_reminder':
       return `/forms/${notif.postId}`;
+    // A payment landed on a full form (`postId` is the FORM): its manager is sent to that form's
+    // responses, where the paid-over-capacity answer is, not to the page that answers the form.
+    case 'form_paid_over_capacity':
+      return formResponsesRoute(notif.postId);
     // A calendar manager was told an event is waiting: send them where they can validate it, not to
     // the month view where a pending event is a grey square among thirty.
     case 'event_proposed':
@@ -65,8 +70,11 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'repost_personal_refused':
       return `/posts/${notif.postId}`;
     // A live a moderator cut (`postId` is the live, deleted when it ended): the row tells the
-    // broadcaster and goes nowhere - there is no page of a live that no longer exists.
+    // broadcaster and goes nowhere - there is no page of a live that no longer exists. The same for
+    // the right to broadcast suspended or withdrawn (WP-L8b; `postId` is the member's own id).
     case 'live_cut':
+    case 'live_suspended':
+    case 'live_withdrawn':
       return null;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
@@ -85,6 +93,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'reaction',
   'mention',
   'form_reminder',
+  'form_paid_over_capacity',
   'association_post',
   'followed_post',
   'association_repost',
@@ -102,6 +111,8 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'profile_correction_applied',
   'profile_correction_refused',
   'live_cut',
+  'live_suspended',
+  'live_withdrawn',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */

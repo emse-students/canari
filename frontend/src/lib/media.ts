@@ -166,6 +166,11 @@ export interface PendingMediaFile {
   placeholder?: string;
   /** Set only by the voice recorder's own send path - see {@link MediaRef.voiceNote}. */
   voiceNote?: boolean;
+  /**
+   * Set when the chat camera filmed this video as a CanaReel (`chatReelWriter.ts`): its length in
+   * milliseconds. The send turns it into the declaration (`intent`, `durationMs`, `expiresAtMs`).
+   */
+  reelDurationMs?: number;
 }
 
 /** Per-context presets - higher quality, less aggressive resize. */
@@ -578,6 +583,23 @@ export const MEDIA_CIPHERTEXT_OVERHEAD_BYTES = 16;
 function worstCaseOverheadBytes(maxBytes: number): number {
   if (!SEGMENTED_MEDIA_WRITER_ENABLED) return MEDIA_CIPHERTEXT_OVERHEAD_BYTES;
   return segmentedCiphertextLength(maxBytes) - maxBytes;
+}
+
+/**
+ * Whether a file of this type and size is refused BEFORE it is prepared for upload: any type but a
+ * video, over the server's plaintext ceiling. A video is re-encoded on the device first, so its own
+ * size says nothing about what is sent. `null` limits refuse nothing (see `uploadLimits`).
+ *
+ * ONE predicate for every path that stages a file: the composer applies it to a picked file, and a
+ * share into Canari applies it to a copy still on disk, so a copy the composer would refuse is
+ * deleted unread instead of being read whole first.
+ */
+export function refusedBeforePreparation(
+  file: { type: string; size: number },
+  limits: { maxPlaintextBytes: number } | null
+): boolean {
+  if (limits === null || file.type.startsWith('video/')) return false;
+  return file.size > limits.maxPlaintextBytes;
 }
 
 /**

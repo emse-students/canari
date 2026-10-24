@@ -1,0 +1,5 @@
+{
+  "description": "The payable range of one checkout, in cents, as the payment provider (Lydia, confirmed 2026-10-04) accepts it. core-service enforces it (LYDIA_MIN_AMOUNT_CENTS / LYDIA_MAX_AMOUNT_CENTS in lydia-payment-provider.ts) and social-service refuses a form total outside it before calling core (PROVIDER_MIN_AMOUNT_CENTS / PROVIDER_MAX_AMOUNT_CENTS in core-payment-error.ts). Each side's spec asserts its constants equal these, so the two cannot drift apart.",
+  "minCents": 50,
+  "maxCents": 100000
+}

@@ -14,7 +14,7 @@ import type { UploadedAnswerFile } from '$lib/forms/api';
 import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { m } from '$lib/paraglide/messages';
 import { socialUrl } from '$lib/utils/apiUrl';
-import { SocialApiError } from '$lib/associations/api';
+import { amountBoundsOf, SocialApiError, type AmountBounds } from '$lib/associations/api';
 import type { AudienceCondition, FormItem } from '$lib/forms/api';
 import { Log } from '$lib/utils/Log';
 import type { Closure, StoredLine } from './availability';
@@ -99,9 +99,10 @@ export class BookingsApiError extends SocialApiError {
     message: string,
     code: string | null,
     status: number,
-    readonly bookingIds: string[]
+    readonly bookingIds: string[],
+    amountBounds: AmountBounds | null = null
   ) {
-    super(message, code, status);
+    super(message, code, status, amountBounds);
     this.name = 'BookingsApiError';
   }
 }
@@ -114,7 +115,13 @@ async function refusal(res: Response, what: string): Promise<BookingsApiError> {
     ? body.bookingIds.filter((x): x is string => typeof x === 'string')
     : [];
   Log.i('BOOKINGS', `${what} refused status=${res.status} code=${code ?? 'none'}`);
-  return new BookingsApiError(`${what} refused (${res.status})`, code, res.status, ids);
+  return new BookingsApiError(
+    `${what} refused (${res.status})`,
+    code,
+    res.status,
+    ids,
+    amountBoundsOf(body)
+  );
 }
 
 async function call<T>(what: string, path: string, init?: ApiFetchOptions): Promise<T> {

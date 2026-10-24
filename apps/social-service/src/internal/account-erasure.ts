@@ -95,6 +95,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // -- Rows that belong to other people too, or are accounting records: anonymised -------------
   'purchase_records.userId': { action: 'anonymise' },
   'webhook_deliveries.userId': { action: 'anonymise' },
+  // A boutique checkout attempt (migration 101) is the record of a request issued for money: it
+  // stays, per row, like a partnership code - `product_checkouts_one_open` is a partial UNIQUE
+  // (productId, userId), so two erased buyers' open attempts would collide on a constant.
+  'product_checkouts.userId': { action: 'anonymise' },
   'submissions.userId': { action: 'anonymise' },
   'submissions.email': { action: 'anonymise', via: 'userId' },
   'submissions.answers': { action: 'anonymise', via: 'userId' },
@@ -213,8 +217,21 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // The live chat (WP-L6): the account's messages and reaction taps go; a count map holds no id.
   'live_chat_messages.authorId': { action: 'delete' },
   'live_reaction_bursts.userId': { action: 'delete' },
+  // The strike ladder (WP-L8b): a withdrawal is a record ABOUT the account, and goes with it; the
+  // moderator who decided is anonymised, as a cut's.
+  'live_broadcast_withdrawals.userId': { action: 'delete' },
+  'live_broadcast_withdrawals.reviewerId': { action: 'anonymise' },
+  // A REPORTED chat line stays until its report is handled or the 90-day bound, even once its
+  // author erased their account (owner, 2026-10-20): the author's id goes, the words stay for staff.
+  'live_chat_reported_lines.authorId': { action: 'anonymise' },
+  'live_chat_reported_lines.authorSignature': NO_ACCOUNT(
+    'an HMAC over the report id and the author id, never an id itself; it reads erased once anonymised'
+  ),
+  'live_chat_reported_lines.reporterSignature': NO_ACCOUNT(
+    'an HMAC over the report id and the reporter id, never an id itself; it reads erased once anonymised'
+  ),
   'live_reaction_bursts.counts': NO_ACCOUNT(
-    'a reaction kind to tap count map (like, love, ...), never an id'
+    'a reaction kind to tap count map (like, fire, ...), never an id'
   ),
 
   // -- Not an account reference, despite the name ----------------------------------------------
@@ -326,6 +343,11 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  * LOCK ORDER: `lives` first, then `live_cuts` - the order a staff cut takes them (the live's row
  * lock, then the cut's insert) - so an erasure racing a cut waits or is waited for, never deadlocks.
  * - Its live chat messages and reaction bursts, on any live, are deleted (WP-L6, migration 098).
+ * - A withdrawal of its right to broadcast is deleted; one it decided as a moderator is anonymised.
+ * - A REPORTED line it wrote (`live_chat_reported_lines`) is KEPT, its author anonymised: the line
+ *   stays until its report is handled or the 90-day bound (owner, 2026-10-20). AFTER the messages'
+ *   delete: a chat-line report holds the message `FOR SHARE` until it commits, so this statement,
+ *   running after that delete waited, sees the kept line the report wrote.
  *
  * Exported apart so `lives.integration.spec.ts` runs exactly these against the schema 091 builds.
  */
@@ -367,6 +389,18 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'live_reaction_bursts',
     sql: `DELETE FROM live_reaction_bursts WHERE "userId" = $1`,
+  },
+  {
+    label: 'live_chat_reported_lines_author',
+    sql: `UPDATE live_chat_reported_lines SET "authorId" = $2 WHERE "authorId" = $1`,
+  },
+  {
+    label: 'live_broadcast_withdrawals',
+    sql: `DELETE FROM live_broadcast_withdrawals WHERE "userId" = $1`,
+  },
+  {
+    label: 'live_broadcast_withdrawals_reviewer',
+    sql: `UPDATE live_broadcast_withdrawals SET "reviewerId" = $2 WHERE "reviewerId" = $1`,
   },
 ];
 
@@ -453,6 +487,11 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'webhook_deliveries',
     sql: `UPDATE webhook_deliveries SET "userId" = $2 WHERE "userId" = $1`,
+  },
+  // Unique per row, for the partial unique index named above.
+  {
+    label: 'product_checkouts',
+    sql: `UPDATE product_checkouts SET "userId" = '[deleted]:' || id::text WHERE "userId" = $1`,
   },
   // The answers go, the row stays: it is a seat the form counted and, when paid, a payment record.
   {
@@ -750,7 +789,12 @@ export function scrubComments(
   if (!Array.isArray(comments)) return { comments, changed: false };
   const all = comments as StoredComment[];
   const byId = new Map(all.map((c) => [c.id, c]));
-  const removed = new Set(all.filter((c) => c.userId === userId).map((c) => c.id));
+  // A comment written AS an association belongs to it, not to its writer (the rule posts follow):
+  // it stays, and only the account is let go of.
+  const asAssociation = (c: StoredComment) => !!c.associationId;
+  const removed = new Set(
+    all.filter((c) => c.userId === userId && !asAssociation(c)).map((c) => c.id)
+  );
   let changed = removed.size > 0;
 
   const survivingParent = (parentId: string | null | undefined): string | null => {
@@ -768,6 +812,10 @@ export function scrubComments(
       let next = c;
       if (Array.isArray(c.likes) && c.likes.includes(userId)) {
         next = { ...next, likes: c.likes.filter((id: string) => id !== userId) };
+        changed = true;
+      }
+      if (c.userId === userId && asAssociation(c)) {
+        next = { ...next, userId: '' };
         changed = true;
       }
       if (c.parentId && removed.has(c.parentId)) {

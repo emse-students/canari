@@ -26,8 +26,17 @@
  *   5. Returns `{ data, isSameDevice }` so the caller can decide what to do
  *      with the MLS state and can trigger Device A re-invitation flow.
  *
- * File format:
- *   [magic: 4 bytes "CAN\x02"] [WASM-encrypted JSON payload]
+ * File format (v3, written since 2026-10-22 - see `crypto/backupRecoveryCode.ts`):
+ *   [magic "CAN\x03"] [HKDF salt 16] [AES-GCM IV 12] [AES-256-GCM(JSON payload)]
+ * sealed under a key derived from a RECOVERY CODE generated at export and shown once - never the
+ * device key, which on a phone is random, hardware-held, and opens nothing on another device. Every
+ * message row and seed in the payload is RE-SEALED from the device key to that same backup key, and
+ * re-sealed again under the importing device's key on import, so the file carries no device key.
+ *
+ * File format (v2, still READ): [magic "CAN\x02"] [WASM-encrypted JSON payload], the envelope and
+ * the rows under the exporting device's key - opens only where that key is the session's.
+ *
+ * Steps 1 and 4 above describe v2; v3 opens the envelope with the code and re-seals each row.
  *
  * The JSON payload:
  *   {
@@ -47,6 +56,12 @@
  */
 
 import type { IStorage, ConversationMeta } from './db';
+import { openSealedBytes, sealBytes } from './encryption';
+import {
+  deriveBackupKeyB64,
+  deviceKeyCheckValue,
+  parseRecoveryCode,
+} from './crypto/backupRecoveryCode';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,10 +79,10 @@ interface SerializedRow {
  * A Graine session row on the wire: the clear columns verbatim, and the sealed seed as `number[]`
  * like every other ciphertext in this file.
  *
- * The seed travels STILL ENCRYPTED under the device key. That key is PIN-derived, so it is the same
- * on the user's second device - which is what makes these rows worth carrying: after Graine the
- * server holds no channel key material, so a seed lost here is channel history that has to be
- * begged off a peer, or is gone.
+ * The seed travels STILL ENCRYPTED - under the backup key in a v3 file, re-sealed under the
+ * importing session's key on the way in (a v2 file carried it under the exporting device's key).
+ * These rows are worth carrying because after Graine the server holds no channel key material, so a
+ * seed lost here is channel history that has to be begged off a peer, or is gone.
  */
 interface SerializedGraineRow {
   sessionId: string;
@@ -93,6 +108,11 @@ export interface BackupData {
   graine?: SerializedGraineRow[];
   /** Hex-encoded, device-key-encrypted MLS state (from localStorage). */
   mlsState?: string;
+  /**
+   * v3: the check value of the device key `mlsState` is sealed under (`deviceKeyCheckValue`), so an
+   * import restores the state only where it opens - never the key itself.
+   */
+  mlsStateKeyCheck?: string;
 }
 
 /**
@@ -116,6 +136,10 @@ export type BackupErrorCode =
   | 'too_old'
   /** The envelope did not open: a different device key, or damaged bytes. */
   | 'wrong_key'
+  /** A v3 file and no recovery code, or a code that is not one (wrong length or alphabet). */
+  | 'code_required'
+  /** A v3 file whose envelope the typed recovery code does not open: another code, or damage. */
+  | 'wrong_code'
   /** It opened, and what came out is not a backup this build can read. */
   | 'corrupted'
   /** Structurally fine and past a size this client refuses to load into memory. */
@@ -138,8 +162,52 @@ export class BackupError extends Error {
   }
 }
 
-// Magic header: bytes for 'C', 'A', 'N', version=2
-const MAGIC = new Uint8Array([0x43, 0x41, 0x4e, 0x02]);
+// Magic header: bytes for 'C', 'A', 'N', then the file version (2: device key, 3: recovery code).
+const MAGIC = new Uint8Array([0x43, 0x41, 0x4e, 0x03]);
+
+/** The v3 header after the magic: the HKDF salt, then the envelope's AES-GCM IV. */
+const V3_SALT_BYTES = 16;
+const V3_IV_BYTES = 12;
+
+/**
+ * The file version of `fileData`, or `null` when it is not a Canari backup. Lets the surface ask for
+ * the recovery code BEFORE an import of a v3 file, rather than learning it from a refusal.
+ */
+export function backupFileVersion(fileData: Uint8Array): number | null {
+  if (
+    fileData.length < 4 ||
+    fileData[0] !== MAGIC[0] ||
+    fileData[1] !== MAGIC[1] ||
+    fileData[2] !== MAGIC[2]
+  ) {
+    return null;
+  }
+  return fileData[3];
+}
+
+/**
+ * Re-seals every row from one key to another, row by row. A row that does not open under `fromKey`
+ * is LEFT OUT and counted: on export it is under a key older still (a seed a pre-fix recovery
+ * stranded), and on import it cannot be a row of this file. Both callers log the count.
+ */
+async function resealRows<T extends { iv: Uint8Array; cipherText: Uint8Array }>(
+  rows: T[],
+  fromKeyB64: string,
+  toKeyB64: string
+): Promise<{ rows: T[]; unreadable: number }> {
+  const out: T[] = [];
+  let unreadable = 0;
+  for (const row of rows) {
+    const plain = await openSealedBytes(row.cipherText, row.iv, fromKeyB64);
+    if (!plain) {
+      unreadable += 1;
+      continue;
+    }
+    const sealed = await sealBytes(plain, toKeyB64);
+    out.push({ ...row, iv: sealed.iv, cipherText: sealed.cipherText });
+  }
+  return { rows: out, unreadable };
+}
 
 // ---------------------------------------------------------------------------
 // Export
@@ -155,6 +223,8 @@ const MAGIC = new Uint8Array([0x43, 0x41, 0x4e, 0x02]);
  *                         to detect same-device restore vs. second-device transfer).
  * @param mlsStateHex      Optional hex string of the encrypted MLS state from
  *                         localStorage - valid only for same-device restores.
+ * @param recoveryCode     The 16 bytes of the device's recovery code
+ *                         (`crypto/deviceRecoveryCode.ts`), shown to the user by the caller.
  * @returns Binary blob ready to be saved / downloaded as a .canari file.
  */
 export async function exportBackup(
@@ -162,12 +232,19 @@ export async function exportBackup(
   userId: string,
   deviceKeyB64: string,
   deviceId: string,
-  mlsStateHex?: string
+  mlsStateHex: string | undefined,
+  recoveryCode: Uint8Array
 ): Promise<Uint8Array> {
+  const salt = crypto.getRandomValues(new Uint8Array(V3_SALT_BYTES));
+  const backupKeyB64 = await deriveBackupKeyB64(recoveryCode, salt);
   const conversations = await storage.getConversations();
-  const rawRows = await storage.getAllEncryptedRows();
 
-  const messages: SerializedRow[] = rawRows.map((r) => ({
+  const movedMessages = await resealRows(
+    await storage.getAllEncryptedRows(),
+    deviceKeyB64,
+    backupKeyB64
+  );
+  const messages: SerializedRow[] = movedMessages.rows.map((r) => ({
     id: r.id,
     conversationId: r.conversationId,
     timestamp: r.timestamp,
@@ -175,7 +252,17 @@ export async function exportBackup(
     cipherText: Array.from(r.cipherText),
   }));
 
-  const rawGraine = await storage.getAllEncryptedGraineRows();
+  const movedGraine = await resealRows(
+    await storage.getAllEncryptedGraineRows(),
+    deviceKeyB64,
+    backupKeyB64
+  );
+  if (movedMessages.unreadable + movedGraine.unreadable > 0) {
+    console.warn(
+      `[BACKUP] ${movedMessages.unreadable} message(s) and ${movedGraine.unreadable} seed(s) do not open under the session key - left out of the backup`
+    );
+  }
+  const rawGraine = movedGraine.rows;
   const graine: SerializedGraineRow[] = rawGraine.map((r) => ({
     sessionId: r.sessionId,
     workspaceId: r.workspaceId,
@@ -189,7 +276,7 @@ export async function exportBackup(
   }));
 
   const backup: BackupData = {
-    version: 2,
+    version: 3,
     userId,
     exportedAt: Date.now(),
     exporterDeviceId: deviceId,
@@ -197,15 +284,19 @@ export async function exportBackup(
     messages,
     graine,
     mlsState: mlsStateHex,
+    mlsStateKeyCheck: mlsStateHex ? await deviceKeyCheckValue(deviceKeyB64) : undefined,
   };
 
-  const wasm = await import('$lib/wasm/mls_wasm.js');
   const plaintext = new TextEncoder().encode(JSON.stringify(backup));
-  const encrypted: Uint8Array = wasm.encrypt_with_key(deviceKeyB64, plaintext);
+  const sealed = await sealBytes(plaintext, backupKeyB64);
 
-  const result = new Uint8Array(MAGIC.length + encrypted.length);
+  const result = new Uint8Array(
+    MAGIC.length + V3_SALT_BYTES + V3_IV_BYTES + sealed.cipherText.length
+  );
   result.set(MAGIC);
-  result.set(encrypted, MAGIC.length);
+  result.set(salt, MAGIC.length);
+  result.set(sealed.iv, MAGIC.length + V3_SALT_BYTES);
+  result.set(sealed.cipherText, MAGIC.length + V3_SALT_BYTES + V3_IV_BYTES);
   return result;
 }
 
@@ -216,38 +307,34 @@ export async function exportBackup(
 /**
  * Decrypt and restore a .canari backup file to the local DB.
  *
- * Accepts v2 (device-key-based, no salt) only. A v1 file is encrypted with the PIN, which is not
+ * Reads v3 (recovery code) and v2 (device key). A v1 file is encrypted with the PIN, which is not
  * available here, so it is refused outright - the doc used to promise a `decrypt_with_pin` fallback
  * that no longer exists.
  *
  * @param fileData         Raw bytes of the backup file.
- * @param deviceKeyB64     Base64-encoded 32-byte device key (must match the key
- *                         used during export).
+ * @param deviceKeyB64     Base64-encoded 32-byte device key of THIS session: what the restored rows
+ *                         are sealed under (v3), or what must open the envelope (v2).
  * @param storage          Initialised IStorage instance on the importing device.
  * @param currentDeviceId  MLS device ID of the current device.
- * @returns `{ data, isSameDevice }` - `isSameDevice` is true when the backup
- *          was created on this same device (wipe + restore scenario).
- * @throws  If the magic header is wrong, the key is incorrect, or the backup
+ * @param recoveryCode     The code shown at export, as typed - required for a v3 file
+ *                         ({@link backupFileVersion} tells the surface before it asks).
+ * @returns `{ data, isSameDevice, mlsStateUsable }` - `isSameDevice` is true when the backup
+ *          was created on this same device (wipe + restore scenario); `mlsStateUsable` when the
+ *          MLS state it carries is sealed under this session's key, the only case it may be restored.
+ * @throws  If the magic header is wrong, the key or code is incorrect, or the backup
  *          format is unsupported.
  */
 export async function importBackup(
   fileData: Uint8Array,
   deviceKeyB64: string,
   storage: IStorage,
-  currentDeviceId: string
-): Promise<{ data: BackupData; isSameDevice: boolean }> {
-  // Validate magic header
-  if (
-    fileData.length < 4 ||
-    fileData[0] !== MAGIC[0] ||
-    fileData[1] !== MAGIC[1] ||
-    fileData[2] !== MAGIC[2]
-  ) {
+  currentDeviceId: string,
+  recoveryCode?: string
+): Promise<{ data: BackupData; isSameDevice: boolean; mlsStateUsable: boolean }> {
+  const backupVersion = backupFileVersion(fileData);
+  if (backupVersion === null) {
     throw new BackupError('not_a_backup', `magic header mismatch (${fileData.length} bytes)`);
   }
-
-  const backupVersion = fileData[3];
-  const encrypted = fileData.slice(4);
 
   // A v1 file is encrypted with the PIN (Argon2id + salt prefix), not with the device key, so it
   // cannot be opened here at all. The check sits ABOVE the try on purpose: raising it from inside
@@ -256,17 +343,41 @@ export async function importBackup(
   if (backupVersion < 2) {
     throw new BackupError('too_old', `file version ${backupVersion}, this build reads 2+`);
   }
+  if (backupVersion > 3) {
+    throw new BackupError('corrupted', `file version ${backupVersion}, this build reads 2 and 3`);
+  }
 
-  // Decrypt outer envelope
-  const wasm = await import('$lib/wasm/mls_wasm.js');
+  // Decrypt outer envelope. v3: the recovery code's key, and every row is re-sealed below.
   let decrypted: Uint8Array;
-  try {
-    decrypted = wasm.decrypt_with_key(deviceKeyB64, encrypted);
-  } catch (err) {
-    // The underlying cause is replaced by a single verdict here, so it is logged before it is lost.
-    // The underlying cause does not survive the classification, so it is logged before it is lost.
-    console.warn(`[BACKUP] Outer envelope decrypt failed: ${String(err)}`);
-    throw new BackupError('wrong_key', String(err));
+  /** v3: the key the rows in the file are sealed under. `null` for v2, whose rows are the session's. */
+  let fileRowKeyB64: string | null = null;
+  if (backupVersion === 3) {
+    const code = recoveryCode ? parseRecoveryCode(recoveryCode) : null;
+    if (!code) throw new BackupError('code_required', 'v3 file, no well-formed recovery code');
+    const header = 4 + V3_SALT_BYTES + V3_IV_BYTES;
+    if (fileData.length <= header) {
+      throw new BackupError('corrupted', `v3 file of ${fileData.length} bytes`);
+    }
+    fileRowKeyB64 = await deriveBackupKeyB64(code, fileData.slice(4, 4 + V3_SALT_BYTES));
+    const opened = await openSealedBytes(
+      fileData.slice(header),
+      fileData.slice(4 + V3_SALT_BYTES, header),
+      fileRowKeyB64
+    );
+    if (!opened) {
+      console.warn('[BACKUP] the recovery code does not open the envelope');
+      throw new BackupError('wrong_code', 'AES-GCM tag did not verify under the code');
+    }
+    decrypted = opened;
+  } else {
+    const wasm = await import('$lib/wasm/mls_wasm.js');
+    try {
+      decrypted = wasm.decrypt_with_key(deviceKeyB64, fileData.slice(4));
+    } catch (err) {
+      // The underlying cause does not survive the classification, so it is logged before it is lost.
+      console.warn(`[BACKUP] Outer envelope decrypt failed: ${String(err)}`);
+      throw new BackupError('wrong_key', String(err));
+    }
   }
 
   // The envelope opened, so the bytes are ours and the key was right - but a truncated file
@@ -367,22 +478,39 @@ export async function importBackup(
   // inserted from this backup (skip orphan rows for skipped conversations).
   const allConvsAfterMerge = await storage.getConversations();
   const knownConvIds = new Set(allConvsAfterMerge.map((c) => c.id));
+  /** v3 rows go from the file's key to this session's; v2 rows are the session's already. */
+  const intoSessionKey = async (iv: number[], cipherText: number[]) => {
+    const row = { iv: new Uint8Array(iv), cipherText: new Uint8Array(cipherText) };
+    if (!fileRowKeyB64) return row;
+    const moved = await resealRows([row], fileRowKeyB64, deviceKeyB64);
+    return moved.rows[0] ?? null;
+  };
+  let unreadableRows = 0;
   for (const msg of backup.messages) {
     if (!knownConvIds.has(msg.conversationId)) continue;
+    const sealed = await intoSessionKey(msg.iv, msg.cipherText);
+    if (!sealed) {
+      unreadableRows += 1;
+      continue;
+    }
     await storage.importEncryptedRow({
       id: msg.id,
       conversationId: msg.conversationId,
       timestamp: msg.timestamp,
-      iv: new Uint8Array(msg.iv),
-      cipherText: new Uint8Array(msg.cipherText),
+      ...sealed,
     });
   }
 
   // Seeds are restored on BOTH device paths, unlike conversations. A conversation is forced to
   // `pending` on a second device because that device is not yet an MLS member and must wait for a
-  // Welcome; a Graine seed carries no such membership - it is a symmetric key sealed under the
-  // PIN-derived device key, and it opens exactly the messages it always opened.
+  // Welcome; a Graine seed carries no such membership - it is a symmetric key, re-sealed under this
+  // session's key, and it opens exactly the messages it always opened.
   for (const row of graineRows) {
+    const sealed = await intoSessionKey(row.iv, row.cipherText);
+    if (!sealed) {
+      unreadableRows += 1;
+      continue;
+    }
     await storage.importEncryptedGraineRow({
       sessionId: row.sessionId,
       workspaceId: row.workspaceId,
@@ -391,10 +519,21 @@ export async function importBackup(
       firstIndex: Number(row.firstIndex) || 0,
       createdAt: Number(row.createdAt) || 0,
       sentCount: row.sentCount,
-      iv: new Uint8Array(row.iv),
-      cipherText: new Uint8Array(row.cipherText),
+      ...sealed,
     });
   }
+  if (unreadableRows > 0) {
+    console.warn(`[BACKUP] ${unreadableRows} row(s) of the file did not open - not restored`);
+  }
 
-  return { data: backup, isSameDevice };
+  // The MLS state is sealed under the EXPORTING session's key. A v2 envelope that opened proves
+  // that key is this session's; a v3 file says so only through its check value - after a wipe, a
+  // phone's hardware-held key is a new one, and restoring a state it cannot open would refuse the
+  // next unlock.
+  const mlsStateUsable =
+    fileRowKeyB64 === null ||
+    (!!backup.mlsStateKeyCheck &&
+      backup.mlsStateKeyCheck === (await deviceKeyCheckValue(deviceKeyB64)));
+
+  return { data: backup, isSameDevice, mlsStateUsable };
 }

@@ -23,9 +23,11 @@ import { isUniqueViolation } from '../common/pg-errors';
 import { isBlockedBetween } from '../common/user-blocks';
 import { ModerationService } from '../moderation/moderation.service';
 import { PostNotificationsService } from '../posts/post-notifications.service';
+import { NOTIFICATIONS_TARGET } from '../push/push-target';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import {
   LIVE_BYTE_BUDGET,
+  LIVE_CHAT_REPORT_MAX_KEEP_MS,
   LIVE_CUT_DETAILS_MAX,
   LIVE_CUT_REASONS,
   LIVE_CUT_RETENTION_MS,
@@ -40,13 +42,23 @@ import {
   LIVE_SEGMENT_MIN_DURATION_MS,
   LIVE_START_WINDOW_MS,
   LIVE_STARTS_PER_HOUR,
+  LIVE_WITHDRAWAL_FROM_CUTS,
   type LiveCutReason,
   type LiveEndReason,
 } from './live.constants';
 import { LiveSeats } from './live-seats';
 import { LIVE_SEGMENT_STORE, type LiveSegmentStore } from './live-segment-store';
 import { LiveAnnouncer, type ClaimedLive } from './live-announcer';
+import {
+  consequenceOf,
+  lockStanding,
+  otherCutsOnRecord,
+  standingOf,
+  type LiveStanding,
+  type LiveStrikeConsequence,
+} from './live-strikes';
 import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
+import { short } from './live-log';
 
 /** A live as its viewers read it: the key included (L2, Q4). */
 export interface LiveView {
@@ -84,6 +96,13 @@ export interface LiveManifest {
   lastSegmentAt: Date | null;
   serverNow: Date;
   segments: LiveManifestSegment[];
+  /**
+   * HOW MANY ACCOUNTS WATCH THIS LIVE - the seats it holds on the host's cap, the caller's own
+   * included, the broadcaster never (it takes none). A COUNT ONLY: no response of this API names a
+   * viewer, to anybody (lives.md, "The viewer count"). The owner decided viewers see the count
+   * (2026-10-21), EXACT and not rounded - confirmed by the owner 2026-10-21. `null` only on the broadcaster's poll when the count did not answer ({@link LiveSeats.watching}).
+   */
+  viewers: number | null;
 }
 
 /** The answer to an ingest, and to its idempotent repeat. */
@@ -109,10 +128,12 @@ export interface CutRecord {
   /** How the live ended - `cut` when the cut ended it, else its earlier end (never `erased`). */
   liveEndedAt: Date;
   liveEndReason: Exclude<LiveEndReason, 'erased'>;
+  /** The cut's place on its broadcaster's ladder, fixed when it was recorded (migration 099). */
+  strike: number;
 }
 
 /** The {@link CutRecord} columns, ONE list for every read of a cut. */
-const CUT_COLUMNS = `"broadcasterId", reason, "cutAt", "liveEndedAt", "liveEndReason"`;
+const CUT_COLUMNS = `"broadcasterId", reason, "cutAt", "liveEndedAt", "liveEndReason", strike`;
 
 export interface LiveCutResult {
   liveId: string;
@@ -123,11 +144,14 @@ export interface LiveCutResult {
   endReason: LiveEndReason;
   /** False on a repeat: the live was cut before, and nothing changed. */
   newlyCut: boolean;
-  /**
-   * The broadcaster's OTHER cuts still kept (`LIVE_CUT_RETENTION_MS`) - what a moderator reads before
-   * deciding on a mute. No policy acts on it: the strike rule is the user's to decide (backlog).
-   */
+  /** The broadcaster's OTHER cuts on record (the rolling `LIVE_STRIKE_WINDOW_MS`). */
   priorCuts: number;
+  /** This cut's place on the broadcaster's ladder: 1 + `priorCuts` when it was recorded. */
+  strike: number;
+  /** What it did to the broadcaster: `warning` (strike 1) or `suspended` (strike 2 and later). */
+  consequence: LiveStrikeConsequence;
+  /** The broadcaster's standing after it - the suspension's end, a withdrawal due. */
+  standing: LiveStanding;
 }
 
 /** A member's standing with the first-live rules (L11): what the pre-live screen asks. */
@@ -181,7 +205,6 @@ const LIVE_COLUMNS = `id, "broadcasterId", "associationId", "liveKey", "startedA
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Short form of an account id for a log line. */
-const short = (id: string) => id.slice(0, 8);
 
 /**
  * The live row, its key, its removed viewers and its segments (WP-L2, WP-L3;
@@ -263,6 +286,24 @@ export class LivesService implements OnModuleDestroy {
     let row: LiveRow;
     try {
       row = await this.db.transaction(async (tx) => {
+        // THE STRIKE LADDER (WP-L8b): a withdrawn or suspended right refuses the start. Read under
+        // the account's standing lock, the one a cut takes before it counts, so a start never slips
+        // between a cut's count and its commit.
+        await lockStanding(tx, broadcasterId);
+        const standing = await standingOf(tx, broadcasterId);
+        if (standing.withdrawnAt) {
+          this.logger.log(`[LIVE] start refused: ${short(broadcasterId)}'s right was withdrawn`);
+          throw new ForbiddenException({ code: 'LIVE_BROADCAST_WITHDRAWN' });
+        }
+        if (standing.suspendedUntil) {
+          this.logger.log(
+            `[LIVE] start refused: ${short(broadcasterId)} is suspended until ${standing.suspendedUntil.toISOString()}`
+          );
+          throw new ForbiddenException({
+            code: 'LIVE_BROADCAST_SUSPENDED',
+            suspendedUntil: standing.suspendedUntil,
+          });
+        }
         // The rolling hour of starts, from rows that outlive their live (`live_starts`). Two starts
         // racing both read the same count, and the one-open-live index lets one of them through.
         const [{ recent }]: { recent: number }[] = await tx.query(
@@ -383,7 +424,7 @@ export class LivesService implements OnModuleDestroy {
    */
   async manifest(viewerId: string, liveId: string, from?: number): Promise<LiveManifest> {
     const row = await this.assertMayWatch(this.db.manager, viewerId, liveId);
-    await this.takeSeat(row, viewerId);
+    const viewers = await this.viewerCount(row, viewerId, await this.takeSeat(row, viewerId));
     const start = from ?? Math.max(0, row.nextIndex - LIVE_MANIFEST_WINDOW);
     const segments: LiveManifestSegment[] = await this.db.query(
       `SELECT s."index", s.name, s.bytes
@@ -399,6 +440,7 @@ export class LivesService implements OnModuleDestroy {
       lastSegmentAt: row.lastSegmentAt,
       serverNow: row.serverNow,
       segments,
+      viewers,
     };
   }
 
@@ -843,12 +885,19 @@ export class LivesService implements OnModuleDestroy {
    * 2. an OPEN live is ENDED with `endReason = 'cut'` - from then on its key and manifest answer
    *    `410 LIVE_ENDED` with `endReason: 'cut'`, its broadcaster's next segment too, and it leaves
    *    `GET /api/lives`; a live already ended KEEPS its reason, before the purge and after it (the
-   *    cut row copies it), and its broadcaster gets no notice - the cut is still recorded, so a
-   *    broadcaster ending their live as the moderator presses does not escape the record;
-   * 3. every PENDING report on it is marked `reviewed` by this moderator - the report's own trail.
+   *    cut row copies it) - the cut is still recorded, so a broadcaster ending their live as the
+   *    moderator presses does not escape the record, nor the ladder;
+   * 3. its STRIKE is fixed on the row (WP-L8b): 1 + the broadcaster's other cuts on record, counted
+   *    under the account's standing lock (`live-strikes.ts`), taken BEFORE the row lock as a start
+   *    takes it. Strike 1 is the warning, strike 2 and later suspend the right to broadcast for
+   *    `LIVE_SUSPENSION_MS`; from `LIVE_WITHDRAWAL_FROM_CUTS` cuts on record the answer says a
+   *    withdrawal is due - staff decide it ({@link withdraw}), the code never does;
+   * 4. every PENDING report on the LIVE is marked `reviewed` by this moderator - the report's own
+   *    trail. A reported chat LINE of it is not: it is a report about its author, answered apart.
    *
    * After the commit: the purge (seats released, segments and row deleted - or left to the sweep
-   * while a segment is storing, whose confirm then purges), and the broadcaster's in-app notice.
+   * while a segment is storing, whose confirm then purges), and the broadcaster's in-app notice
+   * ({@link notifyCut}: the warning or the suspension).
    *
    * 400 `LIVE_CUT_REASON_INVALID` / `LIVE_CUT_DETAILS_INVALID`; 404 `LIVE_NOT_FOUND` for a live with
    * no row and no cut (absent, or ended and already purged - nothing is left to cut); 410
@@ -861,20 +910,17 @@ export class LivesService implements OnModuleDestroy {
     input: { reason?: unknown; details?: unknown }
   ): Promise<LiveCutResult> {
     this.logger.debug(`[LIVE_CUT] ${liveId} asked by ${short(reviewerId)}`);
-    const reason = input.reason;
-    if (typeof reason !== 'string' || !(LIVE_CUT_REASONS as readonly string[]).includes(reason)) {
-      throw new BadRequestException({ code: 'LIVE_CUT_REASON_INVALID' });
-    }
-    const rawDetails = input.details ?? null;
-    if (
-      rawDetails !== null &&
-      (typeof rawDetails !== 'string' || rawDetails.length > LIVE_CUT_DETAILS_MAX)
-    ) {
-      throw new BadRequestException({ code: 'LIVE_CUT_DETAILS_INVALID' });
-    }
-    const details = typeof rawDetails === 'string' && rawDetails.trim() !== '' ? rawDetails : null;
+    const { reason, details } = parseModerationNote(input);
 
     const result = await this.db.transaction(async (tx): Promise<LiveCutResult> => {
+      // THE STANDING LOCK FIRST, the row lock second - the order a start takes them too, so the two
+      // never wait on each other in a cycle. The broadcaster is read unlocked to name the lock: it
+      // only ever changes to the erased tombstone, which the locked read below refuses anyway.
+      const owner: { broadcasterId: string }[] = await tx.query(
+        `SELECT "broadcasterId" FROM lives WHERE id = $1`,
+        [liveId]
+      );
+      if (owner[0]) await lockStanding(tx, owner[0].broadcasterId);
       const rows: LiveRow[] = await tx.query(
         `SELECT ${LIVE_COLUMNS} FROM lives WHERE id = $1 FOR UPDATE`,
         [liveId]
@@ -891,7 +937,10 @@ export class LivesService implements OnModuleDestroy {
           cutAt: earlier.cutAt,
           endReason: earlier.liveEndReason,
           newlyCut: false,
-          priorCuts: await this.countOtherCuts(tx, earlier.broadcasterId, liveId),
+          priorCuts: await otherCutsOnRecord(tx, earlier.broadcasterId, liveId),
+          strike: earlier.strike,
+          consequence: consequenceOf(earlier.strike),
+          standing: await standingOf(tx, earlier.broadcasterId),
         };
       }
       // AN ERASED BROADCASTER'S LIVE IS NOT CUT: every erased account shares DELETED_ACCOUNT, so a
@@ -915,13 +964,16 @@ export class LivesService implements OnModuleDestroy {
         liveEndedAt = ended[0].endedAt;
         endReason = 'cut';
       }
+      // THE STRIKE (WP-L8b): 1 + the broadcaster's other cuts on record, counted under the standing
+      // lock and FIXED on the row - the ladder's durable state.
+      const priorCuts = await otherCutsOnRecord(tx, row.broadcasterId, liveId);
       // An INSERT ... RETURNING answers its rows alone (an UPDATE answers `[rows, affected]`).
-      const inserted: { cutAt: Date }[] = await tx.query(
+      const inserted: { cutAt: Date; strike: number }[] = await tx.query(
         `INSERT INTO live_cuts ("liveId", "broadcasterId", "associationId", "reviewerId", reason,
-                                details, "liveStartedAt", "liveEndedAt", "liveEndReason")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                                details, "liveStartedAt", "liveEndedAt", "liveEndReason", strike)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT ("liveId") DO NOTHING
-         RETURNING "cutAt"`,
+         RETURNING "cutAt", strike`,
         [
           liveId,
           row.broadcasterId,
@@ -932,11 +984,12 @@ export class LivesService implements OnModuleDestroy {
           row.startedAt,
           liveEndedAt,
           endReason,
+          priorCuts + 1,
         ]
       );
       const newlyCut = inserted.length > 0;
       const cut = newlyCut
-        ? { reason: reason as LiveCutReason, cutAt: inserted[0].cutAt }
+        ? { reason: reason as LiveCutReason, cutAt: inserted[0].cutAt, strike: inserted[0].strike }
         : (await this.cutOf(tx, liveId))!;
       if (newlyCut) {
         // The report's own trail, as a moderator closing it by hand would leave it.
@@ -953,60 +1006,71 @@ export class LivesService implements OnModuleDestroy {
         cutAt: cut.cutAt,
         endReason: endReason!,
         newlyCut,
-        priorCuts: await this.countOtherCuts(tx, row.broadcasterId, liveId),
+        priorCuts,
+        strike: cut.strike,
+        consequence: consequenceOf(cut.strike),
+        standing: await standingOf(tx, row.broadcasterId),
       };
     });
 
     if (result.newlyCut) {
       this.logger.log(
         `[LIVE_CUT] ${liveId} cut by ${short(reviewerId)} reason=${result.reason} ` +
-          `broadcaster=${short(result.broadcasterId)} end=${result.endReason} priorCuts=${result.priorCuts}`
+          `broadcaster=${short(result.broadcasterId)} end=${result.endReason} priorCuts=${result.priorCuts} ` +
+          `strike=${result.strike} consequence=${result.consequence}` +
+          (result.standing.withdrawalDue ? ' withdrawalDue' : '')
       );
-      // The notice says "your live was stopped by moderators": true only when THIS cut ended it. A
-      // broadcaster who had already ended their own live is not told so.
-      if (result.endReason === 'cut') await this.notifyCut(result);
+      await this.notifyCut(result);
     }
     await this.purgeBestEffort(liveId, 'after a cut');
     return result;
   }
 
   /**
-   * The broadcaster's in-app notice of a cut: a `live_cut` row in the bell, `text` the reason CODE
-   * (the client words it), no actor (`''`, as an anonymous post's notice: which moderator cut is not
-   * the broadcaster's to read). NO PUSH YET: a push needs its native strings in both apps first
-   * (`skipPush`, so no "no push content" warn either) - the broadcaster's own screen is told at once
-   * anyway, by the 410 its next segment gets. Best-effort: the cut is already durable.
+   * The broadcaster's in-app notice of a NEW cut, by its consequence on the ladder (WP-L8b):
+   *
+   * - `live_suspended` from strike 2 on - always, whether the cut ended the live or recorded the
+   *   decision on a live already ended: a suspension the member is not told of is one they meet as
+   *   a bare refusal. Its end is `GET /api/lives/standing`'s.
+   * - `live_cut` at strike 1 (the WARNING) when the cut ended the live. A cut of a live its
+   *   broadcaster had already ended is still strike 1 on record and is not notified: the notice says
+   *   moderators stopped the live, which they did not.
+   *
+   * `text` the reason CODE (the client words it), no actor (`''`, as an anonymous post's notice:
+   * which moderator cut is not the broadcaster's to read). AND A PUSH, through the same call
+   * (`social_live_cut` / `social_live_suspended`, fixed sentences the device words), whose tap opens
+   * the notifications list (`NOTIFICATIONS_TARGET`): the live is deleted, so there is no page of it
+   * to open. The broadcaster's own screen is told at once anyway, by the 410 its next segment gets;
+   * the push is for the broadcaster who already left it. Best-effort: the cut is already durable.
    */
   private async notifyCut(cut: LiveCutResult): Promise<void> {
     if (cut.broadcasterId === DELETED_ACCOUNT) return;
+    const type =
+      cut.consequence === 'suspended'
+        ? 'live_suspended'
+        : cut.endReason === 'cut'
+          ? 'live_cut'
+          : null;
+    if (type === null) {
+      this.logger.debug(`[LIVE_CUT] ${cut.liveId}: strike 1 on a live already ended - no notice`);
+      return;
+    }
+    this.logger.debug(`[LIVE_CUT] ${cut.liveId}: ${type} notice and push to the broadcaster`);
     try {
       await this.notifications.createNotification({
         recipientId: cut.broadcasterId,
-        type: 'live_cut',
+        type,
         postId: cut.liveId,
         actorId: '',
         actorName: '',
         text: cut.reason,
-        skipPush: true,
+        pushData: { target: NOTIFICATIONS_TARGET },
       });
     } catch (e) {
       this.logger.warn(
         `[LIVE_CUT] ${cut.liveId}: the broadcaster's notice was not written: ${causeOf(e)}`
       );
     }
-  }
-
-  /** The broadcaster's cuts still kept, this live's excepted: the repeat-offender count. */
-  private async countOtherCuts(
-    manager: EntityManager,
-    broadcasterId: string,
-    liveId: string
-  ): Promise<number> {
-    const [{ n }]: { n: number }[] = await manager.query(
-      `SELECT count(*)::int AS n FROM live_cuts WHERE "broadcasterId" = $1 AND "liveId" <> $2`,
-      [broadcasterId, liveId]
-    );
-    return n;
   }
 
   /**
@@ -1057,6 +1121,152 @@ export class LivesService implements OnModuleDestroy {
     )) as [unknown, number];
     if (affected > 0) this.logger.log(`[LIVE_GC] ${affected} cut(s) past their retention deleted`);
     return affected;
+  }
+
+  /**
+   * ERASES THE REPORTED CHAT LINES WHOSE TIME IS UP (WP-L8b; owner, 2026-10-20) - one rule on
+   * durable state, two halves: a line whose report is no longer `pending` (handled: reviewed or
+   * dismissed), and a line kept {@link LIVE_CHAT_REPORT_MAX_KEEP_MS}, handled or NOT. The second is
+   * a commitment broken - nobody answered the report in 90 days - so it logs at `warn` with its count.
+   * A deleted report takes its line by the foreign key's cascade.
+   */
+  async pruneReportedChatLines(): Promise<number> {
+    const [, handled] = (await this.db.query(
+      `DELETE FROM live_chat_reported_lines k
+        WHERE NOT EXISTS (SELECT 1 FROM content_reports r
+                           WHERE r.id = k."reportId" AND r.status = 'pending')`
+    )) as [unknown, number];
+    const [, bounded] = (await this.db.query(
+      // The column alone on its side, so `live_chat_reported_lines_kept_at_idx` serves it.
+      `DELETE FROM live_chat_reported_lines
+        WHERE "keptAt" <= now() - $1::float8 * interval '1 millisecond'`,
+      [LIVE_CHAT_REPORT_MAX_KEEP_MS]
+    )) as [unknown, number];
+    if (handled > 0) {
+      this.logger.log(
+        `[LIVE_GC] ${handled} reported chat line(s) erased: their report was handled`
+      );
+    }
+    if (bounded > 0) {
+      this.logger.warn(
+        `[LIVE_GC] ${bounded} reported chat line(s) erased UNHANDLED: their report waited the ` +
+          `${LIVE_CHAT_REPORT_MAX_KEEP_MS / 86_400_000}-day bound`
+      );
+    }
+    return handled + bounded;
+  }
+
+  /** The caller's own standing with the right to broadcast (`GET /api/lives/standing`). */
+  async standing(userId: string): Promise<Omit<LiveStanding, 'withdrawalDue'>> {
+    const { cutsOnRecord, suspendedUntil, withdrawnAt } = await standingOf(this.db.manager, userId);
+    return { cutsOnRecord, suspendedUntil, withdrawnAt };
+  }
+
+  /**
+   * STAFF WITHDRAW AN ACCOUNT'S RIGHT TO BROADCAST (the ladder's 3rd step, owner 2026-10-20: a
+   * person's decision). Allowed once {@link LIVE_WITHDRAWAL_FROM_CUTS} cuts are on record, else 409
+   * `LIVE_WITHDRAWAL_NOT_DUE` with the count - the ladder is the owner's, and a moderator who wants
+   * an account silenced sooner has the mute. Idempotent: a repeat answers the first withdrawal with
+   * `newlyWithdrawn: false`. An open live of the account is NOT ended by it: that is a cut.
+   * The member is told by a `live_withdrawn` notice (reason code, no actor) and its push
+   * (`social_live_withdrawn`, opening the notifications list).
+   */
+  async withdraw(
+    reviewerId: string,
+    userId: string,
+    input: { reason?: unknown; details?: unknown }
+  ): Promise<{
+    userId: string;
+    reason: LiveCutReason;
+    withdrawnAt: Date;
+    newlyWithdrawn: boolean;
+    cutsOnRecord: number;
+  }> {
+    const { reason, details } = parseModerationNote(input);
+    const target = parseAccountId(userId);
+    const result = await this.db.transaction(async (tx) => {
+      await lockStanding(tx, target);
+      // The cuts the withdrawal rests on, held FOR SHARE: an account erasure deletes them BEFORE it
+      // deletes the withdrawal rows, so it either waits for this commit (and its later DELETE then
+      // sees the row written here) or has deleted them first (and the count below, a new
+      // statement, reads them gone and refuses). Never a withdrawal row left behind an erasure.
+      await tx.query(`SELECT 1 FROM live_cuts WHERE "broadcasterId" = $1 FOR SHARE`, [target]);
+      const standing = await standingOf(tx, target);
+      const existing: { reason: LiveCutReason; withdrawnAt: Date }[] = await tx.query(
+        `SELECT reason, "withdrawnAt" FROM live_broadcast_withdrawals WHERE "userId" = $1`,
+        [target]
+      );
+      if (existing[0]) {
+        return { ...existing[0], newlyWithdrawn: false, cutsOnRecord: standing.cutsOnRecord };
+      }
+      if (standing.cutsOnRecord < LIVE_WITHDRAWAL_FROM_CUTS) {
+        this.logger.log(
+          `[LIVE_STRIKE] withdrawal of ${short(target)} refused: ${standing.cutsOnRecord} cut(s) on record`
+        );
+        throw new ConflictException({
+          code: 'LIVE_WITHDRAWAL_NOT_DUE',
+          cutsOnRecord: standing.cutsOnRecord,
+          required: LIVE_WITHDRAWAL_FROM_CUTS,
+        });
+      }
+      const rows: { withdrawnAt: Date }[] = await tx.query(
+        `INSERT INTO live_broadcast_withdrawals ("userId", "reviewerId", reason, details)
+         VALUES ($1, $2, $3, $4) RETURNING "withdrawnAt"`,
+        [target, reviewerId, reason, details]
+      );
+      return {
+        reason,
+        withdrawnAt: rows[0].withdrawnAt,
+        newlyWithdrawn: true,
+        cutsOnRecord: standing.cutsOnRecord,
+      };
+    });
+    if (result.newlyWithdrawn) {
+      this.logger.log(
+        `[LIVE_STRIKE] ${short(target)}'s right to broadcast withdrawn by ${short(reviewerId)} ` +
+          `reason=${result.reason} cutsOnRecord=${result.cutsOnRecord}`
+      );
+      try {
+        await this.notifications.createNotification({
+          recipientId: target,
+          type: 'live_withdrawn',
+          postId: target,
+          actorId: '',
+          actorName: '',
+          text: result.reason,
+          pushData: { target: NOTIFICATIONS_TARGET },
+        });
+      } catch (e) {
+        this.logger.warn(
+          `[LIVE_STRIKE] ${short(target)}: the withdrawal notice was not written: ${causeOf(e)}`
+        );
+      }
+    } else {
+      this.logger.debug(`[LIVE_STRIKE] ${short(target)} was withdrawn already`);
+    }
+    return { userId: target, ...result };
+  }
+
+  /** Staff LIFT a withdrawal: the row goes, starts are allowed again. Idempotent (`lifted: false`). */
+  async liftWithdrawal(
+    reviewerId: string,
+    userId: string
+  ): Promise<{ userId: string; lifted: boolean }> {
+    const target = parseAccountId(userId);
+    const lifted = await this.db.transaction(async (tx) => {
+      await lockStanding(tx, target);
+      const [, affected] = (await tx.query(
+        `DELETE FROM live_broadcast_withdrawals WHERE "userId" = $1`,
+        [target]
+      )) as [unknown, number];
+      return affected > 0;
+    });
+    if (lifted) {
+      this.logger.log(`[LIVE_STRIKE] ${short(target)}'s withdrawal lifted by ${short(reviewerId)}`);
+    } else {
+      this.logger.debug(`[LIVE_STRIKE] lift of ${short(target)}: nothing withdrawn`);
+    }
+    return { userId: target, lifted };
   }
 
   /**
@@ -1205,10 +1415,26 @@ export class LivesService implements OnModuleDestroy {
    * takes or renews a seat, 503 `LIVE_FULL` past the host's cap. Taken AFTER the watch check, so a
    * removed, blocked or ended answer is never masked as "full". The broadcaster takes none: its
    * reads cost the uplink nothing a viewer's would.
+   *
+   * Answers the live's viewer count as the take counted it, or `null` for the broadcaster (no seat,
+   * no take) - who asks {@link viewerCount} instead, and only where a count is shown.
    */
-  private async takeSeat(row: LiveRow, viewerId: string): Promise<void> {
-    if (row.broadcasterId === viewerId) return;
-    await this.seats.take(row.id, viewerId);
+  private async takeSeat(row: LiveRow, viewerId: string): Promise<number | null> {
+    if (row.broadcasterId === viewerId) return null;
+    return this.seats.take(row.id, viewerId);
+  }
+
+  /**
+   * THE VIEWER COUNT a manifest carries (lives.md, "The viewer count") - from the seats, no second
+   * tracker: a viewer's from its own take (`taken`), the broadcaster's from a read-only count of the
+   * same set. Asked by the manifest only: the key read shows no count, so it runs no count.
+   */
+  private async viewerCount(
+    row: LiveRow,
+    viewerId: string,
+    taken: number | null
+  ): Promise<number | null> {
+    return row.broadcasterId === viewerId ? this.seats.watching(row.id) : taken;
   }
 
   /**
@@ -1292,6 +1518,43 @@ function toView(row: LiveRow): LiveView {
     nextIndex: row.nextIndex,
     key: row.liveKey,
   };
+}
+
+/**
+ * A staff decision's `{ reason, details? }` - a cut or a withdrawal: a reason CODE from
+ * {@link LIVE_CUT_REASONS} (400 `LIVE_CUT_REASON_INVALID`), and an optional note of at most
+ * {@link LIVE_CUT_DETAILS_MAX} characters (400 `LIVE_CUT_DETAILS_INVALID`), blank read as none.
+ */
+function parseModerationNote(input: { reason?: unknown; details?: unknown }): {
+  reason: LiveCutReason;
+  details: string | null;
+} {
+  const reason = input.reason;
+  if (typeof reason !== 'string' || !(LIVE_CUT_REASONS as readonly string[]).includes(reason)) {
+    throw new BadRequestException({ code: 'LIVE_CUT_REASON_INVALID' });
+  }
+  const rawDetails = input.details ?? null;
+  if (
+    rawDetails !== null &&
+    (typeof rawDetails !== 'string' || rawDetails.length > LIVE_CUT_DETAILS_MAX)
+  ) {
+    throw new BadRequestException({ code: 'LIVE_CUT_DETAILS_INVALID' });
+  }
+  const details = typeof rawDetails === 'string' && rawDetails.trim() !== '' ? rawDetails : null;
+  return { reason: reason as LiveCutReason, details };
+}
+
+/**
+ * An account id from a URL, as every account id is compared: trimmed, lower case, at most 255
+ * characters. The erased tombstone is refused: it pools every erased account, so no decision may
+ * name it. 400 `LIVE_ACCOUNT_INVALID`.
+ */
+function parseAccountId(raw: string): string {
+  const id = raw.trim().toLowerCase();
+  if (id === '' || id.length > 255 || id === DELETED_ACCOUNT.toLowerCase()) {
+    throw new BadRequestException({ code: 'LIVE_ACCOUNT_INVALID' });
+  }
+  return id;
 }
 
 /** The cause of a failure on one line - an axios error carries a whole socket graph otherwise. */

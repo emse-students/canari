@@ -59,10 +59,13 @@ export function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
-/** Stages the video chunk by chunk under `session`. */
-async function stage(session: string, video: Blob): Promise<void> {
-  for (let offset = 0; offset < video.size; offset += GALLERY_CHUNK_BYTES) {
-    const data = await blobToBase64(video.slice(offset, offset + GALLERY_CHUNK_BYTES));
+/**
+ * Stages a blob chunk by chunk under `session`: a reel on its way to the gallery, or any decrypted
+ * file on its way to the share sheet (`sharing/shareOut.ts`).
+ */
+export async function stageBlob(session: string, blob: Blob): Promise<void> {
+  for (let offset = 0; offset < blob.size; offset += GALLERY_CHUNK_BYTES) {
+    const data = await blobToBase64(blob.slice(offset, offset + GALLERY_CHUNK_BYTES));
     await invoke<number>(galleryCommand('appendVideoChunk'), { session, offset, data });
   }
 }
@@ -74,7 +77,7 @@ export async function saveVideoToGallery(video: Blob, name: string): Promise<Gal
   console.debug(`[gallery] saving ${name}, ${video.size} bytes, session ${session}`);
   let answer: { status: string };
   try {
-    await stage(session, video);
+    await stageBlob(session, video);
     answer = await invoke<{ status: string }>(galleryCommand('saveVideo'), { session, name });
   } catch (err) {
     console.error('[gallery] the save failed', err);

@@ -16,28 +16,41 @@ import {
   logCallAudioTrackSettings,
 } from '$lib/utils/callAudio';
 import { publishCallPresence } from '$lib/utils/callPresence';
+import { deriveCallKeys, keyFingerprint, type CallKeys, type CallRole } from '$lib/utils/callKeys';
+import { callMediaKind, type CallTransformOptions } from '$lib/utils/callFrameAad';
 import {
   CallE2eBypassedError,
   CallE2eSetupError,
+  CallSetupAbandonedError,
   CallE2eUnsupportedError,
   CallInitiateError,
+  CallRelayWithheldError,
   CallSignallingRefusedError,
   describeCallFailure,
+  TURN_DISABLED_CODE,
 } from '$lib/utils/callFailure';
 import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
-import { CALLS_ENABLED } from '$lib/features';
+import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
+import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
+import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import {
   audioCodecOrder,
+  buildCallReport,
+  callReportEngine,
   describeAudioCodecs,
   describeSelectedPair,
   describeVideoStats,
+  refusedCallReport,
   relayGapIsSuspect,
+  type CallReportContext,
+  type MediaSnapshot,
 } from '$lib/utils/callStats';
+import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
 import {
   callVideoConstraints,
   canHoldVideoToVp8,
@@ -146,6 +159,19 @@ export const CALL_ICE_RESTART_ATTEMPTS = 3;
  */
 export const CALL_E2E_PATH_RECHECKS = 6;
 
+/**
+ * How often a live call writes its `[CALL_REPORT]` (revival plan section 6, WP-C2). Each tick is
+ * armed when the previous one has been WRITTEN, so two never overlap; a wrong value costs lines,
+ * never a call.
+ */
+export const CALL_REPORT_INTERVAL_MS = 10_000;
+
+/** The `engine=` field of every `[CALL_REPORT]` from this device. */
+function currentEngine(): string {
+  const shell = isAndroidTauriRuntime() ? 'android' : isIosTauriRuntime() ? 'ios' : null;
+  return callReportEngine(typeof navigator === 'undefined' ? '' : navigator.userAgent, shell);
+}
+
 /** The suffix of an unjudged kind with packets and no frame yet: its verdict is the next check. */
 const CARRIED_NO_FRAME_YET = ' carried packets, no frame yet';
 
@@ -230,6 +256,12 @@ export class CallService {
   /** ICE servers fetched for this call before ringing, so a missing TURN key fails the call early. */
   private iceServers: RTCIceServer[] | null = null;
   /**
+   * The server's code when it withheld the TURN relay for this call (`ice-servers` answered STUN
+   * only, B7), else null. Kept so a call that then NEVER connects says why - see
+   * {@link neverConnectedCause}.
+   */
+  private turnWithheldCode: string | null = null;
+  /**
    * Perfect negotiation (W3C WebRTC section 10.5). `polite` is the side that yields on an offer
    * collision - the callee, as the server's `PeerReady { initiator: false }` says.
    */
@@ -247,6 +279,29 @@ export class CallService {
   private inviteSent = false;
   /** The relay paired the two parties: the ring is over whatever the media then does. */
   private peerArrived = false;
+  /** `performance.now()` at the user's tap (call or answer): the origin of `dur_ms` / `setup_ms`. */
+  private tapAt: number | null = null;
+  /** Tap to the first unmuted remote audio track - the report's `setup_ms`. */
+  private setupMs: number | null = null;
+  /** The next `[CALL_REPORT]` tick of the current peer connection (`armCallReport`). */
+  private reportTimer: number | null = null;
+  /**
+   * The tick being read and written, if any, with the peer connection it reads: the end report is
+   * written after it, and rates against it only if it read the SAME peer connection.
+   */
+  private reportInFlight: {
+    pc: RTCPeerConnection;
+    snapshot: Promise<MediaSnapshot | null>;
+  } | null = null;
+  /**
+   * Which call setup is the live one: bumped when `startCall`/`acceptCall` begins and at every
+   * `cleanup`, so a setup step resuming after its call ended can tell (`assertSetupLive`).
+   */
+  private callSetupSeq = 0;
+  /** Settles the pending `ensureWorkerKeyReady` wait, if any (`cleanup` calls it). */
+  private abandonWorkerKeyWait: (() => void) | null = null;
+  /** The previous reading's byte totals on the CURRENT peer connection, so the next states a rate. */
+  private lastSnapshot: MediaSnapshot | null = null;
   /**
    * The relay's token for THIS device's seat (`Joined.resume_token`): what lets a new socket take
    * the seat back after the old one dropped. Replaced by every `Joined`.
@@ -352,7 +407,10 @@ export class CallService {
   private e2eReportFired = false;
   /** All remote tracks merged for 1:1 display (audio + video in one MediaStream). */
   private mergedRemoteStream: MediaStream | null = null;
-  private callKeyBytes: Uint8Array | null = null;
+  /** This call's media keys, one per direction (`utils/callKeys.ts`); raw bytes, for the worker. */
+  private callKeys: CallKeys | null = null;
+  /** The key-mismatch notice (`onUndecryptable`) was shown in this call: once per call. */
+  private keyMismatchShown = false;
   private pendingRemoteIceCandidates: RTCIceCandidateInit[] = [];
 
   public currentCallId: string | null = null;
@@ -363,7 +421,6 @@ export class CallService {
   public incomingCallerId: string | null = null;
   /** The ringing invite asked for VIDEO (`CallMsg.hasVideo === true`): accepting opens the camera. */
   public incomingHasVideo = false;
-  private callKey: CryptoKey | null = null;
 
   private callHasVideo = false;
   /** `visibilitychange` listener installed during a call; removed on cleanup. */
@@ -528,6 +585,15 @@ export class CallService {
         appendLog('[Call] ignoring invite from own account on another device');
         return;
       }
+      // The server's kill switch (`calls_mode`, B12): with calls closed the server refuses every
+      // call request, so an invite that reaches us anyway (a caller on an older client, or one
+      // that skipped the server) must not ring a call this estate does not allow.
+      if (!(await callsAvailableAnswered())) {
+        appendLog(
+          `[Call] invite ${callMsg.callId} in ${groupId} not rung - calls are off on the server (mode=${serverCallsMode()})`
+        );
+        return;
+      }
       // The conversation's call permission: the server already withheld the ring push, and the
       // in-app invite is the half it cannot read. The missed-call line is `handleCallSignalForChat`'s
       // to write, from the same predicate, so the timeline has one writer.
@@ -562,7 +628,14 @@ export class CallService {
       this.currentGroupId = groupId;
       this.incomingCallerId = senderNorm;
       // Video only when the invite ASKS for it: an invite that says nothing never opens a camera.
-      this.incomingHasVideo = callMsg.hasVideo === true;
+      // And only on a build that carries video: an audio-only build (production, 2026-10-21) rings
+      // a video invite as an AUDIO call - accepting it never opens the camera.
+      this.incomingHasVideo = CALLS_VIDEO_ENABLED && callMsg.hasVideo === true;
+      if (callMsg.hasVideo === true && !CALLS_VIDEO_ENABLED) {
+        appendLog(
+          `[Call] invite ${callMsg.callId} asks for video - this build is audio only, it rings as audio`
+        );
+      }
       this.callState.set('incoming');
       this.armRingTimer(callMsg.callId, ringTimeoutMs, 'incoming');
 
@@ -644,26 +717,38 @@ export class CallService {
     if (get(this.callState) !== 'idle') return;
     // Refused BEFORE any request: no room, no ring, nothing the other party could answer.
     if (!canUseRtpScriptTransform()) {
-      appendLog('[Call] startCall refused - RTCRtpScriptTransform unavailable, no E2E possible');
+      appendLog(refusedCallReport('-', currentEngine()));
       throw new CallE2eUnsupportedError();
     }
 
     this.currentGroupId = groupId;
+    // An audio-only build never places a video call, whatever its caller asked: the default of
+    // `video` is `true`, so this is the boundary that holds it, not the buttons.
+    if (video && !CALLS_VIDEO_ENABLED) {
+      appendLog('[Call] startCall asked for video - this build is audio only, calling as audio');
+      video = false;
+    }
+    this.tapAt = performance.now();
+    const seq = ++this.callSetupSeq;
 
     try {
       this.callState.set('calling');
       // Get server-issued room ID and access token before connecting.
       const { roomId, roomToken, ringTimeoutMs } = await this.fetchInitiateCall(groupId);
+      this.assertSetupLive(seq, 'after the initiate');
       this.currentCallId = roomId;
       this.currentRoomToken = roomToken;
       // Before ringing: a server without TURN credentials (503) fails the call here, not after
       // the callee has answered into a call that can never connect.
       this.iceServers = await this.fetchIceServers(groupId, roomId);
-      await this.setupMedia(video);
+      this.assertSetupLive(seq, 'after the ICE servers');
+      await this.setupMedia(video, seq);
       this.installBackgroundHandler();
-      await this.setupEncryption(groupId, this.currentCallId!);
+      await this.setupEncryption(groupId, roomId, 'caller', seq);
       // The caller joins first, so the relay makes it the initiator when the callee arrives.
-      await this.connectSignalling(roomId);
+      await this.connectSignalling(roomId, seq);
+      // Before the ring: a call that ended while the socket joined must ring nobody.
+      this.assertSetupLive(seq, 'after the join');
       // The ring OPENS the server's answer window, and it goes BEFORE the invite: no callee can
       // learn of the call before the server would hand it a token, so an early answer (a quick tap,
       // an auto-accept) can never meet a 410 and hang up a call that was fine. Nothing the caller
@@ -691,6 +776,13 @@ export class CallService {
       void this.chatNotifier?.onCallStarted(groupId, roomId);
       this.syncCallPresence(true);
     } catch (e) {
+      // The call already ended (and was cleaned up, or is showing its summary): nothing to undo,
+      // and a step that failed BECAUSE it ended (its socket closed under it) is no failure to show.
+      if (e instanceof CallSetupAbandonedError) return;
+      if (!this.setupLive(seq)) {
+        appendLog(`[Call] a setup step failed after its call ended: ${String(e)} - not reported`);
+        return;
+      }
       const msg = String(e);
       appendLog(`[Call] startCall failed: ${msg}`);
       console.error('Error starting call:', e);
@@ -714,6 +806,26 @@ export class CallService {
     return false;
   }
 
+  /**
+   * THROWS `CallSetupAbandonedError` unless the setup `seq` is still the live one and its call is
+   * neither over nor showing its summary. Called after EVERY await of a call's setup: a hangup
+   * during the microphone prompt used to let `startCall` resume after `cleanup`, key a NEW worker
+   * whose memo outlived the call, and leave the NEXT call's keys unsent - a silent call that the
+   * mismatch notice then blamed on the app's version.
+   */
+  private assertSetupLive(seq: number, step: string): void {
+    if (this.setupLive(seq)) return;
+    const state = get(this.callState);
+    appendLog(`[Call] the call ended during its setup (${step}, state=${state}) - setup abandoned`);
+    throw new CallSetupAbandonedError(step);
+  }
+
+  /** Whether the setup `seq` is still the live one and its call neither over nor in its summary. */
+  private setupLive(seq: number): boolean {
+    const state = get(this.callState);
+    return seq === this.callSetupSeq && state !== 'idle' && state !== 'ended';
+  }
+
   /** Accepts an incoming call after the user taps accept. */
   public async acceptCall(groupId: string, callId: string, video?: boolean) {
     if (get(this.callState) !== 'incoming') return;
@@ -722,30 +834,45 @@ export class CallService {
     this.currentCallId = callId;
     // Answered: the server's deadline, not this timer, now decides (a late token is a 410).
     this.clearRingTimer();
-    const useVideo = video ?? this.incomingHasVideo;
+    this.tapAt = performance.now();
+    // `incomingHasVideo` is already false on an audio-only build; an explicit `video` is held too.
+    const useVideo = CALLS_VIDEO_ENABLED && (video ?? this.incomingHasVideo);
+    const seq = ++this.callSetupSeq;
 
     try {
       if (!canUseRtpScriptTransform()) {
-        appendLog('[Call] acceptCall refused - RTCRtpScriptTransform unavailable, no E2E possible');
+        appendLog(refusedCallReport(callId, currentEngine()));
         throw new CallE2eUnsupportedError();
       }
       this.callState.set('incall');
       // The token FIRST: it is where the server refuses (a block set while the call rang, a closed
       // window), and a refused answer must not have told anyone it was answered. Our siblings stop
       // ringing one round trip later than they would otherwise - nothing reads that gap.
-      this.currentRoomToken = await this.fetchRoomToken(groupId, callId);
+      const roomToken = await this.fetchRoomToken(groupId, callId);
+      this.assertSetupLive(seq, 'after the room token');
+      this.currentRoomToken = roomToken;
       const deviceId = this.mlsService.getDeviceId();
       // Tell our other devices to stop ringing before joining the SFU.
       await this.sendMlsNotification(groupId, mkCallAnswered(callId, deviceId));
+      this.assertSetupLive(seq, 'after the answered notice');
       // WP-XP-5: also stop the system-surface rings (CallStyle notifs / CallKit) everywhere.
       void this.endServerRing(groupId, callId, 'answered');
       this.iceServers = await this.fetchIceServers(groupId, callId);
-      await this.setupMedia(useVideo);
+      this.assertSetupLive(seq, 'after the ICE servers');
+      await this.setupMedia(useVideo, seq);
       this.installBackgroundHandler();
-      await this.setupEncryption(groupId, callId);
-      await this.connectSignalling(callId);
+      await this.setupEncryption(groupId, callId, 'callee', seq);
+      await this.connectSignalling(callId, seq);
+      this.assertSetupLive(seq, 'after the join');
       this.syncCallPresence(true);
     } catch (e) {
+      // The call already ended (and was cleaned up, or is showing its summary): nothing to undo,
+      // and a step that failed BECAUSE it ended (its socket closed under it) is no failure to show.
+      if (e instanceof CallSetupAbandonedError) return;
+      if (!this.setupLive(seq)) {
+        appendLog(`[Call] a setup step failed after its call ended: ${String(e)} - not reported`);
+        return;
+      }
       const msg = String(e);
       appendLog(`[Call] acceptCall failed: ${msg}`);
       showToast(describeCallFailure(e), 'warning');
@@ -794,6 +921,9 @@ export class CallService {
     // Show the "ended" summary screen briefly (1.5 s) so the user sees the call
     // duration and result before the overlay disappears (P4).
     if (get(this.callState) === 'incall' || get(this.callState) === 'calling') {
+      // Read NOW, while the peer connection and the worker are alive: `cleanup` releases both
+      // when the summary closes.
+      this.writeEndReport();
       this.endedAt.set(Date.now());
       this.callState.set('ended');
       setTimeout(() => {
@@ -828,6 +958,15 @@ export class CallService {
     this.endCall(false);
   }
 
+  /**
+   * Why a call that NEVER connected failed, when this side knows more than "connection lost": the
+   * server withheld the relay, so only a direct path could have worked. Undefined otherwise - the
+   * generic sentence then stands, which is the truth for a call whose relay was offered.
+   */
+  private neverConnectedCause(): CallRelayWithheldError | undefined {
+    return this.turnWithheldCode ? new CallRelayWithheldError(this.turnWithheldCode) : undefined;
+  }
+
   /** Publishes Redis-backed call presence so sibling devices can detect an active call. */
   private syncCallPresence(active: boolean): void {
     const deviceId = this.mlsService.getDeviceId();
@@ -842,6 +981,8 @@ export class CallService {
   }
 
   private cleanup() {
+    // Any setup still awaiting belongs to the call ending here (`assertSetupLive`).
+    this.callSetupSeq += 1;
     // Read before the reset below: only a call that connected owes a final worker report.
     const wasConnected = get(this.connectedAt) !== null;
     const endedCallId = this.currentCallId;
@@ -850,6 +991,11 @@ export class CallService {
     this.resetE2eEvidence();
     this.clearRingTimer();
     this.clearResumeTimer();
+    this.stopCallReports();
+    this.reportInFlight = null;
+    this.lastSnapshot = null;
+    this.tapAt = null;
+    this.setupMs = null;
     this.inviteSent = false;
     this.peerArrived = false;
     this.resumeToken = null;
@@ -874,12 +1020,13 @@ export class CallService {
     this.currentCallId = null;
     this.currentGroupId = null;
     this.incomingCallerId = null;
-    this.callKey = null;
-    this.callKeyBytes = null;
+    this.dropCallKeys();
+    this.keyMismatchShown = false;
     this.currentRoomToken = null;
     this.mergedRemoteStream = null;
     this.pendingRemoteIceCandidates = [];
     this.iceServers = null;
+    this.turnWithheldCode = null;
     this.polite = false;
     this.makingOffer = false;
     this.ignoreOffer = false;
@@ -909,6 +1056,8 @@ export class CallService {
       this.signaledWs.close();
       this.signaledWs = null;
     }
+    // A key wait still pending belongs to this call: settled now, never by its timer in the next.
+    this.abandonWorkerKeyWait?.();
     if (this.encryptionWorker) {
       const worker = this.encryptionWorker;
       this.encryptionWorker = null;
@@ -960,7 +1109,8 @@ export class CallService {
       throw new CallInitiateError(
         'ring',
         res.status,
-        `calls/ring failed (${res.status})${detail ? `: ${detail}` : ''}`
+        `calls/ring failed (${res.status})${detail ? `: ${detail}` : ''}`,
+        refusalCodeOf(detail)
       );
     }
     appendLog('[Call] server ring sent - answer window open');
@@ -1079,11 +1229,36 @@ export class CallService {
         /* ignore */
       }
       appendLog(`[Call] ICE servers HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
-      throw new Error(`Failed to fetch ICE servers: ${res.status}${detail ? ` - ${detail}` : ''}`);
+      // Typed like the other setup steps: the kill switch (`CALLS_DISABLED`) is an answer the reader
+      // is told as such, read from the code. A spent relay budget is NOT a refusal: see below.
+      throw new CallInitiateError(
+        'ice-servers',
+        res.status,
+        `Failed to fetch ICE servers: ${res.status}${detail ? ` - ${detail}` : ''}`,
+        refusalCodeOf(detail)
+      );
     }
 
-    const data = (await res.json()) as { iceServers?: IceServerConfig[] };
+    const data = (await res.json()) as {
+      iceServers?: IceServerConfig[];
+      turn?: { status?: string; code?: string };
+    };
     const servers = data.iceServers ?? [];
+    // TURN WITHHELD, CALL STILL ON (B7). The server answers STUN only when the month's relay budget
+    // is spent or its meter cannot be read: a call between two reachable peers needs no relay, so
+    // refusing it would fail calls that cost nothing. Said loudly - a call that then cannot connect
+    // will be the one behind a NAT, and this line is what explains it.
+    this.turnWithheldCode = null;
+    if (data.turn?.status === 'unavailable') {
+      this.turnWithheldCode = data.turn.code ?? 'no code';
+      // TURN OFF BY CONFIGURATION is the owner's choice and said at info; any other withheld relay
+      // is an outage the server is already accusing, and said as one.
+      appendLog(
+        this.turnWithheldCode === TURN_DISABLED_CODE
+          ? '[Call] TURN relay disabled by the server (TURN_DISABLED) - direct path only'
+          : `[Call] ERROR: TURN relay withheld by the server (${this.turnWithheldCode}) - direct path only`
+      );
+    }
 
     if (servers.length === 0) {
       appendLog('[Call] ICE servers: empty response');
@@ -1221,6 +1396,7 @@ export class CallService {
    */
   private async connectSignalling(
     roomId: string,
+    seq: number,
     joinToken = this.currentRoomToken,
     attemptTimeoutMs?: number
   ) {
@@ -1245,11 +1421,10 @@ export class CallService {
     } catch {
       appendLog('[Call] signalling WS: no in-memory token, relying on canari_ws_token cookie');
     }
-    // The call may have ended during that await (a resume racing a hangup): opening a socket now
-    // would seat a device in a call that is already over.
-    if (this.currentCallId !== roomId) {
-      throw new Error(`call ${roomId} ended before its signalling socket opened`);
-    }
+    // The call may have ended during that await (a hangup, a resume racing one, or the ended
+    // summary - where the room id still matches): opening a socket now would seat a device in a
+    // call that is already over.
+    this.assertSetupLive(seq, 'before the signalling socket');
 
     const wsUrl = `${wsBase}/api/call${tokenParam}`;
     appendLog(
@@ -1492,6 +1667,9 @@ export class CallService {
       // and its own ladder: the dead link's evidence says nothing about the new one.
       this.cameraTransceiver = null;
       this.stopVideoQuality();
+      // It counts its bytes from zero: a rate against the old one's totals would be negative.
+      // (A tick of the old one still in flight is refused by `writeEndReport`: it names its pc.)
+      this.lastSnapshot = null;
       this.mergedRemoteStream = null;
       this.pendingRemoteIceCandidates = [];
       this.makingOffer = false;
@@ -1573,11 +1751,20 @@ export class CallService {
     if (this.currentCallId !== roomId || !this.signallingLost) return;
     this.resumeInFlight = true;
     let retry = false;
+    // The live call's sequence: a cleanup during the resume makes it stale (`assertSetupLive`).
+    const seq = this.callSetupSeq;
     try {
-      await this.connectSignalling(roomId, this.resumeToken, CALL_SIGNALLING_RESUME_TIMEOUT_MS);
+      await this.connectSignalling(
+        roomId,
+        seq,
+        this.resumeToken,
+        CALL_SIGNALLING_RESUME_TIMEOUT_MS
+      );
       appendLog(`[Call] signalling resumed on attempt ${this.resumeAttempts}`);
       this.resumeAttempts = 0;
     } catch (e) {
+      // The call ended during the resume: nothing to retry, nothing to end.
+      if (e instanceof CallSetupAbandonedError) return;
       if (e instanceof CallSignallingRefusedError) {
         appendLog(`[Call] signalling resume refused (${e.reason}) - the call is over`);
         this.endCall(false);
@@ -1865,6 +2052,25 @@ export class CallService {
     // A new m-line is media the 5 s check of the first connect may not have seen: check it again.
     if (newMline && this.pc) this.scheduleE2ePathCheck(this.pc, `after a new ${track.kind} m-line`);
 
+    // AN AUDIO-ONLY BUILD RECEIVES A PEER'S VIDEO AND SHOWS NOTHING OF IT. Only a modified client
+    // (or a later build) sends one. The m-line is answered `recvonly` - this side never adds a
+    // camera - and its transforms are attached above, so its frames are decrypted and the E2E path
+    // check keeps judging it: left bare, its packets would end the call as media AROUND the
+    // transform. The track never reaches the UI.
+    // `inactive` WOULD be possible (after the first remote description either side may
+    // renegotiate, and set here it would even shape this side's answer) and would save the peer's
+    // video bandwidth and CPU. It is not taken: how the E2E path check treats a negotiated m-line
+    // that carries nothing is unmeasured on a phone (it may withdraw the E2E claim of a healthy
+    // audio call), and the case comes only from a modified client until video ships - when the
+    // floor rises past this build or the `inactive` route is built (docs/wiki/frontend/modules/calls.md, B0).
+    if (track.kind === 'video' && !CALLS_VIDEO_ENABLED) {
+      appendLog(
+        '[Call] the peer sends video - this build is audio only, it is received and not shown'
+      );
+      track.onunmute = () => this.recheckE2eOnMediaStart('after the remote video unmuted');
+      return;
+    }
+
     if (!this.mergedRemoteStream) {
       this.mergedRemoteStream = new MediaStream();
     }
@@ -1883,6 +2089,10 @@ export class CallService {
 
     track.onunmute = () => {
       appendLog(`[Call] remote track unmuted kind=${track.kind}`);
+      // setup_ms: the user's tap to the first remote audio that actually flows - what they waited.
+      if (track.kind === 'audio' && this.setupMs === null && this.tapAt !== null) {
+        this.setupMs = performance.now() - this.tapAt;
+      }
       this.publishRemoteStream();
       this.recheckE2eOnMediaStart(`after the remote ${track.kind} unmuted`);
     };
@@ -1939,6 +2149,7 @@ export class CallService {
     });
     this.pc = pc;
     this.transformEpoch += 1;
+    this.armCallReport(pc);
 
     const gathered = { host: 0, srflx: 0, relay: 0, prflx: 0 };
     /** Gathering ended with no relay candidate and no working pair yet - see `onicecandidate`. */
@@ -2018,7 +2229,15 @@ export class CallService {
       const state = pc.connectionState;
       appendLog(`[Call] connectionState=${state}`);
       if (state === 'connected') {
-        if (get(this.callState) !== 'idle') this.callState.set('incall');
+        // Only a RINGING call becomes `incall` here, as in `handleRemoteTrack`: ICE that connects
+        // during the 1.5 s summary must not turn `ended` back into a call - the summary's timer would
+        // then skip `cleanup`, leaving the microphone open under an overlay that says "in call".
+        const callState = get(this.callState);
+        if (callState === 'ended' || callState === 'idle') {
+          appendLog(`[Call] connected after the call ended (state=${callState}) - not reopened`);
+          return;
+        }
+        if (callState === 'calling' || callState === 'incoming') this.callState.set('incall');
         if (get(this.connectedAt) === null) this.connectedAt.set(Date.now());
         void pc
           .getStats()
@@ -2045,7 +2264,7 @@ export class CallService {
           this.maybeRestartIce('connectionState=failed');
           this.updateReconnecting();
         } else {
-          this.failCall('connectionState=failed');
+          this.failCall('connectionState=failed', this.neverConnectedCause());
         }
       }
     };
@@ -2074,7 +2293,7 @@ export class CallService {
             '[Call] WARN no TURN relay candidate was gathered and no direct pair worked (Cloudflare TURN unreachable or misconfigured)'
           );
         }
-        this.failCall('iceConnectionState=failed');
+        this.failCall('iceConnectionState=failed', this.neverConnectedCause());
         return;
       } else if (iceState === 'disconnected' || iceState === 'failed') {
         // A path that had connected and was lost - a network change, a blip. Restart, not end.
@@ -2344,6 +2563,130 @@ export class CallService {
     this.scheduleE2ePathCheck(pc, 're-check');
   }
 
+  /** What a report says that the peer connection and the worker do not, stamped at THIS moment. */
+  private reportStamp(phase: CallReportContext['phase']): Omit<CallReportContext, 'ice' | 'e2e'> {
+    return {
+      callId: this.currentCallId ?? '-',
+      phase,
+      durMs: this.tapAt === null ? 0 : performance.now() - this.tapAt,
+      setupMs: this.setupMs,
+      engine: currentEngine(),
+    };
+  }
+
+  /**
+   * Starts reading one `[CALL_REPORT]` of `pc`: its ICE state now, its stats and the worker's
+   * counts (`askE2eReport`, bounded, `null` when the worker does not answer). Both reads START
+   * here, so the end report reads a peer connection and a worker that are still alive. It never
+   * rejects: a failed read is carried as `error`, to be said when the line is due.
+   */
+  private readCallReport(
+    pc: RTCPeerConnection,
+    phase: CallReportContext['phase']
+  ): Promise<
+    { stats: RTCStatsReport; e2e: E2eWorkerReport | null; ice: string } | { error: unknown }
+  > {
+    const worker = this.encryptionWorker;
+    const ice = pc.iceConnectionState;
+    return Promise.all([
+      pc.getStats(),
+      worker ? this.askE2eReport(`call report ${phase}`, worker) : Promise.resolve(null),
+    ]).then(
+      ([stats, e2e]) => ({ stats, e2e, ice }),
+      (error: unknown) => ({ error })
+    );
+  }
+
+  /**
+   * Writes the line of a reading begun by `readCallReport` and returns its snapshot - or, when the
+   * stats could not be read, says so and returns `null`. A tick of a peer connection rebuilt
+   * meanwhile is not a failure: it is named as dropped.
+   */
+  private async logCallReport(
+    pc: RTCPeerConnection,
+    reading: ReturnType<CallService['readCallReport']>,
+    stamp: Omit<CallReportContext, 'ice' | 'e2e'>,
+    previous: MediaSnapshot | null
+  ): Promise<MediaSnapshot | null> {
+    const read = await reading;
+    if ('error' in read) {
+      appendLog(
+        stamp.phase === 'tick' && this.pc !== pc
+          ? '[Call] call report tick dropped - its peer connection was rebuilt while it was read'
+          : `[Call] WARN call report (${stamp.phase}) not written: ${String(read.error)}`
+      );
+      return null;
+    }
+    const report = buildCallReport(
+      read.stats,
+      { ...stamp, ice: read.ice, e2e: read.e2e },
+      previous
+    );
+    appendLog(report.line);
+    return report.snapshot;
+  }
+
+  /**
+   * Arms the next 10 s `[CALL_REPORT]` tick of `pc`. A tick reports only while the call is
+   * `incall` (before that there is nothing to rate) and re-arms itself once its line is written,
+   * for as long as `pc` is the call's peer connection.
+   */
+  private armCallReport(pc: RTCPeerConnection): void {
+    this.stopCallReports();
+    this.reportTimer = window.setTimeout(() => {
+      this.reportTimer = null;
+      if (this.pc !== pc) return;
+      if (get(this.callState) !== 'incall') {
+        this.armCallReport(pc);
+        return;
+      }
+      const inFlight = {
+        pc,
+        snapshot: this.logCallReport(
+          pc,
+          this.readCallReport(pc, 'tick'),
+          this.reportStamp('tick'),
+          this.lastSnapshot
+        ).then((snapshot) => {
+          if (this.reportInFlight === inFlight) this.reportInFlight = null;
+          if (this.pc !== pc) return snapshot;
+          if (snapshot) this.lastSnapshot = snapshot;
+          // Not after the end report began: it stopped the ticks, and `callState` says it.
+          if (get(this.callState) === 'incall') this.armCallReport(pc);
+          return snapshot;
+        }),
+      };
+      this.reportInFlight = inFlight;
+    }, CALL_REPORT_INTERVAL_MS);
+  }
+
+  private stopCallReports(): void {
+    if (this.reportTimer !== null) {
+      window.clearTimeout(this.reportTimer);
+      this.reportTimer = null;
+    }
+  }
+
+  /**
+   * The END `[CALL_REPORT]`, once per call that built a peer connection: stamped and READ now,
+   * while the peer connection and the worker are alive (`cleanup` releases them when the summary
+   * closes), and WRITTEN after a tick still in flight, so no tick line follows it.
+   */
+  private writeEndReport(): void {
+    const pc = this.pc;
+    if (!pc) return;
+    this.stopCallReports();
+    const stamp = this.reportStamp('end');
+    const reading = this.readCallReport(pc, 'end');
+    const tick = this.reportInFlight;
+    const previous = this.lastSnapshot;
+    // Written after a tick in flight, so no tick line follows it; rated against that tick only if
+    // it read THIS peer connection - an old one's totals would make a negative or bogus rate.
+    void (tick?.snapshot ?? Promise.resolve(null)).then((tickSnapshot) =>
+      this.logCallReport(pc, reading, stamp, (tick?.pc === pc ? tickSnapshot : null) ?? previous)
+    );
+  }
+
   /** How long after `connected` the negotiated audio codecs are read (see `logAudioCodecs`). */
   private static readonly CODEC_READ_DELAY_MS = 3_000;
 
@@ -2375,26 +2718,47 @@ export class CallService {
     }
   }
 
-  private async setupEncryption(groupId: string, callId: string) {
-    const context = new TextEncoder().encode(callId);
-    const secret = await this.mlsService.exportSecret(groupId, 'mls-webrtc-media', context, 32);
-    this.callKeyBytes = Uint8Array.from(secret);
-
-    this.callKey = await crypto.subtle.importKey(
-      'raw',
-      this.callKeyBytes as BufferSource,
-      { name: 'AES-GCM' },
-      false,
-      ['encrypt', 'decrypt']
+  /**
+   * Derives this call's two media keys - one per direction, `role` deciding which one this device
+   * sends with (`utils/callKeys.ts`) - and puts them in the worker. The log carries a SHA-256
+   * fingerprint of each, never key bytes: one side's `send_fp` equals the other's `recv_fp` exactly
+   * when the two ends agree, which two exported logs can show.
+   */
+  private async setupEncryption(groupId: string, callId: string, role: CallRole, seq: number) {
+    this.assertSetupLive(seq, 'before the keys');
+    const keys = await deriveCallKeys(
+      (g, label, context, length) => this.mlsService.exportSecret(g, label, context, length),
+      groupId,
+      callId,
+      role
     );
-    const fp = Array.from(this.callKeyBytes.slice(0, 4))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-    appendLog(`[Call] encryption key derived from MLS (fp=${fp}…)`);
-    // The key goes INTO the worker now, before any track is added: the transforms are attached in
+    try {
+      this.assertSetupLive(seq, 'after the key export');
+    } catch (e) {
+      // Derived for a call that is over: zeroed here, never handed to a worker.
+      keys.send.fill(0);
+      keys.receive.fill(0);
+      throw e;
+    }
+    this.dropCallKeys();
+    this.callKeys = keys;
+    // Not awaited: the digests are a diagnostic, and the call's setup does not wait on them.
+    void Promise.all([keyFingerprint(keys.send), keyFingerprint(keys.receive)]).then(
+      ([send, receive]) =>
+        appendLog(
+          `[Call] media keys derived from MLS (role=${role} send_fp=${send} recv_fp=${receive}, sha256)`
+        ),
+      (e: unknown) =>
+        appendLog(
+          `[Call] media keys derived from MLS (role=${role}, fingerprint failed: ${String(e)})`
+        )
+    );
+    // The keys go INTO the worker now, before any track is added: the transforms are attached in
     // the task that creates their sender, where nothing may be awaited (`attachSenderTransform`).
     await this.ensureWorkerKeyReady();
-    appendLog('[Call] E2E worker holds the call key');
+    // A cleanup during the wait terminated that worker and dropped its memo and the keys.
+    this.assertSetupLive(seq, 'after the worker took the keys');
+    appendLog('[Call] E2E worker holds the call keys');
   }
 
   private getOrCreateEncryptionWorker(): Worker {
@@ -2419,6 +2783,13 @@ export class CallService {
           appendLog(`[Call] E2E encrypting ${mediaKind ?? '?'} (${count} frame(s))`);
         } else if (type === 'decryptOk') {
           appendLog(`[Call] E2E decrypting ${mediaKind ?? '?'} (${count} frame(s))`);
+        } else if (type === 'undecryptable') {
+          const d = event.data as unknown as { epoch: number; failures: number };
+          this.onUndecryptable(worker, d.epoch, mediaKind ?? '?', d.failures);
+        } else if (type === 'transformError') {
+          appendLog(
+            `[Call] ERROR E2E transform threw (${count ?? '?'} so far): ${detail ?? 'unknown'}`
+          );
         } else if (type === 'inPath') {
           const d = event.data as unknown as { side: string; epoch: number; mediaKind: string };
           this.noteE2eEvidence(worker, d.side, d.epoch, d.mediaKind);
@@ -2497,6 +2868,41 @@ export class CallService {
     this.claimE2eIfProven();
   }
 
+  /**
+   * A receiver transform failed `DECRYPT_MISMATCH_FAILURES` frames and decrypted none (worker
+   * `undecryptable`, F5 of #1997's review). When NO receiver of this peer connection has decrypted
+   * anything, the two ends hold different keys - different MLS epochs, or a build on the other side
+   * that derives them differently - and the call "connects" in silence: said in the log at ERROR and
+   * shown to the user, once per call. When another receiver DID decrypt, the keys agree and this one
+   * receiver's frames are broken another way: logged at ERROR, no notice. Decided by COUNTS the
+   * worker kept, never by a timer.
+   */
+  private onUndecryptable(
+    worker: Worker,
+    epoch: number,
+    mediaKind: string,
+    failures: number
+  ): void {
+    if (this.encryptionWorker !== worker || epoch !== this.transformEpoch) {
+      appendLog(
+        `[Call] E2E undecryptable ${mediaKind} receiver of a stale transform (epoch ${epoch}, current ${this.transformEpoch}) - ignored`
+      );
+      return;
+    }
+    if (this.e2eReceiverSeen) {
+      appendLog(
+        `[Call] ERROR E2E ${mediaKind} receiver: ${failures} frame(s) failed and none decrypted, while another receiver of this call decrypts - not a key mismatch`
+      );
+      return;
+    }
+    appendLog(
+      `[Call] ERROR E2E key mismatch - ${failures} ${mediaKind} frame(s) failed and none decrypted: the two ends hold different keys (compare this device's send_fp/recv_fp with the other's)`
+    );
+    if (this.keyMismatchShown) return;
+    this.keyMismatchShown = true;
+    showToast(m.call_e2e_key_mismatch(), 'error');
+  }
+
   /** Sets the screen's claim when both sides were seen and nothing withdrew it. */
   private claimE2eIfProven(): void {
     if (!this.e2eSenderSeen || !this.e2eReceiverSeen || this.e2eClaimWithdrawn) return;
@@ -2528,42 +2934,70 @@ export class CallService {
     this.scheduleE2ePathCheck(pc, why);
   }
 
-  /** Pushes the MLS call key into the encryption worker and waits until it is applied. */
+  /**
+   * Forgets this call's media keys, ZEROING their bytes first: a key outlives its call only in the
+   * worker, which is terminated at cleanup. The copies posted to the worker were transferred.
+   */
+  private dropCallKeys(): void {
+    if (!this.callKeys) return;
+    this.callKeys.send.fill(0);
+    this.callKeys.receive.fill(0);
+    this.callKeys = null;
+  }
+
+  /**
+   * Pushes this call's two media keys into the encryption worker and waits until applied. A
+   * `cleanup` during the wait SETTLES it (`abandonWorkerKeyWait`): its timer is cleared, so it can
+   * never fire into the NEXT call, and the wait rejects with `CallSetupAbandonedError`.
+   */
   private ensureWorkerKeyReady(): Promise<void> {
-    if (!this.callKey) return Promise.resolve();
+    if (!this.callKeys) return Promise.resolve();
     if (this.workerKeyReady) return this.workerKeyReady;
 
     const worker = this.getOrCreateEncryptionWorker();
-    this.workerKeyReady = new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(() => {
+    const ready: Promise<void> = new Promise<void>((resolve, reject) => {
+      /** Ends this wait: its timer, its listener, and its memo - only if the memo is still its own. */
+      const settle = (forget: boolean) => {
+        window.clearTimeout(timeout);
         worker.removeEventListener('message', onReady);
-        this.workerKeyReady = null;
+        if (forget && this.workerKeyReady === ready) this.workerKeyReady = null;
+        if (this.abandonWorkerKeyWait === abandon) this.abandonWorkerKeyWait = null;
+      };
+      const timeout = window.setTimeout(() => {
+        settle(true);
         reject(new Error('encryption worker key timeout'));
       }, 3_000);
+      const abandon = () => {
+        settle(true);
+        appendLog('[Call] the call ended while the worker took its keys - the wait is settled');
+        reject(new CallSetupAbandonedError('waiting for the worker to take the keys'));
+      };
       const onReady = (event: MessageEvent<{ type: string; detail?: string }>) => {
         if (event.data?.type === 'keyReady') {
-          window.clearTimeout(timeout);
-          worker.removeEventListener('message', onReady);
+          settle(false);
           // Only if this is still the call's worker: a call ended meanwhile cleared it.
           if (this.encryptionWorker === worker) this.workerKeyApplied = true;
           resolve();
         } else if (event.data?.type === 'keyError') {
-          window.clearTimeout(timeout);
-          worker.removeEventListener('message', onReady);
-          this.workerKeyReady = null;
+          settle(true);
           reject(new Error(event.data.detail ?? 'worker key import failed'));
         }
       };
+      this.abandonWorkerKeyWait = abandon;
       worker.addEventListener('message', onReady);
-      const keyBytes = this.callKeyBytes;
-      if (!keyBytes) {
-        reject(new Error('no call key bytes'));
+      const keys = this.callKeys;
+      if (!keys) {
+        settle(true);
+        reject(new Error('no call keys'));
         return;
       }
-      const keyCopy = keyBytes.slice();
-      worker.postMessage({ type: 'setKey', payload: keyCopy.buffer }, [keyCopy.buffer]);
+      // Copies, transferred: the worker owns its bytes, and these copies leave this thread.
+      const send = keys.send.slice().buffer;
+      const receive = keys.receive.slice().buffer;
+      worker.postMessage({ type: 'setKeys', send, receive }, [send, receive]);
     });
-    return this.workerKeyReady;
+    this.workerKeyReady = ready;
+    return ready;
   }
 
   /**
@@ -2572,15 +3006,22 @@ export class CallService {
    * see `attachSenderTransform`.
    */
   private keyedWorker(side: 'sender' | 'receiver', mediaKind: string): Worker {
-    if (!this.callKey || !this.encryptionWorker || !this.workerKeyApplied) {
+    if (!this.callKeys || !this.encryptionWorker || !this.workerKeyApplied) {
       throw new CallE2eSetupError(`${side} (${mediaKind}): the worker holds no call key`);
     }
     return this.encryptionWorker;
   }
 
-  /** A transform's options: its side, and the peer connection it belongs to (`transformEpoch`). */
-  private transformOptions(side: 'sender' | 'receiver') {
-    return { side, epoch: this.transformEpoch };
+  /**
+   * A transform's options: its side, its track's kind - authenticated in every frame, so the worker
+   * is TOLD it rather than reading it off a frame - and the peer connection it belongs to
+   * (`transformEpoch`). THROWS for a kind that is neither audio nor video: such a transform could
+   * not authenticate a frame, so it is never made.
+   */
+  private transformOptions(side: 'sender' | 'receiver', trackKind: string): CallTransformOptions {
+    const kind = callMediaKind(trackKind);
+    if (!kind) throw new CallE2eSetupError(`${side} (${trackKind}): not an audio or video track`);
+    return { side, kind, epoch: this.transformEpoch };
   }
 
   /**
@@ -2597,7 +3038,7 @@ export class CallService {
     if (sender.transform) return;
     sender.transform = new RTCRtpScriptTransform(
       this.keyedWorker('sender', mediaKind),
-      this.transformOptions('sender')
+      this.transformOptions('sender', mediaKind)
     );
     appendLog(`[Call] E2E sender transform ${how} (${mediaKind})`);
   }
@@ -2607,7 +3048,7 @@ export class CallService {
     if (receiver.transform) return;
     receiver.transform = new RTCRtpScriptTransform(
       this.keyedWorker('receiver', mediaKind),
-      this.transformOptions('receiver')
+      this.transformOptions('receiver', mediaKind)
     );
     appendLog(`[Call] E2E receiver transform attached (${mediaKind})`);
   }
@@ -2652,19 +3093,31 @@ export class CallService {
    * call: it is said on screen (`call_camera_unavailable`) and logged, and the call goes on with
    * the camera off, which the user can retry from the call screen.
    */
-  private async setupMedia(video: boolean) {
-    this.callHasVideo = video;
-    this.localStream = await navigator.mediaDevices.getUserMedia({
+  private async setupMedia(video: boolean, seq: number) {
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: buildCallAudioConstraints(),
       video: false,
     });
+    try {
+      this.assertSetupLive(seq, 'after the microphone prompt');
+    } catch (e) {
+      // Granted after the call ended: the microphone belongs to nobody, so it is released now.
+      stream.getTracks().forEach((t) => t.stop());
+      throw e;
+    }
+    this.callHasVideo = video;
+    this.localStream = stream;
     logCallAudioTrackSettings(this.localStream, appendLog);
     this.localStreamStore.set(this.localStream);
     this.isMuted.set(false);
     this.isVideoOff.set(true);
     const mic = this.localStream.getAudioTracks()[0];
     if (mic) this.watchSystemMicrophone(mic);
-    if (video) await this.cameraOn();
+    if (video) {
+      // `cameraOn` stops a capture that resolves after its call (`sameCameraCall`).
+      await this.cameraOn();
+      this.assertSetupLive(seq, 'after the camera');
+    }
   }
 
   /**
@@ -2923,6 +3376,12 @@ export class CallService {
    * connection exists - into the local stream, which `initPeerConnection` adds.
    */
   private async cameraOn(): Promise<void> {
+    // THE choke point of every camera open (a video call's setup, the camera button): an
+    // audio-only build never opens one, whatever path asked.
+    if (!CALLS_VIDEO_ENABLED) {
+      appendLog('[Call] camera refused - this build is audio only');
+      return;
+    }
     if (!this.callUp() || !this.beginCameraOp('on', 'on')) return;
     const call = this.cameraCallToken();
     try {

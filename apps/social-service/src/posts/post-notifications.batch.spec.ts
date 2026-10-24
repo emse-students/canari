@@ -392,6 +392,45 @@ describe('PostNotificationsService.createNotifications', () => {
       expect(pushes).toEqual([]);
     });
   });
+
+  /**
+   * THE STRIKE LADDER'S THREE NOTICES ARE PUSHED (WP-L8b): the row AND a push the device words, with
+   * no actor, no icon and no reason - and a tap that opens the notifications list, never the
+   * `post/<id>` link their `postId` (a live, an account) would otherwise build.
+   */
+  describe('the live moderation notices', () => {
+    it.each([
+      ['live_cut', 'social_live_cut', 'live-1'],
+      ['live_suspended', 'social_live_suspended', 'live-1'],
+      ['live_withdrawn', 'social_live_withdrawn', 'broadcaster'],
+    ])('%s writes its row and pushes %s', async (type, key, postId) => {
+      await service().createNotification({
+        recipientId: 'broadcaster',
+        type,
+        postId,
+        actorId: '',
+        actorName: '',
+        text: 'harassment',
+        pushData: { target: 'notifications' },
+      });
+      expect(saved).toEqual([
+        {
+          recipientId: 'broadcaster',
+          type,
+          postId,
+          actorId: '',
+          actorName: '',
+          text: 'harassment',
+        },
+      ]);
+      expect(pushes).toHaveLength(1);
+      expect(pushes[0].userId).toBe('broadcaster');
+      expect(pushes[0].content).toMatchObject({ key, actorName: '', arg: '' });
+      expect(pushes[0].content.icon).toBeUndefined();
+      expect(pushes[0].data).toEqual({ type: 'social', postId, target: 'notifications' });
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
 });
 
 /**

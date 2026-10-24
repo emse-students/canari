@@ -20,11 +20,14 @@
 - [The one-time key-package pool, measured](protocols/key-package-pool.md) - every count, every population, and every rule refuted against the pool nothing reclaims
 - [MLS protocol](protocols/mls-protocol.md) — RFC 9420 integration, epochs, forward secrecy, device sync
 - [History reconciliation](protocols/history-reconciliation.md) — how a device works out it is missing messages and gets them: the replacement for the non-terminating `history_request` machinery, and the decisions taken
+- [Addressing a history answer (design, step A)](protocols/history-answer-addressing.md) — DESIGN ONLY, revised after its opus review: answers addressed to the asking device and accepted only when solicited, bounded and add-only; A protects against honest servers and answerers only; sealing to an ephemeral X25519 key from `mls-core` comes next
 - [MLS defects the campaign measured](protocols/campaign-measured-defects.md) — The reasoning, numbers, recurrences and refuted readings behind the open MLS healing and delivery entries of the backlog
 - [MLS desync prevention](protocols/mls-desync-prevention.md) — Server + client tactics to avoid state drift
 - [MLS recovery ladder](protocols/mls-recovery-ladder.md) — Step-by-step recovery (commit replay → external join → welcome_request)
 - [MLS + Graine state machine](protocols/mls-graine-state-machine.md) — **Every path, drawn from the code.** Mermaid diagrams with `file:line` on every transition, the duplicate-path table, the dead ends, and the P1/P2/P3 triage
 - [Channel encryption](protocols/channel-encryption.md) — **Graine, PHASES 1-5 ARE IN.** Why a salon is not an MLS group, the per-sender seed the server has never held, and the cut that is still owed
+- [Graine rotates on a departure (design)](protocols/graine-removal-tracker.md) — DESIGN ONLY, reviewed before code: a commit summary from `mls-core` on every platform, a per-key-group clean run, the fail-safe argument, reuse across an Add by re-distributing the same seed, `joined` keeps rotate-on-add
+- [DMs and communities, compared](protocols/dm-vs-community-encryption.md) — What MLS-carried DMs and Graine-carried communities each do well, re-measured on production 2026-10-21: group sizes, the rotation rate, the bundle, the queue, and where each can improve
 - [WebSocket binary protocol](protocols/websocket-protocol.md) — protobuf wire format, AppMessage, MlsFrame
 - [API surface](protocols/api-surface.md) — Full endpoint list across all services
 
@@ -66,6 +69,7 @@
 - [Startup load and send delay, 2026-10-12](frontend/startup-load-audit-2026-10-12.md) - a return after 3 h: 775 already-held seed bundles in the queue, 26 salon re-reads, communities in series, and a salon send with no bubble for 6.1 s
 - [A heavy store phone, read, 2026-10-13](frontend/store-phone-reading-2026-10-13.md) - a 15.5 MB state on a Pixel 6a: faces re-mirrored on every salon open, a frozen press, a misleading `[HISTORY]` line, the KeyPackage share of every checkpoint, past-epoch drops, and why logcat holds no JavaScript
 - [Mobile architecture](frontend/mobile.md) — Tauri 2, iOS NSE, Android push, native FFI
+- [Sharing into and out of Canari](frontend/sharing.md) - the OS share sheet both ways: the Android SEND filter, the native copy and its handoff file, the "Envoyer a..." picker, and the lots left (share out, the iOS extension, suggestions)
 - [App icons](frontend/app-icons.md) — one drawing, the bird at half of what is seen, four generators
 - [Android / iOS parity audit](frontend/android-ios-parity.md) - where the two native projects DISAGREE, read from source 2026-08-28
 - [MLS WASM client](frontend/mls-wasm.md) — openmls compiled to WASM, key management, sync engine
@@ -73,16 +77,19 @@
 - [Auth module](frontend/modules/auth.md) — Login flow, PIN, biometrics, device registration
 - [Chat module](frontend/modules/chat.md) — Conversations, groups, channels, communities
 - [Calls module](frontend/modules/calls.md) — WebRTC audio/video calls, CallKit, SFU relay
+- [Lives in production](frontend/modules/live-production.md) - the gates, the order of the switch, the read-only preflight, the viewer-cap steps from 24 to none, and the HELD privacy wording
+- [Live scaling](frontend/modules/live-scaling.md) - no visible audience ceiling: what bounds a live's audience (the host uplink, ~24), the five options, R2 for the segments, the staged path and the owner's decisions
 - [Live](frontend/modules/live.md) — Livestream plan (R4/C9): the user's 2026-10-15 decisions, open questions, work packages; not started
 - [Associations module](frontend/modules/associations.md) — Club management, members, calendar, shop, documents
 - [Forms module](frontend/modules/forms.md) — Form builder, submissions, cash/Stripe payments
 - [Calls revival plan](frontend/modules/calls-revival-plan.md) - draft 2026-10-15: decisive tests first, the endpoint x network x call-kind matrix, the App Review video, a server-side switch, WP-C0..C13
 - [Calendar module](frontend/modules/calendar.md) — Events, ICS export, global calendar
 - [Posts module](frontend/modules/posts.md) — Feed, polls, reactions, comments
+- [Sharing out of Canari](frontend/share-out.md) — "Partager" on a message, an attachment, a post: the system share sheet, the decrypted copy and how long it lives
 - [CanaReels (client)](frontend/modules/reels.md) — The camera tab, the capture screen, publishing a reel, the vertical viewer, save to gallery
 - [CanaReels editor](frontend/modules/reel-editor.md) — The post-capture review, editor (text and emoji overlays, one gesture helper), remove-the-sound, and the work-package split
 - [CanaReels in a conversation](frontend/modules/reels-in-chat.md) — Design study (2026-10-09): an ephemeral E2E video message in DMs, groups and salons, its model, retention, weak network, work packages
-- [Payments module](frontend/modules/payments.md) — Lydia, products, shop; [Stripe archive](stripe-archive.md) — what Stripe did and why it left
+- [Lydia API reference](lydia-api.md) — every call, state and callback, with the source of each fact; [Payments module](frontend/modules/payments.md) — Lydia, products, shop; [Stripe archive](stripe-archive.md) — what Stripe did and why it left
 - [Minesweeper](frontend/modules/minesweeper.md) — No-guess generation, seed + first click, ranked replay, generation cost
 - [Admin module](frontend/modules/admin.md) — Dashboard, moderation, platform config
 
@@ -94,6 +101,7 @@
 - [Host WAF body limit](infrastructure/host-waf-body-limit.md) - the school-managed firewall refuses large request bodies; why every upload body stays under 8 MiB
 - [Nginx routing](infrastructure/nginx.md) — Route table (source of truth), auth_request
 - [Authentik (OIDC)](infrastructure/authentik.md) — Identity provider, OIDC flow, deployment
+- [CAS callback without state](infrastructure/cas-callback-state.md) — school CAS sign-ins that return with no code: pinned cookie, setting, measurements
 - [Mino access](infrastructure/mino-access.md) — Wiki.js and Omeka permissions driven by Authentik groups, the three archive levels
 - [MiConnect profiles and access](profiles-and-access.md) — the reform decided 2026-09-29: affiliations, spaces, who reaches which app, and the production state it was measured against
 - [Cloudflare edge](infrastructure/cloudflare-edge.md) — the zone configured by hand with no representation in git: what lives there, how to read it, and the tunnel token rotation
@@ -103,6 +111,7 @@
 - [Dev environment](infrastructure/dev-environment.md) — `dev.canari-emse.fr`: what keeps it apart from production, the full copy and its three strips, the declared version gap, and the one kind of evidence that lifts a merge ceiling
 - [Store listings](store-listings.md) - what Play and the App Store show: current texts and what is stale, screenshot sizes, the fictional-demo-data pipeline and its privacy checklist
 - [Store UGC answers](store-ugc-answers.md) - what Apple 1.2 and Play's UGC policy ask (filter, report, block, contact, terms), mapped to what the app has and what is missing (WP-L9)
+- [Store review for lives](store-review-live-checklist.md) - the guideline 1.2 checklist by screen, the review video shot list, the App Review notes, what the owner provides (WP-L9, draft)
 - [Production queue and epoch audit, 2026-10-12](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md) - why `queued_message` reached 93 k rows: repair answers sent to every seat of a new community, and seats of devices with no session left; no client stuck, the reaper by age rejected
 - [Storage forecast](infrastructure/storage-forecast.md) — Measured unit costs, the model at 400 daily users, and why the backup scheme fails before the data does
 - [Storage and retention](infrastructure/storage-and-retention.md) — Draft audit of 2026-10-11: host disk, volumes, logs and backups measured read-only; the unmeasured remainder is listed
@@ -138,6 +147,7 @@
 - [Device verification runbook](device-verification.md) — The ordered Android + iOS pass: what compiling never proves, and the log line that is the verdict for each check
 - [Device readings, 2026-10](device-readings-2026-10.md) — the Mi 9T and iPhone 12 alpha passes of 2026-10-05 to 10-07: what passed, with the evidence, and the bench traps met
 - [Bench readings for calls and live, 2026-10-18](device-readings-calls-live-2026-10-18.md) - calls BLOCKED (no tag carries lot 1); the WP-L1 live bench on both phones: 720p fMP4 segments for 36-42 min, a growing MSE source with 0 append errors, bitrate, battery and heat
+- [`v1.4.0-alpha.4` read on the Mi 9T, sideloaded, 2026-10-22](device-readings-v1.4.0-alpha.4.md) - version, feed, comments sheet and a CanaReel shot and played; DM and group read, salon and push not read; the log lines left unexplained
 - [Testing methodology](testing-methodology.md) — How a result earns belief: the harness faults distilled into rules, plus the environment traps that read as application bugs
 - [Test suite reform](test-suite-reform.md) — The whole test estate measured (2026-10-18): where the 16-minute frontend job goes, the gaps found, and the ordered work packages WP-T1..T8, and the generated inventory of every suite with its deletion candidates (`tools/test-inventory`)
 - [Mechanism audit](mechanism-audit.md) - What every part of the app is covered by, measured across the board, the unit tests and the hand pass - and the five things nothing watches

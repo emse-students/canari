@@ -14,7 +14,9 @@
   import type { PickerOption } from '$lib/components/ui/picker';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
+  import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { Log } from '$lib/utils/Log';
 
   interface Props {
     asso: Association;
@@ -75,13 +77,6 @@
     }
   }
 
-  function purchaseBuyerName(purchase: AssociationPurchase): string {
-    if (purchase.firstName || purchase.lastName) {
-      return `${purchase.firstName ?? ''} ${purchase.lastName ?? ''}`.trim();
-    }
-    return getUserDisplayNameSync(purchase.userId);
-  }
-
   /** Maps a payment method identifier to its display label. */
   function paymentMethodLabel(method: AssociationPurchase['paymentMethod']): string {
     if (method === 'cash') return m.asso_achats_payment_cash();
@@ -109,7 +104,10 @@
       grantAmountEuros = '';
       await loadPurchases();
     } catch (e) {
-      purchasesError = m.common_load_error();
+      // An amount outside the product's bounds is typed with them: say the range, not "load error".
+      const amountRefusal = providerRefusalMessage(e);
+      Log.i('ASSO', `cash grant refused: ${amountRefusal ? 'amount out of range' : String(e)}`);
+      purchasesError = amountRefusal ?? m.common_load_error();
     } finally {
       grantingProduct = false;
     }

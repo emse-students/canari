@@ -49,7 +49,9 @@ Only classes a static reading can justify. Each names the covering test, or says
 
 **Not a candidate, deliberately:** `framework-boot.spec.ts` exists four times and is identical, but each
 copy asserts what is installed in ITS service's `node_modules`, so the tool skips any copy that reads
-its own install. A test that reads a native file (`native-contract`) is out of scope: no other layer
+its own install. Nor is a copy whose group in `declared-duplicates.mjs` carries `keepEachCopy`
+(`http-error-log.spec.ts` builds its input with the `axios` each service resolves for itself); the
+other declared spec copies were deleted on 2026-10-21 ([test-suite-reform](../../docs/wiki/test-suite-reform.md#72-the-declared-copies-deleted-2026-10-21)). A test that reads a native file (`native-contract`) is out of scope: no other layer
 catches it short of a device build (WP-T5).
 
 ## Rules for changing it

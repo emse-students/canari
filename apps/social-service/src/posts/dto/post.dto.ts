@@ -12,6 +12,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   Validate,
@@ -21,6 +22,7 @@ import {
   type ValidationArguments,
   type ValidatorConstraintInterface,
 } from 'class-validator';
+import { COMMENT_MAX_LENGTH, COMMENT_PAGE_MAX, type CommentOrder } from '../comment-page';
 
 /**
  * A post needs a body OR a media entry - the rule the composer's Publier button already applies
@@ -362,6 +364,26 @@ export class ListPostsQueryDto {
   formation?: string;
 }
 
+/** Query of `GET :postId/comments`: one page of whole threads. See `pageComments`. */
+export class ListCommentsQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  cursor?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(COMMENT_PAGE_MAX)
+  limit?: number;
+
+  @IsOptional()
+  @IsIn(['recent', 'oldest'])
+  order?: CommentOrder;
+}
+
 export class VotePollDto {
   @IsString()
   @IsOptional()
@@ -380,11 +402,25 @@ export class AddCommentDto {
 
   @IsString()
   @IsOptional()
+  @MaxLength(COMMENT_MAX_LENGTH)
   text?: string;
 
   @IsString()
   @IsOptional()
   parentId?: string;
+
+  /**
+   * Comment AS this association: needs `POST_AS_ASSO` there (the controller asks `canPostAs`).
+   * Exclusive with `anonymous` - an association comment wins, like a post's.
+   */
+  @IsOptional()
+  @IsUUID()
+  associationId?: string;
+
+  /** Comment anonymously: open to any member, the account stays known to moderation. */
+  @IsOptional()
+  @IsBoolean()
+  anonymous?: boolean;
 
   @IsObject()
   @IsOptional()
@@ -408,6 +444,7 @@ export class AddReactionDto {
 export class EditCommentDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(COMMENT_MAX_LENGTH)
   text: string;
 }
 

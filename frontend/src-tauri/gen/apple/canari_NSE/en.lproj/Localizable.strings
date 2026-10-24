@@ -35,10 +35,18 @@
 "notif.social.coorganise_proposed.body" = "An event to co-organise";
 "notif.social.live_started.title" = "%@ is live";
 "notif.social.live_started.body" = "Tap to watch";
+"notif.social.live_cut.title" = "Your live was stopped";
+"notif.social.live_cut.body" = "Moderators cut your live. This is a warning.";
+"notif.social.live_suspended.title" = "Lives suspended";
+"notif.social.live_suspended.body" = "After another cut by moderators, you cannot start a live for now.";
+"notif.social.live_withdrawn.title" = "Right to go live withdrawn";
+"notif.social.live_withdrawn.body" = "Moderators have withdrawn your right to start a live.";
 "notif.form.opening_soon.title" = "Form opening soon";
 "notif.form.opening_soon.body" = "A form you are watching opens in 5 minutes!";
 "notif.form.open.title" = "Form now open!";
 "notif.form.open.body" = "The form is available - hurry, spots are limited!";
+"notif.form.paid_over_capacity.title" = "Payment on a full form";
+"notif.form.paid_over_capacity.body" = "“%1$@”: a payment arrived after the form was full. A refund is owed.";
 
 /* The agenda's five. See the note in fr.lproj. */
 "notif.event.proposed.title" = "Event to review";
@@ -53,3 +61,6 @@
 "notif.event.deleted.body" = "“%1$@” was removed by the BDE";
 "notif.event.pending.title" = "Event needs approval again";
 "notif.event.pending.body" = "“%1$@” needs approval again: its dates changed";
+
+"notif.device.added.title" = "New device";
+"notif.device.added.body" = "A new device was added to your account. If it was not you, open Canari.";

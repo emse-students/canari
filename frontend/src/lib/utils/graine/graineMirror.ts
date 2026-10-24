@@ -10,9 +10,10 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
  * keeps only the newest sessions per channel, which is the whole difference from the epoch mirror
  * it replaces: epoch keys were few, seeds accumulate for ever.
  *
- * Security posture: app-private plaintext, the same as `push_context.json` and `mls.bin`. The seed
- * never leaves the device; what travels in the push is a ciphertext the device opens locally, so
- * Google/FCM and Apple see nothing.
+ * Security posture: app-private, SEALED AT REST under the install's native cache key, and excluded
+ * from backups (`native_cache.rs` in src-tauri, the only copy of that design); only Rust opens the
+ * file. The seed never leaves the device; what travels in the push is a ciphertext the device opens
+ * locally, so Google/FCM and Apple see nothing.
  */
 
 /**
@@ -49,7 +50,7 @@ export async function mirrorGraineSeed(session: StoredGraineSession): Promise<vo
  * Drops every mirrored seed of one channel. Tauri only; a no-op on web.
  *
  * Called when a community leaves the device, alongside the durable purge. Best-effort like the
- * write: a mirror that refuses to shrink costs stale plaintext in an app-private file, which is
+ * write: a mirror that refuses to shrink costs stale seeds in a sealed app-private file, which is
  * worth a warning and not worth failing a purge over - and the durable rows, the ones that decide
  * what the app can READ, are gone regardless.
  */
@@ -71,9 +72,9 @@ export async function forgetGraineChannelMirror(channelId: string): Promise<void
  * Called by the retention sweep, which works one SESSION at a time in channels the device still
  * belongs to - {@link forgetGraineChannelMirror} is the wrong scope there, and the mirror's own
  * per-channel bound is not a substitute: it only trims a channel something is still being written
- * to, so a quiet salon keeps plaintext seeds for messages the server deleted a year ago.
+ * to, so a quiet salon keeps seeds for messages the server deleted a year ago.
  *
- * Best-effort like the rest of this module: a mirror that refuses to shrink costs stale plaintext
+ * Best-effort like the rest of this module: a mirror that refuses to shrink costs stale seeds
  * in an app-private file, and the durable rows - the ones deciding what the app can READ - are gone
  * regardless. The warning is what makes that visible rather than silent.
  *

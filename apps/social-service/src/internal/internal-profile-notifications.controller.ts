@@ -7,7 +7,7 @@ import {
   Logger,
   Post,
 } from '@nestjs/common';
-import { PostNotificationsService } from '../posts/post-notifications.service';
+import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
 import { assertInternalSecret } from './internal-secret.util';
 
 /** The two answers an admin can give to a profile correction request (D10). */
@@ -16,9 +16,6 @@ type ProfileCorrectionOutcome = (typeof PROFILE_CORRECTION_OUTCOMES)[number];
 
 /** The longest refusal note a notification row carries. */
 const NOTE_MAX = 500;
-
-/** What the notification says a person's name is: the platform, since an admin acted for it. */
-const SYSTEM_ACTOR_NAME = 'Canari';
 
 interface ProfileCorrectionBody {
   recipientId: string;

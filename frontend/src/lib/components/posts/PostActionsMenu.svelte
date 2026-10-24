@@ -5,7 +5,7 @@
     Pencil,
     Trash2,
     Flag,
-    Link,
+    Share2,
     Ellipsis,
     VenetianMask,
     Repeat2,
@@ -14,7 +14,7 @@
     Megaphone,
     X,
   } from '@lucide/svelte';
-  import { sharePostLink } from '$lib/posts/sharePost';
+  import { Log } from '$lib/utils/Log';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
@@ -165,15 +165,26 @@
   }
 
   /**
-   * Copies the post's public link and confirms it with a toast (`posts/sharePost.ts`, shared with
-   * the CanaReels rail).
+   * "Partager" opens the post's share sheet (`PostShareSheet`): send into a conversation, copy the
+   * link, the system sheet. It is loaded on the first open, never with the card: the sheet reads
+   * the conversation list (`globalChatSingleton`), weight no card that is only scrolled past should
+   * pay - the reason `LinkPreviewCard` loads `PostMedia` the same way.
    *
-   * A TOAST, NOT AN IN-MENU CHECKMARK - `pick()` sets `open = false` in the same tick as this row
-   * flipped to its checkmark, so the confirmation only ever painted for the 150 ms slide-out
-   * transition before the whole menu unmounted, not the 2 s the old timeout intended.
+   * The sheet lives OUTSIDE the menu: `pick()` closes the menu on the same tap, and anything drawn
+   * inside it unmounts with it (the toast rule of 2026-09-27).
    */
-  function sharePost() {
-    sharePostLink(postId);
+  let ShareSheet = $state<typeof import('./PostShareSheet.svelte').default | null>(null);
+  let shareOpen = $state(false);
+
+  function openShareSheet() {
+    import('./PostShareSheet.svelte')
+      .then((mod) => {
+        ShareSheet = mod.default;
+        shareOpen = true;
+      })
+      .catch((e: unknown) =>
+        Log.d('PostActionsMenu', `the share sheet did not load: ${String(e)}`)
+      );
   }
 
   /** One row per action: same box, same padding, so the menu reads as a list rather than a pile. */
@@ -219,10 +230,10 @@
         <button
           type="button"
           role="menuitem"
-          onclick={() => pick(sharePost)}
+          onclick={() => pick(openShareSheet)}
           class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
         >
-          <Link size={16} strokeWidth={2.5} />
+          <Share2 size={16} strokeWidth={2.5} />
           {m.post_share_label()}
         </button>
 
@@ -350,4 +361,8 @@
       </div>
     {/if}
   </div>
+
+  {#if ShareSheet}
+    <ShareSheet open={shareOpen} {postId} onClose={() => (shareOpen = false)} />
+  {/if}
 {/if}

@@ -5,12 +5,15 @@
   import {
     fetchGifPage,
     GifSearchUnavailableError,
+    pickGridRendition,
     type GifResult,
   } from '$lib/utils/chat/gifSearch';
+  import { cachedGifPage, rememberGifPage } from '$lib/utils/chat/gifSearchCache';
   import { columnsFor, layoutMasonry, nearEnd, visibleTiles } from '$lib/utils/chat/gifMasonry';
   import { proxiedGifUrl } from '$lib/utils/gifMediaProxy';
   import { ensurePreviewTicket } from '$lib/utils/previewTicket.svelte';
   import MediaFrame from '$lib/components/shared/MediaFrame.svelte';
+  import GifTileImage from './GifTileImage.svelte';
 
   /**
    * THE GIF SEARCH AND ITS GRID - one component for the phone's keyboard-sized panel
@@ -74,11 +77,23 @@
     const controller = new AbortController();
     inFlight = controller;
     const mine = nextPage === 1 ? ++generation : generation;
-    loading = true;
     failed = false;
+    // A page read in the last five minutes is shown at once: reopening the picker is not a wait.
+    const remembered = cachedGifPage(q, nextPage);
+    if (remembered) {
+      Log.d('GifGrid', `page ${nextPage} of "${q.trim() ? 'search' : 'trending'}" from memory`);
+      results = nextPage === 1 ? remembered.gifs : [...results, ...remembered.gifs];
+      page = nextPage;
+      hasNext = remembered.hasNext;
+      inFlight = null;
+      loading = false;
+      return;
+    }
+    loading = true;
     try {
       const result = await fetchGifPage(q, nextPage, controller.signal);
       if (mine !== generation) return;
+      rememberGifPage(q, nextPage, result);
       results = nextPage === 1 ? result.gifs : [...results, ...result.gifs];
       page = nextPage;
       hasNext = result.hasNext;
@@ -131,7 +146,8 @@
     }
   });
 
-  // Closing the grid drops what it held: the next opening starts from trending, at the top.
+  // Closing the grid drops what it held: the next opening starts from trending, at the top (the
+  // page cache makes that instant).
   $effect(() => {
     if (active) return;
     inFlight?.abort();
@@ -139,7 +155,14 @@
     results = [];
     page = 0;
     hasNext = false;
+    failed = false;
   });
+
+  /** Asks again after a failure: the first page, or the one that did not come. */
+  function retry() {
+    Log.d('GifGrid', `retry of page ${page + 1}`);
+    void load(query, page === 0 ? 1 : page + 1);
+  }
 
   $effect(() => {
     const el = scroller;
@@ -189,13 +212,23 @@
   <div
     bind:this={scroller}
     onscroll={(e) => (scrollTop = (e.currentTarget as HTMLElement).scrollTop)}
-    class="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2"
+    class="relative min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto overscroll-contain px-2"
     data-testid="gif-grid-scroller"
   >
     {#if unavailable}
       <p class="text-text-muted py-10 text-center text-sm">{m.chat_gif_not_configured()}</p>
     {:else if failed && results.length === 0}
-      <p class="py-10 text-center text-sm text-red-500">{m.chat_gif_load_error()}</p>
+      <div class="flex flex-col items-center gap-3 py-10">
+        <p class="text-center text-sm text-red-500">{m.chat_gif_load_error()}</p>
+        <button
+          type="button"
+          onclick={retry}
+          class="border-cn-border text-text-main rounded-full border px-4 py-1.5 text-sm"
+          data-testid="gif-grid-retry"
+        >
+          {m.chat_gif_retry()}
+        </button>
+      </div>
     {:else if !loading && results.length === 0 && page > 0}
       <p class="text-text-muted py-10 text-center text-sm">{m.chat_no_gif_found()}</p>
     {:else}
@@ -219,23 +252,30 @@
               class="bg-black/5 dark:bg-white/10"
             >
               {#snippet children(frame)}
-                {@const src = proxiedGifUrl(gif.preview.url)}
-                {#if src}
-                  <img
-                    {src}
-                    alt=""
-                    width={gif.preview.width}
-                    height={gif.preview.height}
-                    decoding="async"
-                    onload={frame.onLoad}
-                    class="h-full w-full object-cover"
-                  />
-                {/if}
+                {@const rendition = pickGridRendition(gif, tile.width)}
+                <GifTileImage
+                  src={proxiedGifUrl(rendition.url)}
+                  width={rendition.width}
+                  height={rendition.height}
+                  onLoad={frame.onLoad}
+                />
               {/snippet}
             </MediaFrame>
           </button>
         {/each}
       </div>
+      {#if failed && results.length > 0}
+        <div class="flex justify-center py-4">
+          <button
+            type="button"
+            onclick={retry}
+            class="border-cn-border text-text-main rounded-full border px-4 py-1.5 text-sm"
+            data-testid="gif-grid-retry"
+          >
+            {m.chat_gif_retry()}
+          </button>
+        </div>
+      {/if}
       {#if loading && results.length === 0}
         <div class="flex justify-center py-10">
           <div
