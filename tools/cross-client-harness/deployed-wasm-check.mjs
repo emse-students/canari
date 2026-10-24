@@ -33,10 +33,10 @@ const MAX_DEPTH = 3;
 // nobody is testing any more. An explicit argument still wins, because this tool is also how a
 // human asks one particular deployment whether the wasm it serves can panic.
 //
-// `names.mjs` IS LOADED ONLY WHEN NO ARGUMENT IS GIVEN, because it is git-ignored (it is the rig's
+// `site.mjs` (over the rig's `names.mjs`) IS LOADED ONLY WHEN NO ARGUMENT IS GIVEN, because it is git-ignored (it is the rig's
 // own, per-machine file): a static import made this script unrunnable on a fresh checkout, which is
 // where `serve-dev.yml` runs it. An explicit origin is the CI path and needs no rig at all.
-const base = (process.argv[2] ?? (await import('./names.mjs')).SITE).replace(/\/+$/, '');
+const base = (process.argv[2] ?? (await import('./site.mjs')).SITE).replace(/\/+$/, '');
 
 // THE LANDING PAGE IS FETCHED UNDER A QUERY NO ONE ELSE USES. nginx offers the SSR shell to the
 // edge cache for `s-maxage=60`, so right after a deploy a plain `/` can still be the PREVIOUS

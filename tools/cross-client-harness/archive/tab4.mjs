@@ -22,7 +22,8 @@ import { APP_TAB, awaitAppReady, awaitMessage, client, ensureConversation, evalu
 import { connect, listTargets, reloadAndWait } from '../cdp.mjs';
 import { gate, ignoringExpectedLog, report, watch } from '../watch.mjs';
 import { mark, record, exitOnRecorded } from '../results.mjs';
-import { PORTS, SITE, peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
+import { SITE } from '../site.mjs';
 
 const w1 = await client(PORTS.W1, APP_TAB);
 const w2 = await client(PORTS.W2, APP_TAB);

@@ -23,7 +23,8 @@
  */
 import { client, evaluate } from "../chat.mjs";
 import { residueVerdict } from "../native-residue.mjs";
-import { ORIGIN, PORTS } from "../names.mjs";
+import { PORTS } from "../names.mjs";
+import { ORIGIN } from "../site.mjs";
 import { pathToFileURL } from "node:url";
 
 /**

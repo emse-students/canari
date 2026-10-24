@@ -46,7 +46,8 @@ import {
 } from "./devices.mjs";
 import { APP_TAB, client, ensureChat } from "./chat.mjs";
 import { evaluate, until } from "./cdp.mjs";
-import { ORIGIN, PORTS } from "./names.mjs";
+import { PORTS } from "./names.mjs";
+import { ORIGIN } from "./site.mjs";
 import { recordObserved } from "./results.mjs";
 import { HARNESS_ROOT, requireScript } from "./scriptpath.mjs";
 import { watch } from "./watch.mjs";

@@ -60,7 +60,8 @@ import { mark, finishObserved } from '../results.mjs';
 import { logcatReport, logcatSince, watch } from '../watch.mjs';
 import { requireFreshFcmLink } from '../fcmlink.mjs';
 import * as phone from '../phone.mjs';
-import { ORIGIN, OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
+import { ORIGIN } from '../site.mjs';
 
 // The phone this row drives, declared - see the same line in `notif.mjs`. It also sets
 // `ANDROID_SERIAL` for every adb spawned underneath, so a second handset on the bench cannot be

@@ -36,7 +36,8 @@ import { killBrowser, startBrowser } from '../launch.mjs';
 import { unlockClient } from './pingate.mjs';
 import { mark, recordObserved } from '../results.mjs';
 import { watch } from '../watch.mjs';
-import { ACCOUNT_OF, PORTS, SITE, peerNameFor } from '../names.mjs';
+import { ACCOUNT_OF, PORTS, peerNameFor } from '../names.mjs';
+import { SITE } from '../site.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

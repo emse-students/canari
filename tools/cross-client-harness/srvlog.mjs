@@ -1,5 +1,5 @@
 /**
- * THE THIRD OBSERVER: production's own logs, classified the way the browser's are.
+ * THE THIRD OBSERVER: the estate's own server logs (local or dev), classified the way the browser's are.
  *
  *   bun srvlog.mjs --since 2026-08-14T11:00:00Z    everything since an instant
  *   bun srvlog.mjs --since 15m                     everything in the last 15 minutes

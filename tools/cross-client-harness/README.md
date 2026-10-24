@@ -1,7 +1,8 @@
 # Cross-client test harness
 
 The rig that drives **three real Canari clients at once** against ONE estate named by ONE constant
-(`SITE` in `names.mjs`, the LOCAL docker estate since 2026-09-03): two desktop Chrome profiles and an
+(`SITE` in `names.mjs`: the LOCAL docker estate, or `dev.canari-emse.fr` since 2026-10-24 - and
+NEVER production, which the rig refuses outright, see *The target*): two desktop Chrome profiles and an
 Android device. It exists because a whole class of Canari bug is invisible to
 a unit test and to a single client - a message the sender shows as delivered and the receiver never
 stores, a tab that stops receiving while looking healthy, a notification that is not dismissed on the
@@ -66,6 +67,50 @@ is only for surfaces the WebView cannot reach (the notification shade, the syste
 forward left over from an earlier session stays listed and points at nothing, or at another app's
 socket - the phone then reads as "not debuggable" while it is in the foreground. `phone.mjs`
 derives it from the running pid every time and refuses to report success until CDP has answered.
+
+## The target: the local estate or dev, and production is refused
+
+**An estate is `local` or `dev`, and there is no third value** (R1 of the 1.4.1 campaign,
+2026-10-24). Until then `estate.mjs` decided with one boolean and routed everything not local to
+PRODUCTION's containers, so pointing `SITE` at dev would have read production's tables and logs and
+reported them as dev's.
+
+- **`site.mjs` is the only door to `SITE` and `ORIGIN`**, and its evaluation throws
+  `EstateRefusedError` for any other `SITE` - production under either name, `http://dev...`, an
+  undeclared host - before the importing entry point runs a line. `archive/estate-selftest.mjs`
+  fails the gate if any file takes `SITE` or `ORIGIN` from `names.mjs` directly - by a named,
+  namespace (`N.SITE`), destructured-dynamic or `createRequire` import. **`SITE` and every web
+  `ORIGIN` must be EXACTLY an origin** (`https://dev.canari-emse.fr`, no trailing slash, path, dot
+  or upper case): the rig compares them as strings. The scan covers `.mjs` only; the one other
+  driver, `a1.py`, drives the phone's native surfaces and reads no estate.
+- **`estate.mjs` has no production branch.** Local is `docker exec canari-local-*`; dev is `ssh
+  <DEV_SSH_HOST>` (machine-local, in `names.mjs`) and the container found BY COMPOSE LABEL
+  `com.docker.compose.project=canari-dev` - one running container per service, the label re-read
+  before use, exit `97` otherwise - the lookup `infrastructure/dev/reset-dev-to-seed.sh` makes. The
+  routing is pure (`estate-target.mjs`); the self-test drives it with stub transports and runs the
+  resolver itself under `sh` against a fake `docker`.
+- **A page is attached to or navigated to by ALLOWLIST** (`pageVerdict` / `refuseForeignPage` in
+  `estate-target.mjs`): it must be on `SITE`'s origin, a Tauri engine page (`http://tauri.localhost`,
+  `tauri://localhost`), an inert browser page (`about:blank`, the new-tab page, Chrome's error
+  page) or an identity provider over https (MiConnect, its legacy name, CAS). Enforced in the ONE
+  attach path, `listTargets` in `cdp.mjs` (it refuses if ANY listed page is off the list, so a
+  profile still sitting on production stops the run before a socket exists), in every
+  `Page.navigate` / `Target.createTarget` a connection sends, and in `launch.mjs` `startBrowser`
+  (its landing url, and the tabs the profile restored). With no estate registered (`site.mjs` not
+  yet evaluated) `listTargets` loads it; the guard itself never passes a page by default.
+- **A NATIVE CLIENT RUNNING A PRODUCTION BUILD IS NOT REFUSED BY THE PAGE GUARD.** A Tauri app's
+  page is `http://tauri.localhost` / `tauri://localhost` whatever origins its build baked in, so
+  the guard cannot see that an APK or an iPhone build talks to production. That is checked AFTER
+  the fact, by `pin.mjs` (which origins the client actually contacted), and before the fact only for
+  APKs the rig builds itself (`a1apk.mjs` greps the packaged bundle). An installed store or
+  TestFlight build is not inspected: read what it contacts with `pin.mjs` before a row uses it.
+- **Every ledger row records its `estate` and `site`**, and `rows.mjs` reads only the rows of the
+  estate `SITE` names (a row older than R1 carries none and counts as local): one `STATE_DIR` serves
+  both estates.
+- **Verify the target before a run**: `bun estate.mjs` names the estate and resolves its containers
+  (read-only); `archive/run.mjs`'s preflight does the same on its first lines and refuses on a miss.
+- **Dev is shared with testers.** Reads are free; writes to dev's database and Redis are allowed by
+  the owner for campaign-owned fixtures only. Nothing the rig runs may write anywhere else.
 
 ## Setting it up
 
@@ -373,7 +418,7 @@ used to get wrong on its own.
 | `identity.mjs` | **WHICH ACCOUNT A CLIENT IS ACTUALLY ACTING AS**, and the answer no check could give before 2026-09-09. `bun identity.mjs` reads every client in `PORTS`; `--device W2` reads one. It asks TWO questions on purpose - what the client SHOWS (`canari_saved_user`, written by the app at login) and what it ACTS AS (the `sub` of its access token) - because the false P1 that day claimed exactly that they could disagree. **It costs no traffic and no reload**: the access token is published by the app itself into the JS-readable `canari_ws_token` cookie, so it is read where the app already put it rather than by watching nine seconds of traffic after a reload, which is what the first version did. Exits non-zero when a reachable client is not its owner. |
 | `subject.mjs` | The pure half of the above - `subjectOfToken`, `nameSubject`, `describeIdentity`, `wrongIdentities`. Split for the same reason as `device-census.mjs`, `native-residue.mjs` and `usability.mjs`: `identity-selftest.mjs` is in the CI gate, and deciding what a subject MEANS needs no browser and no `names.mjs`. An unreadable half is never an agreement, so a client with no token yet reads `agrees: false` rather than passing quietly. |
 | `names.mjs` / `accounts.mjs` | The only two readers of machine-local truth. Every other file goes through them. **`accounts.mjs` holds THREE strings for one human and they are not interchangeable**: `username` fills a LOGIN FORM, `OWNER_NAME`/`PEER_NAME` in `names.mjs` match a MEMBER PICKER, and `subjectFor(key)` is the only one the SERVER decides by. Two of the three have already been used as the third - the display name did it on 2026-09-09 and produced a P1 that declared every two-client measurement void. |
-| `estate.mjs` | `psql` and `redis`, aimed at whichever estate `SITE` names - local `docker exec` or production through the tunnel, with no flag and no fallback. **Its own module rather than two more exports in `ssh.mjs`**, because reading `SITE` means importing `names.mjs`, which is gitignored: putting them there made `srvlog.mjs` and `devices.mjs` unimportable on a fresh checkout and `gate-selftest.mjs` failed within the hour. A transport is machine-agnostic; an estate is not. |
+| `estate.mjs` | `psql`, `redis` and the server log window, aimed at whichever estate `SITE` names - local `docker exec` or dev's containers by compose label - with no flag, no fallback and no production branch (*The target*). **Its own module rather than two more exports in `ssh.mjs`**, because reading `SITE` means importing `names.mjs`, which is gitignored: putting them there made `srvlog.mjs` and `devices.mjs` unimportable on a fresh checkout and `gate-selftest.mjs` failed within the hour. A transport is machine-agnostic; an estate is not. |
 | `device-census.mjs` | The pure half of `devices.mjs` - the census SQL text and every function that turns a row into a fact. Split for the same reason as `native-residue.mjs`, `servable.mjs`, `usability.mjs` and `marker.mjs`: `devices-selftest.mjs` is in the CI gate, and deciding what a row MEANS needs no machine. |
 | `phone.mjs` | adb, app lifecycle, notifications, the WebView - and the only entry point for the devtools forward. Also the NATIVE half of what a device holds: `nativeFootprint()` for a byte total, and `nativeResidue()` for the part that is a criterion - WHICH of Canari's own paths are still under `/data/data/<pkg>` (`mls.bin`, `canari_<userId>.db`, `graine_seeds.json`, `channel_keys.json`, the `avatar_*` cache, `shared_prefs/canari_*`, `keystore_aliases`). Its `OUR_NATIVE` faces `KEPT_AT_TOP_LEVEL` in `src-tauri/src/commands/storage.rs`: that says what the wipe must not touch, this says what must be gone after it. Prefer it to the byte total, which read 19 MB with the account gone and 31 MB with it present on the same device inside an hour. Ids are cut to eight characters, and `logs/` is reported under `rewritten` rather than counted - the running app recreates it in milliseconds. Needs a DEBUGGABLE build (`run-as`). |
 | `login.mjs`, `pin.mjs`, `unlock.mjs` | The auth gates. `unlock.mjs` unlocks every client it can identify. `login.mjs` ends its wait on EITHER the app's own form or a CAS form in the phone's **Chrome Custom Tab** (`--tabPort`, default `port + 1`), fills whichever holds it with one copy of the code, and reads the landing by RE-RESOLVING the app's target - Android may have killed the WebView while the tab was in front. **It ends on the SESSION, never on a clock**: it polls `canari_saved_user` until the app writes it, and on reaching its 30 s reporting bound it names which of the three states it saw - the exchange still running (SLOW), the app back with nothing written (REFUSED), or the browser never back at all (the deep link or the IdP). Until 2026-09-24 those three shared one message, and a login that had succeeded was reported as one that had not. |
@@ -500,7 +545,7 @@ hole with an assertion rather than a habit:
   running this by hand is a diagnostic rather than the protection. The comparison and the repair both
   live in `bundle.mjs`, shared by all three. Rule 36 of
   [testing-methodology](../../docs/wiki/testing-methodology.md) carries the run this cost.
-- **`ssh.mjs` - the single door to production.** `ssh` resolves to **Git's** binary under Bash, which
+- **`ssh.mjs` - the single door to a remote host, used by `estate.mjs` for dev alone.** `ssh` resolves to **Git's** binary under Bash, which
   mangles the backslashes in the cloudflared `ProxyCommand`, so the same gateway probe answered
   differently depending on which shell launched the run. It picks Windows OpenSSH explicitly.
 - **`rawcheck.mjs` - the escapes in a page-side expression belong to the PAGE, not to Node.** Every
@@ -913,11 +958,11 @@ Two environment traps worth repeating here, because they read as application bug
   `am kill` - and `am kill` will not reclaim a foreground process, so go HOME first and assert the
   death.
 
-The browser report attributes every console line to the ORIGIN that emitted it (`consoleorigin.mjs`: execution-context origin, then the top stack frame, then a non-network log entry's url; a network entry's url names the resource and is never an emitter). Lines from a foreign origin (the identity provider's console during `login.mjs`) are removed from `unexplained` and REPORTED as `foreignOrigins`, a count per origin, mirroring the phone report's `foreign` bucket; an unattributable line is never forgiven (#1277).\n
+The browser report attributes every console line to the ORIGIN that emitted it (`consoleorigin.mjs`: execution-context origin, then the top stack frame, then a non-network log entry's url; a network entry's url names the resource and is never an emitter). Lines from a foreign origin (the identity provider's console during `login.mjs`) are removed from `unexplained` and REPORTED as `foreignOrigins`, a count per origin, mirroring the phone report's `foreign` bucket; an unattributable line is never forgiven (#1277).
 
 ## Standing constraints
 
-- **Runs against the LOCAL estate since 2026-09-03** - `SITE` in `names.mjs`, one constant, and
+- **Runs against the LOCAL estate (since 2026-09-03) or DEV (since 2026-10-24), never production** - `SITE` in `names.mjs`, one constant read through `site.mjs`, and
   every file derives its host from it rather than spelling one (89 literals were swept out on
   2026-09-04 for exactly that reason). The estate is `infrastructure/local/docker-compose.yml`, built
   and served by nginx on `${CANARI_LOCAL_API_PORT:-8081}`; its database holds no production data (production data is never copied to a workstation).

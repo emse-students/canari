@@ -16,12 +16,13 @@
  *        bun login.mjs --device W1 --flow cas
  */
 import { accountFor } from './accounts.mjs';
-import { connect, evaluate, listTargets, realClick } from './cdp.mjs';
+import { connect, evaluate, listTargets, noTargetsOnTransportFailure, realClick } from './cdp.mjs';
 import { forwardIdpBrowser } from './phone.mjs';
 import { WEBVIEW_MATCH as IOS_WEBVIEW, signInThroughSheet } from './phone-ios.mjs';
 import { isIosName } from './phone-platform.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
-import { PORTS, SITE } from './names.mjs';
+import { PORTS } from './names.mjs';
+import { SITE } from './site.mjs';
 import { DEEP, FORM_SHAPE, stageTable, tickScript } from './idpform.mjs';
 
 const argv = process.argv.slice(2);
@@ -107,7 +108,7 @@ const atAnIdP = (url) => IDP_HOSTS.some((h) => url.includes(h));
  * otherwise read as "no form at all".
  */
 const idpTargetOn = async (p) => {
-  const seen = await listTargets(p).catch(() => []);
+  const seen = await listTargets(p).catch(noTargetsOnTransportFailure);
   const idp = seen.filter((t) => atAnIdP(t.url));
   if (idp.length <= 1) return idp[0] ?? null;
   for (const t of idp) {
@@ -586,7 +587,7 @@ for (let n = 0; n <= MAX_STAGES; n++) {
 let probe = tabTarget ? null : await appCx();
 const appProbe = async () => {
   if (probe) return probe;
-  const seen = await listTargets(port).catch(() => []);
+  const seen = await listTargets(port).catch(noTargetsOnTransportFailure);
   const app = seen.find((t) => onTheApp(t.url));
   if (!app) return null;
   const next = connect(app.webSocketDebuggerUrl);

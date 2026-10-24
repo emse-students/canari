@@ -11,7 +11,8 @@
  */
 import { listTargets } from '../cdp.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
-import { PORTS, SITE } from '../names.mjs';
+import { PORTS } from '../names.mjs';
+import { SITE } from '../site.mjs';
 
 const argv = process.argv.slice(2);
 const dry = argv.includes('--dry');

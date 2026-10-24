@@ -9,7 +9,8 @@
 import { client } from '../chat.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
 import { connect } from '../cdp.mjs';
-import { PORTS, SITE } from '../names.mjs';
+import { PORTS } from '../names.mjs';
+import { SITE } from '../site.mjs';
 
 const port = PORTS.W2;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

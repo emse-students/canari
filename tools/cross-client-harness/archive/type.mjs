@@ -34,11 +34,13 @@ import { requireScript } from '../scriptpath.mjs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { client, evaluate, openDM, openChannel, realClick, until, COMPOSER } from '../chat.mjs';
+import { listTargets } from '../cdp.mjs';
 import { gate, ignoringOfflineCut, report, watch } from '../watch.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { awaitOffline, awaitOnline, whoIs } from './presence.mjs';
 import { errorDetail, record } from '../results.mjs';
-import { OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
+import { SITE } from '../site.mjs';
 
 const { W1, W2 } = PORTS;
 
@@ -149,8 +151,9 @@ async function type3() {
   const b = await client(W2);
   await openDM(b, OWNER_NAME);
 
-  const targets = await (await fetch(`http://127.0.0.1:${W1}/json/list`)).json();
-  const page = targets.find((t) => t.type === 'page' && !String(t.url).startsWith('devtools://'));
+  // Through the one attach path, which refuses a page off the estate (R1).
+  const targets = await listTargets(W1);
+  const page = targets[0];
 
   const a = await client(W1);
   await openDM(a, PEER_NAME);

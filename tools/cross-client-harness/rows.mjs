@@ -43,6 +43,8 @@ import { PHASES } from './checks.mjs';
 import { instrumentShaOf } from './instrument.mjs';
 import { findScript } from './scriptpath.mjs';
 import { STATE_DIR } from './names.mjs';
+import { ESTATE } from './site.mjs';
+import { ledgerEstateOf } from './estate-target.mjs';
 /**
  * The board's word -> the ledger's word, IMPORTED rather than written out, and that is the point.
  *
@@ -272,6 +274,8 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
     continue;
   }
   if (!r || !r.id) continue;
+  // ONLY THIS ESTATE'S VERDICTS: a dev run and a local run of one row are different measurements.
+  if (ledgerEstateOf(r) !== ESTATE) continue;
   const hits = boardRowsFor(r.id);
   if (hits.length === 0) {
     if (RETIRED.has(r.id)) {
@@ -378,7 +382,7 @@ for (const [row, real] of latestReal) {
     } catch {
       continue;
     }
-    if (!rec || !rec.id || rec.at !== real.at) continue;
+    if (!rec || !rec.id || rec.at !== real.at || ledgerEstateOf(rec) !== ESTATE) continue;
     if (!boardRowsFor(rec.id).includes(row) || rec.verdict === 'SKIPPED') continue;
     latest.set(row, {
       verdict: rec.verdict,

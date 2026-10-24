@@ -181,9 +181,14 @@ DEV_PG=$(docker ps --filter label=com.docker.compose.project=canari-dev \
 docker exec "$DEV_PG" sh -c 'psql -U "$POSTGRES_USER" -d auth_db -c "UPDATE users SET admin = true WHERE id = '\''<your sub>'\'';"'
 ```
 
-**The campaign rig needs nothing from dev.** It drives the local estate or production (`SITE`),
-never dev, which it cannot reach without an Access service token. The one tool pointed at dev,
-`deployed-wasm-check.mjs` in `serve-dev.yml`, needs no account.
+**The campaign rig targets dev since 2026-10-24 (the 1.4.1 campaign), and production never.**
+`SITE` in the rig's machine-local `names.mjs` names the local estate or `https://dev.canari-emse.fr`
+and nothing else: `tools/cross-client-harness/site.mjs` refuses any other value when the first rig
+module loads, and `estate-target.mjs` reaches dev's database, Redis and logs by the SAME label lookup
+as the snippet above - `com.docker.compose.project=canari-dev`, one running container per service,
+the label re-read before use - over the ssh alias the private operations notes name. Dev answers
+with no Access gate (`GET /chat` -> `200`, measured 2026-10-24), and the owner confirmed it is to be
+used as it is. `deployed-wasm-check.mjs` in `serve-dev.yml` still needs no account.
 
 ### The reset, and what it keeps
 
@@ -630,19 +635,15 @@ that nobody reads a stale meaning into either.
 
 ---
 
-## The three blocking steps the user took, and the three capabilities dev still does without
+## The three blocking steps the user took, and the two capabilities dev still does without
 
 The tracked items live in [backlog](../backlog.md); this is the map. **Nothing here blocks the
 estate any more** - the three steps that did are numbered below, each recording HOW, because the
-how is what a rebuild would need. What remains is three capabilities dev deliberately does
+how is what a rebuild would need. What remains is two capabilities dev deliberately does
 without.
 
 **Still owed, and NOT blocking the estate** - each buys one capability dev does without:
 
-- the Cloudflare Access service token for the harness (needs `Account -> Cloudflare Tunnel` plus the
-  two account-scoped Access permissions); without it the campaign rig cannot drive dev - which costs
-  nothing today, the rig naming `canari-emse.fr` as a literal in 89 files and so targeting
-  production regardless
 - a dev APNs key, for push. **FIREBASE OWES NOTHING** (settled with the user 2026-09-02): dev reuses
   the existing `fr.emse.canari` Firebase app, so `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` is not a new
   project. Both push rows are disposition `warn` in the manifest, so their absence has never blocked

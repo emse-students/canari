@@ -1,5 +1,8 @@
 /**
- * THE ONE WAY THIS HARNESS REACHES PRODUCTION.
+ * THE ONE WAY THIS HARNESS REACHES A REMOTE HOST - and its one caller is `estate.mjs`, for DEV.
+ *
+ * It used to be the way the rig reached production's containers. Since 2026-10-24 no rig path does:
+ * `estate-target.mjs` accepts the local estate and dev only, and builds every remote command itself.
  *
  * WHY IT IS NOT JUST `execFileSync('ssh', ...)`. Two `ssh` binaries are on this machine and they do
  * not behave the same. Git ships one at `/usr/bin/ssh`, and it MANGLES the `ProxyCommand` in
@@ -28,7 +31,7 @@ export const SSH = (() => {
 })();
 
 /**
- * Runs one command on a prod host and returns its trimmed stdout.
+ * Runs one command on a remote host and returns its trimmed stdout.
  *
  * Throws on a non-zero exit rather than returning what came back, so no caller can mistake an
  * unreachable server for an empty answer - the distinction `presence.mjs` exists to preserve.
@@ -39,7 +42,7 @@ export const SSH = (() => {
  * so the BUSIEST service on the platform was the one whose logs could never be read, and the reason
  * looked like a broken tunnel. The busiest service is exactly the one a run most needs to see.
  *
- * @param host one of the aliases in `~/.ssh/config`: `canari`, `mitv`, `cercle`.
+ * @param host an alias in `~/.ssh/config`, named by machine-local configuration (`DEV_SSH_HOST`).
  */
 export function ssh(host, command, { timeoutMs = 30_000, maxBuffer = 256 * 1024 * 1024 } = {}) {
   // A TRANSPORT FAILURE IS NOT AN ANSWER, AND ONLY ONE EXIT CODE SAYS WHICH IT IS. `ssh` reserves

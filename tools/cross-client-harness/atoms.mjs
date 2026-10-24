@@ -60,14 +60,16 @@
  * THE INVENTORY. Everything the rig can do to a client, by what it is for.
  *
  * **The estate** - where the campaign runs, and it is one constant.
- *   `SITE`            `names.mjs`  the absolute URL of the estate under test. Changing it moves the
- *                                  campaign; everything below derives from it and nothing spells a
- *                                  host.
+ *   `SITE`            `site.mjs`   the absolute URL of the estate under test, read from `names.mjs`
+ *                                  through the one door that REFUSES production. Changing it moves
+ *                                  the campaign; everything below derives from it and nothing spells
+ *                                  a host. Only the local estate and dev are accepted.
  *   `APP_TAB`         `chat.mjs`   the substring that identifies the app's own tab (host + port).
  *   `APP_HOST`        `chat.mjs`   the hostname alone, for a cookie's `domain`, which has no port.
- *   `psql` `redis`    `estate.mjs` the estate's database and Redis - LOCAL containers or production
- *                                  through the tunnel, decided by `SITE`, never by a flag. Its own
- *                                  module because `ssh` is machine-agnostic and an ESTATE is not.
+ *   `psql` `redis`    `estate.mjs` the estate's database and Redis - LOCAL containers, or dev's found by
+ *                                  compose label on its host, decided by `SITE`, never by a flag.
+ *                                  Production has no branch. Its own module because `ssh` is
+ *                                  machine-agnostic and an ESTATE is not.
  *
  * **THE ROWS ARE NO LONGER BESIDE THE ATOMS.** Since 2026-09-04 the ~114 row scripts live in
  * `archive/` and only atoms remain at this root, so `ls` answers the question this file was written
@@ -153,9 +155,9 @@ import { dirname, join } from 'node:path';
 export { APP_HOST, APP_TAB, client, ensureChat, goto, openConversation, openDM, send } from './chat.mjs';
 export { createDM, createGroup, deleteGroup, dismissLocally, openGroup } from './groupnav.mjs';
 export { BROWSERS, closeBrowser, isUp, killBrowser, startBrowser } from './launch.mjs';
-export { ORIGIN, PORTS, SITE, VENUE } from './names.mjs';
+export { PORTS, VENUE } from './names.mjs';
+export { ORIGIN, SITE } from './site.mjs';
 export { psql, redis } from './estate.mjs';
-export { ssh } from './ssh.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
