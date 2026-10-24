@@ -37,6 +37,10 @@
 # 2026-09-03 - and installing cross-host keys in order to write a report is a privilege expansion
 # nobody asked for. That gap is in `docs/wiki/backlog.md` with what would close it.
 #
+# AND THE ROOT DISK (2026-10-24): the host's administrators found it at 90 % before anything here
+# did. Red at DISK_FAIL_PERCENT, with our consumers printed beside it
+# (docs/wiki/infrastructure/host-updates.md#the-root-disk).
+#
 # Structure: `gather` reads the host and writes facts, `judge` reads facts and decides. They are
 # separate so the judgement can be tested against fabricated hosts -
 # `.github/scripts/tests/host-update-report.test.sh`. A report whose verdict has never been seen to
@@ -66,6 +70,12 @@ ALLOWED_ORIGIN_SUBSTRING="${ALLOWED_ORIGIN_SUBSTRING:-Debian-Security}"
 # list, the unreadable log) are printed and not judged; everything that is OUR question stays: the
 # timer ran, nothing security is pending, no reboot is owed.
 POLICY_OWNER="${POLICY_OWNER:-canari}"
+
+# THE ROOT FILESYSTEM'S RED LINE, IN PERCENT (2026-10-24). The host's administrators reported its
+# root disk at 90 % and asked for no new container until it is extended; it was at 92 % when read,
+# and nothing here had said so. 85 leaves the room for one more nightly archive and one deploy
+# generation of images between the run that accuses and the one that would fill the disk.
+DISK_FAIL_PERCENT="${DISK_FAIL_PERCENT:-85}"
 
 # -------------------------------------------------------------------------------------------------
 # GATHER - reads the host, writes facts, judges nothing.
@@ -133,6 +143,49 @@ gather() {
     reboot_pkgs="$(paste -sd',' /var/run/reboot-required.pkgs 2>/dev/null)"
   fi
 
+  # THE ROOT DISK, AND THE THREE THINGS ON IT THAT ARE OURS (2026-10-24): the backup directory the
+  # crontab names, Docker's images and volumes, and the old versions the self-hosted runners leave
+  # behind when they update themselves. Everything else on that disk belongs to the host's
+  # administrators or to a co-tenant, and is reported by the percentage alone.
+  local disk_pct="" disk_used_kb=0 disk_size_kb=0
+  read -r disk_pct disk_used_kb disk_size_kb <<<"$(df -P -k / 2>/dev/null | awk 'NR == 2 { sub("%", "", $5); print $5, $3, $2 }')"
+
+  local backups_dir backups_kb=""
+  backups_dir="$(crontab -l 2>/dev/null | sed -n 's/^BACKUP_DIR=//p' | head -1)"
+  [ -n "$backups_dir" ] && backups_kb="$(du -sk "$backups_dir" 2>/dev/null | cut -f1)"
+
+  local docker_df=""
+  docker_df="$(docker system df --format '{{.Type}} {{.Size}} ({{.Reclaimable}} reclaimable)' 2>/dev/null | paste -sd';' | sed 's/;/; /g')"
+
+  # A RUNNER'S SELF-UPDATE downloads into `_work/_update`, unpacks `bin.<new>` and `externals.<new>`,
+  # moves the `bin` and `externals` symlinks, and leaves the old pair where it was. Every runner on
+  # the host is a sibling of the one running this job, so the root is read from RUNNER_WORKSPACE
+  # (`<root>/<runner>/_work/<repo>`) rather than written here.
+  local runner_stale_kb=0 runner_stale="" runners_root="" kb=""
+  if [ -n "${RUNNER_WORKSPACE:-}" ] && runners_root="$(cd "$RUNNER_WORKSPACE/../../.." 2>/dev/null && pwd)"; then
+    local d v cur
+    for d in "$runners_root"/*/; do
+      d="${d%/}"
+      [ -L "$d/bin" ] || continue
+      for v in "$d"/bin.* "$d"/externals.*; do
+        [ -d "$v" ] || continue
+        case "${v##*/}" in
+          bin.*) cur="$(readlink "$d/bin")" ;;
+          externals.*) cur="$(readlink "$d/externals")" ;;
+        esac
+        [ "${cur##*/}" = "${v##*/}" ] && continue
+        kb="$(du -sk "$v" 2>/dev/null | cut -f1)"
+        runner_stale_kb=$((runner_stale_kb + ${kb:-0}))
+        runner_stale="$runner_stale ${d##*/}/${v##*/}"
+      done
+      if [ -n "$(ls -A "$d/_work/_update" 2>/dev/null)" ]; then
+        kb="$(du -sk "$d/_work/_update" 2>/dev/null | cut -f1)"
+        runner_stale_kb=$((runner_stale_kb + ${kb:-0}))
+        runner_stale="$runner_stale ${d##*/}/_work/_update"
+      fi
+    done
+  fi
+
   local origins
   origins="$(apt-config dump Unattended-Upgrade::Origins-Pattern 2>/dev/null |
     sed -n 's/^Unattended-Upgrade::Origins-Pattern:: "\(.*\)";$/\1/p' | paste -sd'|')"
@@ -156,6 +209,15 @@ gather() {
     printf 'reboot_pkgs=%q\n' "$reboot_pkgs"
     printf 'origins=%q\n' "$origins"
     printf 'now_epoch=%q\n' "$(date +%s)"
+    printf 'disk_pct=%q\n' "$disk_pct"
+    printf 'disk_used_kb=%q\n' "$disk_used_kb"
+    printf 'disk_size_kb=%q\n' "$disk_size_kb"
+    printf 'backups_dir=%q\n' "$backups_dir"
+    printf 'backups_kb=%q\n' "$backups_kb"
+    printf 'docker_df=%q\n' "$docker_df"
+    printf 'runners_root=%q\n' "$runners_root"
+    printf 'runner_stale_kb=%q\n' "$runner_stale_kb"
+    printf 'runner_stale=%q\n' "${runner_stale# }"
   } >"$out"
 }
 
@@ -283,8 +345,49 @@ $(printf '%s' "${origins}" | tr '|' '\n')
 EOF
   fi
 
+  # --- the root disk ---
+  gb() { awk -v k="${1:-0}" 'BEGIN { printf "%.1f GB", k / 1048576 }'; }
+  printf '\n=== Disk on %s\n' "${host:-unknown}"
+  if [ -n "${disk_pct:-}" ]; then
+    printf '    root filesystem     : %s %% (%s of %s)\n' "${disk_pct}" "$(gb "${disk_used_kb}")" "$(gb "${disk_size_kb}")"
+  else
+    printf '    root filesystem     : UNREADABLE\n'
+  fi
+  if [ -n "${backups_kb:-}" ]; then
+    printf '    backups             : %s (%s)\n' "$(gb "${backups_kb}")" "${backups_dir}"
+  else
+    printf '    backups             : unknown (%s)\n' "${backups_dir:-no BACKUP_DIR in the crontab of this account}"
+  fi
+  printf '    docker              : %s\n' "${docker_df:-unreadable}"
+  if [ -z "${runners_root:-}" ]; then
+    printf '    runner leftovers    : not measured (not run by a self-hosted runner)\n'
+  elif [ "${runner_stale_kb:-0}" -gt 0 ]; then
+    printf '    runner leftovers    : %s in %s\n' "$(gb "${runner_stale_kb}")" "${runner_stale}"
+  else
+    printf '    runner leftovers    : none\n'
+  fi
+  printf '\n'
+
+  # A FULL ROOT DISK STOPS EVERY TENANT OF A SHARED HOST, and its administrators found this one at
+  # 90 % before anything here did. The percentage is the finding; the lines above say which of OUR
+  # consumers to look at first.
+  if ! [[ "${disk_pct:-}" =~ ^[0-9]+$ ]]; then
+    printf '::error::cannot read the root filesystem usage on %s - a full disk would pass\n' "${host}"
+    findings=$((findings + 1))
+  elif [ "${disk_pct}" -ge "${DISK_FAIL_PERCENT}" ]; then
+    printf '::error::the root filesystem of %s is at %s %% (threshold %s %%) - every tenant of the host stops when it is full. Ours, largest first, are listed above; what is safe to delete is in docs/wiki/infrastructure/host-updates.md#the-root-disk\n' \
+      "${host}" "${disk_pct}" "${DISK_FAIL_PERCENT}"
+    findings=$((findings + 1))
+  fi
+  # LEFTOVERS ARE A NOTE, NOT A FINDING: every runner update makes some, they cost space only, and
+  # deleting them is a hand's work on directories the host's administrators own.
+  if [ "${runner_stale_kb:-0}" -gt 0 ]; then
+    printf 'note: the self-hosted runners left %s of old versions behind; deleting them by hand is safe, see docs/wiki/infrastructure/host-updates.md#the-root-disk\n' \
+      "$(gb "${runner_stale_kb}")"
+  fi
+
   if [ "$findings" -eq 0 ]; then
-    printf 'OK: %s is applying its security updates, and they are in effect.\n' "${host}"
+    printf 'OK: %s is applying its security updates, they are in effect, and its root disk is under %s %%.\n' "${host}" "${DISK_FAIL_PERCENT}"
     return 0
   fi
   printf '\n%s finding(s) on %s.\n' "$findings" "${host}"

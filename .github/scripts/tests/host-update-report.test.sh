@@ -65,6 +65,15 @@ facts_for() {
     printf 'reboot_pkgs=%q\n' ""
     printf 'origins=%q\n' "$SECURITY_ORIGINS"
     printf 'now_epoch=%q\n' "$NOW"
+    printf 'disk_pct=%q\n' 73
+    printf 'disk_used_kb=%q\n' 32505856
+    printf 'disk_size_kb=%q\n' 47185920
+    printf 'backups_dir=%q\n' /srv/canari-backups
+    printf 'backups_kb=%q\n' 5662310
+    printf 'docker_df=%q\n' 'Images 6.301GB (538.2MB (8%) reclaimable); Local Volumes 3.994GB (0B (0%) reclaimable)'
+    printf 'runners_root=%q\n' /runners
+    printf 'runner_stale_kb=%q\n' 0
+    printf 'runner_stale=%q\n' ''
   } > "$out"
   local kv
   for kv in "$@"; do
@@ -254,6 +263,42 @@ if [ "$(POLICY_OWNER=host-admins verdict "$f")" = "1" ]; then
   pass "a host-admins box with a pending security update and a timer that never ran is still a finding"
 else
   fail "POLICY_OWNER=host-admins silenced a finding that is not about the policy"
+fi
+
+printf '\nthe root disk: DISK_FAIL_PERCENT is the red line, and a disk nobody can read is not a pass\n'
+# ═════════════════════════════════════════════════════════════════════════════
+# 2026-10-24: the host's administrators found its root disk at 90 % (92 % when read) before any
+# report here said so. The threshold is 85, and these cases pin both sides of it.
+f="$(facts_for 'disk_pct=85')"
+case "$(text_of "$f")" in
+  *"is at 85 % (threshold 85 %)"*) pass "DISK_FAIL_PERCENT: 85 % is a finding that names the percentage and the threshold" ;;
+  *) fail "DISK_FAIL_PERCENT: a root disk at 85 % was not reported" ;;
+esac
+f="$(facts_for 'disk_pct=84')"
+if [ "$(verdict "$f")" = "0" ]; then
+  pass "DISK_FAIL_PERCENT: 84 % passes"
+else
+  fail "DISK_FAIL_PERCENT: 84 % was reported - the threshold is off by one"
+fi
+f="$(facts_for 'disk_pct=92')"
+if [ "$(DISK_FAIL_PERCENT=95 verdict "$f")" = "0" ] && [ "$(verdict "$f")" = "1" ]; then
+  pass "DISK_FAIL_PERCENT moves the line: 92 % fails at the default 85 and passes at 95"
+else
+  fail "DISK_FAIL_PERCENT is not the value the judgement reads"
+fi
+f="$(facts_for 'disk_pct=')"
+case "$(text_of "$f")" in
+  *"cannot read the root filesystem"*) pass "an unreadable df is a finding about the report, not a pass" ;;
+  *) fail "an unreadable root filesystem passed" ;;
+esac
+f="$(facts_for 'runner_stale_kb=5452595' 'runner_stale=canari/bin.2.337.0 canari/externals.2.337.0')"
+out="$(text_of "$f")"
+named=no
+case "$out" in *"5.2 GB in canari/bin.2.337.0"*"note: the self-hosted runners left 5.2 GB"*) named=yes ;; esac
+if [ "$(verdict "$f")" = "0" ] && [ "$named" = "yes" ]; then
+  pass "runner leftovers are named with their size, as a note and not a finding"
+else
+  fail "runner leftovers were a finding, or were not named"
 fi
 
 printf '\n'

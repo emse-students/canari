@@ -53,6 +53,44 @@ unit reads healthy while the spool is unread); route the event to syslog with se
 class instead, and prove the alarm by firing a test event through the real path.** A stale
 `spares=` declaration would have cried wolf on every boot and was removed.
 
+## The root disk
+
+**The host's administrators found its root disk at 90 % on 2026-10-24** (92 % when read) and asked
+for no new container until they extend it; nothing here had said so. Since then the same report
+(`host-update-report.sh`, the `hosts` job of `scheduled.yml`, daily) prints the root filesystem's
+percentage and the three consumers that are OURS, and **turns the run red at `DISK_FAIL_PERCENT`
+(85)**:
+
+| Line | Read from | Note |
+| --- | --- | --- |
+| root filesystem | `df -P -k /` | the finding; an unreadable `df` is a finding too |
+| backups | `du -sk` of the `BACKUP_DIR` the runner account's crontab sets | archives and the local restic repository ([backup](backup.md#retention)) |
+| docker | `docker system df` | the WHOLE daemon, co-tenants included; images are pruned by [docker-prune](../../../infrastructure/docker-prune/README.md) |
+| runner leftovers | every runner beside the one running the job, from `RUNNER_WORKSPACE` | a NOTE, never a finding |
+
+The threshold is pinned by `host-update-report.test.sh` (85 fails, 84 passes, the variable moves
+it, an unreadable `df` fails).
+
+### The cleanup of 2026-10-24, and what is safe to delete
+
+Done by hand with the owner's yes, 92 % to 73 %:
+
+1. **Old runner versions, -5.2 GB over the four self-hosted runners.** A runner updates itself: it
+   downloads into `_work/_update`, unpacks `bin.<new>` and `externals.<new>` beside the old ones,
+   moves the `bin` and `externals` SYMLINKS, and never deletes the old pair. **Safe:** a `bin.<v>`
+   or `externals.<v>` directory that the `bin` / `externals` symlink does NOT point to (read it with
+   `readlink`), and the contents of `_work/_update`. **Not safe:** the directory a symlink names, the
+   symlinks, the runner's own configuration files (`.runner`, `.credentials*`), `_work/<repo>` while
+   a job runs, and `_diag` (the runner's logs, small).
+2. **Local nightly archives older than 7 days**, after checking the offsite copy held the same
+   files; [backup](backup.md#retention) made 7 days the rule.
+
+**It comes back.** Every runner release leaves one more pair per runner (the last one reached three
+runners on 2026-10-22 and the fourth on 2026-10-24); the four held 5.2 GB of leftovers that day. The
+report names them with
+their size; deleting them stays a hand's work, because the runners' home is a directory of the
+shared host and a cron there is a change its administrators have not agreed to.
+
 ## What stays open: the report's reach, the RAID channel, and libraries nothing restarts
 
 The report covers only the host the runner lives on; a RAID sensor without a report channel and a
