@@ -204,7 +204,7 @@ warning, then suspension, then withdrawal by staff; a cut is kept **90 days**; *
 reports**; live reports answered within **24 hours on working days**; **a reported chat message is kept (encrypted,
 for staff) until handled** - this REVERSES C2's "no grace period"; floating reactions = heart, laugh,
 bravo, fire, the canary chick; the first-live rules reuse the posts' publication rules; **no viewer cap
-wanted** (the plan: [live](frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)).
+wanted** (the plan: [live](frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20); **2026-10-21, no VISIBLE ceiling: the design and the owner's decisions O-1..O-7 are on [live-scaling](frontend/modules/live-scaling.md)**).
 **WP-L8b, server half BUILT 2026-10-21 (draft PR):** the strike ladder, the 90-day retention, the
 reported chat line (checked, signed, kept until handled and 90 days at most, the author's erasure
 included), the five reaction kinds and `LIVE_RULES_VERSION` 2 ([lives](services/lives.md#the-strike-ladder-wp-l8b)).
