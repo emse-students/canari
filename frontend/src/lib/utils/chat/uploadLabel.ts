@@ -1,6 +1,10 @@
 import { m } from '$lib/paraglide/messages';
 import { formatFileSize } from '$lib/utils/fileSize';
-import { uploadPercent, type UploadView } from '$lib/utils/chat/uploadProgress.svelte';
+import {
+  preparePercent,
+  uploadPercent,
+  type UploadView,
+} from '$lib/utils/chat/uploadProgress.svelte';
 
 /**
  * The one line an attachment's bubble says about its upload, localized. Every figure is a REAL byte
@@ -14,8 +18,12 @@ import { uploadPercent, type UploadView } from '$lib/utils/chat/uploadProgress.s
 export function uploadCaption(view: UploadView, declaredSize: number): string {
   const total = formatFileSize(view.total > 0 ? view.total : declaredSize);
   switch (view.phase) {
-    case 'preparing':
-      return m.upload_preparing();
+    case 'preparing': {
+      const percent = preparePercent(view);
+      return percent === null
+        ? m.upload_preparing()
+        : m.upload_preparing_progress({ percent: String(percent) });
+    }
     case 'queued':
       return m.upload_queued();
     case 'waiting':

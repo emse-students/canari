@@ -65,6 +65,15 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
+import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import {
+  SHARED_PAYLOAD_WRITES_ENV,
+  type PayloadGroupFacts,
+  materializeDeliveries,
+  readSharedPayloadWrites,
+  saveWithSharedPayload,
+  sharesPayload,
+} from '../utils/queued-payload';
 import {
   bumpSeatGeneration,
   claimSeat,
@@ -256,6 +265,17 @@ export interface ValidateCommitBody {
 
 /** Why a Welcome's target is refused: no device registered under it, or not in the group. */
 export type WelcomeTargetRefusal = 'welcome_target_unknown' | 'welcome_target_not_member';
+
+/**
+ * What {@link MessagingService.readKeyGroupBaseForPush} answers a shut phone: the key group's scope,
+ * and either its base (null when none is published yet) or `welcomeOwed` when a Welcome is on its
+ * way and the device must not serve itself.
+ */
+export interface KeyGroupBaseForPush {
+  scope: DistributionScope;
+  welcomeOwed: boolean;
+  base: { groupInfo: string; baseEpoch: number; activeEpoch: number } | null;
+}
 
 export interface ValidateCommitResult {
   accepted: boolean;
@@ -698,6 +718,14 @@ export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
   /** Per-device count of sends that found no push token - see `sendFcmForQueued`. */
   private readonly noPushTokenRepeats = new RepeatCounter();
+  /**
+   * Whether a key-group fan-out is written as ONE shared payload. Read once at boot; OFF until a
+   * release after the one that ships the readers turns it on - see `readSharedPayloadWrites`.
+   */
+  private readonly sharedPayloadWrites = readSharedPayloadWrites(
+    process.env[SHARED_PAYLOAD_WRITES_ENV],
+    this.logger
+  );
 
   constructor(
     @InjectRepository(QueuedMessage)
@@ -1035,6 +1063,12 @@ export class MessagingService {
       this.logger.warn(
         `[PUSH_SEND][${traceId}] over-budget proto not inlined: ${carriage.bytes}B over a ${carriage.budget}B budget ` +
           `(senderName=${Buffer.byteLength(senderName, 'utf8')}B groupName=${Buffer.byteLength(groupName, 'utf8')}B)`
+      );
+    } else if (carriage.kind === 'long-frame') {
+      // A long text: its own size, not the names, is what overflows. Expected - fetched by
+      // `queuedMessageId` like a Welcome.
+      this.logger.debug(
+        `[PUSH_SEND][${traceId}] long frame carried by reference: ${carriage.bytes}B, budget ${carriage.budget}B`
       );
     } else if (carriage.kind === 'by-reference') {
       // A Welcome (ciphertext + ratchet tree) or a key-distribution frame over the budget (a seed
@@ -3361,6 +3395,19 @@ export class MessagingService {
     return distributionScopeOf(group);
   }
 
+  /**
+   * Whether `userId` is a member of `groupId`, asked of the table that records membership for that
+   * kind of group (see `memberOfGroupKind`). An unknown group has no members.
+   */
+  async isGroupMember(groupId: string, userId: string): Promise<boolean> {
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+    });
+    if (!group) return false;
+    return (await this.memberOfGroupKind(group, groupId, userId)).isMember;
+  }
+
   /** Whether `userId` is on the user roster of `groupId` - who may read its external-join base. */
   private async isOnRoster(groupId: string, userId: string): Promise<boolean> {
     return !!(await this.groupMemberRepo.findOne({ where: { groupId, userId } }));
@@ -3536,6 +3583,132 @@ export class MessagingService {
       silent: true,
       pushable: true,
     });
+  }
+
+  /**
+   * The external-join base of a KEY GROUP, for a shut phone that received a salon push sealed on a
+   * key group it holds no seat in (channel-encryption section 26, decided by the user 2026-10-22).
+   *
+   * THE SAME GATE AS THE APP'S OWN JOIN, NEVER A SECOND ONE. The app reads this base through
+   * social-service with a session; a killed app has none, so it authenticates with its PushSecret
+   * and this asks social-service the SAME question (`isEntitledToDistributionGroup`, the predicate
+   * that serves the base and gates the commit). Unanswered is the 503 that helper throws, never an
+   * acceptance.
+   *
+   * - A conversation is refused (`not_a_key_group`): its base is gated by its own roster on the
+   *   JWT route, and this door must not become a second way to read it.
+   * - A device whose seat is `pending` with a Welcome queued or an add in flight is told
+   *   `welcomeOwed` and given NO base: somebody is writing its leaf, and a second writer is the
+   *   duplicate-leaf race (one door at a time, section 20).
+   */
+  async readKeyGroupBaseForPush(
+    groupId: string,
+    userId: string,
+    deviceId: string
+  ): Promise<KeyGroupBaseForPush> {
+    const traceId = this.makeTraceId('kg-base-push');
+    const scope = await this.keyDistributionScope(groupId);
+    if (!scope) {
+      this.logger.warn(
+        `[KEY_GROUP_PUSH_JOIN][${traceId}] REFUSED base group=${groupId} device=${cutUserId(userId)}:${deviceId} reason=not_a_key_group`
+      );
+      throw new ForbiddenException({
+        error: 'not_a_key_group',
+        message: 'only a key-distribution group is joined from a push',
+      });
+    }
+    if (!(await isEntitledToDistributionGroup(scope, userId, traceId))) {
+      this.logger.warn(
+        `[KEY_GROUP_PUSH_JOIN][${traceId}] REFUSED base group=${groupId} ${scope.kind}=${scope.id} device=${cutUserId(userId)}:${deviceId} reason=not_entitled`
+      );
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.NOT_A_MEMBER, 'this device may not join this key group', {
+          error: 'not_entitled',
+        })
+      );
+    }
+    const seat = await this.deviceGroupRepo.findOne({
+      where: { userId, deviceId, groupId },
+      select: { status: true },
+    });
+    if (seat?.status === 'pending') {
+      const { welcomed, locked } = await readPendingMembershipFacts(
+        this.queuedMessageRepo,
+        this.redis,
+        deviceId,
+        [groupId],
+        this.logger
+      );
+      if (welcomed.has(groupId) || locked.has(groupId)) {
+        this.logger.log(
+          `[KEY_GROUP_PUSH_JOIN][${traceId}] WELCOME OWED group=${groupId} device=${cutUserId(userId)}:${deviceId} ` +
+            `welcomeQueued=${welcomed.has(groupId)} addInFlight=${locked.has(groupId)} - no base served`
+        );
+        return { scope, welcomeOwed: true, base: null };
+      }
+    }
+    const base = await this.readGroupInfo(groupId);
+    this.logger.log(
+      `[KEY_GROUP_PUSH_JOIN][${traceId}] base served group=${groupId} ${scope.kind}=${scope.id} ` +
+        `device=${cutUserId(userId)}:${deviceId} baseEpoch=${base?.baseEpoch ?? 'none'} activeEpoch=${base?.activeEpoch ?? 'none'}`
+    );
+    return { scope, welcomeOwed: false, base };
+  }
+
+  /**
+   * Submits a shut phone's EXTERNAL commit into a KEY GROUP - the commit half of
+   * {@link readKeyGroupBaseForPush}.
+   *
+   * NARROWER THAN `POST /mls/commit` ON PURPOSE. A PushSecret is a weaker credential than a session
+   * (it lives on the device to serve a killed app), so this door takes the one commit a push can
+   * legitimately produce - an external commit into a key-distribution group - and refuses every
+   * other: a member commit (a Remove, an Add) or any commit into a conversation. What it accepts then
+   * goes through {@link validateCommit} unchanged, so the entitlement, the epoch gate, the base
+   * stored with the advance and the committer's activation are the app's own.
+   */
+  async submitKeyGroupJoinForPush(
+    body: ValidateCommitBody,
+    userId: string
+  ): Promise<ValidateCommitResult> {
+    const traceId = this.makeTraceId('kg-join-push');
+    const groupId = sanitizeQueryValue(body.groupId, 'groupId');
+    const frame = typeof body.proto === 'string' ? readCommitFrame(body.proto) : null;
+    if (!frame?.external) {
+      this.logger.warn(
+        `[KEY_GROUP_PUSH_JOIN][${traceId}] REFUSED commit group=${groupId} device=${cutUserId(userId)}:${body.deviceId} reason=not_an_external_commit framed=${!!frame}`
+      );
+      throw new BadRequestException({
+        error: 'not_an_external_commit',
+        message: 'only an external commit is accepted from a push',
+      });
+    }
+    if (!(await this.isKeyDistributionGroup(groupId))) {
+      this.logger.warn(
+        `[KEY_GROUP_PUSH_JOIN][${traceId}] REFUSED commit group=${groupId} device=${cutUserId(userId)}:${body.deviceId} reason=not_a_key_group`
+      );
+      throw new ForbiddenException({
+        error: 'not_a_key_group',
+        message: 'only a key-distribution group is joined from a push',
+      });
+    }
+    // Nothing from the body but the commit, its base and the base it creates: a push join admits
+    // nobody, removes nobody and excludes nobody but itself.
+    const result = await this.validateCommit(
+      {
+        groupId,
+        deviceId: body.deviceId,
+        senderId: body.senderId,
+        baseEpoch: body.baseEpoch,
+        proto: body.proto,
+        groupInfo: body.groupInfo,
+      },
+      userId
+    );
+    this.logger.log(
+      `[KEY_GROUP_PUSH_JOIN][${traceId}] commit ${result.accepted ? `ACCEPTED newEpoch=${result.newEpoch}` : `refused reason=${result.reason} currentEpoch=${result.currentEpoch}`} ` +
+        `group=${groupId} device=${cutUserId(userId)}:${body.deviceId} baseEpoch=${body.baseEpoch}`
+    );
+    return result;
   }
 
   /**
@@ -4674,10 +4847,38 @@ export class MessagingService {
         );
       }
       if (kept.length === 0) return [];
-      const saved = await manager.getRepository(QueuedMessage).save(kept);
+      const saved = await this.saveQueuedRows(manager, group, kept, groupId, tag, traceId);
       if (welcome) await this.ensurePendingSeat(manager, groupId, welcome);
       return saved;
     });
+  }
+
+  /**
+   * Stores the rows a send keeps, in the transaction `m` that holds the seat lock and the group row.
+   *
+   * A KEY-GROUP FAN-OUT STORES ITS CIPHERTEXT ONCE, under the same lock and in the same transaction
+   * as its records, so the group cannot end between the two and the collector never sees a payload
+   * without them (`utils/queued-payload.ts`). ONLY WHILE THE WRITER'S SWITCH IS ON: off, every
+   * fan-out is the inline per-seat write, the shape an image older than the readers can still serve
+   * (`readSharedPayloadWrites`).
+   */
+  private async saveQueuedRows(
+    m: EntityManager,
+    group: PayloadGroupFacts,
+    rows: QueuedMessage[],
+    groupId: string,
+    tag: string,
+    traceId: string
+  ): Promise<QueuedMessage[]> {
+    if (this.sharedPayloadWrites && sharesPayload(group, rows)) {
+      // Expected on every key-group fan-out, so debug: `QUEUED count=` already reports the send.
+      this.logger.debug(
+        `[${tag}][${traceId}] SHARED_PAYLOAD group=${groupId} records=${rows.length} ` +
+          `bytes=${rows[0].proto?.length ?? 0} - one stored copy instead of ${rows.length}`
+      );
+      return saveWithSharedPayload(m, groupId, rows);
+    }
+    return m.getRepository(QueuedMessage).save(rows);
   }
 
   /**
@@ -5291,11 +5492,18 @@ export class MessagingService {
     while (!done) {
       const qb = this.queuedMessageRepo
         .createQueryBuilder('q')
+        // The payload in the SAME statement as the record - see `PAYLOAD_RELATION`.
+        .leftJoinAndSelect('q.payload', 'payload')
         .where('q.recipientId = :userId', { userId: safeUserId })
         .andWhere('q.deviceId = :deviceId', { deviceId: safeDeviceId })
         .orderBy('q.createdAt', 'ASC')
-        .skip(offset)
-        .take(PENDING_FETCH_CHUNK_ROWS);
+        // Two records of one device can share a `createdAt` (one transaction, one `now()`): the id
+        // makes the order total, or OFFSET paging could hand one row twice and skip another.
+        .addOrderBy('q.id', 'ASC')
+        // SQL `OFFSET`/`LIMIT`, not `skip`/`take`: with a join TypeORM turns `skip`/`take` into a
+        // DISTINCT-ids query plus a second read, and a many-to-one join cannot multiply rows.
+        .offset(offset)
+        .limit(PENDING_FETCH_CHUNK_ROWS);
 
       if (after?.trim()) {
         qb.andWhere('q.createdAt > :after', { after: new Date(after) });
@@ -5305,8 +5513,14 @@ export class MessagingService {
       const chunk = await qb.getMany();
       if (chunk.length === 0) break;
       offset += chunk.length;
+      // Materialised BEFORE the byte budget is measured: a record pointing at a shared payload
+      // stores no `proto`, and a page sized on the stored bytes alone would hand over megabytes it
+      // believed were nothing - the 2026-08-13 failure this budget exists to prevent. A record whose
+      // payload is missing is withheld there, never served empty; `offset` above counts it anyway,
+      // because it is still a row of the table this pages over.
+      const served = materializeDeliveries(chunk, this.logger, traceId);
 
-      for (const row of chunk) {
+      for (const row of served) {
         const size = row.proto?.length ?? 0;
         const last = messages[messages.length - 1];
         const sameInstant = last !== undefined && +row.createdAt === +last.createdAt;

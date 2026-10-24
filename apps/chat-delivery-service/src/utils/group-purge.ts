@@ -1,6 +1,7 @@
 import { EntityManager, In, type EntityTarget, type ObjectLiteral } from 'typeorm';
 import type Redis from 'ioredis';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
@@ -28,6 +29,7 @@ const GROUP_ID_COLUMN = 'groupId';
 /** Per-table row counts removed by {@link deleteGroupOwnedRows}, for the caller's log line. */
 export type GroupOwnedRowCounts = {
   queuedMessages: number;
+  queuedPayloads: number;
   members: number;
   deviceMemberships: number;
   commitLog: number;
@@ -66,6 +68,9 @@ const GROUP_OWNED_TABLES: readonly {
 }[] = [
   { count: 'members', entity: GroupMember },
   { count: 'queuedMessages', entity: QueuedMessage },
+  // AFTER the records, which are the only thing referencing a payload: a group's payloads go with
+  // its records in the one transaction, so no record of a live group ever loses its ciphertext.
+  { count: 'queuedPayloads', entity: QueuedPayload },
   { count: 'deviceMemberships', entity: DeviceGroupMembership },
   { count: 'commitLog', entity: MlsCommitLog },
   { count: 'groupInfo', entity: MlsGroupInfo },
@@ -78,6 +83,7 @@ const GROUP_OWNED_TABLES: readonly {
 function noRowsRemoved(): GroupOwnedRowCounts {
   return {
     queuedMessages: 0,
+    queuedPayloads: 0,
     members: 0,
     deviceMemberships: 0,
     commitLog: 0,
@@ -92,7 +98,7 @@ function noRowsRemoved(): GroupOwnedRowCounts {
 /**
  * Deletes every database row the given groups own, from {@link GROUP_OWNED_TABLES}.
  *
- * {@link GROUP_OWNED_TABLES} plus `dm_user_dismissed_groups` is an ALLOWLIST: nine tables named
+ * {@link GROUP_OWNED_TABLES} plus `dm_user_dismissed_groups` is an ALLOWLIST: ten tables named
  * one by one, checkable against `src/entities/` (every entity carrying a `groupId` is here). It
  * exists because the two places that end a group each carried their own shorter list, and both
  * were wrong in the same direction - measured on prod 2026-08-18, 21 of 69 `mls_group_info` rows,

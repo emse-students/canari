@@ -140,25 +140,6 @@ if (!it) {
   else bad('its pattern does not select live-seats.spec.ts - the seat scripts run nowhere');
 }
 
-console.log("chat-delivery's integration job runs on the database production runs:");
-{
-  const job = jobBlock('test-delivery-integration');
-  if (!job) {
-    bad('no test-delivery-integration job - the seat lock orderings run nowhere');
-  } else {
-    const image = /\n\s+image: (postgres:\S+)/.exec(job)?.[1];
-    const prod = /\n\s+image: (postgres:\S+)/.exec(
-      readFileSync(resolve(repoRoot, 'infrastructure/docker-compose.prod.yml'), 'utf8')
-    )?.[1];
-    if (image && prod && image === prod) ok(`same image as production: ${image}`);
-    else bad(`delivery integration job runs ${image}, production runs ${prod} - bump them together`);
-    if (/DELIVERY_IT_DATABASE_URL: postgres:\/\//.test(job)) ok('it sets DELIVERY_IT_DATABASE_URL');
-    else bad('it does not set DELIVERY_IT_DATABASE_URL - every spec would skip, and pass');
-    if (/numPendingTests/.test(job)) ok('it refuses a skipped test');
-    else bad('it does not read the skipped count - a spec that skipped would pass');
-  }
-}
-
 console.log('the addressing scripts run against a real Redis:');
 {
   const rust = /\n  test-rust:[\s\S]*?(?=\n  [a-z-]+:\n)/.exec(ci)?.[0] ?? '';
@@ -170,6 +151,25 @@ console.log('the addressing scripts run against a real Redis:');
   if (/CHAT_DELIVERY_IT_REDIS_URL: redis:\/\//.test(boot) && /addressing\.redis/.test(boot)) {
     ok('boot-nest-apps runs addressing.redis with CHAT_DELIVERY_IT_REDIS_URL');
   } else bad('boot-nest-apps does not run addressing.redis against Redis - the publish script runs nowhere');
+}
+
+console.log('the chat-delivery integration job runs on the database production runs:');
+const chatIt = jobBlock('test-chat-delivery-integration');
+if (!chatIt) {
+  bad('no test-chat-delivery-integration job - the chat-delivery integration specs run nowhere');
+} else {
+  const image = /\n\s+image: (postgres:\S+)/.exec(chatIt)?.[1];
+  const prod = /\n\s+image: (postgres:\S+)/.exec(
+    readFileSync(resolve(repoRoot, 'infrastructure/docker-compose.prod.yml'), 'utf8')
+  )?.[1];
+  if (image && prod && image === prod) ok(`same image as production: ${image}`);
+  else bad(`chat-delivery integration job runs ${image}, production runs ${prod} - bump them together`);
+  if (/CHAT_DELIVERY_IT_DATABASE_URL: postgres:\/\//.test(chatIt)) ok('it sets CHAT_DELIVERY_IT_DATABASE_URL');
+  else bad('it does not set CHAT_DELIVERY_IT_DATABASE_URL - every spec would skip, and pass');
+  // The seat lock's orderings run here too (`seat-lock.integration.spec.ts`): a spec that skipped
+  // must fail the job, never pass it.
+  if (/numPendingTests/.test(chatIt)) ok('it refuses a skipped test');
+  else bad('it does not read the skipped count - a spec that skipped would pass');
 }
 
 console.log('every Redis CI runs is the one production runs:');

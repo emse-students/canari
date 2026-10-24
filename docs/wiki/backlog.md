@@ -82,11 +82,20 @@ nothing is built for it. Design and limits:
 [history-answer-addressing](protocols/history-answer-addressing.md#decided-a-quote-of-an-earlier-message),
 [history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
 
+## P2 - Signed authorship of restored history: built (#2276), owed rig rows and a version floor (2026-10-22)
+
+Restored history carries each message's author signature, and frames carry a signed epoch fingerprint ([history-reconciliation](protocols/history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22), [mls-protocol](protocols/mls-protocol.md#fork-detection-a-signed-epoch-fingerprint-in-every-application-frame-2026-10-22)). Owed:
+
+- **Rig rows:** a history restore between two clients on a live local estate (a signed message verified, an older one marked "non verifie"), and a forced fork that must produce one `[INTEGRITY] fork` line on each side.
+- **A `minClientVersion` floor:** unsigned messages are only MARKED today, because every older client sends them. Refusing them outright waits until the floor is a signing build on both stores, plus the retention window of the oldest unsigned message.
+- **P3 - a history bundle has no byte cap per chunk, only a message count**, and each message now carries its body and proof beside its content (about 2.5x per message). A cap in bytes is owed before bundles of long messages are common.
+
 ## P1 - A community's past goes only to a proven admission: BUILT (draft PR), owed its readings and a client floor (2026-10-22)
 
 Decided by the user: communities stay `shared` by default, the past goes only to an admission a
 member can verify, and a new user's arrival rotates (D5, #2263). Migration `107` is approved by the
-user. Owed, in order: merge after #2262 and #2264; the rig rows COMM-26..31; and a
+user. Merged (#2273); #2264 is rebuilt on it, one chokepoint calling the gate. Owed, in order: the
+rig rows COMM-26..31; and a
 `minClientVersion` floor at the version carrying it, since an older answering client still hands
 the past to whoever the roster names. **The cut date is DECIDED** (user, 2026-10-23):
 `ADMISSION_PROOF_SINCE` is the day the production stable carrying the proof ships, planned for
@@ -177,7 +186,12 @@ path leaf names its committer (the server now refuses one that does not). A new 
 commit alike; (2) the bundle bounded in bytes and paged is BUILT (draft PR, 2026-10-22), owed one rig run of a
 paged history answer ([channel-encryption §4.4](protocols/channel-encryption.md#44-joining-and-what-a-share-link-is-worth));
 (3) a key-group frame stored once per group, not once per seat (31 copies per
-payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
+payload, 883 MB of the 1.5 GB queue): BUILT 2026-10-22, draft PR, for the next stable (user). It
+ships the READERS with migration 034 and the writer OFF (`QUEUED_PAYLOAD_SHARED_WRITES=false`).
+Owed: the user's yes to apply migration 034; then, once that stable is in production, a pull
+request turning the writer on in the release after it; then one re-measure of the queue's bytes
+([chat-delivery](services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)).
+Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
 
 ## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)
@@ -485,7 +499,7 @@ for ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-
 Both migrations are applied by the release's deploy before the new containers start, and may ride the
 next stable (user, 2026-10-22). The first-writer-wins race runs against PostgreSQL in CI
 (`distribution-departure.integration.spec.ts`), and chat-delivery's seat lock orderings too
-(`seat-lock.integration.spec.ts`, `test-delivery-integration`). A rejoin after a lost second eviction
+(`seat-lock.integration.spec.ts`, `test-chat-delivery-integration`). A rejoin after a lost second eviction
 waits for the hourly drain, by design ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
 Owed: (1) the counts of `[KEY_DISTRIBUTION] second eviction FAILED`, `departure ABANDONED`,
 `abandoned departure NOT settled`, `first eviction named NO departure`, `DEPARTURE_SUPERSEDED`,
@@ -848,6 +862,24 @@ searches), `HEAD` content-length.
 ## P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)
 
 **User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Budget: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. F1 (saved workspace list), F2, F3, F4 (a salon's last page kept locally), F5, F6 and F7 (one engine call for a page's signatures, 2026-10-22, native: a lead review) are built; the tab is 2-4x faster and works offline, but still short of 200 ms (first mount cut, see the page). **Left:** a re-measure against the budget on the Mi 9T (F7's gain included, from the next pre-release), a CPU profile of the warm resume at 4x, the history head/body split, iOS. State and numbers: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`.
+
+## P2 - A withdrawn or wiped chat reel can leak its upload session for 24 h (owed BEFORE `CHAT_REEL_WRITER_ENABLED`)
+
+Found in the review of #2117 (RC-5, 2026-10-19), not built. The withdrawal of a queued chat reel releases its resumable session with a best-effort `DELETE`. **Three paths still leak it** to media-service's 24 h sweep:
+- a cancel made offline - the weak link the reel was stuck on - logs `NOT released`;
+- a sign-out and an account erasure wipe the outbox without a `DELETE`;
+- an account deletion does the same.
+
+Each leaked session holds, for 24 h, one of the owner's 4 open sessions, up to 256 MiB of staging and its share of the daily `chat-reel` budget, so four of them in a day answer the member 429. Nothing reaches users while the writer switch is off; **this must be built before it is flipped**.
+
+**Fix, decided shape:** a durable "to release" mark, swept at the next start and after each sign-in:
+- **What the mark holds:** the session ids and the owner id, NO key, encrypted under the device key, in a store that outlives the per-account outbox wipe.
+- **When it is written:** by the withdrawal before its `DELETE`, and by the sign-out/erasure path BEFORE it wipes the outbox. Neither may lose a mark silently.
+- **When it is removed:** an entry goes only once its `DELETE` answered (2xx, or the 404/409 that says the session is already gone or completed). An erased account's marks are swept under that account's token, then dropped.
+- **Privacy:** ids only. A session id names staged ciphertext the owner can already address and nothing else, and the server checks the owner on every route.
+- **Proof:** an outbox test that cancels offline, relaunches online and sees the `DELETE`, plus one per wipe path.
+
+The mechanism and the gap are written up in [reels-in-chat](frontend/modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19). Not built in #2117 because it is not small: it touches the sign-out and erasure wipe paths, needs a store that survives them, and adds a sweep to sign-in.
 
 ## P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)
 
@@ -1501,8 +1533,13 @@ Shipped in `v0.18.28`; what is left is readings, one decision, three test rows a
   6a: a salon message in Gala with the phone shut, `fetchCommitsFromBackend` answering 200 before the
   banner ([channel-encryption §16](protocols/channel-encryption.md#16-a-shut-phone-one-commit-behind-could-never-catch-up-in-any-community---fixed-2026-09-27)).
   The iPhone: `NOTIF-20`'s NSE half ([channel-encryption §19](protocols/channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)).
-- **P1 - USER DECISION: should a phone join a salon's key group from the PUSH, as it joins a DM from
-  a Welcome?** Two Gala members (`76198d2d`, `7bc0efc7`) held no device in the key group: the seat is
+- **P1 - DECIDED BY THE USER 2026-10-22 (*"Oui, rejoindre au push"*) AND BUILT: a shut Android
+  phone joins a salon's key group from the push; iOS joins at the next foreground**
+  ([channel-encryption section 26](protocols/channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)).
+  Owed: the Mi 9T reading (generic banner, `settled joined`, the next push readable,
+  `[KEY_GROUP_PUSH_JOIN] ... registered` at the next start) and the iPhone reading (the join at the
+  next foreground). The original question: should a phone join a salon's key group from the PUSH, as
+  it joins a DM from a Welcome? Two Gala members (`76198d2d`, `7bc0efc7`) held no device in the key group: the seat is
   committed by the member's own device when it LOADS the community, and theirs never had (read on
   production 2026-09-27 21:00, `0.18.15` and `0.18.22`), so every salon push reached them unreadable.
   Production check, read-only: whether either now holds a key-group row (`dm_group_members` for

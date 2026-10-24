@@ -477,6 +477,61 @@ pub(crate) fn read_and_clear_read_watermarks(app: tauri::AppHandle) -> Vec<serde
     take_ndjson_handoff(&app, "read_watermarks.ndjson", "READ_WATERMARK")
 }
 
+/// Takes the ledger of key-group joins the push service attempted while the app was shut, and
+/// deletes it (channel-encryption section 26, `mobile::key_group_join`).
+///
+/// Called once at start-up, BEFORE the key-group registry is restored and before the drain: a group
+/// joined from a push is in `mls.bin` and in no registry row, and a key group the registry does not
+/// name has its backlog refused as `absent-conversation` (section 22). The `joined` entries carry the
+/// scope the server named, which is what the frontend writes into the registry. From this call on,
+/// every group in the ledger is the app's own join's to own - which is why the whole file goes.
+///
+/// Empty on desktop, where no push service exists to join anything, and on iOS, whose notification
+/// extension never joins (it writes no `mls.bin` of the app's).
+#[tauri::command]
+pub(crate) fn take_key_group_push_joins(app: tauri::AppHandle) -> Vec<serde_json::Value> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("[KG_PUSH_JOIN] app_data_dir() failed: {e}");
+                return vec![];
+            }
+        };
+        // The ledger is sealed under the install's cache key: without it, it stays where it is for
+        // a start that can read it (`app_cache_key` has logged the absence).
+        let Ok(key) = crate::native_cache::app_cache_key(&app) else {
+            // Only an accusation when there IS a ledger to take (never on iOS, which writes none).
+            if data_dir
+                .join(crate::mobile::key_group_join::LEDGER_FILE)
+                .exists()
+            {
+                log::error!("[KG_PUSH_JOIN] ledger not taken: the native cache key is unreadable");
+            }
+            return vec![];
+        };
+        match crate::mobile::key_group_join::take_all(&data_dir, &key) {
+            Ok(taken) => {
+                log::info!("[KG_PUSH_JOIN] ledger taken: {} entry/entries", taken.len());
+                taken
+                    .into_iter()
+                    .filter_map(|t| serde_json::to_value(t).ok())
+                    .collect()
+            }
+            Err(e) => {
+                log::error!("[KG_PUSH_JOIN] ledger not taken: {e}");
+                vec![]
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = app;
+        vec![]
+    }
+}
+
 /// Rewrites {app_data_dir}/outbox_pending.ndjson from the current outbox snapshot.
 /// Each entry carries the AppMessage proto *in the clear* (base64), which the Android service
 /// encrypts against the live epoch via `nativeSendMessageBackground`. App-private plaintext file,

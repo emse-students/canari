@@ -36,16 +36,17 @@ none: a jest run that selects nothing is no longer a pass (the `test` scripts lo
 viewer cap's atomicity, a live's viewer count, a seat's expiry) had been skipped on every run before.
 `ci-passed-gate.test.mjs` asserts the image, the variable and the selection, and that every Redis
 `ci.yml` runs is production's.
+**CHAT-DELIVERY-SERVICE GOT THE SAME JOB ON 2026-10-22** (`test-chat-delivery-integration`,
+`CHAT_DELIVERY_IT_DATABASE_URL`, same digest, same no-skip count), written with migration 034
+([chat-delivery](services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)).
+It also runs `seat-lock.integration.spec.ts`, the seat lock's orderings - a claim, an eviction, a
+route and a send's queued rows against one per-group advisory lock - which no fake can judge
+([channel-encryption](protocols/channel-encryption.md)). The gate test asserts its image, its
+variable and its skip check.
 **ONE spec is excluded from it, by name in both steps: `internal/account-erasure.integration.spec.ts`**,
 which copies every social table out of `public` and so needs the schema `synchronize` builds; it runs
 in `boot-nest-apps` right after the boot built that schema (2026-10-17, found by rebasing on the
 merged account erasure: on this job's empty database it failed with "no table ... in public").
-**CHAT-DELIVERY HAS THE SAME JOB SINCE 2026-10-22** (`test-delivery-integration`, gated on
-`DELIVERY_IT_DATABASE_URL`, the same digest, the same count of suites run and tests skipped): its
-`*.integration.spec.ts` run the seat lock's orderings - a claim, an eviction, a route and a send's
-queued rows against one per-group advisory lock - which no fake can judge
-([channel-encryption](protocols/channel-encryption.md)). `ci-passed-gate.test.mjs` asserts its image,
-its variable and its skip check.
 `ci-passed-gate.test.mjs` holds the rest - every job is a need of `ci-passed`, `ci-passed` keeps
 `if: always()`, the aggregation refuses `failure` AND `cancelled` (run, not read), and the job's
 image equals production's.

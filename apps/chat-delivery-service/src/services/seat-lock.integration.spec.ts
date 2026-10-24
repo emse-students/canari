@@ -9,10 +9,11 @@
  * service's own transaction is parked on it, then commits. No sleep anywhere. The same harness
  * holds two commits at one base, a Welcome store, an erasure and the two `pending` seat writers.
  *
- * GATED ON `DELIVERY_IT_DATABASE_URL`; CI's `test-delivery-integration` sets it. Locally, against a
- * throwaway PostgreSQL:
+ * GATED ON `CHAT_DELIVERY_IT_DATABASE_URL`, the one name every chat-delivery integration spec reads;
+ * CI's `test-chat-delivery-integration` sets it and refuses a skip. Locally, against a throwaway
+ * PostgreSQL:
  *
- *   DELIVERY_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- seat-lock.integration
+ *   CHAT_DELIVERY_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- seat-lock.integration
  *
  * Everything happens in a throwaway schema, created before the DataSource initializes and dropped at
  * the end. Redis is a set in memory: the routes it holds are ordered by the PostgreSQL lock, which is
@@ -26,6 +27,7 @@ import { DataSource } from 'typeorm';
 import type Redis from 'ioredis';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
@@ -58,7 +60,7 @@ const entitled = isEntitledToDistributionGroup as jest.MockedFunction<
   typeof isEntitledToDistributionGroup
 >;
 
-const URL = process.env.DELIVERY_IT_DATABASE_URL;
+const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
 const migration = readFileSync(
@@ -231,6 +233,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       url: URL,
       entities: [
         QueuedMessage,
+        QueuedPayload,
         KeyPackage,
         OneTimeKeyPackage,
         GroupMember,

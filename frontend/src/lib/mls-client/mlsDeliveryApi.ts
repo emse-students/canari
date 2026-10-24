@@ -59,9 +59,18 @@ export interface GroupRosterBatch {
  * for it - the `serverTimestamp` the sender's own copy is stored with, since a sender never receives
  * its frame back. `null` when the server's answer carried none (a server predating the field).
  */
-export interface SentFrame {
-  sealed: Uint8Array;
+export interface SentFrame extends AuthoredFrame {
   receivedAt: number | null;
+}
+
+/**
+ * One application frame as the platform engine sealed it: the ciphertext, and the encoded author
+ * proof mls-core appended inside it (`$lib/crypto/messageAuthorship`) - which the sender keeps on its
+ * own copy, so its history bundles carry the same proof its peers received.
+ */
+export interface AuthoredFrame {
+  sealed: Uint8Array;
+  authorProof: Uint8Array;
 }
 
 /**

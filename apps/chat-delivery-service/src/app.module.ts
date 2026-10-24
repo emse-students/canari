@@ -22,6 +22,7 @@ import { PushController } from './controllers/push.controller';
 import { InternalController } from './controllers/internal.controller';
 import { AdminStorageController } from './controllers/admin-storage.controller';
 import { QueuedMessage } from './entities/queued-message.entity';
+import { QueuedPayload } from './entities/queued-payload.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
 import { GroupMember } from './entities/group-member.entity';
@@ -85,6 +86,7 @@ class RedisShutdown implements OnModuleDestroy {
       })(),
       entities: [
         QueuedMessage,
+        QueuedPayload,
         KeyPackage,
         OneTimeKeyPackage,
         GroupMember,
@@ -106,6 +108,7 @@ class RedisShutdown implements OnModuleDestroy {
     }),
     TypeOrmModule.forFeature([
       QueuedMessage,
+      QueuedPayload,
       KeyPackage,
       OneTimeKeyPackage,
       GroupMember,

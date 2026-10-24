@@ -216,6 +216,70 @@ export class MessagingController {
     return { recorded: true };
   }
 
+  /**
+   * A client stating it saw what a private conversation must never show: two trees at one epoch
+   * (`fork`, a frame whose signed epoch fingerprint is not the receiver's), or restored history whose
+   * author signature does not verify (`forged-history`). The UI comes later; this ERROR line is where
+   * the event is read today, since a client's console is collected nowhere. Protocol:
+   * history-reconciliation, "Restored history carries its author's signature", and mls-protocol,
+   * "Fork detection".
+   *
+   * Stores nothing, like `sender-mismatch`. Every field goes through `sanitizeLogValue`, `kind` is
+   * an allowlist and `epoch` a non-negative integer, so no body can write a line of its own.
+   *
+   * WHAT IS ESTABLISHED AND WHAT IS CLAIMED. The reporter is the authenticated user and device and a
+   * MEMBER of the group (anyone else is refused, 403) - those are facts. The `peer` it names is only
+   * its claim, and logged as `claimedPeer`. The level follows the client's own, read from the TYPED
+   * `proven` field and never from `detail` (free text): `proven: false` (a fork it could not
+   * attribute) is a warn, as in mls-core; `true` is ERROR, and so is a report carrying no boolean.
+   */
+  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @Post('mls/integrity-finding')
+  async reportIntegrityFinding(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') reporterDeviceId: string | undefined,
+    @Body()
+    body: {
+      kind?: unknown;
+      groupId?: unknown;
+      epoch?: unknown;
+      peer?: unknown;
+      detail?: unknown;
+      proven?: unknown;
+    }
+  ): Promise<{ recorded: true }> {
+    const reporter = `${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)}`;
+    const groupId = typeof body.groupId === 'string' ? body.groupId : '';
+    if (
+      !groupId ||
+      !authUserId ||
+      !(await this.messagingService.isGroupMember(groupId, authUserId))
+    ) {
+      this.logger.warn(
+        `[INTEGRITY] REJECT not-a-member reporter=${reporter} group=${sanitizeLogValue(body.groupId)}`
+      );
+      throw new ForbiddenException({
+        error: 'not-a-member',
+        message: 'not a member of this group',
+      });
+    }
+    const kind = body.kind === 'fork' || body.kind === 'forged-history' ? body.kind : 'invalid';
+    const epoch =
+      body.epoch === undefined || body.epoch === null
+        ? 'none'
+        : Number.isSafeInteger(body.epoch) && (body.epoch as number) >= 0
+          ? String(body.epoch)
+          : 'invalid';
+    const proven = typeof body.proven === 'boolean' ? String(body.proven) : 'invalid';
+    const line =
+      `[INTEGRITY] kind=${kind} reporter=${reporter} group=${sanitizeLogValue(groupId)} ` +
+      `epoch=${epoch} claimedPeer=${sanitizeLogValue(body.peer)} proven=${proven} ` +
+      `detail=${sanitizeLogValue(body.detail)}`;
+    if (body.proven === false) this.logger.warn(line);
+    else this.logger.error(line);
+    return { recorded: true };
+  }
+
   @UseGuards(HeaderAuthGuard)
   @Post('mls/base-refresh-request')
   /**

@@ -684,11 +684,11 @@ jobs:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- lives-mode-migration.integration
 
-      # A SESSION'S END AND ITS PUSH ENDING, ONE TRANSACTION (core migration 016). The spec builds
-      # its own tables in a throwaway schema, so the boot's database is all it needs
-      # (docs/wiki/sessions.md). Its chat-delivery half - the delete by session that ends exactly the
-      # registration that session made (migration 037) - is a `*.integration.spec.ts` like every
-      # other chat-delivery one, so `test-delivery-integration` runs it, skip-refused.
+      # A SESSION'S END AND ITS PUSH ENDING, ONE TRANSACTION (core migration 016). The spec builds its
+      # own tables in a throwaway schema, so the boot's database is all it needs
+      # (docs/wiki/sessions.md). Its chat-delivery half, the delete by session (migration 037), is a
+      # `*.integration.spec.ts` like every other chat-delivery one, so `test-chat-delivery-integration`
+      # runs it, skip-refused.
       - name: Push-ending outbox against PostgreSQL
         if: ${{ matrix.service == 'apps/core-service' }}
         working-directory: ${{ matrix.service }}
@@ -813,16 +813,18 @@ jobs:
           fi
 
   # =================================================================================================
-  # CHAT-DELIVERY AGAINST A REAL POSTGRESQL
+  # CHAT-DELIVERY-SERVICE AGAINST A REAL POSTGRESQL
   # =================================================================================================
-  # The seat lock (`utils/seat-eviction.ts`) is a per-group advisory lock that orders a seat's
-  # claim, its eviction, its route and a send's queued rows - which side waits for which is the
-  # mechanism, and no fake can judge it. `*.integration.spec.ts` here run those orderings against
-  # PostgreSQL, gated on `DELIVERY_IT_DATABASE_URL` and SKIPPED without it, so the last step refuses
-  # a run where any spec on disk did not run or any test was skipped - `test-social-integration`'s
-  # rule, for the same reason. The same Postgres as production, by digest (`ci-passed-gate.test.mjs`).
-  test-delivery-integration:
-    name: Chat-delivery integration specs (PostgreSQL)
+  # The same shape as the social job above, for the same reason: `*.integration.spec.ts` here are
+  # gated on `CHAT_DELIVERY_IT_DATABASE_URL` and report SKIPPED without it. Written 2026-10-22 with migration
+  # 034 (a key-group frame stored once), whose collector, purge and pull join are SQL a mock cannot
+  # judge; the seat lock's orderings (`seat-lock.integration.spec.ts`: a per-group advisory lock
+  # ordering a seat's claim, its eviction, its route and a send's queued rows) run here too, since no
+  # fake can judge which side waits for which. Each spec builds its own throwaway schema, so an empty
+  # database is all it needs. Same Postgres digest as production (`ci-passed-gate.test.mjs` compares
+  # them); a skip is a failure.
+  test-chat-delivery-integration:
+    name: Chat-delivery-service integration specs (PostgreSQL)
     needs: [changes]
     if: ${{ contains(needs.changes.outputs.ts-matrix, 'apps/chat-delivery-service') }}
     runs-on: ubuntu-24.04
@@ -833,7 +835,7 @@ jobs:
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: it-probe
-          POSTGRES_DB: delivery_it
+          POSTGRES_DB: chat_it
         ports:
           - 5432:5432
         options: >-
@@ -865,18 +867,17 @@ jobs:
       - name: Run every integration spec
         working-directory: apps/chat-delivery-service
         env:
-          DELIVERY_IT_DATABASE_URL: postgres://canari:it-probe@localhost:5432/delivery_it
+          CHAT_DELIVERY_IT_DATABASE_URL: postgres://canari:it-probe@localhost:5432/chat_it
         run: >-
           node --run test -- --runInBand
           --testPathPatterns '\.integration\.spec\.ts$'
-          --testPathIgnorePatterns '/node_modules/'
-          --json --outputFile "$RUNNER_TEMP/delivery-it.json"
+          --json --outputFile "$RUNNER_TEMP/chat-it.json"
 
       - name: Every integration spec ran, and none was skipped
         working-directory: apps/chat-delivery-service
         run: |
           set -euo pipefail
-          report="$RUNNER_TEMP/delivery-it.json"
+          report="$RUNNER_TEMP/chat-it.json"
           on_disk="$(find src -name '*.integration.spec.ts' | wc -l)"
           suites="$(jq '.numTotalTestSuites' "$report")"
           tests="$(jq '.numTotalTests' "$report")"
@@ -1504,7 +1505,7 @@ jobs:
     name: CI passed
     if: always()
     needs:
-      [changes, test-rust, boot-nest-apps, test-social-integration, test-delivery-integration, test-typescript-backend, test-frontend, test-android, test-harness,
+      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-android, test-harness,
       test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, security, dependency-audit]
     runs-on: ubuntu-24.04
     steps:

@@ -9,6 +9,7 @@ import {
   totalGroupOwnedRows,
 } from './group-purge';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
@@ -25,7 +26,7 @@ import { SeatEviction } from '../entities/seat-eviction.entity';
  * It is worth pinning because the omission is invisible: prod carried 21 orphaned `mls_group_info`
  * rows out of 69 and 293 of 452 `mls_commit_log` for as long as those two tables were missing from
  * the reaper, and nothing anywhere said so. A table dropped from this list would regress exactly
- * that way, silently, so the test names all nine.
+ * that way, silently, so the test names all ten.
  */
 describe('deleteGroupOwnedRows', () => {
   /**
@@ -37,6 +38,8 @@ describe('deleteGroupOwnedRows', () => {
   const OWNED = [
     GroupMember,
     QueuedMessage,
+    // After the records that reference it, so a group's payloads go with its queue.
+    QueuedPayload,
     DeviceGroupMembership,
     MlsCommitLog,
     MlsGroupInfo,
@@ -72,6 +75,7 @@ describe('deleteGroupOwnedRows', () => {
 
     expect(counts).toEqual({
       queuedMessages: 3,
+      queuedPayloads: 3,
       members: 3,
       deviceMemberships: 3,
       commitLog: 3,
@@ -81,7 +85,7 @@ describe('deleteGroupOwnedRows', () => {
       seatEvictions: 3,
       dismissals: 3,
     });
-    expect(totalGroupOwnedRows(counts)).toBe(27);
+    expect(totalGroupOwnedRows(counts)).toBe(30);
   });
 
   it('spares the per-user dismissal markers when the group row SURVIVES', async () => {
@@ -136,8 +140,8 @@ describe('deleteGroupOwnedRows', () => {
 
     await deleteGroupOwnedRows(manager, ['g1', 'g2']);
 
-    // An allowlist: nine deletes, each carrying the same explicit id set and nothing else.
-    expect(deletes).toHaveLength(9);
+    // An allowlist: ten deletes, each carrying the same explicit id set and nothing else.
+    expect(deletes).toHaveLength(10);
     for (const where of deletes) {
       expect(Object.keys(where as object)).toEqual(['groupId']);
       expect(JSON.stringify(where)).toContain('g1');

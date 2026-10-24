@@ -2,6 +2,8 @@ import { Controller, Inject, OnModuleInit, OnModuleDestroy, Logger } from '@nest
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan, MoreThanOrEqual } from 'typeorm';
 import { QueuedMessage } from './entities/queued-message.entity';
+import { QueuedPayload } from './entities/queued-payload.entity';
+import { collectUnreferencedPayloads } from './utils/queued-payload';
 import {
   KeyPackage,
   KEY_PACKAGE_LIFETIME_DAYS,
@@ -444,7 +446,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Delete queued messages older than MESSAGE_RETENTION_MS.
+   * Delete queued messages older than MESSAGE_RETENTION_MS, then every shared payload no delivery
+   * record references any more.
+   *
+   * THE COLLECTOR RUNS HERE, AFTER the retention delete, and it is the only collector: an ACK, a
+   * device purge, an account erasure and this retention all delete RECORDS and never a payload, so
+   * whichever of them took a payload's last record, the next pass takes the payload. Hourly is the
+   * cost of that - a payload outlives its last record by at most an hour - and it buys one
+   * predicate instead of one per deleting path (`collectUnreferencedPayloads`).
    */
   private async cleanupExpiredQueuedMessages() {
     const expiry = new Date(Date.now() - AppController.MESSAGE_RETENTION_MS);
@@ -453,6 +462,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     });
     if (result.affected && result.affected > 0) {
       this.logger.log(`[CRON] cleanupExpiredQueuedMessages: deleted ${result.affected} message(s)`);
+    }
+    const payloads = await collectUnreferencedPayloads(this.queuedMessageRepo.manager);
+    if (payloads > 0) {
+      this.logger.log(
+        `[CRON] cleanupExpiredQueuedMessages: collected ${payloads} shared payload(s) no record references`
+      );
     }
   }
 
@@ -492,14 +507,19 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // row threshold, so this report stayed at LOG level for weeks - carrying 36 MB, because a
     // quarter of them held media at up to 89 kB each. Ranking by depth put a harmless 189-frame
     // device above it. The predicate that named the retransmission storm could not name this.
+    //
+    // A record pointing at a shared payload stores no bytes of its own, and still costs its device
+    // the whole payload to drain - so the size is the payload's, joined, not the row's NULL.
+    const bytes = 'COALESCE(SUM(LENGTH(COALESCE(q.proto, p.proto))), 0)';
     const deepest = await this.queuedMessageRepo
       .createQueryBuilder('q')
+      .leftJoin(QueuedPayload, 'p', 'p.id = q.payloadId')
       .select('q.deviceId', 'deviceId')
       .addSelect('COUNT(*)', 'depth')
-      .addSelect('COALESCE(SUM(LENGTH(q.proto)), 0)', 'bytes')
+      .addSelect(bytes, 'bytes')
       .addSelect('MIN(q.createdAt)', 'oldest')
       .groupBy('q.deviceId')
-      .orderBy('COALESCE(SUM(LENGTH(q.proto)), 0)', 'DESC')
+      .orderBy(bytes, 'DESC')
       .limit(QUEUE_DEPTH_REPORT_TOP_N)
       .getRawMany<{ deviceId: string; depth: string; bytes: string; oldest: Date }>();
 
