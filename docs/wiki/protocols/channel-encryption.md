@@ -4,8 +4,9 @@
 > per-sender seed the server has never held; the push path derives its key the same way on all three
 > native surfaces; a missing seed is asked for and answered; a joiner receives the history its
 > community allows; and a reaction is an encrypted message rather than a cleartext tally. What is NOT
-> done: the deletion of the server's own derivation - so `channels.masterSecret` still EXISTS,
-> unused, until WP-50/51 - and the cut itself (WP-60..62). §1 describes what the old regime did while
+> done at that date: the deletion of the server's own derivation and the cut itself. Both have
+> since landed: migration `041` dropped `channels.masterSecret` and the other server-held key
+> columns (see WP-51 below). §1 describes what the old regime did while
 > it was live, and stays as the record of why this was worth doing.
 
 **The requirement, from the user:** a community message must not be readable by the server, at the
@@ -193,8 +194,92 @@ one message.**
 
 **Both factors of that estimate were wrong by 2026-10-21.** A v2 seed is about 330 bytes on the wire,
 not 50. The largest community minted 458 seeds in its first 8 days, because adds rotate (§4.1). Its
-bundle is about 150 KB today, and the 8 000-seed cap is about 2.6 MB in one MLS message
+bundle is about 150 KB today, and the 8 000-seed cap was about 2.6 MB in one MLS message
 ([dm-vs-community-encryption](dm-vs-community-encryption.md#the-history-bundle---6x-heavier-per-seed-and-sized-for-the-wrong-rotation-rate)).
+
+**An answer is bounded in BYTES and sent in pages (2026-10-22).** Every hop a bundle crosses was read
+from code and config, and the binding one is the pending-queue page an offline device catches up in:
+
+| Hop | Limit |
+| --- | --- |
+| `POST /api/mls/send`, nginx `client_max_body_size` | 100 MB |
+| chat-delivery `bodyParser.json` | 10 MB of JSON |
+| `queued_message.proto` (Postgres, no length) | 1 GB |
+| Redis `chat:messages`, delivery to gateway | 512 MB |
+| gateway to device WebSocket (tungstenite defaults on both ends, no override) | 16 MiB frame, 64 MiB message |
+| **pending-queue page, `PENDING_PAGE_MAX_BYTES`** | **1 MiB of base64** (one larger row is still sent, alone) |
+| ciphertext inlined in a push | ~3.7 KB: a page never fits, the device fetches it by `queuedMessageId` |
+
+`GRAINE_BUNDLE_PAGE_MAX_BYTES` is **255 KiB** of encoded `AppMessage`, sized so that THREE pages fit
+one pending page. The arithmetic, with the MLS framing MEASURED rather than estimated
+([application_frame_overhead.rs](../../../frontend/mls-core/tests/application_frame_overhead.rs)):
+
+| Quantity | Bytes |
+| --- | --- |
+| Pending page, base64 characters | 1 048 576 |
+| Largest base64 frame of which three fit (1 048 576 / 3, rounded down) | 349 525 |
+| Largest MLS frame giving it (4 x ceil(262 143 / 3) = 349 524) | 262 143 |
+| MLS framing, measured (UUID group id, 0 B to 255 KiB plaintext; no padding configured) | 165 - 170 |
+| A full page: 261 120 plaintext + 170 framing | 261 290 frame, 348 388 base64 |
+| Three full pages | 1 045 164, **3 412 under** the pending page |
+| What 256 KiB would have been: three frames of 349 752 | 1 049 256, 680 OVER |
+
+The first version of this page said 256 KiB was "a third" without counting the framing, and three of
+them did not fit; the test pins the framing under the 1 023 bytes 255 KiB leaves for it. A page is
+about 1/29 of the 10 MB body limit.
+
+An answer over the budget goes as `page_count` complete `GraineBundleMsg`s under one `request_id`,
+numbered by `page_index`. When it pages, seeds are grouped by salon, so a salon is re-read by as few
+pages as possible; `truncated` rides the last page only. **An answer that fits is one bundle with no
+page numbers and its seeds in the order gathered**, so its bytes are exactly the pre-paging ones (the
+grouping applies only to an answer that pages). 8 000 seeds is about eleven pages;
+`GRAINE_HISTORY_BUNDLE_MAX_SEEDS` now bounds one answer's work, not one message
+([bundlePages.ts](../../../frontend/src/lib/utils/graine/bundlePages.ts)).
+
+**The history floor is read once per ANSWER, not once per page.** The floor that decides what an asker
+may read (`seedsTheAskerMayRead`, one `graineHistoryFloor` call per salon) belongs to the GATHER step,
+which runs before `pageGraineBundle`. Paging cuts what was already filtered, and a page carries no
+check of its own. Moving that filter after the paging would cost one floor call per salon per page,
+about eleven at the cap, so it must stay before.
+
+**Pages need no reassembly, so nothing waits for them.** A receiver stores each seed on its own in the
+durable seed store, keyed on the session id. Pages may arrive in any order. A duplicated page is
+`already-held`: nothing is stored and no salon is re-read. A numbering that cannot be true is warned
+about and the page is still absorbed. Each page names itself in the absorb line
+(`page 2/5 of request r`).
+
+**A lost page corrupts nothing, but it is not free.** It happens when the answerer's send fails
+partway, and that failure is logged with how many pages went before it. Its sessions are missing, and
+§4.5 hides a row whose seed is missing until the repair lands. That repair is asked for one session at
+a time, as each row fails to open. For a HISTORY answer the loss is also recorded durably:
+- `pagedHistoryAnswer.ts` keeps the ask's request id from the moment it is sent, so a page absorbed
+  after a restart is still recognised;
+- it marks each page absorbed only after its seeds are stored;
+- it closes on the last page.
+
+**The page numbers are untrusted.** The history ask goes out on the shared key group, so any member
+(or a buggy client) can answer it with any `page_index` and `page_count`, a `uint32` each. The
+receiver never allocates by them. A `page_count` above `GRAINE_BUNDLE_MAX_PAGES` is refused. That cap
+equals `GRAINE_HISTORY_BUNDLE_MAX_SEEDS`, because every page carries at least one entry and an answer
+carries at most that many. An index outside its count is refused too: its seeds are absorbed and the
+absorb line warns once, but the page is not recorded. The record also belongs to the FIRST answer
+recorded, meaning its sender and its count. A page from another sender, or with another count
+(a forged "page 1 of 1" or "one message" included), is refused with a warning. Without that, one
+forged page could close the record and cancel the re-ask. A stored count above the cap is read back
+as no record.
+
+At the next start `requestCommunityHistory`, which otherwise asks only while no seed is held, asks
+ONCE more when that record names missing pages. That re-ask is spent only when it is sent, so an ask
+that finds nobody online keeps it. A second incomplete answer is left to the per-session repair. The
+trigger is the next start and the evidence is which page numbers arrived; no clock is involved. A
+re-ask may duplicate pages still sitting in the queue at that start, which costs one more answer and
+corrupts nothing.
+
+**A reader that predates pages** decodes a page with a schema lacking fields 7 and 8 (protobufjs and
+the native `proto_fields` reader both skip unknown tags), so each page is an ordinary bundle carrying
+its own seeds. It absorbs them, writes one debug line per page, re-reads the salons each page adds to,
+and warns `TRUNCATED` once, at the last page, when the answer was cut. No old reader asks again for a
+history it already holds part of (`requestCommunityHistory` asks only when no seed is held).
 
 `history_visibility` is per community, **`shared` by default** (a newcomer receives the past),
 `joined` available for a sensitive salon. Two consequences to carry deliberately:
@@ -1157,11 +1242,11 @@ key" will otherwise assume more than is true.
 **The server still decides WHO is a member, so it still decides who may enter the distribution
 group.** Entry is by external commit against a published `mls_group_info`, and eligibility is read
 from a roster the server owns. A server that wanted future seeds would not read them out of a column
-any more - it would admit a device it controls. That is a strictly better position than before (it
-buys nothing retroactive, and every commit is visible to the members in the group's log) but it is
-not nothing, and no client currently WATCHES that log for an unexpected admission. **The PAST is
-handed over on a member's signature, not on the roster** since 2026-10-22: a member gives a
-community's history only to a newcomer whose admission it can verify
+any more - it would admit a device it controls. That is a strictly better position than before (every
+commit is visible to the members in the group's log) but it is not nothing, and no client currently
+WATCHES that log for an unexpected admission. **The PAST is handed over on a member's signature, not
+on the roster** since 2026-10-22: a member gives a community's history only to a newcomer whose
+admission it can verify
 ([section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)).
 
 **`history_visibility` is a policy guarantee, never a cryptographic one.** Only a device holding a
@@ -2913,6 +2998,20 @@ varint. No Graine bytes can be an MLS `SignContent`, so an endorsement can never
   - Exposed to Tauri as the commands of the same names.
   - A verification answers `valid` or a code, never an exception: a signature that does not verify is
     an answer, not a failed call.
+  - **A page is verified in ONE call** (`graine_verify_signatures`, WASM export and Tauri command,
+    2026-10-22). The checks cross as one packed buffer (`packGraineSignatureChecks` in
+    `graineV2.ts`, decoded by `unpack_graine_signature_checks`; a shared vector pins the two, and
+    `graineSignatureBatch.wasm.test.ts` runs the BUILT WASM on the TS packer), as one
+    base64 string over Tauri. Each check is still `verify_graine_signature`, one verdict per check in
+    order: it is NOT an Ed25519 batch verification, which answers one bit for the set and is not
+    strict, so one forged row would refuse its honest neighbours. A packing that does not parse
+    rejects the call whole; it is a contract break, never a verdict. So does an answer that is not
+    one known verdict per check (`requireGraineVerdicts`, a typed `GraineSignatureBatchError`). The history load and the
+    whole-history search open their rows through `openChannelMessagePage` (`channelSeal.ts`), which
+    runs the single open's two halves around that call: every check before the signature row by
+    row, one engine call, then the decrypt and the replay claim in page order. Every row gets what
+    `openChannelMessage` gives it; `channelSeal.test.ts` asserts that on a page holding every
+    refusal. The live path opens one row and keeps the single call.
 - **The encodings, the AES-GCM with AAD, and the endorsement check**:
   - `frontend/src/lib/crypto/graineV2.ts`, which is pure and takes the Ed25519 half as a
     `GraineSignatureEngine`;

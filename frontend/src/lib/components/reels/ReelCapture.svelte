@@ -64,6 +64,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import ReelEditor from './ReelEditor.svelte';
+  import { markChatReelTake } from '$lib/reels/chatReelWriter';
 
   interface Props {
     /** The session, injectable for tests. */
@@ -83,12 +84,18 @@
     onpublished?: (identity: string) => void;
     /** "Garder comme post" from the composer: the step's caption and identity, as they stand. */
     onkept?: (caption: string, identity: string) => void;
+    /**
+     * A `chat` destination that may FILM (the chat reel writer, `chatReelWriter.ts`): a hold records
+     * a video, handed back marked as a reel message. Absent, the chat camera takes photos only.
+     */
+    chatFilms?: boolean;
   }
 
   let {
     destination = 'feed',
+    chatFilms = false,
     // The microphone is asked as `destinationRules(destination).microphone` says (openerFor).
-    session = new CameraSession(openerFor(destinationRules(destination).microphone)),
+    session = new CameraSession(openerFor(destinationRules(destination, chatFilms).microphone)),
     publishDeps,
     oncapture,
     onclose,
@@ -105,7 +112,7 @@
     return (lens) => openReelCamera(lens);
   }
 
-  const rules = $derived(destinationRules(destination));
+  const rules = $derived(destinationRules(destination, chatFilms));
   /** A photo needs no ceiling: only a video take reads the server's cap. */
   const needsLimits = $derived(!rules.photoOnly);
   /** The open stream carries a LIVE microphone - a fact of the session, not of the destination. */
@@ -262,6 +269,8 @@
   function handBack(blob: Blob, poster: Blob | null | undefined): boolean {
     const file = captureFileFrom(blob);
     if (poster && file.type.startsWith('video/')) attachCapturePoster(file, poster);
+    // A video filmed in a chat IS the reel message: the composer reads the mark, nothing else tells it.
+    if (destination === 'chat' && file.type.startsWith('video/')) markChatReelTake(file);
     console.debug(
       `[reel-capture] handing back ${file.name} (${file.size} bytes) to ${destination}`
     );
