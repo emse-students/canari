@@ -36,8 +36,8 @@ const REFUSAL_WORDING: Readonly<Record<string, () => string>> = {
 /**
  * Codes a server registry carries that are NEVER shown to a member as a sentence, because a typed
  * flow answers them: a revoked id is re-enrolled under a fresh one, a full device list is a typed
- * `DeviceLimitReachedError`, a key package the client minted wrong is a bug of ours, and a
- * key-distribution group is never joined by a screen. Declared so the drift test can tell "not
+ * `DeviceLimitReachedError`, a key package the client minted wrong is a bug of ours, a
+ * key-distribution group is never joined by a screen, and a rate-limited commit pauses a sweep. Declared so the drift test can tell "not
  * worded on purpose" from "forgotten".
  */
 export const TYPED_ELSEWHERE_CODES: readonly string[] = [
@@ -45,6 +45,12 @@ export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   'DEVICE_LIMIT_REACHED',
   'KEY_PACKAGE_IDENTITY_INVALID',
   'KEY_DISTRIBUTION_GROUP',
+  // A commit refused by the per-user rate limit is a typed `CommitRefusedError('rate_limited')`
+  // carrying the wait, and the recovery sweeps pause on it; no screen words it.
+  'RATE_LIMITED',
+  // A key-group commit whose seat claim an unrelated eviction overtook is a typed
+  // `CommitRefusedError('seat_claim_overtaken')`, and the committer retries it at once.
+  'SEAT_CLAIM_OVERTAKEN',
 ];
 
 /** Every code {@link describeRefusalCode} words. */

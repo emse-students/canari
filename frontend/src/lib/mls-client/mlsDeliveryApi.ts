@@ -2151,7 +2151,14 @@ export class MlsDeliveryApi {
     return await res.json();
   }
 
-  /** Marks a device's group invitation as `pending` or `active`. Best-effort, non-throwing. */
+  /**
+   * Marks a device's group invitation as `pending` or `active`. Best-effort, non-throwing.
+   *
+   * A REFUSAL IS SAID HERE, because no caller reads it. A report of `active` promotes an existing
+   * seat only, and the server refuses it (`403 NOT_A_MEMBER`, `reason` `no_seat`, `kicked` or
+   * `not_on_roster`) otherwise - a device whose pending row was purged before it processed its
+   * Welcome then stays unrouted, and without this line its own log never said so.
+   */
   async updateInvitationStatus(
     deviceId: string,
     userId: string,
@@ -2159,11 +2166,18 @@ export class MlsDeliveryApi {
     status: 'pending' | 'active'
   ): Promise<void> {
     try {
-      await this.f(`${this.historyUrl}/api/mls/invitations/status`, {
+      const res = await this.f(`${this.historyUrl}/api/mls/invitations/status`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ deviceId, userId, groupId, status }),
       });
+      if (!res.ok) {
+        const refusal = await refusalFromResponse(res, 'invitation status report');
+        console.warn(
+          `[MEMBERSHIP] report of ${status} REFUSED for group ${groupId.slice(0, 8)}... device ${deviceId}: ` +
+            `status=${refusal.status} code=${refusal.code ?? 'none'} reason=${refusal.reason ?? 'none'}`
+        );
+      }
     } catch (e) {
       console.error('Failed to update invitation status', e);
     }

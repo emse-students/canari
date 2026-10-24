@@ -14,6 +14,7 @@ import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { SeatEviction } from '../entities/seat-eviction.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { PushToken } from '../entities/push-token.entity';
 import { KeyPackage } from '../entities/key-package.entity';
@@ -45,14 +46,15 @@ const GROUP_ID = 'g-1';
 
 /** The six tables a SOFT delete sweeps. `UserDismissedGroup` is deliberately not among them. */
 const SWEPT = [
+  GroupMember,
   QueuedMessage,
   QueuedPayload,
-  GroupMember,
   DeviceGroupMembership,
   MlsCommitLog,
   MlsGroupInfo,
   GroupInvite,
   GroupMembershipInterval,
+  SeatEviction,
 ];
 
 interface Doors {
@@ -107,8 +109,11 @@ function makeRepos() {
       manager: {
         transaction: jest.fn(),
         // The account erasure's own-records half, outside the group sweep this file measures.
-        query: jest.fn().mockResolvedValue([[], 0]),
+        // A SELECT answers rows (the account's eviction rows: none); a raw DELETE `[rows, count]`.
+        query: jest.fn(async (sql: string) => (sql.trim().startsWith('SELECT') ? [] : [[], 0])),
         delete: jest.fn().mockResolvedValue({ affected: 0 }),
+        // The account's key packages, deleted on their own before anything is read.
+        getRepository: () => ({ delete: jest.fn().mockResolvedValue({ affected: 0 }) }),
       },
     },
     groupMember: {
@@ -143,9 +148,8 @@ describe('a group ends - one policy, three routes', () => {
     // the actual write - and every other entity to a counting fake, so a table dropped from the
     // sweep shows up as a missing name rather than as silence.
     //
-    // ONLY THE TRANSACTION THAT TOMBSTONES THE GROUP IS THE SWEEP. An account deletion also ends the
-    // account's device memberships in a transaction of its own (`endDeviceMemberships`), which never
-    // touches `Group` - that is how the two are told apart here.
+    // ONLY THE TRANSACTION THAT TOMBSTONES THE GROUP IS THE SWEEP. Any other transaction never
+    // touches `Group` - that is how they are told apart here.
     sweeps = 0;
     repos.group.manager.transaction.mockImplementation(
       async (cb: (m: unknown) => Promise<unknown>) => {
@@ -158,7 +162,11 @@ describe('a group ends - one policy, three routes', () => {
               return repos.group;
             }
             entities.push(entity);
-            return { delete: jest.fn().mockResolvedValue({ affected: 1 }) };
+            return {
+              delete: jest.fn().mockResolvedValue({ affected: 1 }),
+              // The account's device rows, read before they end: none left in these cases.
+              find: jest.fn().mockResolvedValue([]),
+            };
           }),
         };
         const out = await cb(transactional);
@@ -187,6 +195,8 @@ describe('a group ends - one policy, three routes', () => {
       delete: jest.fn().mockResolvedValue({ affected: 0 }),
       update: jest.fn().mockResolvedValue({ affected: 0 }),
       save: jest.fn(),
+      // The erasure's count of the device rows it leaves for the final pass: none here.
+      count: jest.fn().mockResolvedValue(0),
     });
 
     const module: TestingModule = await Test.createTestingModule({

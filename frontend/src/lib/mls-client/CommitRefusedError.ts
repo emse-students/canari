@@ -11,16 +11,37 @@
  *
  * The message keeps its historical spelling so a log reader and older assertions read it the same.
  */
+/**
+ * The reason a commit carries when the server answered 409 `SEAT_CLAIM_OVERTAKEN` on every one of
+ * its {@link SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS} submissions: each time, an unrelated eviction moved
+ * the group's seat generation while a seat the commit writes was being decided, so the WHOLE commit
+ * was refused and nothing advanced. The epoch did not move, so a caller that retries only past a
+ * moved epoch must retry on this reason too - each refusal proves an eviction.
+ */
+export const SEAT_CLAIM_OVERTAKEN_REASON = 'seat_claim_overtaken';
+
+/**
+ * How many times `runCommitTransaction` submits one commit the server refuses `SEAT_CLAIM_OVERTAKEN`,
+ * rebuilding it in between. A BOUND, NOT THE TERMINATION CONDITION: each refusal proves an eviction
+ * landed in that window, and evictions are rare; this only keeps a group evicting without pause
+ * from holding the MLS lock.
+ */
+export const SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS = 3;
+
 export class CommitRefusedError extends Error {
   /**
    * @param reason - the server's refusal reason (`epoch_mismatch`, `concurrent_commit`, ...).
    * @param baseEpoch - the epoch the refused commit was built on.
    * @param currentEpoch - the server's epoch at the refusal, when it reported one.
+   * @param retryAfterMs - `rate_limited` only: how long the server asked this account to wait
+   *   before its next commit (`commitRateLimit.ts`); null for every other reason, or
+   *   when the server named no wait.
    */
   constructor(
     readonly reason: string,
     readonly baseEpoch: number,
-    readonly currentEpoch: number | undefined
+    readonly currentEpoch: number | undefined,
+    readonly retryAfterMs: number | null = null
   ) {
     super(`Staged commit rejected: ${reason}`);
     this.name = 'CommitRefusedError';

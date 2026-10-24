@@ -3,7 +3,8 @@
  * hands over against the line the author sealed (WP-L8b). The server always held the live key (C12:
  * the seal protects against the store and the database's readers, never against social-service);
  * this is the first and only place it uses it on a message, and only for a line a member reported
- * while the live's row still exists. The key is not kept beyond that row.
+ * while the live's row still exists. The key is not kept beyond that row, where it is stored sealed
+ * (migration 110) and reaches this file only through `openLiveKey` (`live-key-at-rest.ts`).
  *
  * The format is the client's, `frontend/src/lib/live/liveChatCrypto.ts`, v1:
  *

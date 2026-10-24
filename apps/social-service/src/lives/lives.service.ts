@@ -59,6 +59,15 @@ import {
 } from './live-strikes';
 import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
 import { short } from './live-log';
+import {
+  isLiveKeySealingConfigured,
+  LIVE_KEY_ENCRYPTION_SECRET_ENV,
+  LiveKeyUnavailableError,
+  openLiveKeyOr503,
+  sealLiveKey,
+  storedLiveKeyColumns,
+  type StoredLiveKey,
+} from './live-key-at-rest';
 
 /** A live as its viewers read it: the key included (L2, Q4). */
 export interface LiveView {
@@ -185,12 +194,11 @@ type ConfirmOutcome =
   | { kind: 'stored'; result: LiveIngestResult; claimed: ClaimedLive | null }
   | { kind: 'ended'; endedAt: Date | null; endReason: LiveEndReason | null };
 
-/** The columns every access decision reads. */
-interface LiveRow {
+/** The columns every access decision reads, and the stored key, opened only by `openLiveKey`. */
+interface LiveRow extends StoredLiveKey {
   id: string;
   broadcasterId: string;
   associationId: string | null;
-  liveKey: string;
   startedAt: Date;
   lastSegmentAt: Date | null;
   nextIndex: number;
@@ -198,8 +206,11 @@ interface LiveRow {
   endReason: LiveEndReason | null;
 }
 
-const LIVE_COLUMNS = `id, "broadcasterId", "associationId", "liveKey", "startedAt", "lastSegmentAt",
-  "nextIndex", "endedAt", "endReason"`;
+const LIVE_COLUMNS = `id, "broadcasterId", "associationId", ${storedLiveKeyColumns()}, "startedAt",
+  "lastSegmentAt", "nextIndex", "endedAt", "endReason"`;
+
+/** How many plaintext keys one query of the backfill takes; it loops until none is left. */
+const PLAINTEXT_KEY_BATCH = 100;
 
 /** An association id: a uuid, checked before it reaches a `uuid` column (a 500 otherwise). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -259,6 +270,14 @@ export class LivesService implements OnModuleDestroy {
     this.logger.debug(`[LIVE] start asked by ${short(broadcasterId)}`);
     if (typeof input.key !== 'string' || !LIVE_KEY_HEX_RE.test(input.key)) {
       throw new BadRequestException({ code: 'LIVE_KEY_INVALID' });
+    }
+    const key = input.key;
+    // Refused BEFORE anything is written: a live whose key cannot be sealed is never stored.
+    if (!isLiveKeySealingConfigured()) {
+      this.logger.error(
+        `[LIVE] start refused for ${short(broadcasterId)}: ${LIVE_KEY_ENCRYPTION_SECRET_ENV} is unset or shorter than 32 characters`
+      );
+      throw new ServiceUnavailableException({ code: 'LIVE_KEY_SEALING_UNAVAILABLE' });
     }
     const raw = input.associationId ?? null;
     const associationId = typeof raw === 'string' && UUID_RE.test(raw) ? raw : null;
@@ -320,10 +339,13 @@ export class LivesService implements OnModuleDestroy {
             HttpStatus.TOO_MANY_REQUESTS
           );
         }
+        // The id is chosen here, not by the column default: the seal is bound to it.
+        const id = randomUUID();
+        const sealed = sealLiveKey(id, key);
         const rows: LiveRow[] = await tx.query(
-          `INSERT INTO lives ("broadcasterId", "associationId", "liveKey")
-           VALUES ($1, $2, $3) RETURNING ${LIVE_COLUMNS}`,
-          [broadcasterId, associationId, input.key]
+          `INSERT INTO lives (id, "broadcasterId", "associationId", "liveKeyCiphertext", "liveKeyVersion")
+           VALUES ($1, $2, $3, $4, $5) RETURNING ${LIVE_COLUMNS}`,
+          [id, broadcasterId, associationId, sealed.liveKeyCiphertext, sealed.liveKeyVersion]
         );
         await tx.query(`INSERT INTO live_starts ("broadcasterId") VALUES ($1)`, [broadcasterId]);
         return rows[0];
@@ -336,7 +358,8 @@ export class LivesService implements OnModuleDestroy {
       throw e;
     }
     this.logger.log(`[LIVE] ${row.id} started by ${short(broadcasterId)}`);
-    return toView(row);
+    // The broadcaster's own key, just sealed: answered as received, nothing to open.
+    return toView(row, key);
   }
 
   /**
@@ -413,8 +436,10 @@ export class LivesService implements OnModuleDestroy {
   /** One live and its key, to a viewer allowed to watch it ({@link assertMayWatch}). */
   async get(viewerId: string, liveId: string): Promise<LiveView> {
     const row = await this.assertMayWatch(this.db.manager, viewerId, liveId);
+    // Opened before the seat is taken: a key that cannot be read (503) seats nobody.
+    const key = openLiveKeyOr503(row.id, row);
     await this.takeSeat(row, viewerId);
-    return toView(row);
+    return toView(row, key);
   }
 
   /**
@@ -1292,6 +1317,65 @@ export class LivesService implements OnModuleDestroy {
     return rows;
   }
 
+  /**
+   * THE BACKFILL OF MIGRATION 110: seals every live whose row still holds its key in the previous,
+   * plaintext form - written before the migration, or by the previous release's replica during the
+   * rolling deploy. Run by every sweep, so it needs no "done" marker: the state is the row.
+   *
+   * ONE STATEMENT PER ROW writes the ciphertext and NULLs the plaintext together, and only if the
+   * plaintext is still the one read (`"liveKey" = $4`): an interruption leaves each row wholly in one
+   * form or the other, and a re-run, or two replicas racing, seal a row once. A row that fails is
+   * logged at ERROR and excluded from the rest of this run, so it neither stops the batch nor spins
+   * the loop. With no secret configured nothing is sealed and that is said at ERROR, once per run.
+   * In the steady state it is one empty query on a partial index.
+   */
+  async sealPlaintextKeys(): Promise<{ sealed: number; failed: number }> {
+    const outcome = { sealed: 0, failed: 0 };
+    const skipped: string[] = [];
+    for (;;) {
+      const rows: { id: string; liveKey: string }[] = await this.db.query(
+        `SELECT id, "liveKey" FROM lives
+          WHERE "liveKey" IS NOT NULL AND id <> ALL($1::uuid[])
+          ORDER BY id LIMIT $2`,
+        [skipped, PLAINTEXT_KEY_BATCH]
+      );
+      if (rows.length === 0) return outcome;
+      if (!isLiveKeySealingConfigured()) {
+        this.logger.error(
+          `[LIVE_KEY] ${rows.length}+ live(s) hold a plaintext key and none can be sealed: ` +
+            `${LIVE_KEY_ENCRYPTION_SECRET_ENV} is unset or shorter than 32 characters`
+        );
+        outcome.failed += rows.length;
+        return outcome;
+      }
+      for (const row of rows) {
+        try {
+          const sealed = sealLiveKey(row.id, row.liveKey);
+          const [, changed] = (await this.db.query(
+            `UPDATE lives
+                SET "liveKeyCiphertext" = $2, "liveKeyVersion" = $3, "liveKey" = NULL
+              WHERE id = $1 AND "liveKey" = $4`,
+            [row.id, sealed.liveKeyCiphertext, sealed.liveKeyVersion, row.liveKey]
+          )) as [unknown, number];
+          if (changed === 1) {
+            outcome.sealed += 1;
+          } else {
+            // Excluded like a failure, so the loop ends by construction whatever the row became.
+            this.logger.debug(`[LIVE_KEY] ${row.id} was sealed or deleted meanwhile`);
+            skipped.push(row.id);
+          }
+        } catch (e) {
+          // `sealLiveKey` logs its own typed refusal; anything else is the database's.
+          if (!(e instanceof LiveKeyUnavailableError)) {
+            this.logger.error(`[LIVE_KEY] ${row.id} could not be sealed: ${String(e)}`);
+          }
+          outcome.failed += 1;
+          skipped.push(row.id);
+        }
+      }
+    }
+  }
+
   /** The ended lives still holding a row, oldest end first, minus the ones a run already kept. */
   async endedLiveIds(exclude: string[], limit: number): Promise<string[]> {
     const rows: { id: string }[] = await this.db.query(
@@ -1508,7 +1592,8 @@ export function liveEnded(endedAt: Date | null, endReason: LiveEndReason | null)
   return new GoneException({ code: 'LIVE_ENDED', endedAt, endReason });
 }
 
-function toView(row: LiveRow): LiveView {
+/** The viewer's answer: the row and its key, already opened by the caller (`openLiveKey`). */
+function toView(row: LiveRow, key: string): LiveView {
   return {
     id: row.id,
     broadcasterId: row.broadcasterId,
@@ -1516,7 +1601,7 @@ function toView(row: LiveRow): LiveView {
     startedAt: row.startedAt,
     lastSegmentAt: row.lastSegmentAt,
     nextIndex: row.nextIndex,
-    key: row.liveKey,
+    key,
   };
 }
 

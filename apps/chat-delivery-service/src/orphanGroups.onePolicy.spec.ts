@@ -15,6 +15,7 @@ import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { GroupInvite } from './entities/group-invite.entity';
 import { GroupMembershipInterval } from './entities/group-membership-interval.entity';
+import { SeatEviction } from './entities/seat-eviction.entity';
 import { UserDismissedGroup } from './entities/user-dismissed-group.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
@@ -46,14 +47,15 @@ const TOMBSTONED = 'g-dead';
 
 /** What a purge takes, in order. A HARD delete: the group row is already gone, so the marker goes. */
 const SWEPT = [
+  GroupMember,
   QueuedMessage,
   QueuedPayload,
-  GroupMember,
   DeviceGroupMembership,
   MlsCommitLog,
   MlsGroupInfo,
   GroupInvite,
   GroupMembershipInterval,
+  SeatEviction,
   UserDismissedGroup,
 ];
 
@@ -64,14 +66,15 @@ const SWEPT = [
  */
 const FAKE_TABLE = new Map<unknown, string>([
   [Group, 'table_of_group'],
+  [GroupMember, 'table_of_group_member'],
   [QueuedMessage, 'table_of_queued_message'],
   [QueuedPayload, 'table_of_queued_payload'],
-  [GroupMember, 'table_of_group_member'],
   [DeviceGroupMembership, 'table_of_device_membership'],
   [MlsCommitLog, 'table_of_commit_log'],
   [MlsGroupInfo, 'table_of_group_info'],
   [GroupInvite, 'table_of_invite'],
   [GroupMembershipInterval, 'table_of_membership_interval'],
+  [SeatEviction, 'table_of_seat_eviction'],
   [UserDismissedGroup, 'table_of_dismissal'],
 ]);
 

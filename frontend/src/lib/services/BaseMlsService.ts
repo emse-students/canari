@@ -49,6 +49,11 @@ import {
   snapshotEmitted,
 } from '$lib/mls-client/sendRatchetLedger';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
+import {
+  MlsStateUnreadableNowError,
+  MlsStateVerdictError,
+  type MlsStateVerdictCode,
+} from '$lib/mls-client/mlsStateSeal';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
@@ -155,7 +160,13 @@ import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/a
 import { forgetRefusedDevicesOf } from '$lib/mls-client/refusedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
-import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import {
+  CommitRefusedError,
+  SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS,
+  SEAT_CLAIM_OVERTAKEN_REASON,
+} from '$lib/mls-client/CommitRefusedError';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { commitRateLimitRemainingMs, noteCommitRateLimited } from '$lib/mls-client/commitRateLimit';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
@@ -166,6 +177,14 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
  * that is behind the group's epoch ends the loop on that fact, whatever this number is.
  */
 const EXTERNAL_JOIN_MAX_ATTEMPTS = 3;
+
+/**
+ * Whether a failed commit submission is the server's 409 `SEAT_CLAIM_OVERTAKEN`: a whole-commit
+ * refusal that advanced nothing, read off the typed status and code, never off the message.
+ */
+function isSeatClaimOvertaken(e: unknown): boolean {
+  return e instanceof ApiRefusalError && e.status === 409 && e.code === 'SEAT_CLAIM_OVERTAKEN';
+}
 
 /**
  * How many times one join may read the device's published-KeyPackage fact while rounds keep
@@ -249,6 +268,17 @@ function assertResolvedIdentity(seam: string, userId: string, deviceId: string):
     throw new UnresolvedIdentityError(seam, 'deviceId');
   }
 }
+
+/**
+ * The recovery each verdict of `mls-core`'s deterministic reader maps to - the same one the prefix
+ * of the identical native error reaches through the string arms of `classifyStateLoadFailure`.
+ */
+const STATE_LOAD_FAILURE_OF_VERDICT: Record<MlsStateVerdictCode, StateLoadFailure> = {
+  STATE_ALTERED: 'altered',
+  STATE_KEY_MISMATCH: 'rotated',
+  STATE_UNDECRYPTABLE: 'undecryptable',
+  IDENTITY_MISMATCH: 'mismatch',
+};
 
 export abstract class BaseMlsService implements IMlsService {
   // ── Platform identity ─────────────────────────────────────────────────────
@@ -639,8 +669,9 @@ export abstract class BaseMlsService implements IMlsService {
    * therefore a two-release sequence; see `docs/wiki/backlog.md`.
    *
    * **`rotated` AND `altered` ARE THE TWO HALVES OF `undecryptable` THAT A KEY FINGERPRINT
-   * SEPARATES**, and since step 2 framed every save (2026-10-17) both fire. `mls-core` (and the web's
-   * v2 reader) throws `STATE_KEY_MISMATCH` when a FRAMED state's header names a key other than the
+   * SEPARATES**, and since step 2 framed every save (2026-10-17) both fire. `mls-core` (the web's v2
+   * opener for `STATE_KEY_MISMATCH` only - a WebCrypto refusal is `unreadable_now` unless `mls-core`
+   * confirms the tag, `loadAndInitWasm`) throws `STATE_KEY_MISMATCH` when a FRAMED state's header names a key other than the
    * one in hand - the old PIN opens it - and `STATE_ALTERED` when the header names THE KEY IN HAND
    * and the tag still fails: the bytes were altered and no PIN ever will (CORRUPT-1, CORRUPT-2). No
    * guess, no failed decrypt to interpret - the blob says so. A LEGACY blob, written before the flip
@@ -659,6 +690,12 @@ export abstract class BaseMlsService implements IMlsService {
    * and hands the user to the PIN modal ({@link isKeystoreKeyUnavailable}).
    */
   protected classifyStateLoadFailure(error: unknown): StateLoadFailure {
+    // A TYPE, read before any code: the web's WebCrypto refusal is not a verdict on the bytes, and
+    // its message must never be able to reach a needle below.
+    if (error instanceof MlsStateUnreadableNowError) return 'unreadable_now';
+    // A TYPE too: `mls-core`'s deterministic reader judged bytes WebCrypto refused, and its verdict
+    // crossed the WASM boundary as a code (`state_blob_verdict`), never as prose.
+    if (error instanceof MlsStateVerdictError) return STATE_LOAD_FAILURE_OF_VERDICT[error.code];
     const errStr = String(error);
     if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
     if (errStr.includes('STATE_KEY_MISMATCH')) return 'rotated';
@@ -3650,57 +3687,127 @@ export abstract class BaseMlsService implements IMlsService {
       // The section covers stage through merge - the whole window in which this device's notion of
       // the epoch and the server's can disagree. See `epochSendBarrier`.
       runAsEpochAdvance(groupId, async () => {
-        const staged = await stageFn();
-        // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
-        const baseEpoch = await this.freshEpoch(groupId);
-        // The devices this commit adds, recorded by the server WITH the advance so each is a
-        // recipient of what it can open before its Welcome is even sent (`commitAdmits`).
-        const admits = commitAdmits(
-          opts.excludeDeviceIds,
-          staged.addedDeviceIds,
-          `${this.userId}:${this.deviceId}`
-        );
-        if (admits.length > 0) {
-          console.log(
-            `[COMMIT] ${groupId.slice(0, 8)}... admits ${admits.length} device(s) at epoch ${baseEpoch + 1}: ${admits.map((a) => `${a.userId.slice(0, 8)}:${a.deviceId}`).join(', ')}`
+        // ONE COMMIT, REBUILT WHILE THE SERVER ANSWERS `SEAT_CLAIM_OVERTAKEN`. That refusal moved
+        // nothing - the epoch, the tree and the log stand where they were - and it reaches EVERY
+        // commit that writes a seat, an ordinary conversation's included: a pending member's own
+        // add or remove carries its committer's claim. Rebuilt here, under the same lock, no caller
+        // has to know about it; only the last refusal of the bound is handed up.
+        for (let attempt = 1; ; attempt++) {
+          // NOT STAGED AT ALL while the server still refuses this account's commits: the answer is
+          // already known (`commitRateLimit.ts`), and nothing is left to roll back.
+          const waitMs = commitRateLimitRemainingMs();
+          if (waitMs > 0) {
+            const epoch = await this.freshEpoch(groupId);
+            console.warn(
+              `[COMMIT] ${groupId.slice(0, 8)}... not submitted - the commit rate limit holds for ${Math.round(waitMs / 1000)} s more`
+            );
+            throw new CommitRefusedError('rate_limited', epoch, undefined, waitMs);
+          }
+          const staged = await stageFn();
+          // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
+          const baseEpoch = await this.freshEpoch(groupId);
+          // The devices this commit adds, recorded by the server WITH the advance so each is a
+          // recipient of what it can open before its Welcome is even sent (`commitAdmits`).
+          const admits = commitAdmits(
+            opts.excludeDeviceIds,
+            staged.addedDeviceIds,
+            `${this.userId}:${this.deviceId}`
           );
+          if (admits.length > 0) {
+            console.log(
+              `[COMMIT] ${groupId.slice(0, 8)}... admits ${admits.length} device(s) at epoch ${baseEpoch + 1}: ${admits.map((a) => `${a.userId.slice(0, 8)}:${a.deviceId}`).join(', ')}`
+            );
+          }
+          // One atomic server round-trip: validate the epoch, and on accept the server records the
+          // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
+          // between this accept and the local merge below, our epoch lags the server by one - a gap the
+          // rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
+          let validation: Awaited<ReturnType<MlsDeliveryApi['submitCommit']>>;
+          try {
+            validation = await this.delivery.submitCommit(
+              groupId,
+              baseEpoch,
+              toBase64(staged.commit),
+              opts.excludeDeviceIds,
+              toBase64(staged.groupInfo),
+              admits,
+              // Whom this commit removes, so the server queues it to the devices its half of the
+              // removal already parted (`commitRemovals`).
+              opts.removes
+            );
+          } catch (e) {
+            // A 429 IS A REFUSAL, NOT A SILENCE: the per-user limit on `POST /mls/commit` answers
+            // before the epoch gate, so the server provably did not advance. The staged commit is
+            // rolled back exactly as on a business refusal - left pending, it would block every later
+            // commit on this group - and the caller gets the same typed refusal, which says nothing
+            // about our state. Every other failure is left as it was: unanswered is not refused.
+            if (e instanceof ApiRefusalError && e.status === 429) {
+              console.warn(
+                `[COMMIT] ${groupId.slice(0, 8)}... refused by the commit rate limit at epoch ${baseEpoch} - staged commit rolled back`
+              );
+              noteCommitRateLimited(e.retryAfterMs);
+              await this.clearPendingCommit(groupId).catch((clearErr) =>
+                console.error(
+                  `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the rate-limited commit:`,
+                  String(clearErr).slice(0, 120)
+                )
+              );
+              throw new CommitRefusedError(
+                'rate_limited',
+                baseEpoch,
+                undefined,
+                commitRateLimitRemainingMs()
+              );
+            }
+            // A 409 SEAT_CLAIM_OVERTAKEN IS A REFUSAL OF THE WHOLE COMMIT: an unrelated eviction
+            // moved the group's seat generation while a seat this commit writes was being decided,
+            // so nothing advanced. Rolled back like any refusal, then rebuilt on a fresh claim.
+            if (isSeatClaimOvertaken(e)) {
+              const last = attempt >= SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS;
+              console.warn(
+                `[COMMIT] ${groupId.slice(0, 8)}... refused at epoch ${baseEpoch}: an unrelated eviction overtook its seat claim - staged commit rolled back, ` +
+                  (last
+                    ? `attempt ${attempt}/${SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS}, giving up`
+                    : `rebuilding (attempt ${attempt}/${SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS})`)
+              );
+              // Not rebuilt on a commit that is still staged: the next stage would fail on it.
+              const cleared = await this.clearPendingCommit(groupId).then(
+                () => true,
+                (clearErr) => {
+                  console.error(
+                    `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the overtaken commit:`,
+                    String(clearErr).slice(0, 120)
+                  );
+                  return false;
+                }
+              );
+              if (!last && cleared) continue;
+              throw new CommitRefusedError(SEAT_CLAIM_OVERTAKEN_REASON, baseEpoch, baseEpoch);
+            }
+            throw e;
+          }
+          if (!validation.accepted) {
+            // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
+            // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
+            // retryable failure rather than a fork to heal. [[C7]]
+            await this.clearPendingCommit(groupId).catch(() => {});
+            // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
+            await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
+            throw new CommitRefusedError(
+              validation.reason || 'epoch_mismatch',
+              baseEpoch,
+              validation.currentEpoch
+            );
+          }
+          await this.mergePendingCommit(groupId);
+          const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
+          return {
+            welcome: staged.welcome,
+            ratchetTree,
+            addedDeviceIds: staged.addedDeviceIds ?? [],
+            skipped: staged.skipped ?? [],
+          };
         }
-        // One atomic server round-trip: validate the epoch, and on accept the server records the
-        // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
-        // between this accept and the local merge below, our epoch lags the server by one - a gap the
-        // rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
-        const validation = await this.delivery.submitCommit(
-          groupId,
-          baseEpoch,
-          toBase64(staged.commit),
-          opts.excludeDeviceIds,
-          toBase64(staged.groupInfo),
-          admits,
-          // Whom this commit removes, so the server queues it to the devices its half of the
-          // removal already parted (`commitRemovals`).
-          opts.removes
-        );
-        if (!validation.accepted) {
-          // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
-          // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
-          // retryable failure rather than a fork to heal. [[C7]]
-          await this.clearPendingCommit(groupId).catch(() => {});
-          // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
-          await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
-          throw new CommitRefusedError(
-            validation.reason || 'epoch_mismatch',
-            baseEpoch,
-            validation.currentEpoch
-          );
-        }
-        await this.mergePendingCommit(groupId);
-        const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
-        return {
-          welcome: staged.welcome,
-          ratchetTree,
-          addedDeviceIds: staged.addedDeviceIds ?? [],
-          skipped: staged.skipped ?? [],
-        };
       })
     );
     // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX (COMM-22). It used to be a
@@ -4665,6 +4772,15 @@ export abstract class BaseMlsService implements IMlsService {
       // gate must exclude the id that actually joins.
       const excludeSelf = [`${this.userId}:${this.deviceId}`];
       for (let attempt = 0; attempt < EXTERNAL_JOIN_MAX_ATTEMPTS; attempt++) {
+        // The server already refuses this account's commits for a while: nothing is built, and the
+        // caller is told how long (`commitRateLimit.ts`), so a sweep can stop rather than ask again.
+        const waitMs = commitRateLimitRemainingMs();
+        if (waitMs > 0) {
+          console.warn(
+            `[MLS] externalJoin ${short}... not attempted - the commit rate limit holds for ${Math.round(waitMs / 1000)} s more`
+          );
+          return { joined: false, reason: 'rate_limited', retryAfterMs: waitMs };
+        }
         // THE REFUSAL HAS TO SURVIVE THIS CATCH, which flattened every outcome into `null` and cost
         // the caller the only discriminator it needed. `NotAGroupMemberError` is the server answering
         // the question recovery is asking; anything else says nothing about membership and leaves the
@@ -4746,12 +4862,44 @@ export abstract class BaseMlsService implements IMlsService {
           // still dropped, because an external commit cannot be cleared and a pending one left
           // unmerged breaks every later operation on it - and if the server DID accept the commit we
           // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
+          const rateLimited = e instanceof ApiRefusalError && e.status === 429;
+          const overtaken = isSeatClaimOvertaken(e);
           await dropGroupState(this, joined.groupId, {
-            reason: 'the commit gate could not be reached',
+            reason: rateLimited
+              ? 'the commit gate refused it under the rate limit'
+              : overtaken
+                ? 'an unrelated eviction overtook its seat claim'
+                : 'the commit gate could not be reached',
             // Built in memory during this very call and never checkpointed: there is nothing
             // durable to undo, and a save here would cost one per failed attempt.
             checkpoint: 'never-persisted',
           });
+          // A 429 IS AN ANSWER: the throttler refused before the gate, so nothing was accepted. Its
+          // wait is recorded for every commit path and handed to the caller, which stops its sweep.
+          if (rateLimited) {
+            noteCommitRateLimited(e.retryAfterMs);
+            return {
+              joined: false,
+              reason: 'rate_limited',
+              retryAfterMs: commitRateLimitRemainingMs(),
+            };
+          }
+          // A 409 SEAT_CLAIM_OVERTAKEN IS AN ANSWER: nothing advanced, and the next attempt asks
+          // for a fresh claim at once. Each refusal proves an eviction landed in between, and the
+          // attempt bound still holds against a group evicting without pause.
+          if (overtaken) {
+            console.warn(
+              `[MLS] externalJoin seat claim OVERTAKEN for ${short}... (base ${gi.baseEpoch}) - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
+            );
+            if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
+              return {
+                joined: false,
+                reason: 'refused',
+                serverReason: SEAT_CLAIM_OVERTAKEN_REASON,
+              };
+            }
+            continue;
+          }
           console.warn(
             `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +
               ` nothing is claimed about membership:`,

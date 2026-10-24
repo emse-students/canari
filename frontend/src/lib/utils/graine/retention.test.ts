@@ -1,5 +1,9 @@
 import type { EncryptedGraineRow } from '$lib/db/types';
-import { sweepExpiredGraineSeeds } from './retention';
+import {
+  boundGraineRetentionDays,
+  GRAINE_RETENTION_FLOOR_DAYS,
+  sweepExpiredGraineSeeds,
+} from './retention';
 import { cacheGraineSession, cachedGraineSession, setGraineRuntime } from './runtime';
 
 /**
@@ -8,7 +12,8 @@ import { cacheGraineSession, cachedGraineSession, setGraineRuntime } from './run
  * The window is the SERVER's, and the sweep asks rather than re-deriving it - the whole point being
  * that a pinned message exempt from the purge keeps its own seed, which a matching client-side
  * timer would have deleted. The tests that matter here are the ones about what must NOT be dropped:
- * a young session with no messages yet, and anything at all when the answer never arrived.
+ * a young session with no messages yet, anything at all when the answer never arrived, and
+ * anything younger than the client floor whatever window the server states.
  */
 
 const liveGraineSessions = vi.fn();
@@ -128,15 +133,65 @@ describe('sweepExpiredGraineSeeds', () => {
     expect(deleted).toEqual([]);
   });
 
-  it('refuses to sweep when the server gives no usable window', async () => {
+  it.each([0, -30, 1, 7, 364])(
+    'never sweeps a seed younger than the client floor when the server answers retentionDays=%d',
+    async (hostile) => {
+      // The window is the server's to state, but not the server's to SHRINK on a device: a value
+      // below the floor would make every device drop every seed older than it, the whole history
+      // of every salon. The floor is the product's own window, so it changes nothing honest.
+      rows = [mkRow('s-day', 1), mkRow('s-month', 30), mkRow('s-nearly', 364)];
+      liveGraineSessions.mockResolvedValue({ live: [], retentionDays: hostile });
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      await expect(sweepExpiredGraineSeeds()).resolves.toBe(0);
+
+      expect(deleted).toEqual([]);
+      expect(forgetMirrored).not.toHaveBeenCalled();
+      // The out-of-bound answer accuses the server; it is not a quiet correction.
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(`retentionDays=${hostile}`));
+      error.mockRestore();
+    }
+  );
+
+  it('still sweeps past the floor when the server answers below it', async () => {
+    // Clamped, not refused: a seed older than the product window whose messages are gone is still
+    // the liability this sweep exists to drop.
+    rows = [mkRow('s-young', 10), mkRow('s-old', 400)];
+    liveGraineSessions.mockResolvedValue({ live: [], retentionDays: 1 });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(sweepExpiredGraineSeeds()).resolves.toBe(1);
+
+    expect(deleted).toEqual([['s-old']]);
+    error.mockRestore();
+  });
+
+  it('refuses to sweep when the server window is not a number at all', async () => {
     rows = [mkRow('s-old', 400)];
-    liveGraineSessions.mockResolvedValue({ live: [], retentionDays: 0 });
+    liveGraineSessions.mockResolvedValue({ live: [], retentionDays: Number.NaN });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await expect(sweepExpiredGraineSeeds()).resolves.toBe(0);
 
-    // Fail closed: with a zero window every session looks old enough, and the sweep would take the
-    // seed of every salon this device has not yet posted in.
     expect(deleted).toEqual([]);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('retentionDays=NaN'));
+    error.mockRestore();
+  });
+
+  it('bounds the window from below only', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // At the floor and above it the server's value is used as is, silently: an honest answer.
+    expect(boundGraineRetentionDays(GRAINE_RETENTION_FLOOR_DAYS)).toBe(GRAINE_RETENTION_FLOOR_DAYS);
+    expect(boundGraineRetentionDays(400)).toBe(400);
+    expect(error).not.toHaveBeenCalled();
+
+    expect(boundGraineRetentionDays(GRAINE_RETENTION_FLOOR_DAYS - 1)).toBe(
+      GRAINE_RETENTION_FLOOR_DAYS
+    );
+    expect(boundGraineRetentionDays(Number.POSITIVE_INFINITY)).toBeNull();
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
   });
 
   it('asks in bounded chunks the server will accept', async () => {

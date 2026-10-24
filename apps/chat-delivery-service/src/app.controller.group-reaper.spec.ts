@@ -37,13 +37,21 @@ describe('AppController - cleanupSoftDeletedGroups', () => {
   let transactionOpen = false;
 
   /** A manager whose repositories record whether the transaction was open at delete time. */
+  /** Every row lock and delete the transaction takes, in order. */
+  const txEvents: string[] = [];
   const txManager = {
     getRepository: jest.fn((entity: unknown) => ({
+      find: jest.fn((opts: { lock?: { mode: string } }) => {
+        txEvents.push(entity === Group ? `lock-groups:${opts.lock?.mode}` : 'find-other');
+        return Promise.resolve([]);
+      }),
       delete: jest.fn(() => {
         if (entity === Group) {
           groupDeletedInTx = transactionOpen;
+          txEvents.push('delete-groups');
         } else {
           deletedInTx.push(transactionOpen ? 'in' : 'out');
+          txEvents.push('delete-owned');
         }
         return Promise.resolve({ affected: 2 });
       }),
@@ -88,6 +96,7 @@ describe('AppController - cleanupSoftDeletedGroups', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     deletedInTx.length = 0;
+    txEvents.length = 0;
     groupDeletedInTx = false;
     transactionOpen = false;
 
@@ -122,10 +131,21 @@ describe('AppController - cleanupSoftDeletedGroups', () => {
 
     await run();
 
-    // Eight owned tables plus dm_groups itself, all in one unit of work.
-    expect(deletedInTx).toEqual(['in', 'in', 'in', 'in', 'in', 'in', 'in', 'in', 'in']);
+    // Nine owned tables plus the dismissals, all in one unit of work with dm_groups itself.
+    expect(deletedInTx).toEqual(['in', 'in', 'in', 'in', 'in', 'in', 'in', 'in', 'in', 'in']);
     expect(groupDeletedInTx).toBe(true);
     expect(groupRepo.manager.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('locks the dm_groups rows before any owned row, the one order an eviction also takes', async () => {
+    // An eviction moves the group's seat generation (its dm_groups row) before it deletes seats;
+    // a reaper deleting seats first and the group row last would wait on it in a cycle.
+    groupRepo.find.mockResolvedValue([{ id: 'g1' }]);
+
+    await run();
+
+    expect(txEvents[0]).toBe('lock-groups:pessimistic_write');
+    expect(txEvents[txEvents.length - 1]).toBe('delete-groups');
   });
 
   it('drops the Redis keys after the commit, never before', async () => {

@@ -223,6 +223,26 @@ describe('admitNewcomerToDistributionGroup', () => {
     expect(mls.releaseAddLock).toHaveBeenCalledTimes(1);
   });
 
+  it('re-builds at once an Add whose seat claim an unrelated eviction overtook', async () => {
+    // The server refused the whole commit and advanced nothing: the epoch did not move, and the
+    // retry meets a fresh claim. Each such refusal proves an eviction landed, which bounds it.
+    mls.getEpoch.mockReturnValue(5);
+    mls.addMembersBulk
+      .mockRejectedValueOnce(new CommitRefusedError('seat_claim_overtaken', 5, 5))
+      .mockResolvedValueOnce({
+        welcome: new Uint8Array([9]),
+        ratchetTree: new Uint8Array([8]),
+        addedDeviceIds: ['phone'],
+        skipped: [],
+      });
+
+    const out = await admitNewcomerToDistributionGroup(workspaceScope('ws-1'), 'bob', log);
+
+    expect(out).toMatchObject({ kind: 'admitted' });
+    expect(mls.addMembersBulk).toHaveBeenCalledTimes(2);
+    expect(mls.releaseAddLock).toHaveBeenCalledTimes(1);
+  });
+
   it('gives up, loudly, on a refusal its catch-up could not move past', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mls.addMembersBulk.mockRejectedValue(new CommitRefusedError('epoch_mismatch', 5, 7));

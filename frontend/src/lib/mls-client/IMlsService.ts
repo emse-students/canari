@@ -93,6 +93,12 @@ export type ExternalJoinOutcome =
   | { joined: false; reason: 'own_key_package_unverified' }
   /** The commit gate was never reached. Nothing is claimed about membership. */
   | { joined: false; reason: 'unreachable' }
+  /**
+   * The server's per-user commit limit refused it (`429`), or still holds from an earlier refusal.
+   * Nothing is claimed about membership; nothing else this account commits is accepted for
+   * `retryAfterMs`, so a sweep stops there rather than ask group after group.
+   */
+  | { joined: false; reason: 'rate_limited'; retryAfterMs: number }
   /** The gate refused every bounded attempt; `serverReason` is its own classification. */
   | { joined: false; reason: 'refused'; serverReason: string; serverEpoch?: number };
 
@@ -310,10 +316,13 @@ export class GroupDrainAbandonedError extends Error {
  * instead ({@link StateLoadFailure}).
  */
 export class SavedStateUnopenedError extends Error {
-  readonly reason: Extract<StateLoadFailure, 'rotated' | 'undecryptable' | 'unknown'>;
+  readonly reason: Extract<
+    StateLoadFailure,
+    'rotated' | 'undecryptable' | 'unreadable_now' | 'unknown'
+  >;
 
   constructor(
-    reason: Extract<StateLoadFailure, 'rotated' | 'undecryptable' | 'unknown'>,
+    reason: Extract<StateLoadFailure, 'rotated' | 'undecryptable' | 'unreadable_now' | 'unknown'>,
     cause: unknown
   ) {
     super(`the saved MLS state did not open under this key (${reason}) - nothing written`, {
@@ -357,8 +366,10 @@ export function isKeystoreKeyUnavailable(error: unknown): boolean {
  * `mismatch` (another device's identity), `rotated` (a framed state whose header names another
  * key: the old PIN opens it), `altered` (a framed state whose header names THE KEY IN HAND and whose
  * tag fails: no PIN opens it), `undecryptable` (a legacy state that did not open - either of the two,
- * and nothing says which), `keystore_unavailable` (biometric mode found no key) and `unknown` (an
- * untyped failure).
+ * and nothing says which), `keystore_unavailable` (biometric mode found no key), `unreadable_now`
+ * (the web's WebCrypto refused a v2 state and the deterministic reader did not prove it altered:
+ * nothing is known about the bytes, so the state is re-read and never replaced -
+ * `MlsStateUnreadableNowError`) and `unknown` (an untyped failure).
  */
 export type StateLoadFailure =
   | 'mismatch'
@@ -366,6 +377,7 @@ export type StateLoadFailure =
   | 'rotated'
   | 'altered'
   | 'keystore_unavailable'
+  | 'unreadable_now'
   | 'unknown';
 
 /**
