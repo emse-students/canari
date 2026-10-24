@@ -1421,7 +1421,7 @@ Two refusals carry the design:
   included) is logged at `error` and the sweep runs with the floor, so no seed younger than a year is
   ever dropped on a remote number. A non-numeric answer is refused outright. There is no ceiling: it
   could only delete SOONER than the server says, and the server already decides which sessions are
-  live. **Shortening `CHANNEL_MESSAGE_RETENTION_DAYS` means lowering the floor in the same change.**
+  live. **Changing `CHANNEL_MESSAGE_RETENTION_DAYS` means changing the floor in the same change.**
 - **A chunk that went unanswered abandons the whole run.** A failed ask reads exactly like "the
   server names nothing", and acting on it would delete every seed on the device the first time the
   API is down. The server refuses a list over `MAX_LIVE_SESSION_QUERY` = 500 rather than truncating

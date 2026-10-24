@@ -282,7 +282,12 @@ jobs:
           # `bun.lock` and `patches/` decide which library code the suite runs (2026-10-13): a
           # lockfile-only bump of a patched dependency drops its patch silently, and only
           # `patchedDependencies.test.ts` and the behavioural test behind the patch would say so.
+          # `channel-retention.scheduler.ts` IS IN THIS LIST FOR THE SAME REASON: the frontend's
+          # `retentionFloorPin.test.ts` reads `CHANNEL_MESSAGE_RETENTION_DAYS` from it and fails
+          # when the graine retention floor no longer matches, so a PR changing ONLY that constant
+          # must run the frontend suite instead of breaking a later, unrelated frontend PR.
           if has '^frontend/src/' || has '^frontend/src-tauri/' || has '^frontend/static/' || \
+             has '^apps/social-service/src/channels/channel-retention\.scheduler\.ts$' || \
              has '^frontend/package\.json' || has '^frontend/bun\.lock' || has '^frontend/patches/' || \
              has '^frontend/svelte\.config' || \
              has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \

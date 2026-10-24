@@ -15,8 +15,9 @@ import { ChannelMessage } from './entities/channel-message.entity';
  *
  * The client bounds this number from below by `GRAINE_RETENTION_FLOOR_DAYS`
  * (`frontend/src/lib/utils/graine/retention.ts`), so a server-provided value can never shorten a
- * device's seed lifetime. SHORTENING this window means lowering that floor in the same change;
- * `frontend/src/lib/utils/graine/retentionFloorPin.test.ts` fails while they differ.
+ * device's seed lifetime. CHANGING this window means changing that floor in the same change;
+ * `frontend/src/lib/utils/graine/retentionFloorPin.test.ts` fails while they differ (this file is
+ * in ci.yml's frontend path filter so that a PR touching only it runs that test).
  */
 export const CHANNEL_MESSAGE_RETENTION_DAYS = 365;
 
