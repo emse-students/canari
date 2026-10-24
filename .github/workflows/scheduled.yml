@@ -83,9 +83,13 @@ jobs:
   # its key is authorised on none of the other three hosts (measured 2026-09-03), and installing
   # cross-host keys in order to write a report is a privilege expansion nobody asked for. The gap is
   # in `docs/wiki/backlog.md` with what would close it.
+  #
+  # AND ITS ROOT DISK (2026-10-24), in the same report rather than a new job: the host's
+  # administrators found it at 90 % before anything here said so. Red at 85 %, with the three
+  # consumers that are ours - backups, Docker, runner leftovers - printed beside the percentage.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   hosts:
-    name: Security updates on the production host
+    name: Security updates and disk on the production host
     if: >
       github.event.schedule == '30 7 * * *' ||
       (github.event_name == 'workflow_dispatch' &&
