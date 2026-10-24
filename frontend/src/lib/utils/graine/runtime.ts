@@ -72,6 +72,7 @@ export function setGraineRuntime(next: GraineRuntime | null): void {
     listedCommunities.clear();
     seedsAwaitingListing.clear();
     historyVisibilityByWorkspace.clear();
+    dropHistoryRuleWaiters(null, 'the session ended');
     seedCache.clear();
     openedKeys.clear();
     repairListener = null;
@@ -103,7 +104,59 @@ export function registerCommunityHistoryVisibility(
 ): GraineHistoryVisibility {
   const narrowed = narrowHistoryVisibility(visibility);
   historyVisibilityByWorkspace.set(workspaceId, narrowed);
+  const waiting = historyRuleWaiters.get(workspaceId);
+  if (waiting) {
+    historyRuleWaiters.delete(workspaceId);
+    console.info(
+      `[GRAINE] community ${workspaceId.slice(0, 8)}'s history rule is known ('${narrowed}') - ` +
+        `resuming ${waiting.length} step(s) that waited for it`
+    );
+    for (const resume of waiting) resume();
+  }
   return narrowed;
+}
+
+/** Steps deferred until a community's history rule is known - see {@link whenHistoryRuleKnown}. */
+const historyRuleWaiters = new Map<string, (() => void)[]>();
+
+/** How many steps may wait for a history rule at once, across communities. */
+export const MAX_HISTORY_RULE_WAITERS = 256;
+
+/**
+ * Runs `resume` once the server has stated `workspaceId`'s history rule
+ * ({@link registerCommunityHistoryVisibility}) - for a step that may neither guess the rule nor
+ * read the fail-closed default as a floor: a seed bundle that arrived before the community listing,
+ * or a seed ask this device cannot answer yet (`parkedAsks.ts`).
+ *
+ * Event-driven, never a clock. Dropped with the session, or with the community leaving this device,
+ * said out loud: what waited is then asked for again by the next start's history ask. Bounded by
+ * {@link MAX_HISTORY_RULE_WAITERS}, since nothing but the rule drains it.
+ *
+ * @returns false when the bound is reached: `resume` will never run, and the caller says so.
+ */
+export function whenHistoryRuleKnown(workspaceId: string, resume: () => void): boolean {
+  let waitingNow = 0;
+  for (const steps of historyRuleWaiters.values()) waitingNow += steps.length;
+  if (waitingNow >= MAX_HISTORY_RULE_WAITERS) return false;
+  const waiting = historyRuleWaiters.get(workspaceId) ?? [];
+  waiting.push(resume);
+  historyRuleWaiters.set(workspaceId, waiting);
+  return true;
+}
+
+/** Drops the deferred steps of `workspaceId` (all communities with `null`), saying how many. */
+function dropHistoryRuleWaiters(workspaceId: string | null, why: string): void {
+  const dropped =
+    workspaceId === null
+      ? [...historyRuleWaiters.values()].reduce((n, w) => n + w.length, 0)
+      : (historyRuleWaiters.get(workspaceId)?.length ?? 0);
+  if (workspaceId === null) historyRuleWaiters.clear();
+  else historyRuleWaiters.delete(workspaceId);
+  if (dropped > 0) {
+    console.info(
+      `[GRAINE] dropping ${dropped} step(s) that waited for a history rule: ${why} - the next start asks again`
+    );
+  }
 }
 
 /**
@@ -136,6 +189,24 @@ export function historyVisibilityFor(workspaceId: string): GraineHistoryVisibili
     `[GRAINE] no history rule known for community ${workspaceId.slice(0, 8)} - refusing to hand the past over`
   );
   return 'joined';
+}
+
+/**
+ * A community's history rule as the server last said it in this session, or `null` when it never
+ * did - WITHOUT the fail-closed reading of {@link historyVisibilityFor}.
+ *
+ * For the questions where `joined` by default would be a lie rather than a precaution:
+ *
+ * - whether the community's past was CLOSED to this member, which is what makes a later `shared` a
+ *   widening owed a history ask (`requestCommunityHistory`). Recording a closed past from a rule
+ *   nobody stated would ask the whole past again the first time the real `shared` arrived;
+ * - whether a seed may be handed over or kept FLOORED (`frameHandler`). A floor drawn under a rule
+ *   nobody stated is not a precaution but a loss: a `shared` community's newcomer answered with
+ *   the floored past records it as answered and never asks again. So an unknown rule answers with
+ *   silence and defers a bundle, and never floors.
+ */
+export function knownHistoryVisibility(workspaceId: string): GraineHistoryVisibility | null {
+  return historyVisibilityByWorkspace.get(workspaceId) ?? null;
 }
 
 /**
@@ -463,6 +534,7 @@ export function forgetWorkspaceGraineState(
   // A send still waiting for one of these salons can never be sealed now: refused as `left`.
   forgetSalonSendGates(channelIds);
   historyVisibilityByWorkspace.delete(workspaceId);
+  dropHistoryRuleWaiters(workspaceId, 'the community left this device');
 }
 
 /**

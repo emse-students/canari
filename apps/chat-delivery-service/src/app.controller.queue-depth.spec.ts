@@ -34,6 +34,7 @@ describe('AppController - reportQueueDepth', () => {
   let log: jest.SpyInstance;
 
   const depthBuilder = {
+    leftJoin: jest.fn().mockReturnThis(),
     select: jest.fn().mockReturnThis(),
     addSelect: jest.fn().mockReturnThis(),
     groupBy: jest.fn().mockReturnThis(),
