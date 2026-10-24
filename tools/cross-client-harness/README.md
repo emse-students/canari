@@ -1060,7 +1060,9 @@ release (`ACCEPT`, `REJECT epoch_mismatch`, `REJECT concurrent_commit`) - a refu
 {accepted: false}`, so no client network log can tell it from an acceptance. **CC-4 arms the leaf
 refresh on the device** (`armLeafRefresh`: the refresh ledger is the device's own `localStorage`,
 backdated eight days on a leaf its own commit produced), inside the race so no earlier frame spends
-it. **CC-5 is not played** - it needs a fifth campaign account (`ccrows.mjs` `CC5_PREMISE`).
+it. **CC-5 is BLOCKED-ON-ACCOUNT** - it needs a fifth campaign account (`ccrows.mjs` `CC5_PREMISE`).
+The contract is the OUTCOME: one winner, the loser refused with either race refusal and rebuilt;
+which code it met is recorded in the detail (`refusalCodes`), never judged.
 
 ## Rules that make a result trustworthy
 

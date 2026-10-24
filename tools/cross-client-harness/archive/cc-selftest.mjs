@@ -8,7 +8,7 @@
  *
  *   bun archive/cc-selftest.mjs
  */
-import { CC5_PREMISE, CC_ROWS, doubleRemoveOwn, parseCommitLines, rebuiltRaceOwn, refreshRaceOwn } from '../ccrows.mjs';
+import { CC5_PREMISE, CC_ROWS, RACE_REFUSALS, doubleRemoveOwn, parseCommitLines, rebuiltRaceOwn, refreshRaceOwn, refusalCodes } from '../ccrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -46,7 +46,7 @@ ok('CC-4 races a refresh against an Add', CC_ROWS['CC-4'].race.W1.refresh === tr
 ok('a removed seat is not a member at the end', !CC_ROWS['CC-2'].members.includes('W4') && !CC_ROWS['CC-3'].members.includes('W4'));
 ok('every seat a row names is opened', Object.values(CC_ROWS).every((r) => [...r.setup, ...Object.keys(r.race), ...r.members].every((d) => r.devices.includes(d))));
 ok('the setup holds whoever a row removes', Object.values(CC_ROWS).every((r) => Object.values(r.race).every((a) => !a.remove || r.setup.includes(a.remove))));
-ok('CC-5 is absent and says why', !CC_ROWS['CC-5'] && /fifth campaign account/.test(CC5_PREMISE));
+ok('CC-5 is absent and says why', !CC_ROWS['CC-5'] && CC5_PREMISE.startsWith('BLOCKED-ON-ACCOUNT') && /fifth campaign account/.test(CC5_PREMISE));
 
 // ── CC-1 / CC-2 ──────────────────────────────────────────────────────────────────────────────
 console.log('CC-1 / CC-2 rebuilt race');
@@ -66,8 +66,13 @@ const r = (over = {}) => rebuiltRaceOwn({ fromEpoch: 3, view: view(), parsed: cl
 ok('one accepted, the other refused epoch_mismatch and rebuilt -> all hold', allOk(r()));
 ok('only one accepted (the loser never rebuilt) fails', !allOk(r({ parsed: parseCommitLines([ACCEPT('a', 4), MISMATCH('b', 3, 4)]), view: view({ activeEpoch: 4, commitEpochs: [0, 1, 2, 3] }) })));
 ok('no refusal at all (the hold never made a race) fails', !allOk(r({ parsed: parseCommitLines([ACCEPT('a', 4), ACCEPT('b', 5)]) })));
-ok('a LOCK refusal fails, and says it is a question for the row', failed(r({ parsed: parseCommitLines([ACCEPT('a', 4), LOCKED('b', 4), ACCEPT('b2', 5)]) })).some((w) => /concurrent_commit/.test(w) && /question/.test(w)));
-ok('two refusals fail', !allOk(r({ parsed: parseCommitLines([ACCEPT('a', 4), MISMATCH('b', 3, 4), MISMATCH('b2', 3, 4), ACCEPT('b3', 5)]) })));
+ok('a LOCK refusal is the same outcome -> all hold (the code is detail, not the contract)', allOk(r({ parsed: parseCommitLines([ACCEPT('a', 4), LOCKED('b', 4), ACCEPT('b2', 5)]) })));
+ok('the refusal code is named in the assertion', r({ parsed: parseCommitLines([ACCEPT('a', 4), LOCKED('b', 4), ACCEPT('b2', 5)]) }).some((a) => a.ok && /concurrent_commit/.test(a.what)));
+ok('refusals of both kinds before the rebuild landed -> all hold', allOk(r({ parsed: parseCommitLines([ACCEPT('a', 4), LOCKED('b', 4), MISMATCH('b2', 3, 4), ACCEPT('b3', 5)]) })));
+ok('an UNTYPED refusal (not a race answer) fails', !allOk(r({ parsed: parseCommitLines([ACCEPT('a', 4), nest(`[COMMIT][commit-z] REJECT commit_malformed group=${G} device=d2`), ACCEPT('b3', 5)]) })));
+ok('TWO winners of one epoch fails', !allOk(r({ parsed: parseCommitLines([ACCEPT('a', 4), ACCEPT('b', 4), MISMATCH('c', 3, 4)]) })));
+ok('refusalCodes lists the codes in order', refusalCodes(parseCommitLines([LOCKED('b', 4), MISMATCH('c', 3, 4)])).join() === 'concurrent_commit,epoch_mismatch');
+ok('both race refusals are typed', RACE_REFUSALS.includes('epoch_mismatch') && RACE_REFUSALS.includes('concurrent_commit'));
 ok('an epoch that moved three times fails', !allOk(r({ view: view({ activeEpoch: 6, commitEpochs: [0, 1, 2, 3, 4, 5] }) })));
 ok('an added user missing from the roster fails (an Add lost)', !allOk(r({ view: view({ roster: view().roster.filter((x) => x.userId !== U5) }) })));
 ok('an added user with no active seat fails', !allOk(r({ view: view({ seats: view().seats.map((s) => (s.userId === U4 ? { ...s, status: 'pending' } : s)) }) })));
