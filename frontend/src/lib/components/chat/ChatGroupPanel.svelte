@@ -32,7 +32,8 @@
   import { joiningRows, membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
   import NotificationLevelControl from './NotificationLevelControl.svelte';
   import CallPermissionControl from './CallPermissionControl.svelte';
-  import { CALLS_ENABLED } from '$lib/features';
+  import { callsAvailable } from '$lib/utils/callsAvailability';
+  import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
   import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
   import type { ConversationNotificationLevel } from '$lib/notifications/conversationLevel';
 
@@ -185,7 +186,9 @@
   // Read in the same request as the level, so the same load above answers it and the same rule
   // holds: nothing is checked until the store has answered. Offered where a call can be placed -
   // a direct conversation of a build with calls on - and nowhere else.
-  const callsControlShown = $derived(CALLS_ENABLED && !isGroupConversation && !!groupId);
+  const callsControlShown = $derived(
+    callsAvailable(serverCallsMode()) && !isGroupConversation && !!groupId
+  );
   let callsError = $state('');
   let callsSaving = $state(false);
   const callsAllowed = $derived<boolean | null>(

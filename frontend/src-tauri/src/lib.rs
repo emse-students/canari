@@ -65,6 +65,9 @@ use crate::commands::push::{
     set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
     store_push_context, store_push_secret, take_fcm_cache,
 };
+use crate::commands::push_registration::{
+    complete_owed_push_token_deletion, end_push_registration,
+};
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, delete_user_database, get_installer_package,
     get_local_storage_usage, get_native_flags, load_mls_state, mls_foreground_heartbeat,
@@ -1382,6 +1385,8 @@ pub fn run() {
             mls_state_owner,
             store_push_secret,
             claim_device_notices,
+            end_push_registration,
+            complete_owed_push_token_deletion,
             clear_app_data,
             delete_user_database,
             delete_user_push_files,
