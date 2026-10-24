@@ -43,6 +43,7 @@ import {
 import { TAURI_WEBVIEW_ORIGINS } from '../cors-origins';
 import { REFRESH_HEADER, usesBodyRefreshTransport } from './refresh-transport';
 import { ACCESS_TOKEN_TTL_SECONDS } from './token-lifetimes';
+import { assertMintableUserId } from '../users/user-id';
 import {
   AccountErasureService,
   type ErasureState,
@@ -579,6 +580,8 @@ export class AuthController {
     if (!userinfo.sub) {
       throw new UnauthorizedException('Invalid userinfo response from Authentik');
     }
+    // `users.id` IS the subject: refused before any account exists unless it is a mintable id.
+    assertMintableUserId(userinfo.sub, this.logger, 'oidc-callback');
 
     // 3. Refuse an account whose erasure is still running. `users.id` IS the OIDC subject, so a
     // sign-in now would recreate the account under the same id, and the erasure's next pass would
