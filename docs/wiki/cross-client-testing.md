@@ -1,5 +1,10 @@
 # Cross-client testing - the board
 
+> **STALE AS A GATE (2026-10-24).** `bun rows.mjs` finds 24 cells the ledger contradicts or never
+> recorded, and the floor rows date from `0.16.3` on the local estate. The `1.4.1` campaign on dev
+> is planned in [cross-client-campaign-1-4-1](cross-client-campaign-1-4-1.md#1-the-verdict-on-the-existing-documents),
+> which proposes archiving this board as it stands.
+
 **STATE ONLY, AND IN AS FEW WORDS AS THE STATE ALLOWS.** A cell is a verdict, a date and the build
 it ran on. **A `PASS` cell says nothing else** - not the numbers, not how the row was fixed, not what
 it read PASS-DIRTY on first. They were here for 117 cells and made the file a third longer than the
