@@ -11,6 +11,10 @@ and run later by the lead. It carries four things and nothing else:
    the rows that run after it;
 4. the order, the cost, and the open questions.
 
+**How each row of section 4.2 is RUN and RECORDED** - its runner, the rig atom covering it, what is
+still missing, and whether a person is needed - is
+[cross-client-campaign-1-4-1-runners](cross-client-campaign-1-4-1-runners.md).
+
 How a result earns belief is still [testing-methodology](testing-methodology.md), and nothing here
 restates it. The rig is [the harness README](../../tools/cross-client-harness/README.md). When this
 campaign has run, the rows' verdicts go to a board (section 1 says which), and this page keeps the
@@ -329,7 +333,10 @@ group again: a verdict about one build does not carry to the next.
   is due after 7 days of activity per seat, kept in `mls_leaf_refresh:<user>:<device>`. The row
   arms it by writing that one key, for a campaign-owned device only, on dev (a fictional-seed estate
   where the owner allows campaign writes). It writes no other key, no other device and nothing on
-  production.
+  production. **CORRECTED 2026-10-24: there is no such Redis key** - the refresh ledger is the
+  device's own `localStorage` (`leafRefresh.ts`), so CC-4 writes nothing on the server and arms the
+  refresh on the campaign device itself
+  ([runners, section 5](cross-client-campaign-1-4-1-runners.md#5-two-findings-against-the-plan)).
 - **Q4. Can the iPhone be unlocked by the rig?** If its passcode cannot be typed over WDA, every I1
   row after a lock is `O`, and BIG-1 / FLOOR-3 need the owner for a minute.
 - **Q5. How does DEV-5 make one device id present a new key** without a product seam? Copying a
