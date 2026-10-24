@@ -110,7 +110,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | POST | `/api/auth/restore/registration/options` | Bearer + the CURRENT refresh credential, app `Origin`; 10/min per account | WebAuthn creation options for the calling session's restore key, and the id of the key it holds ([account-restore](../account-restore.md)) |
 | POST | `/api/auth/restore/registration` | same | Verify and store THE restore key of the calling session |
 | POST | `/api/auth/restore/assertion/options` | none | A stateless HMAC challenge for a restore |
-| POST | `/api/auth/restore/assertion` | none | Verify a restore key, then consume it WITH the old session in one transaction, then mint the new phone's session (a transfer) |
+| POST | `/api/auth/restore/assertion` | none | Verify a restore key, then consume it WITH the old session and its push ending (`session_push_endings`, cause `restored`) in one transaction, then mint the new phone's session (a transfer) |
 | GET | `/api/auth/verify` | Bearer | Validate JWT for Nginx auth_request |
 | HEAD | `/api/auth/verify` | Bearer | Same as GET (Nginx HEAD probe) |
 

@@ -32,18 +32,24 @@ CREATE TABLE IF NOT EXISTS restore_credentials (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_restore_credentials_session ON restore_credentials ("sessionId");
 CREATE INDEX IF NOT EXISTS idx_restore_credentials_user ON restore_credentials ("userId");
 
--- Constraints have no IF NOT EXISTS, so they are added in a block, as 003 does.
+-- Constraints have no IF NOT EXISTS, so they are added in a block, each looked up in the CURRENT
+-- schema only (as social-service 087 does): a same-named constraint in another schema must never
+-- make this file skip its own.
 DO $$
+DECLARE
+    ns oid := to_regnamespace(current_schema())::oid;
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'fk_restore_credentials_session'
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'fk_restore_credentials_session' AND connamespace = ns
     ) THEN
         ALTER TABLE restore_credentials
             ADD CONSTRAINT fk_restore_credentials_session
             FOREIGN KEY ("sessionId") REFERENCES auth_sessions (id) ON DELETE CASCADE;
     END IF;
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'fk_restore_credentials_user'
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'fk_restore_credentials_user' AND connamespace = ns
     ) THEN
         ALTER TABLE restore_credentials
             ADD CONSTRAINT fk_restore_credentials_user

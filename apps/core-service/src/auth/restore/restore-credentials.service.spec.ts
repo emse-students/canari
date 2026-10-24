@@ -135,8 +135,26 @@ function makeStore() {
       tokenId?: string;
       previousTokenId?: string | null;
       rotatedAt?: Date | null;
+      deviceId?: string | null;
     }
   >();
+  /** What `SessionPushEndService.enqueue` was handed, and how many drains followed. */
+  const pushEndings: { id: string; userId: string; deviceId: string | null; cause: string }[] = [];
+  const pushEnd = {
+    drains: 0,
+    enqueue: async (
+      _m: unknown,
+      ended: ReadonlyArray<{ id: string; userId: string; deviceId?: string | null }>,
+      cause: string
+    ) => {
+      for (const row of ended)
+        pushEndings.push({ id: row.id, userId: row.userId, deviceId: row.deviceId ?? null, cause });
+      return ended.length;
+    },
+    drain: async () => {
+      pushEnd.drains += 1;
+    },
+  };
 
   /** A credential found by its id, or by the session holding it. */
   const findCredential = (where: { id?: string; sessionId?: string }) => {
@@ -171,15 +189,19 @@ function makeStore() {
         spent.set(nonce, params[1] as Date);
         return [{ nonce }];
       }
+      // A raw DELETE is answered `[rows, rowCount]`, as TypeORM's postgres driver answers it - a
+      // fake answering the rows alone hid exactly that shape once.
       if (sql.startsWith('DELETE FROM restore_credentials')) {
         const row = credentials.get(params[0] as string);
-        if (!row) return [];
+        if (!row) return [[], 0];
         credentials.delete(row.id);
-        return [{ sessionId: row.sessionId }];
+        return [[{ sessionId: row.sessionId }], 1];
       }
       if (sql.startsWith('DELETE FROM auth_sessions')) {
-        sessions.delete(params[0] as string);
-        return [];
+        const s = sessions.get(params[0] as string);
+        if (!s) return [[], 0];
+        sessions.delete(s.id);
+        return [[{ id: s.id, userId: s.userId, deviceId: s.deviceId ?? null }], 1];
       }
       throw new Error(`unexpected SQL in the fake: ${sql}`);
     },
@@ -197,9 +219,10 @@ function makeStore() {
         return s && s.userId === opts.where.userId ? s : null;
       },
     } as never,
-    { transaction: async (cb: (m: typeof manager) => unknown) => cb(manager) } as never
+    { transaction: async (cb: (m: typeof manager) => unknown) => cb(manager) } as never,
+    pushEnd as never
   );
-  return { service, credentials, spent, sessions, manager };
+  return { service, credentials, spent, sessions, manager, pushEnd, pushEndings };
 }
 
 /** A whole restore as the controller runs it: verify, then consume. */
@@ -311,14 +334,43 @@ describe('RestoreCredentialsService', () => {
     });
   });
 
+  it("records the old session's push ending with the revocation, then drains: a sold phone gets no notification", async () => {
+    const { service, sessions, pushEnd, pushEndings, phone } = await registered();
+    sessions.set(SID, { ...sessions.get(SID)!, deviceId: 'old-phone' });
+    const request = await service.assertionOptions(LATER);
+    expect((await restore(service, phone.assert(request.challenge), LATER)).status).toBe('ok');
+    expect(pushEndings).toEqual([
+      { id: SID, userId: USER, deviceId: 'old-phone', cause: 'restored' },
+    ]);
+    expect(pushEnd.drains).toBe(1);
+  });
+
+  it('records no push ending when a concurrent revocation already deleted the session', async () => {
+    const { service, sessions, manager, pushEnd, pushEndings, phone } = await registered();
+    const request = await service.assertionOptions(LATER);
+    const verified = await service.verifyAssertion(phone.assert(request.challenge) as never, LATER);
+    if (verified.status !== 'verified') throw new Error('expected a verified assertion');
+    // The session goes between the verification and the consumption (a logout racing it): that
+    // revocation recorded its own ending, so this one names nothing and drains nothing.
+    const realQuery = manager.query;
+    manager.query = async (sql, params) => {
+      if (sql.startsWith('DELETE FROM auth_sessions')) sessions.delete(SID);
+      return realQuery(sql, params);
+    };
+    await expect(service.consume(verified.assertion)).resolves.toEqual({ status: 'consumed' });
+    expect(pushEndings).toEqual([]);
+    expect(pushEnd.drains).toBe(0);
+  });
+
   it('writes NOTHING on verification alone, so a refusal before consume keeps the key', async () => {
-    const { service, credentials, sessions, spent, phone } = await registered();
+    const { service, credentials, sessions, spent, pushEndings, phone } = await registered();
     const request = await service.assertionOptions(LATER);
     const verified = await service.verifyAssertion(phone.assert(request.challenge) as never, LATER);
     expect(verified.status).toBe('verified');
     expect(credentials.size).toBe(1);
     expect(sessions.has(SID)).toBe(true);
     expect(spent.size).toBe(0);
+    expect(pushEndings).toEqual([]);
   });
 
   it('refuses a replayed assertion even when its key exists again (the spent nonce)', async () => {

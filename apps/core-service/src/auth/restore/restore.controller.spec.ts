@@ -60,6 +60,7 @@ describe('AuthController restore routes', () => {
     consume: jest.Mock;
   };
   let errorLog: jest.SpyInstance;
+  let warnLog: jest.SpyInstance;
   let sessions: { create: jest.Mock; revoke: jest.Mock };
   let erasure: { erasureState: jest.Mock; confirmAfterSignIn: jest.Mock };
   let platform: { getConfig: jest.Mock; isAccessBlockedByMaintenance: jest.Mock };
@@ -68,7 +69,7 @@ describe('AuthController restore routes', () => {
 
   beforeAll(() => {
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
-    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    warnLog = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
     errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
   });
@@ -76,6 +77,7 @@ describe('AuthController restore routes', () => {
   beforeEach(() => {
     order.length = 0;
     errorLog.mockClear();
+    warnLog.mockClear();
     process.env.JWT_SECRET = JWT_SECRET;
     process.env.NODE_ENV = 'test';
     process.env.ALLOW_INSECURE_COOKIES = 'false';
@@ -196,7 +198,7 @@ describe('AuthController restore routes', () => {
       expect(errorLog).not.toHaveBeenCalled();
     });
 
-    it('accuses the eviction of a key this install did not register, and not of its own', async () => {
+    it('warns, with both readings, when it replaced a key the client did not name - never of its own', async () => {
       restore.register.mockResolvedValue({
         status: 'registered',
         credentialId: 'cred',
@@ -207,7 +209,9 @@ describe('AuthController restore routes', () => {
         cloudBackup: true,
         previousCredentialId: 'mine',
       });
-      expect(errorLog).not.toHaveBeenCalled();
+      expect(warnLog).not.toHaveBeenCalledWith(
+        expect.stringContaining('replaced a key the client did not name')
+      );
 
       restore.register.mockResolvedValue({
         status: 'registered',
@@ -219,7 +223,12 @@ describe('AuthController restore routes', () => {
         cloudBackup: true,
         previousCredentialId: 'mine',
       });
-      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('FOREIGN KEY EVICTED'));
+      // A lost local record looks the same from here, so it is a warn, never an error.
+      expect(warnLog).toHaveBeenCalledWith(
+        expect.stringContaining('replaced a key the client did not name')
+      );
+      expect(warnLog).toHaveBeenCalledWith(expect.stringContaining('lost its record'));
+      expect(errorLog).not.toHaveBeenCalled();
     });
 
     it('answers a registration that lost a race for its session with a typed 409', async () => {

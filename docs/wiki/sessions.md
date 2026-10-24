@@ -366,8 +366,12 @@ both sides, and neither depends on the other.**
 
 **Server.** Every path in `AuthSessionsService` that deletes a session deliberately ends the push
 registrations it leaves behind: `revoke` (the logout), `revokeOwned` (the owner revoking a device),
-`revokeOthers`, and the replay that revokes in `rotate`. Three facts make it exact and durable by
-construction:
+`revokeOthers`, and the replay that revokes in `rotate` - and so does the one deletion OUTSIDE it, a
+restore consuming its key (`RestoreCredentialsService.consume`, cause `restored`), which ends the old
+phone's session in its own transaction and enqueues through the same `SessionPushEndService.enqueue`
+([account-restore](account-restore.md)). A new deletion of `auth_sessions` that skips the enqueue
+leaves a sold or lost phone receiving the account's notifications. Three facts make it exact and
+durable by construction:
 
 - **The registration names its session.** An access token carries `sid`, the session it was minted
   for (`signAccessToken`); `/api/auth/verify` answers it as `X-Session-Id`, nginx forwards it on every

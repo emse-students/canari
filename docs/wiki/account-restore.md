@@ -53,6 +53,17 @@ adds one.** This is the design's one invariant, and every rule below follows fro
   the ordinary session-expired path. A transfer is the case Play describes (setting up a new phone
   from the old one), and the old phone signing out is the visible trace of it - the same trace a
   stolen-and-used credential leaves.
+- **And the old phone stops receiving the account's notifications.** The same transaction records
+  the old session's push ending (`session_push_endings`, cause `restored`), drained after the
+  commit by `SessionPushEndService` as every other session end is - so a phone restored from and
+  then sold keeps no push registration for the account ([sessions](sessions.md), "A session that
+  ends takes its device's push registration with it"). The adversarial review of 2026-10-24 found
+  the first draft deleting the session row bare, which left that registration alive - and the
+  integration case written for it found a worse one under it: TypeORM's postgres driver answers a
+  raw `DELETE ... RETURNING` as `[rows, rowCount]`, the draft read it as the rows, so the old
+  session was NEVER deleted and a consumed key never read as `gone`. The in-memory fake answered
+  the rows alone and hid it; it now answers the driver's shape, and
+  `session-push-end.integration.spec.ts` runs `consume` against PostgreSQL.
 - **A restore does not refresh the old session** before revoking it, so nothing about the chain
   extends a session's life.
 
@@ -95,9 +106,12 @@ thief later. Two rules close it:
   accused. Equal to `registered` but not `held`, it is this install's previous key (a create whose
   registration was then refused) - replaced with a `warn`. Anything else is accused at `error` and
   replaced. The registration names `previousCredentialId` (= `registered`); the server logs
-  `[RESTORE] FOREIGN KEY EVICTED` at `error` when the key it actually replaced is another. So a key
-  planted between two of the owner's starts lives until the next one, and leaves a line on both
-  ends - and an honest divergence leaves no false accusation.
+  `[RESTORE] replaced a key the client did not name` at `warn` when the key it actually replaced
+  is another - a `warn` and not an `error`, because from the server a planted key and an install
+  that merely lost its local record look the same, and the line names both readings; the client,
+  which holds `held`, is the end that can tell them apart and accuses. So a key planted between two
+  of the owner's starts lives until the next one, and leaves a line on both ends - and an honest
+  divergence leaves no false accusation.
 - **One registration at a time.** `ensureRestoreKey` is single-flight on the client, and two
   registrations racing for one session anyway (two installs of one session cannot exist; two
   requests can) meet the unique session constraint: the second is a typed `409
@@ -158,7 +172,7 @@ anonymous caller can grow (below), and the four routes are throttled all the sam
 | Method, path | Auth | Does |
 | --- | --- | --- |
 | `POST /api/auth/restore/registration/options` | Bearer + refresh credential (cookie or `X-Canari-Refresh`), AND `Origin` one of the Android app's (`http(s)://tauri.localhost`) | `{ options, registeredCredentialId }`: creation options for THIS session (challenge, RP id, a random `user.id`, ES256/RS256, `attestation: none`, `residentKey: required`, `userVerification: discouraged`) and the id of the key the session holds now, or null |
-| `POST /api/auth/restore/registration` | same | Verifies the registration response; stores THE key of this session (one per session, a re-registration replaces it; a credential id already held by ANOTHER session is refused, never re-bound); answers `{ registered: true, credentialId }` and accuses a replaced key that is not the body's `previousCredentialId` |
+| `POST /api/auth/restore/registration` | same | Verifies the registration response; stores THE key of this session (one per session, a re-registration replaces it; a credential id already held by ANOTHER session is refused, never re-bound); answers `{ registered: true, credentialId }` and warns of a replaced key that is not the body's `previousCredentialId` |
 | `POST /api/auth/restore/assertion/options` | none | Request options: a challenge, the RP id, `userVerification: discouraged`, no `allowCredentials` (the platform chooses) |
 | `POST /api/auth/restore/assertion` | none | Verifies the assertion against the stored public key and the bound session's life (writes nothing); refuses an erasure or a maintenance window HERE, so the key survives a refusal and can be retried; then consumes the key, the challenge and the old session in one transaction; then mints the new phone's session through the callback's own minting |
 
@@ -342,8 +356,8 @@ touched, and [legacy-compatibility](legacy-compatibility.md) gains no entry.
 | --- | --- |
 | Challenge format, expiry, purpose and binding separation, single use | `restore-challenge.spec.ts` (injected clock, no wall clock) |
 | Registration and assertion verification, origin pinning, RP id, unknown key, dead session, replay, minting through `issueSession` | `restore-credentials.service.spec.ts`, `restore.controller.spec.ts`, with a software authenticator in the test (real ES256 signatures) |
-| A stale refresh credential cannot register, the grace-window one can; a replaced key that is not the client's is accused; a racing registration is a typed 409 | `restore-credentials.service.spec.ts` (rotation moves `tokenId`, the grace window, the unique violation), `restore.controller.spec.ts` (`FOREIGN KEY EVICTED`, `RESTORE_REGISTRATION_CONFLICT`) |
-| The old session goes in the consume transaction; erasure and maintenance refuse BEFORE it; a failed mint leaves no session and no cookie | `restore-credentials.service.spec.ts`, `restore.controller.spec.ts` (call order and the mint-failure case) |
+| A stale refresh credential cannot register, the grace-window one can; a replaced key the client did not name is warned of; a racing registration is a typed 409 | `restore-credentials.service.spec.ts` (rotation moves `tokenId`, the grace window, the unique violation), `restore.controller.spec.ts` (the replaced-key `warn`, `RESTORE_REGISTRATION_CONFLICT`) |
+| The old session AND its push ending go in the consume transaction (against PostgreSQL too); erasure and maintenance refuse BEFORE it; a failed mint leaves no session and no cookie | `restore-credentials.service.spec.ts`, `restore.controller.spec.ts` (call order and the mint-failure case), `session-push-end.integration.spec.ts` |
 | The registration routes are throttled per account, the anonymous ones per address | `client-ip-throttler.guard.spec.ts` (both trackers, a forged token never picks a bucket, the guard on each route) |
 | The cascade and the erasure statement | `erasure-policy.spec.ts`; the cascade by the migration text, and by `account-erasure.integration.spec.ts` where a database is reachable |
 | Client attempt / register / clear decisions, the every-start check, the foreign-key replacement, a lost answer recognised, single-flight, a 429 never recording the attempt, the refusal codes | `restoreCredential.test.ts` |

@@ -14,6 +14,7 @@ import {
 } from '@simplewebauthn/server';
 import { AuthSession } from '../entities/auth-session.entity';
 import { isPreviousTokenInGrace, SWEEP_INTERVAL_MS } from '../auth-sessions.service';
+import { EndedSession, SessionPushEndService } from '../session-push-end.service';
 import { RestoreChallengeSpent, RestoreCredential } from './restore-credential.entity';
 import {
   checkRestoreChallenge,
@@ -114,7 +115,8 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
     private readonly spent: Repository<RestoreChallengeSpent>,
     @InjectRepository(AuthSession)
     private readonly sessions: Repository<AuthSession>,
-    private readonly dataSource: DataSource
+    private readonly dataSource: DataSource,
+    private readonly pushEnd: SessionPushEndService
   ) {
     // The controller refuses to start without JWT_SECRET; this is the same secret under its own
     // label, so an empty one throws here too rather than deriving a key anyone can compute.
@@ -407,8 +409,9 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
 
   /**
    * Consumes a verified assertion: the challenge is SPENT, the key is DELETED and the session it was
-   * bound to is REVOKED, in ONE transaction - so a restore can never leave the account with one more
-   * session than before (the new phone's is minted only after this commits).
+   * bound to is REVOKED - its push ending recorded with it (cause `restored`) - in ONE transaction,
+   * so a restore can never leave the account with one more session than before (the new phone's is
+   * minted only after this commits), nor the old phone with the account's notifications.
    *
    * SINGLE USE, TWICE OVER, settled by the database: the challenge's nonce is recorded (a second
    * presentation of the same assertion finds it), and the key is consumed by `DELETE ... RETURNING`
@@ -423,15 +426,27 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
         [assertion.challenge.nonce, assertion.challenge.expiresAt]
       );
       if (inserted.length === 0) return 'replay' as const;
-      const consumed: { sessionId: string }[] = await manager.query(
+      // TypeORM's postgres driver answers a raw DELETE (or UPDATE) as `[rows, rowCount]`, never as
+      // the rows alone - an INSERT is answered with the rows. Destructured, as
+      // `SessionPushEndService.claim` does.
+      const [consumed] = (await manager.query(
         `DELETE FROM restore_credentials WHERE id = $1 RETURNING "sessionId"`,
         [id]
-      );
+      )) as [{ sessionId: string }[], number];
       if (consumed.length === 0) return 'gone' as const;
-      // The old phone's session, revoked with the key: `AuthSessionsService.revoke` is this same
-      // single DELETE, written here so it commits or rolls back with the consumption.
-      await manager.query(`DELETE FROM auth_sessions WHERE id = $1`, [consumed[0].sessionId]);
-      return consumed[0];
+      const sessionId = consumed[0].sessionId;
+      // The old phone's session ends with the key, AND records its push ending in this same
+      // transaction - what every session end in `AuthSessionsService` owes (docs/wiki/sessions.md,
+      // "A session that ends takes its device's push registration with it"). Without it a phone
+      // restored from and then sold keeps receiving the account's notifications. RETURNING, so the
+      // ending names exactly the row THIS delete removed: a concurrent revocation that won the
+      // delete has recorded the ending itself.
+      const [ended] = (await manager.query(
+        `DELETE FROM auth_sessions WHERE id = $1 RETURNING id, "userId", "deviceId"`,
+        [sessionId]
+      )) as [EndedSession[], number];
+      const queued = await this.pushEnd.enqueue(manager, ended, 'restored');
+      return { sessionId, queued };
     });
     if (outcome === 'replay') {
       this.logger.warn(
@@ -444,8 +459,11 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
       this.logger.warn(`[RESTORE] assertion refused id=${shortId(id)}: key consumed concurrently`);
       return { status: 'unknown' };
     }
+    // Drained after the commit and unawaited, as `AuthSessionsService.endSessions` does: a slow
+    // chat-delivery never turns a restore into a refusal, and the outbox row survives its failure.
+    if (outcome.queued > 0) void this.pushEnd.drain();
     this.logger.log(
-      `[RESTORE] key consumed and its session revoked user=${assertion.userId} id=${shortId(id)} sid=${outcome.sessionId}`
+      `[RESTORE] key consumed and its session revoked user=${assertion.userId} id=${shortId(id)} sid=${outcome.sessionId} pushEndings=${outcome.queued}`
     );
     return { status: 'consumed' };
   }

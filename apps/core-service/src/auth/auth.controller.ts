@@ -969,10 +969,12 @@ export class AuthController {
     switch (result.status) {
       case 'registered':
         if (result.replaced !== null && result.replaced !== (previous ?? null)) {
-          // The session held a key this install never registered: somebody else, holding this
-          // session's credentials at some point, put it there. It is gone now - and accused.
-          this.logger.error(
-            `[RESTORE] FOREIGN KEY EVICTED user=${userId} sid=${sessionId}: the session held key ${result.replaced.slice(0, 8)}, which this install did not register`
+          // The session held a key the client did not name. Two causes this end cannot separate:
+          // somebody else holding this session's credentials planted it, or this install merely
+          // lost its local record of its own key. The client tells them apart (its `held` id) and
+          // accuses at error on its side; here it is a `warn` carrying both readings.
+          this.logger.warn(
+            `[RESTORE] replaced a key the client did not name user=${userId} sid=${sessionId} replaced=${result.replaced.slice(0, 8)} named=${typeof previous === 'string' ? previous.slice(0, 8) : 'none'} - planted by another holder of this session, or this install lost its record of it`
           );
         }
         return { registered: true, credentialId: result.credentialId };
