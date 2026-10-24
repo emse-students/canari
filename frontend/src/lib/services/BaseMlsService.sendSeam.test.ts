@@ -28,6 +28,7 @@ vi.mock('$lib/mls-client/sendRatchetLedger', () => ({
 
 import { BaseMlsService } from './BaseMlsService';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 
 /**
  * The three rules that must hold around EVERY send, asserted on the seam that now owns them.
@@ -56,10 +57,13 @@ abstract class SendSeamHarness extends BaseMlsService {
     };
   }
 
-  protected async encryptForSend(_groupId: string, _messageBytes: Uint8Array): Promise<Uint8Array> {
+  protected async encryptForSend(
+    _groupId: string,
+    _messageBytes: Uint8Array
+  ): Promise<AuthoredFrame> {
     this.encryptCalls++;
     this.trace.push('encrypt');
-    return new Uint8Array([1, 2, 3]);
+    return { sealed: new Uint8Array([1, 2, 3]), authorProof: new Uint8Array([4]) };
   }
 
   /** Exposes the protected counter every replacement seam compares against. */

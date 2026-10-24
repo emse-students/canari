@@ -4,6 +4,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ForbiddenException } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { PushSecretGuard } from '../guards/push-secret.guard';
+import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import { PushController } from './push.controller';
 import { PushToken } from '../entities/push-token.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -41,6 +43,10 @@ describe('PushController - getCommitsPush (PushSecret commit catch-up)', () => {
       // The controller declares ThrottlerGuard/HeaderAuthGuard on OTHER routes; stub them so the
       // test module compiles (this endpoint is PushSecret-authed, not guarded).
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })
@@ -114,6 +120,10 @@ describe('PushController - sendMessagePush answers the receive time', () => {
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })

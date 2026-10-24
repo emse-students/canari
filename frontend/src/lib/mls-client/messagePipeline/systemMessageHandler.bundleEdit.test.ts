@@ -63,19 +63,17 @@ describe('history_bundle - an edit the device missed', () => {
     );
   });
 
-  it('never takes the body from a peer that is NOT the author - only the flag', async () => {
+  it('takes nothing of an edit from a peer that is NOT the author - not the body, not the flag', async () => {
+    // The flag and the time are the edit's as much as the body is: a third party's word that a
+    // message was edited is no more evidence than its word for the text (bundleVetting.ts).
     const ctx = makeCtx('mallory', { ...HELD });
 
     await handleSystemEvent('history_bundle', { messages: [EDITED] }, ctx as any);
 
     const row = ctx.conversations.get(GROUP).messages[0];
     expect(row.content).toBe('before');
-    expect(row.isEdited).toBe(true);
-    expect(ctx.storage.updateMessage).toHaveBeenCalledWith(
-      'm1',
-      expect.not.objectContaining({ content: expect.anything() }),
-      'device-key'
-    );
+    expect(row.isEdited).toBeFalsy();
+    expect(ctx.storage.updateMessage).not.toHaveBeenCalled();
   });
 
   it("keeps a LATER edit the row already holds, even from the author's bundle", async () => {

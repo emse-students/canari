@@ -33,7 +33,10 @@ function deps(event: string) {
     mlsService: createMlsServiceStub({
       getUserGroups: vi.fn().mockResolvedValue([{ groupId, name: 'Test', isGroup: true }]),
       getLocalGroups: vi.fn().mockReturnValue([groupId]),
-      processIncomingMessage: vi.fn().mockResolvedValue(encodeAppMessage(mkSystem(event, '{}'))),
+      processIncomingMessage: vi.fn().mockResolvedValue({
+        plaintext: encodeAppMessage(mkSystem(event, '{}')),
+        author: 'unsigned',
+      }),
     }),
     storage: null,
     userId: 'user-a',

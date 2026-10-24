@@ -1,4 +1,5 @@
 import { canari } from '$lib/proto/canari.js';
+import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import type {
   AddMessageToChatOptions,
   Conversation,
@@ -8,7 +9,7 @@ import type {
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
+import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
@@ -27,10 +28,28 @@ import {
 import {
   serializeEnvelope,
   applyEditToBody,
+  envelopeBodyText,
   mkChannelInviteEnvelope,
   mkChannelInviteSentEnvelope,
   channelInviteMessageId,
 } from '$lib/envelope';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import { noteIntegrityFinding } from '$lib/mls-client/integrityFindings';
+import type { AuthorKeySource } from '$lib/crypto/messageAuthorship';
+import type { StoredMessagePatch } from '$lib/db/types';
+import {
+  mergeVettedRow,
+  upgradedRow,
+  upgradePatch,
+  vetBundle,
+  type BundleEntry,
+  type BundleHeldRow,
+  type BundleRowDecision,
+  type BundleUpgrade,
+  type ForgedReport,
+  type MergeableRow,
+  type MergedRow,
+} from './bundleVetting';
 
 /**
  * System events that are live negotiation only and must never be acted on during a replay.
@@ -52,6 +71,9 @@ export type PendingHistoryMessage = {
     isEdited?: boolean;
     /** Unix ms of the last edit, as carried by a history_bundle. */
     editedAt?: number;
+    /** The author's signed edit and tombstone a bundle proved, kept so this device relays them. */
+    editProof?: RecordedAuthorship;
+    deleteProof?: RecordedAuthorship;
   };
 
 /**
@@ -78,14 +100,35 @@ export interface ReplaySystemEventCtx {
   messageReactions: Map<string, MessageReaction[]>;
   /** msgId -> final reaction list, applied to DB after the batch save. */
   reactionUpdates: Map<string, MessageReaction[]>;
+  /** The keys this device trusts for an author (the MLS service): what a bundle's proofs verify under. */
+  authorKeys: AuthorKeySource;
+  /**
+   * msgId -> what a replayed `history_bundle` changed on a HELD row (an upgrade, a vetted tombstone
+   * or edit), merged onto the stored row in the post-save pass.
+   */
+  rowPatches: Map<string, StoredMessagePatch>;
+  /**
+   * The messages this page already queued, by id - the same objects `pushPendingMessage` queued, so
+   * a replayed bundle that names one of them updates it in place rather than queueing a second row
+   * that the batch write would store last.
+   */
+  pendingById: Map<string, Omit<PendingHistoryMessage, 'ingestSequence'>>;
   /**
    * Messages deleted via a `delete_message` event during this replay, each with the id of the
    * member that sent the event. The author check cannot always happen here - the message may not be
    * in memory yet - so the claim is carried to whoever can verify it against the stored row.
    */
-  deletedMessages: Map<string, { by: string }>;
+  deletedMessages: Map<string, { by: string; proof?: RecordedAuthorship }>;
   /** Messages edited via an `edit_message` event, with their new content and who claims to edit. */
-  editedMessages: Map<string, { content: string; editedAt: Date; by: string }>;
+  editedMessages: Map<
+    string,
+    { content: string; editedAt: Date; by: string; proof?: RecordedAuthorship }
+  >;
+  /**
+   * The author's signature on THIS frame, as mls-core verified it ({@link recordAuthorship}) -
+   * stored with the edit or the deletion so a bundle this device writes later proves it.
+   */
+  authorship?: RecordedAuthorship;
   /**
    * Read state accumulated over the page, one instant per participant, merged as `max`. Written to
    * the conversation once at the end of the replay rather than message by message - which is the
@@ -110,6 +153,26 @@ export interface ReplaySystemEventCtx {
   ) => Promise<M[] | null>;
 }
 
+/** Writes what the one merge changed back onto a queued message, with the proofs it took. */
+function writeMergedPending(
+  pm: Omit<PendingHistoryMessage, 'ingestSequence'>,
+  merged: MergedRow<MergeableRow>
+): void {
+  const row = merged.next;
+  pm.content = row.content;
+  if (merged.reactions) pm.reactions = merged.reactions;
+  if (row.isDeleted) {
+    // A tombstone keeps only its own proof - the original bytes go with the body.
+    pm.isDeleted = true;
+    delete pm.authorship;
+    delete pm.editProof;
+  }
+  if (row.isEdited) pm.isEdited = true;
+  if (row.editedAt) pm.editedAt = row.editedAt.getTime();
+  if (merged.editProof && !row.isDeleted) pm.editProof = merged.editProof;
+  if (merged.deleteProof) pm.deleteProof = merged.deleteProof;
+}
+
 /**
  * May `senderNorm` rewrite or remove `target`? Only its own author may - the replay twin of
  * `mutationIsAuthorised` in `systemMessageHandler.ts`, where the reasoning is written out.
@@ -125,8 +188,8 @@ export function replayMutationIsAuthorised(
   senderNorm: string,
   kind: 'edit' | 'delete'
 ): boolean {
-  const owner = (target.senderId ?? '').toLowerCase();
-  if (owner && owner === senderNorm.toLowerCase()) return true;
+  const owner = canonicalUserId(target.senderId ?? '');
+  if (owner && owner === canonicalUserId(senderNorm)) return true;
   console.warn(
     `[HISTORY_REPLAY] Refused ${kind === 'edit' ? 'an edit' : 'a delete'} of a message owned by ` +
       `${owner.slice(0, 8) || 'unknown'} from ${senderNorm.slice(0, 8)} - only the author may mutate it`
@@ -151,6 +214,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     setConversation,
     messageReactions,
     reactionUpdates,
+    rowPatches,
+    pendingById,
     deletedMessages,
     editedMessages,
     readWatermarkUpdates,
@@ -173,7 +238,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
   // unhandled, so that adding a branch for them later has to be a decision instead of an accident.
   if (REPLAY_IGNORED_EVENTS.has(parsed.system.event ?? '')) return;
 
-  const senderNorm = msg.sender_id.toLowerCase();
+  // The ONE canonical user id (leafIdentity.ts, Rust's): every comparison below goes through it.
+  const senderNorm = canonicalUserId(msg.sender_id);
   // Plain text for a membership notice, a serialized envelope for a card (channel invitation).
   let systemContent: string | null = null;
   // Defaults to the MLS frame id; a card overrides it with an id derived from the invitation so
@@ -204,7 +270,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // the id is a self-asserted payload field, the stream row's sender is the identity MLS
       // authenticated, and only the party that left may say so. Rendering nothing is what an
       // unusable payload already gets here.
-      if (String(data.userId).toLowerCase() === senderNorm) {
+      if (canonicalUserId(String(data.userId)) === senderNorm) {
         const getName = await resolveDisplayNames([data.userId]);
         systemContent = chat_system_member_left({ user: getName(data.userId) });
       }
@@ -233,7 +299,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         : undefined;
       systemMessageId = channelInviteMessageId(channelId, String(data.inviteeId || ''));
       systemContent = serializeEnvelope(
-        senderNorm === userId.toLowerCase()
+        senderNorm === canonicalUserId(userId)
           ? mkChannelInviteSentEnvelope(
               channelId,
               workspaceName ?? channelName,
@@ -288,7 +354,10 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       }
       // Recorded with the claimed author when the message is not in memory: the row it applies to
       // is read later, and that is where the claim can still be checked.
-      deletedMessages.set(data.messageId, { by: senderNorm });
+      deletedMessages.set(data.messageId, {
+        by: senderNorm,
+        ...(ctx.authorship ? { proof: ctx.authorship } : {}),
+      });
     } else if (parsed.system.event === 'edit_message' && data.messageId && data.newContent) {
       // Dated by the sender, exactly as the live path and the pin path are, so a replay cannot undo
       // an edit this device already holds that is newer - and two devices replaying the same log in
@@ -338,6 +407,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         content: data.newContent,
         editedAt,
         by: senderNorm,
+        ...(ctx.authorship ? { proof: ctx.authorship } : {}),
       });
     } else if (
       (parsed.system.event === 'pin' || parsed.system.event === 'unpin') &&
@@ -370,9 +440,9 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         reactionUpdates.set(data.messageId, updated);
       }
     } else if (parsed.system.event === 'history_bundle') {
-      // The bundle is delivered via the message queue; handling it here guarantees that a
-      // device coming online after the queue TTL (7 days) still recovers the history
-      // from Redis Streams.
+      // A bundle in the shared archive: every history answer is sent as transport today and never
+      // enters it (history-answer-addressing.md, rule 3), so what reaches this branch was written
+      // durably by an older build. It still restores history, under the same rule as a live one.
       const bundleData = data.messages;
       // Read state travels once for the whole conversation, so it is taken even from a bundle
       // carrying no messages at all - "you are missing nothing, and here is who has read what".
@@ -392,67 +462,237 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         );
       }
       if (Array.isArray(bundleData) && bundleData.length > 0) {
-        const existingIds = new Set(
-          (getConversation(contactName)?.messages ?? []).map((m) => m.id)
+        // THE ONE RULE EVERY BUNDLE GOES THROUGH (`bundleVetting.ts`), the one the live handler
+        // applies: a durable bundle an older build wrote keeps restoring history - MARKED when
+        // nothing proves its author - and nothing in it is taken on its relayer's word about
+        // somebody else. Only the writes differ: they go to this page's accumulators.
+        const entries = (bundleData as Array<Record<string, unknown>>).filter(
+          (m) =>
+            typeof m?.id === 'string' &&
+            m.id !== '' &&
+            typeof m.senderId === 'string' &&
+            m.senderId !== '' &&
+            typeof m.content === 'string' &&
+            m.content !== ''
+        ) as unknown as BundleEntry[];
+        // HELD = what memory holds AND what this page already queued. A row queued earlier in the
+        // page - a decrypted original, or another bundle's copy - is held like a stored one: it is
+        // upgraded by a proof and never queued twice, so a later copy cannot overwrite it.
+        const heldRows = new Map<string, BundleHeldRow>(
+          (getConversation(contactName)?.messages ?? []).map((row) => [row.id, row])
         );
-        // Merge transport-carried reactions and edit times onto messages we ALREADY have (e.g. our
-        // own sent messages): they are skipped by the "add new" loop below, so without this their
-        // bundle metadata would be lost.
+        for (const [id, pm] of pendingById) {
+          heldRows.set(id, {
+            id,
+            senderId: pm.senderId,
+            content: pm.content,
+            ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+            ...(pm.isDeleted ? { isDeleted: true } : {}),
+          });
+        }
+        // The messages we would ADD, through the same hygiene filter the live handler applies - a
+        // bundle replayed from the stream is the same answer arriving late, and a message from
+        // inside our own exclusion window is no more ours for having waited.
+        const admitted =
+          (await ctx.dropOwnExcluded(entries.filter((m) => !heldRows.has(m.id)))) ?? [];
+        const logReplay = (line: string): void => console.debug(line);
+        const refuseForged: ForgedReport = (what, id, why) => {
+          console.error(
+            `[AUTHORSHIP] REFUSED a replayed ${what} ${id.slice(0, 8)} relayed by ${senderNorm.slice(0, 8)} in ${conversationId.slice(0, 8)}…: ${why}`
+          );
+          noteIntegrityFinding({
+            kind: 'forged-history',
+            groupId: conversationId,
+            peer: senderNorm,
+            detail: what,
+            proven: true,
+          });
+        };
+        const vetted = await vetBundle(
+          ctx.authorKeys,
+          conversationId,
+          { entries, fresh: admitted, held: heldRows, relayer: senderNorm, mutateHeld: true },
+          logReplay,
+          refuseForged
+        );
+        if (vetted.unverified > 0) {
+          console.debug(
+            `[AUTHORSHIP] ${vetted.unverified} replayed message(s) in ${conversationId.slice(0, 8)}… relayed by ${senderNorm.slice(0, 8)} carry no author proof - kept, marked unverified`
+          );
+        }
+
+        // Held MARKED rows a copy proves are replaced ENTIRELY by it (`upgradedRow`): a queued one
+        // in place, a stored one in memory and, at the end of the page, at rest (`upgradePatch`).
+        const memoryUpgrades = new Map<string, BundleUpgrade>();
+        for (const [id, up] of vetted.upgrades) {
+          const pm = pendingById.get(id);
+          // Memory follows, whether or not the page queued the row: what the stored write misses
+          // is patched at the end of the page; a queued row's own write already carries it.
+          memoryUpgrades.set(id, up);
+          if (!pm) continue;
+          const next = upgradedRow(
+            { senderId: pm.senderId, content: pm.content, timestamp: new Date(up.timestamp) },
+            up,
+            userId
+          );
+          pm.senderId = next.senderId;
+          pm.content = next.content;
+          pm.timestamp = next.timestamp;
+          pm.authorship = up.authorship;
+          delete pm.restoredUnverified;
+          delete pm.isEdited;
+          delete pm.editedAt;
+          delete pm.editProof;
+        }
+        const beforeUpgrade = getConversation(contactName);
+        if (memoryUpgrades.size > 0 && beforeUpgrade) {
+          setConversation(contactName, {
+            ...beforeUpgrade,
+            messages: beforeUpgrade.messages.map((row) => {
+              const up = memoryUpgrades.get(row.id);
+              // A queued row was the held one; memory's copy of it is upgraded only if it is marked
+              // too - a proven row in memory is never rewritten by a bundle.
+              if (!up || (pendingById.has(row.id) && !row.restoredUnverified)) return row;
+              return upgradedRow(row, up, userId);
+            }),
+          });
+          for (const [id, up] of memoryUpgrades) {
+            if (pendingById.has(id)) continue;
+            rowPatches.set(id, { ...rowPatches.get(id), ...upgradePatch(up) });
+          }
+        }
+
+        // What each entry may change on a row this page queued, merged by the one merge in place.
+        for (const [id, pm] of pendingById) {
+          const d = vetted.decisions.get(id);
+          if (!d) continue;
+          const merged = mergeVettedRow<MergeableRow>(
+            {
+              id,
+              senderId: pm.senderId,
+              content: pm.content,
+              ...(pm.isDeleted ? { isDeleted: true } : {}),
+              ...(pm.isEdited ? { isEdited: true } : {}),
+              ...(pm.editedAt ? { editedAt: new Date(pm.editedAt) } : {}),
+              ...(pm.reactions ? { reactions: pm.reactions } : {}),
+              ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+            },
+            d.entry,
+            d.decision,
+            senderNorm,
+            messageReactions.get(id)
+          );
+          if (!merged.changed) continue;
+          writeMergedPending(pm, merged);
+          if (merged.reactions) messageReactions.set(id, merged.reactions);
+        }
+
+        // What each entry may change on a row memory holds, merged by the one merge and written at
+        // the end of the page (`rowPatches`, `reactionUpdates`).
         const convoForMerge = getConversation(contactName);
         if (convoForMerge) {
-          type BundleMeta = {
-            id?: string;
-            reactions?: MessageReaction[];
-            editedAt?: number;
-          };
-          const bundleById = new Map<string, BundleMeta>();
-          for (const m of bundleData as BundleMeta[]) {
-            if (m?.id) bundleById.set(m.id, m);
-          }
           let mergedAny = false;
           const mergedMsgs = convoForMerge.messages.map((existing) => {
-            const b = bundleById.get(existing.id);
-            if (!b) return existing;
-            let next = existing;
-            // Merged pair by pair, larger timestamp wins - the same rule as the live path. Seeding
-            // only when we held nothing left a removal unable to reach a stale placement (D3).
-            if (Array.isArray(b.reactions) && b.reactions.length > 0) {
-              const merged = mergeReactions(
-                messageReactions.get(existing.id) ?? next.reactions ?? [],
-                b.reactions
-              );
-              if (merged) {
-                next = { ...next, reactions: merged };
-                messageReactions.set(existing.id, merged);
-                reactionUpdates.set(existing.id, merged);
-                mergedAny = true;
+            const d = vetted.decisions.get(existing.id);
+            if (!d) return existing;
+            const queued = pendingById.get(existing.id);
+            if (queued) {
+              // The page queued this row too, and the queued row's write (`replayedStoredRow`)
+              // is what reaches storage - memory takes the same merge so it does not wait for a
+              // reload. The decision was vetted against the QUEUED row's author, so it speaks for
+              // memory's only when that is the same author; a signed edit's text goes onto
+              // memory's own body.
+              if (canonicalUserId(existing.senderId) !== canonicalUserId(queued.senderId)) {
+                return existing;
               }
-            }
-            // The edit time, which only the bundle can supply: the sender's own edit is never
-            // echoed back over MLS, so a device restored this way has no other source for it.
-            if (typeof b.editedAt === 'number' && b.editedAt > 0 && next.editedAt == null) {
-              next = { ...next, editedAt: new Date(b.editedAt) };
+              const edit = d.decision.edit;
+              const decision: BundleRowDecision =
+                edit?.kind === 'apply'
+                  ? {
+                      ...d.decision,
+                      edit: {
+                        ...edit,
+                        content: applyEditToBody(existing.content, envelopeBodyText(edit.content)),
+                      },
+                    }
+                  : d.decision;
+              const merged = mergeVettedRow(
+                existing,
+                d.entry,
+                decision,
+                senderNorm,
+                existing.reactions
+              );
+              if (!merged.changed) return existing;
               mergedAny = true;
+              return merged.next;
             }
+            const merged = mergeVettedRow(
+              existing,
+              d.entry,
+              d.decision,
+              senderNorm,
+              messageReactions.get(existing.id)
+            );
+            if (!merged.changed) return existing;
+            mergedAny = true;
+            if (merged.reactions) {
+              messageReactions.set(existing.id, merged.reactions);
+              reactionUpdates.set(existing.id, merged.reactions);
+            }
+            const next = merged.next;
+            const patch: StoredMessagePatch = { ...rowPatches.get(existing.id) };
+            if (next.isDeleted && !existing.isDeleted) {
+              // A tombstone purges the original signed bytes with the body.
+              Object.assign(patch, {
+                isDeleted: true,
+                content: next.content,
+                authorship: null,
+                editProof: null,
+                ...(merged.deleteProof ? { deleteProof: merged.deleteProof } : {}),
+              });
+            } else if (merged.bodyEdited) {
+              Object.assign(patch, { content: next.content, editProof: merged.editProof ?? null });
+            }
+            if (next.isEdited && !existing.isEdited) patch.isEdited = true;
+            if (next.editedAt && next.editedAt !== existing.editedAt) {
+              patch.editedAt = next.editedAt.getTime();
+            }
+            if (Object.keys(patch).length > 0) rowPatches.set(existing.id, patch);
             return next;
           });
           if (mergedAny) setConversation(contactName, { ...convoForMerge, messages: mergedMsgs });
         }
-        // The messages we would ADD, through the same hygiene filter the live handler applies - a
-        // bundle replayed from the stream is the same answer arriving late, and a message from inside
-        // our own exclusion window is no more ours for having waited.
-        const fresh = (bundleData as Array<Record<string, any>>).filter(
-          (m) => m?.id && !existingIds.has(m.id) && m.senderId && m.content
-        ) as Array<
-          { id: string; timestamp: number; serverTimestamp?: number } & Record<string, any>
-        >;
-        const admitted = (await ctx.dropOwnExcluded(fresh)) ?? [];
-        for (const m of admitted) {
-          pushPendingMessage({
-            senderId: String(m.senderId).toLowerCase(),
-            content: String(m.content),
-            messageId: String(m.id),
-            timestamp: typeof m.timestamp === 'number' ? new Date(m.timestamp) : undefined,
+
+        // The new messages, each merged with what its entry may change before it is queued.
+        for (const { entry: m, verdict } of vetted.fresh) {
+          const verified = verdict.kind === 'verified';
+          const merged = mergeVettedRow<MergeableRow>(
+            {
+              id: m.id,
+              senderId: canonicalUserId(m.senderId),
+              content: verified ? verdict.content : m.content,
+              ...(verdict.kind === 'unverified' ? { restoredUnverified: true } : {}),
+            },
+            m,
+            vetted.decisions.get(m.id)?.decision ?? {},
+            senderNorm,
+            undefined
+          );
+          const row = merged.next;
+          if (merged.reactions && !messageReactions.has(m.id)) {
+            // Seeded so later reaction stream events apply on top of it, not onto an empty array.
+            messageReactions.set(m.id, merged.reactions);
+          }
+          const pm: Omit<PendingHistoryMessage, 'ingestSequence'> = {
+            senderId: row.senderId ?? canonicalUserId(m.senderId),
+            content: row.content,
+            messageId: m.id,
+            timestamp: verified
+              ? new Date(verdict.timestamp)
+              : typeof m.timestamp === 'number'
+                ? new Date(m.timestamp)
+                : undefined,
             // The message's own server time, and NOTHING ELSE. This used to fall back on the
             // bundle frame's time, which is when the bundle was sent, not when the message was:
             // an exclusion window placed by it would release a message from inside the window or
@@ -460,27 +700,11 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             ...(typeof m.serverTimestamp === 'number'
               ? { serverTimestamp: m.serverTimestamp }
               : {}),
-            // Metadata transferred from the source device: reactions, deletions and edits -
-            // full state at migration time. Read state is not here: it belongs to the
-            // conversation, not to any one message.
-            ...(Array.isArray(m.reactions) && m.reactions.length > 0
-              ? { reactions: m.reactions }
-              : {}),
-            ...(m.isDeleted === true ? { isDeleted: true } : {}),
-            ...(m.isEdited === true ? { isEdited: true } : {}),
-            // Carried with the flag, or the message shows "edited" with no time for ever.
-            ...(typeof m.editedAt === 'number' && m.editedAt > 0 ? { editedAt: m.editedAt } : {}),
-          });
-        }
-        // Seed messageReactions from the bundle so later reaction stream events
-        // apply on top of it, rather than onto an empty array.
-        for (const m of bundleData) {
-          if (m?.id && Array.isArray(m.reactions) && m.reactions.length > 0) {
-            const msgId = String(m.id);
-            if (!messageReactions.has(msgId)) {
-              messageReactions.set(msgId, m.reactions);
-            }
-          }
+            ...(m.authorship ? { authorship: m.authorship } : {}),
+            ...(row.restoredUnverified ? { restoredUnverified: true } : {}),
+          };
+          writeMergedPending(pm, merged);
+          pushPendingMessage(pm);
         }
       }
     }
