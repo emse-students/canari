@@ -52,11 +52,12 @@ Owed before it ships:
 
 Built: no automatic Add brings in a user absent from the adder's tree, web, native and the Android
 background answer alike; a member is asked "X asks to join" (Add / Decline), which replaces the
-group link's automatic admission; and an entry no member made is written in the conversation and
-reported (`[UNINVITED_ENTRY]`) - see
-[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Owed: the
-`[UNINVITED_ENTRY]` count on production once the build serves both stores, and a second step on the
-receiving side (private operations notes).
+group link's automatic admission (the server holds a link joiner outside, `awaitingAdmission`, until a
+member's Add); and an entry no member made is written in the conversation and reported
+(`[UNINVITED_ENTRY]`, with its `kind`) - see
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Owed: migration 038
+deployed with the build; the `[UNINVITED_ENTRY] kind=new-person` count on production once the build
+serves both stores; and a second step on the receiving side (private operations notes).
 
 ## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
 

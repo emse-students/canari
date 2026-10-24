@@ -15,7 +15,22 @@ import type { DeviceEvent } from './deviceTrust';
  *
  * @see entersUninvited in `deviceTrust.ts`, the predicate.
  */
+/**
+ * What THIS device knows about the entrant, which separates a legitimate self-rejoin from an entry
+ * nobody wanted (`noteUninvitedEntries` in `deviceNotices.svelte.ts` decides it):
+ *
+ * - `returning`: this device saw the same USER leave the tree at an earlier epoch
+ *   (`IMlsService.removalEpochs`) - a member who lost every leaf and rejoined, which the external
+ *   join exists for.
+ * - `direct-peer`: the other person of a 1:1 conversation - the conversation IS the two of them.
+ * - `new-person`: neither - the only kind written in the conversation, since it is the only one a
+ *   member must be told about. A device that never saw a departure reads a returning member as this.
+ */
+export type UninvitedEntryKind = 'new-person' | 'returning' | 'direct-peer';
+
 export interface UninvitedEntryReport {
+  /** Sent as the server's `kind=` field, so the count separates the three. */
+  kind: UninvitedEntryKind;
   groupId: string;
   /** The admitted leaf, `userId:deviceId` - the user half canonical. */
   entrant: string;
@@ -44,21 +59,29 @@ export function resetReportedUninvitedEntries(): void {
 }
 
 /**
- * Logs an entry no member made, at a level that accuses, and reports it once.
+ * Logs an entry no member made and reports it once, with its {@link UninvitedEntryKind}: a
+ * `new-person` at a level that accuses, a legitimate rejoin as what it is.
  *
  * Called only for a CONVERSATION: in a community or salon key group an external commit is how every
  * member enters, and the caller does not ask.
  */
-export function reportUninvitedEntry(event: DeviceEvent): void {
+export function reportUninvitedEntry(event: DeviceEvent, kind: UninvitedEntryKind): void {
   const report: UninvitedEntryReport = {
+    kind,
     groupId: event.groupId,
     entrant: canonicalIdentity(event.identity) ?? event.identity,
     epoch: event.epoch,
     keyFingerprint: event.keyFingerprint,
   };
-  console.error(
-    `[MLS] UNINVITED ENTRY group=${event.groupId.slice(0, 8)} entrant=${report.entrant} epoch=${event.epoch} - a user absent from the tree admitted themselves; no member added them`
-  );
+  if (kind === 'new-person') {
+    console.error(
+      `[MLS] UNINVITED ENTRY group=${event.groupId.slice(0, 8)} entrant=${report.entrant} epoch=${event.epoch} - a user absent from the tree admitted themselves; no member added them`
+    );
+  } else {
+    console.log(
+      `[MLS] self-rejoin group=${event.groupId.slice(0, 8)} entrant=${report.entrant} epoch=${event.epoch} kind=${kind} - not written in the conversation, reported for the count`
+    );
+  }
   const key = `${event.groupId}|${report.entrant}|${event.keyFingerprint}`;
   if (reported.has(key)) return;
   reported.add(key);

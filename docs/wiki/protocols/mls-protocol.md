@@ -896,7 +896,34 @@ stops the ask coming back. The sweep reads the server's `pending` rows, the dura
 completed sweep replaces the asks on screen: one another member answered leaves with the next sweep.
 The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>`), which used to
 admit the person with no member involved. The Android background answer refuses such a request as
-`newcomer` and leaves it to the foreground's sweep.
+`newcomer` and leaves it to the foreground's sweep. Only a GROUP conversation takes an ask
+(`askAMemberToAdmit`): a 1:1 conversation's `pending` rows and a key group's requests raise nothing -
+a DM ask's Add always failed and its Decline deleted the peer's own roster row.
+
+**An answer leaves the screen only when it happened** (`joinAnswers.ts`). The invite never throws; it
+returns a typed `BulkAdditionOutcome` (`added` with the users the merged commit put in the tree, or
+`not-added` with `add-lock-busy`, `no-device-added`, `failed`...), and Add is done only when the
+person is among `addedUsers` - or already holds a leaf, another member's Add having come first. Decline
+is done only when the roster row is gone, and is refused for a person who holds a leaf by now (that
+is a Remove). Anything else keeps the ask, logged with its reason.
+
+**The link is an ASK, carried from the server that knows it.** Accepting a link writes the roster row
+with `awaitingAdmission = true` (`dm_group_members`, migration 038; only `acceptGroupInvite` sets it),
+and the server holds the person outside until a member answers:
+
+- `getDeviceMemberships` says `awaitingAdmission` per row, so the joiner's `requestReAdd` reads
+  `awaiting-admission` (`readWelcomeOwedFromRow`) and sends a `welcome_request` instead of an
+  external join - the request that raises the ask on a member's device. Nothing is learned by failing.
+- The external-join base (`GET`/`PUT .../group-info`) answers **409 `awaiting_admission`** to such a
+  person - deliberately not a 403, which older clients read as `NotAGroupMemberError` and retire the
+  conversation on - and the commit gate refuses every commit from them, external or member.
+- The flag is cleared inside the transaction of the first accepted commit whose `admits` name one of
+  their devices: a member's Add. A Decline deletes the row with it; an unanswered seat is purged with
+  the other stranded seats after 14 days. The stranded-seat reports count these seats apart
+  (`awaiting-member`).
+
+The other reading was refused: treating the link as the member's decision would mean a member's
+device honouring a server-written flag, the very trust in server rows this policy removes.
 
 **A new person who entered by their own commit is made visible.** It shows in the signed commit as a
 `DeviceEvent` whose `addedBy` IS the admitted leaf and whose `memberAlreadyPresent` is `false`
@@ -909,6 +936,15 @@ durably until the row loads), logs it at ERROR and reports it once (`POST mls/un
 commit is how every member enters. The shape is `sender-mismatch`'s: a measurement, read on
 production before anything is decided about such entries. The receiving side is hardened in a
 second step.
+
+**A legitimate rejoin is not written, only counted.** The report carries a `kind`
+(`UninvitedEntryKind`): `returning` when this device saw the same user leave the tree at an earlier
+epoch (`removalEpochs`), `direct-peer` for the other person of a 1:1 conversation, `new-person`
+otherwise - and only `new-person` is written and logged at ERROR. A departure read that fails keeps
+the entry owed rather than guessing. A device that never saw the departure still reads a returning
+member as `new-person`. The server takes the report from a member of the group only (403
+`not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
+(group, entrant, epoch), so N members reporting one entry make one line, not N.
 
 ## Key packages
 

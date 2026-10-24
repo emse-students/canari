@@ -482,6 +482,8 @@ export type UserGroupRow = {
     welcomeQueued: boolean;
     addInFlight: boolean;
     admitted: boolean;
+    /** The seat waits for a member's admission (see {@link DeviceMembershipRow}); absent from an older server. */
+    awaitingAdmission?: boolean;
   } | null;
 };
 
@@ -601,6 +603,12 @@ export type DeviceMembershipRow = {
   welcomeQueued?: boolean;
   /** Some member holds this group's add lock right now, so an Add really is in flight. */
   addInFlight?: boolean;
+  /**
+   * The seat came from an invitation link and no member has admitted the person yet: the server
+   * refuses them the external-join base and every commit, so the device WAITS for a member's Add
+   * (`readWelcomeOwedFromRow` -> `awaiting-admission`). Absent from a server older than the field.
+   */
+  awaitingAdmission?: boolean;
 };
 
 export interface IMlsService {

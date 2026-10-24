@@ -72,13 +72,16 @@ const NOW = 100 * DAY;
 const ENROLLED = 90 * DAY;
 
 function makeCtx(over: Partial<DeviceNoticeContext> = {}) {
-  const conversations = new Map<string, { conversationType?: string; messages: { id: string }[] }>([
-    ['dm-1', { conversationType: 'direct', messages: [] }],
+  const conversations = new Map<
+    string,
+    { conversationType?: string; directPeerId?: string; messages: { id: string }[] }
+  >([
+    ['dm-1', { conversationType: 'direct', directPeerId: 'bob', messages: [] }],
     ['group-1', { conversationType: 'group', messages: [] }],
     ['group-no-bob', { conversationType: 'group', messages: [] }],
     ['salon-1', { conversationType: 'channel', messages: [] }],
     ['community-key', { conversationType: 'group', messages: [] }],
-    ['dm-carol', { conversationType: 'direct', messages: [] }],
+    ['dm-carol', { conversationType: 'direct', directPeerId: 'Carol', messages: [] }],
   ]);
   const addMessageToChat = vi.fn(
     async (_s: string, _c: string, convoKey: string, options?: { messageId?: string }) => {
@@ -97,6 +100,8 @@ function makeCtx(over: Partial<DeviceNoticeContext> = {}) {
       if (!tree) throw new Error(`group ${g} not held`);
       return tree;
     }),
+    // By default this device saw nobody leave any tree.
+    removalEpochs: vi.fn(async (): Promise<number[]> => []),
     addMessageToChat,
     resolveDisplayNames: async () => (id: string) => (id === 'bob' ? 'Bob' : id),
     deviceLabel: async () => undefined,
@@ -451,6 +456,7 @@ describe('deliverDeviceEvents - an entry no member made', () => {
     expect(options).toMatchObject({ isSystem: true });
     expect(reporter).toHaveBeenCalledTimes(1);
     expect(reporter).toHaveBeenCalledWith({
+      kind: 'new-person',
       groupId: 'group-1',
       entrant: 'mallory:dev1',
       epoch: 5,
@@ -490,8 +496,8 @@ describe('deliverDeviceEvents - an entry no member made', () => {
     first.conversations.delete('group-1');
     await deliverDeviceEvents([intruder()], first.ctx);
     expect(first.addMessageToChat).not.toHaveBeenCalled();
-    // Reported at once: the measurement does not wait for a row to load.
-    expect(reporter).toHaveBeenCalledTimes(1);
+    // Not reported yet: what the entry IS (a 1:1 peer's rejoin, say) is read from the row.
+    expect(reporter).not.toHaveBeenCalled();
 
     forgetDeviceNotices();
     loadDeviceNotices('alice');
@@ -500,6 +506,71 @@ describe('deliverDeviceEvents - an entry no member made', () => {
 
     expect(linesWrittenIn(second.addMessageToChat.mock.calls)).toEqual(['group-1']);
     expect(reporter).toHaveBeenCalledTimes(1);
+    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'new-person' }));
+    error.mockRestore();
+  });
+
+  it('writes nothing for a member this device saw leave, and reports a `returning` entry', async () => {
+    const error = quiet();
+    const { ctx, addMessageToChat } = makeCtx({
+      removalEpochs: vi.fn(async (_g: string, u: string) => (u === 'mallory' ? [3] : [])),
+    });
+    await deliverDeviceEvents([intruder()], ctx);
+
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'returning' }));
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('a departure AFTER the entering epoch is not a return', async () => {
+    const error = quiet();
+    const { ctx, addMessageToChat } = makeCtx({ removalEpochs: vi.fn(async () => [7]) });
+    await deliverDeviceEvents([intruder()], ctx);
+
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['group-1']);
+    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'new-person' }));
+    error.mockRestore();
+  });
+
+  it('writes nothing for the other person of a 1:1 conversation, and reports a `direct-peer` entry', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents(
+      [intruder({ groupId: 'dm-carol', identity: 'carol:p2', addedBy: 'carol:p2' })],
+      ctx
+    );
+
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'direct-peer', groupId: 'dm-carol' })
+    );
+  });
+
+  it('a third person entering a 1:1 conversation is a new person', async () => {
+    const error = quiet();
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents([intruder({ groupId: 'dm-carol' })], ctx);
+
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['dm-carol']);
+    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'new-person' }));
+    error.mockRestore();
+  });
+
+  it('keeps the entry owed when the departures cannot be read, rather than guessing', async () => {
+    const error = quiet();
+    const first = makeCtx({
+      removalEpochs: vi.fn(async () => {
+        throw new Error('state locked');
+      }),
+    });
+    await deliverDeviceEvents([intruder()], first.ctx);
+    expect(first.addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).not.toHaveBeenCalled();
+
+    const second = makeCtx({ removalEpochs: vi.fn(async () => [2]) });
+    await deliverDeviceEvents([], second.ctx);
+    expect(second.addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'returning' }));
     error.mockRestore();
   });
 });

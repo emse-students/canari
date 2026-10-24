@@ -110,6 +110,43 @@ async function automaticAdmission(deps: {
 }
 
 /**
+ * Puts a NEW PERSON's ask to this device's member ("X asks to join") - ONLY FOR A GROUP
+ * CONVERSATION, read off its conversation row.
+ *
+ * The ask's two answers are a group's: Add is `inviteMembersToGroup`, which only a group takes, and
+ * Decline removes the person's roster row. Raised for anything else they are wrong on both counts:
+ * a 1:1 conversation's `pending` rows are written for every group of a registering user, DMs
+ * included, so a peer holding no leaf there raised an ask whose Add always failed and whose Decline
+ * deleted the peer's own roster row of the DM. A key group has no conversation row at all - its
+ * members enter by external commit, entitled by their community. And a row not loaded yet answers
+ * nothing: the next sweep asks again, once the row is there.
+ *
+ * In none of those is the new person added either: an automatic Add never brings one in.
+ */
+function askAMemberToAdmit(
+  conversations: ReadonlyMap<string, Conversation>,
+  request: JoinApprovalRequest,
+  tag: string,
+  log: (message: string) => void,
+  onJoinApprovalRequested: ((request: JoinApprovalRequest) => void) | undefined
+): void {
+  const short = request.groupId.slice(0, 8);
+  const convo = conversations.get(request.groupId);
+  const kind = convo ? (convo.conversationType ?? 'group') : null;
+  if (kind !== 'group') {
+    log(
+      `${tag} ${request.requesterUserId} has no leaf in ${short}... - not added, and nobody is asked: ` +
+        `${kind === null ? 'no conversation row is loaded for it' : `a ${kind} conversation`} takes no join ask`
+    );
+    return;
+  }
+  log(
+    `${tag} ${request.requesterUserId} has no leaf in ${short}... - a new person is not added automatically, a member's approval is asked`
+  );
+  onJoinApprovalRequested?.(request);
+}
+
+/**
  * Whether `userId:deviceId`'s leaf is in OUR copy of `groupId`'s ratchet tree.
  *
  * THE TREE IS THE AUTHORITY ON WHO IS IN A GROUP, and the two callers of this used to ask the
@@ -398,14 +435,13 @@ export async function processPendingInvitations(params: {
         });
         if (admission === 'unreadable') continue;
         if (admission === 'newcomer') {
-          log(
-            `[PENDING] ${inv.userId} has no leaf in ${groupId.slice(0, 8)}... - a new person is not added from a server row, a member's approval is asked`
+          askAMemberToAdmit(
+            conversations,
+            { groupId, requesterUserId: inv.userId, requesterDeviceId: inv.deviceId },
+            '[PENDING]',
+            log,
+            onJoinApprovalRequested
           );
-          onJoinApprovalRequested?.({
-            groupId,
-            requesterUserId: inv.userId,
-            requesterDeviceId: inv.deviceId,
-          });
           continue;
         }
         // A DEVICE THIS ONE REFUSED FOR A CHANGED KEY IS NOT FETCHED AGAIN: every package it has
@@ -1181,10 +1217,13 @@ export async function handleWelcomeRequest(params: {
   });
   if (admission === 'unreadable') return;
   if (admission === 'newcomer') {
-    log(
-      `[WELCOME_REQ] ${requesterUserId} has no leaf in ${groupId.slice(0, 8)}... - a new person is not added on a relayed request, a member's approval is asked`
+    askAMemberToAdmit(
+      conversations,
+      { groupId, requesterUserId, requesterDeviceId },
+      '[WELCOME_REQ]',
+      log,
+      onJoinApprovalRequested
     );
-    onJoinApprovalRequested?.({ groupId, requesterUserId, requesterDeviceId });
     return;
   }
 

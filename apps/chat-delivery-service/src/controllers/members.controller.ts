@@ -59,6 +59,16 @@ import { RefusalCode, refusalBody } from '../utils/refusal-codes';
  */
 export const GROUP_ROSTERS_MAX_GROUPS = 200;
 
+/** One device's seat in one group, with the facts that say which kind of `pending` it is. */
+interface DeviceSeatFacts {
+  status: 'pending' | 'active';
+  welcomeQueued: boolean;
+  addInFlight: boolean;
+  admitted: boolean;
+  /** The user's seat awaits a member's admission (an invitation link's - migration 038). */
+  awaitingAdmission: boolean;
+}
+
 /** Group membership management: add/remove members, list members, list user groups. */
 @Controller()
 export class MembersController {
@@ -258,7 +268,8 @@ export class MembersController {
     const deviceMembershipOf = await this.readDeviceMemberships(
       safeUserId,
       headerDeviceId,
-      activeGroups.map((g) => g.id)
+      activeGroups.map((g) => g.id),
+      new Set(memberships.filter((m) => m.awaitingAdmission === true).map((m) => m.groupId))
     );
     // THE INSTANT THE GROUP CAME INTO EXISTENCE, because a client cannot derive it and keeps
     // asking other members for a past that never existed.
@@ -291,31 +302,18 @@ export class MembersController {
    * This device's membership row per group, each carrying the two facts that say which kind of
    * `pending` it is (the one partition is {@link readPendingMembershipFacts}). Empty without a
    * device header, and a group the device has no row for is simply absent from the map.
+   *
+   * @param awaitingGroups the groups where the user's seat awaits a member's admission
+   *   (`GroupMember.awaitingAdmission`, read off the roster rows the caller already holds): such a
+   *   seat is an ask a member answers, never a stranded one.
    */
   private async readDeviceMemberships(
     userId: string,
     deviceId: string | undefined,
-    groupIds: string[]
-  ): Promise<
-    Map<
-      string,
-      {
-        status: 'pending' | 'active';
-        welcomeQueued: boolean;
-        addInFlight: boolean;
-        admitted: boolean;
-      }
-    >
-  > {
-    const out = new Map<
-      string,
-      {
-        status: 'pending' | 'active';
-        welcomeQueued: boolean;
-        addInFlight: boolean;
-        admitted: boolean;
-      }
-    >();
+    groupIds: string[],
+    awaitingGroups: ReadonlySet<string>
+  ): Promise<Map<string, DeviceSeatFacts>> {
+    const out = new Map<string, DeviceSeatFacts>();
     if (!deviceId || groupIds.length === 0) return out;
     const safeDeviceId = sanitizeOptionalQueryValue(deviceId, 'x-canari-device');
     if (!safeDeviceId) return out;
@@ -339,10 +337,16 @@ export class MembersController {
         // cleared by every transition): the window between the commit and the Welcome, which the
         // add lock does not cover on every path.
         admitted: r.admittedAtEpoch !== null && r.admittedAtEpoch !== undefined,
+        awaitingAdmission: awaitingGroups.has(r.groupId),
       });
     }
     const stranded = [...out.entries()].filter(
-      ([, v]) => v.status === 'pending' && !v.welcomeQueued && !v.addInFlight && !v.admitted
+      ([, v]) =>
+        v.status === 'pending' &&
+        !v.welcomeQueued &&
+        !v.addInFlight &&
+        !v.admitted &&
+        !v.awaitingAdmission
     ).length;
     if (stranded > 0) {
       this.logger.log(

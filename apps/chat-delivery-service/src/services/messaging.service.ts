@@ -2442,6 +2442,26 @@ export class MessagingService {
                 { admittedAtEpoch: baseEpoch + 1, kickedAt: null }
               );
           }
+          // THE ADMISSION A LINK'S SEAT WAITED FOR (`GroupMember.awaitingAdmission`): this commit
+          // is a member's Add - the gate above refuses every commit from a seat still awaiting one -
+          // and it admits a device of the person, so the person is a member from this epoch on and
+          // may rejoin by themselves like any other. Written with the advance, so the flag never
+          // outlives the leaf nor goes before it. A key group has no roster rows: nothing matches.
+          const admittedUsers = [...new Set(admitted.map((a) => a.userId))];
+          if (admittedUsers.length > 0) {
+            const lifted = await m
+              .getRepository(GroupMember)
+              .update(
+                { groupId, userId: In(admittedUsers), awaitingAdmission: true },
+                { awaitingAdmission: false }
+              );
+            if ((lifted.affected ?? 0) > 0) {
+              this.logger.log(
+                `[COMMIT][${traceId}] ADMITTED group=${groupId} epoch=${baseEpoch + 1} ` +
+                  `users=${lifted.affected} - a member's Add answered their invitation-link ask`
+              );
+            }
+          }
           // THE WELCOME LANDS WITH THE ADVANCE OR NEITHER DOES (`ValidateCommitBody.welcome`). Its
           // seat is guaranteed as `sendWelcome` guarantees it - inserted, never overwriting a row -
           // when the admits above did not already write it.
@@ -2818,9 +2838,9 @@ export class MessagingService {
     groupInfo: string,
     baseEpoch: number
   ): Promise<{ stored: boolean }> {
-    if (!(await this.isOnRoster(groupId, requesterUserId))) {
-      throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
-    }
+    // Who may write the base is who may read it: a person still awaiting a member's admission holds
+    // no tree, so a base from them is one nobody minted.
+    await this.assertMayReadExternalBase(groupId, requesterUserId);
     return this.putGroupInfo(groupId, groupInfo, baseEpoch);
   }
 
@@ -2916,16 +2936,15 @@ export class MessagingService {
   /**
    * Returns the latest stored GroupInfo for `groupId` so an authorized member can build an external
    * commit to (re)join. Membership-gated (the ratchet tree it carries is public group state, but we
-   * still restrict it to roster members). Returns null when no GroupInfo has been stored yet (the
+   * still restrict it to roster members, and to those a member admitted -
+   * {@link assertMayReadExternalBase}). Returns null when no GroupInfo has been stored yet (the
    * caller then falls back to a peer welcome_request).
    */
   async getGroupInfo(
     groupId: string,
     requesterUserId: string
   ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null> {
-    if (!(await this.isOnRoster(groupId, requesterUserId))) {
-      throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
-    }
+    await this.assertMayReadExternalBase(groupId, requesterUserId);
     return this.readGroupInfo(groupId);
   }
 
@@ -3059,8 +3078,13 @@ export class MessagingService {
    *   A removal deletes the removed member's rows and a kick stamps `kickedAt`: both are refused.
    * - AN EXTERNAL COMMIT is the one commit made from outside the tree (an external join or rejoin),
    *   recognised by its own clear header ({@link readCommitFrame}), never by a client flag. It is
-   *   accepted from whoever may read the base it is built on - the roster predicate of
-   *   {@link getGroupInfo} - so the gate and the door it guards answer the same question.
+   *   accepted from whoever may read the base it is built on - {@link assertMayReadExternalBase},
+   *   the predicate of {@link getGroupInfo} - so the gate and the door it guards answer the same
+   *   question.
+   * - A SEAT AWAITING A MEMBER'S ADMISSION (`GroupMember.awaitingAdmission`, an invitation link's)
+   *   commits nothing, external or member: no member has admitted the person, so they hold no leaf,
+   *   and the one way in is a member's Add (docs/wiki/protocols/mls-protocol.md, "Who admits a new
+   *   person").
    * - A KEY-DISTRIBUTION GROUP'S external commit is asked of social-service, which owns its roster
    *   and serves its base by the same predicate ({@link isEntitledToDistributionGroup}). Unanswered,
    *   it is a retryable 503 and never an acceptance (WP-KEYGROUP-JOIN-GATE).
@@ -3084,15 +3108,21 @@ export class MessagingService {
   ): Promise<SeatClaim> {
     const claim = await claimSeat(this.groupRepo.manager, groupId, userId);
     const scope = external ? await this.keyDistributionScope(groupId) : null;
+    // The conversation roster seat, read once: an external commit needs one, and a seat awaiting a
+    // member's admission refuses every commit. A key group has no roster rows - social-service owns
+    // its membership - so it is not read there.
+    const seat = scope ? null : await this.rosterSeat(groupId, userId);
+    const awaiting = seat?.awaitingAdmission === true;
     // A DEPARTURE IN PROGRESS IS REFUSED HERE, before the epoch moves - not at the activation that
     // follows, which would leave the committer in the tree with no seat. Read from the claim, so no
     // second query, and the activation's re-read under the lock still catches one that begins later.
     const allowed =
       !claim.owed &&
+      !awaiting &&
       (scope
         ? await isEntitledToDistributionGroup(scope, userId, traceId)
         : external
-          ? await this.isOnRoster(groupId, userId)
+          ? seat !== null
           : !!(await this.deviceGroupRepo.findOne({
               where: [
                 { groupId, userId, deviceId, status: 'active' as const },
@@ -3105,7 +3135,8 @@ export class MessagingService {
       `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
         `device=${sanitizeLogValue(userId)}:${deviceId} ` +
         `kind=${scope ? `key-group-external ${scope.kind}=${scope.id}` : external ? 'external' : 'member'}` +
-        (claim.owed ? ' reason=departure_in_progress' : '')
+        (claim.owed ? ' reason=departure_in_progress' : '') +
+        (awaiting ? ' reason=awaiting_admission' : '')
     );
     // `code` is what a client's typed refusal reads; `error` is kept for the clients that read it.
     throw new ForbiddenException(
@@ -3408,9 +3439,49 @@ export class MessagingService {
     return (await this.memberOfGroupKind(group, groupId, userId)).isMember;
   }
 
-  /** Whether `userId` is on the user roster of `groupId` - who may read its external-join base. */
+  /** Whether `userId` is on the user roster of `groupId`, admitted or still awaiting a member. */
   private async isOnRoster(groupId: string, userId: string): Promise<boolean> {
-    return !!(await this.groupMemberRepo.findOne({ where: { groupId, userId } }));
+    return (await this.rosterSeat(groupId, userId)) !== null;
+  }
+
+  /** `userId`'s roster seat in `groupId`, or `null` - the one read of `dm_group_members` here. */
+  private async rosterSeat(
+    groupId: string,
+    userId: string
+  ): Promise<Pick<GroupMember, 'id' | 'awaitingAdmission'> | null> {
+    return this.groupMemberRepo.findOne({
+      where: { groupId, userId },
+      select: { id: true, awaitingAdmission: true },
+    });
+  }
+
+  /**
+   * Refuses `userId` the external-join base of `groupId` unless they hold a roster seat that does
+   * NOT await a member's admission - the question the commit gate ({@link assertCommitterMayCommit})
+   * asks of an external commit, so the base and the gate agree.
+   *
+   * A seat an invitation link wrote is an ask until a member's Add admits the person
+   * (`GroupMember.awaitingAdmission`); serving it the base let the person enter around that member.
+   * Its refusal is a 409 `awaiting_admission`, NEVER the 403 of no seat at all: a client reads a 403
+   * here as "I am not a member" and retires the conversation (`NotAGroupMemberError`), while this
+   * person is a pending member who waits. A current client is told before it asks
+   * (`GET mls/device-memberships`, `awaitingAdmission`); this answer is what an older one meets, and
+   * it falls back to asking a member, which is the right next move.
+   */
+  private async assertMayReadExternalBase(groupId: string, userId: string): Promise<void> {
+    const seat = await this.rosterSeat(groupId, userId);
+    if (!seat) {
+      throw new ForbiddenException(`User ${userId} is not a member of group ${groupId}`);
+    }
+    if (seat.awaitingAdmission) {
+      this.logger.log(
+        `[GROUP_INFO] group=${groupId} user=${sanitizeLogValue(userId)} awaits a member's admission - base withheld`
+      );
+      throw new ConflictException({
+        error: 'awaiting_admission',
+        message: 'a member has not admitted this person yet',
+      });
+    }
   }
 
   /**

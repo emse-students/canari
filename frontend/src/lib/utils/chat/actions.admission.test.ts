@@ -26,7 +26,10 @@ vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
 }));
 
-function activeConversations(groupId: string): Map<string, Conversation> {
+function activeConversations(
+  groupId: string,
+  conversationType?: Conversation['conversationType']
+): Map<string, Conversation> {
   return new Map([
     [
       groupId,
@@ -37,6 +40,7 @@ function activeConversations(groupId: string): Map<string, Conversation> {
         messages: [],
         lifecycle: 'active',
         mlsStateHex: null,
+        ...(conversationType ? { conversationType } : {}),
       } as Conversation,
     ],
   ]);
@@ -70,6 +74,7 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
     extra: {
       log?: (msg: string) => void;
       onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
+      conversationType?: Conversation['conversationType'];
     } = {}
   ) =>
     handleWelcomeRequest({
@@ -77,7 +82,7 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
       storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
-      conversations: activeConversations(groupId),
+      conversations: activeConversations(groupId, extra.conversationType),
       log: extra.log ?? vi.fn(),
       requesterUserId,
       requesterDeviceId: 'dev-1',
@@ -113,6 +118,28 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
       requesterDeviceId: 'dev-1',
     });
     expect(mlsService.addMember).not.toHaveBeenCalled();
+  });
+
+  it('asks nobody about a 1:1 conversation or a channel - only a group takes a join ask', async () => {
+    // A DM's `pending` rows are written for every group of a registering user: a peer holding no
+    // leaf there raised an ask whose Add always failed and whose Decline deleted the peer's DM row.
+    for (const conversationType of ['direct', 'channel'] as const) {
+      const onJoinApprovalRequested = vi.fn();
+      const log = vi.fn();
+      const mlsService = serverVouches({
+        getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self']),
+      });
+
+      await run(`g-adm-${conversationType}`, mlsService, 'stranger', {
+        onJoinApprovalRequested,
+        log,
+        conversationType,
+      });
+
+      expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+      expect(mlsService.addMember).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('takes no join ask'));
+    }
   });
 
   it('says in the log which user it refused and why', async () => {
@@ -215,6 +242,7 @@ describe('processPendingInvitations - a new user is never added automatically', 
     extra: {
       log?: (msg: string) => void;
       onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
+      conversations?: Map<string, Conversation>;
     } = {}
   ) =>
     processPendingInvitations({
@@ -222,7 +250,7 @@ describe('processPendingInvitations - a new user is never added automatically', 
       storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
-      conversations: activeConversations('g1'),
+      conversations: extra.conversations ?? activeConversations('g1'),
       requestReAdd: () => Promise.resolve(),
       log: extra.log ?? vi.fn(),
       onJoinApprovalRequested: extra.onJoinApprovalRequested,
@@ -260,6 +288,23 @@ describe('processPendingInvitations - a new user is never added automatically', 
     });
     expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
     expect(mlsService.updateInvitationStatus).not.toHaveBeenCalled();
+  });
+
+  it('raises no ask for a 1:1 conversation, and leaves its row alone', async () => {
+    const onJoinApprovalRequested = vi.fn();
+    const mlsService = makeMls({
+      ...pendingFor('stranger', 's1'),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device']),
+    });
+
+    await sweep(mlsService, {
+      onJoinApprovalRequested,
+      conversations: activeConversations('g1', 'direct'),
+    });
+
+    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
   });
 
   it('adds a pending device of a user who already holds a leaf', async () => {

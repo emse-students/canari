@@ -60,7 +60,7 @@ describe('joinRequests - a sweep settles what it no longer raises', () => {
 
 describe('joinRequests - a member answers', () => {
   it('runs the approval and the ask leaves', async () => {
-    const approve = vi.fn(async () => {});
+    const approve = vi.fn(async () => ({ done: true as const }));
     setJoinRequestHandlers({ approve, decline: vi.fn() });
     raiseJoinRequest(ask('carol', 'c1'));
     const [request] = pendingJoinRequests();
@@ -68,6 +68,23 @@ describe('joinRequests - a member answers', () => {
     expect(await answerJoinRequest(request, 'approve')).toBe(true);
     expect(approve).toHaveBeenCalledWith(request);
     expect(pendingJoinRequests()).toEqual([]);
+  });
+
+  it('keeps the ask when the Add did not happen - no exception is not an Add', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setJoinRequestHandlers({
+      approve: vi.fn(async () => ({
+        done: false as const,
+        reason: 'the Add did not happen (add-lock-busy)',
+      })),
+      decline: vi.fn(),
+    });
+    raiseJoinRequest(ask('carol', 'c1'));
+    const [request] = pendingJoinRequests();
+
+    expect(await answerJoinRequest(request, 'approve')).toBe(false);
+    expect(pendingJoinRequests()).toHaveLength(1);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('add-lock-busy'));
   });
 
   it('keeps the ask when the answer fails, and says so', async () => {

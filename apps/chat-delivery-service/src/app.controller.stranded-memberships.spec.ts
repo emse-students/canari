@@ -163,6 +163,34 @@ describe('AppController - reportStrandedDeviceMemberships', () => {
     expect(line).toContain('no Welcome ever queued');
   });
 
+  it('counts a seat awaiting a member answer to an invitation link apart, and names it nowhere as stranded', async () => {
+    deviceGroupRepo.find.mockResolvedValue([
+      pending('link-joiner', 'g-link', new Date()),
+      pending('tauri-stranded', 'g2', new Date()),
+    ]);
+    welcomeBuilder.getRawMany.mockResolvedValue([]);
+    const groupMemberRepo = (controller as unknown as { groupMemberRepo: { find: jest.Mock } })
+      .groupMemberRepo;
+    groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-link', userId: 'u1' }]);
+
+    await run();
+
+    expect(groupMemberRepo.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.arrayContaining([
+          { groupId: 'g-link', userId: 'u1', awaitingAdmission: true },
+        ]),
+      })
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("1 awaiting a member's answer to an invitation link")
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('1 never added'));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('tauri-stranded@g2');
+    expect(warn.mock.calls[0][0]).not.toContain('link-joiner');
+  });
+
   it('matches the Welcome on the GROUP too, not on the device alone', async () => {
     // The same device legitimately holds a queued Welcome for another group. Keying the exclusion
     // on the deviceId alone would read this device as healthy everywhere it appears, which is how

@@ -34,7 +34,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   const groupUpdate = jest.fn().mockResolvedValue({ affected: 1 });
   // The group row read under lock before a carried Welcome is written: live unless a test says not.
   const txGroupFind = jest.fn();
-  const txSeatRepo = { findOne: jest.fn() };
+  // `update`: the link seat a commit's admits answer (`awaitingAdmission`), lifted in the advance.
+  const txSeatRepo = { findOne: jest.fn(), update: jest.fn().mockResolvedValue({ affected: 0 }) };
   const txQueuedRepo = {
     create: jest.fn((row: Record<string, unknown>) => ({ ...row })),
     save: jest.fn(async (row: Record<string, unknown>) => ({ ...row, id: 'queued-welcome-1' })),
@@ -938,6 +939,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       });
       expect(groupMemberRepo.findOne).toHaveBeenCalledWith({
         where: { groupId: 'group-1', userId: 'user-1' },
+        select: { id: true, awaitingAdmission: true },
       });
     });
 
@@ -945,6 +947,37 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       tables({ keyPackages: [ownKey], roster: [{ groupId: 'group-1', userId: 'user-2' }] });
 
       await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).rejects.toMatchObject({
+        response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
+      });
+      expect(transaction).not.toHaveBeenCalled();
+    });
+
+    /**
+     * AN INVITATION LINK'S SEAT IS AN ASK UNTIL A MEMBER'S ADD ANSWERS IT (`awaitingAdmission`): the
+     * person on it holds no leaf and enters by that Add, never by a commit of their own - neither the
+     * external join that let a link joiner in around the member, nor a member commit from the
+     * `pending` device the link seated.
+     */
+    it("refuses an external commit from a seat awaiting a member's admission, before the epoch moves", async () => {
+      tables({
+        keyPackages: [ownKey],
+        roster: [{ groupId: 'group-1', userId: 'user-1', awaitingAdmission: true }],
+      });
+
+      await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).rejects.toMatchObject({
+        response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
+      });
+      expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it("refuses a member commit from the pending device of a seat awaiting a member's admission", async () => {
+      tables({
+        keyPackages: [ownKey],
+        devices: [{ ...ownDevice, status: 'pending', kickedAt: null }],
+        roster: [{ groupId: 'group-1', userId: 'user-1', awaitingAdmission: true }],
+      });
+
+      await expect(commit({}, 'user-1')).rejects.toMatchObject({
         response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
       });
       expect(transaction).not.toHaveBeenCalled();
@@ -1203,6 +1236,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
                 if (entity === MlsCommitLog)
                   return { createQueryBuilder: () => commitInsertBuilder };
                 if (entity === DeviceGroupMembership) return seatRepo;
+                // A key group has no roster rows: the admits lift no link ask.
+                if (entity === GroupMember) return txSeatRepo;
                 if (entity === KeyPackage) return txKeyPackageRepo;
                 if (entity === RevokedDevice) return revokedDeviceRepo;
                 if (entity === QueuedMessage)
@@ -2021,6 +2056,37 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         { userId: 'user-2', deviceId: 'phone-2', groupId: 'group-1', status: 'pending' },
         { admittedAtEpoch: 6, kickedAt: null }
       );
+    });
+
+    it("lifts the invitation-link ask of every person it admits, in the advance's transaction", async () => {
+      keyPackageRepo.find.mockResolvedValue([
+        { userId: 'user-2', deviceId: 'phone-2' },
+        { userId: 'user-2', deviceId: 'web-2' },
+      ]);
+      txSeatRepo.update.mockResolvedValueOnce({ affected: 1 });
+
+      const res = await accept([
+        { userId: 'user-2', deviceId: 'phone-2' },
+        { userId: 'user-2', deviceId: 'web-2' },
+      ]);
+
+      expect(res.accepted).toBe(true);
+      // One update per commit, by person - guarded on the flag, so a seat no link wrote is untouched.
+      expect(txSeatRepo.update).toHaveBeenCalledTimes(1);
+      const [where, set] = txSeatRepo.update.mock.calls[0] as [
+        { groupId: string; userId: FindOperator<string[]>; awaitingAdmission: boolean },
+        unknown,
+      ];
+      expect(where.groupId).toBe('group-1');
+      expect(where.awaitingAdmission).toBe(true);
+      expect(where.userId.value).toEqual(['user-2']);
+      expect(set).toEqual({ awaitingAdmission: false });
+    });
+
+    it('lifts no ask when it admits nobody', async () => {
+      await accept();
+
+      expect(txSeatRepo.update).not.toHaveBeenCalled();
     });
 
     it('refuses the committer itself and a device with no KeyPackage, recording neither', async () => {

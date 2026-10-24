@@ -23,10 +23,17 @@ export interface JoinRequest {
   deviceIds: string[];
 }
 
+/**
+ * What running a member's answer did: `done` only when the answer really happened - the person's
+ * device is in the tree (approve), or their roster row is gone (decline). Anything else names why,
+ * and the ask stays on screen.
+ */
+export type JoinAnswerResult = { done: true } | { done: false; reason: string };
+
 /** What a member's answer runs, registered by the page holding a conversation context. */
 export interface JoinRequestHandlers {
-  approve: (request: JoinRequest) => Promise<void>;
-  decline: (request: JoinRequest) => Promise<void>;
+  approve: (request: JoinRequest) => Promise<JoinAnswerResult>;
+  decline: (request: JoinRequest) => Promise<JoinAnswerResult>;
 }
 
 const requests = new SvelteMap<string, JoinRequest>();
@@ -80,8 +87,10 @@ export function setJoinRequestHandlers(next: JoinRequestHandlers | null): void {
 }
 
 /**
- * Runs a member's answer. The ask leaves only once the answer went through; a failure keeps it on
- * screen, logged, so the member can answer again.
+ * Runs a member's answer. The ask leaves only once the answer went through - the handler's
+ * {@link JoinAnswerResult} says `done` - and an answer that did not happen, or threw, keeps it on
+ * screen, logged with its reason, so the member can answer again. The invite flow never throws
+ * (`inviteMembersToGroup` returns its outcome), so "no exception" is not "added".
  *
  * @returns whether the answer went through.
  */
@@ -93,11 +102,15 @@ export async function answerJoinRequest(
     console.error(`[JOIN_REQUEST] no handler registered - the ${answer} of an ask was not run`);
     return false;
   }
+  let result: JoinAnswerResult;
   try {
-    await handlers[answer](request);
+    result = await handlers[answer](request);
   } catch (e) {
+    result = { done: false, reason: String(e) };
+  }
+  if (!result.done) {
     console.error(
-      `[JOIN_REQUEST] ${answer} of ${request.userId} in ${request.groupId.slice(0, 8)}... failed, the ask stays: ${String(e)}`
+      `[JOIN_REQUEST] ${answer} of ${request.userId} in ${request.groupId.slice(0, 8)}... did not happen, the ask stays: ${result.reason}`
     );
     return false;
   }

@@ -205,6 +205,7 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
       localGroups: () => mls.getLocalGroups(),
       storedConversation: session.storedConversation,
       memberIdentities: (groupId) => mls.getGroupMemberIdentities(groupId),
+      removalEpochs: (groupId, userId) => mls.removalEpochs(groupId, userId),
       addMessageToChat: session.addMessageToChat,
       resolveDisplayNames,
       deviceLabel: (deviceId) => deviceLabelOf(mls, session.getUserId(), deviceId),
