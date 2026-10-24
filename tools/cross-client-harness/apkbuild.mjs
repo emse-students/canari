@@ -51,8 +51,8 @@ const FILE = join(STATE_DIR, 'a1-builds.ndjson');
  * different artefacts. Reading whichever happens to exist would silently record the estate's stamp
  * against the phone's APK the first time the order of those two commands changed.
  */
-function packagedStamp() {
-  const at = join(REPO, 'frontend', 'build', '_app', 'version.json');
+function packagedStamp(repo = REPO) {
+  const at = join(repo, 'frontend', 'build', '_app', 'version.json');
   if (!existsSync(at)) {
     throw new Error(
       `no ${at} - frontend/build does not hold the adapter-static shape, so this is not the bundle ` +
@@ -64,7 +64,7 @@ function packagedStamp() {
 }
 
 /** `git` output as text, trimmed - a throw here is a repository that cannot be read. */
-const git = (...args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 'utf8' }).trim();
+const gitIn = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
 
 /**
  * Write down what the tree looked like when this APK was built.
@@ -72,10 +72,12 @@ const git = (...args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 
  * Called by `a1apk.mjs` after the build and BEFORE the install: the record has to exist by the time
  * anything asks the phone what it is running.
  *
+ * @param {string} [repo] the tree the APK was built from - this checkout, or a `--ref` worktree
  * @returns the record, so the caller can print it rather than re-deriving it
  */
-export function recordApkBuild() {
-  const builtAt = packagedStamp();
+export function recordApkBuild(repo = REPO) {
+  const git = (...args) => gitIn(repo, ...args);
+  const builtAt = packagedStamp(repo);
   // The commit is recorded as the tree's HEAD rather than resolved from the timestamp: at build
   // time HEAD is a FACT, where the timestamp derivation is what this module exists to qualify.
   const head = git('rev-parse', '--short', 'HEAD');

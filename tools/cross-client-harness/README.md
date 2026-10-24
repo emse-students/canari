@@ -365,13 +365,32 @@ name in `SERIAL_OF`, or `ANDROID_SERIAL` - adb's own variable, which `useDevice`
 every adb this rig shells out to inherits the binding. A device name carries its platform: `W*` is a
 Chrome profile, `A*` is Android.
 
-**THE APK MUST BE BUILT WITH THE LOCAL-ESTATE OVERLAY OR IT REFUSES THE ESTATE IT IS POINTED AT.**
+**ON THE LOCAL ESTATE, THE APK MUST BE BUILT WITH THE LOCAL-ESTATE OVERLAY OR IT REFUSES THE ESTATE IT IS POINTED AT.**
 `tauri.conf.json` names capability `default` alone, whose fetch scope is `https://**`;
 `src-tauri/tauri.local.conf.json` adds `local-estate`, and `a1apk.mjs` passes it. Without it the
 phone reaches the IdP, authenticates, comes back - and then shows the product's own red
 `url not allowed on the configured scope: http://localhost:8081/...` under the PIN field, because
 `https://**` matches port 443 and `http://**` matches port 80, neither of which is 8081. See
 [`frontend/src-tauri/capabilities/local-estate.json`](../../frontend/src-tauri/capabilities/local-estate.json).
+
+**ON DEV THE APK TAKES NEITHER THE OVERLAY NOR THE REVERSE (R2, 2026-10-24).** `a1apk.mjs` asks
+`a1plan.mjs` what the estate `SITE` names needs: dev (`https://dev.canari-emse.fr`) sits inside the
+default `https://**` scope and the default CSP, the phone reaches it over its radios (so `adb reverse`
+is skipped and `estateReverse` is a logged no-op, and cutting the radios really takes the phone
+offline), and the identity provider is dev's: `DEV_AUTHENTIK` in the machine-local `names.mjs`, the
+pair the pre-release pipeline takes from its `DEV_` secrets, refused when absent. It is still a
+`--debug` build, so CDP reaches the WebView. The packaged bundle must name the estate AND no
+production origin, with ONE narrow allowance measured on the first dev build (chunk `Dypz5d_W.js`):
+`publicAppUrl.ts`'s two link constants (`DEFAULT_PUBLIC_APP_ORIGIN`, `LEGACY_PUBLIC_APP_ORIGIN`), read
+from that source file, as whole string literals - names the app RECOGNISES in a pasted link and
+compares against, never a request target (a dev build mints its links from dev's baked
+`VITE_FRONTEND_URL`). A socket, a path or a concatenation of either is still refused, and the
+build ENVIRONMENT is checked before the build: no `VITE_*` value in the process or an unoverridden
+`frontend/.env*` line may name production, because the bundle cannot tell a baked target from a
+constant and the environment can. `--build-only` touches no phone, not even `adb`; `--build-only --ref v1.4.0`
+builds an OLD client from that tag in its own detached worktree (system temp, `a1-ref-<tag>`) and
+keeps the APK in `STATE_DIR/apks/` for the mixed-version rows. Installing either is a separate,
+deliberate gesture: an `install -r` keeps the enrolment, an uninstall costs the device.
 
 **An atom takes no verdict**, writes nothing to `results.ndjson` and asserts nothing about the
 application. That is what makes it reusable: a row decides what an outcome MEANS, and two rows may
@@ -771,7 +790,7 @@ next one's symptom names the wrong cause.
   which `bun run dev` shares and needs same-origin; and the packaged bundle is then GREPPED for
   `SITE`, because an APK silently pointing at production fails a row for a reason nobody can see.
 
-- **A1 MUST STAY A LOCAL `--debug` BUILD, and the CI artefact cannot replace it (measured
+- **A1 MUST STAY A `--debug` BUILD (local or dev), and the CI artefact cannot replace it (measured
   2026-08-28).** The pipeline produces a RELEASE APK: not debuggable, and signed with the release
   keystore, so `adb install -r` fails on the signature mismatch and the only way through would be an
   uninstall - which destroys the very data a footprint row measures. And **`run-as` needs

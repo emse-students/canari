@@ -446,6 +446,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/instrument-selftest.mjs
 	@bun tools/cross-client-harness/archive/spawn-selftest.mjs
 	@bun tools/cross-client-harness/archive/estate-selftest.mjs
+	@bun tools/cross-client-harness/archive/a1plan-selftest.mjs
 	@bun tools/cross-client-harness/archive/seedargs-selftest.mjs
 	@bun tools/cross-client-harness/archive/identity-selftest.mjs
 	@bun tools/cross-client-harness/archive/exit-selftest.mjs

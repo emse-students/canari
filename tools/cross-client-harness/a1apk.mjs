@@ -1,11 +1,25 @@
 /**
- * BUILD THE A1 APK AGAINST THE LOCAL ESTATE, INSTALL IT, AND PROVE THE PHONE IS RUNNING IT.
+ * BUILD THE A1 APK AGAINST THE ESTATE `SITE` NAMES (LOCAL OR DEV), INSTALL IT, AND PROVE THE PHONE IS RUNNING IT.
  *
- *   bun a1apk.mjs               # reverse + build + install + prove
- *   bun a1apk.mjs --no-build    # reverse + install the APK already on disk + prove
- *   bun a1apk.mjs --reverse     # only the reverse, which is what a replug costs
+ *   bun a1apk.mjs               # reverse (local only) + build + install + prove
+ *   bun a1apk.mjs --no-build    # reverse (local only) + install the APK already on disk + prove
+ *   bun a1apk.mjs --reverse     # only the reverse, which is what a replug costs (local only)
  *   bun a1apk.mjs --release     # the MINIFIED, resource-shrunk build for check R - COSTS THE DEVICE
- *   bun a1apk.mjs --build-only  # build and assert the artifact; touch no phone
+ *   bun a1apk.mjs --build-only  # build and assert the artifact; touch no phone, not even adb
+ *   bun a1apk.mjs --build-only --ref v1.4.0   # an OLD client, built from that tag in its own worktree
+ *
+ * **THE ESTATE DECIDES THE BUILD (R2, 2026-10-24)**, through `a1plan.mjs`: the local estate gets the
+ * `adb reverse` and the `local-estate` overlay described below; DEV (`https://dev.canari-emse.fr`)
+ * gets neither - the phone reaches it over its radios, inside the default `https://**` scope - and
+ * takes dev's identity-provider values from `names.mjs` `DEV_AUTHENTIK`, as the pre-release pipeline
+ * takes them from its `DEV_` secrets. Production has no build here: `site.mjs` refused it first.
+ *
+ * **`--ref <tag>` builds an OLD client** for the mixed-version rows: a detached worktree of that tag
+ * under the system temp dir (`a1-ref-<tag>`), its own `bun install` and `bun run generate`, the same
+ * plan and the same bundle assertions. The working tree is never checked out over. The APK is copied
+ * to `STATE_DIR/apks/` under the ref's name so a later build cannot overwrite it.
+ *
+ * The four facts below are the LOCAL estate's; on dev, (1) does not apply and (2)'s overlay is absent.
  *
  * WHY THIS IS AN ATOM AND NOT A PARAGRAPH IN THE README. The invocation was documented and nothing
  * executed it, so every session retyped it - and the copy went stale in the one place a copy always
@@ -44,11 +58,14 @@
  * store; an uninstall costs a new DEVICE with no history, and a HEAL row reasons about exactly that
  * history. If the signature ever mismatches, the fix is to build debug - not to uninstall.
  */
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { LINK_MODULE, a1BuildPlan, buildEnvVerdict, bundleTargetVerdict, isBuildableRef, linkOriginsOf, reversePortFor } from './a1plan.mjs';
 import { recordApkBuild } from './apkbuild.mjs';
+import * as NAMES from './names.mjs';
 import { STATE_DIR } from './names.mjs';
 import { SITE } from './site.mjs';
 import { PKG, adb, serial, useDevice } from './phone.mjs';
@@ -57,16 +74,61 @@ const HERE = fileURLToPath(new URL('.', import.meta.url));
 const REPO = resolve(HERE, '../..');
 const FRONTEND = join(REPO, 'frontend');
 
-/** `http://localhost:8081` -> `8081`. The port is what `adb reverse` maps; the URL is unchanged. */
+/**
+ * The build this estate needs (`a1plan.mjs`). `DEV_AUTHENTIK` is machine-local and read through the
+ * namespace, so a `names.mjs` that predates it still imports for a local build.
+ */
+const planFor = (release = false) => a1BuildPlan({ site: SITE, release, devAuthentik: NAMES.DEV_AUTHENTIK });
+
+/**
+ * `http://localhost:8081` -> `8081`; `http://localhost` -> `80` (the old refusal read the scheme's
+ * default port as "no port"). The port is what `adb reverse` maps; the URL is unchanged. NULL ON
+ * DEV, which the phone reaches over its radios and which maps nothing.
+ */
 function sitePort() {
-  const port = new URL(SITE).port;
-  if (!port) {
-    throw new Error(
-      `SITE has no explicit port (${SITE}) - the phone reaches the estate by reverse-forwarding one, ` +
-        `so a default-port SITE cannot be served this way`
-    );
+  return reversePortFor(SITE);
+}
+
+/**
+ * A detached worktree of `ref`, ready to build: `bun install` and the generated WASM and protobuf
+ * (`frontend/src/lib/wasm/` and `canari.{js,d.ts}` are not in git). Reused when it already sits on
+ * that commit, so a second `--ref` build is a build and not a forty-minute setup.
+ *
+ * @returns {{frontend: string, repo: string}}
+ */
+function refTree(ref, tag) {
+  if (!isBuildableRef(ref)) throw new Error(`--ref '${ref}' is not a tag or branch name`);
+  const commit = execFileSync('git', ['-C', REPO, 'rev-parse', '--verify', `${ref}^{commit}`], { encoding: 'utf8' }).trim();
+  const dir = join(tmpdir(), `a1-ref-${ref.replace(/[^A-Za-z0-9.-]/g, '_')}`);
+  if (existsSync(dir)) {
+    const at = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    if (at !== commit) {
+      throw new Error(`${dir} exists at ${at.slice(0, 9)}, not ${ref} (${commit.slice(0, 9)}) - remove it with git worktree remove`);
+    }
+  } else {
+    console.log(`[${tag}] worktree of ${ref} (${commit.slice(0, 9)}) at ${dir}`);
+    execFileSync('git', ['-C', REPO, 'worktree', 'add', '--detach', dir, commit], { stdio: 'inherit' });
   }
-  return port;
+  const frontend = join(dir, 'frontend');
+  // THE ONE BUILD INPUT GIT DOES NOT CARRY: the Firebase config the `google-services` gradle plugin
+  // refuses to build without (gitignored; a build credential). It is the same file the checkout
+  // running this rig builds with, so it is copied from there - and its absence there is a refusal.
+  const GOOGLE_SERVICES = 'src-tauri/gen/android/app/google-services.json';
+  if (!existsSync(join(frontend, GOOGLE_SERVICES))) {
+    if (!existsSync(join(FRONTEND, GOOGLE_SERVICES))) {
+      throw new Error(`${GOOGLE_SERVICES} is absent from ${FRONTEND} too - the Android build cannot run without it`);
+    }
+    copyFileSync(join(FRONTEND, GOOGLE_SERVICES), join(frontend, GOOGLE_SERVICES));
+  }
+  for (const args of [
+    ['install', '--frozen-lockfile'],
+    ['run', 'generate'],
+  ]) {
+    console.log(`[${tag}] ${ref}: bun ${args.join(' ')}`);
+    const r = spawnSync(process.execPath, args, { cwd: frontend, stdio: 'inherit', timeout: 30 * 60_000 });
+    if (r.status !== 0) throw new Error(`${ref}: bun ${args.join(' ')} exited ${r.status} - this ref does not build with today's toolchain`);
+  }
+  return { frontend, repo: dir };
 }
 
 /**
@@ -103,8 +165,8 @@ function toolchain() {
 
 /** The two Authentik values, read from the generated `frontend/.env` - local authenticates against
  *  the PRODUCTION identity provider (workflow-migration decision 8), so they are not derived. */
-function authentikEnv() {
-  const file = join(FRONTEND, '.env');
+function authentikEnv(frontend = FRONTEND) {
+  const file = join(frontend, '.env');
   if (!existsSync(file)) return {};
   const out = {};
   for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
@@ -140,6 +202,12 @@ function authentikEnv() {
  * what decides - the same rule as the raise, in the same place.
  */
 export function estateReverse(up, tag = 'A1', port = sitePort()) {
+  // DEV HAS NO REVERSE: the phone reaches it over its own radios, so there is nothing to raise and
+  // nothing to cut - a row that needs the phone offline cuts the radios, and on dev that is ENOUGH.
+  if (port === null) {
+    console.log(`[${tag}] no reverse on this estate (${SITE}) - the phone reaches it over its radios`);
+    return { dev: null, up: null, port: null };
+  }
   const dev = serial();
   try {
     adb(up ? ['reverse', `tcp:${port}`, `tcp:${port}`] : ['reverse', '--remove', `tcp:${port}`]);
@@ -172,7 +240,15 @@ export async function armA1({
   device = 'A1',
   release = false,
   buildOnly = false,
+  ref = null,
 } = {}) {
+  const plan = planFor(release);
+  if (ref && !buildOnly) {
+    throw new Error(
+      '--ref builds an OLD client for a mixed-version row and installs nothing - pass --build-only, ' +
+        'then install that APK when the row says so'
+    );
+  }
   // BINDS THE NAMED PHONE ITSELF, defaulting to the one this atom is named for.
   //
   // With two phones attached, `serial()` refuses rather than choosing - correctly, and it says so:
@@ -189,24 +265,30 @@ export async function armA1({
   // buys nothing; `[A1]` in the log below is the DEVICE, so a line always says which phone it is
   // about. Arming a second phone is `bun a1apk.mjs --no-build --device A2` - the build is shared,
   // and rebuilding it per phone would only risk two of them differing.
-  useDevice(device);
+  // A BUILD-ONLY RUN TOUCHES NO PHONE, NOT EVEN TO BIND ONE: `useDevice` asks adb, and the reverse
+  // writes to the device. Before R2 both ran ahead of the build whatever the flag said.
+  if (!buildOnly) useDevice(device);
   const TAG = device;
 
   // ── the reverse, which is the whole of what a replug costs ────────────────────────────────
   // ONE IMPLEMENTATION, at module level above, because LIFE-6 needs the other direction too.
-  const reverse = (port) => estateReverse(true, TAG, port).dev;
+  const reverse = (port) => estateReverse(true, TAG, port).dev ?? serial();
 
-  const PORT = sitePort();
+  const PORT = plan.reversePort;
 
   // A RETURN, NOT AN EXIT. `process.exit` in a library kills the caller's run too, and this atom
   // exists to be called by the phases that arm the phone.
-  if (reverseOnly) return { reversed: true, dev: reverse(PORT) };
+  if (reverseOnly) return { reversed: PORT !== null, dev: reverse(PORT) };
 
-  const dev = reverse(PORT);
+  const dev = buildOnly ? null : reverse(PORT);
   const { sdk, ndk, ndkVersion } = toolchain();
   console.log(`[${TAG}] SDK ${sdk}`);
   console.log(`[${TAG}] NDK ${ndkVersion} (discovered, not named)`);
-  console.log(`[${TAG}] target origin ${SITE} - the same string on both sides of the reverse`);
+  console.log(
+    `[${TAG}] estate ${plan.estate}, origin ${plan.origin}` +
+      (PORT ? ' - the same string on both sides of the reverse' : " - reached over the phone's radios, no reverse")
+  );
+  const tree = ref ? refTree(ref, TAG) : { frontend: FRONTEND, repo: REPO };
 
   // THE RELEASE VARIANT IS FOR CHECK R AND COSTS THE DEVICE, which is why it is a flag and not a
   // default. `isMinifyEnabled` and `isShrinkResources` are on for this build type ALONE, so it is
@@ -216,24 +298,22 @@ export async function armA1({
   // overlay included: `network_security_config.xml` lives in `src/main/res`, applies to every build
   // type, and names `localhost`, so cleartext to the estate is NOT a debug-only privilege.
   const APK = join(
-    FRONTEND,
+    tree.frontend,
     release
       ? 'src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk'
       : 'src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk'
   );
 
-  // Relative to FRONTEND, which is this build's cwd - `--config` resolves against the cwd.
-  const LOCAL_CONF = 'src-tauri/tauri.local.conf.json';
-
   if (build) {
-    if (!existsSync(join(FRONTEND, LOCAL_CONF))) {
+    // Relative to the frontend, which is this build's cwd - `--config` resolves against the cwd.
+    if (plan.overlay && !existsSync(join(tree.frontend, plan.overlay))) {
       throw new Error(
-        `${LOCAL_CONF} is absent - without it the APK compiles capability \`default\` alone and every ` +
+        `${plan.overlay} is absent - without it the APK compiles capability \`default\` alone and every ` +
           `call to the local estate is refused by scope. It is not optional.`
       );
     }
 
-    const tauri = join(FRONTEND, 'node_modules/.bin/tauri.exe');
+    const tauri = join(tree.frontend, 'node_modules/.bin/tauri.exe');
     if (!existsSync(tauri)) {
       throw new Error(
         `${tauri} is missing - and \`npx tauri\` / \`bun tauri\` do not resolve on this box, so the ` +
@@ -247,18 +327,20 @@ export async function armA1({
     env.ANDROID_HOME = sdk;
     env.ANDROID_SDK_ROOT = sdk;
     env.NDK_HOME = ndk;
-    for (const k of [
-      'VITE_FRONTEND_URL',
-      'VITE_GATEWAY_URL',
-      'VITE_DELIVERY_URL',
-      'VITE_MEDIA_URL',
-      'VITE_CALL_URL',
-      'VITE_SOCIAL_URL',
-      'VITE_CORE_URL',
-    ]) {
-      env[k] = SITE;
+    // The origins (and on dev the identity provider and the banner) come from the plan; the local
+    // estate keeps reading its Authentik pair from the generated `frontend/.env`.
+    Object.assign(env, plan.env);
+    if (plan.authentikFromFrontendEnv) Object.assign(env, authentikEnv(tree.frontend));
+
+    // NO PRODUCTION ORIGIN MAY REACH VITE, checked at the source before a minute is spent building:
+    // the bundle cannot tell a baked request target from a link constant, the environment can.
+    const envFiles = readdirSync(tree.frontend)
+      .filter((f) => /^\.env(\..+)?$/.test(f) && !f.endsWith('.example'))
+      .map((name) => ({ name, text: readFileSync(join(tree.frontend, name), 'utf8') }));
+    const envVerdict = buildEnvVerdict(env, envFiles);
+    if (!envVerdict.ok) {
+      throw new Error(`a VITE_* value this build would bake names a PRODUCTION origin: ${envVerdict.offenders.join(', ')}`);
     }
-    Object.assign(env, authentikEnv());
 
     const logDir = join(STATE_DIR, 'logs');
     mkdirSync(logDir, { recursive: true });
@@ -273,11 +355,10 @@ export async function armA1({
     // build without this overlay produces an APK that REFUSES the estate it was pointed at, with the
     // product's own red "url not allowed on the configured scope". The overlay adds `local-estate`,
     // and nothing else does, which is what keeps a release build from ever compiling it.
-    const args = release
-      ? ['android', 'build', '--config', LOCAL_CONF]
-      : ['android', 'build', '--debug', '--config', LOCAL_CONF];
+    // On dev the plan carries no `--config`: the default capability already covers `https://**`.
+    const args = plan.args;
     const built = spawnSync(tauri, args, {
-      cwd: FRONTEND,
+      cwd: tree.frontend,
       env,
       stdio: 'inherit',
       timeout: 45 * 60_000,
@@ -295,16 +376,29 @@ export async function armA1({
     // (4) above, MEASURED: did Vite actually take the origins from the environment? The packaged
     // bundle is the only place that can answer, and an APK pointing at production would otherwise be
     // found by a row that fails for a reason nobody can see.
-    const chunks = join(FRONTEND, 'build/_app/immutable/chunks');
-    const hits = existsSync(chunks)
-      ? readdirSync(chunks).filter((f) => f.endsWith('.js') && readFileSync(join(chunks, f), 'utf8').includes(SITE))
+    // AND NOTHING ELSE THAT IS PRODUCTION (R2): a bundle naming the estate can still carry a
+    // production origin beside it, taken from a stale `frontend/.env`, and an APK calling both is an
+    // APK on production.
+    const chunks = join(tree.frontend, 'build/_app/immutable/chunks');
+    const texts = existsSync(chunks)
+      ? readdirSync(chunks)
+          .filter((f) => f.endsWith('.js'))
+          .map((name) => ({ name, text: readFileSync(join(chunks, name), 'utf8') }))
       : [];
-    console.log(`[${TAG}] ${SITE} appears in ${hits.length} packaged chunk(s)`);
-    if (!hits.length) {
+    const linkOrigins = linkOriginsOf(readFileSync(join(tree.frontend, LINK_MODULE), 'utf8'));
+    const verdict = bundleTargetVerdict(texts, plan.origin, linkOrigins);
+    console.log(
+      `[${TAG}] ${plan.origin} appears in ${verdict.hits.length} packaged chunk(s), a production origin in ` +
+        `${verdict.production.length}; ${verdict.links.length} production LINK constant(s) of ${LINK_MODULE} tolerated`
+    );
+    if (!verdict.hits.length) {
       throw new Error(
-        `the built bundle does not mention ${SITE} - Vite did not take the VITE_*_URL from the ` +
-          `environment, so this APK would talk to whatever frontend/.env says (production)`
+        `the built bundle does not mention ${plan.origin} - Vite did not take the VITE_*_URL from the ` +
+          `environment, so this APK would talk to whatever frontend/.env says`
       );
+    }
+    if (verdict.production.length) {
+      throw new Error(`the built bundle names a PRODUCTION origin beside ${plan.origin}: ${verdict.production.join(' | ')}`);
     }
 
     // WHETHER THIS APK IS ANY COMMIT AT ALL, written down while the answer is still knowable.
@@ -314,7 +408,7 @@ export async function armA1({
     // fix, build, measure, commit. On 2026-09-08 that put NOTIF-16's PASS against `1fd7cecd7`, the
     // commit BEFORE the fix that makes it pass. Recorded rather than refused: a gate against a
     // dirty build would make the fix-and-measure loop impossible. See `apkbuild.mjs`.
-    const provenance = recordApkBuild();
+    const provenance = recordApkBuild(tree.repo);
     console.log(
       `[${TAG}] built from ${provenance.head}` +
         (provenance.dirty
@@ -329,6 +423,14 @@ export async function armA1({
   // build and its assertions stand alone, and installing is a separate decision - which the release
   // variant makes irreversible.
   if (buildOnly) {
+    // A REF BUILD IS KEPT UNDER ITS NAME: the next build in that worktree would overwrite the path.
+    if (ref) {
+      const kept = join(STATE_DIR, 'apks', `canari-${ref.replace(/[^A-Za-z0-9.-]/g, '_')}-${plan.estate}-${release ? 'release' : 'debug'}.apk`);
+      mkdirSync(join(STATE_DIR, 'apks'), { recursive: true });
+      copyFileSync(APK, kept);
+      console.log(`[${TAG}] --build-only --ref ${ref}: kept at ${kept}; no phone was touched`);
+      return { apk: kept, installed: false, dev };
+    }
     console.log(`[${TAG}] --build-only: the APK is at ${APK} and no phone was touched`);
     return { apk: APK, installed: false, dev };
   }
@@ -436,7 +538,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const at = argv.indexOf('--device');
   const device = at >= 0 ? argv[at + 1] : 'A1';
   if (at >= 0 && !device) throw new Error('--device needs a name, as names.mjs spells it (A1, A2)');
+  const atRef = argv.indexOf('--ref');
+  const ref = atRef >= 0 ? argv[atRef + 1] : null;
+  if (atRef >= 0 && !ref) throw new Error('--ref needs a tag, e.g. v1.4.0');
   armA1({
+    ref,
     build: !argv.includes('--no-build'),
     reverseOnly: argv.includes('--reverse'),
     release: argv.includes('--release'),
