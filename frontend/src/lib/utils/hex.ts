@@ -1,4 +1,4 @@
-import { isTauriRuntime } from '$lib/utils/openExternal';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { withDeviceKeyHeld } from '$lib/db/deviceKeyGate';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
