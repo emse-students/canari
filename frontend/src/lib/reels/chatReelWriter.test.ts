@@ -1,0 +1,54 @@
+import { describe, expect, it } from 'vitest';
+import {
+  CHAT_REEL_RETENTION_MS,
+  CHAT_REEL_WRITER_ENABLED,
+  chatReelAllowed,
+  chatReelDeclaration,
+  isChatReelTake,
+  markChatReelTake,
+  uploadClassFor,
+} from './chatReelWriter';
+import { destinationRules } from './reelCapture';
+
+describe('the chat reel writer', () => {
+  it('is OFF in the shipped code: nothing reaches a member until RC-5 and RC-7', () => {
+    expect(CHAT_REEL_WRITER_ENABLED).toBe(false);
+    expect(chatReelAllowed(false)).toBe(false);
+  });
+
+  it('writes a DM or a group when on, never a salon', () => {
+    expect(chatReelAllowed(false, true)).toBe(true);
+    expect(chatReelAllowed(true, true)).toBe(false);
+  });
+
+  it('declares the length, and the expiry 30 days after the clock it is given', () => {
+    expect(chatReelDeclaration(12.3456, 1_000)).toEqual({
+      intent: 'reel-message',
+      durationMs: 12_346,
+      expiresAtMs: 1_000 + CHAT_REEL_RETENTION_MS,
+    });
+    expect(chatReelDeclaration(0, 0).durationMs).toBe(1);
+  });
+
+  it('uploads a declared reel as chat-reel and anything else as ephemeral', () => {
+    expect(uploadClassFor({ intent: 'reel-message' })).toBe('chat-reel');
+    expect(uploadClassFor({})).toBe('ephemeral');
+  });
+
+  it('marks a take by the file itself', () => {
+    const take = new File(['x'], 'a.mp4', { type: 'video/mp4' });
+    expect(isChatReelTake(take)).toBe(false);
+    markChatReelTake(take);
+    expect(isChatReelTake(take)).toBe(true);
+    expect(isChatReelTake(new File(['x'], 'a.mp4', { type: 'video/mp4' }))).toBe(false);
+  });
+
+  it('keeps the chat camera photo-only unless the writer lets it film', () => {
+    expect(destinationRules('chat').photoOnly).toBe(true);
+    expect(destinationRules('chat', true)).toMatchObject({
+      photoOnly: false,
+      microphone: 'separate',
+    });
+    expect(destinationRules('feed', true).photoOnly).toBe(false);
+  });
+});
