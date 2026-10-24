@@ -66,7 +66,6 @@ import { join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import {
-  DEAD_PUSH_FALLBACK,
   LAYOUT_MODULE,
   LINK_MODULE,
   a1BuildPlan,
@@ -418,14 +417,14 @@ export async function armA1({
           .map((name) => ({ name: name.split(sep).join('/'), text: readFileSync(join(immutable, name), 'utf8') }))
       : [];
     const linkModule = linkModuleOf(readFileSync(join(tree.frontend, LINK_MODULE), 'utf8'));
-    const link = { origins: linkModule.origins, chunk: linkChunkOf(texts, linkModule.hosts), defaultOrigin: linkModule.defaultOrigin };
-    const verdict = bundleTargetVerdict(texts, plan.origin, link, { acceptPushFallback: acceptDeadProductionLiteral });
+    const link = { origins: linkModule.origins, chunk: linkChunkOf(texts, linkModule.hosts), defaultOrigin: linkModule.defaultOrigin, legacyOrigin: linkModule.legacyOrigin };
+    const verdict = bundleTargetVerdict(texts, plan.origin, link, { acceptDeadLiterals: acceptDeadProductionLiteral });
     console.log(
       `[${TAG}] ${plan.origin} appears in ${verdict.hits.length} packaged chunk(s), a production origin in ` +
         `${verdict.production.length}; ${verdict.links.length} production LINK constant(s) of ${LINK_MODULE} tolerated`
     );
     for (const a of verdict.accepted) {
-      console.log(`[${TAG}] ACCEPTED by --accept-dead-production-literal (${DEAD_PUSH_FALLBACK}, old ref ${ref}): ${a}`);
+      console.log(`[${TAG}] ACCEPTED by --accept-dead-production-literal (old ref ${ref}): ${a}`);
     }
     if (!verdict.hits.length) {
       throw new Error(
@@ -448,7 +447,7 @@ export async function armA1({
     // allowed only for an APK whose sha256 is recorded here for this origin (`installVerdict`).
     // AN ACCEPTANCE IS PART OF THE VERDICT, so it is written beside it: a reader of this record must
     // see that the bundle passed only because a dead production literal was accepted, and where.
-    const acceptance = verdict.accepted.length ? { acceptedDeadProductionLiteral: DEAD_PUSH_FALLBACK, accepted: verdict.accepted } : {};
+    const acceptance = verdict.accepted.length ? { acceptedDeadProductionLiteral: verdict.accepted.map((a) => a.split(" ")[0]), accepted: verdict.accepted } : {};
     const provenance = recordApkBuild(tree.repo, { apkSha256: sha256Of(APK), origin: plan.origin, estate: plan.estate, ref, bundleOk: true, ...acceptance });
     console.log(
       `[${TAG}] built from ${provenance.head}` +

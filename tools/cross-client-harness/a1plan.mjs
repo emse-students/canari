@@ -145,7 +145,8 @@ export function linkModuleOf(source) {
     );
   }
   const defaultOrigin = source.match(/export const DEFAULT_PUBLIC_APP_ORIGIN = '([^']+)'/)[1];
-  return { origins, hosts, defaultOrigin };
+  const legacyOrigin = source.match(/export const LEGACY_PUBLIC_APP_ORIGIN = '([^']+)'/)[1];
+  return { origins, hosts, defaultOrigin, legacyOrigin };
 }
 
 /** The root layout, relative to `frontend/` - where the dead push fallback lived until #2385. */
@@ -161,17 +162,26 @@ export const LAYOUT_MODULE = 'src/routes/+layout.svelte';
  */
 export const carriesDeadPushFallback = (layoutSource) => /historyBaseUrl\s*\|\|\s*DEFAULT_PUBLIC_APP_ORIGIN\b/.test(layoutSource);
 
-/** The name an accepted dead literal is recorded under, in the build record and the console. */
-export const DEAD_PUSH_FALLBACK = 'push-service-fallback';
-
 /**
- * Whether the occurrence at `[start, end)` of `text` is the compiled push fallback: the canonical
- * origin as a whole template or string literal, right after `.historyBaseUrl||` and right before the
- * `,` that ends `startPushService`'s first argument. Exactly that shape and nothing near it.
+ * THE TWO DEAD LITERALS `--accept-dead-production-literal` MAY ADMIT, by the name each is recorded
+ * under, and the exact compiled shape of each (decided 2026-10-24 for ADM-5..7). Each is admitted
+ * AT MOST ONCE per bundle; a second occurrence, or any other shape, is production as before.
+ *
+ * - `push-service-fallback`: the canonical origin as a whole literal right after `.historyBaseUrl||`
+ *   and right before the `,` ending `startPushService`'s first argument (the layout, before #2385).
+ *   Unreachable in a signed-in build, where `historyBaseUrl` is always set.
+ * - `legacy-apex-comparison`: the legacy origin as a whole literal right after `!==` and right before
+ *   the `?` of the conditional (`seo/site.ts` comparing the baked origin with the legacy apex, before
+ *   #2385). A comparison, never a request target.
+ *
+ * Each test takes the text, the literal's `[start, end)` (inside its quotes) and the link origins.
  */
-function isPushFallbackAt(text, start, end, literal, defaultOrigin) {
-  return literal === defaultOrigin && text.slice(0, start - 1).endsWith('.historyBaseUrl||') && text[end + 1] === ',';
-}
+export const DEAD_LITERAL_SHAPES = {
+  'push-service-fallback': (text, start, end, link) =>
+    text.slice(start, end) === link.defaultOrigin && text.slice(0, start - 1).endsWith('.historyBaseUrl||') && text[end + 1] === ',',
+  'legacy-apex-comparison': (text, start, end, link) =>
+    text.slice(start, end) === link.legacyOrigin && text.slice(0, start - 1).endsWith('!==') && text[end + 1] === '?',
+};
 
 /**
  * The ONE packaged chunk that is `LINK_MODULE`, found by its `PUBLIC_APP_HOSTS` array literal
@@ -207,17 +217,21 @@ export function linkChunkOf(chunks, hosts) {
  * (`buildEnvVerdict`) and why the one such use was removed from the product (#2385).
  *
  * ONE EXPLICIT ACCEPTANCE, for old refs only (`--accept-dead-production-literal`, decided
- * 2026-10-24 for the floor/old-client rows ADM-5..7): `acceptPushFallback` lets through ONE
- * occurrence of the compiled push fallback (`.historyBaseUrl||"<canonical origin>",`) and nothing
- * else - every other production spelling, in every chunk, stays refused. It is never implied.
+ * 2026-10-24 for the floor/old-client rows ADM-5..7): `acceptDeadLiterals` lets through at most ONE
+ * occurrence of each shape in {@link DEAD_LITERAL_SHAPES} and nothing else - every other production
+ * spelling, in every chunk, stays refused. It is never implied.
  *
  * @param {{name: string, text: string}[]} chunks every packaged JS file (chunks, nodes, entry)
  * @param {string} origin the estate's origin
- * @param {{origins: string[], chunk: string, defaultOrigin?: string} | null} [link] the link constants and their chunk; none allowed when null
- * @param {{acceptPushFallback?: boolean}} [options]
+ * @param {{origins: string[], chunk: string, defaultOrigin?: string, legacyOrigin?: string} | null} [link] the link constants and their chunk; none allowed when null
+ * @param {{acceptDeadLiterals?: boolean}} [options]
+ * @returns accepted entries read `<shape name> <chunk>: <context>`
  */
-export function bundleTargetVerdict(chunks, origin, link = null, { acceptPushFallback = false } = {}) {
-  if (acceptPushFallback && !link?.defaultOrigin) throw new Error('bundleTargetVerdict: accepting the push fallback needs the link module\'s DEFAULT origin');
+export function bundleTargetVerdict(chunks, origin, link = null, { acceptDeadLiterals = false } = {}) {
+  if (acceptDeadLiterals && !(link?.defaultOrigin && link?.legacyOrigin)) {
+    throw new Error("bundleTargetVerdict: accepting the dead literals needs the link module's DEFAULT and LEGACY origins");
+  }
+  const used = new Set();
   const hits = chunks.filter((c) => c.text.includes(origin)).map((c) => c.name);
   const all = new RegExp(PRODUCTION_ORIGIN_SOURCE, 'gi');
   const production = [];
@@ -230,10 +244,15 @@ export function bundleTargetVerdict(chunks, origin, link = null, { acceptPushFal
       if (c.text[end] === '/') end++;
       const isWholeLiteral = ['"', "'", '`'].includes(before) && c.text[end] === before;
       const isLink = link !== null && c.name === link.chunk && isWholeLiteral && link.origins.includes(m[0]);
-      const isAccepted =
-        acceptPushFallback && accepted.length === 0 && isWholeLiteral && isPushFallbackAt(c.text, m.index, end, c.text.slice(m.index, end), link.defaultOrigin);
+      const shape =
+        !isLink && acceptDeadLiterals && isWholeLiteral
+          ? Object.keys(DEAD_LITERAL_SHAPES).find((n) => !used.has(n) && DEAD_LITERAL_SHAPES[n](c.text, m.index, end, link))
+          : undefined;
       if (isLink) links.push(`${c.name}: ${c.text.slice(m.index, end)}`);
-      else if (isAccepted) accepted.push(`${c.name}: ${c.text.slice(Math.max(0, m.index - 19), end + 2)}`);
+      else if (shape) {
+        used.add(shape);
+        accepted.push(`${shape} ${c.name}: ${c.text.slice(Math.max(0, m.index - 19), end + 2)}`);
+      }
       else production.push(`${c.name}: ${c.text.slice(m.index, Math.min(c.text.length, end + 20))}`);
     }
   }

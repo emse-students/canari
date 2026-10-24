@@ -110,11 +110,12 @@ ok('plain http, ws and protocol-relative spellings are refused', refusedIn('"htt
 ok('upper case and a trailing dot are refused', refusedIn('"HTTPS://CANARI-EMSE.FR"') && refusedIn('"https://canari.emse.fr."'));
 ok("dev's own host and bare hostnames are not production origins", bundleTargetVerdict([chunk('Dypz5d_W.js', MEASURED), chunk('x.js', `"${DEV}" "//dev.canari-emse.fr" "canari-emse.fr"`)], DEV, LINK).ok);
 
-// ── --accept-dead-production-literal: the push fallback of an OLD ref, and nothing else (ADM-5..7) ──
+// ── --accept-dead-production-literal: the push fallback and the legacy-apex comparison of an OLD ref, once each, and nothing else (ADM-5..7) ──
 // The shape v1.4.0's layout node compiled to (nodes/0.C1Q5cC68.js, measured 2026-10-24).
 const PUSH = 'Dt(Y.historyBaseUrl||`https://canari.emse.fr`,Y.authToken,Y.myDeviceId)';
-const ACCEPT = { acceptPushFallback: true };
-const LINKD = { ...LINK, defaultOrigin: MODULE.defaultOrigin };
+const ACCEPT = { acceptDeadLiterals: true };
+const CMP = 'return e&&e!==`https://canari-emse.fr`?e:G';
+const LINKD = { ...LINK, defaultOrigin: MODULE.defaultOrigin, legacyOrigin: MODULE.legacyOrigin };
 const withPush = [chunk('Dypz5d_W.js', MEASURED), chunk('nodes/0.js', `"${DEV}";${PUSH}`)];
 ok('the link module names its DEFAULT origin, which is the only literal the acceptance can match', MODULE.defaultOrigin === 'https://canari.emse.fr');
 ok('the push fallback is REFUSED without the flag', !bundleTargetVerdict(withPush, DEV, LINKD).ok);
@@ -123,12 +124,21 @@ ok('the push fallback is REFUSED without the flag', !bundleTargetVerdict(withPus
   ok('with the flag the push fallback passes, and is listed as accepted', v.ok && v.accepted.length === 1 && /historyBaseUrl\|\|`https:\/\/canari\.emse\.fr`,/.test(v.accepted[0]));
 }
 const stillRefused = (text) => !bundleTargetVerdict([...withPush, chunk('x.js', text)], DEV, LINKD, ACCEPT).ok;
-ok('with the flag, the legacy-apex comparison v1.4.0 ALSO carries is still refused', stillRefused('return e&&e!==`https://canari-emse.fr`?e:G'));
+const withBoth = [chunk('Dypz5d_W.js', MEASURED), chunk('nodes/0.js', `"${DEV}";${PUSH};${CMP}`)];
+ok('the legacy-apex comparison is REFUSED without the flag', !bundleTargetVerdict(withBoth, DEV, LINKD).ok);
+{
+  const v = bundleTargetVerdict(withBoth, DEV, LINKD, ACCEPT);
+  ok('with the flag the v1.4.0 node passes: both shapes accepted, each named', v.ok && v.accepted.map((a) => a.split(' ')[0]).join() === 'push-service-fallback,legacy-apex-comparison');
+}
+const bothRefused = (text) => !bundleTargetVerdict([...withBoth, chunk('x.js', text)], DEV, LINKD, ACCEPT).ok;
+ok('with the flag, a second legacy-apex comparison is refused', bothRefused('if(a!==`https://canari-emse.fr`?1:2)'));
+ok('with the flag, a request-shaped use of the legacy apex is refused', bothRefused('fetch(`https://canari-emse.fr`,o)') && bothRefused('f(Y.historyBaseUrl||`https://canari-emse.fr`,a)') && bothRefused('x===`https://canari-emse.fr`?1:2'));
+ok('with the flag, the CANONICAL origin in the comparison shape is refused', !bundleTargetVerdict([chunk('Dypz5d_W.js', MEASURED), chunk('n.js', `"${DEV}";a!=="https://canari.emse.fr"?1:2`)], DEV, LINKD, ACCEPT).ok);
 ok('with the flag, a second push-shaped literal is refused (one acceptance, not a pattern)', stillRefused('Q(Y.historyBaseUrl||`https://canari.emse.fr`,a)'));
 ok('with the flag, the canonical origin after another `||` is refused', stillRefused('f(Y.baseUrl||`https://canari.emse.fr`,a)'));
 ok('with the flag, the legacy name in the push shape is refused', !bundleTargetVerdict([chunk('Dypz5d_W.js', MEASURED), chunk('n.js', `"${DEV}";Dt(Y.historyBaseUrl||\`https://canari-emse.fr\`,a)`)], DEV, LINKD, ACCEPT).ok);
 ok('with the flag, a socket or a path in the push shape is refused', stillRefused('Dt(Y.historyBaseUrl||`wss://canari.emse.fr`,a)') && stillRefused('Dt(Y.historyBaseUrl||`https://canari.emse.fr/api`,a)'));
-ok('the flag needs the DEFAULT origin, and says so', throws(() => bundleTargetVerdict(withPush, DEV, LINK, ACCEPT)) !== null);
+ok('the flag needs the DEFAULT and LEGACY origins, and says so', throws(() => bundleTargetVerdict(withPush, DEV, LINK, ACCEPT)) !== null);
 ok('an OLD layout carries the fallback', carriesDeadPushFallback('startPushService(\n  globalSession.historyBaseUrl || DEFAULT_PUBLIC_APP_ORIGIN,'));
 ok("this tree's layout does not (#2385), so the flag has nothing to accept here", !carriesDeadPushFallback('startPushService(globalSession.historyBaseUrl, x)'));
 
