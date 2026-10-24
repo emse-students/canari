@@ -50,19 +50,35 @@ function isNonPublicWebViewOrigin(origin: string): boolean {
  */
 export function publicAppOrigin(): string {
   const fromEnv = (import.meta.env.VITE_FRONTEND_URL as string | undefined)?.trim();
-  // A build that baked the legacy apex must still hand out the canonical name: this function mints
-  // links for OTHER people, and sending them to a host every browser is redirected off adds a hop
-  // for no reason. Every other baked value (dev's own origin, a preview) is left alone.
-  if (fromEnv && fromEnv.replace(/\/$/, '') !== LEGACY_PUBLIC_APP_ORIGIN) {
-    return fromEnv.replace(/\/$/, '');
-  }
-  if (fromEnv) return DEFAULT_PUBLIC_APP_ORIGIN;
+  if (fromEnv) return canonicalPublicAppOrigin();
 
   if (typeof window !== 'undefined') {
     const origin = window.location.origin.replace(/\/$/, '');
     if (!isNonPublicWebViewOrigin(origin) && origin !== LEGACY_PUBLIC_APP_ORIGIN) return origin;
   }
 
+  return DEFAULT_PUBLIC_APP_ORIGIN;
+}
+
+/**
+ * The canonical origin a BUILD advertises, with no runtime to ask: the baked `VITE_FRONTEND_URL`,
+ * or the canonical name when nothing usable was baked. The one rule behind share links
+ * ({@link publicAppOrigin}) and canonical tags, sitemaps and previews (`siteOrigin` in
+ * `$lib/seo/site`), so the two can never disagree.
+ *
+ * A build that baked the legacy apex still hands out the canonical name: these links are for OTHER
+ * people, and sending them to a host every browser is redirected off adds a hop for no reason.
+ * Every other baked value (dev's own origin, a preview) is left alone.
+ *
+ * THE PRODUCTION NAMES STAY IN THIS MODULE. Every consumer calls a function of it rather than
+ * reading the two constants, so a packaged bundle carries them in this module's chunk alone - which
+ * is what lets the test rig refuse a production origin anywhere else in a dev or local build.
+ */
+export function canonicalPublicAppOrigin(): string {
+  const baked = (import.meta.env.VITE_FRONTEND_URL as string | undefined)
+    ?.trim()
+    .replace(/\/$/, '');
+  if (baked && baked !== LEGACY_PUBLIC_APP_ORIGIN) return baked;
   return DEFAULT_PUBLIC_APP_ORIGIN;
 }
 
