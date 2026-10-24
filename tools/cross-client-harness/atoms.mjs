@@ -128,6 +128,17 @@
  *   `hoverBubble` `longPressBubble` `clickBubbleAction`             `chat.mjs` - desktop and mobile
  *                                                                   shapes of the same gesture.
  *
+ * **Breaking the network on purpose**
+ *   `cut` `cutHard` `throttleUpload` `archive/net.mjs`  the radios: a request refused BEFORE it
+ *                                                  leaves, or a live socket closed, or an upload slowed.
+ *   `armFault(cx, rules)`           `fault.mjs`    the RESPONSE stage, over CDP `Fetch`: a request
+ *                                                  that reaches the server and whose answer is lost
+ *                                                  (`lose-answer`), replaced (`status N`), refused
+ *                                                  unsent (`status-unsent N`), delayed, or held until
+ *                                                  `release()` (`hold` before the server, `hold-answer`
+ *                                                  after it). Records each action; `disarm()` names
+ *                                                  a rule that never fired.
+ *
  * **Observing**
  *   `logs.mjs`                      `logs.mjs`     THE COMMAND over all three observers - a client's
  *                                                  console, the phone's logcat, or the estate -
@@ -158,6 +169,7 @@ export { BROWSERS, closeBrowser, isUp, killBrowser, startBrowser } from './launc
 export { PORTS, VENUE } from './names.mjs';
 export { ORIGIN, SITE } from './site.mjs';
 export { psql, redis } from './estate.mjs';
+export { armFault } from './fault.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 

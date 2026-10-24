@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-86 scripts.
+87 scripts.
 
 | script | what it is |
 |---|---|
@@ -48,6 +48,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `estate-target.mjs` | WHICH ESTATES THIS RIG MAY ADDRESS - THE LOCAL ONE AND DEV - AND THE REFUSAL OF EVERY OTHER, PRODUCTION FIRST. |
 | `estate.mjs` | WHICH ESTATE A QUERY IS ABOUT, DERIVED FROM THE ONE CONSTANT THAT DECIDES WHERE THE CAMPAIGN RUNS. |
 | `expectations.mjs` | THE PURE HALF OF A ROW'S VERDICT BOOKKEEPING: naming the expectations and preconditions it did not |
+| `fault.mjs` | MAKES A REQUEST LAND AND ITS ANSWER VANISH - the response-stage fault atom, over CDP `Fetch`. |
 | `fixtures.mjs` | WHERE A STAGED INPUT FILE LIVES - resolved from the HARNESS ROOT, never from the caller. |
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
 | `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of the estate's database instead (local or dev). |
@@ -213,7 +214,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-44 scripts.
+46 scripts.
 
 | script | what it is |
 |---|---|
@@ -230,6 +231,8 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/estate-selftest.mjs` | WHICH ESTATE A CLIENT IS ON IS A GATE, AND A GATE THAT ONLY EVER ACCEPTS IS NOT ONE. |
 | `archive/exit-selftest.mjs` | A CHECK MAY NOT REPORT SUCCESS AND END IN THE SAME BREATH. |
 | `archive/expectations-selftest.mjs` | Pins `expectations.mjs`: an unarmed row (COMM-9/10's `VACUOUS` with `failures: []`) names every |
+| `archive/fault-live-selftest.mjs` | WHAT CHROME DOES WITH EACH FAULT, MEASURED AGAINST A SERVER THAT COUNTS - AND NO ESTATE AT ALL. |
+| `archive/fault-selftest.mjs` | THE RESPONSE-STAGE FAULT ATOM DECIDES WHAT IT SHOULD, AGAINST A FAKE CDP CONNECTION. |
 | `archive/gate-probe-selftest.mjs` | `pin.mjs`'s gate probe, exercised on the pages it has to tell apart. |
 | `archive/gate-selftest.mjs` | EVERY SELF-TEST IN THE CI GATE MUST BE IMPORTABLE ON A MACHINE THAT HAS NO RIG. |
 | `archive/identity-selftest.mjs` | Pins the two ways a client's identity can be misread, and the one way it must not pass quietly. |
@@ -315,4 +318,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-254 scripts in total.
+257 scripts in total.
