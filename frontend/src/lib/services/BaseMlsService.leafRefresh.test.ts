@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Break the app-wide import cycle (auth store -> composables -> mlsService -> subclasses ->
 // BaseMlsService) that otherwise loads the concrete services before BaseMlsService is defined.
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
@@ -11,9 +12,11 @@ import { BaseMlsService } from './BaseMlsService';
 import { DELIVERY, addressedKeyMaterial, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import { readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
+import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { recordingStage } from '../../test/recordingStage';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 
 /** Any intent: the refresh only hands it on to its stage. */
 const INTENT = new Uint8Array([9]);
@@ -162,6 +165,19 @@ describe('the commits no person asks for - staged only on the branch the server 
     });
   });
 
+  it('refuses a refresh on a follower tab BEFORE fetching the published base', async () => {
+    const leadership = await import('$lib/mls-client/tabLeader');
+    vi.spyOn(leadership, 'getTabLeadership').mockReturnValue('follower');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const ctx = branchCtx({ base: { groupInfo: GI, baseEpoch: 5, activeEpoch: 5 } });
+    await expect(proto.refreshOwnLeaf.call(ctx, 'g-1')).rejects.toBeInstanceOf(
+      FollowerTabCommitError
+    );
+    expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
+    expect(ctx.runCommitTransaction).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
   describe.each(commits)('%s', (_name, commit, stageName) => {
     it.each([
       ['no base is published', { base: null }, 'no-base'],
@@ -209,8 +225,8 @@ abstract class SendHarness extends BaseMlsService {
   protected async groupsWithPendingCommit(): Promise<string[]> {
     return [];
   }
-  protected async encryptForSend(): Promise<Uint8Array> {
-    return sealedFrame(1);
+  protected async encryptForSend(): Promise<AuthoredFrame> {
+    return { sealed: sealedFrame(1), authorProof: new Uint8Array([4]) };
   }
 }
 const Harness = SendHarness as unknown as new () => SendHarness;

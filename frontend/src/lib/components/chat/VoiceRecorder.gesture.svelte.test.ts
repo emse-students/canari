@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE FOUR WAYS A HELD MICROPHONE CAN END, AND THE ONE WAY IT MUST NOT.
  *

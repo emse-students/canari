@@ -251,7 +251,7 @@ and COMM-18's four defects: [cross-client-campaign](cross-client-campaign.md).
 | COMM-9 | Removed from a salon: routing rows dropped (`evicted=true`), the next message sealed under a session they do not hold | `W1 W2` | `PASS` 2026-09-05 03:22 on 0.16.3, clean (recorded jointly with COMM-10 by `comm910.mjs`) |
 | COMM-10 | Removed from a salon: what they ALREADY hold stays readable - Graine retains seeds on purpose | `W1 W2` | `PASS` 2026-09-05 03:22 on 0.16.3, clean (joint with COMM-9) |
 | COMM-11 | Kicked from the COMMUNITY: the workspace purged and every private salon group left | `W1 W2` | `PASS` 2026-09-05 03:24 on 0.16.3, clean |
-| COMM-12 | Re-invited after a removal: sessions minted from now on, and the past only as `history_visibility` allows | `W1 W2` | `PASS` 2026-09-05 03:27 on 0.16.3, clean |
+| COMM-12 | Re-invited after a removal: sessions minted from now on, and the past only as `history_visibility` allows; two arms added 2026-10-22 and owed a first run - a new device under `joined` (W3), and the rule widened under a member already in | `W1 W2 W3` | `PASS` 2026-09-05 03:27 on 0.16.3, clean |
 | COMM-13 | An admin JOINS a salon: 403 before and 200 after, the member list gains them, the transcript gains NOTHING | `W1 W2` | `PASS` 2026-09-05 03:30 on 0.16.3, clean |
 | COMM-14 | Channel notification levels enforced server-side | `+push` | `PASS` 2026-09-05 04:07 on 0.16.3 + APK `2eb116c3`, clean |
 | COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `PASS` 2026-09-05 04:11 on 0.16.3, clean |

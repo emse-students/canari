@@ -24,6 +24,7 @@ const read = (p: string) => readFileSync(resolve(here, p), 'utf8');
 const ANDROID = '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/';
 const nativeCacheRs = read('../../../src-tauri/src/native_cache.rs');
 const pushRs = read('../../../src-tauri/src/commands/push.rs');
+const keyGroupJoinRs = read('../../../src-tauri/src/mobile/key_group_join.rs');
 const nativeCacheKeyKt = read(`${ANDROID}NativeCacheKey.kt`);
 const firebaseKt = read(`${ANDROID}CanariFirebaseMessagingService.kt`);
 const applicationKt = read(`${ANDROID}CanariApplication.kt`);
@@ -65,6 +66,7 @@ describe('one key, under one alias, on every side', () => {
       /private fun drainPendingChannelFrames\(cacheKey: String\)/,
       /private fun postChannelNotification\(\n\s*cacheKey: String,/,
       /private fun openSeedFrame\(\n\s*cacheKey: String,/,
+      /private fun joinKeyGroupFromPush\(cacheKey: String,/,
     ]) {
       expect(firebaseKt).toMatch(fn);
       expect(between(firebaseKt, fn, /\n {4}}\n/)).not.toContain('NativeCacheKey.retrieve(');
@@ -143,6 +145,28 @@ describe('the sealed seed mirror is read by Rust alone', () => {
     ['Objective-C++', pushMm, 'canari_native_graine_seed_held('],
   ])('%s asks Rust whether a session is held', (_name, source, call) => {
     expect(source).toContain(call);
+  });
+});
+
+describe('the push key-group join ledger is sealed by Rust alone', () => {
+  // It names key groups, their state and the salon scope the server answered: metadata the app's
+  // stores seal, in a file the push service writes with the app shut (`mobile/key_group_join.rs`).
+  const ledgerWriter = between(keyGroupJoinRs, /fn with_ledger</, /\n}\n/);
+
+  it('writes the ledger sealed, and re-excludes it after its atomic write', () => {
+    expect(ledgerWriter).toContain('seal_file(key, Purpose::KeyGroupJoinLedger,');
+    expect(ledgerWriter).toMatch(
+      /fs::rename\(&tmp, &path\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*exclude_from_backup\(&path\);/
+    );
+  });
+
+  it('every ledger call takes the cache key, and Kotlin hands it over', () => {
+    for (const fn of [/pub fn claim\(/, /pub fn settle\(/, /pub fn take_all\(/]) {
+      expect(between(keyGroupJoinRs, fn, /\) -> /)).toContain('key: &CacheKey');
+    }
+    expect(firebaseKt).toContain('nativeKeyGroupJoinClaim(filesDir, cacheKey, groupId)');
+    expect(firebaseKt).toMatch(/nativeKeyGroupJoinSettle\(filesDir, cacheKey, groupId,/);
+    expect(firebaseKt).not.toMatch(/File\([^)]*"key_group_push_joins\.json"\)/);
   });
 });
 

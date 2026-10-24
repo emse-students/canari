@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * AN EMOJI IN A POST IS NOTO'S PICTURE, AND AN EMOJI IN CODE IS STILL A CHARACTER.
  *

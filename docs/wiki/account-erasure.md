@@ -243,7 +243,41 @@ account restored, a returner's new account kept, a pending one replayed, a secon
 **Four jobs per subject**: `core` (core's own rows, once more after the tokens expire), `chat-delivery`,
 `social` and `media`. `media` is claimed only once `social` has COMPLETED for the subject
 (`ERASURE_TARGETS`' `after`, enforced in the claim's `NOT EXISTS`): social re-classes the media of
-the posts that stay, and media deleting first would delete them under a live post. The claim is
+the posts that stay, and media deleting first would delete them under a live post. **`chat-delivery`
+waits for `social` the same way (2026-10-22)**: social's part removes the person from every
+community, each removal evicts their key-group seats in chat-delivery, and that eviction writes a
+`dm_seat_evictions` row under their id. Run after social's part completed, chat-delivery's part - its
+final pass included - cuts every remaining seat per group under that group's seat lock (`eraseSeats`:
+the GROUP's seat generation moves, then the queue, the device rows and the routes go), the groups
+named only by one of those rows included. **Then the `dm_seat_evictions` rows are DELETED**
+(`ACCOUNT_ERASURE_COVERAGE`), and that costs nothing: what refuses a seat claim the account took
+before the erasure is the group's generation, which names no one, never the account's row
+([channel-encryption](protocols/channel-encryption.md), "A seat is written against a CLAIM"). Proven
+on PostgreSQL with the whole erasure run between a claim and its check
+(`seat-lock.integration.spec.ts`, "a claim in flight across a whole account erasure"). **A seat
+written while the erasure runs cannot outlive it either**: the account's key packages are deleted
+first, in a transaction of their own, and every writer that admits a device reads its device's key
+package `FOR SHARE` under the seat lock, so the delete waits for a writer holding one and a later
+writer finds none and writes nothing - with two known exceptions, the demotion (below) and
+`addGroupMember` (a group invite, a new 1:1 DM), which takes no seat lock and reads no key package
+under one: **a peer holding a valid token can re-enrol an erased account by its id, roster row
+included, even after the final pass** ([backlog](backlog.md), P2 "addGroupMember can enrol an erased
+account after the final erasure pass"). Every group the account's rows still name is then cut under
+its own seat lock, its rows and its routes together, so a run that stops anywhere leaves each uncut
+group still named for the retry; an eviction after the erasure writes no row naming the account.
+**The ordering alone does not hold during the first pass**: a device of the account that reconnects
+with a token still valid republishes its key package (`register-device`), and a writer may seat it
+again. So the roster rows go once every group was cut (a registration seats a device only where its
+owner is on the roster), and the run ends with a sweep - the key packages deleted again, every group
+a device row names then cut through the same `eraseSeats`, a WARN line when it found anything. **No
+device row is deleted outside `eraseSeats`**: a row is what names its route, so a seat admitted after
+the sweep's read keeps its row beside its route, with a WARN line, for the final pass to cut. That
+pass starts once no token can act as the account, so it meets no republish at all: it is what
+terminates the erasure, not the ordering. The one row that can follow it is a demotion's `pending`
+row, route-less and naming a device with no key package, which `cleanupStaleDevices` collects.
+Proven on PostgreSQL in `seat-lock.integration.spec.ts` ("a key package republished after the first
+delete", "a seat admitted after the sweep's read"). The cost of the ordering is that an
+account's MLS data waits for social's final pass, the account itself being deactivated at once. The claim is
 `FOR UPDATE SKIP LOCKED` with a lease, so several workers never run one job twice at once; a
 completion write is guarded by `"completedAt" IS NULL`, so a pass that outlived its lease cannot
 reopen a finished row. A job naming a service this build does not know fails as `UNKNOWN_SERVICE`.

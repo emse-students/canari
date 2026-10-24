@@ -391,6 +391,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/wait-default-blueprints.test.sh
 	@bash .github/scripts/tests/held-blueprints.test.sh
 	@bash .github/scripts/tests/bench-observables.test.sh
+	@bash .github/scripts/tests/ios-extensions.test.sh
 	@bash .github/scripts/swift-syntax.sh
 	@bash .github/scripts/tests/swift-syntax.test.sh
 	@bun tools/app-store/submit.test.mjs

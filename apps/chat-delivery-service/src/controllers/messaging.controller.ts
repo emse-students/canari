@@ -12,10 +12,11 @@ import {
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import {
   MessagingService,
   SendMessageBody,
@@ -24,6 +25,21 @@ import {
   ValidateCommitBody,
 } from '../services/messaging.service';
 import { sanitizeEpoch, sanitizeLogValue } from '../utils/sanitize';
+
+/**
+ * Commits one user may submit per minute on `POST /mls/commit`, across all their devices.
+ *
+ * SIZED ABOVE THE LARGEST LEGITIMATE BURST, NOT AT THE AVERAGE. Key-group external joins run at
+ * ~77 a day across the whole estate (2026-10-22), but one device that restores, or rejoins after a
+ * lost state, commits once per group in quick succession - and a client submits its commits one at
+ * a time, each under its MLS mutex and after its own round-trip. 600 a minute is ten a second per
+ * user, which that serial path does not reach on any network a phone sits on, while still bounding
+ * what a crafted stream costs (a key group's external commit asks social-service once per commit).
+ * The production maximum per user and minute is owed (`mls_commit_log`, grouped by sender device
+ * and minute) and is what this number is checked against: see the channel-encryption protocol,
+ * "WP-21, and the gate it had nowhere to live".
+ */
+export const MLS_COMMIT_LIMIT_PER_MINUTE = 600;
 
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
 @Controller()
@@ -56,9 +72,16 @@ export class MessagingController {
    * A client's commit, handed to the gate as the fields the web client sends (`submitCommit`) and
    * nothing else: {@link foregroundCommitBody}. A Welcome travels WITH a commit only on the
    * background re-add (`POST mls/push/send-welcome-and-commit`); passed through here, a raw body
-   * would store one through a door nobody declared.
+   * would store one through a door nobody declared. Epoch-gated (`MessagingService.validateCommit`)
+   * and rate-limited per user.
+   *
+   * The limit sits on the route and not on the service because the background Welcome
+   * (`push.controller.ts`) reaches the same gate under a PushSecret, one commit per Welcome, and is
+   * not a stream a client chooses. A refusal is the throttler's `429`, before any work: the epoch
+   * has not moved, and the client rolls its staged commit back on that status (`BaseMlsService`).
    */
-  @UseGuards(HeaderAuthGuard)
+  @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
+  @Throttle({ default: { limit: MLS_COMMIT_LIMIT_PER_MINUTE, ttl: 60_000 } })
   @Post('mls/commit')
   async validateCommit(
     @Body() body: ForegroundCommitBody,
@@ -190,6 +213,70 @@ export class MessagingController {
         `envelope=${sanitizeLogValue(body.envelopeUserId)}:${sanitizeLogValue(body.envelopeDeviceId, 'none')} ` +
         `verified=${sanitizeLogValue(body.verifiedIdentity, 'unreadable')}`
     );
+    return { recorded: true };
+  }
+
+  /**
+   * A client stating it saw what a private conversation must never show: two trees at one epoch
+   * (`fork`, a frame whose signed epoch fingerprint is not the receiver's), or restored history whose
+   * author signature does not verify (`forged-history`). The UI comes later; this ERROR line is where
+   * the event is read today, since a client's console is collected nowhere. Protocol:
+   * history-reconciliation, "Restored history carries its author's signature", and mls-protocol,
+   * "Fork detection".
+   *
+   * Stores nothing, like `sender-mismatch`. Every field goes through `sanitizeLogValue`, `kind` is
+   * an allowlist and `epoch` a non-negative integer, so no body can write a line of its own.
+   *
+   * WHAT IS ESTABLISHED AND WHAT IS CLAIMED. The reporter is the authenticated user and device and a
+   * MEMBER of the group (anyone else is refused, 403) - those are facts. The `peer` it names is only
+   * its claim, and logged as `claimedPeer`. The level follows the client's own, read from the TYPED
+   * `proven` field and never from `detail` (free text): `proven: false` (a fork it could not
+   * attribute) is a warn, as in mls-core; `true` is ERROR, and so is a report carrying no boolean.
+   */
+  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @Post('mls/integrity-finding')
+  async reportIntegrityFinding(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') reporterDeviceId: string | undefined,
+    @Body()
+    body: {
+      kind?: unknown;
+      groupId?: unknown;
+      epoch?: unknown;
+      peer?: unknown;
+      detail?: unknown;
+      proven?: unknown;
+    }
+  ): Promise<{ recorded: true }> {
+    const reporter = `${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)}`;
+    const groupId = typeof body.groupId === 'string' ? body.groupId : '';
+    if (
+      !groupId ||
+      !authUserId ||
+      !(await this.messagingService.isGroupMember(groupId, authUserId))
+    ) {
+      this.logger.warn(
+        `[INTEGRITY] REJECT not-a-member reporter=${reporter} group=${sanitizeLogValue(body.groupId)}`
+      );
+      throw new ForbiddenException({
+        error: 'not-a-member',
+        message: 'not a member of this group',
+      });
+    }
+    const kind = body.kind === 'fork' || body.kind === 'forged-history' ? body.kind : 'invalid';
+    const epoch =
+      body.epoch === undefined || body.epoch === null
+        ? 'none'
+        : Number.isSafeInteger(body.epoch) && (body.epoch as number) >= 0
+          ? String(body.epoch)
+          : 'invalid';
+    const proven = typeof body.proven === 'boolean' ? String(body.proven) : 'invalid';
+    const line =
+      `[INTEGRITY] kind=${kind} reporter=${reporter} group=${sanitizeLogValue(groupId)} ` +
+      `epoch=${epoch} claimedPeer=${sanitizeLogValue(body.peer)} proven=${proven} ` +
+      `detail=${sanitizeLogValue(body.detail)}`;
+    if (body.proven === false) this.logger.warn(line);
+    else this.logger.error(line);
     return { recorded: true };
   }
 

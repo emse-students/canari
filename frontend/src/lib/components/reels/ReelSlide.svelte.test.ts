@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The reel viewer's overlay, as on Instagram (user, 2026-10-16): bottom-left, the publisher's
  * picture and name linking where the post card links (the association for an association post,

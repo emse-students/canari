@@ -6,11 +6,21 @@ import { getClientAppVersion } from '$lib/utils/appVersion';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
-import { MLS_STATE_SEAL_V2_WRITER_ENABLED } from '$lib/mls-client/mlsStateSeal';
+import {
+  MLS_STATE_SEAL_V2_WRITER_ENABLED,
+  MlsStateUnreadableNowError,
+} from '$lib/mls-client/mlsStateSeal';
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
+import type { ForkFinding } from '$lib/mls-client/integrityFindings';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
-import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type {
+  DecryptedApplication,
+  GraineRunReading,
+  MlsBatchProcessResult,
+} from '$lib/mls-client/IMlsService';
+import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import {
   loadAndInitWasm,
   migrateLegacyMlsStateBlob,
@@ -64,6 +74,14 @@ interface WorkerKeyPackageResult {
   poolPackages: DatedKeyPackage[];
   state: Uint8Array;
 }
+
+/**
+ * How many times a load reads a state WebCrypto refused before giving up for THIS start - a COUNT,
+ * never a clock. Three, because an engine fault under memory pressure is transient and a tag that
+ * fails is not: the first re-read separates most of the first kind, and a state that resists three
+ * stays exactly as it is for the next start ({@link MlsStateUnreadableNowError}).
+ */
+export const MLS_STATE_UNREADABLE_NOW_READS = 3;
 
 /** MLS service implementation for the browser (WASM via openmls). */
 export class WebMlsService extends BaseMlsService {
@@ -862,6 +880,25 @@ export class WebMlsService extends BaseMlsService {
         }
       }
 
+      // UNREADABLE RIGHT NOW IS NOT A STATE TO REPLACE, WITH OR WITHOUT `noFreshStart`: WebCrypto
+      // refused it and nothing proved the bytes wrong (`MlsStateUnreadableNowError`), so the blob is
+      // kept as it is and the next start reads it again. A rotation here was IRREVERSIBLE for a
+      // state that was only ever in a browser short of memory.
+      //
+      // AND IT HAS NO EXIT IN CODE, DELIBERATELY: a browser that refuses the same bytes on every
+      // start stays here on every start. The remedy is the user's and the message names it
+      // (`auth_local_state_unreadable_now`: free memory and restart the browser; meanwhile use the
+      // app or another browser, which are other devices; support before any reset). A silent repair
+      // - installing the state `mls-core` opened, or rotating - is exactly what this branch refuses.
+      // The persistent case is an OWED item, not a decided one (`docs/wiki/backlog.md`, "unreadable
+      // right now on every start").
+      if (cause === 'unreadable_now') {
+        console.error(
+          `[MLS] The saved state stayed unreadable after ${MLS_STATE_UNREADABLE_NOW_READS} reads - NOTHING rotated or written, the next start reads it again: ${String(e).slice(0, 240)}`
+        );
+        throw new SavedStateUnopenedError('unreadable_now', e);
+      }
+
       if (noPinOpensState(cause) || state != null) {
         // ANYTHING NO PIN CAN OPEN IS ROTATED, EVERYTHING ELSE IS WORTH PAUSING FOR - same
         // reasoning as `TauriMlsService`, and the same reason it is written as a negation: `unknown`
@@ -891,15 +928,39 @@ export class WebMlsService extends BaseMlsService {
     }
   }
 
-  /** WASM decrypt + client init for a given device key/state; throws on wrong key (no fresh-start). */
+  /**
+   * WASM decrypt + client init for a given device key/state; throws on wrong key (no fresh-start).
+   *
+   * A state WebCrypto could not open RIGHT NOW ({@link MlsStateUnreadableNowError}: an engine fault,
+   * not a verdict on the bytes) is re-read, up to {@link MLS_STATE_UNREADABLE_NOW_READS} reads in
+   * all - a COUNT, never a clock. What still fails after them reaches the caller typed, and `init`
+   * answers it without destroying anything.
+   */
   protected async loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void> {
-    this.client = await loadAndInitWasm(
-      this.userId,
-      this.deviceId,
-      state,
-      deviceKeyB64,
-      this.stateWasExpected
-    );
+    for (let read = 1; ; read++) {
+      try {
+        this.client = await loadAndInitWasm(
+          this.userId,
+          this.deviceId,
+          state,
+          deviceKeyB64,
+          this.stateWasExpected
+        );
+        if (read > 1) {
+          console.warn(
+            `[MLS] state opened on read ${read} after WebCrypto refused it - an engine fault`
+          );
+        }
+        return;
+      } catch (e) {
+        if (!(e instanceof MlsStateUnreadableNowError) || read >= MLS_STATE_UNREADABLE_NOW_READS) {
+          throw e;
+        }
+        console.error(
+          `[MLS] state unreadable right now (read ${read}/${MLS_STATE_UNREADABLE_NOW_READS}, ${e.blobBytes} B, ${e.errorName}, key ${e.keyPrepared ? 'derived' : 'NOT derived'}, mls-core: ${e.deterministicReader ?? 'not asked'}) - reading it again`
+        );
+      }
+    }
   }
 
   /** WASM client wrapper - calls `this.client.create_group` to create a new local MLS group. */
@@ -1413,10 +1474,25 @@ export class WebMlsService extends BaseMlsService {
     return this.client.process_welcome(welcomeBytes, ratchetTreeBytes);
   }
 
-  /** WASM client wrapper - encrypts plaintext via `this.client.send_message_bytes`, then POSTs the ciphertext to the delivery service. */
-  /** WASM client wrapper - advances the live send ratchet. Ordering and persistence: `sendMessage`. */
-  protected async encryptForSend(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array> {
-    return this.client.send_message_bytes(groupId, messageBytes) as Uint8Array;
+  /**
+   * WASM client wrapper - encrypts via `send_authored_message_bytes`, which appends this device's
+   * author signature (`mls-core/src/authorship.rs`) and advances the live send ratchet. Ordering
+   * and persistence: `sendMessage`.
+   */
+  protected async encryptForSend(
+    groupId: string,
+    messageBytes: Uint8Array
+  ): Promise<AuthoredFrame> {
+    const frame = this.client.send_authored_message_bytes(groupId, messageBytes) as {
+      ciphertext: Uint8Array;
+      authorProof: Uint8Array;
+    };
+    return { sealed: frame.ciphertext, authorProof: frame.authorProof };
+  }
+
+  /** WASM client wrapper - see {@link IMlsService.takeForkFindings}. */
+  async takeForkFindings(): Promise<ForkFinding[]> {
+    return this.client.take_fork_findings() as ForkFinding[];
   }
 
   /** WASM client wrapper - decrypts a raw MLS ciphertext via `this.client.process_incoming_message_with_sender`; returns null for commit or proposal frames. */
@@ -1424,14 +1500,15 @@ export class WebMlsService extends BaseMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     envelope?: EnvelopeSender
-  ): Promise<Uint8Array | null> {
+  ): Promise<DecryptedApplication | null> {
     const result = this.client.process_incoming_message_with_sender(groupId, messageBytes) as {
       data: Uint8Array;
       sender: string | null;
+      author: AuthorVerdict;
     } | null;
     if (!result) return null;
     assertVerifiedSender(groupId, envelope, result.sender);
-    return result.data;
+    return { plaintext: result.data, author: result.author };
   }
 
   /** Single WASM crossing for an ordered page of ciphertexts (history catch-up / fallback path). */

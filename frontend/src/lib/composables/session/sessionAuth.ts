@@ -18,6 +18,7 @@ import {
   KeyChangeInterruptedError,
   KeyChangeSupersededError,
   LocalStateUnopenableError,
+  LocalStateUnreadableNowError,
   moveSealedStoresOnly,
   performPinChange,
   thisTabMayChangeDeviceKey,
@@ -76,6 +77,12 @@ import {
 } from '$lib/stores/auth';
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
+import { ensureRestoreKey } from '$lib/services/restoreCredential';
+import {
+  clearRestoreKey,
+  forgetRestoreKeyRegistrations,
+  markRestoreAttempted,
+} from '$lib/services/restoreKey';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { noteUnlockUnattended } from '$lib/stores/unlockPath.svelte';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
@@ -164,6 +171,7 @@ import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache'
 import { adoptOrphanedMirrorEntries, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
 import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
 import { appendLog } from '$lib/utils/sessionLog';
+import { Log } from '$lib/utils/Log';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
 import { handleHistoryRequest, processPendingInvitations } from '$lib/utils/chat/actions';
@@ -183,6 +191,8 @@ import {
   unregisterOutbox,
   flushOutbox,
   applyOutboxPendingStatuses,
+  OutboxPrepareRefusedError,
+  type PreparedOutboxMedia,
 } from '$lib/utils/chat/outbox';
 import {
   getCallSystemMessageContext,
@@ -206,6 +216,7 @@ import {
   stopConnectionWatchdogImpl,
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
+import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
 import { uploadClassFor } from '$lib/reels/chatReelWriter';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
@@ -333,23 +344,100 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     saveConversation: cb.saveConversation,
     uploadMedia: async (
       media: NonNullable<import('$lib/db').OutboxEntry['media']>,
-      transport?: import('$lib/utils/uploadXhr').XhrUploadOptions
+      transport?: import('$lib/utils/uploadXhr').XhrUploadOptions,
+      resume?: { persist: (state: import('$lib/db/types').OutboxResumableUpload) => Promise<void> }
     ) => {
       const { MediaService } = await import('$lib/media');
-      const token = await getToken();
       const bytes = media.fileBytes ?? new Uint8Array(0);
+      const retentionClass = uploadClassFor(media);
+      // A CHAT REEL GOES THROUGH A RESUMABLE SESSION (RC-5): a cut or a kill resends only the parts
+      // the server lacks. It is sealed from the outbox's own bytes, part by part - no `File` copy.
+      // Everything else keeps the one-shot route it always took.
+      if (retentionClass === 'chat-reel' && resume) {
+        return new MediaService().uploadResumably(
+          bytes,
+          { mimeType: media.mimeType, fileName: media.fileName },
+          getToken,
+          { width: media.width, height: media.height },
+          retentionClass,
+          { state: media.upload, persist: resume.persist },
+          transport
+        );
+      }
       const file = new File([bytes.buffer as ArrayBuffer], media.fileName ?? 'file', {
         type: media.mimeType,
       });
+      const token = await getToken();
       return new MediaService().encryptAndUpload(
         file,
         token,
         { width: media.width, height: media.height },
-        uploadClassFor(media),
+        retentionClass,
         transport
       );
     },
+    prepareMedia: prepareQueuedChatReel,
+    releaseUpload: async (uploadId: string, why: string) => {
+      const { MediaService } = await import('$lib/media');
+      await new MediaService().releaseResumableUpload(uploadId, getToken, why);
+    },
   };
+}
+
+/**
+ * Prepares a queued RAW chat-reel take for the outbox (RC-5) with the encoder the composer used for
+ * it before (`prepareVideoForUpload`, the server's plaintext ceiling as its budget). A cancel is
+ * re-thrown as the outbox's `UploadAbortedError`, so it is read as the member's act and never as a
+ * failure of the take.
+ */
+async function prepareQueuedChatReel(
+  media: NonNullable<import('$lib/db').OutboxEntry['media']>,
+  opts: { signal: AbortSignal; onProgress: (fraction: number) => void }
+): Promise<PreparedOutboxMedia> {
+  const [
+    { MediaService },
+    { prepareVideoForUpload, isVideoPrepareError },
+    { UploadAbortedError },
+    { videoPrepareFailureMessage, isUnpreparableFault },
+  ] = await Promise.all([
+    import('$lib/media'),
+    import('$lib/video/prepareVideoForUpload'),
+    import('$lib/utils/uploadXhr'),
+    import('$lib/video/videoPrepareMessages'),
+  ]);
+  const raw = media.fileBytes ?? new Uint8Array(0);
+  const source = new File([raw.buffer as ArrayBuffer], media.fileName ?? 'take', {
+    type: media.mimeType,
+  });
+  const limits = await new MediaService().uploadLimits();
+  try {
+    const prepared = await prepareVideoForUpload(source, {
+      maxBytes: limits?.maxPlaintextBytes,
+      signal: opts.signal,
+      onProgress: opts.onProgress,
+    });
+    return {
+      bytes: new Uint8Array(await prepared.file.arrayBuffer()),
+      mimeType: prepared.file.type,
+      fileName: prepared.file.name,
+      width: prepared.width,
+      height: prepared.height,
+      durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
+    };
+  } catch (e) {
+    if (isVideoPrepareError(e) && e.fault === 'aborted') {
+      throw new UploadAbortedError(opts.signal.reason);
+    }
+    // A FACT OF THE TAKE OR THE ENGINE, classified here at the throw by its typed fault: failed for
+    // good with the composer's own sentence for it, never a retry that is refused the same way.
+    if (isVideoPrepareError(e) && isUnpreparableFault(e.fault)) {
+      throw new OutboxPrepareRefusedError(
+        videoPrepareFailureMessage(e) ?? m.video_prepare_failed(),
+        e
+      );
+    }
+    throw e;
+  }
 }
 
 /**
@@ -440,6 +528,9 @@ export function savedStateFailure(
   }
   if (reason.reason === 'rotated') {
     return new LoginFailure('local_state_sealed_under_old_pin', m.auth_local_state_old_pin());
+  }
+  if (reason.reason === 'unreadable_now') {
+    return new LoginFailure('local_state_unreadable_now', m.auth_local_state_unreadable_now());
   }
   return new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
 }
@@ -1382,6 +1473,10 @@ export async function loginImpl(
     // is one read. Wired first, so the loop's own registrations below are stored too.
     mlsService.setDistributionGroupStore(storageSettled.value);
     await mlsService.hydrateDistributionGroups();
+    // The key groups the push service joined while the app was shut (channel-encryption section
+    // 26): their trees are in the state just loaded, their registry rows are not - until this.
+    // Info level: one line per ledger entry at start, each a decision a device reading must name.
+    await takeKeyGroupPushJoins(mlsService, (line) => Log.i('LOGIN', line));
     stopIfSignedOut('distribution-groups');
 
     // Notify only on genuine private browsing (blocked / ephemeral storage).
@@ -1509,6 +1604,12 @@ export async function loginImpl(
     if (!offlineSession) {
       void bindCurrentSessionDevice(ctx.getMyDeviceId()).catch((e) =>
         cb.log(`[WARN] Session/device binding failed: ${String(e)}`)
+      );
+      // The restore key of this session (WP-RESTORE-1, Android only), for the same reason and on the
+      // same terms: fire-and-forget, a failure is logged and the next start tries again. Skipped
+      // offline: promoteOfflineSession runs it once a token exists.
+      void ensureRestoreKey(ctx.getUserId()).catch((e) =>
+        cb.log(`[WARN] Restore key registration failed: ${String(e)}`)
       );
     }
 
@@ -2294,6 +2395,12 @@ export async function loginImpl(
     // device needs nothing here either: `wipeRevokedDevice` has already forgotten it.
     if (_e instanceof SessionExpiredError) {
       clearUserLocally();
+      // The server ended this session, and its restore key with it (WP-RESTORE-1): the platform's
+      // copy goes too. Here and not only in `clearAuth`, because with no callback wired this branch
+      // forgets the user without passing through it.
+      forgetRestoreKeyRegistrations();
+      markRestoreAttempted();
+      void clearRestoreKey('session expired');
       if (cb.onSessionExpired) cb.onSessionExpired();
       else void goto(resolve('/login'), { replaceState: true });
     } else if (cb.onLoginFailed) {
@@ -2798,6 +2905,12 @@ export async function recoverPinImpl(
     if (e instanceof DeviceKeyMismatchError) {
       cb.log('[PIN_RECOVER] The old PIN does not open the local MLS state - nothing was changed.');
       throw new LocalizedError(m.auth_pin_old_incorrect());
+    }
+    if (e instanceof LocalStateUnreadableNowError) {
+      cb.log(
+        '[PIN_RECOVER] The local MLS state could not be read right now - nothing changed, no reset offered.'
+      );
+      throw new LocalizedError(m.auth_local_state_unreadable_now());
     }
     if (e instanceof LocalStateUnopenableError) {
       cb.log(

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
 }));
@@ -646,6 +647,18 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
       expect(deps.mlsService.sendBaseRefreshRequest).not.toHaveBeenCalled();
     }
   );
+
+  it('asks NOBODY when the server rate-limited the join - a wait is not a missing seat', async () => {
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = vi
+      .fn()
+      .mockResolvedValue({ joined: false, reason: 'rate_limited', retryAfterMs: 30_000 });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendBaseRefreshRequest).not.toHaveBeenCalled();
+  });
 
   it('still asks for a Welcome when NO base is published - that one a member CAN answer', async () => {
     // The two refusals are not the same question: nothing published means nothing to republish, and

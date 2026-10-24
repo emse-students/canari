@@ -55,4 +55,40 @@ export class InternalDistributionEntitlementController {
     );
     return { entitled };
   }
+
+  /**
+   * "How did departure N end" - asked by chat-delivery's hourly drain for a key-group departure
+   * whose second eviction never arrived. The answer is final: a departure not yet recorded is
+   * decided `cancelled` here, and its roster write can then no longer commit
+   * ({@link ChannelService.decideDistributionDeparture}). The entitlement above cannot answer this,
+   * since it says `true` both before a departure commits and after a rejoin.
+   */
+  @Post('departure-outcome')
+  @HttpCode(200)
+  async departureOutcome(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Body() body: { groupId?: unknown; userId?: unknown; departure?: unknown }
+  ): Promise<{ outcome: 'departed' | 'cancelled' }> {
+    assertInternalSecret(secret);
+    const groupId = String(body?.groupId ?? '').trim();
+    // Exactly as the departure recorded it: chat-delivery names the person by the id this service
+    // evicted, so no normalisation may make the two spellings differ.
+    const userId = String(body?.userId ?? '');
+    const departure = body?.departure;
+    if (
+      !UUID.test(groupId) ||
+      !userId ||
+      typeof departure !== 'number' ||
+      !Number.isInteger(departure) ||
+      departure < 1
+    ) {
+      this.logger.warn(`[DISTRIBUTION_GROUP] departure outcome refused: malformed body`);
+      throw new BadRequestException(
+        'groupId (uuid), userId and departure (integer >= 1) are required'
+      );
+    }
+    return { outcome: await this.channels.decideDistributionDeparture(groupId, userId, departure) };
+  }
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

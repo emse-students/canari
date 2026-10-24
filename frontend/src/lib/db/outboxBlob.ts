@@ -2,7 +2,7 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { Log } from '$lib/utils/Log';
 import { appendLog } from '$lib/utils/sessionLog';
 import { OutboxPayloadUnreadableError } from './outboxCodec';
-import type { OutboxEntry } from './types';
+import type { OutboxBlobRef, OutboxEntry } from './types';
 
 // ---------------------------------------------------------------------------
 // The bytes of a queued attachment, kept OUT of the encrypted outbox row.
@@ -29,14 +29,31 @@ import type { OutboxEntry } from './types';
 // garbage the boot sweep deletes; a row with no blob is a typed, visible failure
 // ({@link OutboxBlobMissingError}). The reverse order would put a ghost in the queue.
 //
-// THE BLOB ID IS THE ENTRY ID. Deleting an entry then needs no read of its row (which may be the
-// very thing that is unreadable), and the sweep's question - "is there a row with this id?" - is
-// answered from the clear `id` column, without the device key.
+// THE BLOB ID IS THE ENTRY ID, IN ONE OF TWO SLOTS: `<entryId>` or `<entryId>#b`. Deleting an
+// entry then needs no read of its row (which may be the very thing that is unreadable) - both slots
+// are deleted - and the sweep's question - "is there a row with this id?" - is answered from the
+// clear `id` column, without the device key. The SECOND SLOT exists for an entry whose bytes are
+// REPLACED (reels-in-chat RC-5: the raw take by the prepared file): the new bytes go to the slot the
+// committed row does NOT name, the row is rewritten to name it, and only then is the old slot
+// deleted. Overwriting in place would put bytes under a new key while the committed row still holds
+// the old one - a kill between the two writes and the take could never be opened again.
 // ---------------------------------------------------------------------------
 
 const DB_PREFIX = 'CanariDBOutbox_';
 const STORE = 'blobs';
 const BY_CREATED = 'byCreated';
+const SLOT_SEPARATOR = '#';
+
+/** The store id of an entry's blob in `slot` (absent: the first slot, the entry id itself). */
+export function outboxBlobId(entryId: string, slot?: OutboxBlobRef['slot']): string {
+  return slot ? `${entryId}${SLOT_SEPARATOR}${slot}` : entryId;
+}
+
+/** The entry a stored blob id belongs to, whichever slot it is in. */
+export function outboxBlobOwner(blobId: string): string {
+  const at = blobId.indexOf(SLOT_SEPARATOR);
+  return at < 0 ? blobId : blobId.slice(0, at);
+}
 
 /**
  * A blob younger than this is never swept. The sweep runs once per session, and another tab of the
@@ -326,10 +343,12 @@ export class OutboxBlobStore {
   async sweep(listRowIds: () => Promise<Iterable<string>>, now = Date.now()): Promise<string[]> {
     const stored = await this.list();
     const rowIds = new Set(await listRowIds());
-    const garbage = stored.filter(
-      (b) =>
-        !rowIds.has(b.id) && !this.writing.has(b.id) && now - b.createdAt >= BLOB_SWEEP_GRACE_MS
-    );
+    const garbage = stored.filter((b) => {
+      const owner = outboxBlobOwner(b.id);
+      return (
+        !rowIds.has(owner) && !this.writing.has(owner) && now - b.createdAt >= BLOB_SWEEP_GRACE_MS
+      );
+    });
     for (const b of garbage) await this.delete(b.id);
     return garbage.map((b) => b.id);
   }
@@ -345,30 +364,44 @@ export class OutboxBlobStore {
 export async function writeOutboxWithBlob(
   blobs: OutboxBlobStore,
   entry: OutboxEntry,
-  writeRow: (blobKeyB64: string | undefined) => Promise<void>
+  writeRow: (blob: OutboxBlobRef | undefined) => Promise<void>
 ): Promise<void> {
   const bytes = entry.media?.fileBytes;
   if (!bytes || bytes.length === 0) return writeRow(undefined);
+  // An entry that already names a blob is REPLACING its bytes: the new ones go to the other slot,
+  // so the committed row keeps opening what it names until the new row is committed.
+  const previous = entry.media?.blob;
+  const slot: OutboxBlobRef['slot'] = previous && !previous.slot ? 'b' : undefined;
   blobs.beginWrite(entry.id);
   try {
-    const keyB64 = await blobs.put(entry.id, bytes);
-    await writeRow(keyB64);
+    const keyB64 = await blobs.put(outboxBlobId(entry.id, slot), bytes);
+    await writeRow(slot ? { keyB64, slot } : { keyB64 });
   } finally {
     blobs.endWrite(entry.id);
   }
+  if (previous) {
+    Log.d('outboxBlob.replaced', { id: entry.id, from: previous.slot ?? 'a', to: slot ?? 'a' });
+    await deleteOneBlobQuietly(blobs, outboxBlobId(entry.id, previous.slot));
+  }
+}
+
+/** Delete one stored blob id; a failure is logged and left to the boot sweep. */
+async function deleteOneBlobQuietly(blobs: OutboxBlobStore, blobId: string): Promise<void> {
+  await blobs
+    .delete(blobId)
+    .catch((e) =>
+      appendLog(`[DB] outbox blob ${blobId} NOT deleted (left for the boot sweep): ${String(e)}`)
+    );
 }
 
 /**
- * Delete a blob whose row no longer names it (sent, cancelled, uploaded). A failure leaves garbage
- * the boot sweep removes, never an error for the caller - but it is logged, because a delete that
- * keeps failing is a store that keeps refusing.
+ * Delete the blobs (both slots) of an entry whose row no longer names them (sent, cancelled,
+ * uploaded). A failure leaves garbage the boot sweep removes, never an error for the caller - but it
+ * is logged, because a delete that keeps failing is a store that keeps refusing.
  */
 export async function deleteOutboxBlobQuietly(blobs: OutboxBlobStore, id: string): Promise<void> {
-  await blobs
-    .delete(id)
-    .catch((e) =>
-      appendLog(`[DB] outbox blob of ${id} NOT deleted (left for the boot sweep): ${String(e)}`)
-    );
+  await deleteOneBlobQuietly(blobs, outboxBlobId(id));
+  await deleteOneBlobQuietly(blobs, outboxBlobId(id, 'b'));
 }
 
 /**
@@ -424,7 +457,7 @@ export async function attachOutboxBlob(
   if (!entry.media || !blob) return entry;
   let fileBytes: Uint8Array;
   try {
-    fileBytes = await blobs.get(entry.id, blob.keyB64);
+    fileBytes = await blobs.get(outboxBlobId(entry.id, blob.slot), blob.keyB64);
   } catch (e) {
     if (e instanceof OutboxBlobMissingError && !(await rowExists())) {
       appendLog(`[DB] outbox ${entry.id}: row withdrawn while its blob was read - nothing to send`);

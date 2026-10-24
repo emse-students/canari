@@ -792,11 +792,12 @@ export class ChannelsController {
    * so a pinned message the sweep kept also keeps its seed, and a message deleted for any other
    * reason releases it. A POST because the id list is the request, not an addressable resource.
    *
-   * `retentionDays` travels back with the answer so the CLIENT NEVER HOLDS A COPY of the window.
-   * The device needs it for one thing only - refusing to drop a session younger than the window,
-   * which cannot have lost its messages to the purge and may simply have none yet. Serving the
-   * number rather than compiling it in keeps {@link CHANNEL_MESSAGE_RETENTION_DAYS} the single
-   * copy, and sending DAYS rather than a cutoff instant keeps both sides of the comparison on the
+   * `retentionDays` travels back with the answer. The device needs it for one thing only -
+   * refusing to drop a session younger than the window, which cannot have lost its messages to the
+   * purge and may simply have none yet. The client holds a FLOOR equal to
+   * {@link CHANNEL_MESSAGE_RETENTION_DAYS} (`GRAINE_RETENTION_FLOOR_DAYS`, pinned equal by a test)
+   * and never sweeps with less, so this answer may lengthen a device's seed lifetime but never
+   * shorten it. Sending DAYS rather than a cutoff instant keeps both sides of the comparison on the
    * device's own clock.
    */
   @UseGuards(NginxAuthGuard)

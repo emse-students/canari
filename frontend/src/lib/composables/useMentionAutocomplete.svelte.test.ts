@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useMentionAutocomplete, type MentionUser } from './useMentionAutocomplete.svelte';
 import { flushMacrotask } from '../../test/flush';

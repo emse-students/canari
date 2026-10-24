@@ -65,9 +65,18 @@ export interface GroupRosterBatch {
  * for it - the `serverTimestamp` the sender's own copy is stored with, since a sender never receives
  * its frame back. `null` when the server's answer carried none (a server predating the field).
  */
-export interface SentFrame {
-  sealed: Uint8Array;
+export interface SentFrame extends AuthoredFrame {
   receivedAt: number | null;
+}
+
+/**
+ * One application frame as the platform engine sealed it: the ciphertext, and the encoded author
+ * proof mls-core appended inside it (`$lib/crypto/messageAuthorship`) - which the sender keeps on its
+ * own copy, so its history bundles carry the same proof its peers received.
+ */
+export interface AuthoredFrame {
+  sealed: Uint8Array;
+  authorProof: Uint8Array;
 }
 
 /**
@@ -1159,21 +1168,35 @@ export class MlsDeliveryApi {
     /** True when the gate had ALREADY accepted these exact bytes: a resubmission, answered again. */
     duplicate?: boolean;
   }> {
-    const res = await this.f(`${this.historyUrl}/api/mls/commit`, {
-      method: 'POST',
-      headers: await this.auth({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        groupId,
-        deviceId: this.deviceId,
-        baseEpoch,
-        proto: protoBase64,
-        senderId: this.userId,
-        ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
-        ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
-        ...(admits?.length ? { admits } : {}),
-        ...(removes?.length ? { removes } : {}),
-      }),
-    });
+    // UNDER THE `write` HEAD DEADLINE (`requestDeadline.ts`: 30 s plus the time the body needs to
+    // leave), because every caller awaits this INSIDE THE GLOBAL MLS LOCK, which also guards the
+    // incoming processing of every group: a POST hung on a half-open connection or a captive portal
+    // froze decryption in every conversation for as long as the engine tolerated - and the periodic
+    // leaf refresh makes an unasked commit ordinary. The expiry is a `RequestDeadlineError`, a
+    // transport failure: NO ANSWER, never a refusal, because the gate may have accepted. The callers
+    // already read it that way - `runCommitTransaction` resubmits the same bytes and KEEPS the stage
+    // as unknown while no answer comes (`CommitOutcomeUnknownError`), and the next resubmission
+    // decides, an accepted commit being answered as a duplicate.
+    const res = await trackedFetch(
+      this.f,
+      `${this.historyUrl}/api/mls/commit`,
+      {
+        method: 'POST',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          groupId,
+          deviceId: this.deviceId,
+          baseEpoch,
+          proto: protoBase64,
+          senderId: this.userId,
+          ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
+          ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
+          ...(admits?.length ? { admits } : {}),
+          ...(removes?.length ? { removes } : {}),
+        }),
+      },
+      { requestClass: 'write' }
+    );
     if (!res.ok) {
       throw await refusalFromResponse(res, 'Commit submission HTTP error');
     }
@@ -2165,7 +2188,14 @@ export class MlsDeliveryApi {
     return await res.json();
   }
 
-  /** Marks a device's group invitation as `pending` or `active`. Best-effort, non-throwing. */
+  /**
+   * Marks a device's group invitation as `pending` or `active`. Best-effort, non-throwing.
+   *
+   * A REFUSAL IS SAID HERE, because no caller reads it. A report of `active` promotes an existing
+   * seat only, and the server refuses it (`403 NOT_A_MEMBER`, `reason` `no_seat`, `kicked` or
+   * `not_on_roster`) otherwise - a device whose pending row was purged before it processed its
+   * Welcome then stays unrouted, and without this line its own log never said so.
+   */
   async updateInvitationStatus(
     deviceId: string,
     userId: string,
@@ -2173,11 +2203,18 @@ export class MlsDeliveryApi {
     status: 'pending' | 'active'
   ): Promise<void> {
     try {
-      await this.f(`${this.historyUrl}/api/mls/invitations/status`, {
+      const res = await this.f(`${this.historyUrl}/api/mls/invitations/status`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ deviceId, userId, groupId, status }),
       });
+      if (!res.ok) {
+        const refusal = await refusalFromResponse(res, 'invitation status report');
+        console.warn(
+          `[MEMBERSHIP] report of ${status} REFUSED for group ${groupId.slice(0, 8)}... device ${deviceId}: ` +
+            `status=${refusal.status} code=${refusal.code ?? 'none'} reason=${refusal.reason ?? 'none'}`
+        );
+      }
     } catch (e) {
       console.error('Failed to update invitation status', e);
     }

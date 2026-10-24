@@ -4,7 +4,10 @@ import {
   parseDirectPeerFromName,
   resolveDirectPeerId,
 } from '$lib/utils/chat/conversations';
-import { decodeAppMessage } from '$lib/proto/codec';
+import { decodeAppMessage, type IAppMessage } from '$lib/proto/codec';
+import { recordAuthorship } from '$lib/crypto/messageAuthorship';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import { drainForkFindings } from '$lib/mls-client/integrityFindings';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import {
@@ -60,8 +63,40 @@ import { channelScope, workspaceScope } from '../distributionScope';
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
 export type { MessageHandlerDeps } from './deps';
 
-/** Short-lived message buffered while waiting for a Welcome. */
-type PendingMsg = { sender: string; content: Uint8Array };
+/**
+ * Short-lived message buffered while waiting for a Welcome. `deliveryMeta` is the delivery it
+ * arrived with, replayed with it: an addressed history answer can reach a joining device before its
+ * Welcome, and without it the replay read the answer as a broadcast.
+ */
+type PendingMsg = {
+  sender: string;
+  content: Uint8Array;
+  deliveryMeta: IncomingDeliveryMeta | undefined;
+};
+
+/**
+ * AN ADDRESSED CONVERSATION FRAME IS A HISTORY ANSWER OR NOTHING (step A, rule 5 of
+ * docs/wiki/protocols/history-answer-addressing.md). The server routed it to this device alone, so
+ * nobody else in the group sees it: a message, an edit or a reaction sent that way would show this
+ * device a conversation the rest of the group never saw. No honest build sends one - every other
+ * frame of a conversation reaches the whole group - so it is refused before any of it is applied,
+ * and ACKed: redelivery would not change the answer. What a `history_bundle` may carry is decided
+ * by its own handler (`systemMessageHandler`). Shared by the live path and the Welcome replay.
+ *
+ * @returns `true` when the frame was refused (logged at ERROR).
+ */
+function refusesAddressedNonAnswer(
+  msg: IAppMessage,
+  deliveryMeta: IncomingDeliveryMeta | undefined,
+  convoKey: string,
+  sender: string
+): boolean {
+  if (deliveryMeta?.addressed !== true || msg.system?.event === 'history_bundle') return false;
+  console.error(
+    `[HISTORY_ADDRESSED] REFUSED an addressed ${msg.system?.event ?? (msg.text || msg.reply || msg.media ? 'message' : 'frame')} in ${convoKey.slice(0, 8)}… from ${sender.slice(0, 8)} - only a history answer may be addressed in a conversation`
+  );
+  return true;
+}
 
 /**
  * Recovery action a failing Welcome defers to AFTER releasing the MLS lock (the recovery seams
@@ -190,7 +225,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
   mlsService.onMessage(
     async (sender, content, groupId, isWelcome, ratchetTreeBytes, isCommit, deliveryMeta) => {
-      const senderNorm = sender.toLowerCase();
+      // The ONE canonical user id (leafIdentity.ts): ASCII letters folded, as MLS and the replay do.
+      const senderNorm = canonicalUserId(sender);
 
       // ── Welcome ──────────────────────────────────────────────────────────────
       if (isWelcome) {
@@ -234,6 +270,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           deps,
           pendingBuffer,
           startRecovery,
+          deliveryMeta,
         });
       }
 
@@ -601,10 +638,12 @@ async function handleWelcome({
       if (buf?.msgs.length) {
         for (const msg of buf.msgs) {
           try {
-            const decBytes = await mlsService.processIncomingMessage(joinedGroupId, msg.content, {
+            const dec = await mlsService.processIncomingMessage(joinedGroupId, msg.content, {
               userId: msg.sender,
+              deviceId: msg.deliveryMeta?.senderDeviceId,
               path: 'welcome-replay',
             });
+            const decBytes = dec?.plaintext ?? null;
             // THE BUFFER SPENDS A GENERATION LIKE EVERY OTHER PATH, and recorded nothing until
             // 2026-09-07. These are frames that arrived BEFORE the Welcome and were held; the shared
             // archive holds the same rows, so a replay walked them later, MLS refused the spent
@@ -613,7 +652,12 @@ async function handleWelcome({
             noteFrameConsumed(userId, joinedGroupId, msg.content);
             if (decBytes) {
               const appMsg = decodeAppMessage(decBytes);
-              if (appMsg) {
+              // Kept only on mls-core's `verified`, like any live frame - see the live path below.
+              const authorship = recordAuthorship(decBytes, joinedGroupId, dec?.author);
+              if (
+                appMsg &&
+                !refusesAddressedNonAnswer(appMsg, msg.deliveryMeta, joinedGroupId, msg.sender)
+              ) {
                 const envelope = appMsgToEnvelope(appMsg);
                 if (envelope) {
                   if (batchAddMessages) {
@@ -621,17 +665,22 @@ async function handleWelcome({
                     // were held only because the Welcome had not landed yet. Nobody has been told
                     // about them, so the notification is owed.
                     await batchAddMessages(
-                      [{ senderId: msg.sender, content: envelope.content, ...envelope.options }],
+                      [
+                        {
+                          senderId: msg.sender,
+                          content: envelope.content,
+                          ...envelope.options,
+                          ...(authorship ? { authorship } : {}),
+                        },
+                      ],
                       joinedGroupId,
                       'arrival'
                     );
                   } else {
-                    await addMessageToChat(
-                      msg.sender,
-                      envelope.content,
-                      joinedGroupId,
-                      envelope.options
-                    );
+                    await addMessageToChat(msg.sender, envelope.content, joinedGroupId, {
+                      ...envelope.options,
+                      ...(authorship ? { authorship } : {}),
+                    });
                   }
                 } else if (appMsg.system) {
                   // FIX 2 — Replay the system messages buffered before the Welcome
@@ -650,7 +699,8 @@ async function handleWelcome({
                       convoKey: joinedGroupId,
                       senderNorm: msg.sender,
                       messageId: normalizeMessageId(appMsg.messageId),
-                      deliveryMeta: undefined,
+                      deliveryMeta: msg.deliveryMeta,
+                      ...(authorship ? { authorship } : {}),
                     });
                   }
                 }
@@ -777,6 +827,8 @@ interface UnknownGroupArgs {
   pendingBuffer: Map<string, { msgs: PendingMsg[] }>;
   /** Starts a recovery and returns immediately - never awaited, see `startRecovery`. */
   startRecovery: (groupId: string) => void;
+  /** The frame's delivery, buffered with it for the replay (see `PendingMsg`). */
+  deliveryMeta: IncomingDeliveryMeta | undefined;
 }
 
 /**
@@ -794,6 +846,7 @@ async function handleUnknownGroup({
   deps,
   pendingBuffer,
   startRecovery,
+  deliveryMeta,
 }: UnknownGroupArgs): Promise<boolean> {
   const { log } = deps;
 
@@ -837,7 +890,7 @@ async function handleUnknownGroup({
     log(`[BUFFER] recovery started for unknown group ${groupId.slice(0, 8)}…`);
   }
 
-  if (buf.msgs.length < 20) buf.msgs.push({ sender, content });
+  if (buf.msgs.length < 20) buf.msgs.push({ sender, content, deliveryMeta });
 
   noteUnackedFrame(groupId, 'unknown-group');
   return false; // Keep in queue for replay when the Welcome arrives
@@ -994,11 +1047,12 @@ async function handleKnownGroup({
   };
 
   try {
-    const decrypted = await mlsService.processIncomingMessage(groupId, content, {
+    const opened = await mlsService.processIncomingMessage(groupId, content, {
       userId: sender,
       deviceId: deliveryMeta?.senderDeviceId,
       path: 'live',
     });
+    const decrypted = opened?.plaintext ?? null;
 
     // Persist: immediate for commits (epoch advanced), deferred for application messages.
     if (isCommit) {
@@ -1067,19 +1121,7 @@ async function handleKnownGroup({
       return true;
     }
 
-    // AN ADDRESSED CONVERSATION FRAME IS A HISTORY ANSWER OR NOTHING (step A, rule 5 of
-    // docs/wiki/protocols/history-answer-addressing.md). The server routed it to this device alone,
-    // so nobody else in the group sees it: a message, an edit or a reaction sent that way would show
-    // this device a conversation the rest of the group never saw. No honest build sends one - every
-    // other frame of a conversation reaches the whole group - so it is refused here, before any of it
-    // is applied, and ACKed: redelivery would not change the answer. What a `history_bundle` may
-    // carry is decided by its own handler (`systemMessageHandler`).
-    if (deliveryMeta?.addressed === true && msg.system?.event !== 'history_bundle') {
-      console.error(
-        `[HISTORY_ADDRESSED] REFUSED an addressed ${msg.system?.event ?? (msg.text || msg.reply || msg.media ? 'message' : 'frame')} in ${convoKey.slice(0, 8)}… from ${sender.slice(0, 8)} - only a history answer may be addressed in a conversation`
-      );
-      return true;
-    }
+    if (refusesAddressedNonAnswer(msg, deliveryMeta, convoKey, sender)) return true;
 
     // A LIVE frame from a device we owe a retry is the proof it is online NOW, and its device is the
     // one `verifiedSender` just checked against the credential. A pulled copy proves nothing about
@@ -1087,6 +1129,11 @@ async function handleKnownGroup({
     // `historyOverheardPull`). Silent when nothing is owed - which is nearly every frame.
     const liveAuthor = liveProofOfAuthor(sender, deliveryMeta, msg.system?.event);
     if (liveAuthor) retryPullsOwedTo(liveAuthor, deps);
+
+    // THE AUTHOR'S SIGNATURE, KEPT WITH WHAT IT PROVES - and only on mls-core's `verified`, which
+    // checked it against this frame's MLS sender. A history bundle this device writes later can then
+    // prove the message, edit, deletion or reaction to a reader that never saw the frame.
+    const authorship = recordAuthorship(decrypted, groupId, opened?.author);
 
     if (msg.text || msg.reply || msg.media) {
       const envelope = appMsgToEnvelope(msg, deliveryMeta?.queuedCreatedAt);
@@ -1098,6 +1145,7 @@ async function handleKnownGroup({
         await addMessageToChat(sender, envelope.content, convoKey, {
           ...envelope.options,
           serverTimestamp: deliveryMeta?.queuedCreatedAt,
+          ...(authorship ? { authorship } : {}),
         });
       } else {
         log(`[MLS] Empty envelope for ${convoKey.slice(0, 8)}… - nothing to display`);
@@ -1114,7 +1162,8 @@ async function handleKnownGroup({
         sender,
         emoji,
         Number(msg.reaction.at ?? 0),
-        msg.reaction.removed === true
+        msg.reaction.removed === true,
+        authorship
       );
       if (updated) {
         messageReactions.set(msgId, updated);
@@ -1166,6 +1215,7 @@ async function handleKnownGroup({
         senderNorm: sender,
         messageId: normalizeMessageId(msg.messageId),
         deliveryMeta,
+        ...(authorship ? { authorship } : {}),
       });
     }
 
@@ -1356,6 +1406,9 @@ async function handleKnownGroup({
     log(
       `[MLS] Decryption error for ${convoKey.slice(0, 8)}… (${kind}): ${err.slice(0, 100)} → re-add`
     );
+    // What a FORK looks like from here: mls-core judged the frame's signed epoch fingerprint on
+    // the refusal arm, and the verdict is taken now, before the re-add replaces our copy.
+    if (kind === 'same-epoch-refusal') await drainForkFindings(mlsService, log);
     startRecovery(groupId);
     return true;
   }

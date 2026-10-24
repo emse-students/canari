@@ -213,26 +213,81 @@ export async function publishDistributionGroupInfo(
  * distribution group" into "a cut that found nothing": the discriminator is KNOWN here and the
  * decision is made there, so it travels rather than being guessed from three zeros.
  *
- * @returns whether there was a group at all, and how many rows, Redis routes and queued frames went
+ * TWO CALLS PER DEPARTURE, AND THE SECOND NAMES THE FIRST. The one made before the roster write
+ * BEGINS a departure on chat-delivery, where no seat is written for that person meanwhile, and
+ * answers its name (`departure`), which the roster write records in its own transaction
+ * (`ChannelService.departDistributionGroups`). The one made after it (`settles`) settles that
+ * departure. A second call that never arrives is settled by chat-delivery's hourly drain, which asks
+ * this service how that named departure ended.
+ *
+ * @param settles the departure the first call named, for the eviction made once the roster row is
+ *   gone; absent for the first call
+ * @returns whether there was a group at all, how many rows, Redis routes and queued frames went,
+ *   and - on a first call to a group - the departure it began
  */
 export async function evictFromDistributionGroup(
   secret: string,
   scope: DistributionScope,
-  userId: string
-): Promise<{ evicted: boolean; memberships: number; queued: number; routes: number }> {
+  userId: string,
+  settles?: number
+): Promise<{
+  evicted: boolean;
+  memberships: number;
+  queued: number;
+  routes: number;
+  begun: { groupId: string; departure: number } | null;
+}> {
   const payload = (await callDelivery(
     secret,
     'DISTRIBUTION_GROUP',
-    `internal/mls/distribution-groups/${seg(scope)}/members/${encodeURIComponent(userId)}`,
+    `internal/mls/distribution-groups/${seg(scope)}/members/${encodeURIComponent(userId)}` +
+      (settles === undefined ? '' : `?phase=after_roster_write&departure=${settles}`),
     { method: 'DELETE' }
-  )) as { evicted?: unknown; memberships?: unknown; queued?: unknown; routes?: unknown } | null;
+  )) as {
+    evicted?: unknown;
+    memberships?: unknown;
+    queued?: unknown;
+    routes?: unknown;
+    groupId?: unknown;
+    departure?: unknown;
+  } | null;
 
   return {
     evicted: payload?.evicted === true,
     memberships: typeof payload?.memberships === 'number' ? payload.memberships : 0,
     queued: typeof payload?.queued === 'number' ? payload.queued : 0,
     routes: typeof payload?.routes === 'number' ? payload.routes : 0,
+    begun:
+      typeof payload?.groupId === 'string' && typeof payload?.departure === 'number'
+        ? { groupId: payload.groupId, departure: payload.departure }
+        : null,
   };
+}
+
+/**
+ * Tells chat-delivery that the departure `departure` was abandoned before its roster write and
+ * recorded `cancelled` here, so it settles it with nothing evicted - the person is still a member.
+ *
+ * @returns whether that departure was the one in progress there and is now settled
+ */
+export async function cancelDistributionDeparture(
+  secret: string,
+  scope: DistributionScope,
+  userId: string,
+  departure: number
+): Promise<boolean> {
+  const payload = (await callDelivery(
+    secret,
+    'DISTRIBUTION_GROUP',
+    `internal/mls/distribution-groups/${seg(scope)}/members/${encodeURIComponent(userId)}` +
+      `/departures/${departure}/cancel`,
+    { method: 'POST' }
+  )) as { settled?: unknown } | null;
+  logger.log(
+    `[DISTRIBUTION_GROUP] cancel ${label(scope)} user=${userId.slice(0, 8)} departure=${departure} ` +
+      `settled=${payload?.settled === true}`
+  );
+  return payload?.settled === true;
 }
 
 /** Tombstones a scope's distribution group. Returns false when there was none to delete. */

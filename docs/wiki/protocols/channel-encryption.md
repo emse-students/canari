@@ -632,18 +632,216 @@ joins again on its next recovery pass. A key group's Welcome TARGET is asked the
 `apps/chat-delivery-service/src/internal/distribution-entitlement.ts`,
 `apps/social-service/src/internal/internal-distribution-entitlement.controller.ts`.
 
-**The answer is read before the commit lock, and an eviction can land after it - documented, with its
-bound, not closed.** The entitlement is asked in `validateCommit` before the lock is taken, and the
-committer is activated inside it, after the transaction. A departure in social-service
-(`evictFromDistributionGroup` on chat-delivery's internal controller) that runs in that gap deletes
-the leaver's rows first, and the activation then writes an `active` row back. A conversation's
-external commit has the same window between `isOnRoster` and the activation. Re-asking inside the
-lock would narrow the gap and not close it, because the eviction does not take the commit lock. The
-bound is the one every departure already has: the leaver's leaf is in the tree either way, and the
-removal commit that a remaining member makes when it next opens the community deactivates the row.
-Until then the device keeps receiving the group's frames. That leaver loses the immediate,
-server-enforced cut an eviction gives, and keeps only the cryptographic cut of the commit. The window is the duration of one commit's transaction, and closing it
-means making the eviction and the activation exclude each other.
+**A seat is written against a CLAIM, under one per-group lock, and no HTTP call runs under it
+(2026-10-22).** The gate's answer is read before the epoch moves, but the seat is written later, so a
+departure could run in between. `apps/chat-delivery-service/src/utils/seat-eviction.ts` closes that
+window with a durable row and a lock:
+
+- **The generation is the group's.** `dm_groups."seatGeneration"` (migration `036_seat_evictions.sql`)
+  is moved by every eviction of ANYONE from the group, first thing under the lock
+  (`bumpSeatGeneration`). Nothing naming an account has to survive for an earlier claim to be
+  refused, so an account erasure deletes the account's rows below. **The cost, accepted:** a claim
+  in a group where someone else was evicted meanwhile is refused once (`evicted_since_claim`) and its
+  writer retries with a fresh claim - evictions are rare, and an overtaken claim already meant one
+  refusal and a retry.
+- **The row.** `dm_seat_evictions`, one per (group, person): a `generation` of that person's
+  evictions and `owedDeparture`, the NAME of a key group's departure in progress (the person's
+  generation of the eviction that began it), or null. It refuses a claim only through
+  `owedDeparture`; naming a departure is all it is still for.
+- **The lock.** A transaction-scoped Postgres advisory lock on `seat:<groupId>`, released by the
+  commit or the rollback and never by a clock. Every writer that evicts or creates a seat holds it:
+  `evictFromDistributionGroup` (`evictSeats`), `removeGroupMember` (the conversation removal, its
+  roster write and its eviction record in one transaction), the commit's advance (its admits), an
+  account erasure (`eraseSeats`, per group), the commit's advance for its own committer (written in
+  that transaction, so an accepted commit never leaves a leaf without its seat),
+  `activateDeviceMembership` for a key group's publisher, and the two writers of a `pending` seat - a device
+  registration and an invite acceptance (`writePendingSeats`, shared, against the group row and the
+  roster re-read under it).
+- **One order.** Every writer takes the seat lock, then the `dm_groups` row, then
+  `dm_group_members` and its interval, then `queued_message`, then `dm_device_group_memberships`, and
+  writes `dm_seat_evictions` last; an eviction's `dm_groups` write is its generation, so it comes
+  first. A group's end (`GROUP_OWNED_TABLES`) deletes in the same order: the tombstone writes the
+  group row first, and the 90-day reaper locks it `FOR UPDATE` before deleting what it owns. It is
+  written once, in `utils/seat-eviction.ts`.
+- **The epoch moves from the base the gate read, or not at all.** The gate reads the epoch outside
+  the advance's transaction, and the advance may wait on the seat lock. The advance is
+  `UPDATE ... WHERE "activeEpoch" = base`: of two commits at one base, the second matches nothing and
+  is refused `epoch_mismatch`, whatever the Redis commit lock's 5 s did. A commit-log row already
+  holding that base refuses the advance too, so the log and the epoch never disagree.
+- **The claim.** Before the check that decides a seat (the roster, or
+  `isEntitledToDistributionGroup` over HTTP, always outside the lock) `claimSeat` reads the group's
+  generation and the person's `owedDeparture`. Under the lock `seatClaimHolds` re-reads both - a
+  database read only - and the seat is written only if the generation has not moved and no departure
+  is owed. An eviction therefore ran before the claim
+  (the check sees it), between claim and write (nothing is written), or after the write (it deletes
+  the seat). An activation without a claim is refused and logged at error. The commit gate reads the
+  claim too: a key-group external commit whose author has a departure in progress is refused there
+  (`NOT_A_MEMBER`, logged `reason=departure_in_progress`) before the epoch moves, without asking.
+- **A report promotes under the same lock, and every Redis route follows the commit.** The report's
+  one conditional UPDATE (`promoteReportedSeat`) runs under the seat lock. The route
+  (`group:members:<g>`) is then written by `routeActiveSeat`, after the seat's own transaction
+  committed, under the lock again and only if the seat is still `active`. The gateway reads that set
+  alone - its live broadcast and its election of a peer to answer a request re-check nothing in the
+  database (chat-delivery's queued fan-out reads the active rows) - so a route written for a seat an
+  eviction already deleted would keep a device reached. The two other route writers - a send's
+  reconciliation of the set (`MEMBERS_CACHE_REPAIRED`) and an election door's reload of an empty one
+  (`MEMBERS_CACHE_RELOADED`) - find the missing entries first (`SMISMEMBER`) and add only those still
+  `active` when re-read under the seat lock (`restoreRoutes`).
+- **A send's queued rows cannot outlive a seat.** A send reads its recipients with no lock; its queue
+  write (`enqueueForLiveGroup`) takes the seat lock SHARED before the group row, re-reads who still
+  holds a seat and queues and delivers only to them (a commit's removed devices excepted, logged
+  `SEAT_GONE_NOT_QUEUED`). An eviction waits for the write and its delete then takes those rows; sends
+  into one group never wait for each other.
+- **A commit re-reads its claims in the advance's transaction, and an overtaken one refuses it
+  whole.** Under the seat lock, before the epoch moves, the committer's claim (an external joiner, or
+  a member whose seat is not yet `active`) and each admit's are re-read. A claim an unrelated
+  eviction overtook (`evicted_since_claim`: the group's generation moved) refuses the WHOLE commit
+  with a 409 `SEAT_CLAIM_OVERTAKEN` (`seat: committer|admit`): nothing advances, and the client
+  rebuilds and resubmits at once on a fresh claim. That holds for EVERY commit, an ordinary
+  conversation's included - a pending member's own add or remove carries a committer claim too - so
+  the rebuild lives in `runCommitTransaction` itself (up to `SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS`
+  submissions), with the external join's attempt loop and `admitNewcomer`'s tree re-read above it.
+  Each such refusal proves an eviction landed in between, which is what bounds the retries. A departure in progress still refuses an external join
+  (`NOT_A_MEMBER`, `reason=departure_in_progress`): no leaf enters the tree for a person with no seat.
+- **A device row that ADMITS a device is inserted only beside its key package, read under the
+  lock.** Every such writer reads the device's `KeyPackage` row `FOR SHARE` under the seat lock first
+  (`heldKeyPackages`): `writeClaimedSeat` (the committer's seat, an activation, the group's creator -
+  which also checks the revocation denylist), a commit's admits (`ADMIT_REFUSED reason=no_key_package`;
+  the admit is dropped and the commit accepted, since the leaf belongs to an account that is going),
+  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. **Two known exceptions.** The
+  demotion (`deactivateDeviceMembership`, the stale-device cron among its callers), deliberately:
+  it upserts a `pending` row without that read - the cron demotes precisely a device with no recent
+  key package - and removes the route itself. And `addGroupMember` (a group invite, and the opening
+  of a 1:1 DM), a pre-existing writer not yet converted: it reads the key packages outside any lock
+  and writes the roster row and `pending` seats with no seat lock, so **an erased account can be
+  re-enrolled by a peer's invite, roster row included, even after the erasure's final pass**
+  ([backlog](../backlog.md), P2 "addGroupMember can enrol an erased account after the final erasure
+  pass"). An account erasure deletes the account's key packages FIRST, in a
+  transaction of its own, so a writer either holds one and the delete waits for it - its row is
+  then there for the erasure's discovery - or finds none and writes nothing. The erasure cuts every
+  group it found, under each group's seat lock (`eraseSeats`: rows, queue and routes together), so
+  a run interrupted anywhere leaves what it had not cut still named by a row for the retry.
+  **The ordering does not stop the account itself**: every (re)connection republishes its key
+  package (`register-device`), and a token issued before the deletion is honoured for up to an
+  hour. So the roster rows go once every group was cut (`writePendingSeats` seats a registering
+  device only where its owner is on the roster), and the run ends with a SWEEP - the key packages
+  deleted again, then every group a device row names NOW cut through the same `eraseSeats`. **No
+  device row is deleted outside `eraseSeats`**, because the row is what names the route: a seat
+  admitted after the sweep's read stays whole, row and route, for the FINAL PASS, which core starts
+  once every token expired, so no republish can follow it - termination is that pass's, never the
+  ordering's ([account-erasure](../account-erasure.md)). After it, only a demotion's route-less
+  `pending` row can appear, naming a device with no key package, which `cleanupStaleDevices`
+  collects. Proven on PostgreSQL in `seat-lock.integration.spec.ts` ("a key package republished
+  after the first delete", "a seat admitted after the sweep's read"). `recordSeatEviction` creates no row for an account it is not beginning a
+  departure for, so an eviction after the erasure leaves nothing naming it.
+- **A key group's admits are asked like a join.** An admit writes a `pending` seat its device later
+  promotes by reporting itself, so in a key group each admitted person is asked of social-service
+  (`claimKeyGroupAdmits`, before the commit lock) against a claim re-read under the seat lock: not
+  entitled or departing is `ADMIT_REFUSED`, evicted since is the whole-commit 409 above. The group's epoch is read first, so a
+  commit on another epoch is answered `epoch_mismatch` without asking anyone; the distinct people are
+  then asked in parallel. Unanswered is a 503 for the whole commit, before the epoch moves.
+- **The Welcome store and the key-group eviction take the same seat lock.** A key group has no roster
+  row in chat-delivery, so a Welcome's target is asked of social-service (`resolveWelcomeTarget`)
+  against a claim read before the question. Both stores re-read that claim under the seat lock - a
+  sent Welcome in `enqueueForLiveGroup` (shared), a commit-carried one in the advance's transaction -
+  and refuse `welcome_target_not_member` (`reason=evicted_since_claim` or `departure_in_progress`)
+  when an eviction overtook it - unless the target is also the commit's admit, whose overtaken claim
+  has already refused the whole commit with the 409. The target's `pending` row is written in that same transaction
+  (`ensurePendingSeat`), so an eviction either runs wholly before the store or deletes what it wrote.
+  Evictions and removals end the device rows and the queue through `endDeviceMemberships`, under the
+  lock.
+- **One departure function, two evictions, a named outcome.** Every departure in social-service -
+  `leaveWorkspace`, `kickFromWorkspace` and the account erasure (`removeFromWorkspace`, the community's
+  group and every private salon naming the person), `leaveChannel`, `removeMemberFromChannel`,
+  `updateChannelAccess` - goes through `ChannelService.departDistributionGroups`. It evicts BEFORE the
+  roster write (so a failed eviction aborts a departure that is still retryable), and chat-delivery
+  answers the departure's name; the roster write and a `departed` row in `distribution_departures`
+  (social migration `108`) commit in ONE transaction; then it evicts again with
+  `?phase=after_roster_write&departure=<name>`, which settles that departure and no later one.
+- **The drain asks for an OUTCOME, never the entitlement.** A failed second eviction is logged
+  `[KEY_DISTRIBUTION] second eviction FAILED` and the departure stays owed. The hourly sweep
+  (`drainOwedSeatEvictions`, `[SEAT_DRAIN]`) asks social-service how THAT departure ended
+  (`internal/distribution-groups/departure-outcome`). The entitlement could not answer: it says `true`
+  both before the roster write commits and after a rejoin, and settling on the first lets a seat be
+  written for a person whose departure then commits. The question decides: with no `departed` row
+  yet, social-service writes `cancelled` under the same primary key, so the roster write can no
+  longer commit under that name (it is refused with `DEPARTURE_SUPERSEDED` and rolls back; the person
+  stays a member). The drain applies the outcome under the seat lock only if that departure is still
+  the one owed: `departed` cuts again and settles, `cancelled` settles. It re-reads the row right
+  before asking and skips one that is gone (an account erasure deletes it). A person no longer
+  entitled with nothing recorded is answered `departed` and NOTHING is written - no roster write can
+  restore them under that name, and an erased account's id is not written back after its erasure.
+- **A rejoin after a lost second eviction waits for the drain - deliberately.** While a departure is
+  owed, every claim of that person is refused (`departure_in_progress`), so a person who left, whose
+  second eviction was lost, and who is then re-admitted cannot join the key group until the next
+  hourly pass settles that departure. It is NOT settled at the claim: settling means asking the
+  departure's outcome, and the question DECIDES an undecided departure `cancelled` - so a join
+  attempted by the departing person's own client, while an admin's removal of them is still in flight,
+  would cancel that removal. The drain asks only of a departure its second eviction left behind, at
+  most an hour late; the client's recovery pass retries the join, and nothing is lost but the wait.
+- **An abandoned departure is settled at once.** When a later first eviction or the roster
+  transaction fails, `departDistributionGroups` decides each departure it had begun (`cancelled`, the
+  person still on the roster) and calls
+  `POST mls/distribution-groups/:scope/:scopeId/members/:userId/departures/:departure/cancel`, which
+  settles it under the seat lock and evicts nothing (`settleCancelledDeparture`). Each step logs; one
+  that fails is left to the drain, and the original error is rethrown. The leaving user sees
+  `DEPARTURE_SUPERSEDED` as a retry sentence (`chat_community_departure_retry_error`).
+- **The roster write holds the community's removal lock.** Its transaction opens with
+  `pg_advisory_xact_lock(hashtextextended('community_removal:' || <workspaceId>, 0))`
+  (`COMMUNITY_REMOVAL_LOCK_SQL`); every caller passes the community the departure belongs to. A
+  caller may re-check a permission inside `rosterWrite` against writes serialised on that lock; a
+  refusal thrown there rolls the transaction back (no `departed` record, no roster change) and ends
+  as an abandoned departure, settled `cancelled` above. The first evictions run before the
+  transaction, so no HTTP call is made under the lock. Proven on PostgreSQL
+  (`distribution-departure.integration.spec.ts`, "a refusal re-checked under the community removal
+  lock").
+- **Records end with their group.** A community's deletion deletes the `distribution_departures` rows
+  of its group and its salons' groups in its transaction; a salon group retired deletes its own; an
+  account erasure deletes the account's (`account-erasure.ts`). chat-delivery's `dm_seat_evictions`
+  rows go with their group's purge and with the account's erasure, whose chat-delivery part runs only
+  once social's part - the removals that write those rows - has completed
+  ([account-erasure](../account-erasure.md#ordering-failure-classes-and-operating-it)).
+- **A rolling deploy.** Both migrations (036, 108) are applied before any service is replaced
+  (`deploy-environment.sh` runs `apply_migrations` first). A first eviction answered by an older
+  chat-delivery names no departure: social-service logs `first eviction named NO departure` and evicts
+  plainly after the roster write. An older social-service never names one either, so a newer
+  chat-delivery's departure begun by it stays owed until the drain asks, and is answered from the
+  roster as above.
+
+The interleavings are asserted without a clock in `messaging.commit-log.spec.ts` ("against a
+departure that races it": an eviction while the activation holds the lock, a stale HTTP answer after
+the whole departure, an activation between the two evictions, a late settlement against a newer
+departure, the drain, the admits), in `messaging.one-active-writer.spec.ts` (a report under the lock,
+no route for a seat evicted after its commit), in `members.controller.exclusions.spec.ts` (the
+removal's order under the lock), and in social-service's `distribution-group.spec.ts`: the order
+`evict -> roster -> evict&departure`, the erasure taking the same path, the abandoned departure's
+settlement and the rolling-deploy path. The first-writer-wins race is run against PostgreSQL in
+`distribution-departure.integration.spec.ts` (a transaction held open, the other side waited on
+through `pg_blocking_pids`, then committed or rolled back): the question asked while the roster write
+is in flight reads `departed`, or `cancelled` when it rolls back; a roster write arriving while the
+question is in flight is refused with `DEPARTURE_SUPERSEDED` and the member stays. chat-delivery's
+seat lock is run against PostgreSQL (migration 036 applied) in `seat-lock.integration.spec.ts`, CI job
+`test-chat-delivery-integration`: a claim overtaken while it waits on the lock, a departure refusing claims
+until settled, a send's queue write waiting for an eviction and queueing nothing for that seat, an
+eviction waiting for a send and deleting what it queued, two sends not waiting for each other, a
+route restore waiting for an eviction and writing nothing, a claim refused after a whole account
+erasure with no eviction row of the account left, and a claim overtaken by SOMEONE ELSE's eviction
+refused once and holding on its retry.
+
+**`POST /mls/commit` is rate-limited per user (2026-10-22):** `MLS_COMMIT_LIMIT_PER_MINUTE` (600)
+through `UserThrottlerGuard`, after `HeaderAuthGuard`. A refusal is the throttler's `429` before the
+gate, so the epoch has not moved. Its body is `{ code: 'RATE_LIMITED', retryAfterMs }`, read by
+`refusalFromResponse` into `ApiRefusalError.retryAfterMs`. The client records that wait once for the
+process (`frontend/src/lib/mls-client/commitRateLimit.ts`) because the quota is per ACCOUNT: the
+staged-commit path rolls its commit back and throws `CommitRefusedError('rate_limited')` carrying the
+wait, an external join returns `{ reason: 'rate_limited', retryAfterMs }`, and while the wait holds
+neither stages nor builds anything. The sync watchdog's recovery sweep and its stuck-gap escalations
+stop for the rest of the tick instead of collecting one `429` per group. The number sits above what a
+client's serial commit path produces during a restore and is owed a check against the production
+maximum per user and minute (`mls_commit_log`). The background Welcome's commit
+(`POST /mls/push/send-welcome-and-commit`) and the push-triggered key-group join of #2266
+(`POST /mls/push/key-group-join`), both PushSecret routes, are not throttled, so they do not count
+against this quota.
 
 **What creation writes, and what it deliberately does not.** The `dm_groups` row, and nothing else:
 no `dm_group_members`, no `DeviceGroupMembership`. Both absences are asserted directly in
@@ -1013,8 +1211,8 @@ community with no answer to this question, and a null would be a third state eve
 to interpret.
 
 **THE ENFORCEMENT POINT IS EVERY PLACE A SEED LEAVES A DEVICE, AND FOR A YEAR ONLY ONE OF THE TWO WAS
-GATED.** `gatherCommunityHistory` refused the join-time bundle under `joined`, correctly and out
-loud - and `gatherNamedSessions`, the WP-33 repair path, consulted nothing at all and handed the same
+GATED.** `gatherCommunityHistory` refused the join-time bundle under `joined`, out loud (whole,
+whoever asked - floored at the member's arrival since 2026-10-22, below) - and `gatherNamedSessions`, the WP-33 repair path, consulted nothing at all and handed the same
 past back one session id at a time. That is not an exotic path: a newcomer renders a salon, meets
 ciphertext it cannot open, and `noteMissingSeed` names those exact sessions. The setting was stored,
 broadcast, narrowed fail-closed, enforced on one path and bypassed entirely on the other, so a
@@ -1067,11 +1265,117 @@ roster fetch failed would strand seeds the member is entitled to.
 device still holding `shared` in memory would keep handing the past over after an admin had closed
 it - until its next relaunch.
 
-**Narrowed once, and fail-closed.** `narrowHistoryVisibility` is the only place a wire string becomes
-one of the two values, so the sidebar and the seed layer cannot disagree about a community. A value
-this client does not know, and a community whose rule this session never learned, both read as
-`joined`: refusing costs a newcomer some history they were entitled to, guessing `shared` costs a
-community the privacy it asked for, and those are not symmetrical. Both cases warn.
+#### The floor is the MEMBER's, on every path, and a widening reaches the members already in (2026-10-22)
+
+An audit of the rule on 2026-10-22 found it enforced, with four gaps. All four are closed in the
+same change; the rig arms that read them on a live estate are owed (COMM-12, two arms below).
+
+- **A member's NEW DEVICE got no history bundle under `joined`.** `gatherCommunityHistory` refused
+  every HISTORY ask whole, whoever asked - a reading of the rule by DEVICE, when the floor is per
+  MEMBER (`channel_members.createdAt`). It now answers like the repair path, through ONE function
+  (`seedsTheAskerMayRead` in `frameHandler.ts`): each held seed raised to the server's floor at the
+  asking member's arrival, a session wholly before it withheld, fail-closed when the floors cannot
+  be read. A newcomer's first device gets the sessions spanning its arrival; a long-standing
+  member's new device gets everything since the member arrived. The floor query is sliced at 100
+  session ids (`HISTORY_FLOOR_QUERY_MAX_SESSIONS`), because a bundle can name thousands and the ids
+  travel in the query string; the slices run four at a time (`HISTORY_FLOOR_QUERY_CONCURRENCY`), so
+  a capped bundle's 80 queries are not 80 round trips in a row. The bundle's cap applies before the
+  floors, to the NEWEST sessions first: the store's read has no order, and capping it as it came
+  could keep only sessions that predate a recent arrival - an empty, truncated answer at every ask.
+- **The `joined` newcomer's ask was answered by silence at every launch.** It is now ANSWERED: with
+  floored seeds, or, when every row opened and every one predates the arrival, with the "I hold
+  nothing" flag of [section 24](#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18),
+  meaning "nothing here for you" - recorded per roster exactly like "nothing". So the requester asks
+  under both rules, and the ask stops repeating. Rows that do not open with the device key still
+  answer silence, as under `shared`. **What recovers a past after "nothing for you", said:** only
+  the REPAIR path. The history ask is not asked again for that roster version, and a voucher written
+  onto an existing row (a re-admission, section 25) does not move the epoch. Each row the member
+  renders names its session and asks for it, and that repair goes through the same gate - which,
+  once the admission is proven, hands the seed whole (`frameHandler.test.ts`, RE-ADMISSION).
+  Forgetting the record when this device's own voucher appears was weighed and not built: it needs
+  the requester to watch its own roster row, and the repair path already reaches every row read.
+- **A switch `joined` -> `shared` never restored the past to members already in.** The history ask
+  returns once any seed is held, and a row below a raised floor is classed "sent before this device
+  was given the seed", which asks nobody (asking would loop on the same floor). Re-classing those
+  rows was REJECTED for that reason. Instead the ask is re-opened: `historyClosedSeen.ts` records,
+  durably per account, the communities whose past this device was told is CLOSED (only from a rule
+  the server stated, `knownHistoryVisibility` - never the fail-closed default). When the rule then
+  reads `shared`, `requestCommunityHistory` asks even though seeds are held (reason
+  `visibility-widened`), forgets ONCE the "nothing" answers given under the floor, and keeps asking
+  at each start until an answer STORES a seed (`noteHistoryAnswered`), the ask goes final,
+  or there is nobody to ask. Durable because most members are offline when an admin flips the
+  setting; the live `workspace.updated` also triggers it at once - and forgets, with the "nothing"
+  answers, the in-memory "nobody could answer at this epoch" (`historyUnanswerableAt`), which the
+  floor reached and a live widening does not move. An answer with a lower floor on a
+  held session lowers it (`storeIncomingSeed`) and re-reads the salon. **Residue, said:** an
+  answerer who itself arrived late, or who still holds `joined` in memory, answers with what it may
+  give, and that answer settles the widening.
+- **`shared` -> `joined` cannot take back a seed already handed out**, by design. The admin panel's
+  `joined` note says so (`chat_community_history_joined_note`), and no longer says "permanently".
+
+**The receiver re-floors under `joined` (`seedsWeMayKeep` in `frameHandler.ts`).** A bundle is
+floored for the member who asked, and answerers before 1.2.6 addressed it to the whole key group
+([section 23](#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)), while
+`absorbSeedBundle` stored every seed it carried. The receiver now applies its OWN floor too: a
+bundle's seeds are re-floored at this member's arrival (same server route, same raise-never-lower
+`applyHistoryFloors`) before anything is stored; fail-closed, the seeds stay reachable one session
+at a time by the repair path. The frame carries nothing that says whom it was addressed to, and the
+request id would refuse a legitimate late answer, so the floor is the check. The broadcasting
+answerer is retired by `minClientVersion` at or above `1.2.6` on both estates; the receiver check
+holds against any answerer, modified ones included. The native push mirror (`graine_seeds.json`) also
+absorbs a bundle with the app killed and is not re-floored: it only opens PUSHED messages, which are
+minted after the arrival, and nothing reads it back into the store.
+
+**One chokepoint, composed with the admission gate of [section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)
+(reconciled 2026-10-23).** `seedsTheAskerMayRead` is the one function both answers go through, and
+applies, in this order:
+
+1. the salon's roster - the scope of the key group the request arrived on (`withinFrameScope`). A
+   floor is asked of the server per salon, and a salon the asker may not read never reaches that
+   question, nor the gate. Nothing left in scope answers at once, ungated: "I hold none of these"
+   (a repair's `missing`, a history ask's "nothing" when the store has no row) depends neither on
+   the rule nor on the asker;
+2. the cap (history only);
+3. the rule as this session LEARNED it (`knownHistoryVisibility`): not learned yet PARKS the ask
+   until the listing states it (`parkAskUntilRuleKnown`, woken by `whenHistoryRuleKnown`);
+4. the gate (`pastPolicyFor`): `unobserved` PARKS the ask (section 25); `unverifiable` (the roster
+   or the tree did not read) is answered by SILENCE; `shared` hands everything;
+5. under `joined` - the community's setting or an unproven admission - the floor at the asking
+   MEMBER's arrival.
+
+| Case | Answer | Why |
+| --- | --- | --- |
+| Nothing held in scope | at once, ungated: `missing`, or "nothing" when no row exists | a fact about this store, not about the asker |
+| Rule not learned by this session | parked, gate never asked, then decided again (gate included) when the rule arrives | a floor drawn under a guessed `joined` loses a `shared` past for good; the same queue and bound as `unobserved` (64 asks, the oldest dropped at warn) |
+| Rule `shared`, admission proven | everything in scope | section 25 |
+| Rule `shared`, voucher not observed yet | parked until the key group drains, then decided again | section 25; nothing is floored before the gate decides |
+| Rule `shared`, admission not proven | floored at the member's arrival, "nothing for you" when every row predates it | section 25's "never refused whole"; the same floor as a `joined` community |
+| Rule `shared`, admission not checkable (roster or tree unreadable) | SILENCE on both paths: no floored seed, no "nothing", no decline (decided 2026-10-23) | a floored seed is lasting at the requester - the rows below its floor are asked of nobody - so a passing read failure would cost a member part of a session for good; silence records nothing, and the requester asks again at its next start |
+| Rule `joined`, proven or not | floored at the member's arrival | the rule outranks the proof: a proven admission lifts the `shared` gate, never a closed past |
+| Floors cannot be read | silence | fail-closed |
+| A row withheld for its roster, or the cap cut the list | never "nothing for you" | an unlisted salon may be the asker's; past the cap the floors judged nothing |
+
+**The receiver reads the COMMUNITY's rule, never the gate.** The gate is about whom an answerer may
+hand the past to, and a device is proven to itself. Under `shared` every seed goes to
+`storeIncomingSeed` as it came (a seed of a salon the answered listing did not name waits for its
+registration, `awaitSalonListing`). Under `joined` the bundle is scoped first (`seedsWeMayFloor`, the
+same `seedOutsideScope` as the answerer): another roster's seed is refused, and a seed of a salon not
+listed here - not yet, or not named by the answered listing - is SET ASIDE, not held for its
+registration, because a seed admitted that way would be stored unfloored. The repair path reaches it
+once the salon is rendered, floored at the answerer. Only then is the rest re-floored at our own
+arrival (`seedsWeMayKeep`).
+
+**A settled widening needs a STORED seed.** `noteHistoryAnswered` runs only when the bundle stored
+something new: an answerer handing back the floored past this device already holds settles nothing.
+
+**Narrowed once - and an UNKNOWN rule is neither rule.** `narrowHistoryVisibility` is the only place
+a wire string becomes one of the two values, so the sidebar and the seed layer cannot disagree
+about a community; a value this client does not know reads as `joined`, and warns. A community
+whose rule this SESSION has not learned yet is different (`knownHistoryVisibility` is `null`): the
+answerer PARKS the ask, on both answer paths, and the receiver HOLDS a bundle carrying seeds, until
+the rule arrives (`whenHistoryRuleKnown`, event-driven, at most 256 waiting steps, a step past it
+dropped at warn; dropped and said with the session or the community). A floor drawn under a guessed `joined` is a loss rather than a precaution: a `shared`
+community's newcomer handed the floored past records the ask answered and never asks again.
 
 **The ask is derived state, twice over.** A joiner asks when it holds NO seed for the community -
 read from the store, so it survives a reload a "done" flag would have lied about - and when it has
@@ -1287,9 +1591,11 @@ softening of the window: pinning is somebody deliberately saying this one outliv
 deleting it silently at a year would destroy the one kind of message a human explicitly marked as
 durable. Pinned sets are small and bounded per channel.
 
-**The seeds are swept on the SAME window, and the window is asked for rather than copied.** The
-obvious implementation gives the device its own one-year timer, and that is two windows meant to be
-one - the shape that drifts. Instead:
+**The seeds are swept on the SAME window, and the window is asked for; the client holds only a
+FLOOR equal to it.** The obvious implementation gives the device its own one-year timer, and that is
+two windows meant to be one - the shape that drifts. Instead the server answers liveness and the
+window, and the device bounds that window from below (`GRAINE_RETENTION_FLOOR_DAYS`, pinned equal to
+`CHANNEL_MESSAGE_RETENTION_DAYS` by `retentionFloorPin.test.ts`):
 
 1. `sweepExpiredGraineSeeds` (post-boot, tab-leader only) reads the session ids it holds out of the
    ENCRYPTED rows - id and date, never the seed, so an undecryptable row is swept like any other.
@@ -1305,9 +1611,15 @@ Two refusals carry the design:
 - **A session younger than the window is never dropped, whatever the answer says.** "No message
   names this session" has two causes the answer cannot separate - its messages expired, or it has
   none yet - and only the first is a reason to delete. The window travels back with the answer
-  (`retentionDays`) so the client still holds no copy of it, and it is sent as DAYS rather than as
-  a cutoff instant so both sides of the comparison stay on the device's own clock. A server
-  answering `retentionDays <= 0` gets nothing swept: with no window every session looks old enough.
+  (`retentionDays`); the client holds a floor equal to it, never a second clock, and it is sent as DAYS rather than as
+  a cutoff instant so both sides of the comparison stay on the device's own clock.
+  **Client-side bounds on server-provided retention (2026-10-22):** the answer is bounded from below
+  by `GRAINE_RETENTION_FLOOR_DAYS` = 365 (`retention.ts`), the product window above. An honest
+  server answers exactly that, so the bound changes nothing; an answer below it (zero and negative
+  included) is logged at `error` and the sweep runs with the floor, so no seed younger than a year is
+  ever dropped on a remote number. A non-numeric answer is refused outright. There is no ceiling: it
+  could only delete SOONER than the server says, and the server already decides which sessions are
+  live. **Changing `CHANNEL_MESSAGE_RETENTION_DAYS` means changing the floor in the same change.**
 - **A chunk that went unanswered abandons the whole run.** A failed ask reads exactly like "the
   server names nothing", and acting on it would delete every seed on the device the first time the
   API is down. The server refuses a list over `MAX_LIVE_SESSION_QUERY` = 500 rather than truncating
@@ -3745,7 +4057,10 @@ answerer missed the live request. What can be recorded is an ANSWER.
 is `shared`) and holds NO seed ROW of the community answers a HISTORY request with an empty bundle that
 says so, echoing the `request_id`, addressed to the device that asked as key material like every
 answer ([section 23](#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)). The
-`joined` refusal stays silent (the requester knows the rule), and a SESSIONS request is unchanged.
+`joined` refusal stayed silent (the requester knows the rule) until 2026-10-22; under `joined` the
+ask is now answered, floored, and an empty hand whose rows all opened says "nothing" too
+([WP-34/35](#the-floor-is-the-members-on-every-path-and-a-widening-reaches-the-members-already-in-2026-10-22)).
+A SESSIONS request is unchanged.
 
 **"Nothing" is a count of ROWS, never of what decrypted** (adversarial review of #2027). The seed read
 skips a row the device key cannot open - a PIN change re-sealing the store, backup rows sealed under
@@ -3916,8 +4231,8 @@ admissions, per account) and its MLS layer (pins and departures):
   the moment it drains. An ask arrives ON the key group, so it is that group's current work and can
   never see it drained. An ask whose answer depends on a voucher not observed yet
   (`pastPolicyFor` -> `unobserved`) is therefore PARKED in memory (`parkedAsks.ts`): one per asking
-  device, community and kind, at most 64, the oldest dropped at warn. The drain that follows decides
-  it again and answers then; a decision that has become a refusal is answered as one, with its log.
+  device, community and kind, at most 64 (shared with the asks that wait for an unknown history
+  rule), the oldest dropped at warn. The drain that follows decides it again and answers then; a decision that has become a refusal is answered as one, with its log.
   **Consequence: the answer waits for the key group to catch up on the answering device.** A parked
   ask lost with the app is acceptable: the asking device asks again at its next start. A SESSIONS
   repair naming only seeds this device does not hold is answered at once (`missing` does not depend
@@ -3963,13 +4278,17 @@ read from their arrival on when this device answers. Another device that saw the
 still hands them the past. The record holds only the vouchers on the current roster; one that leaves
 the roster and comes back is observed again, later.
 
-`pastPolicyFor(frame)` is THE gate, and both answer paths call it - the HISTORY bundle
-(`gatherCommunityHistory`) and the SESSIONS repair (`gatherNamedSessions`) - so the two cannot
-disagree about a member. It returns `joined` when the community is set to it, when the admission is
-not proven (`info`: a decision, not a loss), or when the roster or the tree cannot be read (`warn`:
-fail closed). **Not proven is never refused whole**: the answer is the one a `joined` community
-gives - nothing from before the asker's arrival, everything from it on, under the same
-server-computed floor. It returns `unobserved` when the admission is not proven only because a
+`pastPolicyFor(frame)` is THE gate, and both answer paths call it through ONE chokepoint,
+`seedsTheAskerMayRead` - the HISTORY bundle (`gatherCommunityHistory`) and the SESSIONS repair
+(`gatherNamedSessions`) - so the two cannot disagree about a member. It returns `joined` when the
+community is set to it, or when the admission is not proven (`info`: a decision, not a loss), and
+`unverifiable` when the roster or the tree cannot be read (`warn`: fail closed, answered by
+SILENCE on both paths - a floored seed would be lasting at the requester, a passing failure must
+not be). **Not proven is never refused whole**: the answer is the one a
+`joined` community gives - nothing from before the asker's arrival, everything from it on, under the
+same server-computed floor, on the history path too since the reconciliation with #2264
+([the decision table](#the-floor-is-the-members-on-every-path-and-a-widening-reaches-the-members-already-in-2026-10-22)).
+It returns `unobserved` when the admission is not proven only because a
 voucher waits for the key group to drain; the answer path then parks the ask (above). It judges on
 the COMMUNITY's key group (`communityKeyGroupOf`), whichever
 group the ask arrived on: a private salon's own group holds that salon's members and its own
@@ -4026,9 +4345,11 @@ R = lp("canari-graine-admit-redeem-v1") || lp(workspaceId) || lp(subject) || lp(
 
 ### Order with the other drafts
 
-Merges after #2262 (salon scope) and #2264 (visibility floors). #2264 moves the visibility read into
-`seedsTheAskerMayRead`; on rebase, its `historyVisibilityFor(...) === 'shared'` becomes
-`(await pastPolicyFor(frame)) === 'shared'`, so the gate stays the ONE function both paths call.
+This section merged after #2262 (salon scope); #2264 (visibility floors) was then rebuilt on top of
+it (2026-10-23): `seedsTheAskerMayRead` calls `pastPolicyFor` after the rule check, so the gate
+stays the ONE function both paths call, and the history path floors an unproven asker instead of
+refusing them whole. The composed cases are the table in
+[the floor is the member's](#the-floor-is-the-members-on-every-path-and-a-widening-reaches-the-members-already-in-2026-10-22).
 #2263 (rotation on a new user) and #2255 (paging) touch neither the gate nor the voucher.
 
 Tests: `graineAdmission.test.ts` (the leading `0x00`, round trips, every tampering: subject,
@@ -4054,3 +4375,83 @@ COMM-26..31): a fresh link with its fragment gives the past, on the web and thro
 handler; an old link joins and reads from arrival; a member's add gives the past; a new device of a
 rooted member gets the past; a kicked member re-added with their old voucher reads from arrival; the
 `admission is not proven` line on the answerer for an unproven newcomer.
+
+## 26. A shut phone joins a salon's key group from the push - DECIDED BY THE USER 2026-10-22
+
+**The gap.** A member's seat in a key group is committed by an admitter's Welcome
+([section 20](#20-whoever-admits-a-newcomer-welcomes-them---decided-by-the-user-2026-09-27)) or by
+the member's own external commit when the app loads the community. A member nobody admitted (added
+before section 20, or by a path with no online admitter) whose phone does not open the app got every
+salon push as a blind banner: the push service said "not in the salon's key group" and stopped.
+Asked whether the phone should join from the push, as it joins a DM from a Welcome, the user chose:
+*"Oui, rejoindre au push"*. Section 20's admitter stays the first door; this is the one for a seat
+nobody committed.
+
+### What happens on Android
+
+A salon push whose seed frame is refused and whose key group is ABSENT from this device
+(`SeedFrameLadder`'s `onAbsent`) posts its generic banner as before, then queues
+`joinKeyGroupFromPush` on the push service's single MLS lane:
+
+| Step | Where | What it decides |
+| --- | --- | --- |
+| Claim | `mobile/key_group_join.rs` `claim` (`key_group_push_joins.json`, file-locked) | ONE attempt per group until the app starts. Written `attempting` before anything is fetched, so a crash mid-join is never retried from a push; capped at 64 entries. A `deferred` entry is claimed again with the base epoch its prepare failed on |
+| Base | `POST /api/mls/push/key-group-base` (PushSecret) -> `readKeyGroupBaseForPush` | Key group only (403 otherwise); the same entitlement ask as `assertCommitterMayCommit` (403 not entitled, 503 unanswered); `welcomeOwed` when a Welcome is queued or the add lock is held (one door at a time); the scope; the base |
+| Before the prepare | `KeyGroupPushJoin.beforePrepare` | A base at the epoch a previous prepare failed on is not prepared again (`deferred`, unchanged); a salon-scoped base must name the push's own salon (`scope-mismatch`) |
+| Prepare | `prepare_key_group_join` under `MlsStateLock` | Refused in a WARM process (below); the client checks below; builds the external commit and STAGES `digest(mls.bin) + sealed post-join state` - nothing is installed. A refusal reached after the load or the build is `deferred` on that base, so a stuck base does not cost every salon push seconds of work |
+| Commit | `POST /api/mls/push/key-group-join` (PushSecret) -> `submitKeyGroupJoinForPush` | Rate-limited per user like every other commit path, after the PushSecret is proven (`KEY_GROUP_PUSH_LIMIT_PER_MINUTE`, a 429 the phone settles `deferred` on that base, never `lost`); external commits into key groups only (400/403 otherwise), then `validateCommit` unchanged: entitlement, strict epoch, base republished |
+| Install | `finish_key_group_join` -> `background_write_mls_bin_if_unchanged_and_cold` | Under the write lock: refused while the app is in the foreground or warm, refused if `mls.bin` changed since the prepare read it (a compare-and-swap, never a lost update). A state lock not taken is not an answer: the attempt stays `attempting` and the app discards the stage |
+| Settle | `settle`; `KeyGroupPushJoin.kt` maps every answer | `joined` (with the server's scope), `refused` (the server ANSWERED, or the push was inconsistent), `lost` (accepted, not installed), `deferred` (failed on this base), `retryable` (no answer, an unreadable answer, 503, stale or missing base, Welcome owed) |
+
+**No install lands under a foreground manager - cold or warm.** The login reads `mls.bin` through
+`foreground_load_mls_bin`: it marks the foreground active and the process WARM, then reads under the
+write lock, so an install either landed before the read (and the manager holds it) or sees a mark
+and is refused. A warm process - an app backgrounded with its manager still in memory - refuses the
+join outright, before the build: at its resume a manager holding a ratchet advance is persisted over
+the file (`LiveAhead`), which would erase the install. The app's own load joins the group there.
+
+Only the server answering is a refusal; a transport failure, a 503 or an unexpected status claims
+nothing about membership. The app takes and clears the ledger at its next start
+(`take_key_group_push_joins` -> `adoptKeyGroupPushJoins`, right after `hydrateDistributionGroups`,
+and again after each resume reload): a `joined` group the loaded MLS state really holds is registered
+(workspace scope, or a salon whose community this start already knows; otherwise noted as a key
+group until its community loads) - never over a mapping the registry already holds; every other
+entry is left to the community load, which joins the ordinary way.
+
+The ledger is sealed at rest under the install's native cache key, and the staged state under the
+device key; both leave with `mls.bin` at sign-out
+([mobile](../frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
+
+### What the client checks before committing
+
+- the seed frame's clear MLS header names the group the push names (`frame-group-mismatch`);
+- the base names that group too (`base-group-mismatch`) and sits at the epoch the server states
+  (`epoch-mismatch`);
+- the push's author holds a leaf in the base's tree (`sender-not-in-tree`);
+- this device holds no leaf of the group already (`already-held`);
+- a salon-scoped base names the salon the push is for (`scope-mismatch`). A community-scoped base
+  cannot be compared here - the push carries no community id - and is left to the server's gate.
+
+Entitlement itself is the server's gate, asked on both round trips: a phone that never loaded the
+community has no roster of its own to compare with.
+
+### What the triggering push shows
+
+The generic banner already posted. Its frame was sealed before this device's join epoch, which a
+joiner cannot open by construction. The join is a commit, a commit rotates every sender's session,
+and [section 19](#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27) puts
+the new seed on the next message - so the NEXT salon push is readable. No new string.
+
+### iOS
+
+The notification service extension reads an App Group MIRROR of `mls.bin` and never writes the
+app's state, so it cannot join. It logs that the app joins at its next foreground and shows the
+generic localized banner; the app's community load joins the group.
+
+### Owed
+
+Compiled only by CI: the Kotlin service and the JNI entry points (Android), the Swift line (iOS).
+Device readings: on the Mi 9T, a member whose phone never opened community X receives a salon push
+for X - a generic banner, `joinKeyGroupFromPush: settled joined`, the next push readable, and the
+app's next start logging `[KEY_GROUP_PUSH_JOIN] ... registered`; on the iPhone, the generic banner
+and the join at the next foreground.

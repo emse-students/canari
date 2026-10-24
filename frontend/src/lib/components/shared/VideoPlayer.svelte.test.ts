@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * CANARI'S PLAYER REPLACES THE ENGINE'S `controls` IN EVERY VIEWER (user, 2026-10-01).
  *

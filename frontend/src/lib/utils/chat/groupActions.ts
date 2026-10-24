@@ -175,17 +175,21 @@ export async function deleteGroupAndBroadcast(params: {
 }): Promise<void> {
   const { mlsService, groupId, userId, log } = params;
 
-  // 1. Notify peers via MLS BEFORE server deletion.
-  // Encryption requires WASM state (group must be local),
-  // and routing requires dm_group_members (group must be on server).
+  // 1. Notify peers via MLS BEFORE server deletion, and AWAIT ITS ACCEPTANCE (`sendMessage` resolves
+  // on the delivery service's answer, not on a queue write). Encryption requires WASM state (group
+  // must be local), and routing requires dm_group_members (group must be on server). A failure is
+  // lost rather than sent later, for the reason `leaveGroupAndBroadcast` gives: the peers then learn
+  // the deletion from the server (a 410 on their next send, the group gone from their next pull).
   if (holdsGroupState(mlsService, groupId)) {
     try {
       const controlMsg = encodeAppMessage(
         mkVisibleSystem('groupDeleted', JSON.stringify({ deletedBy: userId }))
       );
       await mlsService.sendMessage(groupId, controlMsg);
-    } catch {
-      // Non-blocking: peers will discover the deletion on their next pull
+    } catch (e) {
+      const line = `[DELETE] groupDeleted notice for ${groupId.slice(0, 8)}… NOT delivered - deleting without it: ${String(e).slice(0, 120)}`;
+      console.warn(line);
+      log?.(line);
     }
   }
 
@@ -270,24 +274,30 @@ export async function setGroupImageAndBroadcast(params: {
 }
 
 /**
- * Sends an MLS system message to notify a membership change.
+ * Sends an MLS system message to notify a membership change, and resolves once the delivery service
+ * has ACCEPTED it - `sendMessage` awaits the `POST /api/mls/send` answer itself, it is not the
+ * durable outbox. That is what lets a leave end the membership right after it: the notice is on the
+ * server, routed to the members, before the server step that would refuse it.
  *
- * Always best-effort: if the send fails peers will discover the change on their next
- * `getUserGroups` call. Never call after `forgetGroup`.
+ * Best-effort, and never silent: a failure is logged and the caller goes on, because a membership
+ * change the user asked for must not wait on a notice. Never call after `forgetGroup`.
  */
 async function notifyMembershipChange(
   mlsService: IMlsService,
   groupId: string,
   event: 'memberLeft' | 'memberRemoved',
-  payload: Record<string, string>
+  payload: Record<string, string>,
+  log?: (msg: string) => void
 ): Promise<void> {
   try {
     await mlsService.sendMessage(
       groupId,
       encodeAppMessage(mkVisibleSystem(event, JSON.stringify(payload)))
     );
-  } catch {
-    /* non-blocking */
+  } catch (e) {
+    const line = `[GROUP] ${event} notice for ${groupId.slice(0, 8)}… NOT delivered, and not sent later - the members see the roster change without it: ${String(e).slice(0, 120)}`;
+    console.warn(line);
+    log?.(line);
   }
 }
 
@@ -357,17 +367,34 @@ export async function removeMemberAndBroadcast(params: {
  * carries the reasoning. The local exit is unconditional and completes first; whether the server
  * performed its half is `exitGroupAndCleanup`'s to classify, and only it can decide whether the
  * device still owes one.
+ *
+ * **STEP 2 WAITS FOR THE NOTICE'S DELIVERY, NOT ITS WRITE** - `notifyMembershipChange` resolves on
+ * the delivery service's acceptance, so the notice is routed before the membership ends. The 403 the
+ * GRP-6 row recorded on 2026-10-22 was NOT this notice: it was another entry of the same group in
+ * the durable outbox (a read watermark queued as the leaver closed the conversation), which
+ * `exitGroupAndCleanup` now settles (sends, or withdraws what cannot go) before calling this.
+ *
+ * **A NOTICE THAT FAILS IS LOST, NOT SENT LATER, AND THE LEAVE GOES ON.** It cannot be queued: a
+ * frame needs this device's MLS state and its membership, and step 3 and step 2 remove exactly those -
+ * the outbox would hold a frame no flush can ever send. Holding the leave until the notice goes would
+ * keep a user in a group they asked to leave for as long as the network is down, which the exit
+ * forbids (see `deleteGroupAndBroadcast`). What the others lose is the visible "X left" line only:
+ * the roster stops naming the leaver at once (the server half, replayed by the owed exit when it
+ * failed too), and `removeStrayLeaves` collects the leaf on a remaining member's next connection.
  */
 export async function leaveGroupAndBroadcast(params: {
   mlsService: IMlsService;
   groupId: string;
   userId: string;
   deviceKeyB64: string;
+  log?: (msg: string) => void;
 }): Promise<void> {
-  const { mlsService, groupId, userId } = params;
+  const { mlsService, groupId, userId, log } = params;
 
-  // 1. Notify BEFORE server deletion (WASM must be intact to encrypt).
-  await notifyMembershipChange(mlsService, groupId, 'memberLeft', { userId });
+  // 1. Notify BEFORE server deletion (WASM must be intact to encrypt), and AWAIT ITS ACCEPTANCE:
+  // the server step below ends the membership, and a frame posted after it is refused.
+  // A failure is logged there and the leave goes on - see this function's doc for why it is lost.
+  await notifyMembershipChange(mlsService, groupId, 'memberLeft', { userId }, log);
 
   // 2. Clean the server registry. HELD AND RETHROWN BELOW, for the reason
   // `deleteGroupAndBroadcast` documents at length: this bare catch was the same defect with no log
@@ -381,7 +408,7 @@ export async function leaveGroupAndBroadcast(params: {
 
   // 3. Drop the local state. Awaited, for the reason `deleteGroupAndBroadcast` gives: the user has
   // been told they left, and a reload must not put them back in a group they can no longer read.
-  await dropGroupState(mlsService, groupId, { reason: 'left by us', checkpoint: 'awaited' });
+  await dropGroupState(mlsService, groupId, { reason: 'left by us', checkpoint: 'awaited', log });
 
   // The local exit is complete either way; whether the SERVER performed its half is the caller's
   // to classify, and a 403/404 is one of the answers it reads as done.
@@ -517,6 +544,17 @@ function serializeForBundle(m: StoredMessage) {
     ...(m.editedAt ? { editedAt: m.editedAt } : {}),
     // Secondary timestamp: needed for stable post-migration sorting.
     ...(m.serverTimestamp ? { serverTimestamp: m.serverTimestamp } : {}),
+    // The authors' own signatures, so the reader takes the message, the edit and the deletion from
+    // their authors rather than from this relayer (history-reconciliation, authorship). A deleted
+    // message relays its signed tombstone and never its original bytes.
+    ...(m.authorship && !m.isDeleted ? { authorship: m.authorship } : {}),
+    ...(m.editProof && !m.isDeleted ? { editProof: m.editProof } : {}),
+    ...(m.deleteProof ? { deleteProof: m.deleteProof } : {}),
+    // A row this device holds only as unverified is relayed as such. Without it the reader would
+    // take the row on THIS device's word - as its author's own, when it names this device's user -
+    // and one relay hop would erase the mark (`relayerVouches` in restoredAuthorship.ts). Not the
+    // bundle-level `vouched` flag retired below: this one is per row and says less, not more.
+    ...(m.restoredUnverified ? { authorUnproven: true } : {}),
   };
 }
 

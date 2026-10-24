@@ -17,6 +17,8 @@
  *
  * - accepted, first time or duplicate -> merge (and, for an Add, deliver its Welcome);
  * - refused for a reason that is an answer (another commit took the epoch, a 4xx) -> clear, catch up;
+ *   except a `409 SEAT_CLAIM_OVERTAKEN`, which refuses only the copy that got it: the first request
+ *   reads its own claim when it arrives, and may still land;
  * - still no answer -> UNKNOWN: the staged commit is KEPT and checkpointed, and nothing else is
  *   committed or sent in that group until a resubmission answers - at the next connection, the next
  *   send or commit in the group, or a replay that finds the log decided at that epoch.
@@ -35,6 +37,7 @@ import { commitAdmits } from './commitAdmits';
 import type { CommitRemoval } from './mlsDeliveryApi';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { toBase64 } from '$lib/utils/hex';
+import { DEADLINE_MS } from '$lib/utils/requestDeadline';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /** One submission: everything needed to send exactly the same request again. */
@@ -232,13 +235,54 @@ export class FollowerTabCommitError extends Error {
 }
 
 /**
- * Whether a THROWN submission is a definitive refusal: the server answered with a 4xx, which it
- * sends only before the epoch gate is reached (a malformed commit, a committer not allowed, an
- * expired token, a rate limit) - so the commit did not land. A 5xx, a gateway error or a transport
- * failure is NOT one: the advance may have committed before the answer was lost.
+ * Whether a THROWN FIRST submission is a definitive refusal: the server answered with a 4xx, which
+ * it sends only before the epoch gate is reached (a malformed commit, a committer not allowed, an
+ * expired token, a rate limit) - so the commit did not land, and no earlier request of it exists.
+ * A 5xx, a gateway error or a transport failure is NOT one: the advance may have committed before
+ * the answer was lost. A RESUBMISSION reads some of these 4xx differently
+ * ({@link refusesOnlyThisRequest}).
  */
 export function isDefinitiveCommitRefusal(error: unknown): boolean {
   return error instanceof ApiRefusalError && error.status >= 400 && error.status < 500;
+}
+
+/**
+ * Whether a 4xx answers THIS REQUEST rather than the commit's bytes: a 401 or a 403 from the auth
+ * guard (a session that expired, a device revoked since, a committer no longer a member) or a 429
+ * from the throttler, all given before the gate. On a resubmission they say nothing of the EARLIER
+ * request of the same bytes, which may have landed - an expired session after an accepted but
+ * unanswered commit is exactly that - so the outcome stays UNKNOWN, never refused.
+ */
+export function refusesOnlyThisRequest(error: unknown): boolean {
+  return (
+    error instanceof ApiRefusalError &&
+    (error.status === 401 || error.status === 403 || error.status === 429)
+  );
+}
+
+/**
+ * The longest one commit transaction - or one settlement - holds the global MLS lock with requests
+ * to the commit gate, each under the `write` head deadline: the resubmission that settles the
+ * group's previous commit, then this commit's first request and the resubmission an unanswered one
+ * owes. Three deadlines, derived from that deadline and never tuned apart from it. Each request's
+ * own deadline adds the time its body needs to leave (`deadlineFor`), so a first request that ran to
+ * its deadline leaves room for its resubmission only when no settlement request ran before it;
+ * after one, the resubmission that no longer fits is not sent and the outcome stays unknown.
+ *
+ * A BOUND, NOT A DECISION: a resubmission the budget does not let start leaves the outcome UNKNOWN
+ * (the stage kept, the next settlement decides); a first request it does not let start is never
+ * sent, so its stage is cleared and the commit refused.
+ */
+export const COMMIT_LOCK_HOLD_BUDGET_MS = 3 * DEADLINE_MS.write;
+
+/** The instant the lock-hold budget of a transaction entered at `now` runs out. */
+export function commitLockHoldEndsAt(now: number = Date.now()): number {
+  return now + COMMIT_LOCK_HOLD_BUDGET_MS;
+}
+
+/** Whether a commit-gate request, under the `write` deadline, may still start before `holdEndsAt`. */
+export function mayStartCommitRequest(holdEndsAt: number, now: number = Date.now()): boolean {
+  return now + DEADLINE_MS.write <= holdEndsAt;
 }
 
 /** What the gate answered a resubmission, read the one way every caller reads it. */
@@ -249,10 +293,19 @@ export type ResubmissionVerdict = 'accepted' | 'refused' | 'unknown';
  *
  * `concurrent_commit` is UNKNOWN on a resubmission, never a refusal: the commit lock it reports may
  * be held by this device's own original request, still being validated.
+ *
+ * `epoch_mismatch` IS DEFINITIVE, WHATEVER EPOCH IT NAMES, because the gate answers it nowhere
+ * without first asking its commit log whether THESE bytes from THIS device already landed at the
+ * base (`answerIfAlreadyAccepted`, `messaging.service.ts`): at its admits pre-check, at the strict
+ * gate, and when the advance was lost to another commit. That last one is the overlap the server's
+ * 5 s commit lock against this client's 30 s deadline allows - our own first request, still inside
+ * its transaction, taking the advance from its resubmission - and its log row is committed by the
+ * time the update finds nothing to move, so the overlap is answered `duplicate`.
  */
 export function resubmissionVerdict(answer: {
   accepted: boolean;
   reason?: string;
+  currentEpoch?: number;
 }): ResubmissionVerdict {
   if (answer.accepted) return 'accepted';
   return answer.reason === 'concurrent_commit' ? 'unknown' : 'refused';

@@ -20,7 +20,14 @@ import {
   type BatchDecryptRow,
 } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
-import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
+import type { ForkFinding } from '$lib/mls-client/integrityFindings';
+import type {
+  DecryptedApplication,
+  GraineRunReading,
+  MlsBatchProcessResult,
+} from '$lib/mls-client/IMlsService';
+import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import {
   StagedCommitPendingError,
@@ -70,7 +77,9 @@ interface NativeDatedKeyPackage {
 }
 
 /** What `envoyer_message_bytes` did - mirrors `Scellement` in `src-tauri/src/commands/mls.rs`. */
-type SealOutcome = { status: 'sealed'; bytes: number[] } | { status: 'commitPending' };
+type SealOutcome =
+  | { status: 'sealed'; ciphertext: number[]; authorProof: number[] }
+  | { status: 'commitPending' };
 
 /** What `recharger_mls_au_resume` did - mirrors `ReloadOutcome` in `src-tauri/src/commands/storage.rs`. */
 type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live-ahead';
@@ -1560,11 +1569,16 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /**
-   * Native `invoke` wrapper - advances the live send ratchet. Ordering and persistence: `sendMessage`.
-   * The native side refuses, typed, a group whose state holds a staged commit
-   * ({@link StagedCommitPendingError}): the state decides, not the session's index of it.
+   * Native `invoke` wrapper - encrypts via `envoyer_message_bytes`, which appends this device's
+   * author signature (`mls-core/src/authorship.rs`) and advances the live send ratchet. Ordering
+   * and persistence: `sendMessage`. The native side refuses, typed, a group whose state holds a
+   * staged commit ({@link StagedCommitPendingError}): the state decides, not the session's index of
+   * it.
    */
-  protected async encryptForSend(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array> {
+  protected async encryptForSend(
+    groupId: string,
+    messageBytes: Uint8Array
+  ): Promise<AuthoredFrame> {
     const res = await invoke<SealOutcome>('envoyer_message_bytes', {
       groupId,
       messageBytes: Array.from(messageBytes),
@@ -1575,7 +1589,15 @@ export class TauriMlsService extends BaseMlsService {
       );
       throw new StagedCommitPendingError(groupId);
     }
-    return Uint8Array.from(res.bytes);
+    return {
+      sealed: Uint8Array.from(res.ciphertext),
+      authorProof: Uint8Array.from(res.authorProof),
+    };
+  }
+
+  /** Native `invoke` wrapper - see {@link IMlsService.takeForkFindings}. */
+  async takeForkFindings(): Promise<ForkFinding[]> {
+    return invoke<ForkFinding[]>('prendre_constats_fork');
   }
 
   /** Tauri-native `invoke` wrapper - decrypts a raw MLS ciphertext via `recevoir_message_bytes`; returns null for commit or proposal frames. */
@@ -1583,11 +1605,12 @@ export class TauriMlsService extends BaseMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     envelope?: EnvelopeSender
-  ): Promise<Uint8Array | null> {
-    const res = await invoke<{ data: number[]; sender: string | null } | null>(
-      'recevoir_message_bytes',
-      { groupId, messageBytes: Array.from(messageBytes) }
-    );
+  ): Promise<DecryptedApplication | null> {
+    const res = await invoke<{
+      data: number[];
+      sender: string | null;
+      author: AuthorVerdict;
+    } | null>('recevoir_message_bytes', { groupId, messageBytes: Array.from(messageBytes) });
     // Null is a commit or a proposal - the one result that may have moved the epoch, and the
     // commit replay reads `getEpoch` on the very next line (see `refreshEpochCache`).
     if (!res) {
@@ -1595,7 +1618,7 @@ export class TauriMlsService extends BaseMlsService {
       return null;
     }
     assertVerifiedSender(groupId, envelope, res.sender);
-    return Uint8Array.from(res.data);
+    return { plaintext: Uint8Array.from(res.data), author: res.author };
   }
 
   /** Single IPC crossing for an ordered page of ciphertexts (history catch-up on native MLS). */

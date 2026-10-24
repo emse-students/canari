@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DRAWER THAT STAYS INSIDE THE PAGE IS LAID OUT AGAINST THE PAGE, NOT THE WINDOW.
  *

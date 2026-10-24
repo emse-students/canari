@@ -56,6 +56,18 @@ describe('the distinct-emoji cap', () => {
 });
 
 describe('applying one reaction change', () => {
+  it('keys a reactor by the ONE canonical user id - a non-ASCII case variant is another user', () => {
+    // `canonicalUserId` (leafIdentity.ts) lowers ASCII letters only, as Rust does.
+    const placed = applyReaction([], 'Élise', '👍', 100)!;
+    const other = applyReaction(placed, 'élise', '👍', 200, true)!;
+    expect(standing(other)).toEqual(['Élise👍']);
+    expect(other).toHaveLength(2);
+    // An ASCII variant IS the same user: its withdrawal takes Élise's reaction back.
+    const same = applyReaction(placed, 'ÉLISE', '👍', 300, true)!;
+    expect(standing(same)).toEqual([]);
+    expect(same).toHaveLength(1);
+  });
+
   it('places a reaction that was not there', () => {
     const result = applyReaction([], 'alice', '👍', 100);
 

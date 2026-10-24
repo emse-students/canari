@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createTapDisambiguator, tapBelongsToInnerControl } from './tapDisambiguator';
 import { GESTURE } from './viewerGestures';

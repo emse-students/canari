@@ -137,6 +137,23 @@ impl MlsManager {
         Some(protocol_message.epoch().as_u64())
     }
 
+    /// Parse the group id a framed MLS message names, without decrypting anything - the twin of
+    /// [`Self::parse_message_epoch`]: both PrivateMessage and PublicMessage carry it in clear.
+    ///
+    /// What a shut phone checks before it joins a key group from a push (channel-encryption
+    /// section 26): the seed frame the salon message carries must be a frame OF the group the push
+    /// names, or the push is not a reason to join that group. Returns None for anything that is not
+    /// a framed protocol message (a Welcome, a GroupInfo, garbage).
+    pub fn parse_message_group_id(message_bytes: &[u8]) -> Option<String> {
+        let msg_in = MlsMessageIn::tls_deserialize(&mut &message_bytes[..]).ok()?;
+        let protocol_message: ProtocolMessage = match msg_in.extract() {
+            MlsMessageBodyIn::PublicMessage(m) => m.into(),
+            MlsMessageBodyIn::PrivateMessage(m) => m.into(),
+            _ => return None,
+        };
+        Some(String::from_utf8_lossy(protocol_message.group_id().as_slice()).to_string())
+    }
+
     /// Deletes the persistent OpenMLS state for a group from the storage provider (best-effort).
     ///
     /// Required before any re-Welcome on the SAME group_id: without this,

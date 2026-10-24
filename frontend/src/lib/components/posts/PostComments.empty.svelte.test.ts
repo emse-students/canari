@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * OPENED FROM ZERO, THE COMMENT SECTION IS A COMPOSER AND NOTHING ELSE (user, 2026-10-01, Mi 9T).
  *

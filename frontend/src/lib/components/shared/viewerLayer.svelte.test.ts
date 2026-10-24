@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DIALOG OPENED FROM INSIDE A FULL-SCREEN VIEWER IS DRAWN ABOVE IT (`utils/viewerLayer.ts`): the
  * report dialog of a comment in the CanaReels sheet sat on `--z-modal` (280), under the viewer

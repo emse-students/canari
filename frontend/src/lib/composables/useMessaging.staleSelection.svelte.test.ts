@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A SELECTION IS NOT A SCREEN: a salon "open" in the store is not a salon being read.
  *

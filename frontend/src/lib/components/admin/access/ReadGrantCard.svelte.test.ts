@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A named reader's card: their campuses as chips, grouped, and a NAMED edit button.
  */

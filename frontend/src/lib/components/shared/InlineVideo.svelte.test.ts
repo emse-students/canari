@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A VIDEO PLAYS WHERE IT IS, AND ONE ANSWER SAYS WHETHER EVERY VIDEO MAKES SOUND (user, 2026-09-29).
  *

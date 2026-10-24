@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * IN A GROUP, THE BADGE MUST NAME WHO REACTED - AND A `title` NAMES NOBODY ON A PHONE.
  *

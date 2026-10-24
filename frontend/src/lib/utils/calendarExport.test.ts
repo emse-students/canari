@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /*
  * A LOGO URL IS ABSOLUTIZED BEFORE IT IS DRAWN, and this stub is what proves the sheet asks. The
  * stored value is the app-relative `/api/media/public/<id>`; in the Tauri WebView that resolves

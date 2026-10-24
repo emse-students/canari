@@ -1,5 +1,6 @@
-//! The native caches, sealed at rest: the Graine seed mirror (`graine_seeds.json`) and the push
-//! message cache (`fcm_message_cache*.ndjson`).
+//! The native caches, sealed at rest: the Graine seed mirror (`graine_seeds.json`), the push
+//! message cache (`fcm_message_cache*.ndjson`) and the push key-group join ledger
+//! (`key_group_push_joins.json`, group ids and salon scopes - `mobile/key_group_join.rs`).
 //!
 //! **WHAT THESE FILES ARE.** Both exist so a phone can do something while the app is shut: the seed
 //! mirror lets the notification service derive a salon message key, and the push cache carries the
@@ -53,6 +54,10 @@ pub(crate) enum Purpose {
     SeedMirror,
     /// One line of `fcm_message_cache*.ndjson`.
     PushCache,
+    /// `key_group_push_joins.json`, sealed whole (`mobile/key_group_join.rs`, which exists only
+    /// where a push service can join).
+    #[cfg(any(target_os = "android", target_os = "ios", test))]
+    KeyGroupJoinLedger,
 }
 
 impl Purpose {
@@ -60,6 +65,8 @@ impl Purpose {
         match self {
             Purpose::SeedMirror => b"canari/native-cache/v1/seed-mirror",
             Purpose::PushCache => b"canari/native-cache/v1/push-cache",
+            #[cfg(any(target_os = "android", target_os = "ios", test))]
+            Purpose::KeyGroupJoinLedger => b"canari/native-cache/v1/key-group-join-ledger",
         }
     }
 }

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 const migrateLegacyMlsStateBlob = vi.hoisted(() => vi.fn());
 const saveMlsState = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 

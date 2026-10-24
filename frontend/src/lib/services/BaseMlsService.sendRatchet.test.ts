@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Same import-cycle break as the other BaseMlsService specs (auth store -> composables ->
 // mlsService -> subclasses -> BaseMlsService).
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
@@ -16,6 +17,7 @@ import {
   sendRatchetEntries,
 } from '$lib/mls-client/sendRatchetLedger';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 
 /**
@@ -35,6 +37,14 @@ import { DELIVERY } from '$lib/mls-client/frameDelivery';
 
 const U = 'u';
 const G = 'g-1';
+
+/**
+ * The author proof the model returns WITH a sealed frame, derived from that frame's bytes: a proof
+ * that travels with the wrong frame (one sealed, dropped and sealed again) no longer matches.
+ */
+function proofOf(sealed: Uint8Array): Uint8Array {
+  return Uint8Array.from([0xa5, ...sealed]);
+}
 
 /** What a checkpoint holds of the model, and what a reload restores. */
 interface ModelState {
@@ -102,7 +112,10 @@ function session(model: RatchetModel, peer: Peer, disk: { state: ModelState }) {
     getLocalGroups: () => [G],
     freshEpoch: vi.fn(async () => model.state.epoch),
     getEpoch: () => model.state.epoch,
-    encryptForSend: vi.fn(async () => model.seal()),
+    encryptForSend: vi.fn(async () => {
+      const sealed = model.seal();
+      return { sealed, authorProof: proofOf(sealed) };
+    }),
     skipSendGenerations: vi.fn(async (_g: string, count: number) => {
       model.burn(count);
       return count;
@@ -132,7 +145,7 @@ function session(model: RatchetModel, peer: Peer, disk: { state: ModelState }) {
     skipSendGenerations: Mock<(groupId: string, count: number) => Promise<number>>;
     persistCheckpoint: Mock<() => Promise<void>>;
     delivery: { postApplicationMessage: Mock<(...a: unknown[]) => Promise<unknown>> };
-    encryptForSend: Mock<(...a: unknown[]) => Promise<Uint8Array>>;
+    encryptForSend: Mock<(...a: unknown[]) => Promise<AuthoredFrame>>;
   };
   return {
     svc: typed,
@@ -220,10 +233,17 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
       after.merge();
       return seal(...a);
     });
-    await second.send();
+    const sent = (await second.send()) as { sealed: Uint8Array; authorProof: Uint8Array };
 
     expect(peer.reused).toEqual([]);
     expect(second.svc.delivery.postApplicationMessage).toHaveBeenCalledTimes(1);
+    // The frame returned, and its author proof, are the RESEALED one - the frame actually posted,
+    // never the dropped first seal's.
+    expect(second.svc.encryptForSend).toHaveBeenCalledTimes(2);
+    const posted = second.svc.delivery.postApplicationMessage.mock.calls[0][1] as string;
+    const postedBytes = Uint8Array.from(atob(posted), (c) => c.charCodeAt(0));
+    expect(sent.sealed).toEqual(postedBytes);
+    expect(sent.authorProof).toEqual(proofOf(postedBytes));
   });
 
   /**

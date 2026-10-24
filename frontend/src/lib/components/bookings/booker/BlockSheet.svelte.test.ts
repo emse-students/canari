@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * AN UNKNOWN OUTCOME CLOSES THE BLOCK SHEET (review of #2035). The first block may have landed
  * after a lost answer, so the sheet re-reads the grid, says so, and closes (a second tap would be

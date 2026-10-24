@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A REFUSED CREATION KEEPS THE PANEL OPEN AND SAYS WHY.
  *

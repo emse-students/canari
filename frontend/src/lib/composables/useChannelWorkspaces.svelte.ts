@@ -53,6 +53,7 @@ import {
   enterPrivateSalonGroup,
 } from '$lib/utils/graine/distributionGroup';
 import { leaveKeyGroupToMainTab } from '$lib/utils/graine/followerTabKeyGroup';
+import { requestCommunityHistory } from '$lib/utils/graine/repair';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
 import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
@@ -2474,10 +2475,27 @@ export function useChannelWorkspaces() {
     imageMediaId?: string;
     historyVisibility?: string;
   }) {
+    const previous = channelWorkspaces.find(
+      (ws) => ws.workspaceDbId === event.workspaceId
+    )?.historyVisibility;
     const visibility =
       event.historyVisibility === undefined
         ? undefined
         : adoptHistoryVisibility(event.workspaceId, event.historyVisibility);
+    if (visibility !== undefined && previous !== undefined && visibility !== previous) {
+      // THE RULE MOVED UNDER AN OPEN SESSION. The history ask is where a closed past is recorded and
+      // where a widened one is asked for again (`historyClosedSeen.ts`): a member already in, holding
+      // seeds floored at their arrival, would otherwise never be handed the past the admin just
+      // opened. A device that is offline now meets the same change at its next listing.
+      console.info(
+        `[CHANNEL] history rule of ${event.workspaceId.slice(0, 8)} moved ${previous} -> ${visibility}`
+      );
+      requestCommunityHistory(event.workspaceId).catch((e: unknown) =>
+        console.warn(
+          `[GRAINE] could not ask for the history of community ${event.workspaceId.slice(0, 8)} after its rule moved: ${String(e)}`
+        )
+      );
+    }
     channelWorkspaces = channelWorkspaces.map((ws) =>
       ws.workspaceDbId === event.workspaceId
         ? {

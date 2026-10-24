@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A POPOVER THAT OPENS UPWARD FROM THE TOP OF A SCROLLER IS NOT ON SCREEN.
  *

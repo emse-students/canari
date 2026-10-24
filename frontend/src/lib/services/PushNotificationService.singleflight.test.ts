@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Stub Tauri internals before any import so the CJS module picks them up (same harness as
 // PushNotificationService.test.ts: vi.mock cannot reach @tauri-apps/api/core).
 const tauriInvokeStub = vi.fn((cmd: string, _args?: unknown) => {

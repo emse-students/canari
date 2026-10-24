@@ -7,6 +7,11 @@
   interface Props {
     /** When true, shows an "(modifié)" label. */
     isEdited: boolean;
+    /**
+     * When true, the message was restored from another member's history with nothing proving its
+     * author (an older build's message, history-reconciliation "authorship") - it is marked, never hidden.
+     */
+    restoredUnverified?: boolean;
     /** When true, enables delivery status display. */
     isOwn: boolean;
     /** When true, shows send status (pending / sending / error / sent) on the last own message. */
@@ -35,6 +40,7 @@
 
   let {
     isEdited,
+    restoredUnverified = false,
     isOwn,
     isLastOwn,
     isReadReceiptAnchor = false,
@@ -54,6 +60,9 @@
    * either. `formatTime24` is still used by the tooltip; only this row is gone.
    */
   const showEdited = $derived(isEdited && !outsideBubble);
+  const showUnverified = $derived(restoredUnverified && !outsideBubble);
+  /** Whether the "unverified" marker's explanation is open - local to this row, closed by default. */
+  let unverifiedOpen = $state(false);
   // A FAILURE IS SHOWN WHEREVER IT IS, not only on the last own message: a salon message that was
   // refused and then followed by another one must not look delivered.
   const showSendStatus = $derived(
@@ -74,7 +83,7 @@
       readBy.length === 0
   );
   const showRead = $derived(isOwn && isReadReceiptAnchor && outsideBubble && readBy.length > 0);
-  const show = $derived(showEdited || showSendStatus || showSent || showRead);
+  const show = $derived(showEdited || showUnverified || showSendStatus || showSent || showRead);
 </script>
 
 {#if show}
@@ -85,6 +94,19 @@
   >
     {#if showEdited}
       <span class="text-2xs font-medium italic opacity-65">{m.msg_modifie()}</span>
+    {/if}
+    {#if showUnverified}
+      <!-- A tap explains the marker; it must not also open the bubble's own panel. -->
+      <button
+        type="button"
+        class="text-2xs font-medium italic underline decoration-dotted opacity-65"
+        data-testid="message-restored-unverified"
+        aria-expanded={unverifiedOpen}
+        onclick={(e) => {
+          e.stopPropagation();
+          unverifiedOpen = !unverifiedOpen;
+        }}>{m.msg_restored_unverified()}</button
+      >
     {/if}
     {#if showSendStatus}
       {#if status === 'pending'}
@@ -181,4 +203,13 @@
       <SeenByHeads readers={readBy} withCheck />
     {/if}
   </div>
+  {#if showUnverified && unverifiedOpen}
+    <p
+      class="text-2xs mt-0.5 text-right opacity-65"
+      data-testid="message-restored-unverified-why"
+      role="note"
+    >
+      {m.msg_restored_unverified_hint()}
+    </p>
+  {/if}
 {/if}

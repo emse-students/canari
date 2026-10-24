@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A CanaReel in the feed is a VERTICAL 9:16 box and touching it opens the reel viewer; a post's video
  * keeps the ordinary attachment box. The media layer and the viewer are stand-ins.

@@ -253,6 +253,9 @@ services:
       CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
       # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
       CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
+      # The key-group shared-payload WRITER (migration 034). A literal of env-manifest.tsv: false
+      # until a release AFTER the one shipping its readers. Neither true nor false: no boot.
+      QUEUED_PAYLOAD_SHARED_WRITES: ${QUEUED_PAYLOAD_SHARED_WRITES:-false}
       # Server-side Safe Browsing lookup for shared links (WP-SAFELINK-1). Optional and
       # fails open: unset means no check, never a blocked link.
       GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
@@ -426,6 +429,10 @@ services:
       # real service in another repository's estate. Empty means no MiGallery in dev.
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
+      # Account restore on a new Android phone (WP-RESTORE-1): the signing-certificate SHA-256 the
+      # restore key's origin is computed from. Empty, every /api/auth/restore route answers 503
+      # (docs/wiki/account-restore.md).
+      ANDROID_APP_LINK_SHA256: ${ANDROID_APP_LINK_SHA256:-}
       # THE ONE FIELD THAT TELLS THE TWO ESTATES APART AT RUNTIME, and until 2026-09-02 nothing
       # delivered it. `render-env.sh` computes it, the manifest declares it, `deploy-build.ts`
       # parses it and `version.service.spec.ts` tests it - and no compose file passed it in, so
@@ -496,6 +503,7 @@ services:
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
       LYDIA_KEY_ENCRYPTION_SECRET: ${LYDIA_KEY_ENCRYPTION_SECRET:-}
+      LIVE_KEY_ENCRYPTION_SECRET: ${LIVE_KEY_ENCRYPTION_SECRET:-}
       # PRESENT ON PROD AND LOCAL AND MISSING HERE UNTIL 2026-09-09, which is the whole of the
       # defect: `RedisService` falls back to `redis://localhost:6379`, so this service dialled
       # itself, failed, and retried for ever - 3 657 error lines in one hour, and `POST /api/posts`

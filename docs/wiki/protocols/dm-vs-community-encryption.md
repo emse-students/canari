@@ -155,7 +155,11 @@ and this page carries the reasoning.
    and its 883 MB are the largest single cost in the database. A shared per-group log, read with a
    per-device cursor, would bring the DM side's `history:{groupId}` stream shape to the key groups,
    where every recipient receives the same bytes. This is a change to chat-delivery, not to the
-   protocol.
+   protocol. **Built 2026-10-22 (migration 034), not yet applied to an estate; its readers ship
+   first and its writer is switched on in a later release.** It keeps the
+   per-device row as the delivery record and stores the ciphertext once, instead of a log with a
+   cursor, so ACK, pull and push are unchanged for every client
+   ([chat-delivery](../services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)).
 4. **`joined` exists and no community uses it** (16 of 16 are `shared`). The weak forward secrecy
    above is the price of `shared`. Nothing needs building, but no admin can choose `joined` today
    unless it is offered.

@@ -18,7 +18,7 @@ split in half. The order, which the file's own header states:
 | #   | job                  | what                                                                                                                                                                                       |
 | --- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1   | `changes`            | reads the modified paths and decides which of the jobs below run at all                                                                                                                    |
-| 2   | the test jobs        | Rust, the four NestJS apps' real AppModule, TS, social-service's integration specs on a real PostgreSQL, frontend, the two self-test suites - in parallel, each behind its own path filter |
+| 2   | the test jobs        | Rust, the four NestJS apps' real AppModule, TS, social-service's and chat-delivery's integration specs on a real PostgreSQL, frontend, the two self-test suites - in parallel, each behind its own path filter |
 | 2b  | `dependency-ceiling` | ONLY on a Dependabot pull request: does a gate HERE exist that would see this update fail? A human's pull request carries no `updated-dependencies` block to decide on, so it skips        |
 | 3   | `ci-passed`          | aggregates them. `success` AND `skipped` both pass. The ONE check the ruleset requires                                                                                                     |
 | 4   | `arm-auto-merge`     | in **parallel** with 1-3, not after                                                                                                                                                        |
@@ -36,6 +36,13 @@ none: a jest run that selects nothing is no longer a pass (the `test` scripts lo
 viewer cap's atomicity, a live's viewer count, a seat's expiry) had been skipped on every run before.
 `ci-passed-gate.test.mjs` asserts the image, the variable and the selection, and that every Redis
 `ci.yml` runs is production's.
+**CHAT-DELIVERY-SERVICE GOT THE SAME JOB ON 2026-10-22** (`test-chat-delivery-integration`,
+`CHAT_DELIVERY_IT_DATABASE_URL`, same digest, same no-skip count), written with migration 034
+([chat-delivery](services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)).
+It also runs `seat-lock.integration.spec.ts`, the seat lock's orderings - a claim, an eviction, a
+route and a send's queued rows against one per-group advisory lock - which no fake can judge
+([channel-encryption](protocols/channel-encryption.md)). The gate test asserts its image, its
+variable and its skip check.
 **ONE spec is excluded from it, by name in both steps: `internal/account-erasure.integration.spec.ts`**,
 which copies every social table out of `public` and so needs the schema `synchronize` builds; it runs
 in `boot-nest-apps` right after the boot built that schema (2026-10-17, found by rebasing on the
@@ -2182,6 +2189,25 @@ The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-be
 ### Two frontend advisories wait on the kit 3 chantier (2026-10-24)
 
 `GHSA-pfhg-q3qv-9q6r` and `GHSA-27mw-82g8-phjj` are LOW SvelteKit advisories (an open redirect through enhanced form submission, an XSS through an untrusted `cache-control` header on a prerendered page), fixed only in `@sveltejs/kit` 3.x. The user put the majors (kit 3, adapter-node 6, webrtc 0.21) after the stable as their own chantiers, so the frontend tree ignores both until Dependabot's #2154 lands, and that pull request deletes them. Unlike media-service's, these rest on a decision, not on reachability. **The retirement check is now its own step, `Every ignored advisory is still reported`, run for every tree whose `matrix.audit` carries an `--ignore`**: it re-audits the tree at its own level without them and fails on an id nothing reports any more, so the day kit 3 merges the two ignores go red rather than stay.
+
+### The Rust ignores live in `.cargo/audit.toml` and retire themselves too (2026-10-24)
+
+Each of the four Rust trees carries its ignores in its own `.cargo/audit.toml`, and **each entry's
+reachability statement is written there, the only copy**. Until 2026-10-24 nothing retired them:
+`RUSTSEC-2026-0381` (webpki-roots) kept its entry in `frontend/src-tauri` after the advisory was
+amended to call 0.26.11 unaffected, and nothing said so. The `cargo-audit` job now has the step the
+bun trees have, `Every ignored Rust advisory is still reported`: every lockfile is re-audited from a
+directory holding no `audit.toml`, against the database the audit step just fetched, and
+`ignored-advisories-still-reported.sh` fails on an id nothing reports any more.
+
+`RUSTSEC-2026-0387` (crypto-bigint 0.5.5, constant-time operations that may branch on secrets; fix
+only in 0.7.6) turned `main` red on 2026-10-24 in all four trees. It cannot be taken by a lockfile
+change: crypto-bigint 0.7 means elliptic-curve 0.14, and every p256/p384 0.13 user here is at its
+newest release (jsonwebtoken 11.1.0, openmls_rust_crypto 0.6.0, webrtc 0.17.2's dtls). It is
+unreachable in chat-gateway (HS256 only), mls-wasm and src-tauri (one X25519/Ed25519 suite), and
+**reachable in code in call-service**, whose DTLS runs P-256/P-384 ECDHE on a per-handshake
+ephemeral secret - bounded by that secret living for one operation and by the SFU never having
+placed a production call. The webrtc 0.21 port ([calls](frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15)) removes that edge.
 
 ### A merged branch that is still there was pushed back, not left behind (measured 2026-09-22)
 

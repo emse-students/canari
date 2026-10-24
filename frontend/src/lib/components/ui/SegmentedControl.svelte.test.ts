@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE FIXED TAB SET: every entry visible at once, full tablist semantics, keys that move and select.
  * Layout (nothing clipped at 320 px) is a browser reading; what is pinned here is the contract.

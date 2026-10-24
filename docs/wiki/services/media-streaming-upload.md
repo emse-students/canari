@@ -194,7 +194,12 @@ daily budget, hence the open-session cap.
 S1 and S5 can start immediately after S0; S4 is deliberately last because without it the outbox still
 holds one whole copy and the "do not load the RAM" goal is only met from the network down.
 This supersedes the 1 MiB-parts idea of RC-5 in [reels-in-chat](../frontend/modules/reels-in-chat.md): RC-5
-shrinks to wiring this API into the outbox states. The weak-network page
+shrinks to wiring this API into the outbox states. **Built that way (RC-5, draft, 2026-10-19)**: the chat-reel
+outbox is the first client of these routes, for chat reels only - parts of 1 MiB (question 1 answered for
+that client: a cut costs 1 MiB, and the dev relay's 1 MiB limit is met), the CEK and session id persisted in
+the encrypted outbox row (question 5), resume from the server's status. Its part transport is `xhrUpload`,
+the WebView's own XHR on every shell (S2's decision 9.2). See
+[reels-in-chat section 14](../frontend/modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19). The weak-network page
 ([offline-and-weak-network](../frontend/offline-and-weak-network.md)) owns the retry policy this reuses.
 
 ## 7. What we cannot do about the host edge

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Which publishes a Back may still stop (re-review of #2124). A PHOTO from the camera tab has no
  * abort at any stage, so a Back from the moment "Publier" is pressed is refused - closing the step

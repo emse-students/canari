@@ -9,6 +9,7 @@ import {
   totalGroupOwnedRows,
 } from './group-purge';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
@@ -16,6 +17,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { SeatEviction } from '../entities/seat-eviction.entity';
 
 /**
  * This function is the single definition of "what a group owns", so what is pinned here is the
@@ -24,18 +26,26 @@ import { GroupMembershipInterval } from '../entities/group-membership-interval.e
  * It is worth pinning because the omission is invisible: prod carried 21 orphaned `mls_group_info`
  * rows out of 69 and 293 of 452 `mls_commit_log` for as long as those two tables were missing from
  * the reaper, and nothing anywhere said so. A table dropped from this list would regress exactly
- * that way, silently, so the test names all eight.
+ * that way, silently, so the test names all ten.
  */
 describe('deleteGroupOwnedRows', () => {
-  /** Every entity a group owns. Deliberately spelled out rather than imported from the module. */
+  /**
+   * Every entity a group owns. Deliberately spelled out rather than imported from the module. IN
+   * THE ONE DELETE ORDER (`utils/seat-eviction.ts`): the roster row, the queue, the device rows, and
+   * the eviction records after them - the order a removal and an eviction take, so a group's end
+   * and either of them never wait on each other in a cycle.
+   */
   const OWNED = [
-    QueuedMessage,
     GroupMember,
+    QueuedMessage,
+    // After the records that reference it, so a group's payloads go with its queue.
+    QueuedPayload,
     DeviceGroupMembership,
     MlsCommitLog,
     MlsGroupInfo,
     GroupInvite,
     GroupMembershipInterval,
+    SeatEviction,
     UserDismissedGroup,
   ];
 
@@ -65,15 +75,17 @@ describe('deleteGroupOwnedRows', () => {
 
     expect(counts).toEqual({
       queuedMessages: 3,
+      queuedPayloads: 3,
       members: 3,
       deviceMemberships: 3,
       commitLog: 3,
       groupInfo: 3,
       invites: 3,
       membershipIntervals: 3,
+      seatEvictions: 3,
       dismissals: 3,
     });
-    expect(totalGroupOwnedRows(counts)).toBe(24);
+    expect(totalGroupOwnedRows(counts)).toBe(30);
   });
 
   it('spares the per-user dismissal markers when the group row SURVIVES', async () => {
@@ -128,8 +140,8 @@ describe('deleteGroupOwnedRows', () => {
 
     await deleteGroupOwnedRows(manager, ['g1', 'g2']);
 
-    // An allowlist: eight deletes, each carrying the same explicit id set and nothing else.
-    expect(deletes).toHaveLength(8);
+    // An allowlist: ten deletes, each carrying the same explicit id set and nothing else.
+    expect(deletes).toHaveLength(10);
     for (const where of deletes) {
       expect(Object.keys(where as object)).toEqual(['groupId']);
       expect(JSON.stringify(where)).toContain('g1');

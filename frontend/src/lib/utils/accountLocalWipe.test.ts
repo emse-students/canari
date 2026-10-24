@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { loadDeviceKey, saveDeviceKey } from './deviceKeyVault';
 import {
   accountIndexedDbNames,
@@ -204,19 +205,25 @@ describe('wipeDeletedAccountLocalData - what else goes with the account', () => 
       localStorage.setItem(ACCOUNT_KEY.sendRatchetLedger(id), '{}');
       localStorage.setItem(ACCOUNT_KEY.historyHeldNothing(id), '{}');
       localStorage.setItem(ACCOUNT_KEY.admissionLedger(id), '{}');
+      localStorage.setItem(ACCOUNT_KEY.historyClosedSeen(id), '{}');
       localStorage.setItem(ACCOUNT_KEY.seenCipher(id, 'g1'), '[]');
       localStorage.setItem(ACCOUNT_KEY.historyAudit(id, 'd1'), '1');
+      localStorage.setItem(ACCOUNT_KEY.restoreKeyRegistered(id), '1');
     }
     localStorage.setItem('canari_theme', 'dark');
     expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([]);
     expect(localStorage.getItem(ACCOUNT_KEY.sendRatchetLedger('user-a'))).toBeNull();
     expect(localStorage.getItem(ACCOUNT_KEY.historyHeldNothing('user-a'))).toBeNull();
     expect(localStorage.getItem(ACCOUNT_KEY.admissionLedger('user-a'))).toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.historyClosedSeen('user-a'))).toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.historyClosedSeen('user-ab'))).toBe('{}');
     expect(localStorage.getItem(ACCOUNT_KEY.seenCipher('user-a', 'g1'))).toBeNull();
     expect(localStorage.getItem(ACCOUNT_KEY.historyAudit('user-a', 'd1'))).toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.restoreKeyRegistered('user-a'))).toBeNull();
     // An id that merely STARTS with the deleted one is another account.
     expect(localStorage.getItem(ACCOUNT_KEY.sendRatchetLedger('user-ab'))).toBe('{}');
     expect(localStorage.getItem(ACCOUNT_KEY.seenCipher('user-ab', 'g1'))).toBe('[]');
+    expect(localStorage.getItem(ACCOUNT_KEY.restoreKeyRegistered('user-ab'))).toBe('1');
     expect(localStorage.getItem('canari_theme')).toBe('dark');
   });
 

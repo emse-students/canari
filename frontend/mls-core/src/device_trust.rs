@@ -301,7 +301,8 @@ pub const MAX_PINNED_IDENTITIES: usize = 8192;
 ///
 /// Both halves come from the server when a KeyPackage is fetched, so a second ':' would let one
 /// split disagree with another (the TypeScript parsers split on the first and on the last). No id
-/// this product mints contains one (`web-`/`tauri-` + random, and a UUID user id).
+/// this product mints contains one (`web-`/`tauri-` + random, and a user id that is 64-hex in
+/// practice and ASCII without ':' by construction - core-service `users/user-id.ts`).
 pub fn is_well_formed_identity(identity: &str) -> bool {
     let mut parts = identity.split(':');
     matches!(
@@ -313,7 +314,9 @@ pub fn is_well_formed_identity(identity: &str) -> bool {
 /// Whether a credential `found` names exactly the device `expected`.
 ///
 /// The device half is compared exactly. The user half ignores ASCII case, because user ids are
-/// UUIDs and both halves of the comparison come from different places (the credential was minted
+/// 64-hex in practice and ASCII without ':' by construction (core-service `users/user-id.ts`), so
+/// ASCII folding is all the folding they can need, and both halves of the comparison come from
+/// different places (the credential was minted
 /// from the token's subject, the expectation from a roster): a case difference names the same
 /// account and must not refuse it.
 pub fn identity_names(found: &str, expected: &str) -> bool {

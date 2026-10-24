@@ -214,7 +214,8 @@
         <dt>Données techniques</dt>
         <dd>
           Adresse IP, date, requête et navigateur (journaux du serveur) ; pour chaque session, la
-          dernière adresse IP, l'appareil et les dates d'usage.
+          dernière adresse IP, l'appareil et les dates d'usage ; sur Android, la partie publique de
+          la clé de restauration de la session (voir « Sessions » ci-dessous).
         </dd>
       </div>
       <div>
@@ -446,8 +447,8 @@
             </td>
           </tr>
           <tr>
-            <td>Sessions de connexion</td>
-            <td>7 jours sans utilisation</td>
+            <td>Sessions de connexion, et leur clé de restauration sur Android</td>
+            <td>7 jours sans utilisation ; la clé disparaît avec sa session</td>
           </tr>
           <tr>
             <td>Présence en ligne</td>
@@ -707,7 +708,13 @@
         <dd>
           Le jeton d'accès vit en mémoire et expire au bout d'une heure ; le jeton qui renouvelle la
           session est conservé dans un cookie inaccessible au code de la page (ou dans le stockage
-          de l'application sur iPhone, Mac et Linux).
+          de l'application sur iPhone, Mac et Linux). Sur Android, l'application crée une clé de
+          restauration que le système du téléphone sauvegarde avec votre sauvegarde Google : un
+          nouveau téléphone restauré depuis cette sauvegarde reprend la session sans nouvelle
+          connexion, et l'ancien téléphone en est alors déconnecté. Canari ne conserve que la partie
+          publique de cette clé, rattachée à la session ; elle disparaît avec la session
+          (déconnexion, 7 jours sans utilisation, suppression du compte). Canari n'envoie rien à
+          Google : la clé est créée et sauvegardée par le téléphone lui-même.
         </dd>
       </div>
       <div>

@@ -299,6 +299,16 @@ pub(crate) fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
 /// (`mobile/background.rs`). It describes `mls.bin`, so it leaves with it.
 pub(crate) const STALE_WELCOME_LEDGER_FILE: &str = "welcome_request_stale.json";
 
+/// A push key-group join's staged post-join state beside `mls.bin` (`mobile/key_group_join.rs`). It
+/// holds that state's epoch secrets, so it leaves with `mls.bin`. Named here, not in the module that
+/// writes it, because that module is not compiled on desktop and this sweep is.
+pub(crate) const STAGED_KEY_GROUP_JOIN_FILE: &str = "mls.bin.keygroup-join";
+
+/// The ledger of key-group joins the push service attempted (`mobile/key_group_join.rs`). Its
+/// `joined` entries name groups installed in THIS `mls.bin`, which the next start writes into the
+/// registry - so it leaves with `mls.bin`, or the next account to sign in would adopt them.
+pub(crate) const KEY_GROUP_PUSH_JOIN_LEDGER_FILE: &str = "key_group_push_joins.json";
+
 /// The background Welcome stages written into `mls.bin` and not yet settled by the engine that wrote
 /// them (`mobile/background.rs`): `{groupId: {"baseEpoch"}}`. The foreground's next load reports
 /// each against the state it then holds ([`report_background_stages`]), so a stage left to the
@@ -486,20 +496,27 @@ fn report_what_keeping_the_live_state_loses(
 }
 
 /// [`delete_mls_state`] minus the `AppHandle`, so what it removes is tested on a real directory:
-/// `mls.bin`, its owner record, and the ledgers built from it.
+/// `mls.bin`, its owner record, and the ledgers and push-join files built from it - no epoch secret
+/// outlives the state it belongs to.
 fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
     log::debug!("[MLS] removing mls.bin and what was built from it");
-    // `mls.bin` GOES AFTER THE LEDGER, which describes it: a sweep that fails part-way leaves the
-    // state intact and the next reset finishes the job - never a memo about a digest beside no
-    // state...
+    // `mls.bin` GOES AFTER WHAT WAS BUILT FROM IT: the staged join and the ledgers describe it, so a
+    // sweep that fails part-way leaves the state intact and the next reset finishes the job - never
+    // staged epoch secrets, or a memo about a digest, beside no state...
     // ...and the owner record AFTER it: a failed removal of `mls.bin` leaves the state with the
     // record naming whose it is, never a state nobody is named for.
     let stale_ledger_tmp = format!("{STALE_WELCOME_LEDGER_FILE}.tmp");
+    let join_staged_tmp = format!("{STAGED_KEY_GROUP_JOIN_FILE}.tmp");
+    let join_ledger_tmp = format!("{KEY_GROUP_PUSH_JOIN_LEDGER_FILE}.tmp");
     let stages_tmp = format!("{BACKGROUND_STAGES_FILE}.tmp");
     let owner_tmp = format!("{MLS_STATE_OWNER_FILE}.tmp");
     for name in [
         STALE_WELCOME_LEDGER_FILE,
         stale_ledger_tmp.as_str(),
+        STAGED_KEY_GROUP_JOIN_FILE,
+        join_staged_tmp.as_str(),
+        KEY_GROUP_PUSH_JOIN_LEDGER_FILE,
+        join_ledger_tmp.as_str(),
         BACKGROUND_STAGES_FILE,
         stages_tmp.as_str(),
         "mls.bin",
@@ -670,10 +687,11 @@ pub(crate) fn mls_state_size(app: tauri::AppHandle) -> u64 {
     }
 }
 
-/// Entries at the top of `{app_data_dir}` that this must NOT empty wholesale, for one of two
-/// reasons: they belong to a framework, or Canari only owns part of what is inside (`files` and
+/// Entries at the top of `{app_data_dir}` that this must NOT empty wholesale, for one of three
+/// reasons: they belong to a framework, Canari only owns part of what is inside (`files` and
 /// `shared_prefs`, both emptied selectively below - and a first draft of this constant omitted
-/// those two, which deleted Firebase's installation id and left both prefix lists dead code).
+/// those two, which deleted Firebase's installation id and left both prefix lists dead code), or the
+/// entry is an order a reset would move backwards (`share_epoch`).
 ///
 /// Everything else at that level is deleted, so the default for a file added tomorrow is ERASED.
 /// The filter this replaced kept only `*.db`, which is why a device revoked on 2026-08-28 was
@@ -703,6 +721,11 @@ const KEPT_AT_TOP_LEVEL: &[&str] = &[
     // Shared with Firebase - emptied by prefix, not wholesale.
     "files",
     "shared_prefs",
+    // The share EPOCH is an ORDER that never moves back (`commands/handoff.rs`): reset to 0 here, a
+    // share captured before the wipe - on iOS, stamped from the App Group copy this wipe never
+    // reaches - would read as NEWER than the current session and be offered to the next account.
+    // It names no account and holds no secret.
+    "share_epoch",
 ];
 
 /// Names inside `{app_data_dir}/files`, a directory Canari SHARES with Firebase, that are ours.
@@ -730,9 +753,19 @@ pub(crate) fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
     // after everything else was removed.
     #[cfg(target_os = "ios")]
     {
-        let group = crate::app_group::app_group_dir().and_then(|g| wipe_group_names(&g));
+        // The names copy, and the share the Share Extension left there - its manifest and its
+        // copies - which no sign-out reaches if nobody signed in (`app_group_share`).
+        let group = crate::app_group::app_group_dir().and_then(|g| {
+            let names = wipe_group_names(&g);
+            let share = crate::commands::app_group_share::wipe_group_share(&g);
+            match (names, share) {
+                (Ok(()), Ok(())) => Ok(()),
+                (Err(a), Err(b)) => Err(format!("{a}; {b}")),
+                (Err(e), Ok(())) | (Ok(()), Err(e)) => Err(e),
+            }
+        });
         if let Err(e) = group {
-            log::error!("[RESET] the App Group names copy was not removed: {e}");
+            log::error!("[RESET] the App Group was not entirely wiped: {e}");
             return match wiped {
                 Ok(()) => Err(e),
                 Err(w) => Err(format!("{w}; {e}")),
@@ -1394,6 +1427,24 @@ mod tests {
             dir.join("unrelated.json").exists(),
             "only what belongs to mls.bin"
         );
+
+        // A push key-group join's staged state and its ledger go too: the stage holds epoch
+        // secrets, and the ledger's `joined` entries would be adopted by the next account's start.
+        file(&dir, "mls.bin");
+        file(&dir, "mls.bin.keygroup-join");
+        file(&dir, "mls.bin.keygroup-join.tmp");
+        file(&dir, "key_group_push_joins.json");
+        file(&dir, "key_group_push_joins.json.tmp");
+        remove_mls_state_in(&dir).unwrap();
+        for gone in [
+            "mls.bin",
+            "mls.bin.keygroup-join",
+            "mls.bin.keygroup-join.tmp",
+            "key_group_push_joins.json",
+            "key_group_push_joins.json.tmp",
+        ] {
+            assert!(!dir.join(gone).exists(), "{gone} outlived the sign-out");
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1503,6 +1554,24 @@ mod tests {
         assert!(dir.join("app_textures/x").exists());
         assert!(dir.join("databases/x").exists());
         assert!(!dir.join("graine_seeds.json").exists(), "ours was kept");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The share epoch survives a wipe: a counter that restarted at 0 would make every share captured
+    /// before it look current again.
+    #[test]
+    fn keeps_the_share_epoch_which_never_moves_back() {
+        let dir = temp_dir("share-epoch");
+        file(&dir, "share_epoch");
+        file(&dir, "pending_share.json");
+
+        wipe_app_data(&dir).unwrap();
+
+        assert!(dir.join("share_epoch").exists(), "the epoch was reset");
+        assert!(
+            !dir.join("pending_share.json").exists(),
+            "a waiting share survived"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

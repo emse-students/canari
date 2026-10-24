@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A CONTROL ACTION THE DURABLE QUEUE REFUSES IS SHOWN, NOT ABSORBED (WP-CONTROL-NOTICE).
  *

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE RESOLVER MUST NOT DEPEND ON ITS OWN OUTPUT.
  *

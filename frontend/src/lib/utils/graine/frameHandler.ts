@@ -12,16 +12,23 @@ import {
   cachedGraineSession,
   awaitSalonListing,
   isCommunityListed,
+  knownHistoryVisibility,
   rawChannelId,
   requireGraineRuntime,
   scopeForChannel,
+  whenHistoryRuleKnown,
 } from './runtime';
 import { sameScope, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
-import { historyFloorsFor } from './historyBoundary';
+import { applyHistoryFloors, historyFloorsFor } from './historyBoundary';
 import { pastPolicyFor } from './admissionGate';
-import { parkAsk } from './parkedAsks';
+import { parkAsk, parkAskUntilRuleKnown } from './parkedAsks';
 import { mirrorGraineSeed } from './graineMirror';
-import { forgetAskedSession, noteHistoryHeldNothing, noteSeedUnavailable } from './repair';
+import {
+  forgetAskedSession,
+  noteHistoryAnswered,
+  noteHistoryHeldNothing,
+  noteSeedUnavailable,
+} from './repair';
 import { seedFromWire, storedV2From, storedV2Of, toWireSeed, type IncomingSeed } from './wireSeed';
 import { checkSeedEndorsement, type EndorsementSource } from './endorsement';
 import { pageGraineBundle } from './bundlePages';
@@ -516,9 +523,17 @@ async function answerSeedRequest(
     parkAsk(frame, request, answerSeedRequest);
     return;
   }
-  // A refusal (`null`, the past withheld) is the only case answered by silence, and it is the one
-  // the requester can already derive: the visibility rule is broadcast by the server, so both sides
-  // know it. Everything else answers, INCLUDING an empty hand - "I hold none of these" is the fact
+  // Nor is an unknown history rule: this session's listing has not stated it yet, and a floor drawn
+  // under a guess would cost a `shared` past for good - so the ask waits for the rule, parked the
+  // same way, and is decided again when the listing states it.
+  if (gathered === RULE_UNKNOWN) {
+    parkAskUntilRuleKnown(frame, request, answerSeedRequest);
+    return;
+  }
+  // A refusal (`null`: the asker's floor could not be placed) is the only case answered by silence
+  // - nothing may be handed over without it, and the requester asks again on its next start.
+  // Everything else answers,
+  // INCLUDING an empty hand - "I hold none of these" is the fact
   // that sends the requester to the next member, and withholding it strands the session for good.
   if (!gathered) return;
   // A HISTORY ask answered with an empty hand SAYS SO (section 24): silence there was the one answer
@@ -602,6 +617,16 @@ async function answerSeedRequest(
 /** A gather the admission gate cannot decide until the key group drains - the ask is parked. */
 const UNOBSERVED = Symbol('unobserved');
 
+/** A gather that waits for this session to learn the community's history rule - parked too. */
+const RULE_UNKNOWN = Symbol('rule-unknown');
+
+/** A gather this device cannot decide yet - each one names the event the ask is parked for. */
+type Undecided = typeof UNOBSERVED | typeof RULE_UNKNOWN;
+
+function isUndecided(value: unknown): value is Undecided {
+  return value === UNOBSERVED || value === RULE_UNKNOWN;
+}
+
 /** Seeds ready to travel, what was asked for and not held, and whether more were held than fits. */
 interface GatheredSeeds {
   seeds: canari.GraineMsg.$Properties[];
@@ -634,14 +659,14 @@ interface GatheredSeeds {
  * first. Silence on those ids is the honest shape - the requester already knows the rule.
  *
  * @returns `null` when nothing may be handed over at all, which the caller answers with silence;
- *   {@link UNOBSERVED} when the gate waits for the key group to drain.
+ *   {@link UNOBSERVED} or {@link RULE_UNKNOWN} when the ask waits for an event (parked).
  */
 async function gatherNamedSessions(
   frame: DistributionFrame,
   request: canari.GraineRequestMsg.$Properties,
   storage: IStorage,
   deviceKeyB64: string
-): Promise<GatheredSeeds | null | typeof UNOBSERVED> {
+): Promise<GatheredSeeds | null | Undecided> {
   const wanted = (request.sessionIds ?? []).map(String).filter(Boolean);
   const truncated = wanted.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS;
 
@@ -655,35 +680,120 @@ async function gatherNamedSessions(
     }
     found.push(session);
   }
-  // ONLY THE SALONS THIS KEY GROUP MAY READ, before the history rule: a session of another roster is
-  // absent from BOTH lists, for the reason a withheld one is below - every honest member filters the
-  // same way, so "missing" would send the requester round the whole roster.
-  const held = withinFrameScope(frame, found);
 
   if (missing.length > 0) {
     // Named rather than counted: this device was chosen as the holder and turned out not to be,
     // which is either a roster that moved under the requester or a seed lost on this side. The list
     // also TRAVELS, in the bundle, so the requester can elect somebody else instead of waiting on an
     // answer that is never coming.
+    // "Holding" counts only what this key group may read: a held seed of another roster is not one
+    // this answer can carry, and counting it would read as a seed lost on the way.
+    const holding = found.filter((s) => seedOutsideScope(s.channelId, frame.scope) === null).length;
     console.warn(
-      `[GRAINE] asked for ${wanted.length} seed(s) by ${frame.sender}, holding ${held.length} - missing ${missing.join(', ')}`
+      `[GRAINE] asked for ${wanted.length} seed(s) by ${frame.sender}, holding ${holding} this key group may read - missing ${missing.join(', ')}`
     );
   }
 
-  // NOTHING HELD, NOTHING TO GATE: the answer is `missing` alone under every policy (a `joined`
-  // floor over no session is an empty map, `historyFloorsFor`), so it goes now - "I hold none of
-  // these" sends the requester to the next member, and parking it would only delay that.
-  if (held.length === 0) return { seeds: [], missing, truncated };
+  // A session withheld for its salon's roster is absent from BOTH lists, for the reason a floored
+  // one is: every honest member filters the same way, so "missing" would send the requester round
+  // the whole roster.
+  const share = await seedsTheAskerMayRead(frame, found, 'the seed(s) they asked for');
+  if (share === null || isUndecided(share)) return share;
+  return { seeds: share.seeds, missing, truncated };
+}
 
-  // THE PAST GOES ONLY TO AN ADMISSION THIS DEVICE CAN VERIFY (section 25): a community sharing
-  // its past answers an unproven asker exactly as a `joined` one does - from their arrival on.
-  // Gated AFTER the store was read, as before section 25: the lookups above decide `missing`, which
-  // never depends on the asker's admission.
-  const policy = await pastPolicyFor(frame);
-  if (policy === 'unobserved') return UNOBSERVED;
-  if (policy === 'shared') {
-    return { seeds: held.map(toWireSeed), missing, truncated };
+/** What {@link seedsTheAskerMayRead} hands over, and what it had to work with. */
+interface AskersShare {
+  /** The seeds that travel, floors applied. */
+  seeds: canari.GraineMsg.$Properties[];
+  /** How many held sessions this key group may read - before the cap and the floors. */
+  inScope: number;
+  /**
+   * How many held sessions were withheld for their salon's roster (`withinFrameScope`) - a salon
+   * of another key group, or one this device has not listed YET. Never part of "nothing for you".
+   */
+  outOfScope: number;
+  /** The policy that decided, or `null` when nothing was in scope and no policy was asked. */
+  policy: 'shared' | 'joined' | null;
+}
+
+/**
+ * Of `found`, the seeds the asking MEMBER may be handed, in wire form - THE ONE CHOKEPOINT both
+ * answer paths go through ({@link gatherNamedSessions}, {@link gatherCommunityHistory}), so the
+ * two paths a seed leaves by cannot disagree. In this order:
+ *
+ * 1. **the salon's roster** (`withinFrameScope`): only the salons of the key group the request
+ *    arrived on. First, so neither the admission gate nor a floor is ever asked about a salon the
+ *    asker may not read at all - and with nothing left in scope the answer goes at once, ungated:
+ *    "I hold none of these" depends neither on the rule nor on the asker;
+ * 2. **the cap** (`cap`, history only), on what this key group may read;
+ * 3. **the community's rule, as this SESSION learned it** (`knownHistoryVisibility`). Not learned
+ *    yet: {@link RULE_UNKNOWN} - the caller PARKS the ask until the listing states the rule
+ *    (`parkAskUntilRuleKnown`), never a floor. The fail-closed `joined` of `historyVisibilityFor` is
+ *    a precaution where a seed would otherwise leave unfloored; here it would be a loss - a `shared`
+ *    community's newcomer handed the floored past records the ask answered and never asks again;
+ * 4. **THE GATE** (`pastPolicyFor`, channel-encryption section 25): `shared` only for an admission
+ *    this device can verify; `joined` when the community is set to it, or the admission is not
+ *    proven; `unverifiable` when it cannot be checked - SILENCE (`null`), never a floor, since a
+ *    floored seed is lasting at the requester and a moment's failure must not be; `unobserved` ({@link UNOBSERVED})
+ *    when a voucher waits for the key group to drain - the caller parks the ask;
+ * 5. **under `joined`, the MEMBER's floor** - the community's setting or an unproven admission: each seed raised to the
+ *    floor the server places at the asking member's arrival (`channel_members.createdAt`), a session
+ *    with nothing readable for them withheld whole. The member's, never the device's: a new device of
+ *    a member who has been in the community for a year is entitled to that year, and an unproven
+ *    newcomer reads from their arrival on (section 25: "never refused whole").
+ *
+ * A withheld seed is a decision, logged at info. On a repair an honest requester never asks for one
+ * (it applies the same rule before asking), so a line there names a client that has not learned the
+ * rule or is not applying it; on a history bundle it is the ordinary pre-arrival past.
+ *
+ * @param cap At most this many in-scope sessions are considered (the history bundle's bound).
+ * @returns `null` when the admission or the floors cannot be established - said, and answered by
+ *   the caller with silence; {@link UNOBSERVED} or {@link RULE_UNKNOWN} when the ask must wait for an event.
+ */
+async function seedsTheAskerMayRead(
+  frame: DistributionFrame,
+  found: StoredGraineSession[],
+  what: string,
+  cap = Number.POSITIVE_INFINITY
+): Promise<AskersShare | null | Undecided> {
+  const inScope = withinFrameScope(frame, found);
+  const outOfScope = found.length - inScope.length;
+  // NEWEST FIRST, then the cap: the store's read has no order, and a cap on an arbitrary slice could
+  // keep only sessions that predate a `joined` asker's arrival - an empty, truncated answer, the same
+  // at every ask. The newest sessions are the ones a recent arrival may read.
+  const held =
+    inScope.length > cap
+      ? [...inScope].sort((a, b) => b.createdAt - a.createdAt).slice(0, cap)
+      : inScope;
+  if (held.length === 0) {
+    return { seeds: [], inScope: inScope.length, outOfScope, policy: null };
   }
+
+  if (knownHistoryVisibility(frame.workspaceId) === null) {
+    console.info(
+      `[GRAINE] not answering ${frame.sender} ${what} in community ${frame.workspaceId.slice(0, 8)} yet: ` +
+        `this session has not learned its history rule, and a floor drawn without it could cost a past for good`
+    );
+    return RULE_UNKNOWN;
+  }
+
+  const decision = await pastPolicyFor(frame);
+  if (decision === 'unobserved') return UNOBSERVED;
+  if (decision === 'shared') {
+    return {
+      seeds: held.map(toWireSeed),
+      inScope: inScope.length,
+      outOfScope,
+      policy: 'shared',
+    };
+  }
+  // AN ADMISSION THAT COULD NOT BE CHECKED IS ANSWERED BY SILENCE, on both paths - never floored.
+  // A floored seed is lasting at the requester: the rows below its floor are classed "before this
+  // device was given the seed" and asked of nobody, so a passing read failure would cost a member
+  // who would have been proven part of a session for good. Silence costs a re-ask at the
+  // requester's next start, and records nothing. The gate already said why, at warn.
+  if (decision === 'unverifiable') return null;
 
   let floors: Map<string, number>;
   try {
@@ -693,99 +803,194 @@ async function gatherNamedSessions(
     // nothing. The other symptom is a member whose repairs silently stop working, which no log
     // would ever name.
     console.warn(
-      `[GRAINE] refusing ${frame.sender} the seed(s) they asked for in community ` +
+      `[GRAINE] refusing ${frame.sender} ${what} in community ` +
         `${frame.workspaceId.slice(0, 8)} - cannot place their history boundary: ` +
         String(e)
     );
     return null;
   }
 
-  const seeds: canari.GraineMsg.$Properties[] = [];
-  const withheld: string[] = [];
-  for (const session of held) {
-    const floor = floors.get(session.sessionId);
-    if (floor === undefined) {
-      withheld.push(session.sessionId);
-      continue;
-    }
-    // RAISED, NEVER LOWERED. Our own floor is what we were given ourselves, and a repair that
-    // widened access would be the leak this whole path exists to close.
-    seeds.push(toWireSeed({ ...session, firstIndex: Math.max(session.firstIndex, floor) }));
-  }
-
+  const { kept, withheld } = applyHistoryFloors(held, floors);
   if (withheld.length > 0) {
-    // A decision rather than a loss, so it is logged like the bundle's refusal is. An honest client
-    // never asks for these - it applies the same rule before sending the request - so a line here
-    // names either a client that has not learned the rule yet or one that is not applying it.
     console.info(
-      `[GRAINE] withholding ${withheld.length} seed(s) from ${frame.sender}: community ` +
+      `[GRAINE] withholding ${withheld.length} of ${held.length} seed(s) from ${frame.sender}: community ` +
         `${frame.workspaceId.slice(0, 8)} is answered as 'joined' and they hold nothing that member may read`
     );
   }
-  return { seeds, missing, truncated };
+  return {
+    seeds: kept.map(toWireSeed),
+    inScope: inScope.length,
+    outOfScope,
+    policy: 'joined',
+  };
 }
 
 /**
- * Everything this device holds for the community - a joiner's catch-up, gated by the community's
- * history rule (WP-34).
+ * Everything this device holds for the community that the asking member may read - a joiner's
+ * catch-up, or a new device's, through {@link seedsTheAskerMayRead} (WP-34, section 25).
  *
  * **The rule is enforced by the MEMBERS**, because a device about to hand a seed over is the only
  * place it can be: the server stores the setting and broadcasts it, holds no key, and could not
- * enforce it if it wanted to. This is one of the two places a seed leaves - {@link
- * gatherNamedSessions} is the other, and for a year it was not gated, which handed back one id at a
- * time exactly the past refused here.
+ * enforce it if it wanted to.
  *
- * Refusing is not a silence: `joined` means the joiner reads from their arrival onwards, which is
- * the setting working, so it is logged as a decision rather than left to look like a lost frame.
+ * **Under `joined` this ANSWERS, floored, and never refuses whole** (2026-10-22). The refusal was a
+ * reading of the rule by DEVICE: a member's new phone asked, was refused, and saw nothing of the
+ * year it had been in the community, although the repair path would hand the same seeds over one
+ * session id at a time. The same holds for a `joined` the admission gate decided (section 25): an
+ * unproven newcomer reads from their arrival on. The cap applies to what this key group may read and
+ * BEFORE the floors, so the bundle's size is bounded exactly as under `shared`.
+ *
+ * @returns `null` (silence) and {@link UNOBSERVED} (parked) as {@link seedsTheAskerMayRead} says.
  */
 async function gatherCommunityHistory(
   frame: DistributionFrame,
   storage: IStorage,
   deviceKeyB64: string
-): Promise<GatheredSeeds | null | typeof UNOBSERVED> {
-  // ONE GATE FOR BOTH PATHS (section 25): `joined` is the community's setting, or a sharing
-  // community's answer to an asker whose admission this device cannot verify - which
-  // `pastPolicyFor` has already said. First, as before section 25: a history answer is the past.
-  const policy = await pastPolicyFor(frame);
-  if (policy === 'unobserved') return UNOBSERVED;
-  if (policy === 'joined') {
-    console.info(
-      `[GRAINE] not sending history to ${frame.sender}: community ${frame.workspaceId.slice(0, 8)} is answered as 'joined'`
-    );
-    return null;
-  }
-
-  const held = await storage.getGraineSessionsForWorkspace(frame.workspaceId, deviceKeyB64);
+): Promise<GatheredSeeds | null | Undecided> {
   // The store answers per COMMUNITY, private salons included; the answer goes back on the key group
-  // the request arrived on, so it carries only that group's salons.
-  const readable = withinFrameScope(frame, held);
-  const seeds = readable.slice(0, GRAINE_HISTORY_BUNDLE_MAX_SEEDS).map(toWireSeed);
+  // the request arrived on, so it carries only that group's salons (`seedsTheAskerMayRead`).
+  const held = await storage.getGraineSessionsForWorkspace(frame.workspaceId, deviceKeyB64);
+  const share = await seedsTheAskerMayRead(
+    frame,
+    held,
+    'the history they asked for',
+    GRAINE_HISTORY_BUNDLE_MAX_SEEDS
+  );
+  if (share === null || isUndecided(share)) return share;
+  const { seeds, inScope, outOfScope, policy } = share;
+  const truncated = inScope > GRAINE_HISTORY_BUNDLE_MAX_SEEDS;
   console.info(
-    `[GRAINE] sending ${seeds.length} of ${readable.length} seed(s) this key group may read as history to ${frame.sender}`
+    `[GRAINE] sending ${seeds.length} of ${inScope} seed(s) this key group may read as history to ${frame.sender}` +
+      (policy === 'joined' ? ", floored at that member's arrival" : '')
   );
   // "I HOLD NOTHING" IS A CLAIM ABOUT THE STORE, NOT ABOUT THIS KEY (section 24). The read above skips
   // a row it cannot decrypt - a PIN change re-sealing, a backup row sealed under another key - and
   // an empty list from it would put a durable "nothing" at the requester while the past sits here.
   // So the claim is made from the ROW count, read after the seeds so a row landing in between can
-  // only withhold the claim, never make it. Rows present and none opened answer as before: silence.
+  // only withhold the claim, never make it. Rows present and not all opened answer as before:
+  // silence. Under `joined`, an empty hand whose every row opened and was withheld by the floor
+  // makes the same claim - "nothing here for you" - which the requester records exactly as it
+  // records "nothing": that member's devices are done at this roster, and a row the member meets
+  // later still asks its own session's sender.
+  // NOT when a row was withheld for its salon's ROSTER: a salon this device has not listed yet may
+  // turn out to be the asker's, and a durable "nothing" would close that past for the roster. NOR
+  // when the cap cut the list: the floors judged only the first sessions, and the rest may be the
+  // asker's. (An admission the gate could not check never reaches here: it is answered by silence.)
   let holdsNothing = false;
-  if (held.length === 0) {
+  if (seeds.length === 0) {
     const rows = await storage.countGraineSessionsForWorkspace(frame.workspaceId);
-    holdsNothing = rows === 0;
-    if (!holdsNothing) {
+    holdsNothing = rows === held.length && outOfScope === 0 && !truncated;
+    if (rows !== held.length) {
       console.warn(
         `[GRAINE] not answering ${frame.sender}'s history ask in community ${frame.workspaceId.slice(0, 8)}: ` +
-          `${rows} seed row(s) held and none opens with this device's key - not "I hold nothing"`
+          `${rows} seed row(s) held and ${rows - held.length} do not open with this device's key - not "I hold nothing"`
+      );
+    } else if (!holdsNothing) {
+      const why = [
+        outOfScope > 0 ? `${outOfScope} seed(s) withheld for their salon's roster` : null,
+        truncated ? `more than ${GRAINE_HISTORY_BUNDLE_MAX_SEEDS} seed(s) in scope` : null,
+      ].filter((reason): reason is string => reason !== null);
+      console.info(
+        `[GRAINE] not answering ${frame.sender}'s history ask in community ${frame.workspaceId.slice(0, 8)}: ` +
+          `${why.join(', ')} - not "I hold nothing"`
       );
     }
   }
   // A history request names no session, so there is nothing it could have named and missed.
-  return {
-    seeds,
-    missing: [],
-    truncated: readable.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS,
-    holdsNothing,
-  };
+  return { seeds, missing: [], truncated, holdsNothing };
+}
+
+/**
+ * Of the seeds a bundle carries, the ones THIS member may keep - the receiver's half of `joined`.
+ *
+ * **Why the receiver checks at all, when the answerer already floored the bundle.** A bundle is
+ * floored for the member who ASKED, answerers before 1.2.6 addressed it to the whole key group
+ * (channel-encryption section 23), and a floor drawn for somebody else is not this member's. So
+ * under `joined` the bundle's seeds are re-floored here, at this member's own arrival, through the
+ * same server route and the same raise-never-lower rule as the answerer.
+ *
+ * **The COMMUNITY's rule decides here, never the admission gate.** The gate (section 25) is about
+ * whom an answerer may hand the past to; this member is proven to itself, so under `shared` it keeps
+ * what it is handed - the answerer already floored an unproven asker.
+ *
+ * The frame carries nothing the receiver could check its addressing by - addressing is the
+ * delivery service's - and the request id would refuse a legitimate late answer (section 23: a
+ * struck member's late seed still lands). The floor is the check that cannot be wrong either way.
+ *
+ * Called with the seeds of LISTED salons of this key group only ({@link seedsWeMayFloor}): a floor
+ * is asked of the server per salon, and one salon the server refuses us would fail the whole bundle.
+ *
+ * @returns The seeds to store, floors applied - none at all when the floors cannot be placed
+ *   (fail-closed, said at warn): every seed refused here is still reachable by the repair path, one
+ *   session at a time, which floors it at the answerer.
+ */
+async function seedsWeMayKeep(
+  frame: DistributionFrame,
+  seeds: IncomingSeed[]
+): Promise<IncomingSeed[]> {
+  if (seeds.length === 0) return seeds;
+  const { userId } = requireGraineRuntime('cannot place our own history boundary');
+  let floors: Map<string, number>;
+  try {
+    floors = await historyFloorsFor(seeds, userId);
+  } catch (e) {
+    console.warn(
+      `[GRAINE] NOT absorbing ${seeds.length} seed(s) from ${frame.sender} in community ` +
+        `${frame.workspaceId.slice(0, 8)}: it is set to 'joined' and our own history boundary ` +
+        `cannot be placed - ${String(e)}`
+    );
+    return [];
+  }
+  const { kept, withheld } = applyHistoryFloors(seeds, floors);
+  const sentAt = new Map(seeds.map((s) => [s.sessionId, s.firstIndex]));
+  const raised = kept.filter((seed) => seed.firstIndex !== sentAt.get(seed.sessionId)).length;
+  if (withheld.length > 0 || raised > 0) {
+    // An answer floored for somebody else - an older answerer's broadcast - or a modified one. The
+    // seeds are dropped or raised, and the line says how many, never which device sent the bundle
+    // to whom: this device cannot know.
+    console.info(
+      `[GRAINE] a bundle from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} carried ` +
+        `${withheld.length} seed(s) entirely before our arrival and ${raised} below it - ` +
+        `withheld and raised to our own floor ('joined')`
+    );
+  }
+  return kept;
+}
+
+/**
+ * Under `joined`, which of a bundle's seeds a floor can be asked for - the receiver's scope check,
+ * made BEFORE {@link seedsWeMayKeep}, with the one predicate both ends use ({@link seedOutsideScope}).
+ *
+ * - in scope (a listed salon of this key group): floored;
+ * - another roster (`other-salon-group`, `private-salon`): refused, as `storeIncomingSeed` refuses a
+ *   new one - and a held one is not re-floored through a salon's question this group cannot ask;
+ * - not listed (`unlisted`, `not-listed-yet`): SET ASIDE, unstored. Under `shared` such a seed waits
+ *   for its salon's registration (`awaitSalonListing`) or is kept, but a seed admitted that way is
+ *   stored unfloored, and its floor cannot be asked now - a private salon we are not in is refused
+ *   by the server, failing the whole bundle. Set aside, not lost: a salon this device renders later
+ *   asks its own sessions by the repair path, floored at the answerer.
+ */
+function seedsWeMayFloor(
+  frame: DistributionFrame,
+  seeds: IncomingSeed[]
+): { listed: IncomingSeed[]; otherRoster: string[]; notListed: number } {
+  const listed: IncomingSeed[] = [];
+  const otherRoster: string[] = [];
+  let notListed = 0;
+  for (const seed of seeds) {
+    const outside = seedOutsideScope(seed.channelId, frame.scope);
+    if (outside === null) listed.push(seed);
+    else if (outside === 'other-salon-group' || outside === 'private-salon') {
+      otherRoster.push(seed.sessionId);
+    } else notListed++;
+  }
+  if (notListed > 0) {
+    console.info(
+      `[GRAINE] setting aside ${notListed} seed(s) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)}: ` +
+        `their salon is not listed on this device and the community is set to 'joined', so no floor can be placed for them`
+    );
+  }
+  return { listed, otherRoster, notListed };
 }
 
 /**
@@ -810,24 +1015,66 @@ function pageNote(frame: DistributionFrame, bundle: canari.GraineBundleMsg.$Prop
 /**
  * Stores the seeds of an answer - or of one PAGE of it - and tells the UI which salons just became
  * readable. A page is a complete bundle: nothing here waits for, counts or assembles the others.
+ *
+ * **A bundle carrying seeds WAITS for the community's history rule** when this session has not
+ * learned it ({@link whenHistoryRuleKnown}): kept whole it could be a past the community closed,
+ * floored it could be a past lost for good - a floored seed of a `shared` community classes the rows
+ * below it as sent before this device was given the seed, and asks nobody for them. Under `joined`
+ * the seeds are scoped ({@link seedsWeMayFloor}) then re-floored ({@link seedsWeMayKeep}); under
+ * `shared` each one goes to `storeIncomingSeed` as it is. A held page is numbered and recorded
+ * (`noteHistoryPage`) only when it is absorbed, after the wait.
  */
 async function absorbSeedBundle(
   frame: DistributionFrame,
   bundle: canari.GraineBundleMsg.$Properties
 ): Promise<void> {
+  const carried = (bundle.seeds ?? []).map(seedFromWire);
+  const rule = knownHistoryVisibility(frame.workspaceId);
+  if (rule === null && carried.length > 0) {
+    const waits = whenHistoryRuleKnown(frame.workspaceId, () => {
+      absorbSeedBundle(frame, bundle).catch((e: unknown) => {
+        console.warn(
+          `[GRAINE] the bundle from ${frame.sender} held for community ${frame.workspaceId.slice(0, 8)}'s history rule failed: ${String(e)}`
+        );
+      });
+    });
+    if (waits) {
+      console.info(
+        `[GRAINE] holding a bundle of ${carried.length} seed(s) from ${frame.sender} in community ` +
+          `${frame.workspaceId.slice(0, 8)} until its history rule is known`
+      );
+    } else {
+      // Its seeds are not lost to the community: each row they open asks its own session by the
+      // repair path once the rule is known.
+      console.warn(
+        `[GRAINE] DROPPED a bundle of ${carried.length} seed(s) from ${frame.sender} in community ` +
+          `${frame.workspaceId.slice(0, 8)}: too many steps already wait for a history rule`
+      );
+    }
+    return;
+  }
+  // After the wait, never before it: a held bundle re-enters here, and its numbering is said once.
   const page = pageNote(frame, bundle);
   const repaired = new Set<string>();
   const refusedV1: string[] = [];
   const refusedOutOfScope: string[] = [];
   let awaitingListing = 0;
+  // Scope BEFORE the floor under `joined`: a floor is asked per salon, and a salon of another roster
+  // must never reach that question. The rule is unknown here only for a pure decline (no seed).
+  let toStore = carried;
+  if (rule === 'joined') {
+    const { listed, otherRoster } = seedsWeMayFloor(frame, carried);
+    refusedOutOfScope.push(...otherRoster);
+    toStore = await seedsWeMayKeep(frame, listed);
+  }
   let absorbed = 0;
   let alreadyHeld = 0;
   let endorsedByServer = 0;
-  for (const seed of bundle.seeds ?? []) {
+  for (const seed of toStore) {
     const { outcome, endorsedBy } = await storeIncomingSeed(
       frame.workspaceId,
       frame.sender,
-      seedFromWire(seed),
+      seed,
       frame.groupId,
       frame.scope
     );
@@ -904,6 +1151,14 @@ async function absorbSeedBundle(
       `) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}` +
       page
   );
+
+  // A HISTORY ASK ANSWERED WITH A SEED THIS DEVICE DID NOT HOLD settles a widened ask
+  // (`historyClosedSeen.ts`). Only a STORED one: a bundle of seeds already held, or of seeds all
+  // refused here, is an answerer still giving the past it gave under the floor - and settling on it
+  // would close the widening with nothing of the reopened past arrived.
+  if (absorbed > 0) {
+    noteHistoryAnswered(frame.workspaceId, String(bundle.requestId ?? ''));
+  }
 
   if (bundle.truncated) {
     console.warn(

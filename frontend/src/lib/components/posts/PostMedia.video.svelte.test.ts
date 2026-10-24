@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A POST'S VIDEO IS PLAYED BY CANARI'S PLAYER, NEVER BY THE ENGINE'S `controls` (user, 2026-10-01).
  *

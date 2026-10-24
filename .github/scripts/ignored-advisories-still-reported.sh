@@ -7,12 +7,14 @@
 # This is the machine form of that check: audit the tree WITHOUT its ignores and require every
 # ignored id to still be in the output. One that is not has retired itself, and CI says delete it.
 #
-# Usage: ignored-advisories-still-reported.sh <audit output file> <GHSA id>...
+# The cargo half calls it too, with RUSTSEC ids read from each `.cargo/audit.toml`.
+#
+# Usage: ignored-advisories-still-reported.sh <audit output file> <advisory id>...
 # Exit:  0 every ignored id is still reported; 1 one is not, or the output is empty (an audit that
 #        said nothing at all is a silent registry, never proof that the advisories are gone).
 set -uo pipefail
 
-out="${1:?usage: ignored-advisories-still-reported.sh <audit output file> <GHSA id>...}"
+out="${1:?usage: ignored-advisories-still-reported.sh <audit output file> <advisory id>...}"
 shift
 [ "$#" -gt 0 ] || { echo "::error::no ignored advisory was named, so there is nothing to check"; exit 1; }
 
@@ -27,7 +29,7 @@ for id in "$@"; do
 done
 
 if [ -n "$stale" ]; then
-  echo "::error::the audit no longer reports:$stale - the dependency moved, so the suppression is dead. Delete that --ignore, its premise assertion if it has one, and its backlog entry."
+  echo "::error::the audit no longer reports:$stale - the dependency moved, so the suppression is dead. Delete that --ignore (or audit.toml entry), its premise assertion if it has one, and its backlog entry."
   exit 1
 fi
 echo "    every ignored advisory is still reported; the ignores are still needed."

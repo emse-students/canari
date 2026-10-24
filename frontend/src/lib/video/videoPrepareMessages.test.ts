@@ -4,7 +4,11 @@
  */
 import { m } from '$lib/paraglide/messages';
 import { VideoPrepareError, type VideoPrepareFault } from './prepareVideoForUpload';
-import { videoPrepareFailureMessage, videoPrepareProgressLabel } from './videoPrepareMessages';
+import {
+  isUnpreparableFault,
+  videoPrepareFailureMessage,
+  videoPrepareProgressLabel,
+} from './videoPrepareMessages';
 
 describe('videoPrepareFailureMessage', () => {
   it.each<[VideoPrepareFault, string | null]>([
@@ -17,6 +21,21 @@ describe('videoPrepareFailureMessage', () => {
     ['encode', m.video_prepare_failed()],
   ])('%s', (fault, sentence) => {
     expect(videoPrepareFailureMessage(new VideoPrepareError(fault, 'dev prose'))).toBe(sentence);
+  });
+});
+
+describe('isUnpreparableFault (a queued chat reel fails for good, RC-5)', () => {
+  it.each<[VideoPrepareFault, boolean]>([
+    ['unreadable', true],
+    ['no-video-track', true],
+    ['too-long', true],
+    ['too-large', true],
+    ['unsupported', true],
+    // The encoder failing while working may succeed later; a cancel is not a refusal.
+    ['encode', false],
+    ['aborted', false],
+  ])('%s -> %s', (fault, forGood) => {
+    expect(isUnpreparableFault(fault)).toBe(forGood);
   });
 });
 

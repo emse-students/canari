@@ -36,6 +36,7 @@ import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
+import fr.emse.canari.push.KeyGroupPushJoin
 import fr.emse.canari.push.NotificationLevelGate
 import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
@@ -2404,6 +2405,54 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         requester: String,
         keyPackageB64: String,
     ): String
+
+    // --- A key group joined from a salon push (channel-encryption section 26) ------------------
+    // The ledger, the crypto and the compare-and-swap install live in `mobile/key_group_join.rs`;
+    // what each answer means is [KeyGroupPushJoin]; the orchestration is [joinKeyGroupFromPush].
+
+    /**
+     * Claims one attempt at [groupId]: `granted`, `attempted:<state>`, `full`, or `error`. The
+     * ledger is sealed under [cacheKeyB64]; an empty key answers `error` and nothing is written.
+     */
+    external fun nativeKeyGroupJoinClaim(filesDir: String, cacheKeyB64: String, groupId: String): String
+
+    /**
+     * Settles an attempt: [state] is `joined` ([a] = scope kind, [b] = scope id), `refused`, `lost`
+     * or `retryable` ([a] = the reason token). Sealed under [cacheKeyB64], as for the claim.
+     * Returns whether the ledger was written.
+     */
+    external fun nativeKeyGroupJoinSettle(
+        filesDir: String,
+        cacheKeyB64: String,
+        groupId: String,
+        state: String,
+        a: String,
+        b: String,
+    ): Boolean
+
+    /**
+     * Checks the push against the base, builds the external commit and STAGES the post-join state
+     * (nothing is installed). Returns JSON: `{"ok":true,"commit":"<b64>","nextBase":"<b64>"}` or
+     * `{"ok":false,"reason":"<token>","terminal":<bool>}`.
+     */
+    external fun nativePrepareKeyGroupJoin(
+        filesDir: String,
+        stateBytes: ByteArray,
+        keyB64: String,
+        userId: String,
+        deviceId: String,
+        groupId: String,
+        groupInfoB64: String,
+        baseEpoch: Long,
+        seedFrameB64: String,
+        senderId: String,
+    ): String
+
+    /** Installs the staged state, refused if `mls.bin` changed since it was read. False = lost. */
+    external fun nativeFinishKeyGroupJoin(filesDir: String): Boolean
+
+    /** Deletes the staged state of a commit the server did not accept. */
+    external fun nativeAbandonKeyGroupJoin(filesDir: String)
 
     /**
      * Settles the Add staged in [stateBytes] (the mls.bin just loaded) for [groupId] on a DEFINITIVE
@@ -4852,8 +4901,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // THE MIRROR FIRST, THEN THE FRAME THE MESSAGE CARRIES (channel-encryption §19). A seed the
         // mirror already holds costs a file read; the frame costs an MLS load under the state lock,
         // so it is opened only for a session this device has not seen - the first message of it.
+        // Set when the frame's key group is not on this device at all: the push joins it once the
+        // banner below is up (channel-encryption section 26), never before - a join is seconds.
+        var keyGroupAbsent = false
         val framed = openable && !graineSeedHeld(cacheKey, channelId, sessionId) &&
-            openSeedFrame(cacheKey, data, channelId, sessionId)
+            openSeedFrame(cacheKey, data, channelId, sessionId, onAbsent = { keyGroupAbsent = true })
 
         val seedHeld = openable && (framed || synchronized(PENDING_CHANNEL_LOCK) {
             val held = graineSeedHeld(cacheKey, channelId, sessionId)
@@ -4877,6 +4929,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // be redrawn - `held` says so, and the reader of the count subtracts nothing by guessing.
         if (stamp != 0L && !seedHeld) {
             reportBlindBanner(channelId, blindBannerMissing(data, seedHeld), held = openable)
+        }
+        if (keyGroupAbsent) {
+            // ON THE LANE, BEHIND THIS PUSH: the banner and its redraw claim below are not delayed
+            // by the join's two round trips, and the join is serial with every other MLS write this
+            // process makes - the lane is the push service's single writer.
+            Log.i(TAG, "handleChannelMessage: key group ${seedGroupId?.take(8)} absent -> join from the push queued channel=$channelId")
+            val copy = data.toMap()
+            runSerializedWithWakeLock("key_group_join", 90_000L) { joinKeyGroupFromPush(cacheKey, copy) }
         }
         if (!openable || seedHeld) return
 
@@ -4924,6 +4984,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         data: Map<String, String>,
         channelId: String,
         sessionId: String,
+        onAbsent: () -> Unit,
     ): Boolean {
         val frame = data["seedFrame"]?.takeIf { it.isNotEmpty() }
         val groupId = data["seedGroupId"]?.takeIf { it.isNotEmpty() }
@@ -4938,6 +4999,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             locality = { groupLocality(groupId) },
             catchUp = { tryDecryptWithCommitCatchup(null, groupId, frame, data["senderId"] ?: "") },
             log = { Log.w(TAG, "openSeedFrame: $it") },
+            onAbsent = onAbsent,
         )
         val keyMaterial = outcome as? PushDecrypt.KeyMaterial
         if (keyMaterial == null) {
@@ -4953,6 +5015,235 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.e(TAG, "openSeedFrame: the frame opened and holds no seed for this message's session group=${groupId.take(8)} channel=$channelId session=$sessionId")
         }
         return held
+    }
+
+    /**
+     * Joins the salon key group a push named and this device holds no seat in (channel-encryption
+     * section 26, decided by the user 2026-10-22: "Oui, rejoindre au push").
+     *
+     * The same external commit the app makes when it loads the community, through the same server
+     * gate - the entitlement is asked of social-service on BOTH round trips, and an unanswered ask is
+     * a 503 that claims nothing. Five steps, each settled by [KeyGroupPushJoin]:
+     *
+     * 1. claim the group in the durable ledger - ONE attempt per group until the app starts, so a
+     *    burst of salon pushes is one join and a crash mid-join is never retried from a push;
+     * 2. read the base (`mls/push/key-group-base`), which also says when a Welcome is on its way;
+     * 3. under [MlsStateLock], check the push against the base and stage the post-join state
+     *    (`nativePrepareKeyGroupJoin`) - nothing is installed yet;
+     * 4. submit the commit (`mls/push/key-group-join`), outside the lock;
+     * 5. under the lock again, install the staged state only if `mls.bin` is unchanged since step 3,
+     *    or delete it.
+     *
+     * The push that triggered this stays the generic banner already posted: its frame was sealed
+     * before this device's join epoch, which a joiner cannot open. The senders' sessions rotate on
+     * the epoch change, so the NEXT salon push carries a frame this device can open.
+     */
+    private fun joinKeyGroupFromPush(cacheKey: String, data: Map<String, String>) {
+        val groupId = data["seedGroupId"]?.takeIf { it.isNotEmpty() } ?: return
+        val frame = data["seedFrame"]?.takeIf { it.isNotEmpty() } ?: return
+        val senderId = data["senderId"] ?: ""
+        val tag = groupId.take(8)
+        // The ledger is sealed under the install's cache key: without it, no claim is written in
+        // the clear - so no join is attempted, and the app joins at its next foreground.
+        if (cacheKey.isEmpty()) {
+            Log.w(TAG, "joinKeyGroupFromPush: native cache key absent -> no join group=$tag")
+            return
+        }
+        // The foreground app owns `mls.bin` and joins every key group at load; a second writer is
+        // the lost update the single-writer rule forbids. The native install re-checks this.
+        if (MainActivity.isInForeground) {
+            Log.d(TAG, "joinKeyGroupFromPush: app in foreground -> its own load joins group=$tag")
+            return
+        }
+        val ctx = MlsContextLoader.loadPushContext(this)
+        val secret = retrievePushSecret(this)
+        if (ctx == null || secret == null || ctx.deviceKeyB64.isEmpty()) {
+            Log.w(TAG, "joinKeyGroupFromPush: push context, secret or device key absent -> no join group=$tag")
+            return
+        }
+        val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
+
+        val claim = try {
+            KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, cacheKey, groupId))
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e(TAG, "joinKeyGroupFromPush: native library not loaded: ${e.message}")
+            return
+        }
+        val skipBaseAt = when (claim) {
+            is KeyGroupPushJoin.ClaimAnswer.NotGranted -> {
+                Log.i(TAG, "joinKeyGroupFromPush: not attempted (${claim.why}) group=$tag")
+                return
+            }
+            is KeyGroupPushJoin.ClaimAnswer.Granted -> claim.skipBaseAt
+        }
+        Log.i(TAG, "joinKeyGroupFromPush: claimed group=$tag skipBaseAt=${skipBaseAt ?: "none"} -> reading its base")
+
+        val settlement = try {
+            runKeyGroupJoin(ctx, secret, filesDir, groupId, frame, senderId, data["channelId"] ?: "", skipBaseAt)
+        } catch (e: Exception) {
+            // Anything thrown before the install is a join that did not happen; the staged state,
+            // if any, is deleted so it can never be installed later by mistake.
+            Log.e(TAG, "joinKeyGroupFromPush: exception group=$tag: ${e.message}")
+            nativeAbandonKeyGroupJoin(filesDir)
+            KeyGroupPushJoin.Settlement.Retryable("exception")
+        }
+        if (settlement == null) {
+            // The install never ran (the state lock was not taken): not an answer, so not settled.
+            // The claim stays `attempting`, which no push repeats; the app's start discards the stage.
+            Log.e(TAG, "joinKeyGroupFromPush: ACCEPTED and not installed - MlsStateLock not taken; left unsettled for the app group=$tag")
+            return
+        }
+        val (a, b) = when (settlement) {
+            is KeyGroupPushJoin.Settlement.Joined -> settlement.scopeKind to settlement.scopeId
+            is KeyGroupPushJoin.Settlement.Refused -> settlement.reason to ""
+            is KeyGroupPushJoin.Settlement.Lost -> settlement.reason to ""
+            is KeyGroupPushJoin.Settlement.Retryable -> settlement.reason to ""
+            is KeyGroupPushJoin.Settlement.Deferred -> settlement.reason to settlement.baseEpoch.toString()
+        }
+        val written = nativeKeyGroupJoinSettle(filesDir, cacheKey, groupId, settlement.token, a, b)
+        val level = when (settlement) {
+            is KeyGroupPushJoin.Settlement.Joined -> Log.INFO
+            is KeyGroupPushJoin.Settlement.Retryable -> Log.INFO
+            is KeyGroupPushJoin.Settlement.Deferred -> Log.INFO
+            else -> Log.WARN
+        }
+        Log.println(level, TAG, "joinKeyGroupFromPush: settled ${settlement.token} ($a) group=$tag ledger=${if (written) "written" else "NOT written"}")
+    }
+
+    /**
+     * Steps 2 to 5 of [joinKeyGroupFromPush]; returns how the attempt ended, or null when an
+     * ACCEPTED commit's install never ran because the state lock was not taken.
+     */
+    private fun runKeyGroupJoin(
+        ctx: PushContext,
+        secret: String,
+        filesDir: String,
+        groupId: String,
+        frame: String,
+        senderId: String,
+        pushChannelId: String,
+        skipBaseAt: Long?,
+    ): KeyGroupPushJoin.Settlement? {
+        val tag = groupId.take(8)
+        val baseRequest = JSONObject().apply {
+            put("userId", ctx.userId)
+            put("deviceId", ctx.deviceId)
+            put("groupId", groupId)
+        }
+        val (baseStatus, baseJson) = postPushSecretJson(ctx, secret, "key-group-base", baseRequest)
+        val baseBody = baseJson?.let { json ->
+            val scope = json.optJSONObject("scope")
+            val base = json.optJSONObject("base")
+            KeyGroupPushJoin.BaseBody(
+                welcomeOwed = json.optBoolean("welcomeOwed", false),
+                scopeKind = scope?.optString("kind")?.takeIf { it.isNotEmpty() },
+                scopeId = scope?.optString("id")?.takeIf { it.isNotEmpty() },
+                groupInfo = base?.optString("groupInfo")?.takeIf { it.isNotEmpty() },
+                baseEpoch = base?.takeIf { it.has("baseEpoch") }?.optLong("baseEpoch"),
+                activeEpoch = base?.takeIf { it.has("activeEpoch") }?.optLong("activeEpoch"),
+            )
+        }
+        val base = when (val after = KeyGroupPushJoin.afterBase(baseStatus, baseBody)) {
+            is KeyGroupPushJoin.AfterBase.Stop -> return after.settlement
+            is KeyGroupPushJoin.AfterBase.Proceed -> after.base
+        }
+        KeyGroupPushJoin.beforePrepare(base, skipBaseAt, pushChannelId)?.let { stop ->
+            Log.i(TAG, "runKeyGroupJoin: not prepared (${stop.token}) base epoch=${base.baseEpoch} scope=${base.scopeKind} group=$tag")
+            return stop
+        }
+        Log.d(TAG, "runKeyGroupJoin: base epoch=${base.baseEpoch} scope=${base.scopeKind} group=$tag -> preparing")
+
+        val prepared = withMlsStateLock(10) {
+            val stateBytes = MlsContextLoader.loadMlsState(this)
+                ?: return@withMlsStateLock null
+            JSONObject(
+                nativePrepareKeyGroupJoin(
+                    filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId,
+                    groupId, base.groupInfo, base.baseEpoch, frame, senderId,
+                ),
+            )
+        } ?: return KeyGroupPushJoin.Settlement.Retryable("state-lock-or-mls-bin")
+        if (!prepared.optBoolean("ok", false)) {
+            return KeyGroupPushJoin.afterPrepareRefusal(
+                prepared.optString("reason", "unspecified"),
+                prepared.optBoolean("terminal", false),
+                prepared.optBoolean("deferrable", false),
+                base.baseEpoch,
+            )
+        }
+        Log.d(TAG, "runKeyGroupJoin: commit staged group=$tag -> submitting")
+
+        val commitRequest = JSONObject().apply {
+            put("userId", ctx.userId)
+            put("deviceId", ctx.deviceId)
+            put("groupId", groupId)
+            put("baseEpoch", base.baseEpoch)
+            put("proto", prepared.getString("commit"))
+            put("groupInfo", prepared.getString("nextBase"))
+        }
+        val (commitStatus, commitJson) = postPushSecretJson(ctx, secret, "key-group-join", commitRequest)
+        val (step, refusal) = KeyGroupPushJoin.afterCommit(
+            commitStatus,
+            commitJson?.takeIf { it.has("accepted") }?.optBoolean("accepted"),
+            commitJson?.optString("reason")?.takeIf { it.isNotEmpty() },
+            base.baseEpoch,
+        )
+        if (step == KeyGroupPushJoin.AfterCommit.ABANDON) {
+            nativeAbandonKeyGroupJoin(filesDir)
+            return refusal ?: KeyGroupPushJoin.Settlement.Retryable("commit-unsettled")
+        }
+        // ACCEPTED: the server now holds this device's leaf. The install is the one step whose
+        // failure leaves a leaf with no secrets behind it - LOST, and the app's join replaces it.
+        // A lock not taken is NOT a refusal: null, and the attempt is left unsettled.
+        val installed = withMlsStateLock(60) { nativeFinishKeyGroupJoin(filesDir) }
+        if (installed == false) nativeAbandonKeyGroupJoin(filesDir)
+        return KeyGroupPushJoin.afterInstall(installed, base)
+    }
+
+    /**
+     * POSTs [body] to `/api/mls/push/<route>` under the PushSecret, and returns the status (null when
+     * no answer came back) and the parsed body of a 2xx.
+     */
+    private fun postPushSecretJson(
+        ctx: PushContext,
+        secret: String,
+        route: String,
+        body: JSONObject,
+    ): Pair<Int?, JSONObject?> {
+        return try {
+            val conn = (URL("${ctx.baseUrl}/api/mls/push/$route").openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 10_000
+                requestMethod  = "POST"
+                doOutput       = true
+                setRequestProperty("Authorization", "PushSecret $secret")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            try {
+                conn.outputStream.use { it.write(body.toString().toByteArray()) }
+                val status = conn.responseCode
+                // A 2xx whose body is not JSON is still an ANSWER: the status is kept, the body is
+                // null, and [KeyGroupPushJoin] names it - never "no answer came back".
+                val json = if (status in 200..299) {
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    try {
+                        JSONObject(text)
+                    } catch (e: org.json.JSONException) {
+                        Log.w(TAG, "postPushSecretJson: $route HTTP $status with a body that is not JSON (${text.length} chars)")
+                        null
+                    }
+                } else {
+                    null
+                }
+                Log.d(TAG, "postPushSecretJson: $route HTTP $status")
+                status to json
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "postPushSecretJson: $route no answer: ${e.message}")
+            null to null
+        }
     }
 
     /**

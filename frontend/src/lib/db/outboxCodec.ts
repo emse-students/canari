@@ -1,5 +1,5 @@
 import { fromBase64, toBase64 } from '$lib/utils/hex';
-import type { OutboxEntry } from './types';
+import type { OutboxBlobRef, OutboxEntry } from './types';
 
 // ---------------------------------------------------------------------------
 // Shared (de)serialization for persisted outbox rows.
@@ -71,7 +71,7 @@ export function outboxClearColumns(entry: OutboxEntry): OutboxClearColumns {
  * lives in the blob store ({@link ./outboxBlob}), and the payload keeps only `media.blob.keyB64`, so
  * a row stays under ~1 KB however large the file is.
  *
- * `blobKeyB64` is the key of a blob the storage layer has JUST committed for this entry. Without
+ * `written` names the blob (key and slot) the storage layer has JUST committed for this entry. Without
  * one, an existing `media.blob` reference is carried over unless the file has been uploaded
  * (`uploadedRef`): from then on nothing reads the bytes, and the reference is dropped so the
  * caller can delete the blob. Rows written before this format held the bytes inline as
@@ -79,18 +79,14 @@ export function outboxClearColumns(entry: OutboxEntry): OutboxClearColumns {
  */
 export function encodeOutboxSensitive(
   entry: OutboxEntry,
-  blobKeyB64?: string
+  written?: OutboxBlobRef
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   if (entry.text !== undefined) payload.text = entry.text;
   if (entry.replyTo) payload.replyTo = entry.replyTo;
   if (entry.media) {
     const { fileBytes: _bytes, blob, ...rest } = entry.media;
-    const keep = blobKeyB64
-      ? { blob: { keyB64: blobKeyB64 } }
-      : blob && !rest.uploadedRef
-        ? { blob }
-        : {};
+    const keep = written ? { blob: written } : blob && !rest.uploadedRef ? { blob } : {};
     payload.media = { ...rest, ...keep };
   }
   if (entry.controlProto && entry.controlProto.length > 0) {

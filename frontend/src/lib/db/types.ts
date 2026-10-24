@@ -4,6 +4,7 @@
 
 import type { MediaIntent } from '$lib/media';
 import type { ConversationLifecycle, MessageReaction, ReadWatermarks } from '$lib/types';
+import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 
 /** Lightweight metadata row for a conversation stored in the local DB (no message payload). */
 export interface ConversationMeta {
@@ -74,11 +75,23 @@ export interface StoredMessage {
   /**
    * Unix ms of the last edit, carried by the `edit_message` event. Optional and absent from rows
    * written before it existed: `isEdited` alone still renders the "edited" marker, and the info
-   * tooltip simply omits the time rather than inventing one.
+   * tooltip simply omits the time rather than inventing one. `null` clears it (a restored row whose
+   * unproven edit state an upgrade drops).
    */
-  editedAt?: number;
+  editedAt?: number | null;
   /** True when stored from FCM notification preview (plain text). */
   isFcmPreview?: boolean;
+  /**
+   * The author's signed frame of this message (`$lib/crypto/messageAuthorship`), relayed in history
+   * bundles. `null` clears it on purpose: a deletion purges the original bytes at rest.
+   */
+  authorship?: RecordedAuthorship | null;
+  /** The author's signed `edit_message` that produced the current body; `null` clears it. */
+  editProof?: RecordedAuthorship | null;
+  /** The author's signed `delete_message` behind the tombstone. */
+  deleteProof?: RecordedAuthorship;
+  /** Restored from a bundle with no author proof: see `AddMessageToChatOptions.restoredUnverified`. */
+  restoredUnverified?: boolean;
 }
 
 /**
@@ -149,9 +162,48 @@ export interface OutboxMediaPayload {
    * storage layer, absent on a row written before blobs existed (its bytes are inline) and once the
    * file is uploaded.
    */
-  blob?: { keyB64: string };
+  blob?: OutboxBlobRef;
+  /**
+   * The bytes in the blob are the RAW take and still owe a preparation before upload (reels-in-chat
+   * RC-5): the outbox runs it inside the upload task, then replaces the blob with the prepared file.
+   * Absent: the bytes are what is uploaded.
+   */
+  prepare?: 'chat-reel';
+  /**
+   * The resumable upload session this entry's bytes are going through (RC-5). Persisted BEFORE the
+   * first part leaves, so a relaunch asks the server which parts it holds instead of re-sending them.
+   * Holds the CEK: it lives only in this encrypted payload, like the file it seals.
+   */
+  upload?: OutboxResumableUpload;
   /** Set after a successful encryptAndUpload; makes the flush idempotent (no re-upload). */
   uploadedRef?: OutboxMediaUploadedRef;
+}
+
+/**
+ * Where a queued attachment's bytes are in the outbox blob store. `slot` alternates on every
+ * re-write of an entry that already has a blob (`entryId` / `entryId#b`), so a new blob never
+ * overwrites the one the committed row still names - a kill between the two writes leaves the old
+ * pair intact (RC-5: the raw take is replaced by the prepared file).
+ */
+export interface OutboxBlobRef {
+  keyB64: string;
+  slot?: 'b';
+}
+
+/** What survives a kill of a resumable upload: enough to address the same session and re-seal the same bytes. */
+export interface OutboxResumableUpload {
+  /** Hex CEK the blob is sealed under. Secret: lives only in the encrypted outbox row. */
+  keyHex: string;
+  /** Hex 12-byte base IV. */
+  ivHex: string;
+  /** SHA-256 (hex) of the plaintext this state was opened for; another plaintext never reuses it. */
+  plaintextSha256: string;
+  /** Length of that plaintext. */
+  plaintextBytes: number;
+  /** The session id the server issued; absent until `init` answered. */
+  uploadId?: string;
+  /** The part size the session was opened with (the server's answer). */
+  partBytes?: number;
 }
 
 /**
@@ -589,8 +641,16 @@ export interface IStorage {
   /**
    * One entry with its full payload, or null when it is no longer queued. Throws
    * `OutboxPayloadUnreadableError` when the row exists but cannot be decrypted.
+   *
+   * `withFile: false` decodes the row's payload WITHOUT reading its attachment blob: what a caller
+   * needing only the description (a withdrawal reading the reel's upload session, RC-5) asks for, so
+   * it never decrypts a whole file to learn an id.
    */
-  getOutboxEntry(id: string, deviceKeyB64: string): Promise<OutboxEntry | null>;
+  getOutboxEntry(
+    id: string,
+    deviceKeyB64: string,
+    opts?: { withFile?: boolean }
+  ): Promise<OutboxEntry | null>;
   /**
    * Delete the attachment blobs no outbox row owns (a kill between a blob write and its row write
    * leaves one). Run once per session by the outbox. Resolves with the number removed.

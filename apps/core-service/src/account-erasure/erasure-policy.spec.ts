@@ -1,5 +1,6 @@
 import {
   CORE_ERASURE_STATEMENTS,
+  ERASURE_ORDER,
   ERASURE_TARGETS,
   UNKNOWN_SERVICE,
   afterSuccess,
@@ -25,6 +26,18 @@ describe('erasure policy', () => {
     expect(urls[0]).toMatch(/\/api\/internal\/users\/u%2F1$/);
     expect(urls[1]).toMatch(/\/api\/internal\/users\/u%2F1$/);
     expect(urls[2]).toMatch(/\/api\/media\/internal\/users\/u%2F1$/);
+  });
+
+  it("runs chat-delivery's and media's parts only once social's has completed", () => {
+    // Social's part removes the person from every community, and each removal evicts their seats in
+    // chat-delivery, which records the eviction under their id. Run after it, chat-delivery's part -
+    // its final pass included - erases those records whatever order the services answered in.
+    expect(ERASURE_ORDER).toEqual(
+      expect.arrayContaining([
+        ['chat-delivery', 'social'],
+        ['media', 'social'],
+      ])
+    );
   });
 
   it('calls a refusal of the request itself permanent, and a service down or busy transient', () => {
@@ -93,6 +106,8 @@ describe('erasure policy', () => {
     expect(sql).toContain('DELETE FROM profile_changes WHERE "userId" = $1');
     expect(sql).toContain('DELETE FROM profile_correction_requests WHERE "userId" = $1');
     expect(sql).toContain('DELETE FROM auth_sessions WHERE "userId" = $1');
+    // A restore key could otherwise sign the erased account's subject back in (WP-RESTORE-1).
+    expect(sql).toContain('DELETE FROM restore_credentials WHERE "userId" = $1');
     expect(sql).toContain('DELETE FROM session_push_endings WHERE "userId" = $1');
     expect(CORE_ERASURE_STATEMENTS[CORE_ERASURE_STATEMENTS.length - 1].sql).toBe(
       'DELETE FROM users WHERE id = $1'

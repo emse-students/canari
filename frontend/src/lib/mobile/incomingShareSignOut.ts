@@ -15,19 +15,24 @@
  * A share whose copies are being STAGED stops before each file and after each one is prepared
  * (`stageSharedFiles` and `handleFilesSelected`, `stillWanted` on the sign-out generation).
  *
+ * BOTH MOBILE APPS, ONE PATH. On iOS the Share Extension's share waits in the App Group until the app
+ * carries it over; `read_and_clear_pending_share` does that carry-over before its claim, and
+ * `advance_share_epoch` writes the App Group's copy of the epoch the extension stamps - so the same two
+ * commands leave nothing there either (`commands/app_group_share.rs`).
+ *
  * Kept apart from `incomingShareDrain`, which reaches `media.ts` and through it `stores/auth`, the
  * caller. See `docs/wiki/frontend/sharing.md`.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { incomingShare } from '$lib/stores/incomingShare.svelte';
 import { discardSharedFiles, parseSharedManifest } from '$lib/mobile/sharedInbox';
-import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { appendLog } from '$lib/utils/sessionLog';
 
 /** Drops the held share and the undrained manifest, and deletes their copies. Never throws. */
 export async function eraseIncomingShare(reason: string): Promise<void> {
   incomingShare.drop(reason);
-  if (!isAndroidTauriRuntime()) return;
+  if (!isMobileTauriRuntime()) return;
   let fenced: number | null = null;
   try {
     fenced = await invoke<number>('advance_share_epoch');

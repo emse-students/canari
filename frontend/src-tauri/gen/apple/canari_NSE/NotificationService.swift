@@ -2,6 +2,14 @@ import Security
 import UIKit
 import UserNotifications
 
+/// What an `NSLog` line says of an error: its domain and code, never its text - a
+/// `localizedDescription` often quotes the file it failed on, and NSLog redacts nothing. The
+/// Objective-C twin is `CanariErrorReason` (`canari_push.h`); `nativeLogContent.test.ts` holds both.
+private func errorReason(_ error: Error) -> String {
+  let failure = error as NSError
+  return "\(failure.domain) \(failure.code)"
+}
+
 /// Canari Notification Service Extension.
 ///
 /// Runs in its own process for every incoming `mutable-content: 1` push and
@@ -856,7 +864,7 @@ class NotificationService: UNNotificationServiceExtension {
     do {
       try target.setResourceValues(values)
     } catch {
-      NSLog("[CanariNSE] backupExclusion: ERROR \(url.lastPathComponent) not excluded: \(error.localizedDescription)")
+      NSLog("[CanariNSE] backupExclusion: ERROR \(url.lastPathComponent) not excluded: \(errorReason(error))")
     }
   }
 
@@ -940,7 +948,7 @@ class NotificationService: UNNotificationServiceExtension {
       Self.excludeFromBackup(fileUrl)
       NSLog("[CanariNSE] writeFcmCache: messageId=\(result.messageId.prefix(8)) groupId=\(groupId.prefix(8))")
     } catch {
-      NSLog("[CanariNSE] writeFcmCache: failed: \(error.localizedDescription)")
+      NSLog("[CanariNSE] writeFcmCache: failed: \(errorReason(error))")
     }
   }
 
@@ -1234,7 +1242,10 @@ class NotificationService: UNNotificationServiceExtension {
         NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=local -> commit catch-up")
         json = catchupJson(ctx: ctx, groupId: groupId, senderId: frameSender, protoB64: frame) ?? json
       case .absent:
-        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=absent -> this device is not in the salon's key group; no join to wait for")
+        // Channel-encryption section 26: Android joins the key group from this push; the extension
+        // reads a MIRROR of the app's MLS state and never writes it, so it cannot. The banner stays
+        // generic and the app joins the group at its next foreground (its community load).
+        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=absent -> this device is not in the salon's key group; the extension does not join, the app joins at its next foreground")
       case .unknown:
         NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=unknown -> nothing established")
       }
@@ -1683,7 +1694,7 @@ class NotificationService: UNNotificationServiceExtension {
       content.attachments = [attachment]
       return true
     } catch {
-      NSLog("[CanariNSE] attachImage error: \(error.localizedDescription)")
+      NSLog("[CanariNSE] attachImage error: \(errorReason(error))")
       return false
     }
   }
@@ -1738,7 +1749,7 @@ class NotificationService: UNNotificationServiceExtension {
     do {
       try png.write(to: url, options: .atomic)
     } catch {
-      NSLog("[CanariNSE] initialsImage: write failed: \(error.localizedDescription)")
+      NSLog("[CanariNSE] initialsImage: write failed: \(errorReason(error))")
       return nil
     }
     return url

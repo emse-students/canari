@@ -6,7 +6,7 @@
 //! participate and never reloaded `mls.bin`. Result: a background advance
 //! (Welcome/send/worker) was overwritten on foreground return (lost-update -> SecretReuse).
 
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
 
@@ -181,6 +181,59 @@ pub(crate) fn mark_foreground_inactive() {
     foreground_active_until().store(0, Ordering::SeqCst);
 }
 
+/// Whether THIS PROCESS holds a foreground manager loaded from `mls.bin` - set once by
+/// [`foreground_load_mls_bin`], never cleared while the process lives.
+fn live_manager_flag() -> &'static AtomicBool {
+    static LOADED: AtomicBool = AtomicBool::new(false);
+    &LOADED
+}
+
+/// True once a foreground manager was loaded in this process.
+///
+/// **A WRITE THAT ONLY ADDS MUST NOT LAND UNDER A WARM MANAGER**, and the deadline cannot say so:
+/// a backgrounded app keeps its manager in memory with the guard expired. If that manager holds a
+/// ratchet advance when the app comes back, the resume reload is refused (`LiveAhead`) and the
+/// live state is persisted OVER the file - erasing whatever a background engine wrote meanwhile.
+/// The key-group join from a push (channel-encryption section 26) is the one background write
+/// that can be deferred to the app without losing anything, so it refuses here.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn live_manager_in_process() -> bool {
+    live_manager_flag().load(Ordering::SeqCst)
+}
+
+/// Test-only: forget the warm manager, so tests sharing the process start cold.
+#[cfg(test)]
+pub(crate) fn forget_live_manager_for_test() {
+    live_manager_flag().store(false, Ordering::SeqCst);
+}
+
+/// Marks the foreground active and this process warm - the half of [`foreground_load_mls_bin`] a
+/// login whose caller SUPPLIED the bytes (old-PIN recovery) can still do before installing them.
+pub(crate) fn mark_foreground_manager_loading() {
+    live_manager_flag().store(true, Ordering::SeqCst);
+    mark_foreground_active();
+}
+
+/// Reads `mls.bin` for the FOREGROUND manager about to be built from it: marks the foreground
+/// active and this process warm FIRST, then reads under [`mls_bin_write_lock`].
+///
+/// The order is the proof. A background writer checks both marks under the same lock before it
+/// writes, so it either wrote before this read (and the read sees it) or sees a mark and gives up:
+/// there is no write the manager built from these bytes can later persist over. Before
+/// 2026-10-22 the login read the file with neither, and the heartbeat's first tick came up to
+/// 10 s later.
+pub(crate) fn foreground_load_mls_bin(path: &std::path::Path) -> Result<Option<Vec<u8>>, String> {
+    mark_foreground_manager_loading();
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    match std::fs::read(path) {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("read mls.bin: {e}")),
+    }
+}
+
 /// Number of foreground operations currently holding state a background write would clobber.
 ///
 /// THE DEADLINE ABOVE CANNOT ANSWER THIS AND IT WAS ASKED TO. `sauvegarder_mls_et_persister` locks
@@ -268,11 +321,47 @@ pub(crate) fn background_write_mls_bin_if_unchanged(
     loaded_digest: &[u8; 32],
     data: &[u8],
 ) -> Result<(), String> {
+    background_write_mls_bin_compare_and_swap(path, loaded_digest, data, false)
+}
+
+/// [`background_write_mls_bin_if_unchanged`], AND ALSO REFUSED IN A WARM PROCESS - the writer of
+/// the key-group join from a push (channel-encryption section 26).
+///
+/// That join holds its loaded state across TWO round trips to the server, and it is the one
+/// background write that can be deferred to the app without losing anything: a foreground manager
+/// loaded in this process ([`live_manager_in_process`]) would persist over the install at its next
+/// resume, so the join refuses and the app's own load joins the group instead. The check is made
+/// under the same write lock as the compare, which is what makes it a proof
+/// ([`foreground_load_mls_bin`] marks the process warm before it reads under that lock).
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn background_write_mls_bin_if_unchanged_and_cold(
+    path: &std::path::Path,
+    loaded_digest: &[u8; 32],
+    data: &[u8],
+) -> Result<(), String> {
+    background_write_mls_bin_compare_and_swap(path, loaded_digest, data, true)
+}
+
+/// The one body of both background writers above: the foreground guard, optionally the warm-process
+/// refusal, then the compare-and-swap, all under [`mls_bin_write_lock`].
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+fn background_write_mls_bin_compare_and_swap(
+    path: &std::path::Path,
+    loaded_digest: &[u8; 32],
+    data: &[u8],
+    refuse_warm_process: bool,
+) -> Result<(), String> {
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
     if foreground_is_active() {
         return Err("foreground active - background mls.bin write abandoned (C1/FCM3)".to_string());
+    }
+    if refuse_warm_process && live_manager_in_process() {
+        return Err(
+            "a foreground manager is loaded in this process - background mls.bin write abandoned (a resume would persist over it)"
+                .to_string(),
+        );
     }
     let current = std::fs::read(path).map_err(|e| format!("re-read mls.bin: {e}"))?;
     if &mls_bin_digest(&current) != loaded_digest {

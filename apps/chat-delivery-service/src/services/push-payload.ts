@@ -306,9 +306,12 @@ export function inlineProtoBudget(input: PushMessageInput): number {
  *   `key-material` is a Graine key-distribution frame over the budget: a seed bundle is routinely
  *   kilobytes (a history answer is paged at up to 255 KiB, channel-encryption section 4.4), so its
  *   size accuses nothing. Nothing is dropped either way - the push still wakes the device.
- * - `over-budget`: a MESSAGE whose ciphertext did not fit. Never expected: it means the fixed
- *   fields (`senderName`, `groupName`, unbounded user text) grew, so it is reported at warn level.
- *   A frame the server could not classify (`isKeyDistribution` undefined) stays here.
+ * - `long-frame`: a MESSAGE too long to fit even beside EMPTY names - a long text. Expected since
+ *   every frame carries its author's signature and a signed epoch claim (about 360 B more, measured
+ *   in `mls-core/tests/authored_frames.rs`): carried by reference like a Welcome, debug line.
+ * - `over-budget`: a MESSAGE that would have fit beside empty names and did not beside these. That
+ *   means the fixed fields (`senderName`, `groupName`, unbounded user text) grew, so it is reported
+ *   at warn level. A frame the server could not classify (`isKeyDistribution` undefined) stays here.
  * - `empty`: nothing to carry.
  */
 export type ProtoCarriage =
@@ -320,6 +323,7 @@ export type ProtoCarriage =
       bytes: number;
       budget: number;
     }
+  | { kind: 'long-frame'; proto: ''; bytes: number; budget: number }
   | { kind: 'over-budget'; proto: ''; bytes: number; budget: number }
   | { kind: 'empty'; proto: ''; bytes: 0; budget: number };
 
@@ -330,8 +334,9 @@ export type ProtoCarriage =
  * unconditionally, because the ratchet tree is never in the push), so for that population the
  * budget is not a question and no line is owed. Any other frame is inlined when it fits - key
  * material included, since the native mirror reads seeds from an inline frame. A key-distribution
- * frame that does not fit is carried by reference, its size being ordinary; any other frame that
- * does not fit is `over-budget`, the one outcome that accuses the fixed fields.
+ * frame that does not fit is carried by reference, its size being ordinary; any other frame too long
+ * to fit even beside empty names is a `long-frame` (a long text); what is left is `over-budget`, the
+ * one outcome that accuses the fixed fields.
  *
  * @param input - The message description, read for `isWelcome`, `isKeyDistribution` and the fixed
  *   fields (not `proto`).
@@ -346,6 +351,9 @@ export function decideProtoCarriage(input: PushMessageInput, protoB64: string): 
   if (bytes <= budget) return { kind: 'inlined', proto: protoB64, bytes, budget };
   if (input.isKeyDistribution === true)
     return { kind: 'by-reference', reason: 'key-material', proto: '', bytes, budget };
+  // Would it have fit beside empty names? If not, the FRAME is long, not the names.
+  const bareBudget = inlineProtoBudget({ ...input, senderName: '', groupName: '' });
+  if (bytes > bareBudget) return { kind: 'long-frame', proto: '', bytes, budget };
   return { kind: 'over-budget', proto: '', bytes, budget };
 }
 

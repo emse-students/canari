@@ -132,7 +132,8 @@ describe('AuthController sessions', () => {
       {
         erasureState: jest.fn().mockResolvedValue('none'),
         confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
-      } as never
+      } as never,
+      {} as never // RestoreCredentialsService: no restore route here
     );
   });
 
@@ -159,7 +160,8 @@ describe('AuthController sessions', () => {
         {
           erasureState: jest.fn().mockResolvedValue('none'),
           confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
-        } as never
+        } as never,
+        {} as never // RestoreCredentialsService: no restore route here
       );
 
     const cookieOptionsFor = async (origin: string): Promise<Record<string, unknown>> => {
@@ -549,12 +551,13 @@ describe('AuthController sessions', () => {
         {
           erasureState: jest.fn().mockResolvedValue(erasure.before),
           confirmAfterSignIn: jest.fn().mockResolvedValue(erasure.after),
-        } as never
+        } as never,
+        {} as never // RestoreCredentialsService: no restore route here
       );
     }
 
     /** Authentik's token endpoint (with or without an id_token), then its userinfo. */
-    function authentikAnswers(idToken?: string) {
+    function authentikAnswers(idToken?: string, sub = 'user-1') {
       fetchSpy = jest
         .spyOn(global, 'fetch')
         .mockResolvedValueOnce(
@@ -566,9 +569,7 @@ describe('AuthController sessions', () => {
             { status: 200 }
           )
         )
-        .mockResolvedValueOnce(
-          new globalThis.Response(JSON.stringify({ sub: 'user-1' }), { status: 200 })
-        );
+        .mockResolvedValueOnce(new globalThis.Response(JSON.stringify({ sub }), { status: 200 }));
     }
 
     afterEach(() => {
@@ -662,6 +663,34 @@ describe('AuthController sessions', () => {
       expect(cookies).toEqual({});
       warn.mockRestore();
     });
+
+    /**
+     * `users.id` IS the subject, and every comparison downstream lowercases ASCII letters only: a
+     * subject outside visible ASCII (whitespace included), or holding a ':', is refused before any account is made.
+     */
+    it.each(['Élise', 'alice:dev'])(
+      'refuses a subject that is not a mintable user id (%s), before any account is made',
+      async (sub) => {
+        authentikAnswers('h.idtoken.s', sub);
+        const users = { findOrCreateFromOidc: jest.fn(), claimLegacyCotisations: jest.fn() };
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        const err = await callbackController(undefined, users)
+          .oidcCallback(
+            { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+            makeReq({ origin: 'https://canari.example' }),
+            makeRes().res
+          )
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: 'USER_ID_INVALID',
+        });
+        expect(users.findOrCreateFromOidc).not.toHaveBeenCalled();
+        expect(sessions.create).not.toHaveBeenCalled();
+        expect(error.mock.calls.flat().join(' ')).not.toContain(sub);
+        error.mockRestore();
+      }
+    );
 
     /** The form body of the token request this controller sent to Authentik. */
     function tokenRequestBody(): URLSearchParams {

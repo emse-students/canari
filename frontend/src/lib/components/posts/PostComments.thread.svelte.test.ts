@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE THREAD AS A READER SEES IT (the comment refonte, 2026-10-21): the controls are the ones the
  * SERVER says this reader has (never a comparison of `userId`), a delete asks first, an anonymous

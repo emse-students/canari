@@ -318,6 +318,7 @@
               isLastOwn={msg.id === lastOwnMessageId}
               isReadReceiptAnchor={msg.id === lastReadOwnMessageId}
               isEdited={msg.isEdited}
+              restoredUnverified={msg.restoredUnverified}
               editedAt={msg.editedAt}
               isDeleted={msg.isDeleted}
               status={msg.status}

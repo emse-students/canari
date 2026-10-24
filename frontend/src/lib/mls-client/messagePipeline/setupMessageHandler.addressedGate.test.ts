@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * STEP A, RULE 5 (docs/wiki/protocols/history-answer-addressing.md): in a conversation, a frame the
  * server routed to THIS device alone may only be a history answer. A message, an edit or a reaction
@@ -27,7 +28,7 @@ function deps(plaintext: Uint8Array) {
     mlsService: createMlsServiceStub({
       getUserGroups: vi.fn().mockResolvedValue([{ groupId, name: 'Test', isGroup: true }]),
       getLocalGroups: vi.fn().mockReturnValue([groupId]),
-      processIncomingMessage: vi.fn().mockResolvedValue(plaintext),
+      processIncomingMessage: vi.fn().mockResolvedValue({ plaintext, author: 'unsigned' }),
     }),
     storage: null,
     userId: 'user-a',

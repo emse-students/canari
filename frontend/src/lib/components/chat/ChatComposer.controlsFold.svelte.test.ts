@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * TYPING FOLDS THE EDGE CONTROLS - EVERY TIME, NOT ONLY ON THE FIRST CHARACTER.
  *

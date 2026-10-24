@@ -58,9 +58,23 @@ pub(crate) async fn initialiser_mls(
     // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when it
     // did. `state_on_disk` is only honoured when the caller supplied no bytes, so a caller that
     // does supply them (old-PIN recovery, the migration retry) keeps deciding what is loaded.
+    //
+    // EITHER WAY THE FOREGROUND IS MARKED BEFORE ANY BYTES ARE TRUSTED, and the disk read happens
+    // under the write lock: a background engine (a key-group join from a push, channel-encryption
+    // section 26) then either wrote before this read or sees the mark and gives up - never lands
+    // between the read and this manager's first persist, which would erase it.
     let encrypted_state = match (encrypted_state, opts.state_on_disk) {
-        (None, Some(true)) => crate::commands::storage::read_mls_state_blob(&app),
-        (supplied, _) => supplied,
+        (None, Some(true)) => {
+            let path = tauri::Manager::path(&app)
+                .app_data_dir()
+                .map_err(|e| e.to_string())?
+                .join("mls.bin");
+            crate::concurrency::foreground_load_mls_bin(&path)?
+        }
+        (supplied, _) => {
+            crate::concurrency::mark_foreground_manager_loading();
+            supplied
+        }
     };
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
@@ -737,12 +751,15 @@ pub(crate) fn trailer_welcome(
         })
 }
 
-/// What `envoyer_message_bytes` did with a frame: SEALED, or REFUSED because the group holds a staged
-/// commit nobody has settled - a TYPE, which the WebView maps to the settle that answers it.
+/// What `envoyer_message_bytes` did with a frame: SEALED, with its author's signature appended
+/// (`mls_core::authorship`) and the encoded proof the sender keeps on its own copy - the same proof
+/// its peers receive, so a history bundle it later writes carries it - or REFUSED because the group
+/// holds a staged commit nobody has settled: a TYPE, which the WebView maps to the settle that
+/// answers it.
 #[derive(Debug, PartialEq, serde::Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub(crate) enum Scellement {
-    Sealed { bytes: Vec<u8> },
+    Sealed(crate::state::AuthoredFramePayload),
     CommitPending,
 }
 
@@ -781,9 +798,29 @@ pub(crate) fn seal_unless_commit_pending(
         return Ok(Scellement::CommitPending);
     }
     manager
-        .send_message(group_id, message_bytes)
-        .map(|bytes| Scellement::Sealed { bytes })
-        .map_err(|e| e.to_string())
+        .send_authored_message(group_id, message_bytes)
+        .map(|frame| Scellement::Sealed(frame.into()))
+        .map_err(|e| {
+            log::error!("[AUTHORSHIP] authored send failed for {group_id}: {e}");
+            e.to_string()
+        })
+}
+
+/// Hands over the fork findings recorded since the last call (`mls_core::fork_check`).
+#[tauri::command]
+pub(crate) fn prendre_constats_fork(
+    state: tauri::State<AppState>,
+) -> Result<Vec<crate::state::ForkFindingPayload>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager
+        .take_fork_findings()
+        .into_iter()
+        .map(Into::into)
+        .collect())
 }
 
 /// Advances the send ratchet by `count` generations without emitting anything, repairing an

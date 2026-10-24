@@ -3,7 +3,7 @@ import {
   CHAT_REEL_RETENTION_MS,
   CHAT_REEL_WRITER_ENABLED,
   chatReelAllowed,
-  chatReelDeclaration,
+  chatReelPendingDeclaration,
   isChatReelTake,
   markChatReelTake,
   uploadClassFor,
@@ -21,13 +21,12 @@ describe('the chat reel writer', () => {
     expect(chatReelAllowed(true, true)).toBe(false);
   });
 
-  it('declares the length, and the expiry 30 days after the clock it is given', () => {
-    expect(chatReelDeclaration(12.3456, 1_000)).toEqual({
+  it('a RAW take queued at once (RC-5) declares its intent and expiry, and no length yet', () => {
+    expect(chatReelPendingDeclaration(1_000)).toEqual({
       intent: 'reel-message',
-      durationMs: 12_346,
       expiresAtMs: 1_000 + CHAT_REEL_RETENTION_MS,
     });
-    expect(chatReelDeclaration(0, 0).durationMs).toBe(1);
+    expect(uploadClassFor(chatReelPendingDeclaration(0))).toBe('chat-reel');
   });
 
   it('uploads a declared reel as chat-reel and anything else as ephemeral', () => {

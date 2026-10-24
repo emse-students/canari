@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Same import-cycle break as the other BaseMlsService specs (auth store -> composables ->
 // mlsService -> subclasses -> BaseMlsService).
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));

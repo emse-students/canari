@@ -20,6 +20,7 @@
  * rotated - the engine delivers it upright, and a canvas read applies no EXIF.
  */
 import { canvasToBlob } from '$lib/utils/canvasBlob';
+import { digitalZoomCrop } from './cameraZoom';
 
 /** A width and a height, in whatever unit the caller states. */
 export interface Size {
@@ -160,19 +161,39 @@ export interface PreviewBox {
   dpr: number;
   /** The preview is mirrored on screen, so the capture is drawn mirrored too ({@link shouldMirrorCapture}). */
   mirror: boolean;
+  /**
+   * The DIGITAL zoom the preview is enlarged by (`cameraZoom.ts`), drawn into the capture as the same
+   * centred sub-rectangle. Absent or 1 for no zoom and for a HARDWARE zoom, whose frame arrives zoomed.
+   */
+  zoom?: number;
 }
+
+/**
+ * Where a take's drawing reads its frame, asked on EVERY frame: the lens can flip and the zoom move
+ * during a take, so neither the element, the mirror nor the crop is fixed at its start. `null` while
+ * no frame of the current lens is decoded (a flip in progress): the take then HOLDS its last frame.
+ */
+export type FrameSource = () => { video: HTMLVideoElement; box: PreviewBox } | null;
 
 /** Whether a capture from `facing` is drawn flipped: exactly when the preview is (the front lens). */
 export function shouldMirrorCapture(facing: 'user' | 'environment'): boolean {
   return facing === 'user';
 }
 
-function cropFor(video: HTMLVideoElement, box: PreviewBox): { crop: CropRect; out: Size } {
-  const crop = coverCropRect(
+/**
+ * The preview's crop of `video` - `object-fit: cover`, then the digital zoom's centred part - and the
+ * saved size. The size is computed from the UNZOOMED crop, so a zoom changes what is drawn, never
+ * the file's dimensions (a take's canvas cannot be resized mid-file).
+ */
+export function cropFor(video: HTMLVideoElement, box: PreviewBox): { crop: CropRect; out: Size } {
+  const cover = coverCropRect(
     { width: video.videoWidth, height: video.videoHeight },
     { width: box.width, height: box.height }
   );
-  return { crop, out: framedOutputSize(box, box.dpr, crop) };
+  return {
+    crop: digitalZoomCrop(cover, box.zoom ?? 1),
+    out: framedOutputSize(box, box.dpr, cover),
+  };
 }
 
 /** Draws the crop into the canvas, flipped horizontally when `mirror` (the transform is undone after). */
@@ -251,6 +272,13 @@ export function takeFramedThumbnail(video: HTMLVideoElement, box: PreviewBox): B
  * the canvas's stream (plus the original audio) is what the recorder records. It is the only way to
  * record a CROP - a `MediaRecorder` has no crop of its own - and it keeps the recorded size at the
  * screen's, whatever mode the sensor picked.
+ *
+ * ONE RECORDER FOR THE WHOLE TAKE, WHATEVER THE LENS DOES (user, 2026-10-22: a double tap flips the
+ * lens DURING a take). The recorder records the CANVAS's track and the microphone's, and neither
+ * changes when the lens flips: only the element the canvas draws FROM changes, read from
+ * {@link FrameSource} on every frame, with its mirror and its digital zoom. While the new lens has no
+ * decoded frame the canvas re-paints its own last frame, so the file keeps a steady frame rate and
+ * shows a short freeze, never a hole; the frames held are counted and logged once per flip.
  */
 export class FramedStream {
   readonly stream: MediaStream;
@@ -258,46 +286,75 @@ export class FramedStream {
   readonly bitrate: number;
   #frame: number | null = null;
   #stopped = false;
+  /** Frames re-painted from the canvas's own last picture since the take began (lens flips). */
+  #heldTotal = 0;
+  /** The current run of held frames and when it began, for its one log line. */
+  #holding: { frames: number; since: number } | null = null;
 
   private constructor(
-    video: HTMLVideoElement,
-    box: PreviewBox,
+    source: FrameSource,
     canvas: HTMLCanvasElement,
     context: CanvasRenderingContext2D,
-    crop: CropRect,
     audio: MediaStreamTrack[]
   ) {
     this.size = { width: canvas.width, height: canvas.height };
     this.bitrate = videoBitrateFor(this.size);
     const canvasStream = canvas.captureStream(REEL_CAPTURE_FPS);
     this.stream = new MediaStream([...canvasStream.getVideoTracks(), ...audio]);
-    // The box and the sensor mode do not change during a take (the lens is locked), so the crop is
-    // computed once and the loop only draws.
     const tick = () => {
       if (this.#stopped) return;
-      draw(context, video, crop, this.size, box.mirror);
+      this.#paint(source, canvas, context);
       this.#frame = requestAnimationFrame(tick);
     };
-    draw(context, video, crop, this.size, box.mirror);
+    this.#paint(source, canvas, context);
     this.#frame = requestAnimationFrame(tick);
     console.debug(
-      `[framed-capture] take ${this.size.width}x${this.size.height} at ${this.bitrate} b/s ` +
-        `from ${video.videoWidth}x${video.videoHeight} (box ${box.width}x${box.height} @${box.dpr})`
+      `[framed-capture] take ${this.size.width}x${this.size.height} at ${this.bitrate} b/s`
     );
   }
 
+  /** Frames held so far (a lens flip's cost, in frames of the take). */
+  get heldFrames(): number {
+    return this.#heldTotal;
+  }
+
+  /** One frame of the take: the current lens's crop, or the last picture again while it has none. */
+  #paint(source: FrameSource, canvas: HTMLCanvasElement, context: CanvasRenderingContext2D): void {
+    const now = source();
+    if (now && now.video.videoWidth > 0 && now.video.videoHeight > 0) {
+      if (this.#holding) {
+        const ms = Math.round(performance.now() - this.#holding.since);
+        console.debug(
+          `[framed-capture] the new lens draws again: ${this.#holding.frames} frame(s) held over ${ms} ms`
+        );
+        this.#holding = null;
+      }
+      draw(context, now.video, cropFor(now.video, now.box).crop, this.size, now.box.mirror);
+      return;
+    }
+    // No frame of the current lens: the canvas paints its own last picture again, so the canvas
+    // track keeps producing frames and the recorder never sees the video stall.
+    if (!this.#holding) {
+      this.#holding = { frames: 0, since: performance.now() };
+      console.debug('[framed-capture] no frame from the lens: holding the last picture');
+    }
+    this.#holding.frames++;
+    this.#heldTotal++;
+    context.drawImage(canvas, 0, 0);
+  }
+
   /**
-   * @param video The live preview element, holding a decoded frame.
-   * @param box Its layout box and the device pixel ratio.
-   * @param audio The microphone track(s) of the camera stream.
-   * @returns `null` (logged) when there is no canvas to draw on.
+   * @param source Where each frame is read from; it must hold a decoded frame NOW.
+   * @param audio The microphone track(s) of the camera stream - they outlive a lens flip.
+   * @returns `null` (logged) when there is no frame yet or no canvas to draw on.
    */
-  static start(
-    video: HTMLVideoElement,
-    box: PreviewBox,
-    audio: MediaStreamTrack[]
-  ): FramedStream | null {
-    const { crop, out } = cropFor(video, box);
+  static start(source: FrameSource, audio: MediaStreamTrack[]): FramedStream | null {
+    const first = source();
+    if (!first || first.video.videoWidth === 0) {
+      console.error('[framed-capture] take: no decoded frame to start from');
+      return null;
+    }
+    const { out } = cropFor(first.video, first.box);
     const canvas = document.createElement('canvas');
     canvas.width = out.width;
     canvas.height = out.height;
@@ -306,7 +363,11 @@ export class FramedStream {
       console.error('[framed-capture] take: no canvas context or no canvas.captureStream');
       return null;
     }
-    return new FramedStream(video, box, canvas, context, crop, audio);
+    console.debug(
+      `[framed-capture] take from ${first.video.videoWidth}x${first.video.videoHeight} ` +
+        `(box ${first.box.width}x${first.box.height} @${first.box.dpr})`
+    );
+    return new FramedStream(source, canvas, context, audio);
   }
 
   /** Stops drawing and the canvas's own track; the audio belongs to the camera session. */
@@ -315,6 +376,6 @@ export class FramedStream {
     if (this.#frame !== null) cancelAnimationFrame(this.#frame);
     this.#frame = null;
     for (const track of this.stream.getVideoTracks()) track.stop();
-    console.debug('[framed-capture] take stream stopped');
+    console.debug(`[framed-capture] take stream stopped (${this.#heldTotal} frame(s) held in all)`);
   }
 }

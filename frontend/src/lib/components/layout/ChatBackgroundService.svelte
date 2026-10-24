@@ -1,5 +1,6 @@
 <script lang="ts">
   import { forgetPostComposerMedia } from '$lib/posts/postComposerDraft';
+  import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
   import { resolve } from '$app/paths';
   /**
    * Always-on layout component for the MLS session lifecycle.
@@ -1715,6 +1716,10 @@
           };
           await globalSession.ensureMls().reloadStateFromDisk();
           stepDone('reload');
+          // The push-join ledger is the warm process's too (channel-encryption section 26): taken
+          // right after the reload, so a group joined while away is registered before the drain.
+          await takeKeyGroupPushJoins(globalSession.ensureMls(), (line) => console.log(line));
+          stepDone('key-group-joins');
           if (storage) await reconcileOutboxSent(storage).catch(() => {});
           stepDone('outbox');
           // WP-XP-5: the user may have answered a CallKit ring while we were away - record

@@ -1029,7 +1029,11 @@ export class IndexedDbStorage implements IStorage {
   }
 
   /** One entry with its full payload - see {@link IStorage.getOutboxEntry}. */
-  async getOutboxEntry(id: string, deviceKeyB64: string): Promise<OutboxEntry | null> {
+  async getOutboxEntry(
+    id: string,
+    deviceKeyB64: string,
+    opts?: { withFile?: boolean }
+  ): Promise<OutboxEntry | null> {
     const db = this.ensureDb();
     const row: any = await new Promise((resolve, reject) => {
       const tx = db.transaction('outbox', 'readonly');
@@ -1044,6 +1048,7 @@ export class IndexedDbStorage implements IStorage {
     } catch (e) {
       throw new OutboxPayloadUnreadableError(id, e);
     }
+    if (opts?.withFile === false) return entry;
     return attachOutboxBlob(
       this.blobs,
       entry,

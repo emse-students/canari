@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE GESTURE, WIRED TO A POINTER - which is the half that was broken for six months.
  *

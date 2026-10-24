@@ -32,7 +32,8 @@ import { SvelteMap } from 'svelte/reactivity';
  *   about to be read). A statement about the queue only, never about the network.
  * - `waiting`: the last attempt ended with NO ANSWER (a transport failure) or the link is known to be
  *   down, and the next one is queued. The bytes already sent are gone: the media route has no offset,
- *   so an attempt always restarts at zero.
+ *   so an attempt always restarts at zero - EXCEPT a chat reel, whose resumable session (RC-5) sends
+ *   only the parts the server does not hold.
  * - `repairing`: the entry is held until the conversation's group is sendable again (roster repair,
  *   re-add requested); the connection is fine.
  * - `retrying`: the last attempt failed for another reason (a server error, a local one) and the
@@ -58,6 +59,17 @@ export interface UploadView {
   total: number;
   /** Attempts made so far, so the bubble can say "retry 3" rather than look frozen. */
   attempt: number;
+  /**
+   * How far the on-device PREPARATION has got (0-1), for an entry that owes one (a chat reel's
+   * re-encode, reels-in-chat RC-5). Absent for every other attachment, whose `preparing` is short.
+   */
+  prepared?: number;
+}
+
+/** Whole percent of a running preparation, clamped to 0-99; `null` when none is measured. */
+export function preparePercent(view: UploadView): number | null {
+  if (view.phase !== 'preparing' || view.prepared === undefined) return null;
+  return Math.min(99, Math.max(0, Math.floor(view.prepared * 100)));
 }
 
 const views = new SvelteMap<string, UploadView>();

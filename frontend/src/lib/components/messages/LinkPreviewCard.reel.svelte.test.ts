@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A SHARED REEL'S CARD OPENS THE REEL (user, 2026-10-23, sharing lot S6): a tap on the card of a
  * reel opens the reels viewer on it; a tap on an ordinary post's card still opens its page.

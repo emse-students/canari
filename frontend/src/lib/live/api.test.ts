@@ -314,6 +314,15 @@ describe('refusals, typed at the throw', () => {
     expect(e.nextIndex).toBe(7);
   });
 
+  it('the key at rest: an unopenable key and an unsealable start are retryable, never refused', async () => {
+    expect(classifyLiveRefusal(503, 'LIVE_KEY_UNAVAILABLE', 'gateway')).toBe('unavailable');
+    expect(classifyLiveRefusal(503, 'LIVE_KEY_SEALING_UNAVAILABLE', 'gateway')).toBe('unavailable');
+    apiFetch.mockResolvedValue(json(503, { code: 'LIVE_KEY_UNAVAILABLE' }));
+    const e = await refusal(fetchLive(LIVE));
+    expect(e.kind).toBe('unavailable');
+    expect(e.code).toBe('LIVE_KEY_UNAVAILABLE');
+  });
+
   it('an edge page is not a gateway verdict: 4xx refused (never retried), 5xx unavailable', async () => {
     expect(classifyLiveRefusal(403, null, 'edge')).toBe('refused');
     expect(classifyLiveRefusal(413, null, 'edge')).toBe('refused');

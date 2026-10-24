@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { saveObjectUrlAs } from './fileDownload';
 
 const save = vi.fn();

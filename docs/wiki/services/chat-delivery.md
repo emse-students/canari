@@ -774,6 +774,90 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   ([backlog](../backlog.md#p2---wp-checkpoint-cas-the-foreground-checkpoint-writes-over-a-file-it-did-not-load-2026-10-23-design-one-mls-manager-per-process-owed-a-review-before-code)).
   iOS has no background re-add (its branch was unreachable and is deleted).
 
+### A key-group frame is stored once (migration 034, 2026-10-22)
+
+**Measured on production 2026-10-21:** each key-group payload sat in 31 `queued_message` rows on
+average, and the key groups held **883 MB of a 1.5 GB queue**
+([dm-vs-community-encryption](../protocols/dm-vs-community-encryption.md#where-each-system-can-improve)).
+The ciphertext of one fan-out is the same for every seat, so it is now stored once.
+
+**The per-device row is still the DELIVERY RECORD, and nothing a device sees changed.** Its `id` is
+what the device ACKs, what a push names (`queuedMessageId`, `fetch-proto`), what the deferred push
+checks, and what the client deduplicates on. Its `createdAt` is what the pull pages on. So the
+record keeps every column. On a key-group fan-out its `proto` is NULL and `payloadId` points at one
+`queued_payload` row (`groupId`, `proto`, `createdAt`). All the code is in
+[`utils/queued-payload.ts`](../../../apps/chat-delivery-service/src/utils/queued-payload.ts):
+
+| Step | Function | What it guarantees |
+| --- | --- | --- |
+| Decide | `sharesPayload` | A key-distribution group (community or salon), at least 2 records, the same `proto` on all of them, no Welcome. A DM, a group conversation and a single addressed seat stay inline |
+| Write | `saveWithSharedPayload`, from `enqueueForLiveGroup`, **only while `QUEUED_PAYLOAD_SHARED_WRITES=true`** (OFF as shipped, see below) | The payload and all its records in ONE transaction, under the `dm_groups` row lock the send already takes. The records come back with `proto` set in memory, because the realtime envelope is built from them. OFF, the fan-out is the inline per-seat write every release has made |
+| Read | `materializeDeliveries`, from `fetchMessages` (per chunk, before the byte budget) and `fetch-proto` | The payload is JOINED in the statement that reads the record (`q.payload`, a many-to-one with no foreign key), so the pair is one snapshot and cannot race the collector. The function puts `proto` back and REMOVES `payloadId` and `payload`, so the pull's JSON keeps the shape every shipped client parses. The pull pages with SQL `OFFSET`/`LIMIT`: TypeORM's `skip`/`take` would turn the join into a second query. A record whose payload is missing is logged as a `[PAYLOAD] MISSING` error and WITHHELD - never served as an empty frame, which the device would ACK, deleting the only evidence of the loss; `fetch-proto` answers it as absent |
+| Collect | `collectUnreferencedPayloads`, hourly after the 90-day retention delete | `DELETE ... WHERE NOT EXISTS` a record pointing at it, in one statement. This is an allowlist based on durable state, never on age |
+| End a group | `deleteGroupOwnedRows` | `queued_payload` is in `GROUP_OWNED_TABLES`, right after `queued_message`, so a group's payloads go with its records in the same transaction, and orphan discovery sees them |
+
+**Why one collector is enough, and what would break it.** A payload's reference set only shrinks:
+all its records are inserted in the transaction that inserts it, and nothing ever adds a record to
+an existing payload. So "no record references it now" means no record ever will. Every path that
+deletes RECORDS (an ACK, `purgeDeviceFootprint`, the retention, an account erasure, the internal
+deletes) never touches a payload. Whichever of them removes the last record, the next hourly pass
+takes the payload. The cost is that a payload can outlive its last record by up to an hour. **A
+future writer that points a new record at an existing payload breaks this argument** and must take
+the payload row `FOR SHARE` to restore it.
+
+**No backfill, no transition logic.** Rows written before migration 034 carry their `proto` inline
+and `payloadId` NULL. That is exactly what every reader already serves, so they stay correct untouched
+and leave the queue by ACK or retention as before. There is no foreign key, like every other column
+that joins this service's tables.
+
+**THE READERS SHIP FIRST, AND THE WRITER IS A SWITCH THAT SHIPS OFF.** Once a shared record
+exists, its `proto` column is NULL. An image older than the readers does not join `queued_payload`,
+so it would serve that record as an empty frame, and the device would ACK it away: the message is
+lost, silently - and re-running an older release IS the documented rollback. So the release that
+carries migration 034 carries the join, `materializeDeliveries` and the collector, and writes NOTHING
+shared: `enqueueForLiveGroup` calls the writer only while `QUEUED_PAYLOAD_SHARED_WRITES` is `true`
+(`readSharedPayloadWrites` in `utils/queued-payload.ts`, read once at boot; unset or `false` is OFF,
+anything else stops the boot). The key is a `literal:false` row of
+`infrastructure/deploy/env-manifest.tsv`, passed by both estate compose files.
+
+**Turning the writer on is a code change in a LATER release, never an operator flip.** Once the
+release carrying the readers is the STABLE in production (so every image a rollback can land on reads
+the join), a pull request changes that manifest row to `literal:true` and the matching expectation
+of `.github/scripts/tests/deploy-env.test.sh`; it ships in the next pre-release, then the next stable.
+From then on a rollback may go back as far as the readers' release and no further.
+
+**The migration sets `lock_timeout = '5s'`** (`migrations.lock-timeout.spec.ts` asserts it for 034
+and 035). `ADD COLUMN` takes ACCESS EXCLUSIVE on `queued_message`, the service's busiest table, and
+every send would queue behind it while it waits. A timeout fails the deploy instead, and a re-run is
+safe because every statement is idempotent. The `payloadId` index is PARTIAL (`WHERE "payloadId" IS
+NOT NULL`) and built `CONCURRENTLY`, which the runner allows: `infrastructure/lib/migrations.sh`
+feeds the file to psql on stdin with no `--single-transaction`. A concurrent build that fails leaves
+an INVALID index under its name that `IF NOT EXISTS` would keep for ever, so a `DO` block drops an
+invalid leftover first (a plain `DROP INDEX`, an instant under the same timeout).
+
+**Where it is tested.** `queued-payload.integration.spec.ts` runs against the production Postgres
+digest in CI's `test-chat-delivery-integration` job, which fails if any integration spec of the
+service did not run or was skipped; it applies the migration statement by statement over one
+session, as psql does, over an INVALID leftover, twice. The pull also orders by `q.id` after
+`createdAt`, so records sharing a timestamp page in a total order: `messaging.pending-page.spec.ts`
+fails without it (a fake that orders by nothing it was not told), because a quiet PostgreSQL happens
+to repeat its tie order and passes either way.
+
+**What the reports count.** `reportQueueDepth` sizes a shared record by its payload
+(`LEFT JOIN queued_payload`), because draining it costs the device the whole payload. The admin
+storage panel lists `queued_payload` beside `queued_message`.
+
+**Scope is the key groups only, deliberately.** That is where the bytes are. A group conversation
+of 109 seats has the same shape, and widening `sharesPayload` to it is a one-line change once its
+queue is measured. A DM (2 to 5 rows) would pay a second row and a join for almost nothing.
+
+Pinned by `queued-payload.spec.ts` (the switch, the decision, the write shape, the read shape),
+`messaging.send-race.spec.ts` (the same fan-out OFF, ON, and a bad value refusing the boot) and
+`queued-payload.integration.spec.ts`. The integration spec runs against PostgreSQL through the
+service's own `sendMessage` (booted ON, and once OFF), `fetchMessages`, `acknowledgeMessages`,
+`purgeDeviceFootprint`, the retention cron and `reportQueueDepth`, and it is gated on
+`CHAT_DELIVERY_IT_DATABASE_URL`.
+
 ### A roster seat is not a key, and only a Welcome tells the two apart
 
 `addGroupMember` writes a `dm_device_group_memberships` row with `status: 'pending'` for **every**
@@ -1233,6 +1317,8 @@ those groups' first pages itself, which is the path every group took before the 
 | GET | `/api/mls/push/key-package` | PushSecret | Get key package for background service |
 | POST | `/api/mls/push/commits` | PushSecret | Replayable commits since `sinceEpoch`, for the in-memory catch-up of a device whose app is killed |
 | POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit`, which records the commit, stores its Welcome in the same transaction, fans the commit out and delivers the Welcome from its row. **The answer is typed** ([background Welcome](#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)): `201 {status: 'accepted', newEpoch}`, or `409 {status: 'rejected', reason, currentEpoch?}` with `reason` one of `epoch_mismatch`, `concurrent_commit`, `not_a_member`, `welcome_target_unknown`, `welcome_target_not_member` |
+| POST | `/api/mls/push/key-group-base` | PushSecret, then 64 per user per minute (`PushSecretGuard` -> `PushSecretThrottlerGuard`, 429) | A shut phone's read of a KEY GROUP's scope and external-join base, for the join from a salon push ([channel-encryption section 26](../protocols/channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)). 403 not a key group or not entitled, 503 entitlement unanswered; `welcomeOwed` instead of a base when a Welcome is queued or the add lock is held |
+| POST | `/api/mls/push/key-group-join` | PushSecret, then 64 per user per minute (429, its own bucket) | That phone's external commit into the key group. External commits into key groups only (400 / 403 otherwise), then `validateCommit` unchanged; admits, removes and excludes are not taken here |
 | POST | `/api/mls/push/send` | PushSecret | Send message from background service |
 | POST | `/api/mls/push/broadcast-test` | JWT | Test push to all devices of caller |
 | POST | `/api/mls/push/unavailable` | JWT | A device reporting that it CANNOT obtain a push token (writes nothing - see below) |
@@ -2306,7 +2392,10 @@ the push; the iOS NSE processes no Welcome at all. So inlining a Welcome could n
 
 **The decision** is `decideProtoCarriage` in `push-payload.ts`, a typed `ProtoCarriage`: `inlined`
 (a message that fits), `by-reference` (every Welcome, whatever its size; debug line, expected),
-`over-budget` (a MESSAGE that did not fit: the fixed fields grew; `warn`), `empty`. No client change
+`long-frame` (a MESSAGE too long to fit even beside empty names - a long text, carried by reference,
+debug; every frame is about 360 B raw longer since it carries its author's signature and a signed
+epoch claim, measured in `mls-core/tests/authored_frames.rs`), `over-budget` (a MESSAGE that would
+have fit beside empty names: the fixed fields grew; `warn`), `empty`. No client change
 and no native work was needed. `push-payload.spec.ts` pins the 4608 B case.
 
 **Key material over the budget is carried by reference too (2026-10-22).** A Graine seed bundle is

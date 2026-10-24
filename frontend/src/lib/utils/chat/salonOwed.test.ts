@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * SALON WRITES OWED TO THE RECONNECT (WP-OFF-3, WP-OFF-4): the reconnect is the only trigger, a later
  * write under the same key replaces the owed one, and a write delivered once is never delivered twice.

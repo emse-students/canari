@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, afterEach } from 'vitest';
 import { clickMatchesPress, installPressedClickGuard, isPointerClick } from './pressedClickGuard';
 

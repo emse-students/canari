@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The camera overlay's HISTORY, against a model of the browser's: `pushState` and `replaceState` are
  * synchronous, and `history.back()` is a TRAVERSAL that lands later and fires `popstate` (Chrome 155,

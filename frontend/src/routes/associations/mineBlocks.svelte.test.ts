@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * EACH DIRECTORY TAB OWNS ITS OWN "Mes ..." BLOCK (user, 2026-10-19). `/associations` shows only
  * "Mes associations", `/institutions` only "Mes institutions", `/lists` only "Mes listes"; a block

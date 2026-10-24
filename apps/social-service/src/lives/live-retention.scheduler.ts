@@ -19,11 +19,17 @@ export interface LiveSweepReport {
   cutsPruned: number;
   /** Reported chat lines erased: their report handled, or the 90-day bound reached (WP-L8b). */
   chatLinesErased: number;
+  /** Plaintext live keys sealed at rest (migration 110's backfill). */
+  keysSealed: number;
+  /** Plaintext live keys this run could not seal - each logged at ERROR, retried next run. */
+  keysUnsealed: number;
 }
 
 /**
  * The live sweep (Q5, Q10 of docs/wiki/frontend/modules/live.md), every 30 seconds.
  *
+ * 0. SEALS every live key still stored in the clear (`LivesService.sealPlaintextKeys`, the backfill
+ *    of migration 110) - first, so a live this run purges is not left for it.
  * 1. ENDS the open lives whose broadcaster stopped sending for the reconnect window, or whose hour
  *    is up - writing the end as the row's durable state (`LivesService.endDue`).
  * 2. DELETES every ended live: its segments from the store, then its row, the row only once the
@@ -81,7 +87,17 @@ export class LiveRetentionScheduler {
       orphans: 0,
       cutsPruned: 0,
       chatLinesErased: 0,
+      keysSealed: 0,
+      keysUnsealed: 0,
     };
+    // Its own `try`: a database refusal here must not cost the ends and purges below.
+    try {
+      const keys = await this.lives.sealPlaintextKeys();
+      report.keysSealed = keys.sealed;
+      report.keysUnsealed = keys.failed;
+    } catch (e) {
+      this.logger.error(`[LIVE_GC] plaintext key sealing skipped this run: ${String(e)}`);
+    }
     report.ended = (await this.lives.endDue()).length;
 
     const kept: string[] = [];
@@ -134,7 +150,7 @@ export class LiveRetentionScheduler {
 
     if (Object.values(report).some((n) => n > 0)) {
       this.logger.log(
-        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept} orphans=${report.orphans} cutsPruned=${report.cutsPruned} chatLinesErased=${report.chatLinesErased}`
+        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept} orphans=${report.orphans} cutsPruned=${report.cutsPruned} chatLinesErased=${report.chatLinesErased} keysSealed=${report.keysSealed} keysUnsealed=${report.keysUnsealed}`
       );
     }
     return report;

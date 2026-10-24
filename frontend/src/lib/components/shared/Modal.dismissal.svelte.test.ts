@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * WHAT CLOSES THIS MODAL, AND WHAT MUST NOT - the four dismissal paths, one file.
  *

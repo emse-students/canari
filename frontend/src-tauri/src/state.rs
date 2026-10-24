@@ -58,13 +58,59 @@ impl From<mls_core::DatedKeyPackage> for DatedKeyPackagePayload {
     }
 }
 
+/// An authored frame as `envoyer_message_bytes` hands it to TypeScript:
+/// `{ ciphertext: number[], authorProof: number[] }` (`mls_core::authorship`), inside the
+/// `sealed` outcome of `Scellement`.
+#[derive(Debug, PartialEq, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AuthoredFramePayload {
+    pub ciphertext: Vec<u8>,
+    pub author_proof: Vec<u8>,
+}
+
+impl From<mls_core::authorship::AuthoredFrame> for AuthoredFramePayload {
+    fn from(f: mls_core::authorship::AuthoredFrame) -> Self {
+        Self {
+            ciphertext: f.ciphertext,
+            author_proof: f.author_proof,
+        }
+    }
+}
+
+/// One fork finding as `prendre_constats_fork` hands it to TypeScript
+/// (`{ kind, groupId, epoch, peer, detail }`, `mls_core::fork_check`).
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ForkFindingPayload {
+    pub kind: &'static str,
+    pub group_id: String,
+    pub epoch: f64,
+    pub peer: String,
+    pub detail: String,
+}
+
+impl From<mls_core::fork_check::ForkFinding> for ForkFindingPayload {
+    fn from(f: mls_core::fork_check::ForkFinding) -> Self {
+        Self {
+            kind: f.kind.code(),
+            group_id: f.group_id,
+            epoch: f.epoch as f64,
+            peer: f.peer,
+            detail: f.detail,
+        }
+    }
+}
+
 /// One decrypted application message as the foreground decrypt hands it to TypeScript:
-/// `{ data: number[], sender: string | null }`. `sender` is the identity OpenMLS verified the frame
-/// against (`userId:deviceId`), the one sender a client may believe (channel-encryption section 21).
+/// `{ data: number[], sender: string | null, author: 'unsigned' | 'verified' | 'refused' }`.
+/// `sender` is the identity OpenMLS verified the frame against (`userId:deviceId`), the one sender
+/// a client may believe (channel-encryption section 21); `author` is the author-proof verdict, and
+/// a proof stays at the end of `data` only when it is `verified`.
 #[derive(serde::Serialize, Clone)]
 pub(crate) struct DecryptedFrame {
     pub data: Vec<u8>,
     pub sender: Option<String>,
+    pub author: &'static str,
 }
 
 impl From<mls_core::IncomingApplication> for DecryptedFrame {
@@ -72,6 +118,7 @@ impl From<mls_core::IncomingApplication> for DecryptedFrame {
         Self {
             data: app.plaintext,
             sender: app.sender_identity,
+            author: app.author.code(),
         }
     }
 }
@@ -86,6 +133,9 @@ pub(crate) struct BatchDecryptItem {
     /// only with it - the one sender a client may believe (channel-encryption section 21).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender: Option<String>,
+    /// The author-proof verdict (`unsigned`, `verified`, `refused`), beside `data` and only with it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -99,12 +149,14 @@ pub(crate) fn map_decrypt_outcome(
             ok: true,
             data: Some(app.plaintext),
             sender: app.sender_identity,
+            author: Some(app.author.code()),
             error: None,
         },
         Ok(None) => BatchDecryptItem {
             ok: true,
             data: None,
             sender: None,
+            author: None,
             error: None,
         },
         // Every error is REPORTED, `SecretReuse` included. It used to be mapped to
@@ -120,6 +172,7 @@ pub(crate) fn map_decrypt_outcome(
             ok: false,
             data: None,
             sender: None,
+            author: None,
             error: Some(e.to_string()),
         },
     }

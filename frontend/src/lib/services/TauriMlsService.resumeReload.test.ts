@@ -9,6 +9,7 @@ vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }
 
 import { TauriMlsService } from './TauriMlsService';
 import { StagedCommitPendingError } from '$lib/mls-client/commitSubmission';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 
 /**
  * The resume reload must not put a ratchet BACK, and the refusal is decided natively.
@@ -137,12 +138,15 @@ describe('TauriMlsService.encryptForSend - the state refuses a send its staged c
   });
   const encrypt = (svc: ServiceInternals) =>
     (
-      svc as unknown as { encryptForSend(g: string, b: Uint8Array): Promise<Uint8Array> }
+      svc as unknown as { encryptForSend(g: string, b: Uint8Array): Promise<AuthoredFrame> }
     ).encryptForSend('g-1', new Uint8Array([9]));
 
-  it('returns the sealed bytes', async () => {
-    invoke.mockResolvedValue({ status: 'sealed', bytes: [1, 2] });
-    await expect(encrypt(makeService())).resolves.toEqual(new Uint8Array([1, 2]));
+  it('returns the sealed frame and its author proof', async () => {
+    invoke.mockResolvedValue({ status: 'sealed', ciphertext: [1, 2], authorProof: [3] });
+    await expect(encrypt(makeService())).resolves.toEqual({
+      sealed: new Uint8Array([1, 2]),
+      authorProof: new Uint8Array([3]),
+    });
   });
 
   it('throws the TYPED refusal the send path settles, when a commit is staged', async () => {

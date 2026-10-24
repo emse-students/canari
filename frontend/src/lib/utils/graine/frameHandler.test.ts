@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import protobuf from 'protobufjs';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';
@@ -28,11 +29,14 @@ import {
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { handleDistributionFrame } from './frameHandler';
 import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
+import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
+import { HISTORY_FLOOR_QUERY_CONCURRENCY } from './historyBoundary';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
 import type { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
 import { incompleteHistoryPages, noteHistoryAsked } from './pagedHistoryAnswer';
 import {
   announceGraineRepair,
+  forgetWorkspaceGraineState,
   graineRepairHoldObserver,
   holdGraineRepairs,
   markCommunityListed,
@@ -54,10 +58,15 @@ import {
 // The real walk, observed: the id the bundle quotes must reach it, or a decline never advances it.
 const noteSeedUnavailableSpy = vi.fn();
 const noteHistoryHeldNothingSpy = vi.fn();
+const noteHistoryAnsweredSpy = vi.fn();
 vi.mock('./repair', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./repair')>();
   return {
     ...actual,
+    noteHistoryAnswered: (...args: Parameters<typeof actual.noteHistoryAnswered>) => {
+      noteHistoryAnsweredSpy(...args);
+      return actual.noteHistoryAnswered(...args);
+    },
     noteHistoryHeldNothing: (...args: Parameters<typeof actual.noteHistoryHeldNothing>) => {
       noteHistoryHeldNothingSpy(...args);
       return actual.noteHistoryHeldNothing(...args);
@@ -293,6 +302,8 @@ function closeLeftoverHolds() {
 
 afterEach(() => {
   closeLeftoverHolds();
+  // Sign-out forgets parked asks next to the runtime; a test that parked one must not hand it on.
+  clearParkedAsks();
   setGraineRuntime(null);
 });
 
@@ -1327,39 +1338,288 @@ describe('a history request from a joiner (WP-34)', () => {
     await handleDistributionFrame(historyFrame());
 
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(warn.mock.calls.flat().join(' ')).toContain('none opens with this device');
+    expect(warn.mock.calls.flat().join(' ')).toContain("3 do not open with this device's key");
     info.mockRestore();
     warn.mockRestore();
   });
 
-  it('sends nothing when the community is set to joined, and says why - an empty hand included', async () => {
-    for (const held of [community, []]) {
-      const sendMessage = wireWithSessions(held);
-      registerCommunityHistoryVisibility('ws-1', 'joined');
+  describe("under 'joined', floored at the asking MEMBER's arrival (2026-10-22)", () => {
+    /** The server's floors, per salon - what `historyFloorsFor` reads for the asker. */
+    function floorsBySalon(bySalon: Record<string, Record<string, number>>) {
+      graineHistoryFloor.mockReset();
+      graineHistoryFloor.mockImplementation(async (channelId: string) => bySalon[channelId] ?? {});
+    }
+
+    beforeEach(() => registerCommunityHistoryVisibility('ws-1', 'joined'));
+
+    it("hands a member's NEW device everything since that member arrived", async () => {
+      // THE DEFECT. The bundle was refused whole under `joined`, whoever asked: a member's new phone
+      // saw nothing of the year it had been in the community. The floor is the member's
+      // (`channel_members.createdAt`), so the server returns the held floors for a long-standing
+      // member and the bundle carries them - raised where ours is higher, never lowered.
+      floorsBySalon({ 'chan-1': { 's-1': 0 }, 'chan-2': { 's-2': 2 } });
+      const sendMessage = wireWithSessions(community);
       const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
       await handleDistributionFrame(historyFrame());
 
-      // The rule is enforced HERE because here is the only place a seed leaves a device - the server
-      // holds no key and could not enforce it. An empty hand does not say "I hold nothing" either:
-      // the requester knows the rule (section 24).
-      expect(sendMessage).not.toHaveBeenCalled();
-      expect(info).toHaveBeenCalled();
+      expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
+      expect(graineHistoryFloor).toHaveBeenCalledWith('chan-2', 'newcomer', ['s-2']);
+      const [, payload, , delivery] = sendMessage.mock.calls[0];
+      const bundle = decodeAppMessage(payload)?.graineBundle;
+      expect(bundle?.seeds?.map((s) => [s.sessionId, Number(s.firstIndex)])).toEqual([
+        ['s-1', 0],
+        ['s-2', 5],
+      ]);
+      expect(bundle?.holdsNothing).toBeFalsy();
+      expect(delivery).toEqual(addressedKeyMaterial('newcomer:newcomer-web'));
       info.mockRestore();
-    }
+    });
+
+    it('hands a newcomer only the sessions spanning its arrival, raised to it', async () => {
+      floorsBySalon({ 'chan-1': { 's-1': 7 } });
+      const sendMessage = wireWithSessions(community);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds?.map((s) => [s.sessionId, Number(s.firstIndex)])).toEqual([['s-1', 7]]);
+      expect(info.mock.calls.flat().join(' ')).toContain('withholding 1 of 2 seed(s)');
+      info.mockRestore();
+    });
+
+    it('SAYS it has nothing for them when every row opened and every one predates the arrival', async () => {
+      // Silence here was the newcomer's ask repeated at every launch: answered "nothing", it is
+      // recorded per roster like any other "nothing" (section 24).
+      floorsBySalon({});
+      const sendMessage = wireWithSessions(community);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds ?? []).toHaveLength(0);
+      expect(bundle?.holdsNothing).toBe(true);
+      info.mockRestore();
+    });
+
+    it('stays silent, as under shared, when rows the key cannot open might hold the answer', async () => {
+      floorsBySalon({});
+      const sendMessage = wireWithSessions(community, 3);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      info.mockRestore();
+      warn.mockRestore();
+    });
+
+    it('hands over nothing, out loud, when the floors cannot be placed', async () => {
+      graineHistoryFloor.mockReset();
+      graineHistoryFloor.mockRejectedValue(new Error('offline'));
+      const sendMessage = wireWithSessions(community);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(warn.mock.calls.flat().join(' ')).toContain('cannot place their history boundary');
+      warn.mockRestore();
+    });
+
+    it('asks the server in slices, so a large community is not one URL the edge refuses', async () => {
+      const many: StoredGraineSession[] = Array.from({ length: 250 }, (_, i) => ({
+        ...community[0],
+        sessionId: `s-${i}`,
+      }));
+      graineHistoryFloor.mockReset();
+      graineHistoryFloor.mockImplementation(async (_c: string, _u: string, ids: string[]) =>
+        Object.fromEntries(ids.map((id) => [id, 0]))
+      );
+      const sendMessage = wireWithSessions(many);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      expect(graineHistoryFloor.mock.calls.map((call) => (call[2] as string[]).length)).toEqual([
+        100, 100, 50,
+      ]);
+      expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds).toHaveLength(250);
+      info.mockRestore();
+    });
+
+    it('keeps the NEWEST sessions under the cap, so a recent arrival is not handed an empty truncated answer', async () => {
+      // The store returns oldest first; only the newest session spans the asker's arrival. Capping
+      // the read as it came would drop exactly that one, at every ask.
+      const many: StoredGraineSession[] = Array.from(
+        { length: GRAINE_HISTORY_BUNDLE_MAX_SEEDS + 1 },
+        (_, i) => ({ ...community[0], sessionId: `s-${i}`, createdAt: i })
+      );
+      const newest = `s-${GRAINE_HISTORY_BUNDLE_MAX_SEEDS}`;
+      graineHistoryFloor.mockReset();
+      let inFlight = 0;
+      let peak = 0;
+      graineHistoryFloor.mockImplementation(async (_c: string, _u: string, ids: string[]) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await Promise.resolve();
+        inFlight--;
+        return ids.includes(newest) ? { [newest]: 3 } : {};
+      });
+      const sendMessage = wireWithSessions(many);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds?.map((s) => [s.sessionId, Number(s.firstIndex)])).toEqual([[newest, 3]]);
+      expect(bundle?.truncated).toBe(true);
+      // 80 floor queries, a few at a time rather than one after another.
+      expect(graineHistoryFloor).toHaveBeenCalledTimes(GRAINE_HISTORY_BUNDLE_MAX_SEEDS / 100);
+      expect(peak).toBe(HISTORY_FLOOR_QUERY_CONCURRENCY);
+      info.mockRestore();
+      debug.mockRestore();
+    });
+
+    it('never says "nothing for you" when the cap cut the list before the floors judged it', async () => {
+      // The floors judged only the first GRAINE_HISTORY_BUNDLE_MAX_SEEDS sessions: the ones past
+      // the cap may be the asker's, and a durable "nothing" would close them for the roster.
+      const many: StoredGraineSession[] = Array.from(
+        { length: GRAINE_HISTORY_BUNDLE_MAX_SEEDS + 1 },
+        (_, i) => ({ ...community[0], sessionId: `s-${i}` })
+      );
+      floorsBySalon({});
+      const sendMessage = wireWithSessions(many);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(info.mock.calls.flat().join(' ')).toContain('in scope - not "I hold nothing"');
+      info.mockRestore();
+    });
   });
 
-  it('refuses to hand the past over when this session never learned the rule', async () => {
+  it('PARKS the ask, never a floor, until this session learns the rule - then answers it', async () => {
+    // A floor drawn under a rule nobody stated is a loss, not a precaution: a `shared` community's
+    // newcomer handed the floored past records the ask answered and never asks again. The ask waits
+    // for the listing that states the rule, and is answered then - no restart on either side.
+    graineHistoryFloor.mockReset();
+    graineHistoryFloor.mockResolvedValue({ 's-1': 0, 's-2': 2 });
     const sendMessage = wireWithSessions(community);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     await handleDistributionFrame(historyFrame());
 
-    // Fail-closed and loudly: refusing costs a newcomer some history, guessing 'shared' costs a
-    // community the privacy it asked for. Those are not symmetrical.
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalled();
+    expect(parkedAskCount()).toBe(1);
+    expect(info.mock.calls.flat().join(' ')).toContain(
+      'until this session learns its history rule'
+    );
+
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(parkedAskCount()).toBe(0);
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds?.map((s) => s.sessionId)).toEqual(['s-1', 's-2']);
+    info.mockRestore();
+  });
+
+  it('keeps the asks waiting for a rule within the parked bound, the oldest dropped out loud', async () => {
+    wireWithSessions(community);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    for (let i = 0; i <= MAX_PARKED_ASKS; i++) {
+      await handleDistributionFrame({ ...historyFrame(), senderDeviceId: `newcomer-${i}` });
+    }
+
+    expect(parkedAskCount()).toBe(MAX_PARKED_ASKS);
+    expect(warn.mock.calls.flat().join(' ')).toContain(
+      'DROPPED the parked ask of newcomer:newcomer-0'
+    );
+    info.mockRestore();
     warn.mockRestore();
+  });
+
+  it('parks a SESSIONS ask too when the rule is unknown - the same chokepoint', async () => {
+    graineHistoryFloor.mockReset();
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async (id: string) => community.find((s) => s.sessionId === id) ?? null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => community,
+        countGraineSessionsForWorkspace: async () => community.length,
+      } as unknown as IStorage,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: graineMls({ sendMessage }),
+    });
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      ...historyFrame(),
+      plaintext: encodeAppMessage(
+        mkGraineRequest({
+          workspaceId: 'ws-1',
+          kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+          answererUserId: 'alice',
+          requestId: 'r-s',
+          sessionIds: ['s-1'],
+        })
+      ),
+    });
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(parkedAskCount()).toBe(1);
+    info.mockRestore();
+  });
+
+  describe("the salon's roster comes BEFORE the floor (2026-10-22)", () => {
+    const unlisted: StoredGraineSession = {
+      ...community[0],
+      channelId: 'chan-3',
+      sessionId: 's-3',
+    };
+
+    beforeEach(() => {
+      registerCommunityHistoryVisibility('ws-1', 'joined');
+      graineHistoryFloor.mockReset();
+      graineHistoryFloor.mockImplementation(async (channelId: string) =>
+        channelId === 'chan-3' ? Promise.reject(new Error('403: not a reader')) : {}
+      );
+    });
+
+    it('never asks a floor for a salon withheld for its roster', async () => {
+      wireWithSessions([...community, unlisted]);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      // A salon refused by the server would fail the whole answer; it never reaches the question.
+      expect(graineHistoryFloor.mock.calls.map((call) => call[0])).not.toContain('chan-3');
+      info.mockRestore();
+    });
+
+    it('does NOT say "nothing for you" when a row was withheld for its roster - silence instead', async () => {
+      // Every in-scope row floored away, and one salon not listed here YET: it may be the asker's,
+      // and a durable "nothing" would close that past for the roster.
+      const sendMessage = wireWithSessions([...community, unlisted]);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(info.mock.calls.flat().join(' ')).toContain("withheld for their salon's roster");
+      info.mockRestore();
+    });
   });
 });
 
@@ -1367,6 +1627,8 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
   beforeEach(() => {
     noteHistoryHeldNothingSpy.mockClear();
     noteSeedUnavailableSpy.mockClear();
+    // About the claim, not the boundary: a community that shares its past re-floors nothing.
+    registerCommunityHistoryVisibility('ws-1', 'shared');
   });
 
   function holdsNothingFrame(seeds: canari.GraineMsg.$Properties[] = []) {
@@ -1474,6 +1736,9 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
 });
 
 describe('a bundle answering our own request (WP-33)', () => {
+  // About what is stored, not the boundary: under `joined` the receiver re-floors (tested below).
+  beforeEach(() => registerCommunityHistoryVisibility('ws-1', 'shared'));
+
   it('stores every seed and tells the UI which salons became readable', async () => {
     const { storage, saved } = fakeStorage();
     wire(storage);
@@ -1989,6 +2254,8 @@ describe('a seed this device already holds', () => {
   }
 
   afterEach(() => setGraineRepairListener(null));
+  // About what a held copy changes, not the boundary - the `joined` receiver is its own block below.
+  beforeEach(() => registerCommunityHistoryVisibility('ws-1', 'shared'));
 
   it('re-reads no salon when a bundle carries only seeds already held', async () => {
     const { storage, saved } = fakeStorage([held(0)]);
@@ -2057,7 +2324,23 @@ describe('the past goes only to an admission this device can verify (section 25)
     // A public salon this device listed (#2262): what is withheld here is the admission alone.
     registerChannelWorkspace('chan-1', 'ws-1', false);
     graineHistoryFloor.mockReset();
+    // The newcomer arrived after every held session: under `joined` - the community's or the gate's -
+    // the server's floor leaves them nothing of it (#2264: answered floored, never refused whole).
+    graineHistoryFloor.mockResolvedValue({});
   });
+
+  /**
+   * No PAST was handed to the newcomer, and it was SAID: exactly one answer, carrying no seed and
+   * "nothing here for you". Under #2264 a history ask the gate decides `joined` (not proven) is
+   * floored rather than refused whole, and the server's floor here leaves nothing - so a seed, a
+   * second answer, or a silence are all regressions this fails on.
+   */
+  function expectNothingForYou(sendMessage: ReturnType<typeof vi.fn>) {
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds ?? []).toHaveLength(0);
+    expect(bundle?.holdsNothing).toBe(true);
+  }
 
   const community: StoredGraineSession[] = [
     {
@@ -2149,9 +2432,193 @@ describe('the past goes only to an admission this device can verify (section 25)
 
     await handleDistributionFrame(ask('history'));
 
-    // The community SHARES its past - and this member's admission is the server's word alone.
-    expect(sendMessage).not.toHaveBeenCalled();
+    // The community SHARES its past - and this member's admission is the server's word alone. So the
+    // answer is the one a `joined` community gives (#2264): floored at the newcomer's arrival, which
+    // leaves nothing of what this device holds - said as "nothing here for you", never as silence.
+    expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
+    expectNothingForYou(sendMessage);
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.holdsNothing).toBe(true);
     expect(info.mock.calls.flat().join(' ')).toContain('admission is not proven');
+    info.mockRestore();
+  });
+
+  it('hands an unproven newcomer, asking for HISTORY, what spans their arrival - floored, never refused whole', async () => {
+    // #2264 x #2273: the gate says `joined` for an unproven admission, and the history path floors
+    // at the MEMBER's arrival exactly as a repair does.
+    newcomerArrives(null);
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds?.map((x) => [x.sessionId, Number(x.firstIndex)])).toEqual([['s-1', 4]]);
+    expect(info.mock.calls.flat().join(' ')).toContain("floored at that member's arrival");
+    info.mockRestore();
+  });
+
+  it('asks the server no floor for a PROVEN newcomer - the whole past, unfloored', async () => {
+    newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+    const sendMessage = wireAnswerer();
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    const seeds = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds;
+    expect(seeds?.map((x) => Number(x.firstIndex))).toEqual([0]);
+  });
+
+  it("floors a PROVEN newcomer all the same when the community is set to 'joined'", async () => {
+    // The rule outranks the proof: a proven admission lifts the `shared` default's gate, never a
+    // closed past.
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
+    const seeds = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds;
+    expect(seeds?.map((x) => Number(x.firstIndex))).toEqual([4]);
+    info.mockRestore();
+  });
+
+  it('PARKS before the gate when this session has not learned the rule, and gates once it has', async () => {
+    // Unknown rule comes BEFORE the gate: a floor drawn under a guessed `joined` would be a past
+    // lost for good, and the admission check would be work for an answer not sent yet. Once the
+    // listing states `shared`, the ask is decided by the gate like any other: unproven -> floored.
+    forgetWorkspaceGraineState('ws-1', [], []);
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+    newcomerArrives(null);
+    const sendMessage = wireAnswerer();
+    listWorkspaceMembers.mockClear();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(listWorkspaceMembers).not.toHaveBeenCalled();
+    expect(parkedAskCount()).toBe(1);
+    expect(info.mock.calls.flat().join(' ')).toContain('has not learned its history rule');
+
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(listWorkspaceMembers).toHaveBeenCalled();
+    expectNothingForYou(sendMessage);
+    info.mockRestore();
+  });
+
+  it('RE-ADMISSION: a newcomer told "nothing for you" gets the past by the repair path once proven', async () => {
+    // "Nothing for you" is recorded by the requester for its roster version (section 24), and a
+    // voucher written onto an existing row does not move that epoch: the HISTORY ask is not asked
+    // again. What recovers the past is the REPAIR path - each row the member renders names its
+    // session and asks for it, and that ask goes through the same gate, which now proves them.
+    newcomerArrives(null);
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await handleDistributionFrame(ask('history'));
+    expectNothingForYou(sendMessage);
+
+    // Re-admitted: a rooted member's voucher is written onto the newcomer's row.
+    newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+    const repaired = wireAnswerer();
+    graineHistoryFloor.mockClear();
+    await handleDistributionFrame(ask('sessions'));
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    const seeds = decodeAppMessage(repaired.mock.calls[0][1])?.graineBundle?.seeds;
+    expect(seeds?.map((x) => [x.sessionId, Number(x.firstIndex)])).toEqual([['s-1', 0]]);
+    info.mockRestore();
+  });
+
+  it('answers a SESSIONS repair the gate cannot check with SILENCE - no floored seed, nothing recorded', async () => {
+    // `unverifiable` on the repair path, for a session SPANNING the member's arrival. A floored
+    // seed would be lasting at the requester (the rows below its floor are asked of nobody), so a
+    // passing read failure would cost a member who may be proven part of that session for good.
+    // Nothing leaves - neither the seed nor a decline - and the requester asks again next start.
+    listWorkspaceMembers.mockRejectedValue(new Error('offline'));
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+    const sendMessage = wireAnswerer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('sessions'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(parkedAskCount()).toBe(0);
+    expect(warn.mock.calls.flat().join(' ')).toContain('cannot verify');
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
+  it('answers "I hold nothing" at once, ungated, when nothing it holds is in scope and no row exists', async () => {
+    newcomerArrives(null);
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async () => null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => [],
+        countGraineSessionsForWorkspace: async () => 0,
+      } as unknown as IStorage,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: graineMls({ sendMessage }),
+    });
+    listWorkspaceMembers.mockClear();
+
+    await handleDistributionFrame(ask('history'));
+
+    // Nothing to hand, nothing to gate: the roster is never read for it.
+    expect(listWorkspaceMembers).not.toHaveBeenCalled();
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.holdsNothing).toBe(true);
+  });
+
+  it('declines a SESSIONS ask for seeds it does not hold at once, even with the rule unknown', async () => {
+    // `missing` depends neither on the rule nor on the asker, and it sends the requester to the
+    // next member: withholding it behind an unknown rule would strand the session.
+    forgetWorkspaceGraineState('ws-1', [], []);
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+    newcomerArrives(null);
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async () => null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => [],
+        countGraineSessionsForWorkspace: async () => 0,
+      } as unknown as IStorage,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: graineMls({ sendMessage }),
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('sessions'));
+
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.missingSessionIds).toEqual(
+      ['s-1']
+    );
+    warn.mockRestore();
+  });
+
+  it('answers a HISTORY ask the gate cannot check with SILENCE - neither a floored seed nor "nothing"', async () => {
+    listWorkspaceMembers.mockRejectedValue(new Error('offline'));
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+    const sendMessage = wireAnswerer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    warn.mockRestore();
     info.mockRestore();
   });
 
@@ -2196,7 +2663,7 @@ describe('the past goes only to an admission this device can verify (section 25)
 
     await handleDistributionFrame(ask('history'));
 
-    expect(sendMessage).not.toHaveBeenCalled();
+    expectNothingForYou(sendMessage);
     info.mockRestore();
   });
 
@@ -2230,7 +2697,7 @@ describe('the past goes only to an admission this device can verify (section 25)
 
     await handleDistributionFrame(ask('history'));
 
-    expect(sendMessage).not.toHaveBeenCalled();
+    expectNothingForYou(sendMessage);
     info.mockRestore();
     warn.mockRestore();
   });
@@ -2248,7 +2715,7 @@ describe('the past goes only to an admission this device can verify (section 25)
 
       await handleDistributionFrame(ask('history'));
 
-      expect(sendMessage).not.toHaveBeenCalled();
+      expectNothingForYou(sendMessage);
       expect(warn.mock.calls.flat().join(' ')).toContain('REFUSED admission voucher');
       info.mockRestore();
       warn.mockRestore();
@@ -2285,7 +2752,7 @@ describe('the past goes only to an admission this device can verify (section 25)
     const sendMessage = wireAnswerer();
     await handleDistributionFrame(ask('history'));
 
-    expect(sendMessage).not.toHaveBeenCalled();
+    expectNothingForYou(sendMessage);
     info.mockRestore();
   });
 
@@ -2377,16 +2844,37 @@ describe('the past goes only to an admission this device can verify (section 25)
       expect(parkedAskCount()).toBe(1);
 
       drainNow();
-      await vi.waitFor(() =>
-        expect(info.mock.calls.flat().join(' ')).toContain('not sending history to newcomer')
-      );
+      // Decided after the drain as `joined`, and so floored at the newcomer's arrival (#2264): what
+      // this device holds predates it, so the answer is "nothing here for you", never a seed.
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
       const said = info.mock.calls.flat().join(' ');
       expect(said).toContain('deciding 1 parked ask(s) again');
       expect(said).toContain(
         'its signer carol was not admitted here when this device first saw it'
       );
-      expect(sendMessage).not.toHaveBeenCalled();
+      expectNothingForYou(sendMessage);
       expect(parkedAskCount()).toBe(0);
+      info.mockRestore();
+    });
+
+    it('parks, then FLOORS at the member arrival, an unproven ask decided after the drain', async () => {
+      // unobserved -> parked -> drained -> `joined` -> the member's floor: the three compose.
+      departuresByGroup.set('g-1', new Map([['carol', [4]]]));
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      // Parked BEFORE any floor is asked: the gate decides first.
+      expect(graineHistoryFloor).not.toHaveBeenCalled();
+      expect(parkedAskCount()).toBe(1);
+
+      drainNow();
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
+      const seeds = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds;
+      expect(seeds?.map((x) => Number(x.firstIndex))).toEqual([4]);
       info.mockRestore();
     });
 
@@ -2563,7 +3051,9 @@ describe('the salon scope of an answer', () => {
 
   beforeEach(() => {
     // The asker is a member admitted before the proof (a root, section 25): what these rows test
-    // is the salon scope of the answer, never the admission.
+    // is the salon scope of the answer, never the admission. A community that shares its past: the
+    // `joined` receiver's own scope check is its own block below.
+    registerCommunityHistoryVisibility('ws-1', 'shared');
     communityGroup = 'g-community';
     leaves.push('mallory:mallory-web');
     // The private salon's own key group: alice and mallory only.
@@ -2893,5 +3383,275 @@ describe('the salon scope of an answer', () => {
     expect(saved).toHaveLength(0);
     expect(error.mock.calls.flat().join(' ')).toContain('REFUSED seed s-x');
     error.mockRestore();
+  });
+});
+
+/**
+ * THE RECEIVER'S HALF OF `joined` (2026-10-22). A bundle is floored for the member who ASKED, and
+ * answerers before 1.2.6 addressed it to the whole key group (section 23). A floor drawn for
+ * somebody else is not this member's, so each bundle is re-floored at THIS member's arrival before
+ * anything is stored.
+ */
+describe('a bundle absorbed while the community is set to joined', () => {
+  beforeEach(() => {
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    // A listed public salon: under `joined` an unlisted one is set aside before any floor is asked.
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+    graineHistoryFloor.mockReset();
+  });
+
+  const heldAt = (firstIndex: number): StoredGraineSession => ({
+    workspaceId: 'ws-1',
+    channelId: 'chan-1',
+    sessionId: 'sess-1',
+    senderId: 'bob',
+    seedB64: toBase64(SEED),
+    firstIndex,
+    createdAt: 1_700_000_000_000,
+  });
+
+  const heldCopy = {
+    channelId: 'chan-1',
+    sessionId: 'sess-1',
+    seed: SEED,
+    firstIndex: 0,
+    createdAt: 1_700_000_000_000,
+  };
+
+  function bundleFrame(seeds: canari.GraineMsg.$Properties[]) {
+    return {
+      ...frame(),
+      sender: 'carol',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-of-an-earlier-newcomer', seeds })
+      ),
+    };
+  }
+
+  it('lowers a held floor no further than OUR arrival, whatever floor the bundle carries', async () => {
+    graineHistoryFloor.mockResolvedValue({ 'sess-1': 30 });
+    const { storage, saved } = fakeStorage([heldAt(40)]);
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([heldCopy]));
+
+    // The floor is OURS, asked of the server - never the bundle's, which was drawn for the asker.
+    expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'alice', ['sess-1']);
+    expect(saved.map((s) => s.firstIndex)).toEqual([30]);
+    expect(info.mock.calls.flat().join(' ')).toContain('1 below it');
+    info.mockRestore();
+  });
+
+  it('stores no seed whose every message predates our arrival', async () => {
+    graineHistoryFloor.mockResolvedValue({});
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-1', 's-a', 0)]));
+
+    expect(saved).toHaveLength(0);
+    expect(info.mock.calls.flat().join(' ')).toContain('1 seed(s) entirely before our arrival');
+    info.mockRestore();
+  });
+
+  it('keeps a seed the bundle already floored at or above our arrival, untouched', async () => {
+    graineHistoryFloor.mockResolvedValue({ 's-a': 2 });
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-1', 's-a', 5)]));
+
+    expect(saved.map((s) => [s.sessionId, s.firstIndex])).toEqual([['s-a', 5]]);
+  });
+
+  it('absorbs nothing, out loud, when our own boundary cannot be placed', async () => {
+    graineHistoryFloor.mockRejectedValue(new Error('offline'));
+    const { storage, saved } = fakeStorage([heldAt(40)]);
+    wire(storage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([heldCopy]));
+
+    expect(saved).toHaveLength(0);
+    expect(warn.mock.calls.flat().join(' ')).toContain('NOT absorbing 1 seed(s)');
+    warn.mockRestore();
+  });
+
+  it('asks the server nothing when the community shares its past', async () => {
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    const { storage, saved } = fakeStorage([heldAt(40)]);
+    wire(storage);
+
+    await handleDistributionFrame(bundleFrame([heldCopy]));
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(saved.map((s) => s.firstIndex)).toEqual([0]);
+  });
+
+  it("refuses a private salon's seed BEFORE asking any floor, so the public seeds still land", async () => {
+    // The server refuses a floor for a salon we do not read; asked first, that refusal failed the
+    // whole bundle and the public seeds with it.
+    registerChannelWorkspace('chan-priv', 'ws-1', true);
+    graineHistoryFloor.mockImplementation(async (channelId: string, _u: string, ids: string[]) =>
+      channelId === 'chan-1'
+        ? Object.fromEntries(ids.map((id) => [id, 0]))
+        : Promise.reject(new Error('403: not a reader'))
+    );
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      bundleFrame([
+        await v2SeedFor('chan-1', 's-pub', 0),
+        await v2SeedFor('chan-priv', 's-priv', 0),
+      ])
+    );
+
+    expect(graineHistoryFloor.mock.calls.map((call) => call[0])).toEqual(['chan-1']);
+    expect(saved.map((s) => s.sessionId)).toEqual(['s-pub']);
+    expect(warn.mock.calls.flat().join(' ')).toContain(
+      'not storing 1 seed(s) relayed by carol on community ws-1: 1 REFUSED, their salon rides another key group (s-priv)'
+    );
+    warn.mockRestore();
+  });
+
+  it('sets aside a seed of a salon not listed here, rather than ask its floor', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-unlisted', 's-u', 0)]));
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(saved).toHaveLength(0);
+    expect(info.mock.calls.flat().join(' ')).toContain('setting aside 1 seed(s)');
+    info.mockRestore();
+  });
+
+  it('sets aside, rather than holds for its registration, a seed of a salon the ANSWERED listing did not name', async () => {
+    // Under `shared` such a seed waits for the salon's registration (#2262, `awaitSalonListing`) and
+    // is then stored as it came - unfloored. Under `joined` that would be a past this member may not
+    // read, so it is set aside; the repair path asks for it, floored at the answerer, once rendered.
+    markCommunityListed('ws-1');
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-new', 's-n', 0)]));
+    registerChannelWorkspace('chan-new', 'ws-1', false);
+    await Promise.resolve();
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(saved).toHaveLength(0);
+    expect(info.mock.calls.flat().join(' ')).toContain('setting aside 1 seed(s)');
+    info.mockRestore();
+  });
+});
+
+/**
+ * A BUNDLE THAT ARRIVES BEFORE THE COMMUNITY'S RULE WAITS FOR IT (2026-10-22). Kept whole it could
+ * be a past the community closed; floored it could be a past lost for good - a floored seed of a
+ * `shared` community classes the rows below it as "before this device", and nothing asks for them.
+ */
+describe('a bundle arriving before its history rule is known', () => {
+  beforeEach(() => {
+    graineHistoryFloor.mockReset();
+    noteHistoryAnsweredSpy.mockClear();
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+  });
+
+  function bundleFrame(seeds: canari.GraineMsg.$Properties[]) {
+    return {
+      ...frame(),
+      sender: 'carol',
+      plaintext: encodeAppMessage(mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-1', seeds })),
+    };
+  }
+
+  it('stores nothing and asks no floor until the rule arrives - then absorbs it under that rule', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-1', 's-a', 0)]));
+
+    expect(saved).toHaveLength(0);
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(info.mock.calls.flat().join(' ')).toContain('until its history rule is known');
+
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    await vi.waitFor(() =>
+      expect(saved.map((s) => [s.sessionId, s.firstIndex])).toEqual([['s-a', 0]])
+    );
+    // Under `shared`, the whole past: no floor was ever drawn.
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('drops what waited when the session ends, out loud', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-1', 's-a', 0)]));
+    setGraineRuntime(null);
+
+    expect(info.mock.calls.flat().join(' ')).toContain('dropping 1 step(s)');
+    expect(saved).toHaveLength(0);
+    info.mockRestore();
+  });
+});
+
+/** A widened history ask is settled by a seed STORED, never by one merely carried (2026-10-22). */
+describe('what settles a widened history ask', () => {
+  beforeEach(() => {
+    noteHistoryAnsweredSpy.mockClear();
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+  });
+
+  const bundleOf = async (sessionId: string) => ({
+    ...frame(),
+    sender: 'carol',
+    plaintext: encodeAppMessage(
+      mkGraineBundle({
+        workspaceId: 'ws-1',
+        requestId: 'r-h',
+        seeds: [await v2SeedFor('chan-1', sessionId, 0)],
+      })
+    ),
+  });
+
+  it('a bundle that stored a seed settles it', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+
+    await handleDistributionFrame(await bundleOf('s-new'));
+
+    expect(noteHistoryAnsweredSpy).toHaveBeenCalledWith('ws-1', 'r-h');
+  });
+
+  it('a bundle of seeds already held settles nothing - the answerer gave the floored past again', async () => {
+    const { storage } = fakeStorage([
+      {
+        workspaceId: 'ws-1',
+        channelId: 'chan-1',
+        sessionId: 's-held',
+        senderId: 'carol',
+        seedB64: toBase64(SEED),
+        firstIndex: 0,
+        createdAt: 1,
+      },
+    ]);
+    wire(storage);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(await bundleOf('s-held'));
+
+    expect(noteHistoryAnsweredSpy).not.toHaveBeenCalled();
+    debug.mockRestore();
   });
 });

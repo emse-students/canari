@@ -5,6 +5,7 @@ import { Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { MessagingController } from './messaging.controller';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { MessagingService } from '../services/messaging.service';
 
 /**
@@ -27,6 +28,8 @@ describe('MessagingController - POST mls/sender-mismatch', () => {
       providers: [{ provide: MessagingService, useValue: {} as unknown as MessagingService }],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })

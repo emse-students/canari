@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import type { Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import { discoverMissingGroups } from './actions';

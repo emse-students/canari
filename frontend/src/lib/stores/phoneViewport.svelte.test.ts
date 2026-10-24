@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The reactive viewport questions: each answers what `$lib/utils/viewport` decides, and a reader
  * re-runs when the answer changes. `overlayLayout` is what keeps the feed's conversations panel - drawn

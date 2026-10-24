@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE ORPHAN VERDICT COMES FROM THE DURABLE QUEUE, NOT FROM THE IN-MEMORY STATUS (review of #1730).
  * A real queued upload after a reload has no status and must NOT read "never completed" - its Delete

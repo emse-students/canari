@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import {
   MAX_BURN_GENERATIONS,
   commitPersisted,

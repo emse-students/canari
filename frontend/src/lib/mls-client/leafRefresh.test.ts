@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import type { Mock } from 'vitest';
 import {
   LEAF_REFRESH_INTERVAL_MS,
@@ -14,7 +15,7 @@ import {
   type LeafRefreshRecord,
 } from './leafRefresh';
 import { CommitRefusedError } from './CommitRefusedError';
-import { CommitOutcomeUnknownError } from './commitSubmission';
+import { CommitOutcomeUnknownError, FollowerTabCommitError } from './commitSubmission';
 import { UnpublishedBranchError } from './publishedBranch';
 
 /**
@@ -394,6 +395,17 @@ describe('refreshLeafIfDue', () => {
 
     expect(await refreshLeafIfDue(d, G)).toBe('unverified');
     expect(lines.join(' | ')).toContain('diverged');
+    expect(readLeafRefreshLedger(U, D)[G]).toMatchObject({ observed: true });
+    expect(await refreshLeafIfDue(d, G)).toBe('already-tried');
+    expect(refreshOwnLeaf).toHaveBeenCalledTimes(1);
+  });
+
+  it('a follower tab is not a failure: no FAILED line, and not asked again at the same epoch', async () => {
+    refreshOwnLeaf.mockRejectedValue(new FollowerTabCommitError(G));
+    const d = dueAdmitted();
+
+    expect(await refreshLeafIfDue(d, G)).toBe('follower-tab');
+    expect(lines.join(' | ')).not.toContain('FAILED');
     expect(readLeafRefreshLedger(U, D)[G]).toMatchObject({ observed: true });
     expect(await refreshLeafIfDue(d, G)).toBe('already-tried');
     expect(refreshOwnLeaf).toHaveBeenCalledTimes(1);

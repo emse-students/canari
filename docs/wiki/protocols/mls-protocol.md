@@ -164,6 +164,7 @@ kick gets. The current device has no delete button at all.
 | POST | `/api/mls/push/register` | Register FCM push token |
 | DELETE | `/api/mls/push/unregister/:deviceId` | Deregister push token |
 | POST | `/api/mls/push/commits` | PushSecret-authed ordered commits `sinceEpoch` (background in-memory catch-up) |
+| POST | `/api/mls/push/key-group-base`, `/api/mls/push/key-group-join` | PushSecret-authed key-group base and external commit: a shut phone joining a salon's key group from the push ([channel-encryption section 26](channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)) |
 | GET | `/api/mls/history/:groupId` | Redis Stream history (incremental) |
 
 **`sinceEpoch` IS REQUIRED ON BOTH REPLAY ROUTES, AND THEY SHARE ONE POLICY** (`sanitizeEpoch`):
@@ -379,6 +380,39 @@ the group really is broken for us, because every later frame that sender emits i
 identically. Read as an epoch gap it produced the worst possible outcome: a replay that applied zero
 commits, reported `healed=true` because `epoch >= activeEpoch` was trivially satisfied, and ACKed the
 message off the server (WP-PENDING-2).
+
+### Fork detection: a signed epoch fingerprint in every application frame (2026-10-22)
+
+Two members can hold two different trees for one conversation at the SAME epoch number - a fork -
+and each side sees only the other's frames refused (`same-epoch-refusal`). To tell the two apart,
+every application frame carries, in the MLS `PrivateMessage`'s authenticated data
+(set with `group.set_aad`, cleared again on every exit), a signed claim of the sender's view:
+
+- `fp = SHA-256(lp("canari-mls-epoch-fp-v1") lp(epoch_authenticator))[..16]`;
+- signed with the sender's credential key over `lp("canari-mls-fork-v1") lp(groupId) be64(epoch)
+  lp(fp) lp(identity)`; AAD = `version(1) lp(identity) fp sig`.
+
+**Why the AAD and not the ciphertext.** A member on the other branch of a fork cannot decrypt the
+frame at all, so a fingerprint inside the ciphertext would only ever reach members that agree - a
+check that can never fire. The AAD is readable before the decrypt, on exactly the arm that fails -
+and so by everything that handles the frame's bytes; who that is, and what the `userId:deviceId` in
+it adds, is stated in
+[history-reconciliation](history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22).
+
+**The verdicts** (`mls-core/src/fork_check.rs`), judged on the same-epoch refusal and on success:
+
+| Verdict | Means | Logged |
+| --- | --- | --- |
+| no claim | an older sender | nothing |
+| agrees | same fingerprint, so the frame itself is damaged, not the tree | warn |
+| `fork` | a different fingerprint, signed by the sender's key in OUR tree | ERROR, recorded |
+| `unproven` | a different fingerprint we cannot attribute | warn, recorded |
+| `contradiction` | the frame decrypted at our epoch yet claims another fingerprint | ERROR, recorded |
+
+Findings are bounded (64) and handed over by `take_fork_findings` (WASM) / `prendre_constats_fork`
+(Tauri); the client drains them after a same-epoch refusal and reports each through the integrity
+finding path ([history-reconciliation](history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22)).
+The UI comes later.
 
 ### A frame from a PAST epoch is two events, and only `content_type` separates them (2026-08-11)
 
@@ -958,6 +992,42 @@ at the next gateway connection (before the pending messages are drained), before
 commit in the group, and a commit replay settles it from the log only when the log holds a row AT its
 base epoch, which is decided for good. No clock decides anything.
 
+**No submission holds the MLS lock unbounded.** Every submission - the first and each resubmission - is
+awaited INSIDE the global MLS lock, which also guards the incoming processing of every group, so a
+POST hung on a half-open connection or a captive portal froze decryption in every conversation. Since
+the periodic refresh makes an unasked commit ordinary, `submitCommit` runs under the `write` head
+deadline (`requestDeadline.ts`: 30 s plus the time its body needs to leave). Its expiry is a
+`RequestDeadlineError`, a transport failure - NO ANSWER, never a refusal - so it takes the path above:
+the same bytes are resubmitted once, and a second expiry keeps the stage as unknown. The deadline does
+not decide the outcome; the next resubmission does (`BaseMlsService.unresolvedCommit.test.ts`, "a
+commit gate that never answers"). ONE budget bounds the whole hold of a transaction, settlement and
+rebuilds included: `COMMIT_LOCK_HOLD_BUDGET_MS`, three `write` deadlines (the settlement's
+resubmission, the first request, its resubmission - each deadline also stretched by its body's upload
+time), read before each request and again after the checkpoint that precedes the first. A request it
+does not let start leaves the outcome unknown, or - for a first request - is never sent, its stage
+cleared and the commit refused (`lock_budget_spent`).
+
+**The server's commit lock lives 5 s; the client waits 30 s - so a resubmission can overlap its own
+first request.** The Redis lock (`EX 5`, `messaging.service.ts`) expires while a first request
+stalled inside its transaction (waiting on the seat lock, say) is still running. The resubmission
+then passes the lock, reads the base still active, waits on the group row, and when the first
+request commits it loses the advance (`EpochAdvanceLost`) - while a third device's commit, queued
+behind, may already have moved the epoch past `base + 1`. A key group's Add with admits is refused
+even earlier, by the admits pre-check, before the lock. **So the gate asks its commit log before
+EVERY refusal on the epoch or a seat** (`answerIfAlreadyAccepted`): the admits pre-check, the strict
+gate, and the lost or rolled-back advance (`EpochAdvanceLost`, `SeatClaimOvertaken`,
+`WelcomeSeatGone`). The row is keyed by base epoch and written in the transaction that moves the
+epoch, so when this request finds it holding the same bytes from the same device, the answer is
+`duplicate`, whatever epoch the group has reached. On a resubmission, then (`commitSubmission.ts`):
+
+- `epoch_mismatch` is definitive at any epoch: our own commit would have been answered `duplicate`;
+- a `409 SEAT_CLAIM_OVERTAKEN` is UNKNOWN: the stage is kept, never cleared and never rebuilt, and the
+  next settlement decides. The gate reads seat claims per REQUEST, so the 409 refuses only the copy
+  that got it - a first request still on its way reads its own claims and may land. Only a FIRST
+  request the gate answered `409` is rebuilt. A REAL 409 (an eviction overtook the claim) costs one
+  settlement, not the group: the next resubmission reads fresh claims too, and is answered for good
+  - accepted, `duplicate`, or refused on the epoch.
+
 **One store, one call.** What a resubmission needs - the commit, its successor base, its Welcome,
 and the client's intent (whom it excludes, admits and removes) - is kept BESIDE the staged commit in
 the MLS state itself (`mls-core/src/pending_submission.rs`), and written by the SAME platform call
@@ -1450,7 +1520,11 @@ has the before/after table).
   question nobody has to answer if it never happens. Derived once per device key on the web, as a
   non-extractable `CryptoKey`.
 - **The 16 header bytes are the AAD**, so a rewritten version or fingerprint fails the tag instead of
-  steering the reader somewhere plausible.
+  steering the reader somewhere plausible. **They are ALL the AAD binds**: nothing about whose state
+  it is, or how recent. A blob swapped for another sealed under the same device key therefore OPENS;
+  what refuses to install it is the identity check after the open (`IDENTITY_MISMATCH`, the
+  credential must name this `user:device`). An older checkpoint of the SAME identity put back is not
+  detected by the seal at all - the same as v1 and legacy.
 - **The writer is TypeScript only** (`mlsStateSeal.ts`, routed by `sealWebMlsState` in
   `mlsEncryptWorkerSession.ts`, which THROWS inside Tauri). `mls-core` has no v2 writer, so a native
   build cannot produce one by construction.
@@ -1460,9 +1534,41 @@ has the before/after table).
   `loadAndInitWasm`) and the WASM gets plain CBOR. Measured, not chosen: the WASM reader's software
   AES opened 7.7 MB in 610 ms against 240 ms for ChaCha - a cold-start regression that would have
   eaten the checkpoint saving. Every OTHER shape still goes to `mls-core` sealed. The two v2 readers
-  open the same committed fixture and throw the same codes (`STATE_KEY_MISMATCH` before the cipher,
-  `STATE_ALTERED` for a failed tag, `STATE_UNDECRYPTABLE` for a stub), which is what keeps them from
-  drifting.
+  open the same committed fixture and throw the same codes for what the BYTES decide
+  (`STATE_KEY_MISMATCH` before the cipher, `STATE_UNDECRYPTABLE` for a stub), which is what keeps them
+  from drifting.
+- **A WebCrypto refusal is NOT `STATE_ALTERED` (review of #2074, 2026-10-18).** WebKit names an
+  engine fault (memory pressure on a ~19 MB state) and a failed tag with the same `OperationError`, and
+  `altered` makes `init` rotate the device identity even under `noFreshStart` - irreversibly. So the
+  web opener throws `MlsStateUnreadableNowError` (blob size, error name, whether the key derivation
+  succeeded), and `loadAndInitWasm` asks `mls-core`'s deterministic reader for the verdict through
+  `state_blob_verdict` (`mls-wasm`). **The verdict crosses the boundary as a CODE, classified on the
+  Rust variant** (`MlsError::state_verdict_code`), never by matching the text of a thrown message:
+  `OPENED`, or one of `STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`,
+  `IDENTITY_MISMATCH`, which returns as the typed `MlsStateVerdictError` that
+  `classifyStateLoadFailure` reads by type - so `altered` is only ever its proof and the old-PIN
+  recovery stays reachable. Each code is also the `Display` prefix the Tauri commands surface, so
+  both boundaries use the same word (pinned in `state_load_failure_is_typed.rs`). A REJECTION from
+  `state_blob_verdict` is by contract no verdict, whatever its text. If the reader OPENS the bytes,
+  the engine fault is proven; what it loaded is dropped inside the call, never installed (a witness,
+  not a second load path), and a re-read of the same bytes does not ask again; a rejection (a trap)
+  drops the memoised WASM instance. Anything but a verdict stays `unreadable_now`:
+  `WebMlsService.loadStateWithKey` reads the state up to `MLS_STATE_UNREADABLE_NOW_READS` (3) times,
+  then `init` throws `SavedStateUnopenedError('unreadable_now')` with or without `noFreshStart` -
+  nothing rotated or written, the login shows `auth_local_state_unreadable_now`
+  (`local_state_unreadable_now`, in no recovery predicate), the next start reads again. The PIN
+  recovery says the same (`LocalStateUnreadableNowError` in `pinChange.ts`), never the "damaged,
+  reset" sentence of `LocalStateUnopenableError`. Pinned by `WebMlsService.unreadableNow.test.ts`,
+  `mlsWasmLoader.test.ts` and, on the REAL WASM, `mlsStateSeal.realWasm.test.ts`.
+- **`unreadable_now` HAS NO EXIT IN CODE, AND THAT IS DECIDED, NOT FORGOTTEN.** A browser that
+  refuses the same bytes on every start lands on the same message on every start. Nothing repairs it
+  silently: installing the state `mls-core` opened would be a second load path behind a failed
+  primary one, and rotating is the irreversible loss this branch exists to refuse. **The remedy is
+  the user's, and the message names it**: free memory (Canari's other tabs, heavy tabs and apps),
+  restart the browser and sign in again; meanwhile use the app or another browser, which are other
+  devices and leave this one's state intact; ask support before any reset, which would erase it. The
+  persistent case - what, if anything, the product offers after N starts - is an owed item
+  ([backlog](../backlog.md#p2---unreadable-right-now-on-every-start-has-no-exit-but-the-user)).
 - **The seal runs on the calling thread, not the encrypt worker**: WebCrypto already runs the cipher
   off the JavaScript thread; what remains on it is the input copy, measured as the main thread's
   longest stall.
@@ -1472,12 +1578,39 @@ has the before/after table).
 **Downgrade story.** A build with the v1 reader (`>= v0.18.18`) refuses version 2 by name
 ("written by a newer client, so this is a downgrade"); an older one reads `CANARIS\x02` as a nonce
 and fails the ChaCha tag. Both are `STATE_UNDECRYPTABLE`: loud, nothing destroyed, the user asked for
-the PIN - and holding a state that build cannot open. That is why **the writer ships OFF**
-(`MLS_STATE_SEAL_V2_WRITER_ENABLED = false`), read-first like v1. Three paths would hand a v2 blob to
-an old build: a web deploy rolled back; a tab still running the previous bundle that re-reads
-IndexedDB; and a web `.canari` backup restored on a phone whose store build predates the reader.
-**The flip is one line, owed once a stable carrying this reader has served the web AND
-`minClientVersion` is at or past it** (the second closes the backup path).
+the PIN - and holding a state that build cannot open. That is why **the writer ships OFF**,
+read-first like v1. Two paths hand a v2 blob to an older web bundle: a tab still running the previous
+bundle that re-reads IndexedDB (an unlock after a deploy), and a web deploy rolled back.
+
+**A v2 reader is not enough: the HARDENED one is, so the writer is still OFF.** A v2 reader is in
+every build since `v1.2.7` (#1793), but the builds before the hardening above turn a v2 blob that
+WebCrypto refuses into a wrong answer: `v1.2.7` into `STATE_UNDECRYPTABLE` (the PIN-recovery prompt,
+for a state no PIN opens there), and `v1.4.0` into `STATE_ALTERED`, after which
+`noPinOpensState('altered')` ROTATES the identity, irreversibly - for bytes that may have been
+healthy and only met an engine fault. A v2 blob reaching such a build (an old tab re-initialising, or
+a web rollback down to one) is the backlog's "a damaged MLS state is called a PIN rotation" again. So
+the release carrying the hardened reader ships with `MLS_STATE_SEAL_V2_WRITER_ENABLED = false`, and
+**the flip is its own later pull request, owed once BOTH floors are at or past the release tag that
+carries this reader**: production's `minClientVersion`, AND the lowest tag a web rollback is still
+allowed to reach. A tag, never a date ([durable-rules](../durable-rules.md)). Owed in
+[backlog](../backlog.md#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12).
+
+**Every reader, enumerated on `main` (2026-10-18), for the flip to rely on:** the web load
+(`loadAndInitWasm` -> `openMlsStateBlobV2`) is the ONE entry of the init, the PIN-recovery open
+(`openLocalStateWithKey` -> `loadStateWithKey`) and the reload after a key-package round; every
+native load (Tauri commands, `concurrency.rs`, the Android background JNI, the iOS NSE, the
+`.canari` restore probe in `storage.rs`, the other-account check) goes through
+`MlsManager::load_with_key` / `state_blob::parse`, which reads v2. Nothing else in the frontend reads
+the blob's bytes. Native builds never WRITE v2 (`sealWebMlsState` throws inside Tauri), so on a phone
+the flip changes only the phone's BROWSER.
+
+**Once flipped, it is a one-way door for the DATA, never for the code.** Setting the constant back to
+`false` stops new v2 writes and nothing else: a v2 blob stays v2 until its next checkpoint rewrites
+it legacy. So from the flip on **both v2 readers are permanent**, and the web rollback floor can
+never again go below the tag carrying the hardened reader. `mlsStateSeal.test.ts` already fails if
+the web dispatch or `mls-core`'s `open_v2` leaves the tree, and asserts the writer OFF - the flip PR
+moves that assertion. The encrypt worker and `encryptMlsStateOnMainThread` keep their legacy caller
+until the flip has shipped in a stable, so a revert stays one line; they are deleted after.
 
 **Pinned by** `mls-core/tests/state_blob_v2.rs` (the TypeScript writer's own bytes, frozen in
 `tests/fixtures/webcrypto-v2-peer-state.bin` by `frontend/scripts/freeze-v2-state-blob-fixture.ts`,

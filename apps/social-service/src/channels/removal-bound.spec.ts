@@ -90,14 +90,18 @@ describe('removals bounded by the actor', () => {
       noop as unknown as Repository<WorkspaceInvite>,
       { publishChannelEvent: jest.fn().mockResolvedValue(undefined) } as unknown as RedisService
     );
-    // The key-distribution cut-offs call chat-delivery; what is asserted here is only whether the
-    // removal went through.
-    for (const name of [
-      'cutOffKeyDistribution',
-      'cutOffEveryPrivateChannel',
-      'cutOffChannelKeyDistribution',
-      'hardDeleteWorkspace',
-    ]) {
+    // A departure calls chat-delivery around its roster write; what is asserted here is only
+    // whether the removal went through, so the departure runs its roster write and nothing else.
+    jest.spyOn(service as never, 'departDistributionGroups' as never).mockImplementation((async (
+      _cuts: unknown,
+      _reason: string,
+      _workspaceId: string,
+      rosterWrite: (m: unknown) => Promise<void>
+    ) =>
+      rosterWrite({
+        getRepository: (entity: unknown) => (entity === Channel ? channelRepo : memberRepo),
+      })) as never);
+    for (const name of ['hardDeleteWorkspace']) {
       jest.spyOn(service as never, name as never).mockResolvedValue(undefined as never);
     }
     jest.spyOn(service as never, 'channelAudience' as never).mockResolvedValue([] as never);

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * `--text-zoom` is the factor by which FONT sizes outgrow LENGTHS - 2 on Android's WebView at a 200 %
  * system text size, 1 on a desktop whose default font was raised (both grow together there).

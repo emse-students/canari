@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PHONE HEADER IS BACK + A CENTRE PILL + A MENU THAT GROWS (user, 2026-09-30).
  *

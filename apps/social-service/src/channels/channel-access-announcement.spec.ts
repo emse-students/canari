@@ -9,6 +9,7 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 import { CHANNEL_PERMISSIONS } from './permissions';
+import { fakeDepartureManager } from './departure-transaction.fake-spec';
 
 /**
  * Telling a salon's audience that its write policy changed.
@@ -80,6 +81,9 @@ describe('ChannelService.updateChannelAccess - announcing the new decision', () 
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
     const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
 
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo })),
+    });
     const service = new ChannelService(
       noop as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,
@@ -240,6 +244,9 @@ describe('ChannelService.createChannel - a creation is a grant', () => {
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
     const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
 
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo })),
+    });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,
@@ -407,6 +414,9 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
     const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
 
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo })),
+    });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,
@@ -452,6 +462,51 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
         data,
         audience,
       }));
+
+  /**
+   * A MEMBER DROPPED FROM A PRIVATE SALON IS EVICTED TWICE: before the save (which may abort it), and
+   * again once the save has removed them from `allowedUsers` - the eviction chat-delivery orders a
+   * racing external commit's activation against (channel-encryption, "WP-21").
+   */
+  it('evicts a dropped member before the save and again after it', async () => {
+    const { service } = makeService({ isPrivate: true, allowedUsers: [ADMIN, MEMBER] });
+    const order: string[] = [];
+    (global.fetch as unknown as jest.Mock).mockImplementation(
+      (url: unknown, init?: { method?: string }) => {
+        if (init?.method === 'DELETE' && String(url).includes(`/members/${MEMBER}`)) {
+          order.push(
+            String(url).includes('phase=after_roster_write&departure=3') ? 'settle' : 'evict'
+          );
+        }
+        // The first eviction begins departure 3 and names it.
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({
+                evicted: true,
+                memberships: 1,
+                queued: 0,
+                routes: 1,
+                groupId: 'g-chan',
+                departure: 3,
+              })
+            ),
+        } as unknown as Response);
+      }
+    );
+    const channelRepo = service['channelRepo'] as unknown as { save: jest.Mock };
+    channelRepo.save.mockImplementation((c: Record<string, unknown>) => {
+      order.push('save');
+      return Promise.resolve(c);
+    });
+
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN]);
+
+    // One departure: the save is its roster write, and the second eviction settles departure 3.
+    expect(order).toEqual(['evict', 'save', 'settle']);
+  });
 
   it('announces a private salon to the member a roster edit just added, and to nobody else', async () => {
     const { service, redis } = makeService({ isPrivate: true, allowedUsers: [ADMIN] });

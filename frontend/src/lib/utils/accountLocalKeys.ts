@@ -55,6 +55,11 @@ export const ACCOUNT_KEY = {
    */
   admissionLedger: (userId: string) => `canari_graine_admission_ledger:v1:${userId}`,
   /**
+   * `graine/historyClosedSeen.ts`: the communities whose past this device was last told is closed
+   * (`joined`) - community ids only, so a switch to `shared` re-asks their past.
+   */
+  historyClosedSeen: (userId: string) => `canari_graine_history_closed_seen:v1:${userId}`,
+  /**
    * `graine/pagedHistoryAnswer.ts`: per community, the history ask in flight and which pages of a
    * paged answer to it arrived - request ids and page numbers only, no key material.
    */
@@ -97,6 +102,11 @@ export const ACCOUNT_KEY = {
    */
   legacyConversation: (userId: string, contactName: string) =>
     `canari_conv_${userId}_${contactName}`,
+  /**
+   * `restoreKey.ts`: the current session of the account has registered its restore key
+   * (WP-RESTORE-1, Android). Called with `''` it is the prefix every session mint and sign-out drops.
+   */
+  restoreKeyRegistered: (userId: string) => `canari_restore_registered:${userId}`,
   /**
    * `deviceRecoveryCode.ts`: this device's backup recovery code, SEALED under the device key - one
    * code for every backup the device exports (decision of 2026-10-22).
@@ -165,6 +175,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.seenCipherIndex(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.admissionLedger(userId),
+    ACCOUNT_KEY.historyClosedSeen(userId),
     ACCOUNT_KEY.pagedHistoryAnswer(userId),
     ACCOUNT_KEY.salonUnsent(userId),
     ACCOUNT_KEY.salonReadMarks(userId),
@@ -175,6 +186,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),
     ACCOUNT_KEY.lastActive(userId),
+    ACCOUNT_KEY.restoreKeyRegistered(userId),
     ACCOUNT_KEY.backupRecoveryCode(userId),
     ACCOUNT_KEY.backupOwedAfterKeyMove(userId),
   ];

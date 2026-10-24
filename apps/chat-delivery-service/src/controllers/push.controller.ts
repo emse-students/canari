@@ -8,7 +8,6 @@ import {
   Query,
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   UseGuards,
   Headers,
   Res,
@@ -25,7 +24,9 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { PushSecretGuard, verifyPushSecret } from '../guards/push-secret.guard';
+import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import type { Response } from 'express';
 import {
   sanitizeEpoch,
@@ -34,6 +35,7 @@ import {
   sanitizeQueryValue,
 } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
+import { PAYLOAD_RELATION, materializeDeliveries } from '../utils/queued-payload';
 import { parseSessionId } from '../utils/session-id';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
@@ -75,6 +77,19 @@ function backgroundWelcomeRefusal(
  */
 const BLIND_BANNER_TERMS = new Set(['seed', 'ciphertext', 'nonce', 'messageIndex']);
 
+/**
+ * Key-group requests one user may make per minute on EACH of `mls/push/key-group-base` and
+ * `mls/push/key-group-join` (separate buckets: the throttler keys on the route).
+ *
+ * Sized on the client's own bound, not on an average: a push service attempts each key group once
+ * per app start (the native ledger), and that ledger holds at most 64 groups - so 64 a minute is
+ * every group a device can legitimately try at once, and anything past it is a stream nobody's
+ * phone produces. Each request asks social-service for the entitlement, which is the cost bounded.
+ * A refusal is the throttler's `429`, before the PushSecret's work is spent on the service; the
+ * phone settles it `deferred` on that base, never `lost`.
+ */
+export const KEY_GROUP_PUSH_LIMIT_PER_MINUTE = 64;
+
 /** Outcome vocabulary of the `[PUSH_AVATAR]` line. */
 type AvatarPushOutcome = 'served' | 'absent' | 'unavailable' | 'unreachable' | 'rejected';
 
@@ -98,62 +113,15 @@ export class PushController {
 
   /**
    * Verifies the PushSecret auth header against the stored secret for the given device.
-   * Throws ForbiddenException on failure. Used by all background-service endpoints.
+   * Throws ForbiddenException on failure. Used by all background-service endpoints; the check
+   * itself is `verifyPushSecret`, shared with `PushSecretGuard`.
    */
   private async verifyPushSecretAuth(
     authHeader: string,
     userId: string,
     deviceId: string
   ): Promise<void> {
-    const secret = authHeader?.startsWith('PushSecret ')
-      ? authHeader.slice('PushSecret '.length).trim()
-      : null;
-    if (!secret) {
-      this.logger.warn(
-        `[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=header_missing`
-      );
-      throw new ForbiddenException('PushSecret header required');
-    }
-    const pt = await this.pushTokenRepo.findOne({
-      where: { userId, deviceId },
-    });
-    const stored = pt?.pushSecret;
-    if (!stored) {
-      this.logger.warn(
-        `[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=no_stored_secret`
-      );
-      throw new ForbiddenException('Invalid push secret');
-    }
-
-    // Try SHA-256 hash first (new format)
-    const hashed = crypto.createHash('sha256').update(secret).digest('hex');
-    if (stored.length === hashed.length) {
-      try {
-        if (crypto.timingSafeEqual(Buffer.from(stored, 'utf8'), Buffer.from(hashed, 'utf8'))) {
-          return; // OK - new format
-        }
-      } catch {
-        /* fall through */
-      }
-    }
-
-    // Fallback: compare plaintext (legacy format, backward-compatible)
-    try {
-      if (
-        stored.length === secret.length &&
-        crypto.timingSafeEqual(Buffer.from(stored, 'utf8'), Buffer.from(secret, 'utf8'))
-      ) {
-        // Migrate silently to hashed format
-        await this.pushTokenRepo.update({ userId, deviceId }, { pushSecret: hashed });
-        this.logger.log(`[PUSH_SECRET] migrated to hash for ${userId}:${deviceId}`);
-        return; // OK - legacy format, now migrated
-      }
-    } catch {
-      /* fall through */
-    }
-
-    this.logger.warn(`[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=mismatch`);
-    throw new ForbiddenException('Invalid push secret');
+    await verifyPushSecret(this.pushTokenRepo, this.logger, authHeader, userId, deviceId);
   }
 
   private isTerminalPushTokenError(error: unknown): boolean {
@@ -410,9 +378,14 @@ export class PushController {
 
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
-    const queued = await this.queuedMessageRepo.findOne({
+    const found = await this.queuedMessageRepo.findOne({
       where: { id: messageId, recipientId: userId, deviceId },
+      relations: PAYLOAD_RELATION,
     });
+    // A key-group record stores its ciphertext once, in `queued_payload`: put it back on the row. A
+    // record whose payload is missing is withheld (accused at error there) and answered as absent,
+    // never as a frame - the phone hands an empty answer nothing to decrypt and nothing to ACK.
+    const [queued] = found ? materializeDeliveries([found], this.logger, 'fetch-proto') : [];
     if (!queued) {
       // Already ACKed or non-existent - return empty (no error to avoid retry loops).
       return { proto: '', ratchetTree: '' };
@@ -943,6 +916,63 @@ export class PushController {
     const sinceEpoch = sanitizeEpoch(body.sinceEpoch, 'sinceEpoch');
 
     return this.messagingService.getCommitsSince(groupId, sinceEpoch, userId);
+  }
+
+  /**
+   * The external-join base of a key group, for a phone whose app is killed and that just received a
+   * salon push sealed on a key group it holds no seat in (channel-encryption section 26). Gated by
+   * the same social-service entitlement as the app's own join - see
+   * {@link MessagingService.readKeyGroupBaseForPush}.
+   *
+   * Auth: PushSecret (no JWT - app may be killed), proven ONCE by `PushSecretGuard` - the handler
+   * does not verify it again, which would be a second database read for the same answer.
+   */
+  @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
+  @Throttle({ default: { limit: KEY_GROUP_PUSH_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @Post('mls/push/key-group-base')
+  async getKeyGroupBasePush(@Body() body: { userId: string; deviceId: string; groupId: string }) {
+    // The PushSecret of `userId:deviceId` is proven by `PushSecretGuard`, first on this route.
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
+    return this.messagingService.readKeyGroupBaseForPush(groupId, userId, deviceId);
+  }
+
+  /**
+   * Submits the external commit a killed app built from {@link getKeyGroupBasePush}'s base. Only an
+   * external commit into a key group is taken here; everything else about it is `validateCommit`'s
+   * - see {@link MessagingService.submitKeyGroupJoinForPush}.
+   *
+   * Auth: PushSecret (no JWT - app may be killed), proven ONCE by `PushSecretGuard`.
+   */
+  @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
+  @Throttle({ default: { limit: KEY_GROUP_PUSH_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @Post('mls/push/key-group-join')
+  async submitKeyGroupJoinPush(
+    @Body()
+    body: {
+      userId: string;
+      deviceId: string;
+      groupId: string;
+      baseEpoch: number;
+      proto: string;
+      groupInfo?: string;
+    }
+  ) {
+    // The PushSecret of `userId:deviceId` is proven by `PushSecretGuard`, first on this route.
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    return this.messagingService.submitKeyGroupJoinForPush(
+      {
+        groupId: body.groupId ?? '',
+        deviceId,
+        senderId: userId,
+        baseEpoch: body.baseEpoch,
+        proto: body.proto,
+        groupInfo: body.groupInfo,
+      },
+      userId
+    );
   }
 
   /**

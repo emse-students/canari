@@ -15,6 +15,7 @@
     - canari_iOS/canari_iOS.entitlements (Associated Domains, push, App Group)
     - canari_iOS/{fr,en}.lproj/InfoPlist.strings (WP-iOS-10: localized privacy usage prompts). Cables dans le pbxproj comme PBXVariantGroup InfoPlist.strings (phase Resources de l'app, fr/en dans knownRegions). Sans ce wiring, iOS retombe sur les valeurs FR de base de Info.plist.
     - canari_NSE/                    (Notification Service Extension: source + Info.plist + entitlements + bridging header + FFI header). Cible CanariNotifications ajoutee A LA MAIN dans canari.xcodeproj/project.pbxproj (pas via project.yml). La CI (runner macOS) la build/signe.
+    - canari_Share/                  (Share Extension, S4: Swift sources + Info.plist + entitlements App Group seul + {fr,en}.lproj/Localizable.strings). Cible CanariShare ajoutee A LA MAIN dans le pbxproj, embarquee comme la NSE ; gardee par src/lib/mobile/iosShareExtension.test.ts et .github/scripts/ios-extensions.sh.
     - Podfile                        (Firebase/Messaging)
     - canari.xcodeproj/project.pbxproj (SOURCE DE VERITE du build : sources + frameworks + targets ajoutes a la main dans Xcode. project.yml n'est PAS lu par le build / la CI)
 

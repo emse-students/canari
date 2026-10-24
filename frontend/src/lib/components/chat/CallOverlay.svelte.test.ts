@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE FULL-SCREEN CALL, AS A SCREEN-READER, A KEYBOARD AND THE SYSTEM BACK MEET IT.
  *

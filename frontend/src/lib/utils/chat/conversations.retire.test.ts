@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * `retireConversation` is the ONLY writer of `lifecycle: 'removed'`, and this file defends both
  * halves of that claim.

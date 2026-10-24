@@ -65,7 +65,7 @@ message InboundMsg {
 // The server never sees the plaintext; it only routes opaque ciphertext blobs.
 //
 // Encoding: proto3 binary serialised with this schema, passed as raw bytes to
-// `WasmMlsClient::send_message_bytes()`.
+// `WasmMlsClient::send_authored_message_bytes()`, which appends `author_proof`.
 
 message AppMessage {
   // Unique identifier assigned by the sender (UUID string).
@@ -89,6 +89,19 @@ message AppMessage {
     // groups keep their `edit_message` system event.
     EditMsg          edit           = 13;
   }
+  // The author's signature over this message, appended by mls-core as the LAST field of the bytes
+  // (`mls-core/src/authorship.rs`). Present on a decrypted frame only when mls-core verified it
+  // against the MLS sender's leaf, so a member can relay it in a history bundle and the receiver
+  // can still check who wrote the message. Never set by TypeScript on a send.
+  AuthorProof author_proof = 14;
+}
+
+// The signature `author_proof` carries: `signature` is the author's MLS credential key over
+// lp("canari-mls-author-v1") lp(groupId) lp(author) lp(SHA-256(the AppMessage bytes before it)).
+message AuthorProof {
+  uint32 version   = 1; // 1
+  string author    = 2; // userId:deviceId
+  bytes  signature = 3;
 }
 
 // ── WebRTC Signaling ─────────────────────────────────────────────────────

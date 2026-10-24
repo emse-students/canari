@@ -33,8 +33,21 @@ describe('decideProtoCarriage: a typed outcome per packet kind', () => {
     expect(c).toMatchObject({ kind: 'inlined', proto: 'AAEC', bytes: 4 });
   });
 
-  it('reports a message that does not fit as over-budget and inlines nothing', () => {
+  it('carries a frame too long to fit even beside empty names by reference - a long text, expected', () => {
+    // A signed frame is ~360 B (raw) longer than before (mls-core/tests/authored_frames.rs), so a
+    // long text crossing the budget is the frame's own size, not the fixed fields growing.
     const c = decideProtoCarriage({ ...baseInput }, 'A'.repeat(100_000));
+    expect(c).toMatchObject({ kind: 'long-frame', proto: '' });
+  });
+
+  it('accuses the fixed fields only when the frame would have fit beside empty names', () => {
+    const longNames = {
+      ...baseInput,
+      senderName: 'S'.repeat(1500),
+      groupName: 'G'.repeat(1500),
+    };
+    const bare = inlineProtoBudget({ ...baseInput, senderName: '', groupName: '' });
+    const c = decideProtoCarriage(longNames, 'A'.repeat(bare));
     expect(c).toMatchObject({ kind: 'over-budget', proto: '' });
   });
 
@@ -77,8 +90,16 @@ describe('decideProtoCarriage: a typed outcome per packet kind', () => {
   });
 
   it('keeps accusing an over-budget frame when the server could not say it was key material', () => {
-    const input = { ...baseInput, silent: true, isKeyDistribution: undefined };
-    expect(decideProtoCarriage(input, 'A'.repeat(100_000)).kind).toBe('over-budget');
+    // A frame that would have fit beside empty names, so only the key-material excuse could
+    // spare it the accusation - and an unclassified frame is not given that excuse.
+    const input = {
+      ...baseInput,
+      isKeyDistribution: undefined,
+      senderName: 'S'.repeat(1500),
+      groupName: 'G'.repeat(1500),
+    };
+    const bare = inlineProtoBudget({ ...input, senderName: '', groupName: '' });
+    expect(decideProtoCarriage(input, 'A'.repeat(bare)).kind).toBe('over-budget');
   });
 
   it('reports nothing to carry as empty', () => {

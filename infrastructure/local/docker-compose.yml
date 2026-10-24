@@ -145,6 +145,9 @@ services:
       CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
       # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
       CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
+      # The key-group shared-payload WRITER (migration 034), off as on both estates; set it true
+      # here to exercise the writer locally.
+      QUEUED_PAYLOAD_SHARED_WRITES: ${QUEUED_PAYLOAD_SHARED_WRITES:-false}
       TURN_URL: ${TURN_URL:-turn:host.docker.internal:3478?transport=udp}
       TURN_USERNAME: ${TURN_USERNAME:-user}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-password}
@@ -305,6 +308,9 @@ services:
       # Empty by design (env-from-prod.sh BLANK): this stack signs in through the PRODUCTION MiConnect,
       # so a token here would let a local run edit a real person.
       MICONNECT_EDITOR_TOKEN: ${MICONNECT_EDITOR_TOKEN:-}
+      # Account restore (WP-RESTORE-1). Empty locally unless a debug APK's fingerprint is set: every
+      # /api/auth/restore route then answers 503 (docs/wiki/account-restore.md).
+      ANDROID_APP_LINK_SHA256: ${ANDROID_APP_LINK_SHA256:-}
       # WITHOUT THESE THREE, NO LOGIN CAN COMPLETE LOCALLY, AND THE FAILURE BLAMES THE SERVER.
       # `infrastructure/.env` carried all three correctly and this file forwarded none of them, so
       # the browser reached `/auth/callback?code=...` - Authentik having authenticated and redirected
@@ -375,6 +381,7 @@ services:
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
       LYDIA_KEY_ENCRYPTION_SECRET: ${LYDIA_KEY_ENCRYPTION_SECRET:-}
+      LIVE_KEY_ENCRYPTION_SECRET: ${LIVE_KEY_ENCRYPTION_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010

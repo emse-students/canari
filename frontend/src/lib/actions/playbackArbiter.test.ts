@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * ONE MEDIA PLAYS AT A TIME, IN THE WHOLE APP (user, 2026-10-02).
  *

@@ -2,6 +2,7 @@ import { ConflictException } from '@nestjs/common';
 import type { Repository } from 'typeorm';
 import { Logger } from '@nestjs/common';
 import * as signature from '../lives/live-report-signature';
+import { LIVE_KEY_ENCRYPTION_SECRET_ENV, sealLiveKey } from '../lives/live-key-at-rest';
 import { ModerationService } from './moderation.service';
 import type { ContentReport } from './entities/content-report.entity';
 import type { UserModeration } from './entities/user-moderation.entity';
@@ -272,11 +273,13 @@ describe('ModerationService - reports', () => {
     function answer(opts: { afterRemoval?: boolean }) {
       reportRepo.manager.query.mockImplementation((sql: string) => {
         if (sql.includes('"liveId"::text FROM live_chat_messages')) return [{ liveId: LIVE }];
+        // The live's key as migration 110 stores it: sealed, so `openLiveKey` opens it silently.
         if (sql.includes('FROM lives'))
           return [
             {
               broadcasterId: 'bob',
-              liveKey: Buffer.alloc(32),
+              ...sealLiveKey(LIVE, '00'.repeat(32)),
+              liveKey: null,
               visible: true,
             },
           ];
@@ -297,9 +300,11 @@ describe('ModerationService - reports', () => {
 
     beforeEach(() => {
       process.env.LIVE_REPORT_SIGNING_KEY = 'k'.repeat(64);
+      process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV] = 's'.repeat(32);
     });
 
     afterEach(() => {
+      delete process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV];
       jest.restoreAllMocks();
     });
 

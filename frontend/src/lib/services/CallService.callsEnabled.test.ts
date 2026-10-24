@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { get } from 'svelte/store';
 import type { IMlsService } from '$lib/mls-client';

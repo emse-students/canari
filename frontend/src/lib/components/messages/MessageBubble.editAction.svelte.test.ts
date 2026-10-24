@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * "Modifier" is offered on a member's OWN plain-text message in a salon - and on nothing else.
  *
