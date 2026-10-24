@@ -47,6 +47,9 @@ export const BROWSERS = {
   w5: { port: 9227, profile: join(STATE_DIR, "chrome-w5") },
   // The owner's second scratch device (1.4.1 campaign, DEV-4 and DEV-6): wiped like W3.
   w6: { port: 9228, profile: join(STATE_DIR, "chrome-w6") },
+  // Second seats of the peer and the third account (1.4.1 campaign, BIG-1..3).
+  w7: { port: 9229, profile: join(STATE_DIR, "chrome-w7") },
+  w8: { port: 9230, profile: join(STATE_DIR, "chrome-w8") },
 };
 
 /** True when something still answers on that debugging port. */
