@@ -71,7 +71,6 @@ function commitCtx(accepted: boolean) {
         'checkpointStageBeforeSend',
         'submitRecorded',
         'resubmitUnresolved',
-        'resubmitOnce',
       ].map((name) => [
         name,
         (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],

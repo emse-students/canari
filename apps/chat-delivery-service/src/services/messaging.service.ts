@@ -2138,7 +2138,19 @@ export class MessagingService {
     );
     const admitAnswer = await this.claimKeyGroupAdmits(groupId, body.admits, baseEpoch, traceId);
     if (admitAnswer && !(admitAnswer instanceof Map)) {
-      return { accepted: false, currentEpoch: admitAnswer.epochMismatch, reason: 'epoch_mismatch' };
+      return (
+        (await this.answerIfAlreadyAccepted(
+          groupId,
+          baseEpoch,
+          commitProto,
+          deviceId,
+          traceId
+        )) ?? {
+          accepted: false,
+          currentEpoch: admitAnswer.epochMismatch,
+          reason: 'epoch_mismatch',
+        }
+      );
     }
     const admitClaims = admitAnswer instanceof Map ? admitAnswer : null;
 
@@ -2215,20 +2227,17 @@ export class MessagingService {
       // accepts baseEpoch==0. The old bypass (accepting any baseEpoch when activeEpoch==0)
       // let an inconsistent device fast-forward the counter (e.g. baseEpoch=5 -> activeEpoch=6)
       // and desynchronize everyone (H4).
-      // A RESUBMISSION OF A COMMIT THIS GATE ALREADY ACCEPTED IS ANSWERED AS ACCEPTED. A committer
-      // whose first submission got no answer cannot tell "not landed yet" from "never landed", and
-      // resending the SAME bytes is how it learns which - only if the gate recognises them. The log
-      // row is the proof (keyed by base epoch, written in the advance's transaction, holding the
-      // bytes verbatim); nothing is advanced or fanned out again, since the first acceptance did both.
+      // A RESUBMISSION OF A COMMIT THIS GATE ALREADY ACCEPTED IS ANSWERED AS ACCEPTED
+      // (`answerIfAlreadyAccepted`) - here, and at every other place that refuses on the epoch.
       if (baseEpoch < group.activeEpoch) {
-        const prior = await this.commitLogRepo.findOne({ where: { groupId, baseEpoch } });
-        if (prior && prior.commit === commitProto && prior.senderDeviceId === deviceId) {
-          this.logger.log(
-            `[COMMIT][${traceId}] DUPLICATE group=${groupId} device=${deviceId} baseEpoch=${baseEpoch} ` +
-              `- already accepted, answered again (activeEpoch=${group.activeEpoch})`
-          );
-          return { accepted: true, newEpoch: baseEpoch + 1, duplicate: true };
-        }
+        const duplicate = await this.answerIfAlreadyAccepted(
+          groupId,
+          baseEpoch,
+          commitProto,
+          deviceId,
+          traceId
+        );
+        if (duplicate) return duplicate;
       }
       if (baseEpoch !== group.activeEpoch) {
         this.logger.warn(
@@ -2516,6 +2525,24 @@ export class MessagingService {
           }
         });
       } catch (e) {
+        // EVERY REFUSAL BELOW FIRST ASKS WHETHER THESE BYTES ALREADY LANDED. This transaction may
+        // have waited on the seat lock past the Redis lock's 5 s, behind an EARLIER request of the
+        // same commit from the same device that has since committed: its row is then in the log,
+        // and what failed here is only this copy of an accepted commit.
+        if (
+          e instanceof SeatClaimOvertaken ||
+          e instanceof WelcomeSeatGone ||
+          e instanceof EpochAdvanceLost
+        ) {
+          const duplicate = await this.answerIfAlreadyAccepted(
+            groupId,
+            baseEpoch,
+            commitProto,
+            deviceId,
+            traceId
+          );
+          if (duplicate) return duplicate;
+        }
         // A seat this commit writes stood on a claim an eviction overtook: nothing was written, and
         // the client rebuilds the commit and submits it again (`RefusalCode.SEAT_CLAIM_OVERTAKEN`).
         if (e instanceof SeatClaimOvertaken) {
@@ -3159,6 +3186,35 @@ export class MessagingService {
         error: 'committer_not_member',
       })
     );
+  }
+
+  /**
+   * The answer to a commit this gate ALREADY ACCEPTED from this device at `baseEpoch` - accepted,
+   * `duplicate` - or `null` when it did not.
+   *
+   * A committer whose first submission got no answer cannot tell "not landed yet" from "never
+   * landed", and resending the SAME bytes is how it learns which - only if EVERY refusal on the epoch
+   * recognises them. The log row is the proof: keyed by base epoch, written in the transaction that
+   * moves the epoch, holding the bytes verbatim, so it exists exactly when that advance committed.
+   * Nothing is advanced or fanned out again; the first acceptance did both. Called by each place that
+   * would otherwise refuse on the epoch or on a seat - the admits pre-check, the strict gate, and the
+   * advance's lost or rolled-back transaction - because a client reads any of those as a refusal and
+   * clears a commit the group holds.
+   */
+  private async answerIfAlreadyAccepted(
+    groupId: string,
+    baseEpoch: number,
+    commitProto: string,
+    deviceId: string,
+    traceId: string
+  ): Promise<ValidateCommitResult | null> {
+    const prior = await this.commitLogRepo.findOne({ where: { groupId, baseEpoch } });
+    if (!prior || prior.commit !== commitProto || prior.senderDeviceId !== deviceId) return null;
+    this.logger.log(
+      `[COMMIT][${traceId}] DUPLICATE group=${groupId} device=${deviceId} baseEpoch=${baseEpoch} ` +
+        '- already accepted, answered again'
+    );
+    return { accepted: true, newEpoch: baseEpoch + 1, duplicate: true };
   }
 
   /**

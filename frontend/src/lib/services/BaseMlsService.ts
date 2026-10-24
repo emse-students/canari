@@ -183,8 +183,6 @@ import {
   encodeIntent,
   isDefinitiveCommitRefusal,
   resubmissionVerdict,
-  confirmationVerdict,
-  mayBeOwnOverlap,
   COMMIT_LOCK_HOLD_BUDGET_MS,
   commitLockHoldEndsAt,
   mayStartCommitRequest,
@@ -4034,10 +4032,10 @@ export abstract class BaseMlsService implements IMlsService {
         // has to know about it; only the last refusal of the bound is handed up.
         //
         // ONLY A FIRST REQUEST THE GATE ANSWERED IS REBUILT. The 409 refuses the request that got
-        // it, and nothing more: a resubmission can meet it because our own first request - still
-        // inside its transaction once the server's 5 s commit lock expired, while this client waits
-        // up to 30 s - wrote the seat first. So after a first request that got no answer, a 409
-        // keeps the stage (`resubmitUnresolved`), never clears or rebuilds it.
+        // it, and nothing more: the gate reads seat claims per request, so a first request that got
+        // no answer - stalled on the way, or inside its transaction past the server's 5 s commit
+        // lock while this client waits up to 30 s - may still land with claims of its own. After
+        // one, a 409 keeps the stage (`resubmitUnresolved`), never clears or rebuilds it.
         //
         // A STAGE LEFT ON A FAILED CLEAR IS STILL UNRESOLVED, so every clear here notes the group
         // when it fails: the next settlement reads it again.
@@ -4155,6 +4153,28 @@ export abstract class BaseMlsService implements IMlsService {
               baseEpoch,
               unsaved,
               'its checkpoint failed before the first request, so it was never sent'
+            );
+          }
+          // THE BUDGET IS READ AGAIN AFTER THE CHECKPOINT, which may have taken long: a first request
+          // that cannot start is never sent, so its stage is cleared exactly as an unsaved one is.
+          // The checkpoint may have saved it; a reload then settles a stage that never left, which
+          // the gate decides as a first request - never a fork.
+          if (!mayStartCommitRequest(holdEndsAt)) {
+            try {
+              await clear();
+            } catch (clearErr) {
+              console.error(
+                `[COMMIT] ${groupId.slice(0, 8)}... could not clear the unsent stage on ${baseEpoch}: ${String(clearErr).slice(0, 120)}`
+              );
+              throw new CommitOutcomeUnknownError(groupId, baseEpoch, clearErr, 'its clear failed');
+            }
+            console.warn(
+              `[COMMIT] ${groupId.slice(0, 8)}... the stage on ${baseEpoch} was not sent - the MLS lock budget of ${COMMIT_LOCK_HOLD_BUDGET_MS} ms is spent; cleared`
+            );
+            throw new CommitRefusedError(
+              attempt > 1 ? SEAT_CLAIM_OVERTAKEN_REASON : COMMIT_LOCK_BUDGET_SPENT_REASON,
+              baseEpoch,
+              attempt > 1 ? baseEpoch : undefined
             );
           }
           if (submission.admits) {
@@ -4309,13 +4329,11 @@ export abstract class BaseMlsService implements IMlsService {
    * says nothing of the EARLIER request of these bytes, which may have landed. Clearing on it could
    * leave this device behind its own accepted commit; the stage is kept and the limit remembered.
    *
-   * SO ARE THE TWO ANSWERS AN OVERLAP WITH THAT EARLIER REQUEST PRODUCES. The server's commit lock
-   * lives 5 s and the first request may have waited 30 s, so it can still be inside its transaction
-   * when this one arrives: this one then loses the advance to it (`epoch_mismatch` with
-   * `base + 1`, {@link mayBeOwnOverlap}) or meets the seat it wrote (`409 SEAT_CLAIM_OVERTAKEN`).
-   * Neither refuses these bytes, so neither clears nor rebuilds. The epoch answer is CONFIRMED by
-   * one more resubmission, at once, whose answer is definitive ({@link confirmationVerdict}); the 409
-   * is kept for the next settlement.
+   * SO IS A `409 SEAT_CLAIM_OVERTAKEN`. The gate reads a commit's seat claims per REQUEST, when it
+   * arrives, so the 409 refuses this copy only: the first request, stalled on the way or inside its
+   * transaction past the server's 5 s commit lock, reads its own claims and may still land. The gate
+   * answers `duplicate` instead of the 409 once that first request's log row exists, so the next
+   * settlement decides; never cleared, never rebuilt here.
    *
    * No request starts once `holdEndsAt` would be passed ({@link mayStartCommitRequest}): the outcome
    * then stays unknown.
@@ -4330,44 +4348,18 @@ export abstract class BaseMlsService implements IMlsService {
   }> {
     const short = submission.groupId.slice(0, 8);
     const from = `the commit from epoch ${submission.baseEpoch}`;
-    const sent = await this.resubmitOnce(submission, holdEndsAt, (answer) =>
-      resubmissionVerdict(answer, submission.baseEpoch)
-    );
-    if (sent.answer === undefined || !mayBeOwnOverlap(sent.answer, submission.baseEpoch)) {
-      return sent;
-    }
-    console.warn(
-      `[COMMIT] ${short}... resubmission of ${from} lost the epoch to ${submission.baseEpoch + 1} - ` +
-        'possibly to its own earlier request; confirming with one more resubmission'
-    );
-    return this.resubmitOnce(submission, holdEndsAt, confirmationVerdict, 'confirmation');
-  }
-
-  /** One request of {@link resubmitUnresolved}, its answer read by `read`. */
-  private async resubmitOnce(
-    submission: CommitSubmission,
-    holdEndsAt: number,
-    read: (answer: Awaited<ReturnType<MlsDeliveryApi['submitCommit']>>) => ResubmissionVerdict,
-    what = 'resubmission'
-  ): Promise<{
-    verdict: ResubmissionVerdict;
-    answer?: Awaited<ReturnType<MlsDeliveryApi['submitCommit']>>;
-    error?: unknown;
-  }> {
-    const short = submission.groupId.slice(0, 8);
-    const from = `the commit from epoch ${submission.baseEpoch}`;
     if (!mayStartCommitRequest(holdEndsAt)) {
       const error = new Error(
-        `the MLS lock budget of ${COMMIT_LOCK_HOLD_BUDGET_MS} ms is spent - no ${what} sent`
+        `the MLS lock budget of ${COMMIT_LOCK_HOLD_BUDGET_MS} ms is spent - no resubmission sent`
       );
-      console.warn(`[COMMIT] ${short}... ${what} of ${from}: unknown (${error.message})`);
+      console.warn(`[COMMIT] ${short}... resubmission of ${from}: unknown (${error.message})`);
       return { verdict: 'unknown', error };
     }
     try {
       const answer = await this.submitRecorded(submission);
-      const verdict = read(answer);
+      const verdict = resubmissionVerdict(answer);
       console.log(
-        `[COMMIT] ${short}... ${what} of ${from}: ` +
+        `[COMMIT] ${short}... resubmission of ${from}: ` +
           `${verdict}${answer.duplicate ? ' (duplicate of an accepted commit)' : ''}` +
           `${answer.reason ? ` (${answer.reason}${answer.currentEpoch !== undefined ? `, server at ${answer.currentEpoch}` : ''})` : ''}`
       );
@@ -4380,7 +4372,7 @@ export abstract class BaseMlsService implements IMlsService {
           ? 'refused'
           : 'unknown';
       console.warn(
-        `[COMMIT] ${short}... ${what} of ${from}: ${verdict} (${String(e).slice(0, 120)})`
+        `[COMMIT] ${short}... resubmission of ${from}: ${verdict} (${String(e).slice(0, 120)})`
       );
       return { verdict, error: e };
     }

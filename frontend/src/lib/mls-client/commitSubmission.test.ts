@@ -3,8 +3,6 @@ import {
   encodeIntent,
   isDefinitiveCommitRefusal,
   resubmissionVerdict,
-  confirmationVerdict,
-  mayBeOwnOverlap,
   COMMIT_LOCK_HOLD_BUDGET_MS,
   commitLockHoldEndsAt,
   mayStartCommitRequest,
@@ -31,41 +29,22 @@ describe('isDefinitiveCommitRefusal - did the gate answer, and refuse?', () => {
 
 describe('resubmissionVerdict', () => {
   it('reads an accept, first or duplicate, as accepted', () => {
-    expect(resubmissionVerdict({ accepted: true }, 5)).toBe('accepted');
+    expect(resubmissionVerdict({ accepted: true })).toBe('accepted');
   });
-  it('reads an epoch conflict two or more epochs past the base as refused', () => {
-    expect(
-      resubmissionVerdict({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 7 }, 5)
-    ).toBe('refused');
-  });
-  it('reads `concurrent_commit` as UNKNOWN - the lock may be held by our own first request', () => {
-    expect(resubmissionVerdict({ accepted: false, reason: 'concurrent_commit' }, 5)).toBe(
-      'unknown'
+  // The gate asks its commit log before EVERY epoch refusal, so our own commit - landed by a first
+  // request this one overlapped - is answered `duplicate`, never `epoch_mismatch`, at any epoch.
+  it.each([6, 7])('reads an epoch conflict as refused, the server at %i', (currentEpoch) => {
+    expect(resubmissionVerdict({ accepted: false, reason: 'epoch_mismatch', currentEpoch })).toBe(
+      'refused'
     );
   });
-  // The server's commit lock lives 5 s, the client waits 30 s: a resubmission can lose the advance
-  // to our own first request, still inside its transaction, and read the epoch it made.
-  it('reads an epoch conflict at exactly base + 1 as UNKNOWN - our own commit may have made it', () => {
-    const answer = { accepted: false, reason: 'epoch_mismatch', currentEpoch: 6 };
-    expect(mayBeOwnOverlap(answer, 5)).toBe(true);
-    expect(resubmissionVerdict(answer, 5)).toBe('unknown');
-  });
-});
-
-describe('confirmationVerdict - the resubmission after an overlap-shaped answer', () => {
-  it('reads an epoch conflict at base + 1 as REFUSED - it can no longer overlap an advance', () => {
-    expect(
-      confirmationVerdict({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 6 })
-    ).toBe('refused');
-  });
-  it('reads the duplicate as accepted, and `concurrent_commit` as still unknown', () => {
-    expect(confirmationVerdict({ accepted: true })).toBe('accepted');
-    expect(confirmationVerdict({ accepted: false, reason: 'concurrent_commit' })).toBe('unknown');
+  it('reads `concurrent_commit` as UNKNOWN - the lock may be held by our own first request', () => {
+    expect(resubmissionVerdict({ accepted: false, reason: 'concurrent_commit' })).toBe('unknown');
   });
 });
 
 describe('the MLS lock-hold budget', () => {
-  it('is three write deadlines: a first request, its resubmission, and a confirmation', () => {
+  it('is three write deadlines: a settlement, a first request and its resubmission', () => {
     expect(COMMIT_LOCK_HOLD_BUDGET_MS).toBe(3 * DEADLINE_MS.write);
   });
   it('lets a request start only while its whole write deadline fits', () => {

@@ -251,19 +251,6 @@ the commit log's row for that epoch (its confirmed transcript hash), or a `diver
 `unproven` (nothing staged, nothing escalated) unless the base was minted by the gate. Code unchanged
 in #2269 by decision of the review.
 
-## P2 - A real `409 SEAT_CLAIM_OVERTAKEN` on a resubmission keeps the group unresolved (review of #2269, 2026-10-24, not built)
-
-A resubmission answered `409` is kept as UNKNOWN, because it can be the trace of our own first
-request still running past the server's 5 s commit lock ([mls-protocol](protocols/mls-protocol.md)).
-When it is NOT - an eviction really overtook the claim - every later resubmission of the same bytes
-is answered `409` again: the stage stays unresolved, and the group takes no new commit from this
-device, until a replay finds another device's commit in the log at that base
-(`settleUnresolvedCommitFromLog`). The `epoch_mismatch` twin of this answer is settled by one
-confirming resubmission; the `409` is not, because nothing here proves the first request can no
-longer land when the confirmation is answered. Owed: whether the server can say which seat
-overtook the claim (this device's own commit, or an eviction), so the client reads a fact instead
-of a shape. Count first: `[COMMIT]` lines `resubmission ... unknown (... 409` on production.
-
 ## P3 - A commit left unresolved past the commit-log horizon reads as refused (2026-10-22)
 
 A commit whose submission got no answer is settled by resubmitting it, and the gate's duplicate

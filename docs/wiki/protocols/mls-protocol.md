@@ -1001,26 +1001,32 @@ deadline (`requestDeadline.ts`: 30 s plus the time its body needs to leave). Its
 the same bytes are resubmitted once, and a second expiry keeps the stage as unknown. The deadline does
 not decide the outcome; the next resubmission does (`BaseMlsService.unresolvedCommit.test.ts`, "a
 commit gate that never answers"). ONE budget bounds the whole hold of a transaction, settlement and
-rebuilds included: `COMMIT_LOCK_HOLD_BUDGET_MS`, three `write` deadlines (a first request, its
-resubmission, one confirmation - below), and a request it does not let start leaves the outcome
-unknown, or refuses a commit not yet staged (`lock_budget_spent`).
+rebuilds included: `COMMIT_LOCK_HOLD_BUDGET_MS`, three `write` deadlines (the settlement's
+resubmission, the first request, its resubmission - each deadline also stretched by its body's upload
+time), read before each request and again after the checkpoint that precedes the first. A request it
+does not let start leaves the outcome unknown, or - for a first request - is never sent, its stage
+cleared and the commit refused (`lock_budget_spent`).
 
 **The server's commit lock lives 5 s; the client waits 30 s - so a resubmission can overlap its own
 first request.** The Redis lock (`EX 5`, `messaging.service.ts`) expires while a first request
 stalled inside its transaction (waiting on the seat lock, say) is still running. The resubmission
 then passes the lock, reads the base still active, waits on the group row, and when the first
-request commits it is answered `epoch_mismatch` with `base + 1` (`EpochAdvanceLost`) - or the seat
-recheck answers `409 SEAT_CLAIM_OVERTAKEN`. Neither refuses these bytes: both can be the trace of OUR
-commit landing. So on a resubmission (`commitSubmission.ts`):
+request commits it loses the advance (`EpochAdvanceLost`) - while a third device's commit, queued
+behind, may already have moved the epoch past `base + 1`. A key group's Add with admits is refused
+even earlier, by the admits pre-check, before the lock. **So the gate asks its commit log before
+EVERY refusal on the epoch or a seat** (`answerIfAlreadyAccepted`): the admits pre-check, the strict
+gate, and the lost or rolled-back advance (`EpochAdvanceLost`, `SeatClaimOvertaken`,
+`WelcomeSeatGone`). The row is keyed by base epoch and written in the transaction that moves the
+epoch, so when this request finds it holding the same bytes from the same device, the answer is
+`duplicate`, whatever epoch the group has reached. On a resubmission, then (`commitSubmission.ts`):
 
-- `epoch_mismatch` at exactly `base + 1` is not read as a refusal; ONE more resubmission is sent at
-  once, and its answer is definitive (`confirmationVerdict`). The epoch has moved past the base and
-  never walks back, so it cannot pass the strict gate, and the gate reads the duplicate check and
-  the epoch from one group read while the advance writes the log row with the epoch: ours is answered
-  `duplicate`, anyone else's is a refusal. A refusal two or more epochs past the base was always
-  definitive;
-- a `409` is UNKNOWN: the stage is kept, never cleared and never rebuilt, and the next settlement
-  decides. Only a FIRST request the gate answered `409` is rebuilt.
+- `epoch_mismatch` is definitive at any epoch: our own commit would have been answered `duplicate`;
+- a `409 SEAT_CLAIM_OVERTAKEN` is UNKNOWN: the stage is kept, never cleared and never rebuilt, and the
+  next settlement decides. The gate reads seat claims per REQUEST, so the 409 refuses only the copy
+  that got it - a first request still on its way reads its own claims and may land. Only a FIRST
+  request the gate answered `409` is rebuilt. A REAL 409 (an eviction overtook the claim) costs one
+  settlement, not the group: the next resubmission reads fresh claims too, and is answered for good
+  - accepted, `duplicate`, or refused on the epoch.
 
 **One store, one call.** What a resubmission needs - the commit, its successor base, its Welcome,
 and the client's intent (whom it excludes, admits and removes) - is kept BESIDE the staged commit in

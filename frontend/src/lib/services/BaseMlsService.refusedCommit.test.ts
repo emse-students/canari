@@ -75,7 +75,6 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
         'checkpointStageBeforeSend',
         'submitRecorded',
         'resubmitUnresolved',
-        'resubmitOnce',
       ].map((name) => [
         name,
         (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],

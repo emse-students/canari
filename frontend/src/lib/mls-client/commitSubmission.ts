@@ -17,8 +17,8 @@
  *
  * - accepted, first time or duplicate -> merge (and, for an Add, deliver its Welcome);
  * - refused for a reason that is an answer (another commit took the epoch, a 4xx) -> clear, catch up;
- *   except an answer our own still-running first request may have caused ({@link mayBeOwnOverlap},
- *   a `409 SEAT_CLAIM_OVERTAKEN`), which is not a refusal of THESE bytes;
+ *   except a `409 SEAT_CLAIM_OVERTAKEN`, which refuses only the copy that got it: the first request
+ *   reads its own claim when it arrives, and may still land;
  * - still no answer -> UNKNOWN: the staged commit is KEPT and checkpointed, and nothing else is
  *   committed or sent in that group until a resubmission answers - at the next connection, the next
  *   send or commit in the group, or a replay that finds the log decided at that epoch.
@@ -229,13 +229,15 @@ export function isDefinitiveCommitRefusal(error: unknown): boolean {
 
 /**
  * The longest one commit transaction - or one settlement - holds the global MLS lock with requests
- * to the commit gate: its first request, the resubmission an unanswered one owes, and the
- * confirmation an overlap-shaped answer owes ({@link mayBeOwnOverlap}), each under the `write`
- * head deadline. Derived from that deadline, never tuned apart from it.
+ * to the commit gate, each under the `write` head deadline: the resubmission that settles the
+ * group's previous commit, then this commit's first request and the resubmission an unanswered one
+ * owes. Three deadlines, derived from that deadline and never tuned apart from it. Each request's
+ * own deadline adds the time its body needs to leave (`deadlineFor`), which is why the count is
+ * not two: a first request that ran to its deadline must still leave room for its resubmission.
  *
- * A BOUND, NOT A DECISION: a request the budget does not let start leaves the outcome UNKNOWN (the
- * stage kept, the next settlement decides) or, before anything is staged, refuses the commit. Each
- * request's own deadline adds the time its body needs to leave (`deadlineFor`).
+ * A BOUND, NOT A DECISION: a resubmission the budget does not let start leaves the outcome UNKNOWN
+ * (the stage kept, the next settlement decides); a first request it does not let start is never
+ * sent, so its stage is cleared and the commit refused.
  */
 export const COMMIT_LOCK_HOLD_BUDGET_MS = 3 * DEADLINE_MS.write;
 
@@ -252,54 +254,25 @@ export function mayStartCommitRequest(holdEndsAt: number, now: number = Date.now
 /** What the gate answered a resubmission, read the one way every caller reads it. */
 export type ResubmissionVerdict = 'accepted' | 'refused' | 'unknown';
 
-/** The fields of a gate answer a verdict reads. */
-interface GateAnswer {
+/**
+ * Reads the gate's ANSWER to a resubmission.
+ *
+ * `concurrent_commit` is UNKNOWN on a resubmission, never a refusal: the commit lock it reports may
+ * be held by this device's own original request, still being validated.
+ *
+ * `epoch_mismatch` IS DEFINITIVE, WHATEVER EPOCH IT NAMES, because the gate answers it nowhere
+ * without first asking its commit log whether THESE bytes from THIS device already landed at the
+ * base (`answerIfAlreadyAccepted`, `messaging.service.ts`): at its admits pre-check, at the strict
+ * gate, and when the advance was lost to another commit. That last one is the overlap the server's
+ * 5 s commit lock against this client's 30 s deadline allows - our own first request, still inside
+ * its transaction, taking the advance from its resubmission - and its log row is committed by the
+ * time the update finds nothing to move, so the overlap is answered `duplicate`.
+ */
+export function resubmissionVerdict(answer: {
   accepted: boolean;
   reason?: string;
   currentEpoch?: number;
-}
-
-/**
- * Whether a refusal of a resubmission may be the trace of this device's OWN earlier request of the
- * same bytes: `epoch_mismatch` with the server exactly one epoch past the base.
- *
- * THE SERVER'S COMMIT LOCK LIVES 5 s AND A CLIENT REQUEST MAY WAIT 30 s (`requestDeadline.ts`), so a
- * first request stalled inside its transaction can still be running when the resubmission arrives:
- * the resubmission passes the expired lock, reads the base still active, waits on the group row,
- * and loses the advance to that first request (`EpochAdvanceLost`) - answered `epoch_mismatch`
- * with `base + 1`, the epoch OUR commit made. The same answer is a plain refusal when another
- * device's commit took the base; this answer alone cannot tell which.
- */
-export function mayBeOwnOverlap(answer: GateAnswer, baseEpoch: number): boolean {
-  return (
-    !answer.accepted && answer.reason === 'epoch_mismatch' && answer.currentEpoch === baseEpoch + 1
-  );
-}
-
-/**
- * Reads the gate's ANSWER to a resubmission of the commit staged on `baseEpoch`.
- *
- * - `concurrent_commit` is UNKNOWN, never a refusal: the commit lock it reports may be held by this
- *   device's own original request, still being validated;
- * - `epoch_mismatch` with `baseEpoch + 1` is UNKNOWN ({@link mayBeOwnOverlap}): our own first request
- *   may be the commit that moved the epoch. One more resubmission settles it
- *   ({@link confirmationVerdict});
- * - any other refusal is definitive.
- */
-export function resubmissionVerdict(answer: GateAnswer, baseEpoch: number): ResubmissionVerdict {
-  if (mayBeOwnOverlap(answer, baseEpoch)) return 'unknown';
-  return confirmationVerdict(answer);
-}
-
-/**
- * Reads the gate's answer to the resubmission sent AFTER an answer {@link mayBeOwnOverlap} flagged.
- * Here `epoch_mismatch` is definitive whatever the epoch: the flagged answer re-read the group at
- * `base + 1` or later, an epoch never walks back, so this request cannot pass the strict gate and
- * cannot overlap an advance from the base. The gate's duplicate check and its epoch gate read the
- * group once, and the advance writes the log row in the transaction that moves the epoch: a
- * commit of ours at the base is answered `duplicate`, and a refusal proves the row is someone else's.
- */
-export function confirmationVerdict(answer: GateAnswer): ResubmissionVerdict {
+}): ResubmissionVerdict {
   if (answer.accepted) return 'accepted';
   return answer.reason === 'concurrent_commit' ? 'unknown' : 'refused';
 }
