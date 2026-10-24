@@ -12,6 +12,18 @@ vi.mock('$lib/notifications/preferencesApi', () => ({
   fetchChannelNotificationLevel: vi.fn(),
 }));
 
+const server = vi.hoisted(() => ({
+  mode: 'audio' as 'off' | 'audio',
+  answered: true,
+  refresh: async (): Promise<void> => {},
+}));
+vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/appVersionCheck.svelte')>()),
+  serverCallsMode: () => server.mode,
+  getAppVersionCheck: () => (server.answered ? {} : null),
+  refreshAppVersionCheck: () => server.refresh(),
+}));
+
 import { handleCallSignalForChat, type CallSystemMessageContext } from './callSystemMessages';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { parseEnvelope } from '$lib/envelope';
@@ -45,6 +57,26 @@ describe('handleCallSignalForChat - the conversation call permission', () => {
     const [, content] = addMessageToChat.mock.calls[0] as unknown as [string, string];
     const env = parseEnvelope(content);
     expect(env.kind === 'system' && env.callEvent?.endedAt).toBeFalsy();
+  });
+
+  it('writes it as MISSED when the server answers off, after waiting for the answer', async () => {
+    server.mode = 'off';
+    server.answered = false;
+    server.refresh = async () => {
+      server.answered = true;
+    };
+    try {
+      const { ctx, addMessageToChat } = makeCtx();
+      await handleCallSignalForChat(ctx, 'caller', G, invite, 'me');
+      expect(addMessageToChat).toHaveBeenCalledTimes(1);
+      const [, content] = addMessageToChat.mock.calls[0] as unknown as [string, string];
+      const env = parseEnvelope(content);
+      expect(env.kind === 'system' && env.callEvent?.endedAt).toBeTruthy();
+    } finally {
+      server.mode = 'audio';
+      server.answered = true;
+      server.refresh = async () => {};
+    }
   });
 
   it('writes it as MISSED at once where calls are not allowed, instead of a ring', async () => {
