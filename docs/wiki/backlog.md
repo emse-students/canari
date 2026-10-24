@@ -610,6 +610,14 @@ floating `nginx:stable-alpine` follows on its own, and the allowlist entry is de
 request - the image scan's retirement check fails until it is
 ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
 
+## P3 - Bump authentik when a release ships Debian's libbrotli1 1.1.0-2+deb13u1 (2026-10-24)
+
+Owner: Master. `CVE-2026-111497` on Debian's `libbrotli1` 1.1.0-2+b7 is allowlisted by purl for
+`ghcr.io/goauthentik/server:2026.8.5`, the newest authentik release, which this repository does not
+build. Done when an authentik release carries 1.1.0-2+deb13u1 and `AUTHENTIK_TAG` (the compose
+default and the host's `.env`) moves to it; the image scan's purl retirement fails on that pull
+request until the `libbrotli1` entry is deleted ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
+
 ## Owed a VERIFICATION, and nothing else
 
 Each of these is fixed in the tree; what is left is the measurement that would prove it. **Nothing
