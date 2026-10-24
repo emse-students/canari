@@ -231,6 +231,8 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   let nextId = 1;
   const pending = new Map();
   const events = [];
+  /** Synchronous subscribers by method - see `on` below. */
+  const listeners = new Map();
   const ready = new Promise((resolve, reject) => {
     // Unref'd for the reason the command timer below is: an armed timer keeps Node alive, so a run
     // that had finished would still sit here until it fired.
@@ -266,6 +268,15 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
       } else resolve(msg.result);
     } else if (msg.method) {
       events.push(msg);
+      for (const fn of listeners.get(msg.method) ?? []) {
+        // A listener that throws must not stop the others or the transport; it is LOGGED, because
+        // a swallowed branch leaves nothing else.
+        try {
+          fn(msg.params ?? {}, msg);
+        } catch (e) {
+          console.log(`  [cdp] listener for ${msg.method} threw: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
     }
   });
   // The timer MUST be cleared on the reply, and unref'd besides: an armed 30 s timeout keeps
@@ -323,7 +334,16 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   const guarded = (method, params = {}) =>
     NAVIGATIONS[method] ? ensureEstate().then(() => (refuseForeignPage(String(params[NAVIGATIONS[method]])), cdpSend(method, params))) : cdpSend(method, params);
   const send = webkit ? webkitInput(guarded) : guarded;
-  return { ready, send, events, close: () => ws.close(), isOpen: () => ws.readyState === 1, webkitInput: webkit };
+  // AN EVENT THAT MUST BE ANSWERED, NOT ONLY OBSERVED. `events` is a log a waiter scans; a paused
+  // `Fetch.requestPaused` holds the page's request until somebody answers it, so polling the log
+  // would add the poll interval to EVERY intercepted request. `on` calls the subscriber as the frame
+  // arrives and returns the unsubscribe (`fault.mjs` is its first user).
+  const on = (method, fn) => {
+    if (!listeners.has(method)) listeners.set(method, new Set());
+    listeners.get(method).add(fn);
+    return () => listeners.get(method)?.delete(fn);
+  };
+  return { ready, send, events, on, close: () => ws.close(), isOpen: () => ws.readyState === 1, webkitInput: webkit };
 }
 
 /** Evaluates an expression in the page and returns its value, awaiting promises. */

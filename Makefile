@@ -479,6 +479,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/ios-observables-selftest.mjs
 	@bun tools/cross-client-harness/archive/sendtrace-selftest.mjs
 	@bun tools/cross-client-harness/archive/deploy-selftest.mjs
+	@bun tools/cross-client-harness/archive/fault-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
 # THE SELF-TESTS THAT NEED THE RIG UP, and therefore not the CI gate. `test-harness` runs on a fresh
@@ -488,6 +489,7 @@ test-harness:
 test-harness-device:
 	@echo "${BLUE}🧪 Harness self-tests needing a live rig…${RESET}"
 	@bun tools/cross-client-harness/archive/tabguard-selftest.mjs
+	@bun tools/cross-client-harness/archive/fault-live-selftest.mjs
 	@echo "${GREEN}✅ Device self-tests OK${RESET}"
 
 # Criterion benchmarks for mls-core hot paths (Phase 3 baseline)
