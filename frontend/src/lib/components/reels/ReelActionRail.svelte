@@ -11,9 +11,10 @@
    * sheet, the send is the post menu's share (`posts/sharePost.ts`). `data-no-double-tap` keeps
    * the column out of the double tap that likes the reel (PR #2113): a tap here acts at once.
    */
-  import type { Snippet } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
   import { Heart, MessageCircle, Send, Volume2, VolumeX } from '@lucide/svelte';
   import { videoSound } from '$lib/stores/videoSound.svelte';
+  import { longPress } from '$lib/actions/longPress';
   import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
   import { compactCount } from '$lib/reels/reelRail';
@@ -37,6 +38,11 @@
      * tools below are drawn.
      */
     onHeart?: () => void;
+    /**
+     * The reader picked `type` in the heart's drawer (a long press, the context menu key, or
+     * ArrowUp on the heart). The viewer applies the card's toggle: the same kind again takes it back.
+     */
+    onReact?: (type: string) => void;
     onComments?: () => void;
     onSend?: () => void;
     /**
@@ -53,6 +59,7 @@
     reactionCount = 0,
     commentCount = 0,
     onHeart,
+    onReact,
     onComments,
     onSend,
     tools,
@@ -60,6 +67,58 @@
   }: Props = $props();
 
   const social = $derived(!!onHeart && !!onComments && !!onSend);
+
+  /**
+   * THE REACTION DRAWER (user, 2026-10-23: a long press on the reaction opens a drawer that unfolds
+   * vertically): the card's own reaction set (`REACTIONS`), one per row, opening upward from the
+   * heart. A short tap is still the heart's toggle (`onHeart`); `longPress` swallows the click that
+   * ends a hold, so opening the drawer never also toggles.
+   */
+  let drawerOpen = $state(false);
+  let drawerEl = $state<HTMLElement | null>(null);
+  let heartEl = $state<HTMLElement | null>(null);
+
+  async function openDrawer() {
+    console.debug('[reel-rail] reaction drawer opened');
+    drawerOpen = true;
+    await tick();
+    drawerEl?.querySelector<HTMLElement>('[aria-checked="true"], button')?.focus();
+  }
+
+  function closeDrawer(refocus: boolean) {
+    if (!drawerOpen) return;
+    console.debug('[reel-rail] reaction drawer closed');
+    drawerOpen = false;
+    if (refocus) heartEl?.focus();
+  }
+
+  function pick(type: string) {
+    console.debug(`[reel-rail] drawer picked ${type}`);
+    closeDrawer(true);
+    onReact?.(type);
+  }
+
+  /** Arrow keys walk the drawer, Escape closes it before the viewer reads the key. */
+  function onDrawerKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeDrawer(true);
+      return;
+    }
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    const items = [...(drawerEl?.querySelectorAll<HTMLElement>('button') ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    items[(at + step + items.length) % items.length]?.focus();
+  }
+
+  /** ArrowUp on the heart is the keyboard's way in (the context menu key also opens it). */
+  function onHeartKeydown(e: KeyboardEvent) {
+    if (e.key !== 'ArrowUp' || drawerOpen) return;
+    e.preventDefault();
+    void openDrawer();
+  }
 
   const reacted = $derived(readerReaction !== null);
   /**
@@ -100,13 +159,60 @@
   data-no-double-tap
 >
   {#if social}
-    <div class="flex flex-col items-center">
+    <div class="relative flex flex-col items-center">
+      {#if drawerOpen}
+        <!-- A tap outside closes it: a button, so the viewer's swipe leaves it alone too. -->
+        <button
+          type="button"
+          class="pointer-events-auto fixed inset-0 z-(--z-popover-scrim) cursor-default"
+          tabindex="-1"
+          aria-hidden="true"
+          onclick={() => closeDrawer(false)}
+          data-reel-rail-drawer-dismiss
+        ></button>
+        <div
+          class="pointer-events-none absolute inset-x-0 bottom-full z-(--z-popover) mb-2 flex justify-center"
+        >
+          <div
+            bind:this={drawerEl}
+            class="reel-reaction-drawer border-cn-border pointer-events-auto flex flex-col items-center gap-0.5 rounded-full border bg-(--cn-surface) p-1 shadow-lg"
+            role="menu"
+            aria-label={m.reels_rail_drawer_label()}
+            tabindex="-1"
+            onkeydown={onDrawerKeydown}
+            data-reel-rail-drawer
+          >
+            {#each REACTIONS as reaction (reaction.type)}
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={readerReaction === reaction.type}
+                class="flex h-11 w-11 items-center justify-center rounded-full text-2xl leading-none outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {readerReaction ===
+                reaction.type
+                  ? 'bg-cn-yellow/20 ring-cn-yellow ring-2'
+                  : ''}"
+                title={reactionTypeToLabel(reaction.type)}
+                aria-label={reactionTypeToLabel(reaction.type)}
+                onclick={() => pick(reaction.type)}
+                data-reel-rail-drawer-item={reaction.type}
+              >
+                <span aria-hidden="true"><EmojiText text={reaction.emoji} /></span>
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
       <button
+        bind:this={heartEl}
         type="button"
-        class="ui-icon-button rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button motion-press rounded-full outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-amber-500"
         aria-pressed={reacted}
         aria-label={heartLabel}
+        aria-haspopup="menu"
+        aria-expanded={drawerOpen}
         onclick={onHeart}
+        onkeydown={onHeartKeydown}
+        use:longPress={{ onHold: () => void openDrawer(), onContextMenu: () => void openDrawer() }}
         data-reel-rail-heart
       >
         {#if otherEmoji}
@@ -130,7 +236,7 @@
     <div class="flex flex-col items-center">
       <button
         type="button"
-        class="ui-icon-button rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button motion-press rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
         aria-haspopup="dialog"
         aria-label={m.reels_rail_comments({ count: commentCount })}
         onclick={onComments}
@@ -145,7 +251,7 @@
 
     <button
       type="button"
-      class="ui-icon-button rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+      class="ui-icon-button motion-press rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
       aria-label={m.post_share_label()}
       title={m.post_share_label()}
       onclick={onSend}

@@ -236,6 +236,14 @@ updates:
       - "dependencies"
       - "docker"
     open-pull-requests-limit: 5
+    # NODE 25 IS AN ODD MAJOR, OUT OF SUPPORT SINCE 2026-06-01 AND NO LONGER REBUILT: #2338 moved
+    # frontend-ssr onto it and the image scan reported its stale OpenSSL and npm the same day. Odd
+    # majors never become LTS, so a node major moves by hand, onto the next LTS line (26), and
+    # Dependabot keeps the minors and patches of the one in place. (A `versions` range is refused
+    # for a docker ignore, measured on #2362.)
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
 
   # --- Android (Gradle) ---------------------------------------------------------------------------
   # `gen/android` is COMMITTED AND HAND-MAINTAINED, not regenerated: its build files carry decisions

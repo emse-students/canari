@@ -108,23 +108,43 @@ an old link reads from arrival until a member re-admits them.
 day.** Design:
 [channel-encryption section 25](protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22).
 
-## P2 - A revoked device erases its owner's arrival, so their next device loses history (review of #2226, 2026-10-22)
+## P2 - Local retention is 90 days everywhere while 5 years was intended on native - decision owed (found 2026-10-22)
 
-`purgeDeviceFootprint` deletes a revoked device's rows in every group. For a member whose interval
-opened late, their first device row is the only record of when they really arrived. After the purge,
-`MIN(createdAt)` moves later and `withheldWindows` falls back to the late interval, so their next
-device is denied the span between the two. Nothing leaks to anyone: the member loses history.
-Production held 4 such late-interval members on 2026-10-22. Fix direction: keep the arrival as a fact
-outside the device rows (on the membership interval, for instance) so a purge cannot move it.
+`ChatBackgroundService.svelte:1789-1802` runs `deleteOldMessages(90 * 24 h)` every 6 hours with no
+platform check (`db/indexeddb.ts:924`, `db/sqlite.ts:773`), while `historyWindow.ts`
+(`NATIVE_DEVICE_WINDOW_MS`, 5 years) and
+[history-reconciliation](protocols/history-reconciliation.md#two-boundaries-not-one) promise 5 years
+on a phone or desktop. No decision that 90 days is intended was found. Whether native keeps 5 years
+(gate the GC on `deviceWindowMs()`) or the claim is lowered is a product decision; nothing was
+changed. Until it is taken, a native device claims coverage it deleted.
 
-## P3 - `for` is decided against the caller's EARLIEST arrival (review of #2226, 2026-10-22)
+## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
-The exclusions read honours `for` when the named person's latest device is no older than the
-caller's first arrival. A caller who left and came back can therefore read the arrival of a person
-added while they were away. A founder who adds a device also makes their own arrival readable to
-members who came later. Each answer is a time, never a message. The rule
-[history-reconciliation](protocols/history-reconciliation.md) states is the right one, and the
-predicate should follow it to the caller's current interval.
+`withholdReason` places a copy with no `serverTimestamp` against every window widened by
+`UNDATED_SKEW_MARGIN_MS` (one hour) on BOTH sides. A joiner's before-arrival span `[0, arrival)` thus
+also withholds their undated history from the hour AFTER they arrived. A device that already holds a
+message is never filtered, so the loss is that member's NEXT device restoring history, unless a member
+holding the message dated serves it. Widening only the pre-arrival side would leak a message
+received before the arrival whose sender's clock ran ahead and stamped it after the edge. That is
+exactly the case the margin exists for. **Decided by the user 2026-10-22: symmetric.** The
+post-arrival side is not narrowed. The user's reason: a message received before arrival must not
+leak from a fast clock, and the cost is accepted, a few undated messages just after arrival possibly
+dropped. Nothing is owed. Do not reopen without a new measurement of that cost.
+**The undated count cannot be read on the server.**
+Undated copies live in client stores, and bundles reach the server as ciphertext. The only reading
+is the client's own `[HISTORY_ENTITLEMENT] ... N undated within 60 min` line, on a device that
+receives a filtered push. The creator's case of the same margin is fixed (#2251).
+
+## P3 - A leave's own `memberLeft` notice is refused with 403, so the others never see it (GRP-6, 2026-10-22)
+
+`leaveGroupAndBroadcast` sends `memberLeft` "before the server deletion". But `sendMessage` returns
+once the outbox has written the entry durably, not once it is delivered. `removeMemberFromServer`
+then ends the membership, and the outbox's POST loses the race: `[OUTBOX] ... REFUSED with 403 ...
+parked, no retry until the next sign-in`. Observed in GRP-6 on the local estate: written at +0 ms,
+the leave dropped local state at +26 ms, refused at +54 ms. So the entry is the leave notice itself,
+and withdrawing the group's queued entries on a leave would only silence the line. The fix is
+ordering: step 2 must wait for the notice's DELIVERY, not its durable write. A parked entry for a
+group the device has left should also be withdrawn rather than wait for a sign-in.
 
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 
@@ -138,8 +158,9 @@ key group kept in the MLS state by `mls-core` and judged by `graineOutboundVerdi
 production ratio named on that page, and one read-only pass proving every stored external commit's
 path leaf names its committer (the server now refuses one that does not). A new USER still rotates
 (D5, decided 2026-10-22); a new device of a present user continues, by an Add or an external
-commit alike; (2) bound the bundle in bytes and page it, after measuring what the gateway and
-the queue accept; (3) a key-group frame stored once per group, not once per seat (31 copies per
+commit alike; (2) the bundle bounded in bytes and paged is BUILT (draft PR, 2026-10-22), owed one rig run of a
+paged history answer ([channel-encryption §4.4](protocols/channel-encryption.md#44-joining-and-what-a-share-link-is-worth));
+(3) a key-group frame stored once per group, not once per seat (31 copies per
 payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
 
@@ -175,7 +196,7 @@ warning, then suspension, then withdrawal by staff; a cut is kept **90 days**; *
 reports**; live reports answered within **24 hours on working days**; **a reported chat message is kept (encrypted,
 for staff) until handled** - this REVERSES C2's "no grace period"; floating reactions = heart, laugh,
 bravo, fire, the canary chick; the first-live rules reuse the posts' publication rules; **no viewer cap
-wanted** (the plan: [live](frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)).
+wanted** (the plan: [live](frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20); **2026-10-21, no VISIBLE ceiling: the design and the owner's decisions O-1..O-7 are on [live-scaling](frontend/modules/live-scaling.md)**).
 **WP-L8b, server half BUILT 2026-10-21 (draft PR):** the strike ladder, the 90-day retention, the
 reported chat line (checked, signed, kept until handled and 90 days at most, the author's erasure
 included), the five reaction kinds and `LIVE_RULES_VERSION` 2 ([lives](services/lives.md#the-strike-ladder-wp-l8b)).
@@ -444,6 +465,21 @@ The fix makes the eviction and the activation exclude each other. Before choosin
 lock and a conditional activation, count how often `[DISTRIBUTION_GROUP] evict` and an `ADMITS` or
 activation line for the same user and group fall within one second of each other on production.
 
+## P2 - The mobile sign-in returns through a custom scheme: PKCE binds the code, not the app (2026-10-23)
+
+PKCE (S256, [auth](frontend/modules/auth.md#login-flow)) makes a code worthless to anybody who lacks
+the verifier of the request that produced it. It does not say WHICH app receives the redirect: the
+phone sign-in returns on `fr.emse.canari://callback`, a custom scheme the OS does not verify, and a
+party that runs its own authorization runs its own PKCE too. What closes that is a redirect only
+Canari can receive: an `https` callback on a verified host (`MOBILE_APP_LINK_HOSTS` in
+`frontend/src/lib/mobile/appSiteAssociation.ts`, App Links on Android, Universal Links on iOS)
+registered on the providers in `infrastructure/authentik/blueprints/50-providers.yaml`; then, once
+`minClientVersion` covers it, the custom-scheme redirect URI comes off the providers and core-service
+refuses a callback with no verifier
+([legacy-compatibility](legacy-compatibility.md#no-date-yet---an-oidc-callback-with-no-pkce-verifier)).
+Owed first: whether `ASWebAuthenticationSession` and the Custom Tab both hand an `https` callback on a
+claimed host back to the app on the bench phones, a reading, since no gate here sees it.
+
 ## P3 - `POST /mls/commit` has no rate limit (2026-10-22)
 
 Neither an edge `limit_req` nor the configured `ThrottlerModule` applies to the commit route. A key
@@ -453,6 +489,28 @@ bursts: a device that rejoins many groups after a restore commits once per group
 Measure first: the maximum number of commits per user per minute on production over 30 days
 (`mls_commit_log`, grouped by sender device and minute). Set the limit above that maximum, then add a
 test that the route answers `429` past it and never below it.
+
+## P2 - A push registration is not bound to the session that made it (2026-10-22) - DECIDED: build it (user, 2026-10-23)
+
+A session that ends ends its device's push registration on both sides since 2026-10-22
+([sessions](sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
+The server half is ONE internal call per ended session, deleting by `(userId, deviceId)`. Two
+reliability properties need a schema change. **The user said yes on 2026-10-23**: the migration and
+the outbox below are built as their own pull request, after this one:
+
+- **Durability.** The server-side ending is single-shot: a failed call is logged at error and not
+  retried.
+- **Precision.** The delete is keyed on the device, not on the registration the ended session made,
+  so its order against a re-sign-in on the same device is not fixed by construction.
+
+**The design to build.** Migration on chat-delivery: `push_token."sessionId" uuid NULL`, written by
+`POST /mls/push/register` from the access token's session claim (if the access token does not carry
+`sid`, core-service adds it); the internal route deletes `WHERE "sessionId" = :sid`. Rows registered
+before the column carry NULL and are rewritten at their next registration - no backfill. Migration on
+core-service: an outbox `session_push_endings (sessionId, userId, deviceId, createdAt, attempts,
+lastError)` written in the SAME transaction as the session delete and drained like
+`account_erasure_jobs` until chat-delivery answers 2xx. Together these make a session's end and its
+push ending one durable fact.
 
 ## P3 - A refused membership report is silent on the client (2026-10-22)
 
@@ -512,10 +570,6 @@ WHERE type = 'membership' AND name = 'Cotisation'
 
 A row found this way is put on sale by its association's admin from the boutique, a manual `isActive` change and so the right owner of that decision.
 
-## P3 - The school CAS pins its OAuth cookie to the browser: production re-measure owed (2026-10-22)
-
-The school applied a setting on its TEST CAS and the IP-only and user-agent-only sign-ins went from 0 of 3 to 3 of 3 ([cas-callback-state](infrastructure/cas-callback-state.md)). Owed: the school confirms which setting it applied and whether production has it; then the same two blocks are re-run on the production CAS (one second-factor validation by a person). Production bare callbacks already fell from 14 % to 4 % of sign-ins from 2026-10-08 for a reason not yet separated. Nothing to build in this repository.
-
 ## Idea (owner, 2026-10-21): store videos and screenshots from the bench phones
 
 Reuse the bench phones with screen recording to make demo videos and screenshots for the stores and for communication, from the fictional dev seed (never production). Personal data blurred frame by frame and the result reviewed before delivery; Apple and Google formats. Capture and sizes: [store-listings](store-listings.md#6-capture). Not built.
@@ -528,6 +582,33 @@ built too: recent conversations as direct targets, erased at sign-out, behind a 
 IN on iOS**: the App ID and both profiles exist (user, 2026-10-22); the Share Extension is a draft
 pull request, and it carries the iOS suggestions next. CanaRun waits. Owed: the Mi 9T and iPhone 12
 readings. [sharing](frontend/sharing.md)
+
+## P3 - The eight service images run as root (Trivy DS-0002, measured 2026-10-23)
+
+Trivy's Dockerfile scan finds no non-root `USER` in any `infrastructure/local/Dockerfile.*`, and
+`--no-install-recommends` missing in the two Rust ones (DS-0029). Not gated: a `USER` on a
+production image needs the ownership of its volumes checked on a running estate first. Done when
+each image runs as a non-root user and `trivy config infrastructure/local` reports nothing HIGH
+([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
+
+## P3 - Bump the four Alpine pins when upstream rebuilds with brotli 1.2.1 (2026-10-24)
+
+Owner: Master. `CVE-2026-111497` (`brotli-libs` 1.2.0-r1) is allowlisted in
+`.github/image-scan-allowlist.yaml` because no patched image existed: Alpine fixed it on 2026-10-22
+and the official `adminer`, `nginx:1.31.8-alpine`, `nginx:stable-alpine` and `postgres:18-alpine`
+builds of that day still carry 1.2.0. Done when the three digest pins (production and dev compose,
+the local compose for postgres) move to a rebuild carrying 1.2.1-r0, postgres within major 18. The
+floating `nginx:stable-alpine` follows on its own, and the allowlist entry is deleted in the same pull
+request - the image scan's retirement check fails until it is
+([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
+
+## P3 - Bump authentik when a release ships Debian's libbrotli1 1.1.0-2+deb13u1 (2026-10-24)
+
+Owner: Master. `CVE-2026-111497` on Debian's `libbrotli1` 1.1.0-2+b7 is allowlisted by purl for
+`ghcr.io/goauthentik/server:2026.8.5`, the newest authentik release, which this repository does not
+build. Done when an authentik release carries 1.1.0-2+deb13u1 and `AUTHENTIK_TAG` (the compose
+default and the host's `.env`) moves to it; the image scan's purl retirement fails on that pull
+request until the `libbrotli1` entry is deleted ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
 
 ## Owed a VERIFICATION, and nothing else
 
@@ -666,6 +747,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **review the calls privacy wording (#2013's `/legal/privacy` and register texts: each party sees the other's IP, Cloudflare relays some calls) before calls ship** - presented to you later, decided 2026-10-21 | 1 review | [calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21) (B5) |
 | **decide whether to ROTATE the KLIPY key**: it shipped in every web and native bundle as `VITE_KLIPY_KEY` until 2026-10-16, so it is public; rotating it also ends GIF search on native builds installed before the change, which still call KLIPY directly | 1 decision | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
 | **decide the camera swipe's cause B: a swipe starting in Android's left edge (30 CSS px) is a system Back - add a gesture exclusion rect on the feed's left edge, as was done for the conversations' right edge?** (investigation: PR #2177) | 1 decision | [the right-edge entry](#android-back-gesture-zone-on-the-right-edge-own-bubbles---decided-by-the-user-2026-10-14-draft-pr-in-progress) |
+| **decide whether ruleset `22152902` gets a `code_scanning` rule (CodeQL, errors, high or higher)** - analysed, recommended, the exact `gh api` PUT written, not applied | 1 decision, 1 command | [cicd](cicd.md#a-code_scanning-rule-on-the-ruleset-analysed-2026-10-23-not-applied) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
 
@@ -739,9 +821,9 @@ searches), `HEAD` content-length.
 | `md` | 1.1 MB | 4.4 MB | 11.7 MB | 29 of 144 (20%) |
 | `hd` | 1.8 MB | 7.9 MB | 19.9 MB | 48 of 144 |
 
-## P1 - Opening a community: F1-F6 BUILT, the 200 ms budget and the signature batch are what is left (user, 2026-10-14; state re-read 2026-10-18)
+## P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)
 
-**User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Budget: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. F1 (saved workspace list), F2, F3, F4 (a salon's last page kept locally), F5 and F6 are built and measured; the tab is 2-4x faster and works offline, but still short of 200 ms (first mount cut, see the page). **Left:** F7's second half (one native call for a page's signatures; native, so a lead review), a re-measure against the budget on the Mi 9T, a CPU profile of the warm resume at 4x, the history head/body split, iOS. State and numbers: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`.
+**User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Budget: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. F1 (saved workspace list), F2, F3, F4 (a salon's last page kept locally), F5, F6 and F7 (one engine call for a page's signatures, 2026-10-22, native: a lead review) are built; the tab is 2-4x faster and works offline, but still short of 200 ms (first mount cut, see the page). **Left:** a re-measure against the budget on the Mi 9T (F7's gain included, from the next pre-release), a CPU profile of the warm resume at 4x, the history head/body split, iOS. State and numbers: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`.
 
 ## P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)
 
@@ -812,10 +894,6 @@ The consent flow is built (migration 096). Left out on purpose, each a decision 
 ## P3 - Two association deletes that co-organise each other's events can deadlock (found 2026-10-19, review of #2116, not fixed)
 
 `AssociationsService.remove(A)` locks A, then deletes A's events. Migration 074's trigger takes their co-owner rows and `coorganise` proposals, and these can name B. The row delete of A then cascades into the co-owner rows and proposals where A co-organises B's events. `remove(B)` does the same in mirror, so each delete can hold a row the other's cascade needs: `40P01`, one delete aborted and retried by hand. This is older than #2116. It needs two staff deleting two linked associations at the same moment. The likely fix is for `remove` to lock, in id order, every association its events' co-organisation reaches before deleting anything. [profiles-and-access](profiles-and-access.md)
-
-## P3 - Bookings: a refused block names only a count (review of #2035, 2026-10-18, not built)
-
-A `bookings-inside-block` refusal is worded with its count and the ids are only logged; the organiser could get the bookings listed as a D29 refusal lists them (`StrandedBookings.svelte`). (The P2 half - a block over a block - is built: `block-overlap`.) [bookings](bookings-chantier.md#wp-b5-as-built---the-bookers-screens-2026-10-18)
 
 ## P3 - A reel's loop holds its first frame ~210 ms longer than the file says, on the Mi 9T (measured 2026-10-16, not built)
 
@@ -903,21 +981,21 @@ From [offline-and-weak-network section 15](frontend/offline-and-weak-network.md#
 - **DECIDED by the user, 2026-10-14: TWO MECHANISMS.** Private groups carry the nickname in an MLS application frame the server never sees; communities use a server column with the moderator check. **Build is queued AFTER mute / mentions-only** (next section).
 - **DECIDED by the user, 2026-10-18**: in a community the target sees "set by X"; a nickname STAYS when its setter leaves (the target can reset it) ([WP-NICK-COMMUNITY-RULES](#decided-by-the-user-on-2026-10-18---every-design-question-answered)).
 
-## Group notification levels (all / mentions only / none) - requested by the USER 2026-10-14, release 1.2.8 WAITS for it
+## Group notification levels (all / mentions only / none) - SHIPPED in `1.2.8` (#1874), nothing owed here
 
-**RELEASE SCOPE (user, 2026-10-14).** The stable `1.2.8` waits for these levels (mute and mentions-only, PR #1874) and carries #1863 (device-key vault per account), #1870, #1871 (notification sender name), #1875 (salon first frame), #1877, #1880 (reply swipe thumb arc) and the salon-level-over-socket fix. It does NOT wait for "a remove holds against a re-add" (draft PR #1878, under review or rework): that and the in-app camera everywhere (#1859, needs conflict resolution and Mi 9T + iPhone readings) go to `1.2.9`.
+**SHIPPED (stable `1.2.8`, 2026-10-15).** It waited for these levels (mute and mentions-only, PR #1874) and carries #1863 (device-key vault per account), #1870, #1871 (notification sender name), #1875 (salon first frame), #1877, #1880 (reply swipe thumb arc) and the salon-level-over-socket fix. It does NOT wait for "a remove holds against a re-add" (draft PR #1878, under review or rework): that and the in-app camera everywhere (#1859, needs conflict resolution and Mi 9T + iPhone readings) go to `1.2.9`.
 
-*"Pour la prochaine mise a jour"*: the user decided 1.2.8 is held until both mute and mentions-only ship. A PR is in progress by an agent. **Mentions-only must be decided ON THE DEVICE**: in an E2EE group the server cannot see a mention, so it cannot filter the push itself.
+*"Pour la prochaine mise a jour"*: the user held 1.2.8 until both shipped, and they did. **Mentions-only must be decided ON THE DEVICE**: in an E2EE group the server cannot see a mention, so it cannot filter the push itself.
 
-## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fixed by PR #1911)
+## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fix #1911 MERGED, the floor is owed)
 
 The client half is built (neutral inert row, no link, one warn per type, unknown deep-link host lands on `/notifications` - but a push of a new type still maps its `postId` to `post/<id>` on the server and Android, so a new type MUST send an explicit `deepLink`). **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** (the first one waiting: the organiser alert for a paid form that is full): wait for the release carrying PR #1911 to be served by both stores, then raise `minClientVersion` to it. Earlier types (`profile_correction_*`, `coorganise_proposed`, `repost_proposed`) show the comment fallback on older clients. Detail: [legacy-compatibility](legacy-compatibility.md#no-date-yet---a-notification-type-the-client-does-not-know-from-any-new-server-type).
 
-## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, in progress)
+## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, MERGED as #1878, shipped in `1.2.9`; the floor is owed)
 
-**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (today `1.2.7`) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
+**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (`1.2.7` when this was written; check the live value first) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
 
-Draft PR with server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
+Built (#1878): server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
 
 ## P2 - The tab swipe is lost on a slow start: the 12 px lock sits past Chrome's 8 dp slop (Mi 9T, 2026-10-21)
 
@@ -937,11 +1015,11 @@ is a system Back (8 of 8), the page sees only `touchcancel` - a user decision, o
 above. Owed after the fix: one real-finger reading of slow swipes on the Mi 9T, and class A read on
 the iPhone, where it is unproven.
 
-## Android back-gesture zone on the right edge (own bubbles) - DECIDED by the user 2026-10-14, draft PR in progress
+## Android back-gesture zone on the right edge (own bubbles) - DECIDED by the user 2026-10-14, MERGED as #1883, owed a reading
 
 Decided: declare system gesture exclusion rects for the right edge band while a conversation is open (a reply swipe started in an own bubble's last 17.5 px is a system Back: 11 of 11 on the Mi 9T). **Owed: a Mi 9T reading on the next pre-release.**
 
-## iPhone follows the system text size (Dynamic Type) - DECIDED by the user 2026-10-14, draft PR in progress
+## iPhone follows the system text size (Dynamic Type) - DECIDED by the user 2026-10-14, MERGED as #1884, owed a reading
 
 Decided: the iPhone app FOLLOWS the system text size, like Android. Read on `1.2.9-alpha.1` (2026-10-15): cold start PASS; a size changed while backgrounded applied only after a cold start, now carried from native ([mobile](frontend/mobile.md#the-iphone-follows-dynamic-type-decided-by-the-user-2026-10-14)). **Owed: an iPhone 12 reading of the background change, the rail salon name and a long heading at 2x.**
 
@@ -1485,6 +1563,11 @@ and FAILS the day an ignored id is no longer reported, naming the ignore, its pr
 (`.github/scripts/stream-json-premise.sh`) and this entry as what to delete. The reasoning is in
 [cicd](cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
 
+`RUSTSEC-2026-0387` (crypto-bigint 0.5.5) is ignored in all four Rust trees since 2026-10-24, each
+with its statement in `.cargo/audit.toml`; REACHABLE IN CODE in call-service's DTLS only. Lifted by the
+webrtc 0.21 port and p256 0.14 reaching jsonwebtoken and openmls_rust_crypto; the cargo retirement
+step fails when it is gone ([cicd](cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24)).
+
 ### P2 - TWO of the hosts that take security updates are not reported on, and a library nothing restarts (the rest closed 2026-09-03)
 
 The mechanism and report exist since 2026-09-03 ([host-updates](infrastructure/host-updates.md)). **The shared
@@ -1882,7 +1965,28 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 ### WP-LYDIA-1 - Lydia live in production, with one payment observed end to end
 
-**Owed:** Master tests one homologation payment end to end on dev with a test account (payer e-mail prompt, callback included; not yet observed); production tokens and `LYDIA_ENV=production`; each association re-onboarding on Lydia (**an association with a Stripe-only payment account is no longer payment-ready until it does**); Lydia's still-open Livrable A answers ([plan](../../plans/stripe-to-lydia-migration.md)). The `business/create` `BUSINESS_VALIDATED` webhook is deliberately NOT built: no documented signature and `vendor_token` is public, so anyone could forge an association's onboarding state - ask Lydia whether it signs before building it.
+**Release checklist for the first stable carrying the production pair (2026-10-23).** The production core was recreated by hand with `LYDIA_ENV=production`, and a deploy re-renders `.env` from the manifest, so: (1) no stable and no deploy of any kind before the pull request that makes `LYDIA_ENV` a required production secret is merged; (2) cut a PRE-RELEASE AFTER that merge and check that its commit contains the change before tagging the stable (a stable ships the latest pre-release of its version, so an older alpha would carry the old manifest); (3) after the stable, read the running core's `LYDIA_ENV`; (4) a rollback to any release before it re-renders `homologation` in silence - set `LYDIA_ENV=production` in the production `.env` and recreate the core by hand ([payments](frontend/modules/payments.md#which-payment-provider-is-live)).
+
+**What to read on the running production core right after that stable deploys (2026-10-24).** All read-only, none prints a token; the stable counts as verified only when every line holds. #2323, #2324 and #2325 are merged.
+
+| # | Read | Expected | If not |
+|---|---|---|---|
+| 1 | The release run: the `preflight` step "Production names the real Lydia", then `serve-prod` | both green; the step ran, since it is stable-only and this is its FIRST execution | red at the step = the secret is not exactly `production`: fix the secret, never the step |
+| 2 | The core's startup log, `Lydia configured: yes (<base URL>)` (the provider prints it once per start, `lydia-payment-provider.ts`) | `yes (https://lydia-app.com)` | `yes (https://homologation.lydia-app.com)` = the deploy put the core back on the sandbox with the production pair: set `LYDIA_ENV=production` in the production `.env`, recreate the core by hand ([payments](frontend/modules/payments.md#which-payment-provider-is-live)), and tell the lead |
+| 3 | The container's own `LYDIA_ENV` (inspect its environment, print that ONE key) and the `.env` the deploy wrote (that one key) | both `production`, one line each | they disagree = a hand recreate outlived a deploy, or the reverse: align them |
+| 4 | `platform_config.payment_provider` | `lydia` (it STAYS `lydia`, user 2026-10-23) | `disabled` = something reset it; nobody sets it back without the user |
+| 5 | The Business links: associations holding a Lydia `vendorToken`, and how many are validated or hold a stored callback key | only the associations the user knows about; none validated yet unless the user enrolled one | an unknown association with a `vendorToken` = report at once |
+| 6 | Core and social-service logs since the deploy, for `[LydiaPaymentProvider]` lines: `refused by Lydia`, error `104` ("Provider inconnu"), error `5` ("temporairement bloque"), any `request/do ->` | no `104`; no `request/do` unless a validated Business was used on purpose | `104` = the pair and the environment disagree (the signal the mismatch fails loudly); a `request/do` nobody launched = report at once |
+| 7 | Migrations `100` and `101` in social-service's migrations table, and the callback route answering a body signed with nothing | both applied; the route refuses it with a 4xx, never a 5xx (not measured on production: the one answer known is the 400 for an association with no stored key) | a 5xx on the callback route = the stable broke it |
+| 8 | Nothing else in production moved: no new pending form payment or boutique attempt rows without a person behind them | none | report at once |
+
+**A test PAYMENT after the stable needs a validated Business, which does not exist yet** (the three Businesses made through the onboarding on 2026-10-23 wait for Lydia's validation and for the answer on how their holder signs in, [lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)). Until then the payment path is proved only by the 2026-10-23 manual run (one real payment of the minimum amount through an older merchant account, its `confirm` verified), NOT by the stable. When a Business is validated: the manager pastes its private key, the global admin marks the onboarding complete, then ONE payment of the minimum amount (0.50 EUR) through a form, read to the end - the `confirm` callback arrives and verifies, `request/state` answers `1`, the answer is recorded as paid once, and the payer's return page agrees. A cancel on that paid request answers error 2 and changes nothing (measured). Refund and `end_mobile_url` stay unmeasured.
+
+**Done 2026-10-23:** one real production payment, its `confirm` verified with the Business key ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)); the production Provider tokens are set. **Owed:** `LYDIA_ENV` carried by a GitHub secret (#2323) before the next stable; each association re-onboarding on Lydia (**an association with a Stripe-only payment account is no longer payment-ready until it does**); Lydia's still-open Livrable A answers ([plan](../../plans/stripe-to-lydia-migration.md)). The `business/create` `BUSINESS_VALIDATED` webhook is deliberately NOT built: no documented signature and `vendor_token` is public, so anyone could forge an association's onboarding state - ask Lydia whether it signs before building it.
+
+### Enrolment through Canari - the screen owes the path to validation (2026-10-23)
+
+The user decided that every Business is created by Canari's onboarding, never linked from outside ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)). The first production enrolments showed the screen leaves the manager with no next step: the dashboard link answers 404 when signed out, and the Lydia Pro app did not show a Business made by the Provider, even one created with the signed-in person's own phone ([lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)). **Owed, in order:** Lydia's answer on how that Business's holder signs in to its console, and which documents an association gives; then the card rebuilt around the three steps of Lydia's activation e-mail, saying who does what; a "waiting for Lydia" state told apart from "validated", with error 5 of `request/do` as the measured signal; and the existing refuse-or-confirm item on a re-run onboarding below.
 
 ### P3 - while core-service is mid-deploy, a retry meeting an older core's `closed` is refused (review of #2215, 2026-10-21)
 
@@ -2098,6 +2202,7 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 - **Organiser alert for a paid form that is full (D3, held by the user's decision of 2026-10-15):** it ships ONLY once the minimum client version covers the client fix of PR "unknown notification type" (an unknown type renders neutral with no link). Then: a durable flag `organiserNotifiedAt` claimed through `claimFulfilment` and `releaseFulfilment`, recipients = the owner plus holders of `MANAGE_FORMS` through `mayAct` (never a global admin), a new `PushContentKey` whose argument is the form title only, filed under the EXISTING `forms` category (no new id, which also avoids the preferences defect), a migration at the next free number, and a deep link that opens one form's responses (an accordion on `/forms`, so a route or parameter is needed). **BUILT 2026-10-22 and SWITCHED OFF** (`FORM_ORGANISER_ALERT_ENABLED = false`, migration 102, deep link `form-responses/<id>` -> `/forms?responses=<id>`; recipients are the owner and the members whose own rights carry `MANAGE_FORMS`, never the BDE super-admins (user, 2026-10-22), see [forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)). **Owed:** `minClientVersion` at or above the version that CARRIES #2228 (its first stable, not merely `1.2.9`), on BOTH estates (production and dev each hold their own row in `/admin/platform`), once BOTH Play AND the App Store serve that version (the user's gesture; it reads `1.2.7`), then a follow-up pull request flipping the constant and its spec.
 - **While that alert is switched off, a GUEST who pays over capacity is told to nobody (paid public forms, 2026-10-22).** The row lands `paid_over_capacity` and is listed first in the form's responses; the refund, owed outside Canari, depends on the organiser looking at that table. Switching the alert on (above) closes it for guests as for members.
 - **Accord of the user, recorded (user, 2026-10-22, relayed by the lead session): migrations 100 (Lydia Business key per association) and 101 (product checkout attempts) MAY ride the next STABLE to production; payments stay OFF in production.** Nothing is enabled by it ([payments](frontend/modules/payments.md)). No "migrations need the user's yes" line exists in the owed table on `main`; that wording lived in the #2215/#2218 PR bodies.
+- **Two decisions of the lead session (2026-10-22) on single-answer paid forms**: a refund or a manager delete does not free the slot, and a pending cash answer still refuses an online submit ([forms](frontend/modules/forms.md)).
 - **Accords of the user, recorded (user, 2026-10-15, in session, relayed by the planning session at Master's request), covering: D1-D3 of the paid-form chantier, the backfill of migration 083, the data half of migration 084 before production, `minClientVersion` 1.2.7 (the user's own action), the anonymous-form file question refused, and Lydia states 1 and 5 to be measured by hand on the homologation payer page.** What it does NOT do: it starts no work package (WP-B1 and later lots wait for the lead session), marks nothing ready, merges and releases nothing. The 084 deploy ships with the next STABLE under the lead session's release authority; `minClientVersion` and the two Lydia measurements stay the user's own gestures.
 - **FUTURE lot: a file question on a PUBLIC form (no account) - the user asks for it (2026-10-15).** Refused in #1908 (public and anonymous forms). It needs an abuse design before any code: a limit per address or per token, a size cap, a global quota, a scan, an anonymous upload path with its own purge of files never linked to an answer. Nothing in the repository holds that design yet.
 
@@ -2108,7 +2213,7 @@ Wording in [live](frontend/modules/live.md#decisions-of-2026-10-19). Lives come 
 ## Decided by the user on 2026-10-22 - a 48-hour autonomy window, and what it covers
 
 1. **Autonomy window, 2026-10-22 to 2026-10-24 (48 hours).** The lead may cut pre-releases AND STABLE releases (production plus both stores) without asking, once the alpha has been read on both bench phones and nothing blocks. The user is told AFTER each release. This extends the release authority of [durable-rules](durable-rules.md#release-and-ci---cicd) for the window only.
-2. **Kill switches for calls and lives.** The lead may switch them on in dev, and in production if ALL device readings pass (a reversible kill switch). **Payments stay OFF in production.**
+2. **Kill switches for calls and lives.** The lead may switch them on in dev, and in production if ALL device readings pass (a reversible kill switch). **Payments stay OFF in production.** (Measured 2026-10-23: the flag already read `lydia`; the sandbox pair and the lack of any onboarded Business kept it inert, and the user then had production tested the same day - [payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23).)
 3. **Migrations.** 100 (Lydia Business key per association) and 101 (product checkout attempts) may ride the next stable.
 4. **Cleanup authority.** The stale draft pull requests #2117, #2098, #2127, #2109, #2090, #2074, #2065, #2041, #2039, #2013 and #2011 may be closed, each ONLY after verifying that its content is already in `main` or that it is abandoned, and with a comment saying which. A local branch holding unique commits is archived as a tag before it is deleted.
 5. **Priorities for the window, in order:** lives and calls; payments and reservations; MLS robustness (replay markers, group history, Graine); the backlog and the test-tooling reform ([WP-TEST-TOOLING-REFORM](#decided-by-the-user-on-2026-10-18---every-design-question-answered)).
@@ -2121,6 +2226,14 @@ Wording in [live](frontend/modules/live.md#decisions-of-2026-10-19). Lives come 
 12. **Lives on R2 (#2211), decisions O-1 to O-7.** The lead decides following the recommendations in that pull request and records EACH decision here with the measurement that justifies it. No visible viewer cap; the technique follows.
 13. **Store questionnaires and pieces** (App Store privacy answers and the review video for lives, #2196; Play data safety, calls B14, #2188). The lead submits only what accompanies a stable it cut, and NEVER changes a data declaration without the user.
 14. **Production incident during the window.** The lead may cut a kill switch, restart a container, or redeploy the previous stable. Nothing destructive: no data deletion, no reverse migration, and no admin bypass without writing to the user first in the conversation.
+15. **More migrations (2026-10-22).** chat-delivery 033, 034, 035 (#2254, #2260, #2270) and social-service 106 (#2265) MAY ride the next stable. **034 makes chat-delivery forward-only**, and the release notes say so.
+16. **Store listings (2026-10-22).** Redo everything, texts AND images, with FICTIONAL demo accounts created on dev and no personal data. The user sees the texts and the images BEFORE any submission.
+17. **The next pre-release (`1.4.1-alpha.1`)** is cut as soon as the ready batch of security and sharing pull requests has merged, without waiting for the rest.
+18. **Standing reminder from the user:** *"il faut toujours vider le backlog, et assez rapidement avoir les lives et les appels en production"*. The backlog is always drained, and lives and calls reach production quickly ([live-production](frontend/modules/live-production.md), [calls](frontend/modules/calls.md)).
+19. **Phone at-rest key (#2274): the built design stays** (user, 2026-10-22, after first choosing a variant that also mixed the PIN into the key, then seeing what it would add). Notifications stay complete, the PIN is verified by the server, the hardware key protects the stored data, practicality first.
+20. **Migrations chat-delivery 036 (`dm_seat_evictions`) and social-service 108 (`distribution_departures`) may ride the next stable** (#2258).
+21. **Lives: the live key is encrypted at rest under an environment secret** (a migration, the user's yes). `calls_mode` may be set to `audio` in production by the lead as soon as the stable is deployed and read on both phones, with an immediate notice to the user; `lives_mode` may be opened in production by the lead once everything is read, with an announcement from the lead. The incident rule of the window is unchanged.
+22. **iPhone ring: practicality.** Until a native ring exists (PushKit VoIP token plus CallKit, its own switch), the iPhone call alert is generic ("Appel entrant", no name); that work package joins the calls queue.
 
 ## Decided by the user on 2026-10-23 - bookings redesign, sharing, reels, calls, payments, MiConnect, release
 
@@ -2143,6 +2256,21 @@ All taken in session on 2026-10-23. Bookings rows are D44-D54 in [bookings-chant
 **Repository settings.** Secret-scanning push protection is enabled; a `code_scanning` rule (CodeQL, high or higher) was added to ruleset `22152902` on 2026-10-23.
 
 **#2273.** The cut date is the day the production stable carrying it ships (fixed constant `ADMISSION_PROOF_SINCE`, re-checked before the stable's final pre-release). Old invite links are accepted as a "from arrival" reading. A removed signer's voucher counts only if the device saw it BEFORE the removal. The invite-link grant expires with the link (30 days when it has none). Migration social-service 107 may ride the stable.
+
+## Decided by the user on 2026-10-23 - the night of the open pull requests
+
+Taken in session on 2026-10-23, one decision per open pull request.
+
+1. **#2260** (key-group frame stored once, table `queued_payload`, a migration) ships in the NEXT STABLE, after an Opus review.
+2. **#2322** (Trivy image scan, with the `postgres:18-alpine` digest and the nginx tag in `docker-compose.prod.yml`) merges as is. The user accepts a short availability break when production's database container is recreated.
+3. **#2321** (MiConnect password-sign-in guard) merges as is. The only accounts with a password are test accounts, recreatable at will, so the per-username lockout and the admin-name distinguishability are accepted.
+4. **#2299** (in-app 1:1 audio calls) is in the next stable with `calls_mode` left OFF server side. Master opens it after a reading on both bench phones and tells the user at once.
+5. **#2269** (periodic MLS key refresh, post-compromise security, 93 files) ships IN the next stable, after a full Opus review and a reading on the Mi 9T and the iPhone.
+6. **#2282** (CLAUDE.md cleanup) merges LAST, rebased just before.
+7. **#2183** (public privacy policy and GDPR register for calls) is published with the next stable. The Cloudflare data-processing-addendum row of the register stays OPEN.
+8. **Housekeeping.** Merged pull requests' remote branches are deleted in one pass, and obsolete drafts (#2316, superseded by #2329) are closed, each head archived as a tag first.
+9. **Review of #2264** (history visibility reconciled with the proven-admission gate): an unknown rule parks the ask; `unverifiable` answers with silence on both paths; the "nothing for you" stays lasting, and only the repair path recovers the past.
+10. **P3 - CI: split the 15-minute `Test Frontend (Svelte)` job into parallel jobs.** Not started ([cicd](cicd.md)).
 
 ## P3 - the vendored websocket plugin: four upstream behaviours found by the review of #2167
 
@@ -2175,5 +2303,5 @@ measurements: [lydia-api](lydia-api.md) and [payments](frontend/modules/payments
 | P3 | The expired-form page has no retry control | covered by #2210 |
 | P2 | Re-running the Lydia onboarding silently replaces a linked, validated Business | open: refuse or ask for confirmation |
 | P3 | A product with no price is creatable and its checkout answers 400 with no log | open |
-| Owed | The confirm callback verified with a Business key on dev (needs #1940 deployed and the key pasted by a manager) | open |
-| Owed | `request/cancel` on a PAID request, a refund end to end, the default `expire_time`, the deep link as `end_mobile_url` | open, [lydia-api](lydia-api.md#6-still-unknown) |
+| Owed | The confirm callback verified with a Business key | done in production 2026-10-23 ([lydia-api](lydia-api.md#3-callbacks-confirm_url-cancel_url-expire_url)) |
+| Owed | A refund end to end, the default `expire_time` (at least 47 min), the deep link as `end_mobile_url` | open, [lydia-api](lydia-api.md#6-still-unknown); `request/cancel` on a PAID request measured 2026-10-23 (error 2, stays paid) |

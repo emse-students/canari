@@ -45,11 +45,11 @@ use crate::commands::mls::{
     epoques_departs, exporter_group_info, exporter_ratchet_tree, exporter_secret,
     feuille_portant_cle, generer_key_packages_et_persister, graine_member_signature_key,
     graine_run, graine_session_keypair, graine_sign_with_device_credential,
-    graine_sign_with_session_key, graine_verify_signature, groupe_actif, initialiser_mls,
-    key_package_a_clef_privee, lister_groupes, lister_identites_membres, obtenir_epoch,
-    oublier_groupe, oublier_key_packages, prendre_evenements_appareils, recenser_key_packages,
-    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
-    rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
+    graine_sign_with_session_key, graine_verify_signature, graine_verify_signatures, groupe_actif,
+    initialiser_mls, key_package_a_clef_privee, lister_groupes, lister_identites_membres,
+    obtenir_epoch, oublier_groupe, oublier_key_packages, prendre_evenements_appareils,
+    recenser_key_packages, recevoir_message_bytes, recevoir_messages_batch,
+    recuperer_cle_session_mls, rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
     retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
     trailer_welcome, verifier_key_package,
 };
@@ -63,6 +63,9 @@ use crate::commands::push::{
     read_and_clear_pending_call_accept, read_and_clear_read_watermarks, read_outbox_mirror,
     set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
     store_push_context, store_push_secret, take_fcm_cache,
+};
+use crate::commands::push_registration::{
+    complete_owed_push_token_deletion, end_push_registration,
 };
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, delete_user_database, get_installer_package,
@@ -1314,6 +1317,7 @@ pub fn run() {
             graine_session_keypair,
             graine_sign_with_session_key,
             graine_verify_signature,
+            graine_verify_signatures,
             graine_sign_with_device_credential,
             graine_member_signature_key,
             graine_run,
@@ -1373,6 +1377,8 @@ pub fn run() {
             mls_state_owner,
             store_push_secret,
             claim_device_notices,
+            end_push_registration,
+            complete_owed_push_token_deletion,
             clear_app_data,
             delete_user_database,
             delete_user_push_files,
