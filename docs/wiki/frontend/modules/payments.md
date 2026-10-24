@@ -30,6 +30,42 @@ Lydia has no live status-poll endpoint, no customer object and no saved methods:
 not map onto it were removed rather than faked. The provider mapping and the credentials are in
 [`plans/stripe-to-lydia-migration.md`](../../../../plans/stripe-to-lydia-migration.md) (archived).
 
+**Which Lydia the credentials address is `LYDIA_ENV`, and each estate sets it differently (2026-10-23).**
+`lydia-payment-provider.ts` trims and lowercases the value and uses `https://lydia-app.com` only when
+it reads `production`; anything else (a typo included) is the homologation sandbox. Production renders
+it from the GitHub secret `LYDIA_ENV` (manifest row `required`); **`render-env.sh` accepts only
+`production` for the production estate (user, 2026-10-23)** and refuses a deploy without it or with
+any other word, so pointing production at the sandbox takes a deliberate edit of `allowed_values()` in
+a pull request, never a secret typed by hand. **When it is checked matters:** on a stable, `serve-prod`
+runs only after BOTH stores took the version (`release.yml`: it `needs` `android` and `ios`), so a
+missing or mistyped secret found by the render would surface AFTER the store submission. The release
+`preflight` job therefore checks the secret is exactly `production` for a stable, before anything is
+published (the value is never printed; the render stays the second guard). Until that row existed, production's `.env` kept
+`infrastructure/.env.example`'s `homologation` - the compose default `${LYDIA_ENV:-production}` never
+applies, because the template always sets the key. Dev skips the row and pins `LYDIA_ENV: homologation`
+as a literal in `docker-compose.dev.yml`, with the sandbox pair in `DEV_LYDIA_*`
+([dev-environment](../../infrastructure/dev-environment.md)). A LOCAL estate built from a production
+dump gets `LYDIA_ENV=homologation` and EMPTY Provider tokens (`env-from-prod.sh`): production's pair
+moves real money and must not sit on a laptop.
+
+**What this does and does not decide.** The platform setting above (`payment_provider`) already read
+`lydia` in production before this change, so it never kept production inert: the sandbox base URL did
+(a request issued there moves no money). With `LYDIA_ENV=production` and the production pair, an
+association whose Business is linked and validated takes real payments, and the setting STAYS `lydia`
+(user, 2026-10-23).
+
+**Rolling back to a release BEFORE this one is a trap.** An older `render-env.sh` and manifest do not
+know `LYDIA_ENV`, and the older `verify-secrets` does not check it, so the rollback deploy re-renders the
+template's `homologation` and the core addresses the sandbox with the production tokens, in silence.
+After such a rollback: set `LYDIA_ENV=production` in the production `.env` and recreate the core-service
+by hand (the container alone, through the compose file the deploy uses). The same recreate with
+`LYDIA_ENV=homologation` is the way back to the sandbox, where the production pair then fails loudly
+with Lydia's "Provider inconnu" (code 104) instead of moving money.
+
+GitHub masks the word `production` in the logs of a run that reads this secret, because it is a
+secret: expect `***` where the value would print; the render's error line names the key and the
+accepted word, not the value.
+
 ## Where a provider's name may appear, and where it may not
 
 **A provider's name is true in exactly one layer.** The message catalogue says "prestataire de
@@ -535,7 +571,8 @@ sandbox moves no money) and the absence of any onboarded Business or stored call
 now hold Lydia's PRODUCTION Provider pair, and the production core-service was recreated with
 `LYDIA_ENV=production`, so it talks to `lydia-app.com`: a request it issues now moves REAL money, and an
 association whose Business is linked and validated takes real payments. The flag stays `lydia` (the
-onboarding needs it); if nothing is configured after the test, set it back to `disabled`.
+onboarding needs it), and it STAYS `lydia` after the user's test too (user, 2026-10-23): it is not set
+back to `disabled`.
 
 - **The recreate**: the core-service container alone, through the same compose file the deploy uses, with
   `LYDIA_ENV=production` in the environment of that one command. No file on the host was edited.

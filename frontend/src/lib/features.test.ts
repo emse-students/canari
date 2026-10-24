@@ -4,10 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * Lot 1 of the calls revival puts in-app calling ON for a dev build and nowhere else. The whole of
- * "production stays off" is this one expression, so it is pinned against the variable the
- * pipelines actually write (`VITE_DEPLOY_ENVIRONMENT=development` for dev.canari-emse.fr and every
- * pre-release app, unset for production).
+ * Calls are compiled into every build since the flip of 2026-10-22 (audio 1:1, in-app); production
+ * is held shut by the server's `calls_mode`, not here. What still depends on the variable the
+ * pipelines write (`VITE_DEPLOY_ENVIRONMENT=development` for dev.canari-emse.fr and every
+ * pre-release app, unset for production) is VIDEO, which stays dev only.
  */
 
 async function load() {
@@ -25,14 +25,14 @@ describe('CALLS_ENABLED', () => {
     expect((await load()).CALLS_ENABLED).toBe(true);
   });
 
-  it('is off for a production build, which sets nothing', async () => {
+  it('is on for a production build, which sets nothing (the flip, 2026-10-22)', async () => {
     vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', '');
-    expect((await load()).CALLS_ENABLED).toBe(false);
+    expect((await load()).CALLS_ENABLED).toBe(true);
   });
 
-  it('is off for a value nobody planned for', async () => {
+  it('is on for a value nobody planned for: the server kill switch is what closes it', async () => {
     vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'staging');
-    expect((await load()).CALLS_ENABLED).toBe(false);
+    expect((await load()).CALLS_ENABLED).toBe(true);
   });
 
   it('leaves the native ring off whatever the build', async () => {
@@ -43,10 +43,9 @@ describe('CALLS_ENABLED', () => {
     expect(f.CALLS_NATIVE_RING_COMPILED).toBe(false);
   });
 
-  it('keeps the store binaries without calls until the flip commit', async () => {
-    // The flip rewrites this case, and only this one: CALLS_COMPILED moves alone (calls.md).
-    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
-    expect((await load()).CALLS_COMPILED).toBe(false);
+  it('compiles calls into the store binaries (the flip, 2026-10-22)', async () => {
+    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', '');
+    expect((await load()).CALLS_COMPILED).toBe(true);
   });
 
   it('carries video on a dev build, never production (lot 2)', async () => {
@@ -58,7 +57,7 @@ describe('CALLS_ENABLED', () => {
 });
 
 describe('the first production calls are AUDIO ONLY (owner, 2026-10-21)', () => {
-  // The revival commit flips CALLS_COMPILED and nothing else here. Video must not ride along: it is
+  // The flip moved CALLS_COMPILED and nothing else here. Video must not ride along: it is
   // read from the expression, because CALLS_COMPILED is a constant this suite cannot stub.
   it('video does not follow CALLS_COMPILED', async () => {
     const source = readFileSync(

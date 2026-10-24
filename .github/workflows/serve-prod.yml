@@ -134,6 +134,9 @@ jobs:
           LYDIA_PROVIDER_TOKEN: ${{ secrets.LYDIA_PROVIDER_TOKEN }}
           LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.LYDIA_PROVIDER_PRIVATE_TOKEN }}
           LYDIA_KEY_ENCRYPTION_SECRET: ${{ secrets.LYDIA_KEY_ENCRYPTION_SECRET }}
+          # `production` or `homologation`, said explicitly: the template's own default is
+          # `homologation`, which would send production's Provider pair to Lydia's sandbox.
+          LYDIA_ENV: ${{ secrets.LYDIA_ENV }}
           # THE VARIABLE IS NAMED AFTER THE SECRET, NOT AFTER THE KEY IT RENDERS. render-env.sh
           # reads the manifest's SOURCE column verbatim for production, so `AUTHENTIK_BASE_URL`
           # here would leave `$AUTHENTIK_URL` unset and fail a `required` row at deploy time.
