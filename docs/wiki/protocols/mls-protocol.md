@@ -1060,11 +1060,20 @@ settlement, and if it had landed that device is one epoch behind its own commit 
 
 **Staged only on the branch the server publishes.** The server's gate compares epoch NUMBERS, so a
 device that merged a commit nobody else did is at the right number on the wrong branch, and its
-refresh would be accepted and break every healthy member. `refreshOwnLeaf` reads the published base
-(outside the MLS lock) and, under the lock, stages only when its epoch is ours and our group context
-- tree hash and confirmed transcript hash - is the one it describes
-(`MlsManager::own_context_matches_base`); otherwise nothing is staged (`no-base`, `other-epoch`,
-`diverged` - the last is a fork, logged as one).
+refresh would be accepted and break every healthy member. The two commits a MECHANISM decides on
+its own - `refreshOwnLeaf` and the revoked-leaf removal (`removeMemberDevice`, next section) - go
+through ONE check, `BaseMlsService.assertOnPublishedBranch` (`mls-client/publishedBranch.ts`): it
+reads the published base (outside the MLS lock) and, under the lock, stages only when its epoch is
+ours and our group context - tree hash and confirmed transcript hash - is the one it describes
+(`MlsManager::own_context_matches_base`); otherwise nothing is staged and `UnpublishedBranchError`
+says why (`no-base`, `other-epoch`, `diverged`). **`diverged` is a fork, and it is handed to the
+recovery ladder where it is thrown** (2026-10-23): the group is marked in the epoch-gap registry,
+which keeps every send out of it and hands it to the sync watchdog's rung 2 (forget + re-Welcome),
+with a `[FORK] ... DIVERGES` line at error level - the route an unreadable submission record
+already takes, for the same reason: rung 1 (replaying the log) cannot help a device that is not
+behind but beside. The evidence is the base the server stored WITH the accepted commit (strictly
+monotonic, so the first base of an epoch owns it); a commit from a client too old to carry one
+leaves the base to a holder's repair, which is the one way that base could itself be a branch.
 The **signature key is not rotated**: one device key signs every leaf and every KeyPackage of the
 device, and a stolen signature key is answered by revocation (next section), not by a refresh.
 
@@ -1076,19 +1085,42 @@ single-flight per group. It refreshes only when the leaf is DUE:
 
 | Leaf age basis | Source | Due when |
 |---|---|---|
-| Admitted from a KeyPackage | `not_before + 1 h` read from the tree (`own_leaf_minted_at`) | older than the interval |
+| Admitted from a KeyPackage | `not_before + 1 h` read from the tree (`own_leaf_minted_at`), and an observation OF THAT LEAF in the ledger | the later of: older than the interval, and the observation plus the offset |
 | Replaced by an own commit | the ledger `mls_leaf_refresh:<userId>:<deviceId>` (`{groupId: {at, epoch}}`), written after EVERY accepted own commit and external join | older than the interval |
-| Replaced by a commit, no ledger entry (an install that predates the ledger) | first sight: dated now | never on first sight |
+| Replaced by a commit, observed (no refresh of ours on record) | the observation `{at, epoch, observed: true, mintedAtSec: null}` | the observation plus the offset |
+| No entry, an entry of another incarnation, or one dated in the future | first sight: an observation is recorded | never on first sight |
+
+**The first refresh is spread, or it is a herd** (review, 2026-10-23). The day this ships, every
+leaf is older than the interval, so a decision on age alone makes every seat refresh at its first
+send: ~1600 commits in the first week, back to back in the 109-seat group, where a slow device
+keeps only two past epochs (`max_past_epochs`) and loses the frames sealed in the epochs it
+skipped. So a leaf this device holds no refresh of its own for is first OBSERVED - a ledger entry
+written at its first send, naming the leaf by `own_leaf_minted_at`, never due then - and its first
+refresh is owed at the observation plus an offset in `[0, 7 d)` derived from `(deviceId, groupId)`
+alone (`leafRefreshOffsetMs`: FNV-1a with MurmurHash3's finaliser, `utils/hash32.ts`, the hash
+`historyRangeOf` already used). No clock and no random draw per run choose the day: a reload, a
+second tab or a retry read the same one. The 109 seats of one group land on ~16 a day instead of
+109 on day one (`leafRefresh.test.ts` pins the spread and the determinism). After its first
+refresh each seat's next one follows its own, so the spread holds without being re-applied, and a
+young leaf (a fresh admission) is still owed at its own seven days - the offset only ever delays.
 
 It skips a community key group, a group this device was removed from, a group in an epoch gap (the
 [recovery ladder](mls-recovery-ladder.md) owns it), a group HELD by something that needs its epoch to
 stay put (`holdLeafRefresh`: `CallService` holds its call's group from the ring until the call is
 over, because each end derives the media keys from the CURRENT epoch one after the other - another
 device of either user is not held, see [calls](../frontend/modules/calls.md)), and a second attempt at the epoch a first one
-failed at in this session - the epoch moving is what makes another attempt different. Nothing here
-waits on a clock to be correct: the clock only decides WHETHER a refresh is owed, never what a commit
-contains, and a wrong clock costs one early or one late refresh. The ledger is capped at 512 groups
-and is swept with the account's local keys.
+failed at in this session - the epoch moving is what makes another attempt different. The ledger is
+capped at 512 groups and is swept with the account's local keys.
+
+**The interval is read on this device's clock, and that is acknowledged rather than derived away.**
+It is a duration, and no durable MLS fact measures one: an epoch moves on commits, so a quiet group
+would never be due and a busy one would be due hourly. What a WRONG clock would mean: it decides only
+WHEN a refresh is owed, never what a commit contains. A clock ahead makes refreshes early - at most
+one per group per forward jump, since the refresh it causes is dated by the same clock; a clock
+behind makes them late. A ledger date in the FUTURE (a clock that was ahead has come back) is not
+believed - the leaf is observed again - so the delay is bounded by one interval rather than by how
+far ahead that clock was. The cost of a wrong clock is therefore timing, bounded on both sides, and
+never traffic beyond one refresh per group per jump.
 
 **Why 7 days.** It matches the 7-day cap of a Graine session, so a compromise of either half heals in
 the same bound, and it is twelve times inside the 84-day leaf lifetime. A refresh is owed only after
@@ -1106,12 +1138,19 @@ The ceiling is not the expectation: only seats that send count, and an own commi
 already resets the clock. A commit races like any other: a lost epoch race is a refusal, logged, and
 the next send after the epoch moves tries again.
 
-**Community key groups are excluded, deliberately.** A key group's epoch change rotates every
-sender's Graine seed (`shouldRotateGraineSession`), so a weekly refresh per device would mint a seed
-per refresh across the community - the cost already measured as P2 in
-[backlog](../backlog.md). A key group's leaves are refreshed by its own Adds and Removes; a refresh
-there waits until a seed rotation is triggered by DEPARTURES only, and a self-update is not a
-departure.
+**Community key groups are excluded, deliberately - re-decided on main's rotation rule
+(2026-10-23).** Since 2026-10-22 a key group's seeds rotate on a DEPARTURE, not on every epoch
+(`graineOutboundVerdict`, [graine-removal-tracker](graine-removal-tracker.md)), and a refresh is not
+one: it removes no leaf, brings no user and keeps the signature key, so it continues the clean run.
+Its real cost is therefore not a seed per refresh but this: each refresh moves the epoch, so every
+sender's next send in that scope REDISTRIBUTES its seed - one extra frame per sender per refresh -
+and a redistributed session takes the reused caps (50 messages, 24 hours FROM ITS MINT), so any
+session already past a day ROTATES instead. With one refresh per active device per week, a
+community whose devices refresh daily keeps every sender's session under a day old: the rotation
+rate the departure-only rule was written to bring down returns through the caps. A key group's
+leaves are refreshed by its own Adds and Removes meanwhile; what refreshing them would need (a
+refresh that does not tighten the caps, or caps counted from the redistribution) is in
+[backlog](../backlog.md).
 
 ### A revoked device's leaf is removed from every conversation
 
@@ -1121,8 +1160,18 @@ per answered group, the ACTIVE revocations of the people on that roster (`revoke
 `userId:deviceId`). `removeStrayLeaves` (`frontend/src/lib/utils/chat/strayLeaves.ts`) removes a leaf
 whose whole identity is in that list, by device (`removeMemberDevice`), after the departures and on a
 fresh tree and a fresh answer. It is an ALLOWLIST: a leaf the routing table merely forgot is never a
-candidate, and a device never removes its own leaf. Key groups are not covered yet, for the seed
-reason above ([backlog](../backlog.md)).
+candidate, and a device never removes its own leaf. Like the refresh, nobody asked for this commit,
+so it is staged only on the published branch (`assertOnPublishedBranch` above; a refusal is logged
+`[STRAY] ... NOT removed` and nothing is staged). Key groups are not covered yet: their roster
+collector (`reconcileDistributionGroupRoster`) does not read the `revoked` answer, a separate
+question from the refresh's cost ([backlog](../backlog.md)).
+
+**And the revoked device cannot commit** (2026-10-23). The commit gate (`validateCommit`) refuses a
+commit from a device under an active revocation - `403 DEVICE_REVOKED`, FIRST: before the ownership
+check, the lock and the duplicate answer, read by the pair on the denylist's existing
+`(userId, deviceId)` unique index ([chat-delivery](../services/chat-delivery.md)). The revocation
+purges the static KeyPackage, so an ownership check asked first answers `device_not_owned` - true by
+coincidence, and not the answer the device's client acts on.
 
 ### Static fallback key package
 

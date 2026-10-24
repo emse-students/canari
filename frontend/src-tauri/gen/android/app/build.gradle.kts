@@ -14,36 +14,7 @@ val tauriProperties = Properties().apply {
     }
 }
 
-/**
- * WHETHER THIS BUILD PLACES CALLS, READ FROM THE SAME FACT THE PAGE READS.
- *
- * The page turns `CALLS_ENABLED` on when `VITE_DEPLOY_ENVIRONMENT` is `development`
- * (`frontend/src/lib/features.ts`). Vite takes it from the process environment first, then from
- * `frontend/.env`; this reads the same two, in the same order - `android.yml` writes it into `.env`
- * for a pre-release, `a1apk.mjs` hands `VITE_*` through the environment. Such a build merges
- * `src/calls/AndroidManifest.xml` (the ongoing-call foreground service, WP-C-BG-A); any other build
- * declares no foreground service at all. If the two sides ever disagree the page says so at error
- * level: `canariCall` is registered only when the service is in the merged manifest.
- */
-fun deployEnvironment(): Pair<String?, String> {
-    System.getenv("VITE_DEPLOY_ENVIRONMENT")?.let { return Pair(it.trim(), "the process environment") }
-    val env = file("../../../../.env")
-    if (!env.exists()) return Pair(null, "no frontend/.env")
-    val line = env.readLines().lastOrNull { it.trim().startsWith("VITE_DEPLOY_ENVIRONMENT=") }
-        ?: return Pair(null, "frontend/.env, unset")
-    return Pair(line.substringAfter("=").trim().trim('"', '\''), "frontend/.env")
-}
-val callsInThisBuild: Boolean = deployEnvironment().let { (value, source) ->
-    val on = value == "development"
-    logger.lifecycle("Canari ongoing-call service: ${if (on) "IN" else "not in"} this build (VITE_DEPLOY_ENVIRONMENT=${value ?: "unset"}, from $source)")
-    on
-}
-
 android {
-    if (callsInThisBuild) {
-        sourceSets.getByName("debug").manifest.srcFile("src/calls/AndroidManifest.xml")
-        sourceSets.getByName("release").manifest.srcFile("src/calls/AndroidManifest.xml")
-    }
     compileSdk = 36
     namespace = "fr.emse.canari"
     defaultConfig {

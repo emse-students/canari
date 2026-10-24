@@ -2488,7 +2488,6 @@
   "form_view_payment_declined_note": "Le paiement a été refusé : vous pouvez réessayer.",
   "form_view_payment_ended_note": "La demande de paiement a expiré ou a été annulée : vous pouvez réessayer.",
   "form_view_form_full_note": "Ce formulaire n'accepte plus de nouvelles réponses.",
-  "form_view_from_price": "À partir de {price}",
   "form_view_error_not_open": "Ce formulaire ouvre le {date}.",
   "form_view_error_login_required": "Veuillez vous connecter pour soumettre.",
   "form_view_error_complete_matrix": "Veuillez compléter toutes les lignes pour \"{label}\"",

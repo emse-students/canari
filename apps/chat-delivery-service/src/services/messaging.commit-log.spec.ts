@@ -407,34 +407,90 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     });
 
     // ── WP-GHOST-1: a device that may not be INVITED may not be ROUTED TO either ──────────────
-    // The commit path promotes the COMMITTING device, so without these two guards a device its
-    // owner had deleted could re-enrol itself in every group it still held MLS state for - and
-    // then be messaged forever, invisible in the device list and uncollectable by the GC.
-    it('refuses to promote a device on the revocation denylist', async () => {
+    // The commit path promotes the COMMITTING device, so a device its owner had deleted could
+    // re-enrol itself in every group it still held MLS state for - and then be messaged forever,
+    // invisible in the device list and uncollectable by the GC. Since 2026-10-23 its COMMIT is
+    // refused at the door, so it is neither promoted nor allowed to move any group's epoch.
+    it('refuses a commit from a device on the revocation denylist, before anything moves', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 1 });
       deviceGroupRepo.findOne.mockResolvedValue(null);
       groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'user-2' });
       revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
-      jest
-        .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
+      const fanOut = jest.spyOn(service, 'sendMessage');
 
-      const res = await service.validateCommit(
-        {
-          groupId: 'group-1',
-          deviceId: 'device-revoked',
-          baseEpoch: 1,
-          proto: externalCommitFrame('group-1', 1n, 'user-2:device-revoked'),
-          senderId: 'user-2',
-        },
-        'user-2'
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-revoked',
+            baseEpoch: 1,
+            proto: externalCommitFrame('group-1', 1n, 'user-2:device-revoked'),
+            senderId: 'user-2',
+          },
+          'user-2'
+        )
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'DEVICE_REVOKED', error: 'device_revoked' },
+      });
+
+      // Read by the PAIR, under the one active-revocation rule (the unique index it already has).
+      expect(revokedDeviceRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ userId: 'user-2', deviceId: 'device-revoked' }),
+        })
       );
-
-      // The COMMIT itself is still accepted - it is cryptographically valid and other members
-      // must apply it. Only the routing membership is refused.
-      expect(res.accepted).toBe(true);
+      expect(redis.set).not.toHaveBeenCalled();
+      expect(transaction).not.toHaveBeenCalled();
+      expect(commitInsertBuilder.execute).not.toHaveBeenCalled();
+      expect(fanOut).not.toHaveBeenCalled();
       expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
       expect(redis.sadd).not.toHaveBeenCalledWith('group:members:group-1', 'user-2:device-revoked');
+    });
+
+    it('refuses a member commit from a revoked device that still holds an active row', async () => {
+      // The routing purge and the denylist are two writes: a row that outlived the purge must not
+      // be what lets the revoked device commit.
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      deviceGroupRepo.findOne.mockResolvedValue({ deviceId: 'device-1' });
+      revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
+
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-1',
+            baseEpoch: 5,
+            proto: memberCommitFrame('group-1', 5n),
+            senderId: 'user-1',
+          },
+          'user-1'
+        )
+      ).rejects.toMatchObject({ response: { code: 'DEVICE_REVOKED' } });
+      expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it('names the revocation, not the ownership, when the revocation also purged the KeyPackage', async () => {
+      // The ordinary shape of a revoked device: denylisted AND its static KeyPackage gone. The
+      // answer its client acts on must be the true one, so the denylist is asked first.
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      deviceGroupRepo.findOne.mockResolvedValue({ deviceId: 'device-1' });
+      revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
+      keyPackageRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-1',
+            baseEpoch: 5,
+            proto: memberCommitFrame('group-1', 5n),
+            senderId: 'user-1',
+          },
+          'user-1'
+        )
+      ).rejects.toMatchObject({ response: { code: 'DEVICE_REVOKED', error: 'device_revoked' } });
+      expect(transaction).not.toHaveBeenCalled();
     });
 
     it('refuses a commit from a device with no static KeyPackage, before promoting anything', async () => {
@@ -511,6 +567,21 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         });
         expect(transaction).not.toHaveBeenCalled();
         expect(fanOut).not.toHaveBeenCalled();
+      });
+
+      it('is refused, not answered as accepted, once the device is revoked', async () => {
+        // A resubmission is a commit too: a revoked device is told so, never told it landed.
+        groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 6 });
+        commitLogRepo.findOne.mockResolvedValue({
+          groupId: 'group-1',
+          baseEpoch: 5,
+          commit: memberCommitFrame('group-1', 5n),
+          senderDeviceId: 'device-1',
+        });
+        revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
+
+        await expect(resend()).rejects.toMatchObject({ response: { code: 'DEVICE_REVOKED' } });
+        expect(commitLogRepo.findOne).not.toHaveBeenCalled();
       });
 
       it.each([

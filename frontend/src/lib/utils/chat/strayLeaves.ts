@@ -1,4 +1,5 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import { diffRosterAgainstTree } from '$lib/utils/graine/rosterReconcile';
 import { holdsGroupState } from './groupUsability';
 
@@ -51,7 +52,9 @@ import { holdsGroupState } from './groupUsability';
  * by device (`removeMemberDevice`), after the departures, on a fresh tree and a fresh answer. It is
  * an ALLOWLIST - a destructive control acts only on what the server states is revoked, never on a
  * leaf the routing table merely forgot (a device fresh-start looks exactly like that) - and this
- * device never removes itself: a revoked device is wiped by its own revocation path.
+ * device never removes itself: a revoked device is wiped by its own revocation path. And it is
+ * staged only on the branch the server publishes (`publishedBranch.ts`): nobody asked for this
+ * commit, so it must not be the one that spreads a fork.
  *
  * @returns the groups whose tree a removal changed - empty when every tree already agrees, when this
  *   device holds none of them, or when nothing could be decided.
@@ -193,6 +196,16 @@ async function removeRevokedLeaves(
   try {
     await mlsService.removeMemberDevice(groupId, identities);
   } catch (e) {
+    if (e instanceof UnpublishedBranchError) {
+      // Nothing was staged: this device's state is not the branch the server publishes, and a
+      // removal from it would spread that branch. A `diverged` one was handed to the recovery
+      // ladder where it was thrown; the next connection after the repair decides again.
+      log(
+        `[STRAY] ${short}... ${identities.length} revoked device(s) NOT removed: the published base ` +
+          `cannot vouch for this device's state (${e.reason}) - nothing staged`
+      );
+      return false;
+    }
     // Loud for the reason `removeStrays` gives: until this lands, the revoked device can still
     // read every new epoch. The next connection decides again.
     const named = new Set(identities);
