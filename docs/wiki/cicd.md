@@ -41,6 +41,10 @@ fails as a hook timeout. A test needing more still names its own budget.
 viewer cap's atomicity, a live's viewer count, a seat's expiry) had been skipped on every run before.
 `ci-passed-gate.test.mjs` asserts the image, the variable and the selection, and that every Redis
 `ci.yml` runs is production's.
+**CHAT-DELIVERY-SERVICE GOT THE SAME JOB ON 2026-10-22** (`test-chat-delivery-integration`,
+`CHAT_DELIVERY_IT_DATABASE_URL`, same digest, same no-skip count), written with migration 034
+([chat-delivery](services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22));
+the gate test asserts its image and variable too.
 **ONE spec is excluded from it, by name in both steps: `internal/account-erasure.integration.spec.ts`**,
 which copies every social table out of `public` and so needs the schema `synchronize` builds; it runs
 in `boot-nest-apps` right after the boot built that schema (2026-10-17, found by rebasing on the

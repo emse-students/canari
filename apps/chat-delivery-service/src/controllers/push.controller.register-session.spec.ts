@@ -10,6 +10,7 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import { MessagingService } from '../services/messaging.service';
 
 /**
@@ -37,6 +38,8 @@ describe('PushController - POST mls/push/register binds the registration to its 
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })

@@ -14,6 +14,7 @@ import { installFakeMediaRecorder } from '$lib/reels/fakeMediaRecorder.test-help
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
 import { capturePosterOf } from '$lib/reels/capturePoster';
+import { isChatReelTake } from '$lib/reels/chatReelWriter';
 import { m } from '$lib/paraglide/messages';
 import type { PublishReelDeps } from '$lib/reels/publishReel';
 import { toastStore } from '$lib/stores/toast.svelte';
@@ -527,6 +528,25 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     );
     // A full-size photo is never encoded for it.
     expect(framed.photo).not.toHaveBeenCalled();
+  });
+
+  it('a film in a chat that may film is offered as "Send" - the gesture that queues it at once (RC-5)', async () => {
+    const oncapture = vi.fn();
+    const { target, hold } = await render({
+      destination: 'chat',
+      chatFilms: true,
+      oncapture,
+      onclose: vi.fn(),
+    });
+    await hold();
+    const next = target.querySelector<HTMLButtonElement>('[data-reel-next]')!;
+    expect(next.textContent?.trim()).toBe(m.reel_chat_send());
+    next.click();
+    await settle();
+
+    const file = oncapture.mock.calls[0][0] as File;
+    expect(file.type).toMatch(/^video\//);
+    expect(isChatReelTake(file)).toBe(true);
   });
 
   it('a post camera whose microphone was refused still takes photos: a hold is a photo, and it is said', async () => {
