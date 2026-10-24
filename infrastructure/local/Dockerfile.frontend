@@ -151,7 +151,8 @@ limit_req_zone $lives_ingest_key zone=lives_ingest:1m rate=2r/s;\n\
 # that arrive together wait for that first one instead of each reaching media-service. Sizes:\n\
 # 2 min (`inactive`, and `proxy_cache_valid 200` below) is far past the manifest window a viewer reads\n\
 # from (10 segments of a few seconds), and it bounds how long a segment outlives the purge of its live here.\n\
-# 512 MB holds two minutes of ~20 lives at the planned 3 Mb/s; past it the oldest go first, which costs\n\
+# 512 MB holds ~10 lives at the planned 3 Mb/s: a segment stays ~140 s (read for ~20 s, then 2 min\n\
+# inactive), so ~52 MB a live (docs/wiki/frontend/modules/live-scaling.md); past it the oldest go first, which costs\n\
 # a refetch, never an error. `use_temp_path=off` writes a response straight into this directory.\n\
 proxy_cache_path /var/cache/nginx/live levels=1:2 keys_zone=live_segments:1m max_size=512m inactive=2m use_temp_path=off;\n\
 # The segment route is unauthenticated, so it has an edge ceiling of its own, per client address. A\n\
