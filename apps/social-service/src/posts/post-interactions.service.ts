@@ -9,14 +9,14 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
-import { isUnsafeObjectKey } from '../common/object-keys';
+import { isUnsafeObjectKey, withOwnEntry } from '../common/object-keys';
 import {
   ANONYMOUS_NOTIFICATION_ACTOR_ID,
   ANONYMOUS_NOTIFICATION_ACTOR_NAME,
   PostNotificationsService,
 } from './post-notifications.service';
 import { PushService } from '../push/push.service';
-import { isAnonymousPoll, recordAnonymousVote, servePolls } from './anonymous-poll';
+import { isAnonymousPoll, recordAnonymousVote } from './anonymous-poll';
 import { CommentIdentityService, commentIdentityOf, commentRights } from './comment-identity';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredReel } from './reel.constants';
@@ -432,8 +432,14 @@ export class PostInteractionsService {
    *
    * @throws BadRequestException when the poll has closed, or the selection exceeds what the poll
    *   allows - a refusal, never a silent truncation, because a vote is not a thing to guess at.
+   * @returns the STORED post, which is not an answer to anybody: the route serves it through
+   *   `PostsService.serveToReader`, as every single-post response is served.
    */
-  async votePoll(postId: string, pollId: string, data: { userId: string; optionIds: string[] }) {
+  async votePoll(
+    postId: string,
+    pollId: string,
+    data: { userId: string; optionIds: string[] }
+  ): Promise<Post> {
     // Use a pessimistic write lock to prevent two concurrent votes from silently
     // overwriting each other (check-then-act race on the JSON polls column).
     let result: any;
@@ -491,23 +497,21 @@ export class PostInteractionsService {
         for (const opt of poll.options) {
           if (selectedIds.includes(opt.id)) opt.votes.push(data.userId);
         }
-        // Null-prototype object prevents prototype pollution via crafted userId keys.
-        if (!poll.votesByUser || Object.getPrototypeOf(poll.votesByUser) !== null) {
-          poll.votesByUser = Object.assign(Object.create(null), poll.votesByUser);
-        }
-        poll.votesByUser[data.userId] = selectedIds;
+        // A new null-prototype map, the key written as an own entry (`withOwnEntry`), never by
+        // assignment: the id was refused above, and the write itself cannot walk a prototype.
+        poll.votesByUser = withOwnEntry<string[]>(poll.votesByUser, data.userId, selectedIds);
         updated = true;
       }
 
-      if (updated) {
-        const saved = await manager.save(post as any);
-        result = Array.isArray(saved) ? saved[0] : saved;
-      } else {
-        result = post;
+      // Every poll that matches either records the vote or throws, so nothing recorded means no
+      // poll of this post has that id: a vote on nothing, answered as such.
+      if (!updated) {
+        this.logger.debug(`votePoll ${postId.slice(0, 8)}: no poll ${pollId.slice(0, 8)}`);
+        throw new NotFoundException('Poll not found');
       }
+      const saved = await manager.save(post as any);
+      result = Array.isArray(saved) ? saved[0] : saved;
     });
-    // The saved post carries the anonymous polls' voter lists; the caller is handed only its own
-    // `voted`, exactly as the feed serves it.
-    return { ...result, polls: servePolls(result.polls, data.userId) };
+    return result as Post;
   }
 }

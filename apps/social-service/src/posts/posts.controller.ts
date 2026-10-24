@@ -304,6 +304,10 @@ export class PostsController {
    * ADDS something (a vote, a reaction, a comment, a like), it is refused with the read's own 404
    * on a post the caller may not see (WP6b): an id is not a permission. Taking back one's own
    * reaction or comment is not gated - it adds nothing.
+   *
+   * A vote is refused wherever opening the post would be (`assertMayVote`, the gate `getById`
+   * uses, with the vote's grant-free audience), and the answer is the post served to this reader
+   * (`serveToReader`), like every other route answering with one post.
    */
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/polls/:pollId/vote')
@@ -311,10 +315,15 @@ export class PostsController {
     @Headers('x-user-id') xUserId: string,
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('pollId') pollId: string,
-    @Body() body: VotePollDto
+    @Body() body: VotePollDto,
+    @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
-    await this.service.assertVisible(postId, xUserId, 'VOTE');
-    return this.interactions.votePoll(postId, pollId, { ...body, userId: xUserId });
+    await this.service.assertMayVote(postId, xUserId);
+    const stored = await this.interactions.votePoll(postId, pollId, { ...body, userId: xUserId });
+    return this.service.serveToReader(stored, {
+      viewerId: xUserId,
+      isGlobalAdmin: xGlobalAdmin === 'true',
+    });
   }
 
   /** Adds an emoji reaction from the calling user to a post. */

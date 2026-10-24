@@ -33,3 +33,28 @@ const UNSAFE_OBJECT_KEYS = [
 export function isUnsafeObjectKey(key: string): boolean {
   return UNSAFE_OBJECT_KEYS.includes(key);
 }
+
+/**
+ * `record` with `key` set to `value`, as a NEW prototype-less map - the write for a key that came
+ * off a request.
+ *
+ * A plain `map[key] = value` with such a key is what a remote-property-injection analysis flags,
+ * and it cannot see that the key was refused upstream. Going through a `Map` and
+ * `Object.fromEntries` defines own data properties only (never a setter, never a prototype walk),
+ * and the result is copied onto `Object.create(null)` as before. The refusal still belongs where
+ * the key enters; this throws only if a caller skipped it.
+ *
+ * @throws TypeError for an unsafe key - a caller bug, never a user's answer.
+ */
+export function withOwnEntry<V>(
+  record: Record<string, V> | null | undefined,
+  key: string,
+  value: V
+): Record<string, V> {
+  if (isUnsafeObjectKey(key)) throw new TypeError('withOwnEntry: unsafe key refused');
+  const entries = new Map<string, V>(
+    Object.entries(record ?? {}).filter(([k]) => !isUnsafeObjectKey(k))
+  );
+  entries.set(key, value);
+  return Object.assign(Object.create(null) as Record<string, V>, Object.fromEntries(entries));
+}
