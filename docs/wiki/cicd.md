@@ -2019,6 +2019,23 @@ are builder stages and the local compose file, which reach no estate.
   it (30) or not (11). The upgrade (#2315) must delete the 30 it retires, which this check will
   insist on.
 
+**2026-10-24, the first day it went red on its own:**
+
+- The 30 authentik entries 2026.8.5 fixes were **deleted** (#2362); the retirement check had named them.
+- `frontend-ssr` was back on `node:25-alpine` (Dependabot's #2338 undid #2308): Node 25 left support on
+  2026-06-01 and its image has not been rebuilt since, so its OpenSSL (`CVE-2026-45447`) and bundled npm
+  (`tar`, `brace-expansion`, ...) were reported. **Back to `node:24-alpine`**, and `dependabot.yml` now
+  ignores node MAJORS for that directory (a `versions` range is refused for a docker ignore): an odd
+  major never becomes LTS, so a node major moves by hand, onto the next LTS line.
+- `CVE-2026-111497` (`brotli-libs` 1.2.0, fixed in Alpine's 1.2.1-r0 of 2026-10-22) is in `adminer`,
+  `nginx:1.31.8-alpine`, `nginx:stable-alpine` and `postgres:18-alpine`, and **every one of those pins
+  was already the newest upstream build**: no digest carrying the fix existed that day, so there was
+  nothing to move to. **Allowlisted** (decided the same day), scoped by purl to
+  `brotli-libs@1.2.0-r1` so a later build is not covered: the inventory shows only libcurl (all four)
+  and freetype (nginx) depend on it, which decode brotli in fetched HTTP responses and WOFF2 fonts, not
+  in request bodies - runtime use was not verified. The rescan retires the entry when the pins move
+  ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
+
 **Not gated: Trivy's Dockerfile misconfiguration scan.** Measured the same day, it finds `DS-0002`
 (no non-root `USER`) in all eight Dockerfiles and `DS-0029` (`--no-install-recommends`) in the two
 Rust ones. A `USER` change on production images needs its volumes' ownership verified on a running
@@ -2149,6 +2166,10 @@ The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-be
 **The third retirement condition originally listed is dead, not pending**: `query-string` DOES now depend on a fixed `decode-uri-component` (latest 9.5.1, on `^0.5.0`), but minio's pin is `^7.1.3` and cannot reach a 9.x, so only minio moving retires either suppression.
 
 **Retirement is ASSERTED, not polled (2026-10-10).** The premises step audits media-service without its ignores and fails when any ignored id is no longer reported (`ignored-advisories-still-reported.sh`, `tests/ignored-advisories-still-reported.test.sh`; a registry that did not answer concludes nothing). The five hand re-checks logged here until 2026-10-09 each found `minio` still 8.0.7, `query-string: ^7.1.3`, `stream-json: ^1.8.0`.
+
+### Two frontend advisories wait on the kit 3 chantier (2026-10-24)
+
+`GHSA-pfhg-q3qv-9q6r` and `GHSA-27mw-82g8-phjj` are LOW SvelteKit advisories (an open redirect through enhanced form submission, an XSS through an untrusted `cache-control` header on a prerendered page), fixed only in `@sveltejs/kit` 3.x. The user put the majors (kit 3, adapter-node 6, webrtc 0.21) after the stable as their own chantiers, so the frontend tree ignores both until Dependabot's #2154 lands, and that pull request deletes them. Unlike media-service's, these rest on a decision, not on reachability. **The retirement check is now its own step, `Every ignored advisory is still reported`, run for every tree whose `matrix.audit` carries an `--ignore`**: it re-audits the tree at its own level without them and fails on an id nothing reports any more, so the day kit 3 merges the two ignores go red rather than stay.
 
 ### A merged branch that is still there was pushed back, not left behind (measured 2026-09-22)
 
