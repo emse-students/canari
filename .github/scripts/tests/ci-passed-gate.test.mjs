@@ -153,6 +153,21 @@ console.log('the addressing scripts run against a real Redis:');
   } else bad('boot-nest-apps does not run addressing.redis against Redis - the publish script runs nowhere');
 }
 
+console.log('the chat-delivery integration job runs on the database production runs:');
+const chatIt = jobBlock('test-chat-delivery-integration');
+if (!chatIt) {
+  bad('no test-chat-delivery-integration job - the chat-delivery integration specs run nowhere');
+} else {
+  const image = /\n\s+image: (postgres:\S+)/.exec(chatIt)?.[1];
+  const prod = /\n\s+image: (postgres:\S+)/.exec(
+    readFileSync(resolve(repoRoot, 'infrastructure/docker-compose.prod.yml'), 'utf8')
+  )?.[1];
+  if (image && prod && image === prod) ok(`same image as production: ${image}`);
+  else bad(`chat-delivery integration job runs ${image}, production runs ${prod} - bump them together`);
+  if (/CHAT_DELIVERY_IT_DATABASE_URL: postgres:\/\//.test(chatIt)) ok('it sets CHAT_DELIVERY_IT_DATABASE_URL');
+  else bad('it does not set CHAT_DELIVERY_IT_DATABASE_URL - every spec would skip, and pass');
+}
+
 console.log('every Redis CI runs is the one production runs:');
 {
   const prodRedis = /\n\s+image: (redis:\S+)/.exec(
