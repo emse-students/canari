@@ -47,8 +47,8 @@ is one table plus one action per shape. Each holds its pure judgements in `<name
 | `archive/offline.mjs` | OFF-3..5, NET-1..3, RM-8 | a seat without network, or a degraded one, for a duration | built ([#2398](https://github.com/emse-students/canari/pull/2398)); OFF-4 `BLOCKED-ON-ACCOUNT` |
 | `archive/gap.mjs` | GAP-1..3 | frames reordered, replayed or flooded against a frozen member | built ([#2397](https://github.com/emse-students/canari/pull/2397)); GAP-4 records `SKIPPED` |
 | `archive/kill.mjs` | KILL-1..5, RM-3 | a process killed at a point of the commit | built ([#2399](https://github.com/emse-students/canari/pull/2399)) |
-| `archive/admit.mjs` | ADM-1..8 | a group link, an ask, Add or Decline, and the waiting seat's probes | built (draft PR); ADM-5..7 wait on the old APK's install |
-| `archive/devrows.mjs` | DEV-1..4, DEV-6, DEV-7, DUP-7 | a device minted, revoked or woken | owed |
+| `archive/admit.mjs` | ADM-1..8 | a group link, an ask, Add or Decline, and the waiting seat's probes | built ([#2400](https://github.com/emse-students/canari/pull/2400)); ADM-5..7 wait on the old APK's install |
+| `archive/devrows.mjs` | DEV-1..4, DEV-6, DEV-7, DUP-7 | a device minted, revoked or woken | built (draft PR); W6 owes its `names.mjs` entry and one human sign-in |
 | `archive/salon.mjs` | RM-4..6 | two admins rewriting one salon's access | owed |
 | `archive/big.mjs` | BIG-1..3 | everything at twelve devices | owed |
 
@@ -85,7 +85,7 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | DUP-4 | `lose-answer once`, then `status 409 once` on the resubmission | `fault.mjs` two rules | confirm rule precedence (first unspent match) in `fault-selftest` | no | U | 20 min |
 | DUP-5 | `status 503 once`; sends blocked in that group only, settled at the next gateway connection | `fault.mjs`, `net.mjs` `cutHard` to force the reconnection | invariant 4 counts a fault-PROVOKED 5xx as dirt: `checkInvariant` needs the armed rules' records to forgive exactly those | no | U | 20 min |
 | DUP-6 | `hold-answer` > 30 s twice while a second group sends | `fault.mjs` `hold-answer` | a second minted group on the same seats | no | U | 30 min |
-| DUP-7 | `lose-answer` on an Add of a NEW device (W3), reload between merge and Welcome send | `newdevice.mjs` (W3 wipeable) | the reload point: the merge line (`awaitLine`) | no | U, PIN | 30 min |
+| DUP-7 | `lose-answer` on an Add of a NEW device (W3), reload between merge and Welcome send | `newdevice.mjs` (W3 wipeable), `fault.mjs` `bodyIncludes` (this group's Add and Welcome only) | the reload point: the Welcome POST held, failed, then the reload | no | U, PIN | 30 min |
 
 ### OFF - offline during a commit (`settle.mjs` for 1-2, `offline.mjs` for 3-5)
 
@@ -143,11 +143,11 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | Id | How it is run | Atom | Missing | Human | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
 | DEV-1 | W3 becomes a new owner device | `newdevice.mjs` | the notice counted once per device | no | U, PIN | 20 min |
-| DEV-2, -3 | revoke W3 from W1, online then offline | `purge-devices.mjs` (recorded devices only) | the revoke GESTURE in the device list | no | U | 60 min |
-| DEV-4 | two fresh devices enrol at the same instant | `newdevice.mjs` | a second wipeable seat **W6** (`WIPEABLE` allows W3 only) | no | U, PIN | 30 min |
-| DEV-5 | **blocked on Q5** (how one device id presents a new key without a product seam) | - | the answer to Q5 | - | - | - |
+| DEV-2, -3 | revoke W3 from W1, online then offline | `purge-devices.mjs` (recorded devices only), `net.mjs` `armCutOnNextLoad` + `cutHard` | - | no | U | 60 min |
+| DEV-4 | two fresh devices enrol at the same instant | `archive/mintdevice.mjs` twice | a second wipeable seat **W6** (now in `WIPEABLE`, `launch.mjs`, `names.example.mjs`) | no | U, PIN | 30 min |
+| DEV-5 | **attached to CORRUPT-8** (lead, 2026-10-25), not played on this build | - | - | - | - | - |
 | DEV-6 | revoke one device, then a new one of the same owner reads from the original arrival | `newdevice.mjs` | W6, as DEV-4 | no | U, PIN | 30 min |
-| DEV-7 | the background Welcome on A1, three variants; trigger: `status 503` on the newcomer's `group-info` | `fault.mjs`, `phone.mjs`, logcat | the three variants' timing | no | B | 90 min |
+| DEV-7 | the background Welcome on A1, three variants; trigger: `status 503` on the newcomer's `group-info` | `fault.mjs`, `reopen.mjs` (A1 SWIPED: a force-stopped app gets no push), logcat | `opened` relaunches A1 on the phone's `Welcome staged` line; `stale` moves the group by a W1 leaf refresh while A1 is shut | no | B | 90 min |
 
 ### BIG (`big.mjs`)
 
@@ -170,7 +170,7 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 
 - **DUP-3 and GAP-4 are decided, not owed.** Their runner records `SKIPPED` with the plan's reason
   (Q2; the shared-payload writer OFF), so `bun rows.mjs` shows a decision rather than a gap.
-- **DEV-5 waits on Q5.** Until answered, it is `pending` on the board, never `SKIPPED`.
+- **DEV-5 is attached to CORRUPT-8** (lead, 2026-10-25) and is not played on this build.
 - **The I1 rows (FLOOR-3, BIG-1..3) need no person** (Q4 settled): the rig unlocks the iPhone with
   `tools/ios-device/ios.mjs unlock` and types the PIN from stdin, from the private notes. If WDA ever
   stops answering, the lead asks for the unlock, runs the row unchanged, and the row carries the

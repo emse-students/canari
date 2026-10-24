@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-101 scripts.
+102 scripts.
 
 | script | what it is |
 |---|---|
@@ -47,6 +47,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `deployed-wasm-check.mjs` | Asks a DEPLOYED estate whether the `mls-core` WebAssembly it serves can panic on the target it |
 | `device-census.mjs` | THE PURE HALF OF THE DEVICE CENSUS - the SQL text, and every function that turns one of its rows |
 | `device.mjs` | WHICH CLIENT AN ATOM IS ABOUT, resolved once, in one place. |
+| `devicerows.mjs` | THE DEVICE ROWS OF THE 1.4.1 CAMPAIGN - DEV-1..4, DEV-6, DEV-7 and DUP-7 - their table and judges. |
 | `devices.mjs` | THE DEVICE CENSUS - every device the platform knows, with its runtime, OS, app version, owner, |
 | `epochfork.mjs` | IS THIS DEVICE AT THE GROUP'S EPOCH - the predicate no row asked, as a pure comparison. |
 | `estate-origins.mjs` | WHICH ESTATE A RUNNING CLIENT IS ACTUALLY TALKING TO, as a pure function of what it fetched. |
@@ -139,7 +140,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-87 scripts.
+88 scripts.
 
 | script | what it is |
 |---|---|
@@ -175,6 +176,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/corrupt6.mjs` | CORRUPT-6 - a DAMAGED device-key vault: recover or fail loudly, never a decrypt loop. |
 | `archive/del.mjs` | DEL-2..10 - deleting a conversation while something else is still happening to it. |
 | `archive/del1.mjs` | DEL-1 - the peer deletes a group while the other side is awaiting its history. |
+| `archive/devrows.mjs` | THE DEVICE ROWS OF THE 1.4.1 CAMPAIGN - a new device of the owner, seated, revoked, raced, and |
 | `archive/floor.mjs` | FLOOR-1..3 OF THE 1.4.1 CAMPAIGN - the floor re-proved on dev, before any other MLS row. |
 | `archive/fwd.mjs` | FWD-1 / FWD-2 - the WP-FWD-1 reproduction attempt, channel -> DM. |
 | `archive/fwd345.mjs` | FWD-3, FWD-4, FWD-5 - the three forward shapes WP-FWD-1 has not been tried against. |
@@ -235,7 +237,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-55 scripts.
+56 scripts.
 
 | script | what it is |
 |---|---|
@@ -251,6 +253,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/deploy-selftest.mjs` | A ROW DEV WAS REDEPLOYED UNDER IS ABSENT, NOT FAILING - AND THE GATE ASKS DEV, NOT DOCKER. |
 | `archive/deployed-wasm-selftest.mjs` | THE POST-DEPLOY WASM CHECK MUST REFUSE WHAT IT IS MEANT TO REFUSE, AND ONLY THAT. |
 | `archive/devices-selftest.mjs` | SELFTEST FOR THE DEVICE CENSUS - pins the classification against rows measured on production. |
+| `archive/devrows-selftest.mjs` | THE DEVICE ROWS' OWN JUDGEMENTS, PINNED (`devicerows.mjs`). |
 | `archive/epochfork-selftest.mjs` | Pins `epochfork.mjs`: the comparison that tells a healthy conversation from an epoch-forked one, |
 | `archive/estate-selftest.mjs` | WHICH ESTATE A CLIENT IS ON IS A GATE, AND A GATE THAT ONLY EVER ACCEPTS IS NOT ONE. |
 | `archive/exit-selftest.mjs` | A CHECK MAY NOT REPORT SUCCESS AND END IN THE SAME BREATH. |
@@ -299,7 +302,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 
 They live under `archive/` but they are NOT questions - they take no verdict. Runners that drive other rows, probes, and vocabulary that never moved to the root. **Search here before writing a gesture**: this is the half that used to be filed as rows, where nobody looking for a gesture would ever have found it.
 
-44 scripts.
+45 scripts.
 
 | script | what it is |
 |---|---|
@@ -321,6 +324,7 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 | `archive/idcheck.mjs` | Does anything STAGED carry a real identity? Run it before every commit that touches this rig. |
 | `archive/identity.mjs` | Fingerprints each client's IDENTITY - the pre-flight gate that says the two Chrome profiles are |
 | `archive/ladder.mjs` | WP-RECONNECT-1's owed PROSPECTIVE proof: the reconnect ladder no longer terminates on a count. |
+| `archive/mintdevice.mjs` | ONE NEW DEVICE, MINTED IN ITS OWN PROCESS, AND ITS RESULT AS ONE JSON LINE - for DEV-4, which needs |
 | `archive/mlsdb.mjs` | Snapshot / restore of the browser's MLS state, which is what makes the HEAL phase possible at all. |
 | `archive/nav.mjs` | Client-side navigation to a route, for clients that may be sitting anywhere. |
 | `archive/navclose.mjs` | Does a navigation produce EXACTLY one socket close, and is the document replacement observable? |
@@ -350,4 +354,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-289 scripts in total.
+293 scripts in total.

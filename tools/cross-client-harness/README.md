@@ -1044,7 +1044,7 @@ asserts R5 ownership of every conversation the row writes in, and reads the serv
 when an armed fault never fired, `FAIL` on any own assertion or invariant, else `PASS` - and
 `recordObserved` then gates it on every seat's window, the deploy exclusion (R4) and the server window
 judged by the row id (R6). The invariant (R8) runs after every row, with its reload. A row's own
-judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`, `killrows.mjs`, `admitrows.mjs`), pinned by
+judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`, `killrows.mjs`, `admitrows.mjs`, `devicerows.mjs`), pinned by
 `archive/<group>-selftest.mjs`.
 
 ```sh
@@ -1151,6 +1151,21 @@ not on the `v1.4.0` build (its own `/_app/version.json` against the tag's commit
 from the phone with `chat.mjs` `apiAt` - a phone's page is `tauri.localhost`, not the estate. **A1
 signs in as the owner**, so ADM-5 and ADM-7 run in a group of W2's and W4's. The link's token is never
 recorded, only its length. Judgements in `admitrows.mjs`, pinned by `archive/admit-selftest.mjs`.
+
+```sh
+bun archive/devrows.mjs --row DEV-1|DEV-2|DEV-3|DEV-4|DEV-6|DUP-7   # browsers; mints on W3 (and W6)
+bun archive/devrows.mjs --row DEV-7 --variant cold|opened|stale     # A1 swiped away
+```
+
+**A DEVICE ROW MINTS IN ITS OWN PROCESS.** `newdevice.mjs` binds its device from `--device` at import,
+so each mint is `archive/mintdevice.mjs`, which prints one `MINTED {json}` line and records nothing;
+DEV-4 starts two at once. The minted seat is opened and watched BEFORE the mint, so its whole join is
+in the row's window. A revoke is `purge-devices.mjs` from W1 (its allowlist is the campaign ledger).
+DEV-3 installs the socket patch before the mint (`net.mjs` `armCutOnNextLoad`), so the mint's own load
+carries it. DUP-7 and DEV-7 pick ONE group's request on a shared route with `fault.mjs` `bodyIncludes`:
+a new device makes its owner commit in every group at once. **W6 is the owner's second scratch
+profile**: it must be declared in `names.mjs` (owner account) and signed in once by a human. DEV-5 is
+played with CORRUPT-8. Judgements in `devicerows.mjs`, pinned by `archive/devrows-selftest.mjs`.
 
 ## Rules that make a result trustworthy
 

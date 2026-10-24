@@ -93,7 +93,9 @@ const keepOpen = argv.includes("--keep-open");
  * local material, and the login + `pin.mjs` that follow enter the ACCOUNT's current PIN on a device
  * with nothing to migrate. W2 and W3 are untouched, which a re-registration would not have left true.
  */
-const WIPEABLE = ["W3", "W1"];
+// W6 JOINED ON 2026-10-25 for the 1.4.1 campaign: DEV-4 races two fresh devices of the owner and
+// DEV-6 needs a second one after the first is revoked. It is a scratch profile like W3 and holds nothing.
+const WIPEABLE = ["W3", "W1", "W6"];
 const device = opt("device", "W3");
 if (!WIPEABLE.includes(device)) {
   throw new Error(

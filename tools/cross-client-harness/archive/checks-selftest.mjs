@@ -52,9 +52,10 @@ const A1_DOORS = /PORTS\.A1|sameAccountAs|a1SameAccountAs|tauri\.localhost/;
  *
  * `becomeANewDevice` is the primitive that wipes it and `PORTS.W3` the port itself. A runner reaching
  * W3 by an unlisted door is invisible here, exactly as it is for the phone - so a new one belongs in
- * this pattern the day it is opened.
+ * this pattern the day it is opened. `mintdevice.mjs` opened on 2026-10-25: the device rows mint in
+ * a child process (`archive/devrows.mjs`), so the primitive's name is in the CHILD, not the runner.
  */
-const W3_DOORS = new RegExp("PORTS" + "\\." + "W3|becomeANewDevice");
+const W3_DOORS = new RegExp("PORTS" + "\\." + "W3|becomeANewDevice|mintdevice" + "\\." + "mjs");
 
 /**
  * A COMPUTED PORT LOOKUP IS A DOOR TOO, AND FOR A DAY IT WAS NOT.
