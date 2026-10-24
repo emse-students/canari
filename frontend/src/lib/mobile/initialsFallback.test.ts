@@ -91,7 +91,7 @@ describe('the initials disc, across the three notification implementations', () 
     // could not be named. Both platforms pass the salon explicitly instead.
     expect(kotlin).toContain('generateInitialsBitmap(channelName)');
     expect(swift).toContain('attachInitials(content: content, name: channelName)');
-    expect(objc).toContain('mentionsMe, channelName, YES);');
+    expect(objc).toContain('shownMentionsMe, channelName, YES, NO);');
   });
 
   it('writes to a temp file, never to the avatar cache', () => {

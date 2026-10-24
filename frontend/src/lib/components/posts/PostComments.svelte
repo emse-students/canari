@@ -1,76 +1,80 @@
 <script lang="ts">
-  import EmojiText from '$lib/components/shared/EmojiText.svelte';
-  import {
-    ChevronDown,
-    ChevronUp,
-    Send,
-    X,
-    CornerDownRight,
-    Pencil,
-    Trash2,
-    ArrowUpDown,
-    ImageIcon,
-    Flag,
-  } from '@lucide/svelte';
-  import { tick, onMount } from 'svelte';
-  import { getToken } from '$lib/stores/auth';
-  import GifPickerModal from '$lib/components/chat/GifPickerModal.svelte';
-  import { fetchGifFile } from '$lib/utils/gifMediaProxy';
+  import { ArrowUpDown } from '@lucide/svelte';
+  import { onMount, tick } from 'svelte';
   import type { PostComment, PostMediaRef } from '$lib/posts/api';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
-  import PostImage from './PostImage.svelte';
-  import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
-  import { mediaAspectStyle, resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
-  import { timeAgo, exactDate } from '$lib/utils/time';
-  import SvelteMarkdown from '@humanspeak/svelte-markdown';
-  import { POST_MARKDOWN_RENDERERS } from './postMarkdownRenderers';
-  import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
-  import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
+  import type { CommentIdentity } from '$lib/posts/postIdentity';
+  import type { CommentOutcome } from '$lib/posts/postCommentThread.svelte';
+  import { commentAuthorKind, commentAuthorName } from '$lib/posts/commentAuthor';
+  import CommentItem, { commentAnchorId } from './CommentItem.svelte';
+  import CommentComposer from './CommentComposer.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { SvelteSet } from 'svelte/reactivity';
-  import { reportLineClamp } from '$lib/actions/reportLineClamp';
-  import { showToast } from '$lib/stores/toast.svelte';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { Log } from '$lib/utils/Log';
+  import { commentArrivals } from '$lib/posts/commentArrival';
 
   type SortMode = 'recent' | 'oldest' | 'liked';
 
-  /** Props for the PostComments section of a post card. */
+  /** The most pages "oldest" and "liked" read before sorting, so a very long thread cannot loop for ever. */
+  const MAX_PAGES_FOR_SORT = 25;
+
+  /**
+   * A POST'S THREAD AS A SHEET'S BODY: the list scrolls in the height it is given, and the composer
+   * stays docked under it (the card's comment sheet `PostCommentsSheet`, and the reel viewer's
+   * `ReelCommentsSheet`). The card itself shows only a one-comment preview (`CommentsPreview`), so
+   * there is no inline mode left here: the whole thread is always this.
+   */
   interface Props {
-    /** All comments on the post (including replies). */
+    /** The post, for the draft kept per post and the composer's ids. */
+    postId: string;
+    /** All comments on the post held so far (including replies). */
     comments: PostComment[];
     /** Top-level comments only (parentId is null). Pre-computed by the parent to avoid redundant filtering. */
     topLevelComments: PostComment[];
-    /** Whether the full comment list is expanded (false = show preview only). */
-    showComments: boolean;
     /** Current value of the comment input box, controlled by the parent. */
     commentText: string;
     /** True while a new comment is being submitted to prevent double-posting. */
     submittingComment: boolean;
-    /** Authenticated user's ID, used to gate edit/delete controls. */
+    /** Authenticated user's ID: the heart, and the composer's avatar. Rights come from the server. */
     currentUserId: string;
-    /** Total comment count from the server (may be higher than comments.length if the list was truncated). */
+    /** Total comment count from the server (may be higher than comments.length while pages are unread). */
     totalCommentCount?: number;
-    /** Called when the user clicks "Afficher" / "Masquer" to toggle comment visibility. */
-    onToggleComments: () => void;
     /** Called on each keystroke to sync the comment input value to the parent's state. */
     onCommentTextChange: (text: string) => Promise<void>;
-    /** Called when the user submits a comment (or reply if parentId is provided). media is an optional encrypted GIF/image/file. */
-    onAddComment: (parentId?: string, media?: PostMediaRef) => Promise<void>;
+    /**
+     * Called when the user submits a comment (or reply if parentId is provided). `media` is an
+     * optional encrypted GIF/image; `identity` is who it is written as. The outcome says whether
+     * it went, so the composer keeps a chosen identity across a failed send.
+     */
+    onAddComment: (
+      parentId?: string,
+      media?: PostMediaRef,
+      identity?: CommentIdentity
+    ) => Promise<CommentOutcome>;
     /** Called when the user toggles a like on a comment. */
     onLikeComment: (commentId: string) => void;
     /** Called when the user saves an inline edit. */
     onEditComment: (commentId: string, text: string) => Promise<void>;
-    /** Called when the user deletes a comment. */
+    /** Called when the user deletes a comment (after the confirmation this section asks). */
     onDeleteComment: (commentId: string) => Promise<void>;
     /** Called when the user reports a comment. */
     onReport?: (commentId: string) => void;
     /** Bearer token forwarded to PostImage for decrypting comment media. */
     authToken?: string;
-    /** If provided, a "Load all comments" button is shown when totalCommentCount >= 20. */
-    onLoadAllComments?: () => Promise<void>;
+    /** Reads the next page of older threads; the "older comments" button and the sorts call it. */
+    onLoadOlder?: () => Promise<void>;
+    /**
+     * The server's answer to "is there more": `true` offers the button, `false` hides it, and
+     * `undefined` (no page read yet) falls back to comparing the server's count with the rows held.
+     */
+    hasMoreComments?: boolean;
+    /** A page is on its way: the button says so and cannot ask twice. */
+    loadingMore?: boolean;
     /** Optional external keydown handler forwarded after internal shortcuts are processed. */
     onKeyDown?: (e: KeyboardEvent) => void;
+    /**
+     * Why the last comment did not go, shown beside the box until the reader types again. It used to
+     * be a banner at the bottom of the whole card.
+     */
+    sendError?: string;
     /**
      * Comments shown before the server has acknowledged them.
      *
@@ -84,51 +88,46 @@
      * into view once it is drawn, and marked so the reader sees which one they were told about.
      */
     focusCommentId?: string;
-    /**
-     * Drawn as a sheet's body (`ReelCommentsSheet`): the list scrolls in the height it is given and
-     * the composer stays docked under it, as Instagram's does, and the show/hide toggle is not drawn
-     * - the sheet has its own close.
-     */
-    docked?: boolean;
+    /** Put the caret in the box when the thread opens (the "write a comment" tap, an empty thread). */
+    autofocusComposer?: boolean;
   }
 
   let {
+    postId,
     comments,
     topLevelComments,
-    showComments,
     commentText,
     submittingComment,
     currentUserId,
     authToken = '',
     totalCommentCount,
-    onToggleComments,
     onCommentTextChange,
     onAddComment,
     onLikeComment,
     onEditComment,
     onDeleteComment,
     onReport,
-    onLoadAllComments,
+    onLoadOlder,
+    hasMoreComments,
+    loadingMore = false,
     onKeyDown,
+    sendError = '',
     pendingCommentIds,
     focusCommentId,
-    docked = false,
+    autofocusComposer = false,
   }: Props = $props();
-
-  /** The DOM id of a comment's row, the anchor a notification tap scrolls to. */
-  function commentAnchorId(id: string): string {
-    return `comment-${id}`;
-  }
 
   /** The focus id already acted on, so a later redraw (a new comment, a like) never scrolls again. */
   let focusHandled: string | undefined;
   $effect(() => {
     const id = focusCommentId;
-    if (!id || focusHandled === id || !showComments) return;
+    if (!id || focusHandled === id) return;
     if (!comments.some((c) => c.id === id)) {
-      // Deleted since the push, or not in this list: the post is shown, and the log says why the
-      // page did not move.
-      Log.d(`[PostComments] focus comment ${id.slice(0, 8)} not in the thread - post shown at top`);
+      // Deleted since the push, or not in this list: the thread is shown from the top, and the log
+      // says why the page did not move.
+      Log.d(
+        `[PostComments] focus comment ${id.slice(0, 8)} not in the thread - shown from the top`
+      );
       focusHandled = id;
       return;
     }
@@ -140,165 +139,67 @@
     });
   });
 
-  const mediaService = new MediaService();
-  let pendingMedia = $state<PostMediaRef | null>(null);
-  let pendingPreviewUrl = $state<string | null>(null);
-  let uploadingMedia = $state(false);
-  let showGifPicker = $state(false);
-  /** True while the comment input is focused, so only the focused box handles a keyboard GIF. */
-  let commentInputFocused = $state(false);
-
-  function clearPendingMedia() {
-    if (pendingPreviewUrl) {
-      URL.revokeObjectURL(pendingPreviewUrl);
-    }
-    pendingMedia = null;
-    pendingPreviewUrl = null;
-  }
-
-  /**
-   * Encrypts and uploads an image/GIF, then stages it as the pending comment media (preview +
-   * ref). GIFs are uploaded as-is: canvas compression would render a single frame and drop the
-   * animation. Shared by paste, the in-app GIF picker, and keyboard-committed GIFs.
-   */
-  async function stageMediaFile(file: File) {
-    uploadingMedia = true;
-    try {
-      let uploadFile = file;
-      let dims: { width: number; height: number } | undefined;
-      if (file.type.startsWith('image/') && file.type !== 'image/gif') {
-        const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.comment;
-        const compressed = await compressImage(file, maxWidth, maxHeight, quality);
-        uploadFile = compressed.file;
-        dims = { width: compressed.width, height: compressed.height };
-      }
-      // Read at upload time: the `authToken` prop is a display copy and expires after 15 min.
-      const ref = await mediaService.encryptAndUpload(
-        uploadFile,
-        await getToken(),
-        dims,
-        'archive'
-      );
-      const { type: _type, ...mediaFields } = ref;
-      clearPendingMedia();
-      pendingMedia = mediaFields as PostMediaRef;
-      pendingPreviewUrl = URL.createObjectURL(uploadFile);
-    } catch (err) {
-      console.error('Failed to upload comment media', err);
-      showToast(m.post_comment_media_error());
-    } finally {
-      uploadingMedia = false;
-    }
-  }
-
-  async function handleCommentPaste(e: ClipboardEvent) {
-    const items = Array.from(e.clipboardData?.items ?? []);
-    const fileItem = items.find((item) => item.kind === 'file');
-    if (!fileItem) return;
-    e.preventDefault();
-    const file = fileItem.getAsFile();
-    if (file) await stageMediaFile(file);
-  }
-
-  /**
-   * In-app GIF picker: fetches the chosen GIF's bytes and stages it as encrypted comment media.
-   *
-   * The bytes come through Canari's GIF relay (`fetchGifFile`), never from KLIPY's CDN, so KLIPY
-   * does not see the person attaching it.
-   */
-  async function handleGifSelected(url: string) {
-    showGifPicker = false;
-    try {
-      await stageMediaFile(await fetchGifFile(url));
-    } catch (err) {
-      // The log separates the two causes this shares one message for: a refused connection
-      // (offline, relay down) throws a TypeError, a served error throws our `HTTP <status>`.
-      console.error('Failed to load GIF', err);
-      showToast(m.post_comment_gif_fetch_error());
-    }
-  }
-
-  /** Rebuilds a File from a keyboard-committed GIF (base64, Android/iOS) and stages it as comment media. */
-  function handleKeyboardMedia(detail: { mime?: string; name?: string; data?: string }) {
-    if (!commentInputFocused || !detail?.data) return;
-    try {
-      const bin = atob(detail.data);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const mime = detail.mime || 'image/gif';
-      const name = detail.name || `gif-${Date.now()}.${mime.split('/')[1] ?? 'gif'}`;
-      void stageMediaFile(new File([bytes], name, { type: mime }));
-    } catch (err) {
-      console.error('Failed to handle keyboard GIF', err);
-      showToast(m.post_comment_media_error());
-    }
-  }
+  let composer = $state<{ focus: () => void } | null>(null);
 
   onMount(() => {
-    const onKeyboardMedia = (e: Event) => handleKeyboardMedia((e as CustomEvent).detail ?? {});
-    window.addEventListener('canari-keyboard-media', onKeyboardMedia);
-    return () => window.removeEventListener('canari-keyboard-media', onKeyboardMedia);
+    if (autofocusComposer) void tick().then(() => composer?.focus());
   });
 
-  let loadingAll = $state(false);
-
-  /** Calls onLoadAllComments with a loading spinner, then clears the spinner. */
-  async function handleLoadAll() {
-    loadingAll = true;
-    await onLoadAllComments?.();
-    loadingAll = false;
-  }
+  /** More threads can be read: the server said so, or - before any page - its count exceeds the rows. */
+  const hasOlderComments = $derived(
+    !!onLoadOlder &&
+      (hasMoreComments ?? (totalCommentCount !== undefined && totalCommentCount > comments.length))
+  );
 
   let replyingToId = $state<string | null>(null);
   let replyingToName = $state<string>('');
-  let editingCommentId = $state<string | null>(null);
-  let editingText = $state('');
-  let editInputEl = $state<HTMLInputElement | null>(null);
   let sortMode = $state<SortMode>('recent');
 
-  let expandedComments = $state(new Set<string>());
-  /** Comments whose text is really cut by the five-line clamp (measured, see `reportLineClamp`). */
-  const clippedComments = new SvelteSet<string>();
-
-  function setCommentClipped(id: string, clipped: boolean) {
-    if (clipped) clippedComments.add(id);
-    else clippedComments.delete(id);
-  }
-
-  /** Toggles the "voir plus / voir moins" expanded state for a comment. */
-  function toggleCommentExpanded(id: string) {
-    if (expandedComments.has(id)) {
-      expandedComments = new Set([...expandedComments].filter((c) => c !== id));
-    } else {
-      expandedComments = new Set([...expandedComments, id]);
+  /**
+   * Picks a sort. "Recent" is the order the pages come in; "oldest" and "liked" are about the WHOLE
+   * thread, so while more pages exist they are read first (up to `MAX_PAGES_FOR_SORT`), or the list
+   * would be the oldest of what happens to be loaded - not the oldest comments.
+   */
+  async function selectSort(mode: SortMode) {
+    sortMode = mode;
+    if (mode === 'recent' || !onLoadOlder) return;
+    for (let i = 0; i < MAX_PAGES_FOR_SORT && hasOlderComments; i++) {
+      const before = comments.length;
+      await onLoadOlder();
+      // A page that brought nothing (a failure, which the host said) ends the wait.
+      if (comments.length === before) break;
     }
   }
-
-  $effect(() => {
-    if (editingCommentId && editInputEl) {
-      void tick().then(() => editInputEl?.focus());
-    }
-  });
-
-  const PREVIEW_COUNT = 1;
 
   /**
-   * Enters reply mode targeting the given comment, and cancels any active edit.
-   * YouTube-style: replies to replies are threaded under the top-level comment (flat),
-   * with an @mention pre-filled so the author is still addressable.
+   * Enters reply mode targeting the given comment, and puts the caret in the box (it used to leave
+   * the reader to find the box at the end of the thread and tap again). Replies to replies are
+   * threaded under the top-level comment (flat); a reply to a PERSONAL comment pre-fills the name,
+   * an anonymous or association comment has no name to type.
    */
   function initiateReply(comment: PostComment) {
-    // If replying to a reply, thread under the top-level to keep a flat structure
     replyingToId = comment.parentId ?? comment.id;
-    replyingToName = getCommentAuthorName(comment);
-    editingCommentId = null;
-    // Pre-fill @mention when replying to a reply (YouTube-style)
-    if (comment.parentId) {
+    replyingToName = commentAuthorName(comment);
+    if (comment.parentId && commentAuthorKind(comment) === 'personal') {
       void onCommentTextChange(`@${replyingToName} `);
     }
+    void tick().then(() => composer?.focus());
   }
 
-  /** Exits reply mode and clears the reply target name. Undoes @mention pre-fill if untouched. */
+  /** Re-enters reply mode on a comment a kept draft was answering, without touching the text. */
+  function restoreReply(commentId: string) {
+    const target = comments.find((c) => c.id === commentId);
+    if (!target) {
+      Log.d(
+        `[PostComments] draft reply target ${commentId.slice(0, 8)} is gone - draft kept as a comment`
+      );
+      return;
+    }
+    replyingToId = target.parentId ?? target.id;
+    replyingToName = commentAuthorName(target);
+  }
+
+  /** Exits reply mode and clears the reply target name. Undoes the name pre-fill if untouched. */
   function cancelReply() {
     if (commentText === `@${replyingToName} `) {
       void onCommentTextChange('');
@@ -307,62 +208,21 @@
     replyingToName = '';
   }
 
-  /** Enters inline edit mode for the given comment, pre-populating the edit input, and cancels any active reply. */
-  function initiateEdit(comment: PostComment) {
-    editingCommentId = comment.id;
-    editingText = comment.text;
+  /** An inline edit starts on some comment: the reply being composed is dropped. */
+  function dropReplyForEdit() {
     replyingToId = null;
+    replyingToName = '';
   }
 
-  /** Exits inline edit mode and clears the edit buffer. */
-  function cancelEdit() {
-    editingCommentId = null;
-    editingText = '';
-  }
-
-  /** Calls onEditComment with the trimmed edit text, then exits edit mode. */
-  async function submitEdit() {
-    if (!editingText.trim() || !editingCommentId) return;
-    await onEditComment(editingCommentId, editingText.trim());
-    cancelEdit();
-  }
-
-  /** Submits the comment (text and/or media) as a new comment or reply, then cancels reply mode. */
-  async function handleSubmitComment() {
-    if ((!commentText.trim() && !pendingMedia) || submittingComment || uploadingMedia) return;
-    const media = pendingMedia ?? undefined;
-    clearPendingMedia();
-    await onAddComment(replyingToId ?? undefined, media);
+  /** Sends through the host, then leaves reply mode; the outcome goes back to the composer. */
+  async function handleSend(send: {
+    parentId?: string;
+    media?: PostMediaRef;
+    identity: CommentIdentity;
+  }): Promise<CommentOutcome> {
+    const outcome = await onAddComment(send.parentId, send.media, send.identity);
     cancelReply();
-  }
-
-  function handleInternalKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmitComment();
-    }
-    if (e.key === 'Escape' && replyingToId) cancelReply();
-    if (onKeyDown) onKeyDown(e);
-  }
-
-  /** Handles keyboard shortcuts on the inline comment edit input: Enter saves, Escape cancels. */
-  function handleEditKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      submitEdit();
-    }
-    if (e.key === 'Escape') cancelEdit();
-  }
-
-  /** Returns the best available display name for a comment author: "firstName lastName" → displayName → userId as fallback. */
-  function getCommentAuthorName(comment: PostComment): string {
-    const first = comment.firstName?.trim();
-    const last = comment.lastName?.trim();
-    if (first && last) return `${first} ${last}`;
-    if (first) return first;
-    if (last) return last;
-    if (comment.displayName?.trim()) return comment.displayName.trim();
-    return getUserDisplayNameSync(comment.userId);
+    return outcome;
   }
 
   const sortedTopLevel = $derived.by(() => {
@@ -375,422 +235,114 @@
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   });
 
-  const visibleComments = $derived(
-    showComments ? sortedTopLevel : sortedTopLevel.slice(0, PREVIEW_COUNT)
-  );
+  // THE ENTRANCE OF ONE NEW COMMENT (`motion-pop-in`, `commentArrivals`). The reader's own comment is
+  // shown under a local id and swapped for the server's row when it lands: that swap is the same
+  // comment, so a pass in which a local id vanished is not an arrival.
+  const knownIds = new Set<string>();
+  let listDrawn = false;
+  let heldLocalIds = new Set<string>();
+  let arrived = $state<ReadonlySet<string>>(new Set());
+  $effect(() => {
+    const ids = sortedTopLevel.map((c) => c.id);
+    const present = new Set(ids);
+    const swapped = [...heldLocalIds].some((id) => !present.has(id));
+    heldLocalIds = new Set(ids.filter((id) => pendingCommentIds?.has(id)));
+    const fresh = commentArrivals(knownIds, ids, listDrawn && !swapped);
+    listDrawn = true;
+    if (fresh.length) arrived = new Set([...arrived, ...fresh]);
+  });
 </script>
 
-{#snippet commentNode(comment: PostComment, isReply: boolean)}
-  {@const isOwn = comment.userId === currentUserId}
-  {@const isEditing = editingCommentId === comment.id}
-  {@const isPending = pendingCommentIds?.has(comment.id) ?? false}
-  {@const isFocused = comment.id === focusCommentId}
+<!--
+  THE WHOLE THREAD, in the height the sheet gives it: the list scrolls, the composer is docked under
+  it. Nothing here decides whether to be drawn - a post nobody commented on opens as a composer and
+  nothing else, and the sheet is opened only from a tap that asked for it (the card draws NOTHING
+  for a post with no comments, `CommentsPreview`).
+-->
+<div class="flex h-full min-h-0 flex-col px-4 pt-2 pb-3 sm:px-5">
+  <!-- The scroller reaches the sheet's edges (`-mx-4 px-4`), so the 44 px hit box a small control gets on a
+       touch screen (`tap-target`, the heart at the row's right end) stays INSIDE it: with the padding on
+       the wrapper instead, that box stuck out by a few pixels and the list scrolled sideways. -->
   <div
-    id={commentAnchorId(comment.id)}
-    data-focused={isFocused || undefined}
-    class="flex scroll-mt-24 items-start gap-2.5 {isReply ? 'mt-2.5' : 'mt-4'} {isPending
-      ? 'opacity-60'
-      : ''}"
+    class="-mx-4 min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain px-4 sm:-mx-5 sm:px-5"
+    data-post-comments-list
   >
-    <a
-      href="/profile/{encodeURIComponent(comment.userId)}"
-      class="mt-0.5 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-    >
-      <Avatar userId={comment.userId} size="sm" />
-    </a>
-
-    <div class="min-w-0 flex-1">
-      {#if isEditing}
-        <!-- Inline edit mode. -->
-        <div
-          class="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-amber-500/40 bg-black/5 px-3.5 py-2.5 dark:bg-white/5"
-        >
-          <input
-            type="text"
-            bind:this={editInputEl}
-            bind:value={editingText}
-            onkeydown={handleEditKeyDown}
-            class="text-text-main flex-1 bg-transparent text-sm font-medium outline-none"
-          />
+    <!-- Sort: about a LIST, so not drawn for fewer than two comments. -->
+    {#if topLevelComments.length > 1}
+      <div class="mb-2 flex flex-wrap items-center justify-end gap-1">
+        <ArrowUpDown size={12} class="text-text-muted opacity-60" />
+        {#each [['recent', m.post_sort_recent_label()], ['oldest', m.post_sort_oldest_label()], ['liked', m.post_sort_liked_label()]] as const as [mode, label] (mode)}
           <button
             type="button"
-            onclick={submitEdit}
-            class="shrink-0 text-amber-500 outline-none hover:text-amber-400"
-            aria-label={m.common_validate_button()}
-          >
-            <Send size={15} strokeWidth={2.5} />
-          </button>
-          <button
-            type="button"
-            onclick={cancelEdit}
-            class="text-text-muted hover:text-text-main shrink-0 outline-none"
-            aria-label={m.common_cancel_button()}
-          >
-            <X size={15} strokeWidth={2.5} />
-          </button>
-        </div>
-      {:else}
-        <!-- The comment a notification tap opened the post at carries a ring: the bubble only, so
-             a focused comment does not mark the replies drawn under it. -->
-        <div
-          class="w-fit max-w-full rounded-2xl rounded-tl-sm border border-black/5 bg-black/5 px-3.5 py-2.5 shadow-sm dark:border-white/5 dark:bg-white/5 {isFocused
-            ? 'ring-2 ring-amber-500/60'
-            : ''}"
-        >
-          <a
-            href="/profile/{encodeURIComponent(comment.userId)}"
-            class="text-text-main mb-0.5 block text-xs font-bold transition-colors outline-none hover:text-amber-500 focus-visible:underline"
-          >
-            <EmojiText text={getCommentAuthorName(comment)} />
-          </a>
-          {#if isReply}
-            <!-- "In reply to" badge on rendered replies. -->
-            {@const parentComment = comments.find((c) => c.id === comment.parentId)}
-            {#if parentComment}
-              <span
-                class="text-text-muted text-2xs mb-1 flex items-center gap-1 font-semibold opacity-75"
-              >
-                <CornerDownRight size={11} />
-                <EmojiText text={getCommentAuthorName(parentComment)} />
-              </span>
-            {/if}
-          {/if}
-          {#if comment.text}
-            {@const isExpanded = expandedComments.has(comment.id)}
-            <div
-              use:reportLineClamp={{
-                active: !isExpanded,
-                text: comment.text,
-                onMeasure: (clipped) => setCommentClipped(comment.id, clipped),
-              }}
-              class="post-markdown text-text-main text-sm leading-snug wrap-break-word [&_p]:m-0 [&_p]:inline {isExpanded
-                ? ''
-                : 'line-clamp-5'}"
-            >
-              <SvelteMarkdown
-                source={preprocessPostMarkdown(comment.text)}
-                renderers={POST_MARKDOWN_RENDERERS}
-                options={{ gfm: true, breaks: true }}
-              />
-            </div>
-            {#if clippedComments.has(comment.id) || isExpanded}
-              <button
-                type="button"
-                onclick={() => toggleCommentExpanded(comment.id)}
-                class="text-primary text-2xs mt-0.5 font-semibold outline-none hover:underline focus-visible:underline"
-              >
-                {isExpanded ? m.post_voir_moins() : m.post_voir_plus()}
-              </button>
-            {/if}
-          {/if}
-          {#if comment.media && authToken}
-            {@const reserved = reservesAspectRatio(resolveMediaType(comment.media))}
-            <div
-              class="relative mt-1.5 w-full overflow-hidden rounded-xl {reserved
-                ? 'max-w-56 bg-black/5 dark:bg-white/5'
-                : 'max-w-[20rem]'}"
-              style={reserved ? mediaAspectStyle(comment.media.width, comment.media.height) : ''}
-            >
-              <PostImage media={comment.media} {authToken} />
-            </div>
-          {/if}
-        </div>
-      {/if}
-
-      <div class="mt-1 flex items-center gap-3.5 px-2">
-        <span
-          class="text-text-muted text-2xs font-bold opacity-80"
-          title={exactDate(comment.createdAt)}>{timeAgo(comment.createdAt)}</span
-        >
-
-        <!-- WITHHELD WHILE THE ROW IS PENDING: every one of these names the comment's id to
-             the server, and a pending row's id is local. The reader sees the comment; they
-             simply cannot act on it until it exists. -->
-        {#if !isPending}
-          <button
-            type="button"
-            onclick={() => onLikeComment(comment.id)}
-            class="text-2xs font-bold transition-colors outline-none focus-visible:underline {comment.likes?.includes(
-              currentUserId
-            )
-              ? 'text-red-500'
+            onclick={() => void selectSort(mode)}
+            class="tap-target text-2xs rounded-full px-2 py-0.5 font-bold transition-colors {sortMode ===
+            mode
+              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
               : 'text-text-muted hover:text-text-main'}"
           >
-            {comment.likes?.length
-              ? m.post_likes_count_label({ count: comment.likes.length })
-              : m.post_like_label()}
+            {label}
           </button>
-
-          <button
-            type="button"
-            onclick={() => initiateReply(comment)}
-            class="text-text-muted hover:text-text-main text-2xs font-bold transition-colors outline-none focus-visible:underline"
-          >
-            {m.post_reply_label()}
-          </button>
-
-          {#if isOwn && !isEditing}
-            <button
-              type="button"
-              onclick={() => initiateEdit(comment)}
-              class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-amber-500"
-              aria-label={m.common_edit_label()}
-            >
-              <Pencil size={12} strokeWidth={2.5} />
-            </button>
-            <button
-              type="button"
-              onclick={() => onDeleteComment(comment.id)}
-              class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-500"
-              aria-label={m.common_delete_button()}
-            >
-              <Trash2 size={12} strokeWidth={2.5} />
-            </button>
-          {:else if !isOwn && onReport}
-            <button
-              type="button"
-              onclick={() => onReport?.(comment.id)}
-              class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-400"
-              aria-label={m.post_report_comment_label()}
-              title={m.post_report_label()}
-            >
-              <Flag size={11} strokeWidth={2.5} />
-            </button>
-          {/if}
-        {/if}
-      </div>
-
-      {#if !isReply}
-        {@const replies = comments.filter((c) => c.parentId === comment.id)}
-        {#if replies.length > 0}
-          <div
-            class="mt-1 ml-2 border-l-2 border-black/5 pl-3 sm:ml-3.5 sm:pl-4 dark:border-white/10"
-          >
-            {#each replies as reply (reply.id)}
-              {@render commentNode(reply, true)}
-            {/each}
-          </div>
-        {/if}
-      {/if}
-    </div>
-  </div>
-{/snippet}
-
-<!--
-  NOTHING IS DRAWN FOR A POST NOBODY HAS COMMENTED ON, and that used to cost 90 px per card.
-
-  An `{:else}` branch here rendered the composer at rest in EVERY card - avatar, "Soyez le premier..."
-  and a send button - measured on A1 (Mi 9T, 436 x 945 CSS px) on 2026-09-14. Four posts visible on a
-  phone meant 360 px of empty input fields between them. Facebook draws none: its comment icon opens
-  the composer, which is what this card's own comment button already does.
-
-  So `showComments` is now the only thing that opens it, and the placeholder still says "be the
-  first" when the post has no comments - the invitation was worth keeping, the permanent field was
-  not.
-
-  OPENED FROM ZERO, THE COMPOSER SITS 8 PX UNDER THE ACTION ROW, and it sat 45 px under it. Measured
-  at 436 px (the Mi 9T's width) on 2026-10-01, three paddings stacked above an input with nothing
-  between them: this section's own `py-4` (16), the EMPTY list's `mb-4` (16) and the input area's
-  `pt-3` (12) - spacing that separates a list from the composer, drawn when there is no list. The
-  user read it on the phone as ~100 px of dead space under the icons. The list and its gap now
-  exist only when there are comments, and the section pads itself like the row above it.
--->
-{#if comments.length > 0 || showComments}
-  <div
-    class={docked
-      ? 'flex h-full min-h-0 flex-col px-4 pt-2 pb-3 sm:px-5'
-      : 'border-t border-black/5 bg-white/30 px-4 pt-2 pb-3 sm:px-5 dark:border-white/10 dark:bg-black/10'}
-  >
-    <div
-      class={docked ? 'min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain' : ''}
-      data-post-comments-list
-    >
-      <!--
-      Controls: show/hide + sort. Both are about a LIST, so neither is drawn for a post with no
-      comments - opened from zero, this section is a composer and "Masquer les commentaires" would
-      name something that is not on screen.
-    -->
-      {#if topLevelComments.length > 0}
-        <div class="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-          <div class="min-w-0">
-            {#if topLevelComments.length > PREVIEW_COUNT && !showComments}
-              <button
-                type="button"
-                onclick={onToggleComments}
-                class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-              >
-                <ChevronDown size={16} strokeWidth={2.5} />
-                {m.post_show_comments_label({ count: topLevelComments.length })}
-              </button>
-            {:else if showComments && !docked}
-              <button
-                type="button"
-                onclick={onToggleComments}
-                class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-              >
-                <ChevronUp size={16} strokeWidth={2.5} />
-                {m.post_hide_comments_label()}
-              </button>
-            {/if}
-          </div>
-
-          <!-- Tri -->
-          {#if topLevelComments.length > 1}
-            <div class="flex min-w-0 flex-wrap items-center gap-1">
-              <ArrowUpDown size={12} class="text-text-muted opacity-60" />
-              {#each [['recent', m.post_sort_recent_label()], ['oldest', m.post_sort_oldest_label()], ['liked', m.post_sort_liked_label()]] as const as [mode, label] (mode)}
-                <button
-                  type="button"
-                  onclick={() => (sortMode = mode)}
-                  class="text-2xs rounded-full px-2 py-0.5 font-bold transition-colors {sortMode ===
-                  mode
-                    ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                    : 'text-text-muted hover:text-text-main'}"
-                >
-                  {label}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/if}
-
-      <!-- Comment list. -->
-      {#if visibleComments.length > 0}
-        <div class="mb-3 space-y-1">
-          {#each visibleComments as comment (comment.id)}
-            {@render commentNode(comment, false)}
-          {/each}
-        </div>
-      {/if}
-
-      <!-- Load all comments (if the backend returns more). -->
-      {#if onLoadAllComments && totalCommentCount !== undefined && totalCommentCount >= 20 && showComments}
-        <button
-          type="button"
-          onclick={handleLoadAll}
-          disabled={loadingAll}
-          class="text-text-muted hover:text-text-main text-2xs mb-2 w-full rounded-lg py-1.5 font-bold transition-colors disabled:opacity-50"
-        >
-          {loadingAll ? m.common_loading_label() : m.post_load_all_comments_label()}
-        </button>
-      {/if}
-    </div>
-
-    <!-- Input area. -->
-    <div class="flex flex-col gap-2 {docked ? 'shrink-0 pt-2' : ''}">
-      {#if replyingToId}
-        <div
-          class="animate-in fade-in slide-in-from-bottom-1 text-2xs ml-10 flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 font-bold text-amber-700 dark:text-amber-400"
-        >
-          <span class="flex items-center gap-1.5"
-            ><CornerDownRight size={14} />
-            {m.post_replying_to_label({ name: replyingToName })}</span
-          >
-          <button
-            onclick={cancelReply}
-            class="ui-icon-button rounded-full transition-colors outline-none hover:bg-amber-500/20"
-            aria-label={m.post_cancel_reply_label()}
-          >
-            <X size={14} strokeWidth={2.5} />
-          </button>
-        </div>
-      {/if}
-      {@render commentInputRow(
-        replyingToId
-          ? m.post_reply_placeholder()
-          : comments.length === 0
-            ? m.post_first_comment_placeholder()
-            : m.post_comment_placeholder()
-      )}
-    </div>
-  </div>
-{/if}
-
-{#snippet commentInputRow(placeholder: string)}
-  <div class="relative">
-    {#if pendingPreviewUrl || uploadingMedia}
-      <div class="mb-2 ml-8.5 flex items-center gap-2">
-        <div
-          class="relative max-h-14 w-20 shrink-0 overflow-hidden rounded-lg bg-black/10 dark:bg-white/10"
-          style={pendingMedia?.width && pendingMedia?.height
-            ? mediaAspectStyle(pendingMedia.width, pendingMedia.height)
-            : 'aspect-ratio: 10/7'}
-        >
-          {#if pendingPreviewUrl}
-            <img src={pendingPreviewUrl} alt="GIF" class="h-full w-full object-cover" />
-          {:else}
-            <div class="flex h-full w-full items-center justify-center">
-              <ImageIcon size={20} class="animate-pulse opacity-30" />
-            </div>
-          {/if}
-          {#if !uploadingMedia}
-            <button
-              type="button"
-              onclick={clearPendingMedia}
-              class="absolute top-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white transition-colors hover:bg-red-500"
-              aria-label={m.post_remove_image_label()}
-            >
-              <X size={10} strokeWidth={3} />
-            </button>
-          {/if}
-        </div>
-        {#if uploadingMedia}
-          <span class="text-text-muted text-2xs animate-pulse">{m.common_loading_label()}</span>
-        {/if}
+        {/each}
       </div>
     {/if}
-    <div class="flex items-center gap-2.5">
-      <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
-      <!-- `items-center`, and it was `items-end` (user, 2026-09-10: *"le texte n'est pas centre
-           ici"*). The row's tallest child is the 40px send button, not the 28px editor, so
-           bottom-aligning left the text 17px from the top of the pill and 7px from the bottom -
-           measured, off by 10px. `items-end` is the right rule for a composer that GROWS, and
-           this one cannot: `singleLine` is set on the input. Its two local antidotes go with it,
-           the GIF button's `self-center` and the send icon's `mt-0.5` - a nudge kept once the
-           thing it compensated for is gone is how the next offset gets built. -->
-      <div
-        class="flex min-w-0 flex-1 items-center rounded-2xl border border-black/5 bg-black/5 py-0.5 pr-0.5 pl-3.5 shadow-inner transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:border-white/10 dark:bg-white/5 dark:focus-within:bg-black/40"
-        onfocusin={() => (commentInputFocused = true)}
-        onfocusout={() => (commentInputFocused = false)}
-      >
-        <MentionComposerInput
-          value={commentText}
-          onchange={(text) => onCommentTextChange(text)}
-          {placeholder}
-          singleLine
-          class="min-w-0 flex-1"
-          editorClass="flex-1 bg-transparent text-sm font-medium text-text-main outline-none py-1 min-h-0"
-          minHeight="0"
-          onpaste={handleCommentPaste}
-          onkeydown={handleInternalKeyDown}
-        />
-        <button
-          type="button"
-          onclick={() => (showGifPicker = true)}
-          disabled={uploadingMedia}
-          title={m.chat_send_gif_label()}
-          aria-label={m.chat_send_gif_label()}
-          class="text-text-muted text-2xs mr-0.5 shrink-0 px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
-        >
-          GIF
-        </button>
-        <button
-          type="button"
-          onclick={handleSubmitComment}
-          disabled={(!commentText.trim() && !pendingMedia) || submittingComment || uploadingMedia}
-          class="ui-icon-button ml-1 rounded-full text-amber-500 transition-all outline-none hover:bg-amber-500/10 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent"
-          aria-label={m.post_send_comment_label()}
-        >
-          <Send size={18} strokeWidth={2.5} class="ml-0.5" />
-        </button>
-      </div>
-    </div>
-  </div>
-{/snippet}
 
-<GifPickerModal
-  open={showGifPicker}
-  onClose={() => (showGifPicker = false)}
-  onSelect={(gif) => handleGifSelected(gif.full.url)}
-/>
+    <!-- Comment list. -->
+    {#if sortedTopLevel.length > 0}
+      <div class="mb-3 space-y-1">
+        {#each sortedTopLevel as comment (comment.id)}
+          <div class={arrived.has(comment.id) ? 'motion-pop-in' : ''}>
+            <CommentItem
+              {comment}
+              {comments}
+              {currentUserId}
+              {authToken}
+              {pendingCommentIds}
+              {focusCommentId}
+              onLike={onLikeComment}
+              onReply={initiateReply}
+              onEditStart={dropReplyForEdit}
+              onEdit={onEditComment}
+              onDelete={onDeleteComment}
+              {onReport}
+            />
+          </div>
+        {/each}
+      </div>
+    {/if}
+
+    <!-- Older comments, page by page. -->
+    {#if hasOlderComments}
+      <button
+        type="button"
+        onclick={() => void onLoadOlder?.()}
+        disabled={loadingMore}
+        class="tap-target text-text-muted hover:text-text-main text-2xs mb-2 w-full rounded-lg py-1.5 font-bold transition-colors disabled:opacity-50"
+      >
+        {loadingMore ? m.common_loading_label() : m.post_comment_load_older_label()}
+      </button>
+    {/if}
+  </div>
+
+  <!-- Input area. -->
+  <div class="shrink-0 pt-2">
+    <CommentComposer
+      bind:this={composer}
+      {postId}
+      value={commentText}
+      onChange={(text) => onCommentTextChange(text)}
+      placeholder={replyingToId
+        ? m.post_reply_placeholder()
+        : comments.length === 0
+          ? m.post_first_comment_placeholder()
+          : m.post_comment_placeholder()}
+      submitting={submittingComment}
+      {currentUserId}
+      replyTo={replyingToId ? { id: replyingToId, name: replyingToName } : null}
+      onCancelReply={cancelReply}
+      onRestoreReply={restoreReply}
+      onSubmit={handleSend}
+      {sendError}
+      {onKeyDown}
+    />
+  </div>
+</div>

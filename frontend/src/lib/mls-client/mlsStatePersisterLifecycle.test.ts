@@ -9,6 +9,8 @@ function makePersister(): MlsStatePersister {
   return {
     persistNow: vi.fn(),
     scheduleDeferred: vi.fn(),
+    noteReceivedFrame: vi.fn(),
+    markStructural: vi.fn(),
     flush: vi.fn().mockResolvedValue(undefined),
     flushEncrypted: vi.fn().mockResolvedValue(undefined),
     onBulkIngestStart: vi.fn(),

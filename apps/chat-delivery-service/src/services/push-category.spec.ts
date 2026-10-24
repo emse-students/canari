@@ -27,6 +27,7 @@ describe('categoryOfDataPush', () => {
     ['social_live_started', 'posts'],
     ['form_opening_soon', 'forms'],
     ['form_open', 'forms'],
+    ['form_paid_over_capacity', 'forms'],
     ['event_proposed', 'events'],
     ['event_validated', 'events'],
     ['event_rejected', 'events'],

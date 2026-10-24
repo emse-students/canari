@@ -409,6 +409,19 @@ export class AddCommentDto {
   @IsOptional()
   parentId?: string;
 
+  /**
+   * Comment AS this association: needs `POST_AS_ASSO` there (the controller asks `canPostAs`).
+   * Exclusive with `anonymous` - an association comment wins, like a post's.
+   */
+  @IsOptional()
+  @IsUUID()
+  associationId?: string;
+
+  /** Comment anonymously: open to any member, the account stays known to moderation. */
+  @IsOptional()
+  @IsBoolean()
+  anonymous?: boolean;
+
   @IsObject()
   @IsOptional()
   media?: {

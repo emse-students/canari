@@ -1,3 +1,4 @@
+import { Throttle } from '@nestjs/throttler';
 import {
   BadRequestException,
   Body,
@@ -6,6 +7,7 @@ import {
   ForbiddenException,
   Get,
   Headers,
+  HttpCode,
   Logger,
   Param,
   ParseUUIDPipe,
@@ -20,8 +22,11 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { isUUID } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
+import { CONFIRM_PAYMENT_PER_MINUTE } from '../forms/forms.controller';
 import {
   PERM_FLAG_KEY,
   GlobalAdminOrAssociationRoleGuard,
@@ -67,6 +72,7 @@ import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 import { sanitizeLog } from '../common/log.utils';
+import { wholeCentsOf } from '../common/core-payment-error';
 import {
   AGENDA_SELECTION_REQUIRED,
   assertAgendaAccess,
@@ -76,6 +82,13 @@ import {
 import { isInternalSecret } from '../internal/is-internal-secret.util';
 
 const LOGO_UPLOAD_MB = 2;
+
+/**
+ * Writes of a Lydia Business key per user AND association per minute. A wrong key is only found
+ * by the first callback it fails to verify, so the route must not become a loop; a manager
+ * correcting a paste needs a handful.
+ */
+export const LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE = 5;
 
 /** Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products. */
 @Controller('associations')
@@ -530,6 +543,58 @@ export class AssociationsController {
       throw new ForbiddenException('MANAGE_PAYOUT_ACCOUNT permission required');
     }
     return this.service.getPayoutAccount(id);
+  }
+
+  /**
+   * Whether the association's Lydia Business private token is stored - `{ set }` and NOTHING else,
+   * ever: the key is write-only. MANAGE_PAYOUT_ACCOUNT only, like the payout account it belongs to.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/lydia-business-key')
+  async lydiaBusinessKeyStatus(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<{ set: boolean }> {
+    await this.assertPayoutAccountManager(userId, ga, id, 'Business key status read');
+    return { set: await this.service.isLydiaBusinessKeySet(id) };
+  }
+
+  /**
+   * Stores the association's Lydia Business private token (encrypted at rest), the key its Lydia
+   * callbacks are verified with. MANAGE_PAYOUT_ACCOUNT only. Answers `{ set: true }` - never the
+   * value, which no route returns to a browser. Replaces any key already stored. Throttled per
+   * user and association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`): nothing checks the key against
+   * Lydia here, the first callback it verifies is what proves it.
+   */
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE, ttl: 60_000 } })
+  @Put(':id/lydia-business-key')
+  async setLydiaBusinessKey(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { businessPrivateToken?: unknown }
+  ): Promise<{ set: true }> {
+    await this.assertPayoutAccountManager(userId, ga, id, 'Business key write');
+    await this.service.setLydiaBusinessKey(id, body?.businessPrivateToken, userId);
+    return { set: true };
+  }
+
+  /** Refuses anyone but a MANAGE_PAYOUT_ACCOUNT holder of the association (403). */
+  private async assertPayoutAccountManager(
+    userId: string,
+    ga: string | undefined,
+    id: string,
+    what: string
+  ): Promise<void> {
+    const allowed = await this.service.canManagePayoutAccount(userId, id, {
+      isGlobalAdmin: ga === 'true',
+    });
+    if (!allowed) {
+      this.logger.debug(`[PERM] ${what} refused on ${sanitizeLog(id)}`);
+      throw new ForbiddenException('MANAGE_PAYOUT_ACCOUNT permission required');
+    }
   }
 
   /** Recent posts and forms for this association (picker when linking calendar ↔ content). */
@@ -1404,20 +1469,44 @@ export class AssociationsController {
     @Headers('x-user-id') userId: string,
     @Body()
     body?: {
-      customAmountCents?: number;
+      customAmountCents?: unknown;
       successUrl?: string;
       cancelUrl?: string;
       payerEmail?: string;
     }
   ) {
+    // Read as `unknown` and checked HERE: an inline body type is never validated, so a fraction or
+    // a string reached the bounds check (NaN passes it) and the charge (rounded by `toFixed(2)`).
+    const customAmountCents = wholeCentsOf(body?.customAmountCents, this.logger, 'SHOP');
     return this.productsService.createCheckoutSession(
       id,
       productId,
       userId,
-      body?.customAmountCents,
+      customAmountCents,
       { successUrl: body?.successUrl, cancelUrl: body?.cancelUrl },
       body?.payerEmail
     );
+  }
+
+  /**
+   * The payer's return from Lydia for ONE checkout attempt (`checkout_id` on the shop page): asks
+   * the provider about the attempt's own request, records it if paid, and answers its status. Only
+   * the BUYER may ask, about their own attempt of this product (anything else is a 404). NOT a
+   * mark-paid: the caller names an attempt, and the payment is Lydia's answer about the request the
+   * row stored (`ProductsService.confirmCheckout`). Throttled per user and attempt like the form's
+   * `confirm-payment`, since each call may spend a `request/state`.
+   */
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: CONFIRM_PAYMENT_PER_MINUTE, ttl: 60_000 } })
+  @Post(':id/products/:productId/checkouts/:checkoutId/confirm')
+  @HttpCode(200)
+  confirmCheckout(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('checkoutId', ParseUUIDPipe) checkoutId: string,
+    @Headers('x-user-id') userId: string
+  ) {
+    return this.productsService.confirmCheckout(id, productId, checkoutId, userId);
   }
 
   /** Lists failed Cercle webhook deliveries for admin retry. Requires MANAGE_PRODUCTS flag. */
@@ -1710,19 +1799,35 @@ export class AssociationsController {
     return this.service.clearLydiaAccount(id);
   }
 
-  /** Called by core-service when a product purchase completes. */
+  /**
+   * A VERIFIED Lydia confirm callback for a boutique attempt, handed over by core-service as a
+   * trigger (`ProductsService.handlePurchaseCompleted`): `checkoutId` is the attempt the order_ref
+   * names, `requestId` Lydia's numeric id and `vendorToken` the Business whose key verified it. No
+   * buyer and no amount are accepted - the attempt row holds both. Internal secret only.
+   */
   @Post('products/:productId/purchase-completed')
+  @HttpCode(200)
   purchaseCompleted(
-    @Param('productId') productId: string,
-    @Body() body: { userId: string; amountCents: number; paymentIntentId: string },
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Body() body: { checkoutId?: unknown; requestId?: unknown; vendorToken?: unknown },
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
+    const text = (value: unknown) => (typeof value === 'string' ? value : '');
+    const checkoutId = text(body?.checkoutId);
+    const requestId = text(body?.requestId);
+    const vendorToken = text(body?.vendorToken);
+    if (!isUUID(checkoutId) || !/^\d{1,32}$/.test(requestId) || !vendorToken) {
+      this.logger.warn(
+        `[SHOP] purchase-completed refused: invalid checkoutId, requestId or vendorToken`
+      );
+      throw new BadRequestException('checkoutId, requestId and vendorToken are required');
+    }
     return this.productsService.handlePurchaseCompleted(
       productId,
-      body.userId,
-      body.amountCents,
-      body.paymentIntentId
+      checkoutId,
+      requestId,
+      vendorToken
     );
   }
 }

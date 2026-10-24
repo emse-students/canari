@@ -10,6 +10,8 @@ export type CommentOrder = 'recent' | 'oldest';
 interface StoredComment {
   id: string;
   userId?: string;
+  anonymous?: boolean;
+  associationId?: string | null;
   parentId?: string | null;
 }
 
@@ -27,8 +29,8 @@ export interface CommentPage<T extends StoredComment> {
  * A page never splits a thread - a reply is useless without its parent - so the unit is the
  * top-level comment and its descendants. The cursor is the array POSITION of a thread head
  * (stable, because comments are only appended or removed whole), exclusive: `recent` walks to
- * lower positions, `oldest` to higher ones. A comment by a blocked account is dropped, and so is
- * the whole thread under a blocked head, since the reader would see replies to nothing.
+ * lower positions, `oldest` to higher ones. A comment by a blocked account is dropped (unless it is
+ * anonymous or an association's), and so is the whole thread under a blocked head, since the reader would see replies to nothing.
  */
 export function pageComments<T extends StoredComment>(
   all: T[],
@@ -37,7 +39,10 @@ export function pageComments<T extends StoredComment>(
   const order = opts.order ?? 'recent';
   const limit = Math.min(Math.max(opts.limit ?? COMMENT_PAGE_DEFAULT, 1), COMMENT_PAGE_MAX);
   const blocked = new Set(opts.blockedIds ?? []);
-  const visible = (c: T) => !blocked.has(c.userId ?? '');
+  // An anonymous or association comment is exempt: filtering it on `userId` would let a block
+  // probe who wrote it (the rule `blockedAuthorSql` applies to posts).
+  const visible = (c: T) =>
+    !blocked.has(c.userId ?? '') || c.anonymous === true || !!c.associationId;
 
   const heads: { c: T; pos: number }[] = [];
   all.forEach((c, pos) => {

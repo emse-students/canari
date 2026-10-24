@@ -52,10 +52,14 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
   });
 
   const queryBuilder = () => {
-    const state = { skip: 0, take: 0 };
+    const state = { skip: 0, take: 0, hideAddressed: false };
     const qb = {
       where: () => qb,
-      andWhere: () => qb,
+      // The one condition this fake honours: the SQL filter that withholds addressed rows.
+      andWhere: (condition: string) => {
+        if (/q\.addressed = false/.test(condition)) state.hideAddressed = true;
+        return qb;
+      },
       orderBy: () => qb,
       skip: (n: number) => {
         state.skip = n;
@@ -66,8 +70,9 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
         return qb;
       },
       getMany: async () => {
-        asked.push({ ...state });
-        return table.slice(state.skip, state.skip + state.take);
+        asked.push({ skip: state.skip, take: state.take });
+        const rows = state.hideAddressed ? table.filter((r) => !r.addressed) : table;
+        return rows.slice(state.skip, state.skip + state.take);
       },
     };
     return qb;
@@ -75,6 +80,7 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
 
   const queuedMessageRepo = {
     createQueryBuilder: jest.fn(() => queryBuilder()),
+    count: jest.fn(async () => table.filter((r) => r.addressed).length),
     find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn().mockResolvedValue(null),
     delete: jest.fn().mockResolvedValue({ affected: 0 }),
@@ -140,6 +146,53 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
     expect(page).toHaveLength(Math.floor(PENDING_PAGE_MAX_BYTES / big));
     const bytes = page.reduce((n, m) => n + (m.proto?.length ?? 0), 0);
     expect(bytes).toBeLessThanOrEqual(PENDING_PAGE_MAX_BYTES);
+  });
+
+  /**
+   * Review of #2270: an ADDRESSED row is a history answer the server routed to sessions that declared
+   * they apply rule 5. A session that did not declare it - an older tab - must not pull it either.
+   * Withheld IN THE QUERY, so the page and its cursor are untouched and the row stays queued for the
+   * session that can read it.
+   */
+  it('withholds an addressed row from a fetch that did not declare the capability', async () => {
+    table = [row('a', 10, 0), { ...row('b', 10, 1), addressed: true }, row('c', 10, 2)];
+
+    const older = await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    const current = await service.fetchMessages(
+      'u1',
+      'd1',
+      'u1',
+      undefined,
+      500,
+      undefined,
+      'addressed-history-1'
+    );
+
+    expect(older.map((m) => m.id)).toEqual(['a', 'c']);
+    expect(current.map((m) => m.id)).toEqual(['a', 'b', 'c']);
+    expect(queuedMessageRepo.delete).not.toHaveBeenCalled();
+  });
+
+  it('reports the withheld rows once for a device, not on every pull of an older session', async () => {
+    table = [row('a', 10, 0), { ...row('b', 10, 1), addressed: true }];
+    const logSpy = jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+    const withheldLines = () =>
+      logSpy.mock.calls.filter(([m]) => String(m).includes('WITHHELD')).length;
+
+    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    expect(withheldLines()).toBe(1);
+
+    // A second row waiting is a change: told again, once.
+    table.push({ ...row('c', 10, 2), addressed: true });
+    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    expect(withheldLines()).toBe(2);
+
+    expect(warnSpy.mock.calls.filter(([m]) => String(m).includes('WITHHELD'))).toHaveLength(0);
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 
   it('always sends at least one row, however big that row is', async () => {

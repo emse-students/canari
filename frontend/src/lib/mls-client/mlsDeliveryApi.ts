@@ -1,7 +1,7 @@
 import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
 import { fetchJsonUnderProgressDeadline } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
-import { DELIVERY, type FrameDelivery } from './frameDelivery';
+import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
 import type { DatedKeyPackage } from './keyPackages';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
@@ -85,6 +85,37 @@ export class MalformedExclusionsError extends Error {
   constructor(detail: string) {
     super(`malformed exclusions answer: ${detail}`);
     this.name = 'MalformedExclusionsError';
+  }
+}
+
+/**
+ * The delivery service answered the windows route WITHOUT a `withheld` field: it predates it
+ * (2026-10-22). Typed so the one caller that has an older rule to keep - the receiver - can tell it
+ * from a malformed answer, which fails closed everywhere. A store build runs ahead of production
+ * for as long as both stores take a version, so this is an ordinary state, not a defect.
+ */
+export class WithheldUnsupportedError extends Error {
+  constructor(readonly groupId: string) {
+    super(`the delivery service predates the withheld windows (group ${groupId.slice(0, 8)})`);
+    this.name = 'WithheldUnsupportedError';
+  }
+}
+
+/**
+ * The delivery service refused to ADDRESS a history answer on a conversation to the named devices:
+ * not every live session of theirs declared that it refuses an addressed frame that is not a
+ * solicited history answer (`400 { error: 'addressed_unsupported' }`, step A rule 6). Typed so the
+ * answerer answers nobody - an older device is served by an older peer, never by a broadcast here.
+ */
+export class AddressedUnsupportedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly devices: readonly string[]
+  ) {
+    super(
+      `the addressed device(s) cannot receive an addressed answer in ${groupId.slice(0, 8)}: ${devices.join(',')}`
+    );
+    this.name = 'AddressedUnsupportedError';
   }
 }
 
@@ -599,6 +630,9 @@ export class MlsDeliveryApi {
       const url = new URL(`${this.historyUrl}/api/mls/messages/${this.userId}/${this.deviceId}`);
       url.searchParams.set('limit', String(pageLimit));
       if (afterCreatedAt) url.searchParams.set('after', afterCreatedAt);
+      // The same declaration the socket makes: the server hands an ADDRESSED row only to a session
+      // that applies rule 5 (history-answer-addressing, rule 6), and withholds it from any other.
+      url.searchParams.set('caps', ADDRESSED_HISTORY_CAPABILITY);
 
       let batch: Array<{ createdAt?: string }>;
       // OUTSIDE the try below: a token that cannot be had is not a page asked for too big. It used to
@@ -721,11 +755,31 @@ export class MlsDeliveryApi {
     }
     if (!res.ok) return { kind: 'unanswered', detail: `HTTP ${res.status}` };
     try {
-      const d = (await res.json()) as { keys?: unknown };
+      const d = (await res.json()) as { keys?: unknown; firstSeen?: unknown };
       if (!Array.isArray(d.keys) || !d.keys.every((k) => typeof k === 'string')) {
         return { kind: 'unanswered', detail: 'a 200 with no key list in it' };
       }
-      return { kind: 'keys', keys: (d.keys as string[]).map((k) => fromBase64(k)) };
+      const keys = (d.keys as string[]).map((k) => fromBase64(k));
+      if (!Array.isArray(d.firstSeen)) return { kind: 'keys', keys };
+      // A malformed entry is dropped, never given a date: an undated key reads as OLD, the side
+      // that announces nothing.
+      const firstSeen: Array<{ key: Uint8Array; firstSeenAt: number }> = [];
+      let dropped = 0;
+      for (const entry of d.firstSeen as unknown[]) {
+        const e = entry as { signatureKey?: unknown; firstSeenAt?: unknown };
+        const at = typeof e?.firstSeenAt === 'string' ? Date.parse(e.firstSeenAt) : NaN;
+        if (typeof e?.signatureKey !== 'string' || Number.isNaN(at)) {
+          dropped++;
+          continue;
+        }
+        firstSeen.push({ key: fromBase64(e.signatureKey), firstSeenAt: at });
+      }
+      if (dropped > 0) {
+        console.error(
+          `[MLS] ${dropped} malformed key age(s) for ${deviceId.slice(0, 12)}... dropped`
+        );
+      }
+      return { kind: 'keys', keys, firstSeen };
     } catch (e) {
       return { kind: 'unanswered', detail: `unreadable body: ${String(e).slice(0, 120)}` };
     }
@@ -836,6 +890,8 @@ export class MlsDeliveryApi {
     Array<{
       keyPackage: Uint8Array;
       deviceId: string;
+      /** The `userId` asked for, carried so an Add can check each package names this device. */
+      userId: string;
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
@@ -863,6 +919,7 @@ export class MlsDeliveryApi {
       return devices.map((d) => ({
         keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
         deviceId: d.deviceId,
+        userId,
         deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
         deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
         deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
@@ -1451,6 +1508,17 @@ export class MlsDeliveryApi {
           parseRetryAfterMs(res.headers.get('retry-after'), Date.now())
         );
       }
+      // STEP A's refusal to address a device that does not apply rule 5 - typed at the throw by the
+      // `error` code the server sets, never by its sentence.
+      if (res.status === 400 && delivery.recipients) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string; devices?: unknown };
+        if (body.error === 'addressed_unsupported') {
+          throw new AddressedUnsupportedError(
+            groupId,
+            Array.isArray(body.devices) ? body.devices.map(String) : []
+          );
+        }
+      }
       // ANY OTHER REFUSAL carries its status as a type too: an answer, which the outbox reads as
       // breaking a run of 5xx - a sentence could not be read back.
       throw new ApiRefusalError(res.status, null, `Message send HTTP error: ${res.status}`);
@@ -1697,11 +1765,56 @@ export class MlsDeliveryApi {
    * network path), any other status an {@link ApiRefusalError} carrying it; a transport failure is
    * whatever `f` raised, untouched.
    */
-  getGroupExclusions(groupId: string): Promise<GroupExclusions> {
-    return this.joinInFlight(`exclusions:${groupId}`, async () => {
-      const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/exclusions`, {
-        headers: await this.auth(),
-      });
+  async getGroupExclusions(groupId: string, forUserId?: string): Promise<GroupExclusions> {
+    return (await this.readGroupWindows(groupId, forUserId)).exclusions;
+  }
+
+  /**
+   * What this device's user, and `forUserId` when given, may never be handed in `groupId`: their gaps
+   * AND, in a group conversation, everything before their first arrival (user, 2026-10-21) - the
+   * route's `withheld` field, which names those two people only. A 1:1 answers the gaps only, decided
+   * by the server. A counted person always has an entry, so a missing key means "not counted".
+   *
+   * Read for ONE person at a time - the invitee of a history push, or this device's own user - never
+   * as a union: the span before the newest member's arrival would then withhold everything older
+   * from everyone. Asked with the same `forUserId` as {@link getGroupExclusions}, both cost one read.
+   */
+  async getGroupWithheld(groupId: string, forUserId?: string): Promise<GroupExclusions> {
+    // PARSED HERE AND NOWHERE ELSE: a server that predates the field answers no `withheld`, and that
+    // must fail this read alone. Parsed in the shared read, it failed `getGroupExclusions` too, so
+    // every history answer and every received bundle stopped for as long as a store build is ahead
+    // of production.
+    const { withheld } = await this.readGroupWindows(groupId, forUserId);
+    if (withheld === undefined) throw new WithheldUnsupportedError(groupId);
+    return parseGroupExclusions(withheld);
+  }
+
+  /**
+   * Whether this server routes an addressed history answer on a conversation (step A,
+   * docs/wiki/protocols/history-answer-addressing.md): `addressedAnswers: true` on the same read.
+   * A server that predates it answers without the field, which is `false` here, never a failure.
+   */
+  async getAddressedAnswersSupported(groupId: string, forUserId?: string): Promise<boolean> {
+    return (await this.readGroupWindows(groupId, forUserId)).addressedAnswers;
+  }
+
+  /**
+   * The one read behind {@link getGroupExclusions}, {@link getGroupWithheld} and
+   * {@link getAddressedAnswersSupported}, failures classified at the throw. `withheld` is handed on
+   * UNPARSED - see {@link getGroupWithheld}.
+   */
+  private readGroupWindows(
+    groupId: string,
+    forUserId?: string
+  ): Promise<{ exclusions: GroupExclusions; withheld: unknown; addressedAnswers: boolean }> {
+    const forQuery = forUserId ? `?for=${encodeURIComponent(forUserId)}` : '';
+    return this.joinInFlight(`exclusions:${groupId}${forQuery}`, async () => {
+      const res = await this.f(
+        `${this.historyUrl}/api/mls/groups/${groupId}/exclusions${forQuery}`,
+        {
+          headers: await this.auth(),
+        }
+      );
       if (res.status === 403) {
         // ORIGIN FIRST, as for a send: an HTML 403 is the edge, and says nothing about the roster.
         if (responseOrigin(res) === 'edge') throw new SendEdgeRefusedError(groupId, res.status);
@@ -1714,8 +1827,16 @@ export class MlsDeliveryApi {
           `getGroupExclusions refused with ${res.status} for group ${groupId}`
         );
       }
-      const body = (await res.json()) as { exclusions?: unknown };
-      return parseGroupExclusions(body?.exclusions);
+      const body = (await res.json()) as {
+        exclusions?: unknown;
+        withheld?: unknown;
+        addressedAnswers?: unknown;
+      };
+      return {
+        exclusions: parseGroupExclusions(body?.exclusions),
+        withheld: body?.withheld,
+        addressedAnswers: body?.addressedAnswers === true,
+      };
     });
   }
 

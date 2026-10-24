@@ -1,8 +1,11 @@
 use openmls::prelude::*;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
+use crate::device_trust::{DeviceTrust, leaf_keys};
+use crate::graine_run::{BeforeMerge, GraineRun, observe_merge};
 use crate::members::credential_identity;
 use crate::state::{MlsManager, StateSnapshotCache};
 use crate::{MAX_MLS_MESSAGE_BYTES, MlsError};
@@ -17,6 +20,16 @@ use crate::{MAX_MLS_MESSAGE_BYTES, MlsError};
 pub struct IncomingApplication {
     pub plaintext: Vec<u8>,
     pub sender_identity: Option<String>,
+}
+
+/// Everything a merged commit must be shown to, besides the group itself: the device record
+/// (`crate::device_trust`, with this device's own identity and key) and Graine's departure tracker
+/// (`crate::graine_run`). One value, so every merge path feeds both or neither.
+pub(crate) struct MergeObservers<'a> {
+    pub(crate) trust: &'a mut DeviceTrust,
+    /// This device's credential identity and signature key.
+    pub(crate) own: (&'a [u8], &'a [u8]),
+    pub(crate) graine_runs: &'a mut HashMap<String, GraineRun>,
 }
 
 impl MlsManager {
@@ -144,6 +157,11 @@ impl MlsManager {
             group_id,
             message_bytes,
             &self.state_snapshot,
+            &mut MergeObservers {
+                trust: &mut self.device_trust,
+                own: (self.credential.identity(), self.keypair.public()),
+                graine_runs: &mut self.graine_runs,
+            },
         )
     }
 
@@ -163,10 +181,24 @@ impl MlsManager {
 
         let provider = &self.provider;
         let snapshot = &self.state_snapshot;
+        // Every commit of the batch is observed by the departure tracker IN ORDER, one merge at a
+        // time - a departure in the middle of a batch ends the run like any other.
+        let mut observers = MergeObservers {
+            trust: &mut self.device_trust,
+            own: (self.credential.identity(), self.keypair.public()),
+            graine_runs: &mut self.graine_runs,
+        };
         messages
             .iter()
             .map(|bytes| {
-                Self::process_incoming_on_group(group, provider, group_id, bytes, snapshot)
+                Self::process_incoming_on_group(
+                    group,
+                    provider,
+                    group_id,
+                    bytes,
+                    snapshot,
+                    &mut observers,
+                )
             })
             .collect()
     }
@@ -177,6 +209,7 @@ impl MlsManager {
         group_id: &str,
         message_bytes: &[u8],
         state_snapshot: &RefCell<StateSnapshotCache>,
+        observers: &mut MergeObservers<'_>,
     ) -> Result<Option<IncomingApplication>, MlsError> {
         if message_bytes.len() > MAX_MLS_MESSAGE_BYTES {
             return Err(MlsError::InvalidData);
@@ -375,6 +408,10 @@ impl MlsManager {
             }
         };
 
+        // Whether the verified sender is `new_member_commit` travels to the departure tracker,
+        // which reports it beside each run reset (`graine_run.rs`).
+        let external_commit = matches!(processed_message.sender(), Sender::NewMemberCommit);
+
         match processed_message.into_content() {
             ProcessedMessageContent::ApplicationMessage(app_msg) => {
                 state_snapshot.borrow_mut().invalidate_ratchet();
@@ -384,10 +421,28 @@ impl MlsManager {
                 }))
             }
             ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
+                // The leaves BEFORE the merge, for the device record (`crate::device_trust`).
+                let leaves_before = leaf_keys(group);
+                // The tree BEFORE the merge, for Graine's departure tracker: after it, the leaves a
+                // Remove took are gone (`graine_run.rs`).
+                let before = BeforeMerge::read(provider, group, &staged_commit, external_commit);
                 group
                     .merge_staged_commit(provider, *staged_commit)
                     .map_err(|e| MlsError::OpenMls(format!("Merge commit error: {:?}", e)))?;
                 state_snapshot.borrow_mut().invalidate();
+                // EVERY DEVICE THIS COMMIT ADMITTED, read from the signed tree it produced - the one
+                // place every merged commit passes, live, replayed or in a batch (crate::device_trust).
+                // Merged whatever it admits: refusing a commit the group merged forks this device out.
+                let own_identity = String::from_utf8_lossy(observers.own.0).to_string();
+                observers.trust.observe_merged_commit(
+                    group_id,
+                    group.epoch().as_u64(),
+                    &leaves_before,
+                    &leaf_keys(group),
+                    sender_identity.as_deref(),
+                    (&own_identity, observers.own.1),
+                );
+                observe_merge(observers.graine_runs, provider, group_id, before, group);
                 // A Remove commit naming OUR leaf leaves the group inactive, and this is the
                 // instant that becomes true. Before this line the fact was thrown away and the
                 // caller got the same `Ok(None)` as any other applied commit - so the client only

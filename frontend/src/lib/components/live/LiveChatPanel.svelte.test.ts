@@ -179,10 +179,52 @@ describe('LiveReactionsLayer', () => {
     layer.add('like', 100);
     flushSync();
     expect(target.querySelectorAll('[data-live-float]')).toHaveLength(24);
-    layer.add('love', 3);
+    layer.add('fire', 3);
     flushSync();
-    expect(target.querySelectorAll('[data-live-float="love"]')).toHaveLength(0);
+    expect(target.querySelectorAll('[data-live-float="fire"]')).toHaveLength(0);
     debug.mockRestore();
     unmount(layer as never);
+  });
+});
+
+describe('LiveChatPanel report flag', () => {
+  it("offers a flag on someone else's numbered line only, and calls back with the line", () => {
+    const report = vi.fn();
+    const theirs = line({ id: 'm-1', clientId: 'c-1' });
+    const { target } = render({
+      lines: [
+        theirs,
+        line({ id: 'm-2', clientId: 'c-2', authorId: ME, mine: true }),
+        line({ id: null, clientId: 'c-3', status: 'pending' }),
+      ],
+      report,
+    });
+    const flags = target.querySelectorAll<HTMLButtonElement>('[data-live-chat-report]');
+    expect(flags).toHaveLength(1);
+    expect(flags[0].getAttribute('aria-label')).toBe(m.live_chat_report({ name: 'Bob' }));
+    flags[0].click();
+    expect(report).toHaveBeenCalledExactlyOnceWith(theirs);
+  });
+
+  it('draws no flag on a failed line of the reader', () => {
+    const { target } = render({
+      lines: [
+        line({
+          id: null,
+          clientId: 'c-9',
+          mine: true,
+          authorId: ME,
+          status: 'failed',
+          failure: 'network',
+        }),
+      ],
+      report: vi.fn(),
+    });
+    expect(target.querySelector('[data-live-chat-report]')).toBeNull();
+  });
+
+  it('draws no flag where reporting is not offered', () => {
+    const { target } = render({ lines: [line({})] });
+    expect(target.querySelector('[data-live-chat-report]')).toBeNull();
   });
 });

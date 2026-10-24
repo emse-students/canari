@@ -124,6 +124,7 @@ function signedInAsA() {
     log: vi.fn(),
     conversations: new Map(),
     invalidateRestores: vi.fn(),
+    forgetUnconfirmedSalonDraws: vi.fn(),
     setSelectedContact: vi.fn(),
   } as unknown as ChatSessionCallbacks;
   setSignOutHandler(() => session.endSession(cb));

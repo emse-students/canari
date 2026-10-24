@@ -6,8 +6,15 @@ import {
   Logger,
   NotFoundException,
   PayloadTooLargeException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { describeHttpError } from '../common/http-error-log';
+import {
+  SecretBoxUnavailableError,
+  isSecretBoxConfigured,
+  openSecret,
+  sealSecret,
+} from '../common/secret-box';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
@@ -90,6 +97,7 @@ import { assertCreatorCampusGoverned, defaultCampusRules } from '../spaces/audie
 import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
+import { assertAssociationImageUrl } from './association-image-url';
 import type { CoOrganiserPort } from './co-organisers.port';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
@@ -234,6 +242,21 @@ export interface CalendarViewer {
   isGlobalAdmin?: boolean;
 }
 
+/** HKDF purpose of the Business key's encryption key; bump the suffix to rotate the format. */
+const LYDIA_BUSINESS_KEY_PURPOSE = 'lydia-business-key/v1';
+
+/**
+ * What a Lydia Business private token may look like: printable ASCII, no whitespace, 8 to 256
+ * characters. Its real shape is unmeasured (no validated Business's key has been read), so this only
+ * keeps out what cannot be a token - a pasted sentence, a newline, a megabyte.
+ */
+const LYDIA_BUSINESS_KEY_RE = /^[\x21-\x7e]{8,256}$/;
+
+/** What a Business key is bound to: this association AND this Business. */
+function lydiaBusinessKeyContext(associationId: string, vendorToken: string): string {
+  return `${associationId}:${vendorToken}`;
+}
+
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
@@ -319,6 +342,9 @@ export class AssociationsService {
         'Slug must start with a letter or digit and contain only lowercase letters, digits, and hyphens (2-50 chars)'
       );
     }
+    // The logo is normally set by the upload path; a value sent here is held to the same allowlist.
+    const logoUrl = dto.logoUrl?.trim() ? dto.logoUrl.trim() : null;
+    if (logoUrl !== null) assertAssociationImageUrl(logoUrl);
 
     const existing = await this.assoRepo.findOne({
       where: { slug: dto.slug },
@@ -329,6 +355,7 @@ export class AssociationsService {
 
     const asso = this.assoRepo.create({
       ...dto,
+      logoUrl,
       contactEmail: dto.contactEmail?.trim() ? dto.contactEmail.trim() : null,
       createdBy: userId,
     });
@@ -487,6 +514,16 @@ export class AssociationsService {
   async update(id: string, dto: UpdateAssociationDto) {
     const asso = await this.findById(id);
     const patch = { ...dto } as unknown as Partial<Association>;
+    // Blank clears the logo URL; anything else is held to the image URL allowlist before any write.
+    if (dto.logoUrl !== undefined) {
+      const logoUrl = dto.logoUrl === null ? '' : dto.logoUrl.trim();
+      if (logoUrl === '') {
+        patch.logoUrl = null;
+      } else {
+        assertAssociationImageUrl(logoUrl);
+        patch.logoUrl = logoUrl;
+      }
+    }
     if (dto.description !== undefined && dto.description.trim() === '') {
       patch.description = null;
     }
@@ -1437,6 +1474,17 @@ export class AssociationsService {
       })
       .getCount();
     return n > 0;
+  }
+
+  /** The user ids holding `flag` in the association - who a notice addressed to it must reach. */
+  async listFlagHolders(associationId: string, flag: AssociationPermissionFlag): Promise<string[]> {
+    const rows = await this.memberRepo
+      .createQueryBuilder('m')
+      .select('m.userId', 'userId')
+      .where('m.associationId = :associationId', { associationId })
+      .andWhere('(m.permissions & :flag) <> 0', { flag })
+      .getRawMany<{ userId: string }>();
+    return rows.map((r) => r.userId);
   }
 
   /** Returns true if the user is an admin (any flag) of at least one association. */
@@ -2906,7 +2954,140 @@ ${rejectionReason}`
       lydiaOnboardingComplete: false,
       lydiaDashboardUrl: null,
     });
+    // The Business key belongs to the Business being unlinked: it goes with it. (Bound to the old
+    // vendor token, it could not open for the next Business anyway - this is hygiene, not safety.)
+    await this.assoRepo.query(
+      `UPDATE associations SET "lydiaBusinessKeyCiphertext" = NULL WHERE id = $1`,
+      [id]
+    );
+    this.logger.log(
+      `[AUDIT] Lydia Business key cleared on association ${sanitizeLog(id)} (unlink)`
+    );
     await this.invalidatePostListCaches();
+  }
+
+  /**
+   * Stores the association's Lydia Business private token, ENCRYPTED and bound to the association
+   * and its current vendor token (`secret-box.ts`), so its callbacks can be verified. WRITE-ONLY:
+   * nothing ever answers the value to a browser, and nothing logs it - the audit line names the
+   * association and the actor, never the token. The caller checks MANAGE_PAYOUT_ACCOUNT.
+   *
+   * Refused while no Business is linked (there is no vendor token to bind it to), and refused with
+   * a 503 when the server has no encryption secret, BEFORE anything is written.
+   */
+  async setLydiaBusinessKey(id: string, rawKey: unknown, actorId: string): Promise<void> {
+    const key = typeof rawKey === 'string' ? rawKey.trim() : '';
+    if (!LYDIA_BUSINESS_KEY_RE.test(key)) {
+      this.logger.warn(
+        `[LYDIA] Business key refused on association ${sanitizeLog(id)}: not a token shape`
+      );
+      throw new BadRequestException('Invalid Lydia Business private token');
+    }
+    if (!isSecretBoxConfigured()) {
+      this.logger.error(
+        `[LYDIA] Business key refused on association ${sanitizeLog(id)}: LYDIA_KEY_ENCRYPTION_SECRET is not configured`
+      );
+      throw new ServiceUnavailableException('Business key storage is not configured');
+    }
+    const asso = await this.assoRepo.findOne({
+      where: { id },
+      select: { id: true, lydiaAccountId: true },
+    });
+    if (!asso) throw new NotFoundException('Association not found');
+    if (!asso.lydiaAccountId) {
+      this.logger.warn(
+        `[LYDIA] Business key refused on association ${sanitizeLog(id)}: no Business linked`
+      );
+      throw new BadRequestException('No Lydia Business is linked to this association');
+    }
+    const sealed = sealSecret(
+      LYDIA_BUSINESS_KEY_PURPOSE,
+      lydiaBusinessKeyContext(id, asso.lydiaAccountId),
+      key
+    );
+    await this.assoRepo.query(
+      `UPDATE associations SET "lydiaBusinessKeyCiphertext" = $1 WHERE id = $2`,
+      [sealed, id]
+    );
+    this.logger.log(
+      `[AUDIT] Lydia Business key SET on association ${sanitizeLog(id)} by ${sanitizeLog(actorId)}`
+    );
+  }
+
+  /** Whether a Business key is stored - the ONLY thing the panel ever learns about it. */
+  async isLydiaBusinessKeySet(id: string): Promise<boolean> {
+    const rows: Array<{ set: boolean }> = await this.assoRepo.query(
+      `SELECT ("lydiaBusinessKeyCiphertext" IS NOT NULL) AS "set" FROM associations WHERE id = $1`,
+      [id]
+    );
+    if (rows.length === 0) throw new NotFoundException('Association not found');
+    return rows[0].set === true;
+  }
+
+  /**
+   * The DECRYPTED Business private token of the association holding `vendorToken`, for
+   * core-service to verify a Lydia callback with (internal route only). Null when no association
+   * holds that token with a key, when two do (ambiguous: refuse rather than guess), or when the
+   * ciphertext does not open (another secret, or sealed for another vendor token). THROWS a 503
+   * when the server has no encryption secret: a configuration failure is not a verdict about the
+   * callback. The value is never logged, never cached.
+   */
+  async lydiaCallbackKey(vendorToken: string): Promise<string | null> {
+    if (!vendorToken) return null;
+    const rows: Array<{ id: string; sealed: string }> = await this.assoRepo.query(
+      `SELECT id, "lydiaBusinessKeyCiphertext" AS sealed FROM associations
+        WHERE "lydiaAccountId" = $1 AND "lydiaBusinessKeyCiphertext" IS NOT NULL`,
+      [vendorToken]
+    );
+    if (rows.length === 0) {
+      this.logger.debug('[LYDIA] callback key: no association holds a key for that vendor token');
+      return null;
+    }
+    if (rows.length > 1) {
+      this.logger.error(
+        `[LYDIA] callback key: ${rows.length} associations hold a key for ONE vendor token ` +
+          `(${rows.map((r) => sanitizeLog(r.id)).join(', ')}) - refused, a Business is one association`
+      );
+      return null;
+    }
+    const [row] = rows;
+    try {
+      return openSecret(
+        LYDIA_BUSINESS_KEY_PURPOSE,
+        lydiaBusinessKeyContext(row.id, vendorToken),
+        row.sealed
+      );
+    } catch (err: unknown) {
+      if (err instanceof SecretBoxUnavailableError) {
+        // A CONFIGURATION failure, not a verdict about this key: thrown so the internal route
+        // answers 5xx and core-service a 503 Lydia may retry, never the 400 of a bad signature.
+        this.logger.error(
+          `[LYDIA] callback key of association ${sanitizeLog(row.id)} cannot be opened: ` +
+            `LYDIA_KEY_ENCRYPTION_SECRET is not configured`
+        );
+        throw new ServiceUnavailableException('Business key storage is not configured');
+      }
+      this.logger.error(
+        `[LYDIA] callback key of association ${sanitizeLog(row.id)} does not open ` +
+          `(${err instanceof Error ? err.name : 'unknown'}) - its callbacks are refused until a manager re-enters it`
+      );
+      return null;
+    }
+  }
+
+  /**
+   * The Lydia vendor token an association's payments are PAID INTO - its own, or its approved
+   * parent's - whatever provider is active right now: a payment in flight is still checked after
+   * an admin disables payments. Used to refuse a verified callback whose Business is not the one
+   * the row's money goes to (`FormsService.confirmPaymentFromCallback`).
+   */
+  async getLydiaPayeeAccountId(id: string): Promise<string | null> {
+    const asso = await this.assoRepo.findOne({ where: { id } });
+    if (!asso) return null;
+    const parent = isDelegating(asso)
+      ? await this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
+      : null;
+    return resolvePaymentTarget(asso, parent, 'lydia').connectAccountId;
   }
 
   /**

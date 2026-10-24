@@ -34,4 +34,6 @@ android {
 
 dependencies {
     implementation(project(":tauri-android"))
+    // FileProvider, for a file shared out; the version tauri-android itself declares.
+    implementation("androidx.core:core-ktx:1.7.0")
 }

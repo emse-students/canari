@@ -196,7 +196,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | POST | `/api/mls/push/acquire-add-lock` | PushSecret | Acquire add-lock |
 | DELETE | `/api/mls/push/release-add-lock` | PushSecret | Release add-lock |
 | GET | `/api/mls/push/key-package` | PushSecret | Get key package |
-| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit. `baseEpoch` + `commitPayload` REQUIRED (400 otherwise) |
+| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit. `baseEpoch` + `commitPayload` REQUIRED (400 otherwise). The Welcome is stored in the epoch advance's transaction. `201 {status: 'accepted'}` or `409 {status: 'rejected', reason}` |
 | POST | `/api/mls/push/send` | PushSecret | Send message (background) |
 
 ### Security / PIN
@@ -232,6 +232,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 |---|---|---|---|
 | GET | `/api/internal/mls/devices/:userId/count` | InternalSecret | How many devices a user has, inside the retention window - the service-facing counterpart of `GET /api/mls/devices/:userId` |
 | POST | `/api/internal/push/notify` | InternalSecret | Send push via internal secret |
+| DELETE | `/api/internal/push/users/:userId/devices/:deviceId` | InternalSecret | End one device's push registration (row, destination and push secret) because core-service ended that device's session - idempotent, answers `{ removed }` ([sessions](../sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)) |
 | DELETE | `/api/internal/users/:userId` | InternalSecret | Idempotent account erasure ([account-erasure](../account-erasure.md)) |
 | DELETE | `/api/internal/follows/between/:userA/:userB` | InternalSecret | Drop both follows between two accounts - called by core-service when one blocks the other |
 | GET | `/api/health` | none | Liveness probe |
@@ -354,7 +355,6 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | POST | `/api/channels/invites/:token/accept` | Join through an invite. Refuses a community with no members left (`WORKSPACE_HAS_NO_MEMBERS`) |
 | POST | `/api/channels` | Create channel |
 | POST | `/api/channels/:channelId/messages` | Send encrypted message |
-| POST | `/api/channels/:channelId/members/join` | Join channel |
 | POST | `/api/channels/:channelId/members/invite` | Invite user |
 | POST | `/api/channels/:channelId/members/leave` | Leave a **private** channel (400 on a public one) |
 | POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message |

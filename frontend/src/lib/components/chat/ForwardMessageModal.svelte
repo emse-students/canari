@@ -1,21 +1,18 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
-  import { Search, Forward, Hash } from '@lucide/svelte';
+  import { Search, Forward, Hash, Send } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
-  import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
+  import {
+    missingPeerNameIds,
+    shareCandidates,
+    type ShareCandidate,
+    type WorkspaceLike,
+  } from '$lib/sharing/shareDestinations';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import type { Conversation } from '$lib/types';
-  import { SvelteMap } from 'svelte/reactivity';
   import { m } from '$lib/paraglide/messages';
-
-  /** Minimal community-workspace shape needed to resolve a channel's community. */
-  interface WorkspaceLike {
-    name: string;
-    channels: { id: string }[];
-  }
 
   interface Props {
     open: boolean;
@@ -34,6 +31,17 @@
      * for a DM is the peer's raw user id.
      */
     onSelect: (key: string, conversation: Conversation, label: string) => void;
+    /**
+     * What the pick is for: relaying a message (`forward`, the default) or sending content another
+     * app shared into Canari (`share`). Only the title and the row icon differ.
+     */
+    variant?: 'forward' | 'share';
+    /**
+     * A conversation id to offer first and highlighted - the suggestion the member picked in
+     * Android's share sheet (sharing lot S5). Only a row this list holds is highlighted; the member
+     * still taps it.
+     */
+    preselectedId?: string | null;
   }
 
   let {
@@ -44,27 +52,11 @@
     channelWorkspaces = [],
     onClose,
     onSelect,
+    variant = 'forward',
+    preselectedId = null,
   }: Props = $props();
 
   let query = $state('');
-
-  /** Channel conversation ID → community (workspace) name, for disambiguating same-named salons. */
-  const channelCommunity = $derived.by(() => {
-    const map = new SvelteMap<string, string>();
-    for (const ws of channelWorkspaces) {
-      for (const ch of ws.channels) map.set(ch.id, ws.name);
-    }
-    return map;
-  });
-
-  interface Candidate {
-    key: string;
-    conversation: Conversation;
-    /** Resolved human-readable name (peer name for DMs, group/channel name otherwise). */
-    label: string;
-    /** Community name when the target is a channel/salon, else null. */
-    community: string | null;
-  }
 
   /**
    * Peer names fetched for DM rows the synchronous resolver could not name.
@@ -76,69 +68,47 @@
    */
   let resolvedPeerNames = $state<Record<string, string>>({});
 
-  const presentationOf = (c: Conversation) =>
-    resolveConversationListPresentation(
-      {
-        id: c.id,
-        name: c.name,
-        contactName: c.contactName ?? c.id,
-        conversationType: c.conversationType,
-        directPeerId: c.directPeerId,
-      },
-      currentUserId
-    );
-
   $effect(() => {
-    for (const [key, c] of conversations) {
-      if (key === excludeKey) continue;
-      const pres = presentationOf(c);
-      if (pres.displayNameResolved || pres.conversationType !== 'direct') continue;
-      // No local de-duplication: resolveUserDisplayName already answers from its cache and shares
-      // one in-flight promise per id, and this effect never reads `resolvedPeerNames`, so writing
-      // it cannot re-trigger the loop.
-      void resolveUserDisplayName(pres.contactId).then((name) => {
-        if (name) resolvedPeerNames = { ...resolvedPeerNames, [pres.contactId]: name };
+    // No local de-duplication: resolveUserDisplayName already answers from its cache and shares
+    // one in-flight promise per id, and this effect never reads `resolvedPeerNames`, so writing
+    // it cannot re-trigger the loop.
+    for (const id of missingPeerNameIds(conversations, currentUserId, excludeKey)) {
+      void resolveUserDisplayName(id).then((name) => {
+        if (name) resolvedPeerNames = { ...resolvedPeerNames, [id]: name };
       });
     }
   });
 
-  // All threads (DMs, groups, channels) except the source conversation. Names are resolved via
-  // resolveConversationListPresentation so raw IDs are never shown; channels are labelled with
-  // their community name because multiple channels can share the same display name.
-  const candidates = $derived.by<Candidate[]>(() => {
-    const q = query.trim().toLowerCase();
-    return conversations
-      .filter(([key]) => key !== excludeKey)
-      .map(([key, c]): Candidate => {
-        const community = isChannelConversationId(c.id)
-          ? (channelCommunity.get(c.id) ?? null)
-          : null;
-        const pres = presentationOf(c);
-        const label = pres.displayNameResolved
-          ? pres.displayName
-          : (resolvedPeerNames[pres.contactId] ?? pres.displayName);
-        return { key, conversation: c, label, community };
-      })
-      .filter((cand) => cand.label.trim().length > 0)
-      .filter(
-        (cand) =>
-          !q ||
-          cand.label.toLowerCase().includes(q) ||
-          (cand.community?.toLowerCase().includes(q) ?? false)
-      )
-      .sort(
-        (a, b) =>
-          (a.community ?? '').localeCompare(b.community ?? '') || a.label.localeCompare(b.label)
-      );
-  });
+  // All threads (DMs, groups, channels) except the source conversation, never a raw id; a salon is
+  // labelled with its community, since several salons share a name (`shareCandidates`).
+  const candidates = $derived(
+    shareCandidates({
+      conversations,
+      currentUserId,
+      workspaces: channelWorkspaces,
+      peerNames: resolvedPeerNames,
+      query,
+      excludeKey,
+      order: 'alphabetical',
+      preselectedId,
+    })
+  );
 
-  function pick(cand: Candidate) {
+  function isPreselected(cand: ShareCandidate): boolean {
+    return preselectedId !== null && cand.conversation.id === preselectedId;
+  }
+
+  function pick(cand: ShareCandidate) {
     onSelect(cand.key, cand.conversation, cand.label);
     query = '';
   }
 </script>
 
-<Modal {open} title={m.chat_forward_modal_title()} {onClose}>
+<Modal
+  {open}
+  title={variant === 'share' ? m.share_modal_title() : m.chat_forward_modal_title()}
+  {onClose}
+>
   <div class="flex flex-col gap-3">
     <div class="relative">
       <Search size={16} class="text-text-muted absolute top-1/2 left-3 -translate-y-1/2" />
@@ -159,7 +129,9 @@
           <button
             type="button"
             onclick={() => pick(cand)}
-            class="flex items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            aria-current={isPreselected(cand) ? 'true' : undefined}
+            class="flex items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5
+ {isPreselected(cand) ? 'ring-cn-yellow bg-cn-yellow/10 ring-2' : ''}"
           >
             {#if cand.conversation.conversationType === 'direct'}
               <Avatar
@@ -188,7 +160,11 @@
                 </span>
               {/if}
             </span>
-            <Forward size={16} class="text-text-muted shrink-0" />
+            {#if variant === 'share'}
+              <Send size={16} class="text-text-muted shrink-0" />
+            {:else}
+              <Forward size={16} class="text-text-muted shrink-0" />
+            {/if}
           </button>
         {/each}
       {/if}

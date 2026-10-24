@@ -12,6 +12,7 @@ import { AssociationCategory } from './entities/association-category.entity';
 import { PosterProject } from './entities/poster-project.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
+import { ProductCheckout } from './entities/product-checkout.entity';
 import { AssociationRoleHistory } from './entities/association-role-history.entity';
 import { PartnershipCard } from './entities/partnership-card.entity';
 import { PartnershipCode } from './entities/partnership-code.entity';
@@ -60,6 +61,7 @@ import { PricingModule } from '../pricing/pricing.module';
       PosterProject,
       AssociationProduct,
       WebhookDelivery,
+      ProductCheckout,
       AssociationRoleHistory,
       PartnershipCard,
       PartnershipCode,

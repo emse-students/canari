@@ -1,5 +1,6 @@
 import { MOBILE_APP_PROTOCOL } from './appSiteAssociation';
 import { REPUBLICATION_REQUESTS_ROUTE } from '$lib/posts/notificationTarget';
+import { formResponsesRoute } from '$lib/forms/responsesLink';
 
 /**
  * The query parameter naming the comment a post link opens at - written by the server into a
@@ -13,7 +14,8 @@ export const POST_COMMENT_PARAM = 'comment';
  *
  * The hosts are the ones the server writes into a social push (`socialDeepLink` in social-service)
  * and the ones Android and iOS build natively: `post/<id>`, `form/<id>`, `posts`, `calendar`,
- * `admin-agenda`, `live/<id>`, `republication-requests` (D38b) and `notifications` (WP-L8b). `posts` is what a payload
+ * `admin-agenda`, `live/<id>`, `republication-requests` (D38b), `notifications` (WP-L8b) and
+ * `form-responses/<id>` (the organiser alert for a payment over capacity). `posts` is what a payload
  * naming nothing falls back to on the server, and it has no id; the two agenda hosts and
  * `republication-requests` mirror `notificationHref` (the in-app bell).
  *
@@ -33,6 +35,9 @@ export function appRouteForDeepLink(u: URL): string | null {
     }
     case 'form':
       return id ? `/forms/${encodeURIComponent(id)}` : null;
+    // The organiser alert (a payment landed on a full form): that form's responses on the list.
+    case 'form-responses':
+      return id ? formResponsesRoute(id) : null;
     case 'posts':
       return '/posts';
     case 'calendar':

@@ -16,11 +16,13 @@ The core-service is the authentication and user management hub. It:
 
 ## Auth model
 
-- **Access token**: JWT HS256, 1-hour TTL, stateless, stored in memory only (never localStorage).
+- **Access token**: JWT HS256, 1-hour TTL, stateless, stored in memory only (never localStorage). It
+  carries `sid`, the session it was minted for - a label, not an authorisation: a push registration
+  is bound to it ([sessions](../sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
 - **Refresh token**: HttpOnly cookie, 7-day idle TTL, **backed by a row in `auth_sessions`** and
   rotated on each use.
 - **WebSocket auth**: cookie `canari_ws_token` carrying the access token.
-- **Nginx verification**: `GET /api/auth/verify` injects `X-User-Id`, `X-Logged-In`, `X-Global-Admin` on success.
+- **Nginx verification**: `GET /api/auth/verify` injects `X-User-Id`, `X-Logged-In`, `X-Global-Admin` and `X-Session-Id` on success.
 
 ### Sessions (`auth_sessions`)
 
@@ -419,9 +421,13 @@ can never carry an `X-User-Id` - `NginxAuthGuard` was mistakenly added to this r
 and 401'd every one of those calls in production (2026-09-14) until it was removed; the route needs
 none, per the table below, because the value is global config with no per-user meaning. A
 Lydia `request/do` payment is also confirmed server-side: `POST /api/payments/lydia-request-callback`
-verifies the signed `confirm_url`/`cancel_url`/`expire_url` callback and fans out to the
-fulfillment, via an `order_ref` Canari encodes itself
-(`lydia-order-ref.ts`). **Still blocking an actual switch to Lydia** (tracked in
+verifies the signed `confirm_url`/`cancel_url`/`expire_url` callback with the BUSINESS private token
+of the association its `vendor_token` names (read from social-service's internal
+`POST /api/internal/associations/lydia-callback-key`, never the Provider token - see
+[payments](../frontend/modules/payments.md#what-confirms-a-payment-2026-10-16)) and fans out to the
+fulfillment as a trigger, via an `order_ref` Canari encodes itself
+(`lydia-order-ref.ts`) - a form only: a `product:` confirm fulfils nothing until a boutique checkout
+is a stored row (lot B3); a confirm, a cancel and an expiry alike only make social-service read the row's own request at Lydia before anything moves, and a failure to apply a verified callback (that read included) is a retryable 503. The route is rate-limited at nginx (`lydia_callback`, 5 r/s burst 50 per address). **Still blocking an actual switch to Lydia** (tracked in
 [backlog](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end), harmless today
 since `payment_provider` defaults to `disabled`): nothing resolves the `payerRecipient` `request/do`
 requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
@@ -460,7 +466,7 @@ has no foreign key; the orphan rendered as "Personnel"). Submissions stay, as wi
 | POST | `/api/payments/create-checkout-session` | InternalSecret | Create a checkout session (called by social-service, never by a browser) |
 | POST | `/api/payments/cancel-request` | InternalSecret | Cancel a payment request a retry replaced (Lydia `request/cancel`, numeric `request_id`; social-service only) |
 | POST | `/api/payments/request-state` | InternalSecret | Read a payment request's state (Lydia `request/state`, `request_uuid` - 32 hex digits - + `vendor_token`; social-service only): after a cancel answered "already processed", and for `forms/submissions/:id/confirm-payment` on the payer's return. `verify-session` / `cancel-session` were deleted 2026-10-15: `request/state` echoes no `order_ref`, so they could never name a submission ([payments](../frontend/modules/payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)) |
-| POST | `/api/payments/lydia-request-callback?outcome=confirm\|cancel\|expire` | Lydia signature (`sig`) | `request/do` payment confirmation - the authoritative fulfillment path for Lydia, since the buyer returning to the success redirect is not guaranteed |
+| POST | `/api/payments/lydia-request-callback?outcome=confirm\|cancel\|expire` | Lydia signature (`sig`, the association's Business key) | `request/do` payment confirmation - the authoritative fulfillment path for Lydia, since the buyer returning to the success redirect is not guaranteed |
 
 ### Health
 
@@ -476,7 +482,7 @@ PostgreSQL (`auth_db`). Main tables:
 |---|---|
 | `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `admin`, `notesCiphertext`, `notesKey`, `notes` (legacy) |
 | `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp`, `deviceId` |
-| `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion`, `paymentProvider`, `callsMode` (`calls_mode`, migration 014: `off` / `audio` / `audio_video`, default `off`, enforced by chat-delivery-service on every call request) |
+| `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion`, `paymentProvider`, `callsMode` (`calls_mode`, migration 014: `off` / `audio` / `audio_video`, default `off`, enforced by chat-delivery-service on every call request), `livesMode` (`lives_mode`, migration 015: `off` / `on`, default `off`, enforced by social-service on every live route and relayed to media-service's segment routes - [lives](lives.md#the-two-switches-live_enabled-and-lives_mode)) |
 | `platform_announcements` | `title_fr/en`, `body_fr/en`, `min_client_version`, `max_client_version`, `active`, `created_by` |
 | `platform_announcement_seen` | `announcement_id` (FK CASCADE), `user_id` — PK is the pair |
 

@@ -52,13 +52,15 @@
             {action.label}
           </button>
         {/if}
-        <button
-          onclick={() => dismissToast(toast.id)}
-          class="mt-0.5 shrink-0 opacity-60 transition-opacity hover:opacity-100"
-          aria-label={m.common_close_label()}
-        >
-          <X size={14} />
-        </button>
+        {#if toast.dismissible !== false}
+          <button
+            onclick={() => dismissToast(toast.id)}
+            class="mt-0.5 shrink-0 opacity-60 transition-opacity hover:opacity-100"
+            aria-label={m.common_close_label()}
+          >
+            <X size={14} />
+          </button>
+        {/if}
       </div>
     {/each}
   </div>

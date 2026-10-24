@@ -117,6 +117,8 @@ class FakeLive {
   count = 0;
   serverNow = STARTED;
   lastSegmentAt: number | null = null;
+  /** The manifest's viewer count, as the seat script answers it. */
+  viewers: number | null = 1;
   /** The index from which the camera was re-acquired (a new init), or Infinity. */
   reacquiredAt = Infinity;
   liveErrors: unknown[] = [];
@@ -146,6 +148,7 @@ class FakeLive {
         this.lastSegmentAt === null ? null : new Date(this.lastSegmentAt).toISOString(),
       serverNow: new Date(this.serverNow).toISOString(),
       segments,
+      viewers: this.viewers,
     };
   }
   /** One self-contained segment: its init, then its fragment. */
@@ -162,6 +165,7 @@ let timers: { fn: () => void; ms: number }[];
 let source: FakeSource | null;
 let states: LiveViewerState[];
 let elapsed: number[];
+let viewerCounts: (number | null)[];
 let video: { currentTime: number; paused: boolean; play: () => Promise<void>; pause: () => void };
 let deps: LivePlayerDeps;
 let detach: ReturnType<typeof vi.fn<() => void>>;
@@ -185,6 +189,7 @@ function makePlayer() {
     video,
     onState: (s) => states.push(s),
     onElapsed: (ms) => elapsed.push(ms),
+    onViewers: (count) => viewerCounts.push(count),
     deps,
   });
 }
@@ -198,6 +203,7 @@ beforeEach(() => {
   source = null;
   states = [];
   elapsed = [];
+  viewerCounts = [];
   detach = vi.fn<() => void>();
   video = {
     currentTime: 0,
@@ -284,6 +290,30 @@ describe('the join', () => {
     expect(kinds()).toEqual(['connecting', 'playing']);
     expect(elapsed.at(-1)).toBe(12_000);
     expect(timers.map((t) => t.ms)).toEqual([1_000]);
+  });
+
+  it("tells the screen each manifest's viewer count - the join's and every poll's, no extra request", async () => {
+    live.viewers = 2;
+    await joined(3);
+    expect(viewerCounts).toEqual([2]);
+    live.viewers = 5;
+    live.push(1);
+    await tickTimer();
+    live.viewers = null;
+    await tickTimer();
+    expect(viewerCounts).toEqual([2, 5, null]);
+    expect(deps.fetchManifest).toHaveBeenCalledTimes(3);
+  });
+
+  it('a failed poll hands the screen NO count, never the last one', async () => {
+    live.viewers = 4;
+    await joined(3);
+    expect(viewerCounts).toEqual([4]);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    live.manifestErrors.push(refusal('seats-unavailable'));
+    await tickTimer();
+    expect(kinds().at(-1)).toBe('reconnecting');
+    expect(viewerCounts.at(-1)).toBeNull();
   });
 
   it('joining after a re-acquire takes the newest segment OWN init, never segment 0', async () => {

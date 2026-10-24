@@ -1,7 +1,22 @@
-import { Body, Controller, Delete, Get, Headers, Patch, Put, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Headers,
+  HttpCode,
+  Patch,
+  Post,
+  Put,
+  UseGuards,
+} from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
-import { PlatformService, type PlatformConfigPublic } from './platform.service';
+import {
+  PlatformService,
+  type PlatformConfigPublic,
+  type WithheldReleaseResult,
+} from './platform.service';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { PublishAnnouncementDto } from './dto/publish-announcement.dto';
 import { AnnouncementService, type AnnouncementForAdmin } from './announcement.service';
@@ -29,6 +44,18 @@ export class PlatformAdminController {
     @Body() dto: UpdatePlatformConfigDto
   ): Promise<PlatformConfigPublic> {
     return this.platformService.updateConfig(dto, xUserId.trim().toLowerCase());
+  }
+
+  /**
+   * Releases the boutique products withheld while payments were disabled - the explicit, idempotent
+   * retry for a release that failed after the provider was saved (answered there as
+   * `WITHHELD_RELEASE_INCOMPLETE`), so recovery never depends on the settings form's diff.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Post('release-withheld-products')
+  @HttpCode(200)
+  releaseWithheldProducts(@Headers('x-user-id') xUserId: string): Promise<WithheldReleaseResult> {
+    return this.platformService.releaseWithheldProducts(xUserId.trim().toLowerCase());
   }
 
   /** The announcement being shown right now and how many accounts have seen it, or `null`. */

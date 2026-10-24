@@ -719,6 +719,99 @@ reload the `--dial` role needs the PIN again (`pin.mjs --port 9223 --account thi
 done from the live page; with the conversation open on both a desktop and the iPhone signed in as `gamma`, a Mi 9T
 call rings both, and the desktop's accept stops the iPhone's ring.
 
+## 2026-10-20 (afternoon) - `v1.3.1-alpha.4` across networks: forced relay, TCP and TLS TURN, a NATed hotspot
+
+Same builds as the morning section (Mi 9T release APK `versionCode` 100300104, account `delta`; iPhone 12 TestFlight
+`1.3.1 (100300104)`, account `gamma`), plus two desktop Chrome 155 profiles on dev (`gamma`, `delta`, fake microphone
+playing a speech-like wav). Every reading so far ran on ONE Wi-Fi over host pairs; this one makes the direct path
+impossible on purpose. No app code was changed: the policy is forced from OUTSIDE the app, by a subclass of
+`RTCPeerConnection` evaluated into the LIVE page over CDP (no reload, so no PIN), which rewrites
+`iceTransportPolicy` and optionally keeps only some of the TURN URLs the server handed out, and records every
+`icecandidate`, `icecandidateerror` and state change with its millisecond. Stats are read every 5 s from the same
+object; the desktops' and the Mi 9T's `[Call]` lines come from the console over CDP, the iPhone's from its exported
+log (carried off through the bench conversation as before), the Mi 9T's libwebrtc lines from `logcat`, one desktop's
+from Chrome's own `--enable-logging` file. The driver is a scratch script, not committed. Cloudflare TURN keeps no log
+this project can read; the dev `call-service` log was not needed (every call paired).
+
+| # | Configuration | Verdict | What was read |
+| --- | --- | --- | --- |
+| D0 | desktop <-> desktop, policy as shipped (`all`) | **`PASS`, and CALL-GATHER-0 reproduced** | `host/udp` both ways, 0 lost, 0 % concealed, reports 250 / 268 at 5 s, `decrypt-failed=0`; the CALLEE logged `ICE gathering complete (host=4 srflx=0 relay=0)` + `WARN no TURN relay candidate`, the caller `host=4 srflx=1 relay=3` (below) |
+| D1 | desktop <-> desktop, BOTH `relay`, every TURN URL | **`PASS`** | `relay/udp -> relay/udp`, `relayed=yes relay_proto=udp`, RTT 16-22 ms, jitter 2-3 ms, 0 lost, **0 % concealed**; 250 / 273-274 frames at 5 s on both, `decrypt-failed=0`, path check `no media around the transform`; both sides gathered `relay=5` |
+| D2 | the same, TURN over TCP and TLS URLs only | **`PASS`** | `relay_proto=tcp`, RTT 18-24 ms, jitter 1-2 ms, 0 lost, 0.4-0.5 % concealed; 250 / 267-268 at 5 s, `decrypt-failed=0` |
+| D3 | the same, TURN over TLS on 443 only | **`PASS`** | `relay_proto=tls`, RTT 17-23 ms, jitter 1-2 ms, 0 lost, 0.1-0.2 % concealed; 250 / 267-268 at 5 s, `decrypt-failed=0`; one relay candidate per side |
+| P1 | Mi 9T -> desktop, both `all`, bench Wi-Fi | **`PASS`** | 0 lost, 0-0.1 % concealed; Mi 9T 252 / 277 at 5 s, desktop 250 / 248, `decrypt-failed=0`. Both logged `selected path ... relayed=yes` at `connected` (Mi 9T `srflx->relay`, desktop `relay->srflx`); `getStats` read `host/udp -> host/udp` at the end (CALL-PATH-LINE below) |
+| P2 | desktop (`relay`) -> Mi 9T (`relay`, TLS 443 only) | **`PASS`** | Mi 9T `relay_proto=tls`, RTT 24-27 ms, jitter 4 ms, 0 lost, 0 % concealed on both ends; Mi 9T 250 / 270 at 5 s and 2101 / 2138 (2093 decrypted) at the end, desktop 250 / 249 and 2093 / 2111, `decrypt-failed=0`; **no `CreatePermission` error in `logcat`** |
+| P3 | Mi 9T (`relay`, every URL) -> iPhone (`all`) | **`PASS`, both ends read** | `relay/udp -> srflx/udp`, RTT 16-44 ms, jitter 4-8 ms, 0 lost, Mi 9T concealed 3.2 % in the first 5 s then 0 %; Mi 9T 250 / 241 at 5 s, end 2102 / 2122 (2094 decrypted); iPhone (callee) `host=2 srflx=2 relay=12`, `selected path pair=srflx/udp->relay/udp relayed=yes`, 240 / 248 at 5 s, end 2108 / 2125 (2101 decrypted), `decrypt-failed=0` both |
+| P4 | iPhone (`all`) -> Mi 9T (`relay`, TLS 443 only) | **`PASS`** | `relay(tls) -> srflx`, RTT 19-48 ms, jitter 4-5 ms, 1 packet lost in 40 s, Mi 9T concealed 2.4 % cumulative (seven 5 s intervals at 0-3.4 %, one at 13.4 % with no loss and nobody speaking - TCP head-of-line delay is the likely reading, not measured); Mi 9T 250 / 240 at 5 s, end 2100 / 2120 (2090 decrypted); iPhone 241 / 267 at 5 s, end 2107 / 2141 (2099 decrypted), `decrypt-failed=0` both |
+| P5 | Mi 9T on this PC's Windows mobile hotspot (its own NATed subnet, no working IPv6 egress) -> iPhone on the bench Wi-Fi, both `all` | **`PASS` for the call; the network is lossy** | direct through the PC's NAT: Mi 9T `prflx/udp -> host/udp`, iPhone `host/udp -> prflx/udp`, `relayed=no`, RTT 129-174 ms, jitter 30 ms; Mi 9T hearing the iPhone: 1 lost, concealed 4.8 % in the first 5 s then 0-0.2 %; Mi 9T 251 / 244 at 5 s, end 2093 / 2114 (2086 decrypted); iPhone 240 / 227 at 5 s, end **2172 sent / 1891 received** (1822 decrypted, `decrypt-failed=0`): about 10 % of the Mi 9T's frames never reached the iPhone. The hotspot shares the PC's one Wi-Fi radio, so that loss is not attributed to the app |
+| P6 | iPhone -> Mi 9T, Mi 9T still on the hotspot | **`FAIL`: the Mi 9T never rang** | the iPhone rang its 60 s window (`ring window (60000 ms) closed unanswered`); the Mi 9T never received the invite: its chat socket had not been up since the network change (CALL-WS-V6 below). Back on the bench Wi-Fi the socket connected in 330 ms |
+| C1 | either phone on mobile data | **NOT-READ: no SIM** | neither bench phone has a SIM (`gsm.sim.state=ABSENT` on the Mi 9T) |
+| C2 | a desktop behind a different egress (a client-side SOCKS proxy through a remote host, or the school VPN), UDP filtered | **NOT-READ** | the user authorised both for this test; this session's permission guard refused to open the tunnel and to read the VPN profile, so neither was started |
+| C3 | as shipped (`all`) with all UDP blocked on one end | **NOT-READ** | Chrome 155 accepted `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` on its command line and still paired `host/udp` without a proxy; an outbound firewall rule needs an elevated shell, which this session did not have. D2-D3 and P2 show TCP/TLS TURN carrying the call; what is not shown is ICE falling back to it on its own |
+| - | the iPhone with relay forced | **NOT-READ** | the TestFlight WKWebView is not inspectable, so nothing can be evaluated into it |
+
+**CALL-GATHER-0 - the cause, read in libwebrtc's own log (desktop callee, Chrome `--enable-logging`).** It is not a TURN
+fault. The callee starts gathering only at its `setLocalDescription(answer)`, by then it already holds the caller's
+trickled host candidates, and on one LAN a host pair answers within a few milliseconds:
+
+```
+.119 basic_port_allocator: Start getting ports ... Allocation Phase=Udp   (4 host ports, STUN lookups started)
+.131 p2p_transport_channel: Changed writable_ to 1
+.131 basic_port_allocator: All candidates gathered
+.131 p2p_transport_channel: component 1 gathering complete
+.132 [Call] ICE gathering complete (host=4 srflx=0 relay=0)
+.220 basic_port_allocator: Discarding candidate because port is already done gathering.
+```
+
+With the default gather-once policy libwebrtc stops the allocator session as soon as a connection is writable; the
+relay phase, scheduled after the UDP phase, never starts, and the server-reflexive answer that arrives 90 ms later is
+discarded. The page timeline agrees on every desktop run: callee `gathering=gathering` at +75-87 ms, `ice=connected`
+and `gathering=complete` in the SAME millisecond 2-7 ms later. Every time the direct pair could NOT answer first, the
+callee gathered relays: `relay=5` (D1), `relay=12` on the iPhone as callee of a relay-only Mi 9T (P3), `relay=12` on
+the Mi 9T as callee of a desktop in the morning. So the callee's call never lacks a relay when it needs one; what is
+wrong is the WARN, which fires on every LAN call and names a cause ("Cloudflare TURN unreachable or misconfigured")
+that is not there. The predicate that would be true: warn only when gathering completes while ICE is not yet
+`connected`/`completed`, or count the page's `icecandidateerror` events, which the app does not listen to (on the
+desktops they read `701` "Address not associated with the desired network interface" for TCP/TLS TURN on virtual
+adapters, harmless).
+
+**The `TURN CreatePermission` errors (CALL-TURN), read on both engines.** Desktop (Chrome log, one call): 12
+`code=403`, every one on a pair from a local relay candidate to a remote HOST candidate whose address is a private
+IPv4: Cloudflare will not relay to RFC 1918 peers, and libwebrtc prunes the pair. Mi 9T (`logcat`): `403` and `600`
+(30 in one natural call: 6 and 24; 10 in P3; 2 in P4), on both its IPv4 and its IPv6 "Wildcard" relay ports - the
+Android WebView gathers on `any` networks, which is what the `Socket is bound to the address ... rather than an address
+associated with network` warnings say. `600` is, as far as this reading goes, the value libwebrtc reports for an error
+response that carries no `ERROR-CODE` attribute; which peers draw it was not resolved (the WebView logs no peer
+address). **When both ends were relay-only (P2) there were none**: the refusals come only from pairing a relay with the
+other end's host or IPv6 candidates, pairs that could not carry media anyway, and no selected pair was ever among
+them. Noise from libwebrtc on pairs that cannot work, not a credential problem; nothing in the app produces it.
+
+### Findings
+
+| Id | Severity | What | Evidence |
+| --- | --- | --- | --- |
+| CALL-WS-V6 | **P1** | On a Wi-Fi that hands out IPv6 addresses but carries no IPv6 traffic, the Android app's CHAT socket never connects: every attempt is abandoned by the 15 s JS timeout (`TauriMlsService.connect`) while the native socket's handshake completes 20-21 s after it started. The HTTP client (reqwest) falls back from the IPv6 address to the IPv4 one after 300 ms and works; the WebView's own WebSocket (the call signalling) works. So the phone sends, dials out and calls fine, but receives no live frame and NO CALL INVITE (P6) for as long as it stays on that network. The cause read here: the native connect tries the IPv6 address first and waits on it (IPv6 ping to the internet 100 % lost on that network, IPv6 default routes present); not read: whether each late-completed native socket is closed or left open | Mi 9T console: `Opening connection` at :55.7 / :40.8 / :25.8, `WebSocket connection timeout after 15s` 15 s later each time; `logcat` `tungstenite::handshake::client: Client handshake done` at :15.6 / :01.7 / :46.3, 20-21 s after each; `hyper_util ... connecting to [IPv6]:443` then `connecting to <IPv4>:443` 300 ms later, `connected`; back on the bench Wi-Fi `Connected to Chat Gateway` in 330 ms |
+| CALL-GATHER-0 | **P3, cause found: a false alarm** | the callee's `WARN no TURN relay candidate` fires whenever its direct pair becomes writable before its STUN/TURN servers answer (libwebrtc stops gathering then); the callee gathers relays whenever the direct path is slower. The WARN's predicate and its stated cause are wrong; the relay path is not | the libwebrtc log above; D0, D1, P3 |
+| CALL-TURN | **P3, explained** | `CreatePermission` `403` = Cloudflare refusing a private-IPv4 peer; `600` on the Android WebView's wildcard relay ports; both on pairs with no future, none when both ends relay; not a credential fault | above |
+| CALL-PATH-LINE | **P3** | the `selected path ... relayed=` line, which [calls](frontend/modules/calls.md) calls "the only place that says whether a call was billed", is written once at `connected`; in P1 both ends logged `relayed=yes` while the pair settled on `host/udp -> host/udp`, so the line over-counts relayed calls when ICE moves to a better pair afterwards | P1: the two `selected path` lines against the end `getStats` pair |
+
+**Proven:** the relay path works end to end with E2E on all three engines - Chrome 155, the Mi 9T's WebView Chrome/152
+and the iPhone's WKWebView - over Cloudflare TURN by UDP, by TCP, and by TLS on 443 alone (the one transport a
+filtered network nearly always lets out), with every frame encrypted and decrypted, 0 decrypt failures and 0-0.5 %
+concealment between desktops; and a call across two NATs connects direct. **Not proven:** a real cellular or campus
+network; a network that blocks UDP, with ICE choosing TCP/TLS TURN by itself; the iPhone's concealment as a receiver;
+the iPhone forced to relay.
+
+**Owed:** a SIM in one bench phone (C1); the user's permission rule for the client-side tunnel or the VPN (C2); an
+elevated shell for a UDP-blocking firewall rule, or a proxy that makes Chrome's `disable_non_proxied_udp` bite (C3).
+
+Rig lessons: the policy override is a subclass of `RTCPeerConnection` evaluated into the live page, because the app
+constructs its peer connection by the global name at call time - no reload, no PIN; the iPhone answers through WDA
+(`Accepter l'appel entrant`) and dials from the conversation's `Plus d'actions` menu; its file picker opens in
+selection mode, so a tap on a log SELECTS it and `Ouvrir` attaches it - check the attached name before sending; the
+Mi 9T reached over CDP after a Wi-Fi change keeps its `adb` USB forward; Chrome's own log needs `--enable-logging
+--vmodule=*/webrtc/*=1` and holds ICE passwords, so it stays in the scratch directory.
+
 ## 2026-10-20 (afternoon) - `v1.3.1-alpha.4`: what a locked iPhone keeps, measured for WP-C-BG-I
 
 Same builds and accounts as the morning (Mi 9T `delta`, iPhone 12 `gamma`, iOS 27.0.1), same Wi-Fi. The Mi 9T's
@@ -910,3 +1003,234 @@ On the server, `LIVE_ENABLED` makes `/api/lives` answer `404` in production. **A
   "Connexion externe" once by hand, then re-run it, and it answers the open form.
 - **A bench phone needs ONE driver.** Look for other CDP or adb clients of the serial before a reading, and again
   before believing a reload in its log (BENCH-SHARED-2).
+
+## Reading runbook for the next calls alpha - one driver per phone, in this order (written 2026-10-21, NOT a reading)
+
+**This section is a plan, not a result.** The next `vX.Y.Z-alpha.N` carries calls on dev builds only (`CALLS_ENABLED`
+is true for `development`; `CALLS_COMPILED` stays false). Every row below is copied from a row that already exists;
+the link names it, and a verdict goes back into THAT row, never into a new one. **What could not be found is listed
+last, not invented.** Pass conditions are the cited rows' own words, shortened.
+
+**Rules for the whole run**
+
+- **One driver per bench phone at a time, assigned by the lead** ([testing-methodology](testing-methodology.md#one-driver-per-bench-phone-at-a-time-bench-shared-2-2026-10-21)).
+  Before block M or I, look for other CDP or adb clients of the serial. A reload in a log is believed only when nobody
+  else was driving. Blocks M and I are serial per phone; a cross-phone call needs BOTH phones, so it is ONE session
+  holding both, never two agents.
+- Both phones run the SAME pre-release (Settings > A propos shows `X.Y.Z-alpha.N`, `dev.canari-emse.fr`). **A store serves
+  the highest build number**: Play may offer a stable above the alpha, and on TestFlight the alpha is picked by hand
+  ([CALL-L1 precondition 1](device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)).
+- Never paste a `media keys derived from MLS` line older than 2026-10-21 into this repo. Record `setup_ms`,
+  `relayed`, `rtt_ms`, `loss_in_pct` and `dec_fail` from `[CALL_REPORT]`, per direction, plus the build on each phone.
+- A verdict is `PASS` or `FAIL` with the log inline, never `PASS-DIRTY`.
+
+### Step 0 - one click, before any phone (the lead, a global admin)
+
+| What | Why | Source |
+| --- | --- | --- |
+| `/admin/platform` on `dev.canari-emse.fr`, "Audio et video": set `callsMode` to `audio_video` | migration 014 lands `off` on an EXISTING database, and `off` answers `initiate`, `ring`, `room-token` and `ice-servers` with 403 `CALLS_DISABLED`, so no call works. Dev seeds `audio_video` only on a fresh seed. Read `GET /api/version` for `calls.mode` first: if it already says `audio_video`, no click | [backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), [calls](frontend/modules/calls.md#the-kill-switch---platform_configcalls_mode) |
+
+Also know before the first call: **dev sends no push until `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` exists** (owner line in
+[backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)); chat-delivery logs `[ring] Firebase Admin
+is not initialised` at every ring until then, which is expected, not the finding.
+
+### Block M - Mi 9T only (one driver; alone, or with a desktop `callpeer.mjs` peer)
+
+Use a release APK: a debug APK installed over a release-signed install costs the enrolment. The phone reads
+`ro.build.version.sdk` 36, so the API 28-30 paths stay unread.
+
+**M1. The twelve background readings, WP-C-BG-A**, in a call with the iPhone or a desktop peer. Source:
+[calls, "Owed on the Mi 9T"](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20).
+Logs: `CallFgService`, `CallAudio`, `CallBridge` in `logcat`; `[Call] ongoing-call service ...` in the app log.
+
+| # | Do | Pass |
+| --- | --- | --- |
+| 1 | lock 40 s | both sides keep hearing; no `closed code=1006`, no server `held dead` |
+| 2 | HOME 40 s | same |
+| 3 | read the notification | the name and a running timer; its hang-up ends the call on both ends |
+| 4 | Back at the root during a call | the call goes on |
+| 5 | speaker / earpiece from the call screen, `adb shell dumpsys audio` | `MODE_IN_COMMUNICATION`, the communication device, and WHO set the mode (Chromium may) |
+| 6 | `adb shell dumpsys activity services fr.emse.canari` during the call | `isForeground=true`, `foregroundServiceType=0x80`; gone after |
+| 7 | `dumpsys audio` AFTER the hang-up | `MODE_NORMAL`, no communication device (settles the mode's owner, review F1) |
+| 8 | reload the page mid-call, then press the notification's hang-up | the service leaves; nothing stays in the shade |
+| 9 | the FIRST-EVER call on a fresh install, through the microphone prompt | the service starts once the grant is answered, or is refused `off-screen` and started on `foreground` - never neither |
+| 10 | swipe the app from Recents mid-call | the notification goes; the peer sees the call end |
+| 11 | connect and disconnect a Bluetooth and a wired headset mid-call | the output follows, logged once per change |
+| 12 | notifications DENIED for the app | the service still holds the call (read `dumpsys activity services`) |
+
+Rows 9 and 12 change app state (a fresh install, a permission): run them LAST in this block and restore after.
+
+**M2. The CALL-L1 rows with the Mi 9T as one end** (the iPhone is the other end, so this is the cross-phone session):
+[CALL-L1](device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both) row 0 FIRST (an idle
+call, more than 60 s), rows 1-5 and 7, then rows 8, 9 and 10 (Wi-Fi off 6 s, 14 s - once as callee - and 90 s) and row 11
+(a suspended app, per phone and per gesture). Rows 9 and 10 `FAIL`ed on alpha.2 and were fixed; both are owed a re-read.
+Row 6 (a killed callee rings nothing) is EXPECTED, not a `FAIL`.
+
+**M3. The feed's left-edge gesture exclusion (#2184)**, gesture navigation. A row of the backlog, Kotlin and unit tests
+only. The nine cells are those of [backlog](backlog.md#owed-a-verification-and-nothing-else) ("the feed's LEFT edge is
+excluded"): (1) logcat `gesture exclusion: spans={LEFT=...} -> [ExclusionBand(left=0, ...)]` and the same rect in
+`dumpsys window`; (2) on `/posts`, swipes from x = 20, 50 and 60 physical px at y = 1300 AND at the band's top and bottom
+rows open the camera, 0 Back; (3) just above and below the band the left-edge Back still works; (4) the right edge is
+intact (a reply swipe on an own bubble at x >= 406 CSS px, keyboard closed and open); (5) after a reload then `/posts`,
+both edges' Back behave as specified; (6) leaving the feed clears the band (`/posts/<id>`, `/chat`, `/communities`,
+`/camera`), as do the keyboard up, a rotation and a resume; (7) with an overlay over the feed (reel viewer, media
+viewer, a modal, the composer's camera) a mid-screen left-edge Back closes it; (8) 3-button navigation: no rect, an
+empty list in the log; (9) back-sensitivity slider at max: the band widens and still covers the start. A start on a
+horizontal chip strip inside the band does nothing, by design. Recipe: `<harness-dir>/a1-bench/camera-swipe-r1021/`,
+`gen1.mjs` straight cells. **Then the slow swipe by a real finger**: check
+[V](device-verification.md#v-the-camera-swipe-on-a-fresh-feed-after-publishing---owed-on-android)'s own steps (publish, then
+swipe right with no other navigation), ONE real-finger swipe, since every injected swipe passed. The slow-swipe cells of
+the investigation are not in this repo (see the gaps).
+
+**M4. Double tap, Mi 9T half.** [Check DT](device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones)
+steps 1-7 on real fingers (the alpha.5 reading used CDP touches, see [DT-IOS](#1-double-tap-to-like)); step 7: a vibration
+tick on a like with vibrations on in the settings, none with them off. Read `[doubleTapLike] double tap`,
+`[PostCard.doubleTap] ...: like` and `[reel-viewer] double tap ...: like` over CDP.
+
+**M5. The FCM banner on dev - BLOCKED until the secret exists.** Only once `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` is set on
+the `development` environment and a pre-release has deployed with it: a DM from the other account to the shut Mi 9T shows
+a banner, and T1 (push to banner latency, [backlog](backlog.md#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11))
+is measured. Without the secret, record `NOT-OBSERVED`, never `FAIL`.
+
+### Block I - iPhone 12 only (one driver; WDA for taps, the in-app log for lines)
+
+The phone holds `gamma`'s account; pass `--account` to `login.mjs`. The iOS autofill sheet covers the Go key: screenshot
+before every submit. **A double tap is a W3C sequence (one pointer, two 40 ms holds), never XCUITest's `doubleTap`**
+([rig lessons](#rig-lessons)). In-app log: Settings > A propos > "Enregistrer le journal".
+
+| # | Reading | Pass | Source |
+| --- | --- | --- | --- |
+| I1 | **CALL-L1 row 12, WP-C-BG-I**, in this order: (a) the iOS job's `UIBackgroundModes of the built app:` line lists `audio`; (b) in a connected call, lock the iPhone 60 s, then background it 60 s; (c) OUT of a call (the mode is app-wide) play a reel with sound, then a voice message, locking then backgrounding during each; (d) in a call, an audio ROUTE change (AirPods in and out, a wired headset) and a 2 s interruption (an alarm or Siri); (e) a call ACCEPTED from the lock screen. Record every `mute`/`unmute` pair with its duration | (b) the Mi 9T's inbound audio packets keep rising (`getStats()` over CDP every 5 s) and the iPhone keeps playing; no `the system took the microphone` line. (c) RECORD whether playback continues (a behaviour to accept or refuse). (d) a route change must NOT log `the system took the microphone`; if it does, how often and for how long. (e) it connects, and a muted start shows the notice until given back. If (b) still mutes, read the syslog (`WebKit`, `mediaserverd`) before any native audio code | [CALL-L1 row 12](device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both), [calls](frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20) |
+| I2 | **Double tap, iPhone half**: a REAL W3C double tap with the in-app log, [check DT](device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones) steps 1-6 (reel viewer, reel card in the feed, photo, text, poll option, VoiceOver) | one heart and one `like` line per double tap; the viewer does NOT open on a card double tap; a poll option votes and the post is NOT liked. Read #2175's log for the FIRST attempts after a sign-in on a stale feed, which missed on alpha.5 and were never explained: a miss with no `[doubleTapLike]` line means the tap never reached the card | [check DT](device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones), [DT-IOS](#1-double-tap-to-like) |
+| I3 | **The push banner** on the shut phone, from a DM by the other account: BLOCKED like M5 until the dev Firebase secret exists, else `NOT-OBSERVED`. The alpha.5 smoke left it unread | a banner on the locked phone | [alpha.5 item 4](#4-the-smoke), [backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks) |
+| I4 | **CALL-OS-BANNER**: one FOREGROUND ring on the iPhone | no "Appel entrant" OS banner over the in-app ring; if one shows, the two native candidates are in the backlog item | [backlog](backlog.md#p3---an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix-2026-10-19) |
+
+The iPhone's video reading is V2 and V3 below.
+
+### Block V - video (V1 is the rig, V2 and V3 need both phones)
+
+| # | Reading | Pass | Source |
+| --- | --- | --- | --- |
+| V1 | The two rig rows `video-switch` and `video-off-on` (`bun matrix.mjs` in `tools/call-audio-fidelity`), re-run on a QUIET host: nothing else heavy on the machine, no other agent's rig running. Not phone work, no phone needed | both `PASS`: `video-switch` ~29.9 fps and sender frames still counted AFTER the switch; `video-off-on` the peer's track mutes when off, events `unmute, mute, unmute`; every gated check: `video-fps` >= 27, `video-freezes` 0, `video-fed-after-op` | [calls, video](frontend/modules/calls.md#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver), [rig README](../../tools/call-audio-fidelity/README.md#the-video-rows-2026-10-20) |
+| V2 | **CALL-L1 row 13 - a hidden peer video is still under its transform (B0)**: a dev build WITH video calls a build with video FORCED OFF (`CALLS_VIDEO_ENABLED` false: a local build, or the first audio-only alpha); the video side turns its camera on. ONCE with the iPhone as the audio-only side, ONCE with the Mi 9T | the audio-only side shows NO video and the call goes past 30 s with the camera on; the video side still hears and is heard. Log: `the peer sends video - this build is audio only, it is received and not shown`, then `E2E path check ...: no media around the transform` with `received ... video=` rising; NEVER `media flowed AROUND the transform on receiver:video` nor a `CallE2eBypassedError` end. A false END means the engine does not feed a receiver transform whose track has no sink, and the `inactive` route is owed | [CALL-L1 row 13](device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both), [calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21) |
+| V3 | Video on the phones, the "Owed on the phones" table of the video section: Mi 9T to desktop Chrome `bun callpeer.mjs --browser w3 --launch --dial --video --hangup`, and the phone dialling; off/on, switch front/back, minimise; rotate. iPhone 12: `RTCRtpReceiver.getCapabilities('video')` lists VP8 and `setCodecPreferences` exists | `video ... VP8`, ~30 fps, freezes 0, `not-vp8=0`, `E2E proven`; the picture mutes to the avatar and returns; the back camera is not mirrored; `contain` in landscape, `cover` in portrait; a WebKit naming no codec FAILS CLOSED (a `not-vp8` ERROR) | [calls, video](frontend/modules/calls.md#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver) |
+
+V3 needs `CALLS_VIDEO_ENABLED` true on both ends and V2 needs it false on one: plan the two builds before the session.
+The second is a local build, which costs the Mi 9T's enrolment if installed over a release.
+
+### Block N - network rows (the Mi 9T, plus the iPhone for the ring)
+
+| # | Reading | Pass | Source |
+| --- | --- | --- | --- |
+| N1 | **CALL-WS-V6** (#2167): the PC's mobile hotspot with broken IPv6 (bench P6), the Mi 9T on it | `Connected to Chat Gateway` within a second; ONE `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` means the attempt errored rather than hung: record which); no `[WS] native socket completed ... closing it` WARN; **the iPhone's call RINGS the phone**; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete the backlog item with this reading | [backlog](backlog.md#p1---call-ws-v6-is-fixed-on-a-branch-and-owed-one-phone-reading-2026-10-20) |
+| N2 | **A relayed call on a phone.** The rig read forced TURN relay clean over UDP, TCP and TLS 443 on all three engines (#2165); no PHONE has read a relayed call. Take any call that goes through Cloudflare TURN (a throttled uplink, or the hotspot of N1) and record `relayed=yes` in `[CALL_REPORT]` and the `selected path pair=` line | audio both ways; `relayed=yes` where it is relayed (`relayed=` can over-count, see CALL-PATH-LINE in the backlog) | [calls B10](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [backlog](backlog.md#p3---call-path-line-the-selected-path--relayed-line-over-counts-relayed-calls-2026-10-20-not-built) |
+| N3 | The Tier B audio cells K1, K9, K12 (Mi 9T / iPhone / desktop) and K6 (both phones) of [the matrix](frontend/modules/calls-revival-plan.md#7-the-test-matrix) | as the cells | calls B10 |
+
+Cellular and campus Wi-Fi stay owed: no SIM on the bench.
+
+### What could NOT be found in the repo (do not read these as covered)
+
+- **The #2165 readings** (forced TURN relay over UDP, TCP and TLS 443; "readings PR open on 2026-10-21" per calls B10) are
+  NOT on `main` as of this runbook, so N2 cites no row of theirs. Link them here when that PR merges.
+- **A "quiet host" requirement for `video-switch` and `video-off-on`** appears in no repo doc: the rig README and
+  [calls](frontend/modules/calls.md#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver) record both as
+  `PASS` on 2026-10-20 with no load caveat. V1 follows the lead's instruction.
+- **The slow-swipe camera cells** of the camera-swipe investigation (PR #2177) are not documented; only the left-edge
+  cause B (decided, built as #2184's backlog row) is. M3 states the real-finger reading from check V instead.
+- **A check lettered for the FCM banner on dev**: none exists. M5 and I3 reuse the backlog's T1 item and the owner line
+  about the missing secret. Whether that secret exists NOW is not knowable from the repo.
+- **One list of "calls readings"** does not exist: they are spread over CALL-L1, calls B8-B13 and the backlog, which is why
+  this section exists.
+
+## 2026-10-21 - `v1.3.1-alpha.5` - push banners
+
+This complements the stable-gate section above, whose smoke left "the push banner not read". Same builds and
+accounts: the Mi 9T as `delta`, the iPhone 12 as `gamma`. The peer was the rig's W2 desktop Chrome on dev, and the
+two phones sent to each other.
+
+**Dev cannot send a push, so the code this stable changes cannot be read on dev.**
+
+- `serve-dev.yml` passes `DEV_FIREBASE_SERVICE_ACCOUNT_JSON`, and that secret exists in neither the repository nor
+  the `development` environment. Adding it is the owner item in [backlog](backlog.md) ("set the
+  `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret").
+- The stable's native change, `push_text.rs` and `proto_fields.rs` (#2112, WP-RC-7), is called only by the FCM
+  service and the iOS NSE.
+- So no banner for an app that is backgrounded or killed can appear on dev, on either phone. What dev CAN show is
+  the in-app path: the WebSocket, and the app raising a local notification itself.
+
+| Item | Mi 9T | iPhone 12 |
+| --- | --- | --- |
+| App backgrounded, screen off or locked, a DM arrives | **`NOT-OBSERVABLE` on dev.** On HOME the app logs `[WS] Paused - disconnect sent, socket released until the next foreground`, and no notification follows. | **`NOT-OBSERVABLE` on dev.** After the app went to state 2, nothing about a push appears in the syslog: no `apsd` delivery, no NSE line. |
+| Foreground again, the message is there | **`PASS`.** `[PENDING] Fetched 1 pending messages`, then decrypted and added to the conversation. | **`PASS`.** The message is in the DM after launch. |
+| A DM while the app is open elsewhere (the feed) | **`PASS`.** `[NOTIF] Inbound ... while the app is open on /posts showing the list - asking`, then `Raised ... by the native builder`. The notification sits on `canari_messages_v2`, titled with the sender and carrying the text, with the Répondre and Marquer comme lu actions. | **`PASS`.** The iOS banner shows the sender and the text in the foreground (`willPresentNotification delivery succeeded`). |
+| Tapping that notification opens the conversation | **`PASS`.** `[notifNav] routing to /chat for pending conversation <the DM>`, and the DM opens. | **`PASS`.** `UNNotificationDefaultActionIdentifier`, and the DM with `delta` opens. |
+| A reaction to your own message | **`NOT-OBSERVABLE` on dev.** The reaction frame was processed, and the in-app path raised nothing. That is by construction: `canari_reactions_v2` is posted only by `CanariFirebaseMessagingService`. | not read |
+| A group or community message | none: the reset seed has no community | none |
+
+**Logs.** No line from app code reached warning or error, with one exception:
+
+- **Mi 9T, one warning:** `[WS] pauseSocket: native disconnect failed: Trying to work with closed connection`.
+  - It came when the notification shade sent the app to the background on the tap. The socket was already closed, so
+    a log warning was raised over an outcome that changed nothing.
+  - It is **P3 noise**, under the rule that a line is expected AND necessary or is fixed.
+- **Mi 9T, platform lines.** Codec2 and MediaCodec lines came from the feed's video decoder.
+- **Mi 9T, 26 camera warnings at 08:53:20.** `Handler ... on a dead thread` came from `CameraCaptureSessionImpl.finalize`.
+  - A camera session from the earlier camera-swipe work was not closed: the garbage collector finalized it when the app
+    was backgrounded.
+  - It is filed in Found on the way below.
+- **iPhone:** only WebKit sandbox lines, media-timebase lines and UIKit keyboard lines.
+
+**PASS for what dev can carry; the FCM banner itself is owed.** That means the background banners on both phones, the reaction notification and the
+reel text. They need production, or dev given its Firebase secret.
+
+### What the unread code risks
+
+`git diff v1.3.0 v1.3.1-alpha.5 -- frontend/src-tauri/src/mobile` touches ONE branch: a `MediaMsg`.
+
+- **What `reel` decides.** `reel` is `kind == video && intent (field 14) == 1`. When it is false, the text, the
+  `mediaKind` and `thumbnail_readable` all compute exactly as `v1.3.0` did. Only the debug line's wording changed. So
+  every message kind that already existed - text, reply, photo, video, voice note, audio, attachment, poll, reaction,
+  system events - is unchanged.
+- **What the tests cover.**
+  - `a_reel_message_is_announced_as_a_canareel_and_never_hands_over_its_key`, `a_reel_caption_follows_the_announcement`,
+    `a_single_block_reel_still_withholds_its_key` and `only_a_video_declaring_reel_message_is_a_reel` cover the new
+    branch: no caption, a caption, an empty caption, an unknown intent, no intent, and a photo that declares the intent.
+  - `every_sentence_is_written_in_both_languages` covers the two new sentences.
+  - They build the bytes by field number, and those numbers match `libs/proto/canari.proto` (`caption = 8`,
+    `encoding = 12`, `intent = 14`, `MEDIA_INTENT_REEL_MESSAGE = 1`).
+  - The tests ran green in "Test Rust (Frontend Native (Tauri))", CI run 39247158171 on #2112's merge commit, 139
+    passed. They could not be re-run here: this box's shared `target/` points at a deleted worktree.
+- **Not covered.**
+  - No test feeds bytes written by the TypeScript encoder to the Rust reader. `codec.reelMessage.test.ts` proves the
+    writer's half on its own.
+  - The Kotlin and Objective-C callers pass `mediaKind: "reel"` through. Their only test of it is `!= "image"`, so a
+    reel never gets a thumbnail. That rule is read in the code and was never seen on a device.
+- **Where reels can come from.** At `v1.3.1-alpha.5` no shipped client CREATES a reel message: the in-chat camera
+  takes photos only until RC-3..RC-5 ([reels-in-chat](frontend/modules/reels-in-chat.md)), and `intent` is only
+  carried through on decode and on forward. So the new branch has no traffic to meet in production.
+
+**Risk: low.** The changed path is unreachable by shipped writers, and for every existing kind it is identical to
+`v1.3.0`, which already passed on the FCM path. An FCM banner read on production after the release is enough.
+
+### Incident: a dev PIN reset on `gamma`
+
+To unlock the rig's W2 Chrome profile on dev, the product's "PIN oublié > Réinitialiser" was used, as the
+stable-gate reading had done on the phones. **W2's dev profile (rig account key `third`) IS `gamma`, the iPhone's
+account.**
+
+- **What the server reset did.** `pin-reset` purges every device of the account (`security.controller.ts`
+  `resetPin`), the iPhone's key packages and push token included.
+- **How the iPhone came back.** Its local state was then sealed under a PIN the server no longer knew, so the iPhone
+  went through the same reset. W2 was purged in turn.
+- **The state afterwards.** The iPhone rejoined by an external commit, and `delta` answered its history request with 6
+  messages. Dev only, a test account, nothing lost that mattered.
+- **Rig lesson.** Before resetting a PIN, read which account the profile holds: the avatar label next to "Accéder au
+  profil". A reset on one device signs out the account's other devices.
+
+### Found on the way
+
+| Id | What | Evidence |
+| --- | --- | --- |
+| PAUSE-WARN | `[WS] pauseSocket: native disconnect failed: Trying to work with closed connection` logged as a warning for a socket that was already closed (P3 noise) | Mi 9T console 08:57:14.173 |
+| CAMERA-LEAK | 26 `W/MessageQueue ... Handler on a dead thread` from `CameraCaptureSessionImpl.finalize` at 08:53:20, when the app was backgrounded: a camera capture session left for the garbage collector instead of being closed. The camera was last used by the camera-swipe session before this reading, so the source is not separated | Mi 9T logcat, pid 32161 |
+| (rig) shade tap = background | Opening the shade to tap a notification backgrounds the app, so its pause/resume runs once per tap. Expected, but it explains PAUSE-WARN | Mi 9T console 08:57:14 |

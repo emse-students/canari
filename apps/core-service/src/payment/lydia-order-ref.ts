@@ -2,16 +2,27 @@ const UUID_RE_PART = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 
 /**
  * What an `order_ref` Canari itself generated for a Lydia `request/do` call identifies - see
- * `products.service.ts`/`forms.service.ts` in social-service, the only writers of this format.
+ * `product-checkout.ts`/`forms.service.ts` in social-service, the only writers of this format.
+ * A product's names the ATTEMPT (`checkoutId`, the `product_checkouts` row), because Lydia refuses
+ * a second request/do with an order_ref it has already seen (error 3, measured on dev 2026-10-21):
+ * one string per product and buyer made every product unbuyable after one attempt. The buyer is
+ * NOT in it: the attempt row holds the buyer, and nothing may take one from a callback.
  */
 export type LydiaOrderRef =
   | { kind: 'form'; submissionId: string }
-  | { kind: 'product'; productId: string; userId: string };
+  | { kind: 'product'; productId: string; checkoutId: string };
 
 /**
  * Parses Canari's own `order_ref` encoding back into what it identifies. Returns null for
  * anything that doesn't match exactly - a malformed or foreign `order_ref` must never be guessed
  * at, since it drives which submission/purchase gets marked paid.
+ *
+ * The product grammar is `product:<productId uuid>:<checkoutId uuid>` (81 characters, inside the
+ * 109 Lydia was measured to accept). The `product:<productId>:<userId>` of before migration 101 had
+ * a 64-character hex user id in second place, which this does not match, so no request issued
+ * with it parses - as none ever did: the old parser demanded a UUID there, which no user of this
+ * estate has. And a uuid in second place is only ever looked up as an attempt row: one that names
+ * no stored attempt settles nothing.
  */
 export function parseLydiaOrderRef(orderRef: string | null | undefined): LydiaOrderRef | null {
   if (!orderRef) return null;
@@ -20,6 +31,8 @@ export function parseLydiaOrderRef(orderRef: string | null | undefined): LydiaOr
   const productMatch = new RegExp(`^product:(${UUID_RE_PART}):(${UUID_RE_PART})$`, 'i').exec(
     orderRef
   );
-  if (productMatch) return { kind: 'product', productId: productMatch[1], userId: productMatch[2] };
+  if (productMatch) {
+    return { kind: 'product', productId: productMatch[1], checkoutId: productMatch[2] };
+  }
   return null;
 }
