@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 /**
  * A REGULAR READER GETS THE FULLY HIDDEN TREATMENT; A MODERATOR, PLATFORM ADMIN, OR THE POST'S OWN
- * AUTHOR SEES THE REAL IDENTITY PLUS A BADGE.
+ * AUTHOR SEES "ANONYME" AS THE NAME AND THE REAL AUTHOR SMALL UNDER IT (user, 2026-10-24).
  *
  * User request, 2026-09-17: *"il faut aussi qu'un moderateur sache qu'un poste a ete publie en
  * anonyme, meme s'il peut voir le nom du posteur - pareil pour le posteur lui-meme quand il voit
@@ -15,6 +15,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import PostHeader from './PostHeader.svelte';
 import type { PostEntity } from '$lib/posts/api';
+import { m } from '$lib/paraglide/messages';
 
 vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: (id: string) => `User ${id}`,
@@ -59,23 +60,37 @@ function renderHeader(post: PostEntity) {
 }
 
 describe('PostHeader anonymous post', () => {
-  it('shows the generic icon and "Anonyme", never a profile link, for a regular reader (no authorId)', () => {
+  it('a regular reader (no authorId) sees "Anonyme" alone: no profile link, no author line', () => {
     const target = renderHeader(basePost({ anonymous: true }));
 
     expect(target.textContent).toContain('Anonyme');
     expect(target.querySelector('a[href^="/profile/"]')).toBeNull();
+    expect(target.querySelector('[data-revealed-author]')).toBeNull();
   });
 
-  it('shows the REAL name/avatar plus an "Anonyme" badge when authorId is present (moderator, admin, or the author viewing their own post)', () => {
+  it('a reader served the authorId (moderator, admin, the author) sees "Anonyme" big and the real name small under it', () => {
     const target = renderHeader(
-      basePost({ anonymous: true, authorId: 'real-author-id', authorFirstName: 'Marie' })
+      basePost({
+        anonymous: true,
+        authorId: 'real-author-id',
+        authorFirstName: 'Marie',
+        authorLastName: 'Curie',
+      })
     );
 
-    expect(target.textContent).toContain('Marie');
-    expect(target.querySelector('a[href^="/profile/real-author-id"]')).not.toBeNull();
-    // The badge, not the fully-hidden label - both currently read "Anonyme", so this checks the
-    // profile link is real rather than asserting text absence.
-    expect(target.textContent).toContain('Anonyme');
+    // The name position says "Anonyme", and it is not a link to anyone.
+    const name = target.querySelector('.text-sm.font-bold')!;
+    expect(name.textContent!.trim()).toBe('Anonyme');
+    expect(name.closest('a')).toBeNull();
+    // The real author is the small line under it, linking the profile.
+    const line = target.querySelector('[data-revealed-author="real-author-id"]')!;
+    expect(line).not.toBeNull();
+    expect(line.classList.contains('text-2xs')).toBe(true);
+    expect(line.querySelector('a[href="/profile/real-author-id"]')).not.toBeNull();
+    expect(line.textContent).toContain('User real-author-id');
+    // The line comes before the time's line, under the name.
+    const time = target.querySelector('[data-post-time-line]')!;
+    expect(line.compareDocumentPosition(time) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('renders a normal profile link and avatar for a non-anonymous personal post', () => {
@@ -84,5 +99,31 @@ describe('PostHeader anonymous post', () => {
     expect(target.textContent).toContain('Marie');
     expect(target.querySelector('a[href^="/profile/"]')).not.toBeNull();
     expect(target.textContent).not.toContain('Anonyme');
+    expect(target.querySelector('[data-revealed-author]')).toBeNull();
+  });
+});
+
+describe('PostHeader republication', () => {
+  it('says "Republie par X" on the line of the time, not on a line of its own', () => {
+    const target = renderHeader(
+      basePost({
+        authorId: 'user-1',
+        authorFirstName: 'Marie',
+        republishedBy: [{ id: 'a1', name: 'BDE', slug: 'bde', logoUrl: null }],
+      } as Partial<PostEntity>)
+    );
+
+    const time = target.querySelector('[data-post-time-line]')!;
+    expect(time.querySelector('[data-post-republished-by]')!.textContent).toContain(
+      m.post_republished_by({ names: 'BDE' })
+    );
+    // Two glyphs on the line, the clock and the repost: both decoration.
+    const repost = time.querySelectorAll('svg')[1];
+    expect(repost.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('draws nothing beside the time when nobody republished the post', () => {
+    const target = renderHeader(basePost({ authorId: 'user-1' }));
+    expect(target.querySelector('[data-post-republished-by]')).toBeNull();
   });
 });
