@@ -1,9 +1,15 @@
 import { handleSystemEvent } from './systemMessageHandler';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { WithheldUnsupportedError } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  forgetHistoryAsks,
+  noteHistoryAsk,
+  noteJoinSolicited,
+} from '$lib/utils/chat/historyAddressing';
 
 /**
- * A `history_bundle` is a GROUP BROADCAST, so every member sees an answer meant for one device.
+ * A BROADCAST `history_bundle` (an older peer, or a server that predates addressed answers) reaches
+ * every member, so every member sees an answer meant for one device.
  *
  * Deciding what to do with somebody else's answer used to be delicate: a bundle DISCHARGED the
  * receiver's durable awaiting-history marker, so reading one addressed elsewhere stopped this
@@ -253,5 +259,202 @@ describe('history_bundle ingestion - our own exclusion windows', () => {
     );
     expect(added).toEqual(['undated-far']);
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('(undated-near-window)'));
+  });
+});
+
+/**
+ * STEP A, RULE 5 (docs/wiki/protocols/history-answer-addressing.md): an ADDRESSED bundle reached this
+ * device alone, so it is believed only as the answer to an ask this device made - and only for what
+ * that ask asked, and only to ADD messages.
+ */
+describe('history_bundle - an addressed answer is the answer to OUR ask or nothing', () => {
+  const ADDRESSED = {
+    deliveryMeta: { channel: 'live', addressed: true, senderDeviceId: 'responder-1' },
+  };
+  const TO_ME = digestIdentity(ME, MY_DEVICE);
+  const ASKED_AT = 1_700_000_000_000;
+
+  beforeEach(() => forgetHistoryAsks());
+
+  function refusedLines(error: { mock: { calls: unknown[][] } }) {
+    return error.mock.calls.filter(([l]) => String(l).includes('[HISTORY_ADDRESSED] REFUSED'));
+  }
+
+  it('ingests the answer to an open ask', async () => {
+    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
+    const ctx = makeCtx(ADDRESSED);
+
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [BUNDLE_MSG], to: TO_ME, requestId: 'req-00000001', last: true },
+      ctx as any
+    );
+
+    expect(ctx.batchAddMessages).toHaveBeenCalled();
+  });
+
+  it('refuses one that names no ask, one that names an ask we never made, and one for another device', async () => {
+    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx(ADDRESSED);
+
+    await handleSystemEvent('history_bundle', { messages: [BUNDLE_MSG], to: TO_ME }, ctx as any);
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [BUNDLE_MSG], to: TO_ME, requestId: 'req-99999999' },
+      ctx as any
+    );
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [BUNDLE_MSG],
+        to: digestIdentity(ME, 'another-device'),
+        requestId: 'req-00000001',
+      },
+      ctx as any
+    );
+
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(refusedLines(error)).toHaveLength(3);
+    error.mockRestore();
+  });
+
+  it('the chunk marked `last` closes the ask - a later chunk naming it is refused', async () => {
+    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx(ADDRESSED);
+    const frame = { messages: [BUNDLE_MSG], to: TO_ME, requestId: 'req-00000001', last: true };
+
+    await handleSystemEvent('history_bundle', frame, ctx as any);
+    await handleSystemEvent('history_bundle', frame, ctx as any);
+
+    expect(ctx.batchAddMessages).toHaveBeenCalledTimes(1);
+    expect(refusedLines(error)).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  /**
+   * Review of #2270: the rendezvous can hand one ask to a second responder (a re-election over a
+   * stored probe). Its answer is held to the same bound and ADDS the same way, so refusing it at
+   * error was noise that could lose content - an ask is closed per answering DEVICE.
+   */
+  it('a second responder to the same ask is ingested - the ask is closed per answering device', async () => {
+    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const frame = { messages: [BUNDLE_MSG], to: TO_ME, requestId: 'req-00000001', last: true };
+    const first = makeCtx(ADDRESSED);
+    const second = makeCtx({
+      deliveryMeta: { ...ADDRESSED.deliveryMeta, senderDeviceId: 'responder-2' },
+    });
+
+    await handleSystemEvent('history_bundle', frame, first as any);
+    await handleSystemEvent('history_bundle', frame, second as any);
+
+    expect(first.batchAddMessages).toHaveBeenCalledTimes(1);
+    expect(second.batchAddMessages).toHaveBeenCalledTimes(1);
+    expect(refusedLines(error)).toHaveLength(0);
+    error.mockRestore();
+  });
+
+  /**
+   * Re-review of #2270: the answerer an ask is closed for must be the device MLS verified. The live
+   * and pull paths check the envelope's device against the credential only when the envelope names
+   * one, so an addressed answer that names none is refused rather than keyed on nothing.
+   */
+  it('refuses an addressed answer whose envelope names no sending device', async () => {
+    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx({ deliveryMeta: { channel: 'live', addressed: true } });
+
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [BUNDLE_MSG], to: TO_ME, requestId: 'req-00000001', last: true },
+      ctx as any
+    );
+
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(refusedLines(error)).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  it('drops, at error, what lies outside the range we asked for', async () => {
+    noteHistoryAsk(GROUP, 'req-00000002', {
+      kind: 'range',
+      since: 500,
+      before: 2000,
+      askedAt: ASKED_AT,
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx(ADDRESSED);
+    const newer = { ...BUNDLE_MSG, id: 'newer', timestamp: 2000 };
+
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [BUNDLE_MSG, newer], to: TO_ME, requestId: 'req-00000002', last: true },
+      ctx as any
+    );
+
+    const added = (ctx.batchAddMessages.mock.calls[0][0] as Array<{ messageId: string }>).map(
+      (m) => m.messageId
+    );
+    expect(added).toEqual(['m1']);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('1 message(s) of an addressed range')
+    );
+    error.mockRestore();
+  });
+
+  it('an answer to an ask only ADDS - it merges no read state', async () => {
+    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
+    const ctx = makeCtx(ADDRESSED);
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [],
+        to: TO_ME,
+        requestId: 'req-00000001',
+        last: true,
+        readWatermarks: { peer: 5000 },
+      },
+      ctx as any
+    );
+
+    expect(ctx.conversations.get(GROUP).readWatermarks).toBeUndefined();
+  });
+
+  it("the inviter's push is solicited by our admission, and may hand over the conversation state", async () => {
+    noteJoinSolicited(GROUP, ASKED_AT);
+    const ctx = makeCtx(ADDRESSED);
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [BUNDLE_MSG],
+        to: TO_ME,
+        join: true,
+        last: true,
+        readWatermarks: { peer: 5000 },
+      },
+      ctx as any
+    );
+
+    expect(ctx.batchAddMessages).toHaveBeenCalled();
+    expect(ctx.conversations.get(GROUP).readWatermarks).toEqual({ peer: 5000 });
+  });
+
+  it('a push to a device that was admitted to nothing is refused', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx(ADDRESSED);
+
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [BUNDLE_MSG], to: TO_ME, join: true, last: true },
+      ctx as any
+    );
+
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(refusedLines(error)).toHaveLength(1);
+    error.mockRestore();
   });
 });

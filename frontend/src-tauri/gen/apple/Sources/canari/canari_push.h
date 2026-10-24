@@ -53,4 +53,10 @@ void CanariMirrorPushStateToAppGroup(void);
 /// at the same transitions as the mirror above.
 void CanariDrainAppGroupFcmCache(void);
 
+/// Marks the native caches in `dir` - `graine_seeds.json` and every `fcm_message_cache*.ndjson` -
+/// excluded from iCloud and computer backups, and nothing else in it: the directory also holds
+/// `mls.bin`, `push_context.json` and the identity files a restore must bring back. Per file, so it
+/// is re-applied after every atomic write (a new inode does not carry the flag). nil is a no-op.
+void CanariExcludeNativeCacheFilesFromBackup(NSString *_Nullable dir);
+
 #endif

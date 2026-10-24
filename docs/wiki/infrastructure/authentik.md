@@ -143,6 +143,14 @@ MiConnect is the Service Provider, Alumnforce (the alumni portal) the Identity P
 - **The metadata carries NO certificate** (no `KeyDescriptor`): the source has no signing keypair,
   so authentik does not sign its requests. An IdP that insists on a SP certificate needs one created
   and attached to the source first, which is a production write.
+- **The source ships DISABLED, and may only be enabled with its verification certificate**
+  (`30-sources.yaml`, `enabled: false`). A SAML source verifies a response's signature only when a
+  verification key pair is attached, so enabling one without the IdP's certificate would mean no
+  signature is checked. The precondition for re-enabling, in one step: import Alumnforce's
+  certificate, attach it as the source's `verification_kp`, and keep `signed_response` and
+  `signed_assertion` true. `test-blueprints.sh` enforces this as a CI gate - it refuses any enabled
+  SAML source that has no verification key pair, and refuses an unsigned, weakly-signed (SHA-1/MD5)
+  or IdP-initiated configuration on ANY source, so the source cannot be enabled half-configured.
 - **What the IdP gives back goes into the source**: its metadata URL (Alumnforce's looks like
   `https://mines-saint-etienne.org/sso/saml/metadata`) fills `sso_url`, the issuer and the
   verification certificate. The blueprint (`30-sources.yaml`) still carries a PLACEHOLDER `sso_url`,
@@ -183,16 +191,60 @@ Traps found while writing this, each measured on authentik 2026.8.0:
 Authentik acts as the OIDC **Provider**; Canari's [`core-service`](../services/core-service.md) acts as the **Relying Party**:
 
 ```
-Browser → Authentik /authorize (PKCE + state)
+Browser → Authentik /authorize (PKCE S256 + state)
   → User authenticates (login/password, SSO)
   → Redirect to /auth/callback?code=...&state=...
-  → Browser POSTs code to core-service
-  → core-service exchanges code for tokens (server-side)
+  → Browser POSTs code + PKCE verifier to core-service
+  → core-service exchanges code + verifier for tokens (server-side)
   → core-service upserts user in PostgreSQL (sub = userId)
   → Returns { access_token (JWT HS256, 15 min), refresh (HttpOnly cookie, 7d) }
 ```
 
+core-service forwards the `code_verifier` when the client sends one and publishes `oidcPkce: true` in
+`GET /api/version`, which is what a client reads before it sends a challenge: a challenged code
+redeemed without its verifier is refused by authentik, so the server half ships first
+([legacy-compatibility](../legacy-compatibility.md#no-date-yet---an-oidc-callback-with-no-pkce-verifier)).
+What authentik does with the pair is MEASURED, not assumed: `test-pkce.py`, run by
+`test-blueprints.sh` on a throwaway instance, authorizes through `miconnect-canari-local` and redeems
+the code the way core-service does. On 2026.8.0 (2026-10-23) a challenged code with no verifier and
+with a wrong one answer `400 invalid_grant`, the right verifier answers `200` with an id_token, and a
+verifier sent for an unchallenged code answers `400 invalid_grant`. core-service turns any refusal
+into a `401` carrying a typed `code` (`oidcTokenRefusal`): `OIDC_PKCE_REFUSED` when a verifier was sent
+and MiConnect answered `400`, `OIDC_CODE_REFUSED` when none was, `OIDC_TOKEN_EXCHANGE_FAILED` for any
+other status. A wrong verifier and a spent or expired code both answer `invalid_grant`, so no finer
+code can be stated truthfully; the provider's body is logged, never returned (`auth.controller.spec.ts`).
+
 The user's `sub` claim from Authentik becomes the canonical `userId` across all Canari services (`findOrCreateFromOidc` uses `userinfo.sub` as the primary key).
+
+## Signing in without the CAS (2026-10-23)
+
+Two flows take a password, and both are reachable by URL: `password-login` (the test campaign, the
+smoke sign-in of `serve-dev.yml` and the store review account) and authentik's own
+`default-authentication-flow`. An enrolment flow is reachable by URL too. What guards each, in the
+blueprints and driven by `test-password-guard.py` on every CI run of `test-blueprints.sh`:
+
+- **`miconnect-password-refused`, a deny stage between the identification and the password**, on
+  both password flows. It stops a request when either policy holds (`policy_engine_mode: any`):
+  - `miconnect-password-reputation` - the address or the username has fallen to `-5`. authentik
+    takes 1 per failed password and adds 1 per success, floors each (username, address) row at the
+    tenant's `-5`, and expires a row after a day. A username's rows are summed across addresses, so
+    five failures spread over five addresses still stop it. The cost: five wrong passwords lock that
+    account out of the password flows for a day - a mistyped smoke secret does that too.
+  - `miconnect-password-superuser` - the pending user is a superuser. An admin signs in through the
+    CAS (`miconnect-auth`), never with a password alone. In a stage binding evaluated after the
+    identification, `request.user` IS the pending user, which is what makes this a one-line policy.
+  It sits BEFORE the password stage on purpose: placed after it, it would answer only a RIGHT
+  password, and so tell whoever is guessing that the password was right.
+- **`password-login` asks for the second factor** of an account that has one, with authentik's own
+  `default-authentication-mfa-validation` (an account with no device goes through, which is what the
+  review and test accounts are).
+- **`miconnect-enrollment` plans only when a source handed it an identity** (`ak_is_sso_flow`, the
+  policy authentik's default source enrolment carries). Opened directly, it answers access denied
+  before any page.
+
+**A flow's policy binding is found by its `policybindingmodel` row** (`[flow__slug, ...]`), the way
+the stage bindings are. A `!Find` on the flow itself resolves and applies once, but never matches the
+stored target again, so the second apply of `test-blueprints.sh` fails on a duplicate.
 
 ## Nginx auth_request integration
 
@@ -603,7 +655,8 @@ printed in full (the rollback):**
 
 - `password-login` is reachable by URL only and is NOT dead: the test campaign signs in through it
   (`PASSWORD_LOGIN_FLOW_SLUG`, [cross-client-campaign-resume](../cross-client-campaign-resume.md)).
-  Accounts without a usable password cannot use it.
+  Accounts without a usable password cannot use it. What guards it is
+  [Signing in without the CAS](#signing-in-without-the-cas-2026-10-23).
 - `miconnect-auth-fallback` is referenced by nothing inside authentik; its deny text describes the
   CAS failure below.
 - The `Default - Out-of-box-experience flow` blueprint reports `error` since 2026-08-29. Harmless

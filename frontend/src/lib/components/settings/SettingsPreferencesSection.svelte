@@ -12,16 +12,22 @@
     Moon,
     Monitor,
     Languages,
+    Share2,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { changeLocale, getLocale, locales, LOCALE_LABELS } from '$lib/i18n';
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
+  import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 
   // The vibration toggle is only meaningful on touch-capable hardware; detect it here so the
   // section needs no props and stays drop-in.
   let isTouchDevice = $state(false);
+  // Share suggestions (sharing lot S5) exist only in Android's share sheet: the toggle is hidden
+  // wherever it would do nothing.
+  let isAndroidApp = $state(false);
   onMount(() => {
     isTouchDevice = isCoarsePointerDevice();
+    isAndroidApp = isAndroidTauriRuntime();
   });
 </script>
 
@@ -98,6 +104,36 @@
           <span
             class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
  {settings.vibrationsEnabled ? 'translate-x-6' : 'translate-x-0'}"
+          ></span>
+        </button>
+      </div>
+    {/if}
+
+    {#if isAndroidApp}
+      <div class="flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3.5">
+          <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
+            <Share2 size={20} strokeWidth={2.5} />
+          </div>
+          <div>
+            <p class="text-text-main text-sm font-bold">{m.settings_share_suggestions()}</p>
+            <p class="text-text-muted mt-0.5 text-xs font-medium">
+              {m.settings_share_suggestions_desc()}
+            </p>
+          </div>
+        </div>
+
+        <button
+          role="switch"
+          aria-checked={settings.shareSuggestionsEnabled}
+          aria-label={m.settings_share_suggestions_aria()}
+          onclick={() => settings.setShareSuggestionsEnabled(!settings.shareSuggestionsEnabled)}
+          class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+ {settings.shareSuggestionsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+        >
+          <span
+            class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
+ {settings.shareSuggestionsEnabled ? 'translate-x-6' : 'translate-x-0'}"
           ></span>
         </button>
       </div>

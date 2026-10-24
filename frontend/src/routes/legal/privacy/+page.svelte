@@ -585,6 +585,21 @@
             <td>Jusqu'à leur effacement</td>
           </tr>
           <tr>
+            <td>Raccourcis de conversation (application Android)</td>
+            <td>
+              Les noms de vos conversations récentes, et leur identifiant interne, sont confiés au
+              système Android pour les proposer dans son menu Partager (désactivable dans Paramètres
+              &gt; Préférences) ; les notifications de message y confient aussi le nom et la photo
+              de la conversation. Le système et l'écran d'accueil peuvent donc les afficher
+            </td>
+            <td
+              >Effacés à la déconnexion (les suggestions aussi à la désactivation du réglage) ou à
+              la désinstallation. Un raccourci que vous avez épinglé sur l'écran d'accueil ne peut
+              pas être retiré par l'application : il est désactivé, et c'est le lanceur qui décide
+              s'il reste affiché</td
+            >
+          </tr>
+          <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>
             <td>
               Créé par les versions de l'application antérieures à octobre 2026, qui l'envoyaient à

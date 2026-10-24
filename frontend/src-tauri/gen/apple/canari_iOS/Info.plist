@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.4.0</string>
+	<string>1.4.1</string>
 	<key>CFBundleVersion</key>
-	<string>100400003</string>
+	<string>100400101</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>
@@ -35,12 +35,13 @@
 		     CALLS_COMPILED, whose in-app calls ship without the native ring - never before: an
 		     undeclared-but-unused mode is a rejection, and a used-but-undeclared one cannot get a
 		     PushKit token at all. -->
-		<!-- NO `audio` HERE EITHER, FOR A SIMILAR REASON (WP-C-BG-I), BUT ON THE OTHER SWITCH. WKWebView mutes a page's
-		     microphone when the app is hidden or the screen locks unless this array holds `audio`
-		     (measured on the iPhone 2026-10-20), so a call needs it - and a stable places no call.
-		     ios.yml adds it to every PRE-RELEASE build, the builds that can call; it comes here in
-		     the commit that flips CALLS_COMPILED - the in-app call needs it, the native ring does
-		     not decide it (callsCompiled.test.ts asserts both). -->
+		<!-- `audio` IS HERE SINCE THE FLIP OF CALLS_COMPILED (WP-C-BG-I), ON THE OTHER SWITCH FROM
+		     `voip`. WKWebView mutes a page's microphone when the app is hidden or the screen locks
+		     unless this array holds `audio` (measured on the iPhone 2026-10-20), so an in-app call
+		     needs it; the native ring does not decide it (callsCompiled.test.ts asserts both). App
+		     Review is told what it is for: an ongoing call keeps its microphone with the screen
+		     locked. -->
+		<string>audio</string>
 	</array>
 	<!-- BGTaskScheduler identifiers the app may submit. Must list every identifier passed to
 	     registerForTaskWithIdentifier: / submitTaskRequest: or BGTaskScheduler throws. This
@@ -118,7 +119,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Canari utilise l'appareil photo pour prendre des photos à partager dans vos conversations, des photos et vidéos pour vos publications, et pour filmer vos CanaReels.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Canari utilise le microphone pour enregistrer des messages vocaux et le son des vidéos que vous filmez pour vos publications et vos CanaReels.</string>
+	<string>Canari utilise le microphone pour vos appels audio, pour enregistrer des messages vocaux et le son des vidéos que vous filmez pour vos publications et vos CanaReels.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Canari accède à vos photos pour les partager dans vos conversations.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

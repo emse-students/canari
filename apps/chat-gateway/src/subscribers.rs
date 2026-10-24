@@ -21,7 +21,14 @@ type ConnectedUsers = Arc<Mutex<HashMap<String, HashMap<u64, ConnectedUser>>>>;
 /// Spawns a Redis pub/sub subscriber that listens on `chat:messages` and
 /// `chat:channel_events`, routing frames to connected WebSocket clients.
 /// Reconnects automatically with a 5-second back-off if the connection drops.
-pub fn spawn_redis_subscriber(redis_client: redis::Client, connected_users: ConnectedUsers) {
+///
+/// `session_caps` is what each local session declared on its socket: an ADDRESSED frame reaches only
+/// the sessions that declared [`crate::addressing::ADDRESSED_HISTORY_CAPABILITY`] (the edge filter).
+pub fn spawn_redis_subscriber(
+    redis_client: redis::Client,
+    connected_users: ConnectedUsers,
+    session_caps: Arc<Mutex<HashMap<u64, bool>>>,
+) {
     tokio::spawn(async move {
         loop {
             tracing::info!("Attempting Redis pub/sub connection...");
@@ -143,7 +150,12 @@ pub fn spawn_redis_subscriber(redis_client: redis::Client, connected_users: Conn
                                 "isCommit": json.get("isCommit").and_then(|v| v.as_bool()).unwrap_or(false),
                                 "ratchetTree": json.get("ratchetTree").cloned().unwrap_or(serde_json::Value::Null),
                                 "proto": proto_b64,
-                                "queuedMessageId": json.get("queuedMessageId").and_then(|v| v.as_str()).unwrap_or("")
+                                "queuedMessageId": json.get("queuedMessageId").and_then(|v| v.as_str()).unwrap_or(""),
+                                // The routing fact the receiver needs to refuse an addressed
+                                // conversation frame that is not a solicited history answer
+                                // (history-answer-addressing, rules 4-5). Dropping it here would
+                                // make every live addressed frame look like a broadcast.
+                                "addressed": json.get("addressed").and_then(|v| v.as_bool()).unwrap_or(false)
                             })
                             .to_string()
                             };
@@ -164,7 +176,14 @@ pub fn spawn_redis_subscriber(redis_client: redis::Client, connected_users: Conn
 
                             tracing::info!("Looking for connected user: {}", key);
 
-                            // Send to ALL active connections for this key (multi-tab support).
+                            // Send to ALL active connections for this key (multi-tab support) -
+                            // except, for an ADDRESSED frame, a session that did not declare it
+                            // can refuse one (history-answer-addressing, rule 6).
+                            let addressed = !is_control
+                                && json
+                                    .get("addressed")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
                             let senders = {
                                 let map = connected_users.lock().unwrap();
                                 map.get(&key).cloned()
@@ -172,8 +191,30 @@ pub fn spawn_redis_subscriber(redis_client: redis::Client, connected_users: Conn
 
                             let mut found = false;
                             let mut any_failed = false;
-                            if let Some(senders) = senders {
+                            if let Some(mut senders) = senders {
                                 found = true;
+                                let (_, refused) = {
+                                    let caps = session_caps.lock().unwrap();
+                                    crate::addressing::addressed_recipients(
+                                        addressed,
+                                        senders.keys().copied(),
+                                        &caps,
+                                    )
+                                };
+                                for conn_id in refused {
+                                    senders.remove(&conn_id);
+                                    // chat-delivery checked every session of the device before
+                                    // publishing, so a session here that did not declare is one
+                                    // that connected since - or a check that failed. Either way the
+                                    // frame does not reach it, and nothing queues it for later.
+                                    tracing::error!(
+                                        "[PubSub] ADDRESSED frame NOT delivered to {} conn_id={} (queuedId={}) - this session did not declare {}",
+                                        key,
+                                        conn_id,
+                                        queue_id,
+                                        crate::addressing::ADDRESSED_HISTORY_CAPABILITY
+                                    );
+                                }
                                 for tx in senders.values() {
                                     if tx.try_send(json_frame.clone()).is_ok() {
                                         tracing::info!(
@@ -220,15 +261,19 @@ pub fn spawn_redis_subscriber(redis_client: redis::Client, connected_users: Conn
                                 };
                                 if all_gone {
                                     let rc = redis_client.clone();
-                                    let rk = format!("user:online:{}", key);
                                     let k2 = key.clone();
                                     tokio::spawn(async move {
                                         match rc.get_multiplexed_async_connection().await {
                                             Ok(mut con) => {
-                                                if let Err(e) = redis::cmd("DEL")
-                                                    .arg(&rk)
-                                                    .query_async::<()>(&mut con)
-                                                    .await
+                                                // Presence only: each dead session's field goes
+                                                // with its own ConnectionGuard (crate::addressing).
+                                                if let Err(e) = crate::addressing::leave_session(
+                                                    &mut con,
+                                                    &k2,
+                                                    None,
+                                                    crate::handlers::PRESENCE_TTL_SECS,
+                                                )
+                                                .await
                                                 {
                                                     tracing::warn!(
                                                         "[presence] DEL failed after delivery failure for {}: {}",

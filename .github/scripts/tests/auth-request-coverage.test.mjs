@@ -300,9 +300,10 @@ const RUST_AUTH = [
   'caller_id',
   // `get_admin_presence` - the same header contract, one claim further along.
   'x-global-admin',
-  // Both WebSocket upgrades - the `canari_ws_token` JWT, which nginx never reads and `auth_request`
-  // therefore cannot have checked.
-  'decode::<Claims>',
+  // Both WebSocket upgrades - the access-token JWT, which nginx never reads and `auth_request`
+  // therefore cannot have checked. Each handler verifies it through `decode_access_claims`, which
+  // also refuses a refresh token.
+  'decode_access_claims',
 ];
 
 /**

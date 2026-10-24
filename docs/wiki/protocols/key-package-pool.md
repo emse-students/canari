@@ -403,6 +403,10 @@ DEFECT.** Three MLS engines share one `mls.bin` on Android - foreground Tauri, F
 and each does *load, modify, write*. **Only the WRITE is protected.** `background_write_mls_bin`
 takes `mls_bin_write_lock` and tests `foreground_is_active()`; the load-modify-write cycle around it
 is not a unit, so nothing detects that the file changed between an engine's load and its write.
+**Closed for the background engines on 2026-10-23:** their one writer is now
+`background_write_mls_bin_if_unchanged`, which compares the file with the bytes the engine loaded
+under the same lock and refuses on any difference (`write_over_loaded_state` in
+`mobile/background.rs`; found while moving the at-rest key, which re-seals `mls.bin` under another key).
 
 And that test is a CLOCK. `FOREGROUND_GRACE_MS` is 30 s, refreshed by a 10 s JS heartbeat which -
 by its own comment - "auto-pauses on hidden". Meanwhile `sauvegarder_mls_et_persister`

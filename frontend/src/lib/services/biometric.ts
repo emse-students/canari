@@ -8,14 +8,14 @@ import {
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { m } from '$lib/paraglide/messages';
-import { keystoreCommand } from './keystoreCommands';
+import { DELETE_DEVICE_KEY_COMMAND, keystoreCommand } from './keystoreCommands';
 import { forgetPromptedBiometricUnlock } from './biometricCadence';
 
 /**
  * Flag persisted in localStorage (and mirrored to Tauri native store) that
  * indicates the user opted into biometric unlock.  The actual device key is
  * stored in the platform keystore during the normal PIN login flow
- * (`store_push_context` → `storeKeyBytes`) — no separate keystore write is
+ * (`store_push_context` → `store_guarded`) — no separate keystore write is
  * needed at enrollment time.
  */
 const CONFIG_FLAG_KEY = 'canari_biometric_configured';
@@ -186,13 +186,16 @@ export class BiometricService {
    * Measured on a Pixel 6a on 2026-08-28: the wipe called `disable`, the prompt raised
    * `BiometricActivity`, and cancelling it would have left key and flags intact.
    *
+   * THROUGH THE AT-REST GUARD (`supprimer_cle_appareil`): an entry whose account still has a marker
+   * is refused, so the factory wipe runs this after `clear_app_data` has removed every marker.
+   *
    * @param alias - the exact keystore entry, `mls_device_key_<userId>_<deviceId>`. Without one this
    *   clears the flags only, which is why the wipe reconstructs every alias the device recorded.
    */
   static async forget(alias?: string): Promise<void> {
     if (alias && isTauri()) {
-      await invoke(keystoreCommand('deleteKeyBytes'), { payload: { alias } }).catch((e) => {
-        console.warn('[BIOMETRIC] deleteKeyBytes failed - keystore entry may survive:', e);
+      await invoke(DELETE_DEVICE_KEY_COMMAND, { alias }).catch((e) => {
+        console.warn('[BIOMETRIC] the keystore entry delete failed - it may survive:', e);
       });
     }
     localStorage.removeItem(CONFIG_FLAG_KEY);
@@ -217,20 +220,24 @@ export class BiometricService {
    */
   static async deleteKeyEntry(alias: string): Promise<void> {
     if (!isTauri()) return;
-    await invoke(keystoreCommand('deleteKeyBytes'), { payload: { alias } });
+    await invoke(DELETE_DEVICE_KEY_COMMAND, { alias });
   }
 
   /**
-   * Turns biometric unlock off from Settings: confirms the owner, then forgets the key.
+   * Turns biometric unlock off from Settings: confirms the owner, then clears the flags. THE KEY
+   * ENTRY IS NOT TOUCHED (2026-10-22): it is also what the background push reads, and on a phone
+   * whose at-rest key is hardware-held it is the only copy of that key - a delete followed by a
+   * re-store lost everything to a kill in between. With the flags cleared, the next launch asks
+   * for the PIN; the entry stays as it was.
    *
-   * The prompt is load-bearing here - if the user cancels, `authenticate()` throws and nothing is
-   * deleted, so key and flags stay intact. A caller that must NOT be refusable wants `forget`.
+   * The prompt is load-bearing here - if the user cancels, `authenticate()` throws and nothing
+   * changes. A caller that must NOT be refusable wants `forget`.
    */
-  static async disable(alias?: string): Promise<void> {
+  static async disable(): Promise<void> {
     await authenticate(m.auth_biometric_desc(), {
       ...biometricPromptOptions(),
       title: m.auth_biometric_prompt_disable_title(),
     });
-    await BiometricService.forget(alias);
+    await BiometricService.forget();
   }
 }
