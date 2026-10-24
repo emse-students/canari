@@ -33,39 +33,25 @@
     if (!opt || names[opt.id]) return;
     void resolvePollVoters(opt.voterIds).then((rows) => (names = { ...names, [opt.id]: rows }));
   });
-
-  /** Arrow keys move between the option tabs, as a tablist does. */
-  function onTabKeydown(e: KeyboardEvent, index: number) {
-    const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-    if (!step) return;
-    e.preventDefault();
-    const next = options[(index + step + options.length) % options.length];
-    activeId = next.id;
-    queueMicrotask(() => document.getElementById(`poll-voters-tab-${next.id}`)?.focus());
-  }
 </script>
 
 <Modal open title={m.post_poll_voters_label()} maxWidth="max-w-md" {onClose}>
   {#if options.length > 1}
     <div
-      role="tablist"
+      role="group"
       aria-label={m.post_poll_voters_options_label()}
       class="-mx-2 mb-3 flex gap-2 overflow-x-auto px-2 pb-1"
     >
-      {#each options as opt, i (opt.id)}
+      {#each options as opt (opt.id)}
         <button
           type="button"
-          role="tab"
           id="poll-voters-tab-{opt.id}"
-          aria-selected={opt.id === active.id}
-          aria-controls="poll-voters-panel"
-          tabindex={opt.id === active.id ? 0 : -1}
+          aria-pressed={opt.id === active.id}
           class="min-h-11 max-w-[11rem] shrink-0 truncate rounded-full border px-3 text-xs font-semibold transition-colors {opt.id ===
           active.id
             ? 'text-text-main border-amber-500 bg-amber-500/10'
             : 'border-cn-border text-text-muted'}"
           onclick={() => (activeId = opt.id)}
-          onkeydown={(e) => onTabKeydown(e, i)}
         >
           {opt.label} ({opt.voterIds.length})
         </button>
@@ -73,11 +59,7 @@
     </div>
   {/if}
 
-  <div
-    id="poll-voters-panel"
-    role={options.length > 1 ? 'tabpanel' : undefined}
-    aria-labelledby={options.length > 1 ? `poll-voters-tab-${active.id}` : undefined}
-  >
+  <div id="poll-voters-panel" aria-live="polite">
     <p class="text-text-main mb-2 text-sm font-bold">
       <EmojiText text={active.label} />
       <span class="text-text-muted text-xs font-semibold">

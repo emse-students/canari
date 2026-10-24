@@ -131,7 +131,7 @@ reached on a phone only by a long press (hard to hold without voting) and as tal
   count badge was a `role=button` nested in the vote button and relied on `stopPropagation`. It
   opens `PollVotersSheet.svelte` - `Modal`, so a bottom sheet on a phone and a dialog on desktop,
   with the focus trap, Escape, the back gesture and focus return. The sheet scrolls and, with
-  two options or more, switches option through a tablist.
+  two options or more, switches option through a row of toggle buttons (`aria-pressed`; a `tablist` is reserved by `sectionMenus.test.ts`).
 - **Anonymous polls and empty options get no button**: the server sends an anonymous poll no voter
   ids (a tally), and an option with 0 voters has nobody to list. The server is unchanged.
 - Helpers (cap, name resolution) are in `posts/pollVoters.ts`.

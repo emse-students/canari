@@ -313,7 +313,7 @@
                    on a phone, and never inside the vote button. -->
                 <button
                   type="button"
-                  class="text-text-muted hover:text-text-main absolute top-1/2 right-1 flex size-11 -translate-y-1/2 items-center justify-center rounded-full outline-none hover:bg-black/5 focus-visible:ring-4 focus-visible:ring-amber-500/30 dark:hover:bg-white/10"
+                  class="text-text-muted hover:text-text-main ui-icon-button absolute top-1/2 right-1 -translate-y-1/2 rounded-full outline-none hover:bg-black/5 focus-visible:ring-4 focus-visible:ring-amber-500/30 dark:hover:bg-white/10"
                   aria-label={m.post_poll_voters_info_label({ option: option.label })}
                   aria-haspopup="dialog"
                   data-testid="poll-voters-info"

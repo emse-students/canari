@@ -114,7 +114,7 @@ describe('PostPolls voter list', () => {
     const { target } = render(ids(3));
     info(target).click();
     await settle();
-    const tabs = [...document.body.querySelectorAll<HTMLElement>('[role="tab"]')];
+    const tabs = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"] [aria-pressed]')];
     expect(tabs).toHaveLength(2);
     tabs[1].click();
     await settle();
@@ -131,9 +131,10 @@ describe('PostPolls voter list', () => {
     document.body
       .querySelector('[role="dialog"]')!
       .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    await new Promise<void>((r) => setTimeout(r, 400));
-    flushSync();
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    await vi.waitFor(() => {
+      flushSync();
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    });
     expect(document.activeElement).toBe(btn);
   });
 
