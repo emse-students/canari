@@ -66,8 +66,13 @@ describe('MembersController - lock order of an add and a removal', () => {
 
     const addOrder = tablesInTransaction(add.statements);
     const removeOrder = tablesInTransaction(remove.statements);
+    // The enrolment reads the last departure and the earliest device row before it opens the
+    // interval (`admittedAt`): two plain SELECTs, which take no row lock, so the write order
+    // below them is unchanged.
     expect(addOrder).toEqual([
       'dm_group_members',
+      'dm_group_membership_intervals',
+      'dm_device_group_memberships',
       'dm_group_membership_intervals',
       'dm_device_group_memberships',
       'dm_device_group_memberships',
