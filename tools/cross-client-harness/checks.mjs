@@ -517,6 +517,13 @@ export const PHASES = {
     scripts: ['devrows.mjs --row DEV-1', 'devrows.mjs --row DEV-2', 'devrows.mjs --row DEV-3', 'devrows.mjs --row DEV-4', 'devrows.mjs --row DEV-6', 'devrows.mjs --row DUP-7'],
     needs: ['W1', 'W2', 'W3', 'W6'],
   },
+  // THE REMOVAL BOUND ON A SALON (RM-4..6), browsers only: each row mints its own community, joined by
+  // link, and deletes it once its verdict is on disk.
+  SALON: {
+    title: '1.4.1 - a salon access list: two admins at once, a kick against a grant, and a removal beyond the actor',
+    scripts: ['salon.mjs --row RM-4', 'salon.mjs --row RM-5', 'salon.mjs --row RM-6'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
 };
 
 /**

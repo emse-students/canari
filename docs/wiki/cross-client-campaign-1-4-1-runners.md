@@ -48,8 +48,8 @@ is one table plus one action per shape. Each holds its pure judgements in `<name
 | `archive/gap.mjs` | GAP-1..3 | frames reordered, replayed or flooded against a frozen member | built ([#2397](https://github.com/emse-students/canari/pull/2397)); GAP-4 records `SKIPPED` |
 | `archive/kill.mjs` | KILL-1..5, RM-3 | a process killed at a point of the commit | built ([#2399](https://github.com/emse-students/canari/pull/2399)) |
 | `archive/admit.mjs` | ADM-1..8 | a group link, an ask, Add or Decline, and the waiting seat's probes | built ([#2400](https://github.com/emse-students/canari/pull/2400)); ADM-5..7 wait on the old APK's install |
-| `archive/devrows.mjs` | DEV-1..4, DEV-6, DEV-7, DUP-7 | a device minted, revoked or woken | built (draft PR); W6 owes its `names.mjs` entry and one human sign-in |
-| `archive/salon.mjs` | RM-4..6 | two admins rewriting one salon's access | owed |
+| `archive/devrows.mjs` | DEV-1..4, DEV-6, DEV-7, DUP-7 | a device minted, revoked or woken | built ([#2401](https://github.com/emse-students/canari/pull/2401)); W6 owes its `names.mjs` entry and one human sign-in |
+| `archive/salon.mjs` | RM-4..6 | two admins rewriting one salon's access | built (draft PR); its invariant is the salon's entitlement, not the message probe |
 | `archive/big.mjs` | BIG-1..3 | everything at twelve devices | owed |
 
 ## 3. Row by row
@@ -113,9 +113,9 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | RM-1 | `hold` W2's own Add, W1 Removes W2, release | `fault.mjs` | extracted `removeMember` | no | U | 30 min |
 | RM-2 | Remove while the removed member sends ten | `send` | the typed refusal read on the sender | no | U | 20 min |
 | RM-3 | hold the roster DELETE's answer, close the remover's tab; W2 Adds W5; measure how long W4's seat survives | `fault.mjs` `hold-answer`, `reopen.mjs` | - | no | U | 30 min |
-| RM-4 | two admins PATCH one salon's access, released together | `comm.mjs` `openChannelSettings`, `fault.mjs` `hold` | the second admin role on W2 in the venue | no | U | 30 min |
-| RM-5 | a kick races an invitation into a private salon, x5 | as RM-4 | - | no | U | 30 min |
-| RM-6 | a `channel.manage`-only member makes a salon private leaving out an admin | `comm.mjs` | a role holding only `channel.manage` | no | U | 15 min |
+| RM-4 | two admins each revoke a different member of one private salon, both PATCHes held and released together | `comm.mjs` `revokeChannelAccess`, `fault.mjs` `hold` | a community of the row's own (W2 made admin there, never in the venue) | no | U | 30 min |
+| RM-5 | a kick (`removeCommunityMember`) races a grant (`grantChannelAccess`) for W4, x5; W4 rejoins by link between cycles | as RM-4 | - | no | U | 30 min |
+| RM-6 | a `channel.manage`-only member makes a salon private leaving out an admin | `comm.mjs` `permissionGrid`, `cyclePermissionCell` | the moderator role of the row's community cut down to `channel.manage` | no | U | 15 min |
 | RM-7 | the actor's demotion races their removal of someone | `fault.mjs` | the demotion gesture | no | U | 20 min |
 | RM-8 | leave a group while `cut()`; the server and W2 must agree, whichever way it went | `net.mjs`, `leaveGroup` | - | no | U | 15 min |
 

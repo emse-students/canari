@@ -1044,7 +1044,7 @@ asserts R5 ownership of every conversation the row writes in, and reads the serv
 when an armed fault never fired, `FAIL` on any own assertion or invariant, else `PASS` - and
 `recordObserved` then gates it on every seat's window, the deploy exclusion (R4) and the server window
 judged by the row id (R6). The invariant (R8) runs after every row, with its reload. A row's own
-judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`, `killrows.mjs`, `admitrows.mjs`, `devicerows.mjs`), pinned by
+judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`, `killrows.mjs`, `admitrows.mjs`, `devicerows.mjs`, `salonrows.mjs`), pinned by
 `archive/<group>-selftest.mjs`.
 
 ```sh
@@ -1166,6 +1166,20 @@ carries it. DUP-7 and DEV-7 pick ONE group's request on a shared route with `fau
 a new device makes its owner commit in every group at once. **W6 is the owner's second scratch
 profile**: it must be declared in `names.mjs` (owner account) and signed in once by a human. DEV-5 is
 played with CORRUPT-8. Judgements in `devicerows.mjs`, pinned by `archive/devrows-selftest.mjs`.
+
+```sh
+bun archive/salon.mjs --row RM-4|RM-5|RM-6
+```
+
+**A SALON ROW MINTS ITS OWN COMMUNITY.** W1 creates it, the other seats join by its link, and it is
+deleted once the verdict is on disk, so the roles, the private salon and the kicked member are the
+campaign's alone. Every gesture is the panel's own (`comm.mjs`); a race holds both requests and
+releases them together, and each answer is read from the page's own Network events
+(`salonrows.mjs` `statusesIn`). RM-6's moderator is left holding `channel.manage` alone through
+W1's permission grid. **A salon is not a sidebar conversation**, so section 4.0's message probe is
+replaced by the salon's own invariant: every user the server entitles holds an active seat in the
+salon's group, and nobody else does (`salonEntitlement`). Judgements in `salonrows.mjs`, pinned by
+`archive/salon-selftest.mjs`.
 
 ## Rules that make a result trustworthy
 
