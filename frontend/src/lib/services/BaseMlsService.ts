@@ -5282,7 +5282,7 @@ export abstract class BaseMlsService implements IMlsService {
 
     let plaintext: Uint8Array | null;
     try {
-      plaintext = await this.openDistributionFrame(groupId, sender, ciphertext);
+      plaintext = await this.openDistributionFrame(groupId, sender, ciphertext, senderDeviceId);
     } catch (e) {
       // A FRAME FROM AN EPOCH THIS DEVICE HAS NOT REACHED IS THE ONE REFUSAL A REPLAY REPAIRS, and it
       // used to be refused bare: not acknowledged, no gap armed, so nothing caught the group up and
@@ -5301,7 +5301,7 @@ export abstract class BaseMlsService implements IMlsService {
       while (!opened) {
         if (!(await this.stepDistributionGroup(groupId))) return false;
         try {
-          plaintext = await this.openDistributionFrame(groupId, sender, ciphertext);
+          plaintext = await this.openDistributionFrame(groupId, sender, ciphertext, senderDeviceId);
           opened = true;
         } catch (again) {
           if (classifyIncomingDecryptError(again) !== 'epoch-gap') {
@@ -5367,11 +5367,18 @@ export abstract class BaseMlsService implements IMlsService {
     return true;
   }
 
-  /** Decrypts one key-group frame and records the generation it spent. Throws what MLS threw. */
+  /**
+   * Decrypts one key-group frame and records the generation it spent. Throws what MLS threw.
+   *
+   * `senderDeviceId` is the envelope's device claim: handed to the sender check, a frame whose
+   * device disagrees with the credential is refused like a user mismatch (`[SENDER_MISMATCH]
+   * path=distribution kind=device`), so a device cannot speak in a sibling's name.
+   */
   private async openDistributionFrame(
     groupId: string,
     sender: string,
-    ciphertext: Uint8Array
+    ciphertext: Uint8Array,
+    senderDeviceId?: string
   ): Promise<Uint8Array | null> {
     let plaintext: Uint8Array | null;
     try {
@@ -5380,6 +5387,7 @@ export abstract class BaseMlsService implements IMlsService {
         (
           await this.processIncomingMessage(groupId, ciphertext, {
             userId: sender,
+            ...(senderDeviceId ? { deviceId: senderDeviceId } : {}),
             path: 'distribution',
           })
         )?.plaintext ?? null;

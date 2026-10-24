@@ -444,6 +444,104 @@ describe('routing a frame that arrived on the group', () => {
     );
   });
 
+  it('hands the envelope DEVICE to the sender check, so a sibling cannot be spoken for', async () => {
+    const processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([9, 9]));
+    const ctx = registered({ processIncomingMessage });
+
+    await proto.routeDistributionFrame.call(
+      ctx as never,
+      'g-1',
+      'peer',
+      new Uint8Array([1]),
+      'peer-phone'
+    );
+
+    expect(processIncomingMessage).toHaveBeenCalledWith('g-1', new Uint8Array([1]), {
+      userId: 'peer',
+      deviceId: 'peer-phone',
+      path: 'distribution',
+    });
+  });
+
+  describe('the device half of the sender check, through the REAL comparison', () => {
+    // The decrypt is stubbed to do what the engine does: OpenMLS verified `peer:peer-phone`, and the
+    // envelope this route hands over is compared with it by the one `assertVerifiedSender`.
+    async function verifyingCtx() {
+      const { assertVerifiedSender, resetReportedSenderMismatches } =
+        await import('$lib/mls-client/verifiedSender');
+      resetReportedSenderMismatches();
+      return registered({
+        processIncomingMessage: vi.fn(
+          async (
+            groupId: string,
+            _bytes: Uint8Array,
+            envelope: Parameters<typeof assertVerifiedSender>[1]
+          ) => {
+            assertVerifiedSender(groupId, envelope, 'peer:peer-phone');
+            return { plaintext: new Uint8Array([9, 9]), author: 'unsigned' };
+          }
+        ),
+      });
+    }
+
+    it('files the seed when the envelope names the device MLS verified', async () => {
+      const ctx = await verifyingCtx();
+
+      expect(
+        await proto.routeDistributionFrame.call(
+          ctx as never,
+          'g-1',
+          'peer',
+          new Uint8Array([1]),
+          'peer-phone'
+        )
+      ).toBe(true);
+      expect(ctx.distributionFrameHandler).toHaveBeenCalledWith(
+        expect.objectContaining({ sender: 'peer', senderDeviceId: 'peer-phone' })
+      );
+    });
+
+    it('REFUSES a sibling device speaking in its name: acknowledged, consumed, filed nowhere', async () => {
+      const { frameFingerprint, hasFrameBeenProcessed } =
+        await import('$lib/mls-client/inboundFrameLedger');
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const frame = new Uint8Array([4, 2]);
+      const ctx = await verifyingCtx();
+      resetKeyGroupFrameLosses();
+
+      // Same USER, another DEVICE: before this check, the frame was filed as `peer-tablet`'s.
+      expect(
+        await proto.routeDistributionFrame.call(ctx as never, 'g-1', 'peer', frame, 'peer-tablet')
+      ).toBe(true);
+
+      expect(ctx.distributionFrameHandler).not.toHaveBeenCalled();
+      expect(hasFrameBeenProcessed('g-1', frameFingerprint(frame))).toBe(true);
+      expect(error).toHaveBeenCalledWith(
+        expect.stringMatching(/SENDER MISMATCH \(device\).*path=distribution/)
+      );
+      // A refusal for its sender is not a LOST seed: the next seed request must not print it as one.
+      expect(describeKeyGroupFrameLosses('g-1')).toBe('none');
+      error.mockRestore();
+      warn.mockRestore();
+    });
+
+    it('accepts a frame with NO device on its envelope, as an old sender delivers it', async () => {
+      // A client that never sent `senderDeviceId`, or a stored row read back empty, compares the
+      // user alone - exactly as before this check existed.
+      const ctx = await verifyingCtx();
+
+      expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(true);
+      expect(ctx.processIncomingMessage).toHaveBeenCalledWith('g-1', new Uint8Array([1]), {
+        userId: 'peer',
+        path: 'distribution',
+      });
+      expect(ctx.distributionFrameHandler).toHaveBeenCalledWith(
+        expect.objectContaining({ sender: 'peer', plaintext: new Uint8Array([9, 9]) })
+      );
+    });
+  });
+
   it('counts a frame lost for good, by cause, for the seed requests that follow to print', async () => {
     // F3 of the 2026-10-12 queue audit: a request line names what is missing and could not say why.
     resetKeyGroupFrameLosses();
@@ -1020,6 +1118,29 @@ describe('a frame from an epoch this device has not reached', () => {
     );
     // Still behind the server: nothing may be sealed yet.
     expect(isInEpochGap('g-1')).toBe(true);
+    log.mockRestore();
+  });
+
+  it('hands the envelope device to the RETRY as well, so a step cannot drop the check', async () => {
+    const { ctx } = gapped();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await proto.routeDistributionFrame.call(
+      ctx as never,
+      'g-1',
+      'peer',
+      new Uint8Array([1]),
+      'peer-phone'
+    );
+
+    const opens = (ctx.processIncomingMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([, bytes]) => (bytes as Uint8Array)[0] === 1
+    );
+    // The refused first attempt, then the one after the step.
+    expect(opens).toHaveLength(2);
+    for (const [, , envelope] of opens) {
+      expect(envelope).toEqual({ userId: 'peer', deviceId: 'peer-phone', path: 'distribution' });
+    }
     log.mockRestore();
   });
 
