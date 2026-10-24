@@ -53,12 +53,10 @@ import {
   send,
   until,
 } from '../chat.mjs';
-import { addMember, openGroupSettings } from './addmember.mjs';
+import { addMember, leaveGroup, openGroupSettings, removeMember } from './addmember.mjs';
 import { conversationRows, groupIdByName } from './idb.mjs';
 import { psql } from '../estate.mjs';
 import { closeOverlays, createGroup, deleteGroup, openGroup } from '../groupnav.mjs';
-import { confirmDialog } from '../comm.mjs';
-import { assertCampaignOwned } from '../campaign.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import {
@@ -222,48 +220,6 @@ async function panelReaches(cx, want, timeoutMs = 60000) {
   } catch {
     return null;
   }
-}
-
-/**
- * Removes one member by id and returns once the roster has actually shrunk.
- *
- * THE POST-CONDITION IS THE ROSTER, not the click: a Remove is a commit and a network round trip,
- * exactly as an Add is, and `addmember.mjs` learnt that same lesson one gesture earlier.
- */
-async function removeMember(cx, userId, name) {
-  // R5: a removal is a commit on THIS group, so the open group must be the campaign's.
-  assertCampaignOwned({ kind: 'group', name }, 'grp removeMember');
-  const before = (await panelOf(cx)).count;
-  await realClick(cx, `[data-remove-member="${userId}"]`);
-  // THE CLICK ONLY ASKS: the removal is confirmed in `showConfirm` since #816 ("Retirer ce membre du
-  // groupe ?"). Unanswered, the dialog left the roster at two and covered every later click, so
-  // GRP-3 ended in ERROR and GRP-4..10 were blocked behind it (2026-10-22).
-  await confirmDialog(cx, 'common_remove_label');
-  // AN EXPIRED DEADLINE DOES NOT THROW, as in `addPeer`: the caller reads the roster as it really
-  // stands and fails on that evidence. A throw ended GRP-3 as an ERROR with neither console drained,
-  // so a removal that never landed and one that never rendered read the same.
-  await until(cx, `/MEMBRES\\s*\\(${before - 1}\\)/i.test(document.body.innerText)`, 25000).catch(
-    () => console.log(`[grp] removeMember: the roster did not reach ${before - 1} within 25 s`)
-  );
-  await sleep(2000);
-}
-
-/**
- * Leaves the open group, through BOTH steps the panel requires.
- *
- * `Quitter le groupe` only arms a confirmation (`confirmLeave` in `ChatGroupPanel.svelte`); the
- * button that calls `onGroupLeave` is the `Quitter` inside it.
- */
-async function leaveGroup(cx, name) {
-  assertCampaignOwned({ kind: 'group', name }, 'grp leaveGroup');
-  await realClick(cx, 'text=Quitter le groupe');
-  // CASE-INSENSITIVE, because the confirmation is a `<p class="... uppercase">` and `innerText`
-  // returns what CSS renders: "QUITTER CE GROUPE ?". The exact-case test timed out on every run of
-  // GRP-6 and read as the product refusing to arm its own confirmation.
-  await until(cx, `/quitter ce groupe/i.test(document.body.innerText)`, 8000);
-  await realClick(cx, 'text=Quitter');
-  await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) === -1`, 30000);
-  await sleep(2000);
 }
 
 /** Renames the open group and returns once the panel has closed - `submitRename` closes it. */
