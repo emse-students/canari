@@ -64,7 +64,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `inventory.mjs` | THE INDEX OF EVERY SCRIPT IN THIS RIG, GENERATED FROM THE SCRIPTS THEMSELVES. |
 | `invite.mjs` | Invites a user into the open group conversation - i.e. produces an MLS Add commit. |
 | `iosbench.mjs` | Asks a BENCH iPhone build about its own native stores - the `bench_native_store` command, invoked in |
-| `launch.mjs` | Launching and killing the two test browsers. |
+| `launch.mjs` | Launching and killing the test browsers - W1/W2 (owner/peer), the W3 scratch device, and W4/W5 |
 | `login.mjs` | Drives the login for one of the campaign accounts, over CDP. |
 | `logs.mjs` | READS THE LOGS OF ONE SUBJECT - a web client, the phone, or the estate - and classifies them. |
 | `marker.mjs` | THE MARKER VOCABULARY: minting one, recognising one in rendered text, and decoding when it was |

@@ -1,5 +1,6 @@
 /**
- * Launching and killing the two test browsers.
+ * Launching and killing the test browsers - W1/W2 (owner/peer), the W3 scratch device, and W4/W5
+ * (third/fourth accounts, plan section 4.1 of `docs/wiki/cross-client-campaign-1-4-1.md`).
  *
  * The flags are not decoration. Without
  * `--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows`
@@ -40,6 +41,10 @@ export const BROWSERS = {
   w1: { port: 9224, profile: join(STATE_DIR, "chrome-w1") },
   w2: { port: 9223, profile: join(STATE_DIR, "chrome-w2") },
   w3: { port: 9225, profile: join(STATE_DIR, "chrome-w3") },
+  // The third and fourth accounts' seats (1.4.1 campaign plan, section 4.1): `campaign-fixtures.mjs`
+  // seats them on W4/W5 and refuses without a web seat, so the profiles must be launchable.
+  w4: { port: 9226, profile: join(STATE_DIR, "chrome-w4") },
+  w5: { port: 9227, profile: join(STATE_DIR, "chrome-w5") },
 };
 
 /** True when something still answers on that debugging port. */
@@ -222,7 +227,7 @@ if (process.argv[1] && process.argv[1].endsWith("launch.mjs")) {
   } else if (action === "start") {
     console.log(`${which} up in ${await startBrowser(which)}ms`);
   } else {
-    console.log("usage: bun launch.mjs kill|close|start w1|w2");
+    console.log(`usage: bun launch.mjs kill|close|start ${Object.keys(BROWSERS).join("|")}`);
   }
   process.exit(0);
 }
