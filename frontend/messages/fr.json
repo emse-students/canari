@@ -3323,6 +3323,7 @@
   "join_request_accept": "Ajouter",
   "join_request_decline": "Refuser",
   "join_request_failed": "La réponse n'a pas pu être enregistrée. Réessayez.",
+  "join_request_row_text": "{user} demande à rejoindre ce groupe",
   "chat_system_conversation_deleted": "{sender} a supprimé cette conversation.",
   "chat_system_message_deleted": "Ce message a été supprimé.",
   "chat_system_removed_from_group": "Vous avez été retiré de ce groupe. Vous ne pouvez plus envoyer ni recevoir de nouveaux messages.",

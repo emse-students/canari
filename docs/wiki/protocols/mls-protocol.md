@@ -890,7 +890,11 @@ user who holds none is a new person, and is not added (`automaticAdmission` in `
 proves no membership, so nothing is added (it used to fall through to the Add).
 
 Instead, the ask is put to a member: **"X asks to join this group. Only a member can add them."** (`join_request_body`), with Add and Decline
-(`JoinRequestBanner`, `joinRequests.svelte.ts`). Add is the member's own Add (`inviteMembersToGroup`,
+(`JoinRequestBanner` for the conversations not on screen, and `JoinRequestRow` - a card at the end of
+the thread - for the one that is, user decision 2026-10-24: in the conversation, any member may
+accept; `joinRequests.svelte.ts`). The card FOLLOWS the store and is not a persisted system row: a
+stored row would outlive the ask and keep Add and Decline on screen for someone another member
+already admitted. Both answer through one path (`answerJoinRequestOrToast`). Add is the member's own Add (`inviteMembersToGroup`,
 signed by their device); Decline withdraws the ask (`declineJoinRequest`, below), which is what
 stops it coming back. The sweep reads the server's `pending` rows, the durable state, so each
 completed sweep replaces the asks on screen: one another member answered leaves with the next sweep.

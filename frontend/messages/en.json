@@ -3291,6 +3291,7 @@
   "join_request_accept": "Add",
   "join_request_decline": "Decline",
   "join_request_failed": "Your answer could not be saved. Try again.",
+  "join_request_row_text": "{user} asks to join this group",
   "chat_system_conversation_deleted": "{sender} deleted this conversation.",
   "chat_system_message_deleted": "This message has been deleted.",
   "chat_system_removed_from_group": "You have been removed from this group. You can no longer send or receive new messages.",

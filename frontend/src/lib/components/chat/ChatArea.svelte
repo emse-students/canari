@@ -20,6 +20,7 @@
   import ChatHeader from './ChatHeader.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatTypingBubble from './ChatTypingBubble.svelte';
+  import JoinRequestRow from './JoinRequestRow.svelte';
   import ChatComposer from './ChatComposer.svelte';
   import PollComposerModal from '../channels/PollComposerModal.svelte';
   import type { ChannelPollDraft } from '$lib/utils/chat/channelCrypto';
@@ -1558,6 +1559,12 @@
             isDirect={chatView?.isDirect ?? false}
             isMobile={_isMobile}
           />
+        {/if}
+
+        <!-- A new person asking to join this group: its ask is drawn at the end of the thread it is
+             about, for any member to answer (`JoinRequestRow`). Empty for every other thread. -->
+        {#if conversationId}
+          <JoinRequestRow groupId={conversationId} />
         {/if}
 
         <!-- THE TYPING INDICATOR IS A ROW OF THE THREAD, NOT A BAND OVER IT (user, 2026-09-22).
