@@ -162,6 +162,52 @@ export async function addMember(cx, who, { openSettings = true, openPickerFirst 
 }
 
 /**
+ * Invites SEVERAL people in ONE submission - the product's bulk Add, ONE commit for all of them.
+ *
+ * WHY IT IS NOT `addMember` IN A LOOP. Each `addMember` is its own submission and therefore its own
+ * MLS commit: three people cost three epochs. The picker is a multi-select (`MultiUserSelector`,
+ * `clearOnSelect`): every pick becomes a chip, the button reads "Envoyer l'invitation (N)", and one
+ * press sends `inviteMembersToGroup` the whole list, which stages ONE bulk Add
+ * (`processBulkAddition`). FLOOR-2 and BIG-1 of the 1.4.1 campaign ask exactly that question, and
+ * the campaign fixtures are built the same way so their history is the product's ordinary path.
+ *
+ * Each pick is asserted (the option clicked is the one asked for), and so is the COUNT on the button
+ * before it is pressed: a pick that silently did not take would otherwise send N-1 people and look
+ * like a success.
+ *
+ * @param cx a connected client, with the group open
+ * @param {string[]} names display names as the picker renders them, at least one
+ * @returns {Promise<string[]>} the option texts that were picked, in order
+ */
+export async function addMembers(cx, names, { openSettings = true } = {}) {
+  if (!names.length) throw new Error('addMembers: nobody to add');
+  if (openSettings) await openGroupSettings(cx);
+  await openPicker(cx);
+  const picked = [];
+  for (const who of names) {
+    await typeQuery(cx, who);
+    const spot = await optionFor(cx, who);
+    if (!spot) throw new Error(`addMembers: the picker offers no ${who}`);
+    if (!spot.text.toLowerCase().includes(who.toLowerCase())) {
+      throw new Error(`addMembers: the picker's option reads ${JSON.stringify(spot.text)}, not ${who}`);
+    }
+    await pointerAt(cx, spot);
+    picked.push(spot.text);
+  }
+  // THE COUNT THE BUTTON SHOWS IS THE SELECTION THE SUBMISSION WILL CARRY (`chat_group_send_invite_button`
+  // plus ` (N)`, ChatGroupPanel.svelte).
+  await until(
+    cx,
+    `[].slice.call(document.querySelectorAll('button')).some(function (x) { return /Envoyer l'invitation \\(${names.length}\\)/.test(x.innerText || ''); })`,
+    8000
+  ).catch(() => {
+    throw new Error(`addMembers: the invite button never read (${names.length}) - a pick did not take`);
+  });
+  await submitInvite(cx);
+  return picked;
+}
+
+/**
  * Invites whichever of `candidates` the picker will accept, and returns that name.
  *
  * SEARCH BY ELIMINATION IS NOT A WORKAROUND, it is the only reliable way to learn who the peer is:
