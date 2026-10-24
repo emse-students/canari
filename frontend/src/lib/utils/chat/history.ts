@@ -1,6 +1,8 @@
 import type { HistoryPage } from '$lib/mls-client/historyTypes';
 import { fromBase64 } from '$lib/utils/hex';
 import type { IStorage, StoredMessage } from '$lib/db';
+import type { StoredMessagePatch } from '$lib/db/types';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
@@ -13,6 +15,8 @@ import {
   type PendingHistoryMessage,
 } from './historySystemEvents';
 import { decodeAppMessage } from '$lib/proto/codec';
+import { recordAuthorship, type RecordedAuthorship } from '$lib/crypto/messageAuthorship';
+import { drainForkFindings } from '$lib/mls-client/integrityFindings';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted } from '$lib/paraglide/messages';
 import { applyEditToBody, envelopeBodyText } from '$lib/envelope';
@@ -31,11 +35,13 @@ import { escalateReconciliation } from '$lib/utils/chat/historyReconcile';
 import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
-import { applyReaction } from '$lib/utils/chat/messageReactions';
+import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
 import { mergeReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { holdsGroupState } from './groupUsability';
 import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import { editSupersedes } from './editPrecedence';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -479,6 +485,166 @@ export function replayedRowBody(
 }
 
 /**
+ * A PROVEN stored row against a MARKED copy of it. The copy's sender, body and time are a relayer's
+ * word and never move; what it carries on a proof of its own does - the vetting applied an author's
+ * signed tombstone or edit to it (`writeMergedPending` keeps `deleteProof` / `editProof` only then),
+ * and dropping it here would leave a row its author deleted visible for ever. Reactions merge pair by
+ * pair, as vetted.
+ */
+function provenRowUnderMarkedCopy(
+  prev: StoredMessage,
+  pm: Omit<PendingHistoryMessage, 'ingestSequence'>
+): StoredMessage {
+  const reactions = mergeReactions(prev.reactions ?? [], pm.reactions ?? []);
+  const kept: StoredMessage = reactions ? { ...prev, reactions } : prev;
+  // A mutation's proof names the author it was verified against: the MARKED copy's claimed sender.
+  // It speaks for the proven row only when that is the same author.
+  if (prev.isDeleted || canonicalUserId(pm.senderId) !== canonicalUserId(prev.senderId)) {
+    return kept;
+  }
+  if (pm.isDeleted && pm.deleteProof) {
+    console.debug(
+      `[HISTORY_REPLAY] a signed deletion carried by an unverified copy tombstones proven ${at8(prev.id)}`
+    );
+    const tombstone: StoredMessage = {
+      ...kept,
+      isDeleted: true,
+      content: chat_system_message_deleted(),
+      deleteProof: pm.deleteProof,
+    };
+    // A tombstone keeps only its own proof - the original bytes go with the body.
+    delete tombstone.authorship;
+    delete tombstone.editProof;
+    delete tombstone.isEdited;
+    delete tombstone.editedAt;
+    return tombstone;
+  }
+  if (
+    pm.isEdited &&
+    pm.editProof &&
+    typeof pm.editedAt === 'number' &&
+    editSupersedes({ editedAt: pm.editedAt, content: pm.content }, prev)
+  ) {
+    console.debug(
+      `[HISTORY_REPLAY] a signed edit carried by an unverified copy applies to proven ${at8(prev.id)}`
+    );
+    // The signed TEXT onto the proven row's own body: the copy's envelope (reply, media) is the
+    // relayer's word and stays out.
+    return {
+      ...kept,
+      content: applyEditToBody(prev.content, envelopeBodyText(pm.content)),
+      isEdited: true,
+      editedAt: pm.editedAt,
+      editProof: pm.editProof,
+    };
+  }
+  return kept;
+}
+
+/** The first eight characters of an id, for a log line. */
+function at8(id: string): string {
+  return `${id.slice(0, 8)}…`;
+}
+
+/**
+ * The stored row a replay page writes for one queued message, given the row this device already
+ * stores under its id (`prev`, read before the batch write). A replay re-reads what earlier runs
+ * wrote, so the stored row is evidence:
+ *
+ * - **Never downgraded.** A stored row that is not marked keeps its sender, body, time and proofs
+ *   against a copy that is MARKED - only what that copy carries on its own proof moves onto it
+ *   ({@link provenRowUnderMarkedCopy}).
+ * - **A proven copy replaces an unverified row entirely.** The stored row's sender, body and edit
+ *   state were a relayer's word; only a tombstone survives, applied on its author's grounds.
+ * - **A proof is kept** when the incoming copy carries none for the same state - re-replaying a
+ *   frame without its proof does not erase the one stored.
+ */
+export function replayedStoredRow(
+  pm: Omit<PendingHistoryMessage, 'ingestSequence'>,
+  prev: StoredMessage | undefined,
+  at: { id: string; conversationId: string; userId: string }
+): StoredMessage {
+  if (prev && !prev.restoredUnverified && pm.restoredUnverified) {
+    return provenRowUnderMarkedCopy(prev, pm);
+  }
+  const base =
+    prev?.restoredUnverified && !pm.restoredUnverified && !prev.isDeleted ? undefined : prev;
+  const deleted = base?.isDeleted === true || pm.isDeleted === true;
+  const edited = base?.isEdited === true || pm.isEdited === true;
+  const authorship = pm.authorship ?? base?.authorship;
+  const editProof = pm.editProof ?? base?.editProof;
+  const deleteProof = pm.deleteProof ?? base?.deleteProof;
+  return {
+    id: at.id,
+    conversationId: at.conversationId,
+    senderId: pm.senderId.toLowerCase(),
+    // Preserve deleted/edited content from DB if the mutation event was already processed in a
+    // prior run and is now in seenCipherHashes (`base`), combined with the state the history_bundle
+    // carried (`pm`), so fresh installs reflect deletions and edits without replaying the events.
+    content: replayedRowBody(base, pm),
+    // No lookup: this path builds rows from the bundle, and what we already hold is `base`.
+    timestamp: resolveMessageTimestamp(
+      pm,
+      () => undefined,
+      isOwnMessage(pm.senderId, at.userId)
+    ).getTime(),
+    ...(deleted ? { isDeleted: true } : {}),
+    ...(edited ? { isEdited: true } : {}),
+    // What we already hold wins - it came from the edit event itself - and the bundle supplies it on
+    // a fresh install, which would otherwise show "edited" with no time for ever.
+    ...(base?.editedAt || pm.editedAt ? { editedAt: base?.editedAt ?? pm.editedAt } : {}),
+    ...((pm.reactions ?? []).length > 0 ? { reactions: pm.reactions } : {}),
+    ...(pm.serverTimestamp != null ? { serverTimestamp: pm.serverTimestamp } : {}),
+    // The authors' signatures and the mark, at rest with the row, so this device relays the proofs
+    // in its own bundles and shows the mark after a reload. A tombstone keeps only its own proof.
+    ...(authorship && !deleted ? { authorship } : {}),
+    ...(editProof && edited && !deleted ? { editProof } : {}),
+    ...(deleteProof && deleted ? { deleteProof } : {}),
+    ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+  };
+}
+
+/**
+ * Memory's rows after a replay page wrote `written`, under the storage rule: a row memory holds
+ * MARKED unverified that the page wrote PROVEN - a decrypted original, or a copy a bundle proved - is
+ * replaced entirely by the written row, and only a tombstone survives. Memory takes it in the same
+ * pass rather than staying marked until a reload. Every other memory row is left as it is: the page
+ * merges what it may change on those through its own accumulators.
+ *
+ * @returns The new message list, or `null` when nothing was replaced.
+ */
+export function provenRowsIntoMemory(
+  messages: ChatMessage[],
+  written: StoredMessage[],
+  userId: string
+): ChatMessage[] | null {
+  const proven = new Map<string, StoredMessage>();
+  for (const row of written) if (!row.restoredUnverified) proven.set(row.id, row);
+  let replaced = 0;
+  const next = messages.map((held) => {
+    const row = held.restoredUnverified ? proven.get(held.id) : undefined;
+    if (!row) return held;
+    replaced++;
+    const [fresh] = mapStoredMessagesToChatMessages([row], userId);
+    if (!held.isDeleted || fresh.isDeleted) return fresh;
+    // A tombstone was applied on its author's grounds and survives the proven body.
+    const tombstone: ChatMessage = {
+      ...fresh,
+      isDeleted: true,
+      content: chat_system_message_deleted(),
+    };
+    delete tombstone.isEdited;
+    delete tombstone.editedAt;
+    return tombstone;
+  });
+  if (replaced === 0) return null;
+  console.debug(
+    `[HISTORY_REPLAY] ${replaced} unverified row(s) in memory replaced by a proven copy`
+  );
+  return next;
+}
+
+/**
  * Converts raw StoredMessage rows (from IndexedDB, or out of a peer's history bundle) to ChatMessage
  * objects, deriving BOTH sender-relative flags - `isOwn` and `isSystem` - from `senderId`.
  *
@@ -502,6 +668,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       ...(m.isEdited ? { isEdited: true } : {}),
       ...(m.editedAt ? { editedAt: toValidDate(m.editedAt) } : {}),
       ...(m.isFcmPreview ? { isFcmPreview: true } : {}),
+      ...(m.restoredUnverified ? { restoredUnverified: true } : {}),
     } satisfies ChatMessage;
   });
 }
@@ -705,13 +872,19 @@ export async function replayConversationHistory(params: {
     // the main message batch write (reactions reference messages from previous
     // sessions that are already in DB).
     const reactionUpdates = new Map<string, MessageReaction[]>(); // msgId → final state
+    // What a replayed history_bundle changed on a held row (an upgrade, a vetted tombstone or
+    // edit), merged onto the stored row in the same post-save pass.
+    const rowPatches = new Map<string, StoredMessagePatch>();
     // delete_message / edit_message events from history: collected here and persisted
     // to DB after the main batch save so the DB reload in loadExistingConversations
     // reflects the correct state without a second network round-trip.
     // Each carries WHO claims the mutation: the author check needs the stored row, which is only
     // read after the batch save.
-    const deletedMessages = new Map<string, { by: string }>();
-    const editedMessages = new Map<string, { content: string; editedAt: Date; by: string }>();
+    const deletedMessages = new Map<string, { by: string; proof?: RecordedAuthorship }>();
+    const editedMessages = new Map<
+      string,
+      { content: string; editedAt: Date; by: string; proof?: RecordedAuthorship }
+    >();
     // Read state accumulated over the whole page: one instant per participant, merged as `max`,
     // applied to the conversation once at the end. It is conversation-level state, so it is not
     // affected by the batch save below at all - which is exactly what made the per-message version
@@ -727,10 +900,18 @@ export async function replayConversationHistory(params: {
     // because addMessageToChat does not need them (the mutations arrive via separate MLS
     // events during a normal session).
     const pendingMessages: PendingHistoryMessage[] = [];
+    // The same queued objects, by message id: a replayed bundle naming one updates it in place
+    // (`applyReplaySystemEvent`) instead of queueing a second row the batch write would store last.
+    const pendingById = new Map<string, PendingHistoryMessage>();
+    const queuePending = (pm: PendingHistoryMessage): void => {
+      pendingMessages.push(pm);
+      const id = normalizeMessageId(pm.messageId);
+      if (id) pendingById.set(id, pm);
+    };
     let historyIngestSeq = 0;
     /** Queues a decoded message into the page batch (assigns ingest order, bumps the count). */
     const pushPendingMessage = (entry: Omit<PendingHistoryMessage, 'ingestSequence'>): void => {
-      pendingMessages.push({
+      queuePending({
         ...entry,
         // DERIVED HERE, ONCE, FOR EVERY WRITER THAT REACHES THIS SEAM. Two of them do: the system
         // events this replay renders itself, which pass the flag, and the history_bundle loop, which
@@ -977,22 +1158,25 @@ export async function replayConversationHistory(params: {
           }
 
           const parsed = decodeAppMessage(decryptedBytes);
+          // Kept only on mls-core's `verified`, like a live frame (setupMessageHandler).
+          const authorship = recordAuthorship(decryptedBytes, id, batchResult.author);
 
           const serverMs = parseServerTimestampMs(msg.timestamp);
           const envelope = parsed ? appMsgToEnvelope(parsed, serverMs) : null;
           if (envelope) {
-            pendingMessages.push({
+            queuePending({
               senderId: msg.sender_id,
               content: envelope.content,
               ...envelope.options,
               ingestSequence: historyIngestSeq++,
+              ...(authorship ? { authorship } : {}),
             });
             addedMsg++;
             mlsUpdated = true;
             continue;
           } else if (parsed?.reaction) {
             const messageId = parsed.reaction.messageId ?? '';
-            const senderNorm = msg.sender_id.toLowerCase();
+            const senderNorm = canonicalUserId(msg.sender_id);
             const reactions = messageReactions.get(messageId) || [];
             const emoji = parsed.reaction.emoji ?? '';
             // Replay applies both legs: the frame carries `removed`, and the merge is ordered by
@@ -1002,7 +1186,8 @@ export async function replayConversationHistory(params: {
               senderNorm,
               emoji,
               Number(parsed.reaction.at ?? 0),
-              parsed.reaction.removed === true
+              parsed.reaction.removed === true,
+              authorship
             );
             if (!updated) continue; // already held something at least as recent - no-op
             messageReactions.set(messageId, updated);
@@ -1016,10 +1201,14 @@ export async function replayConversationHistory(params: {
               contactName,
               userId,
               conversationId: id,
+              ...(authorship ? { authorship } : {}),
               getConversation,
               setConversation,
               messageReactions,
               reactionUpdates,
+              authorKeys: mlsService,
+              rowPatches,
+              pendingById,
               deletedMessages,
               editedMessages,
               readWatermarkUpdates,
@@ -1135,6 +1324,11 @@ export async function replayConversationHistory(params: {
                 `[History] frame never read here and unreadable for good (${kind}); will reconcile (group ${id}, frame ${frameKey}, row ${rowKey})`
               );
             }
+            // A refusal at our own epoch is what a FORK looks like from here: mls-core judged the
+            // frame's signed epoch fingerprint on that arm, and the verdict is taken now.
+            if (kind === 'same-epoch-refusal') {
+              await drainForkFindings(mlsService, (line) => console.error(line));
+            }
             continue;
           }
           if (kind === 'epoch-gap' || kind === 'wrong-epoch') {
@@ -1226,36 +1420,20 @@ export async function replayConversationHistory(params: {
 
       const toStore: StoredMessage[] = pendingMessages.map((pm) => {
         const msgId = normalizeMessageId(pm.messageId) ?? crypto.randomUUID();
-        const prev = existingById.get(msgId);
-        return {
+        return replayedStoredRow(pm, existingById.get(msgId), {
           id: msgId,
           conversationId: id,
-          senderId: pm.senderId.toLowerCase(),
-          // Preserve deleted/edited content from DB if the mutation event was already
-          // processed in a prior run and is now in seenCipherHashes.
-          // prev.isDeleted/isEdited : state from a previous run (seenCipherHashes).
-          // pm.isDeleted/isEdited   : state carried by the history_bundle.
-          // Both sources are combined so fresh installs reflect the deletions/edits
-          // without having replayed the MLS events.
-          content: replayedRowBody(prev, pm),
-          // No lookup: this path builds rows from the bundle, and what we already hold is read from
-          // `prev` above rather than searched for.
-          timestamp: resolveMessageTimestamp(
-            pm,
-            () => undefined,
-            isOwnMessage(pm.senderId, userId)
-          ).getTime(),
-          ...(prev?.isDeleted || pm.isDeleted ? { isDeleted: true } : {}),
-          ...(prev?.isEdited || pm.isEdited ? { isEdited: true } : {}),
-          // Same two sources as `content` above. What we already hold wins - it came from the edit
-          // event itself - and the bundle supplies it on a fresh install, which has no row to
-          // preserve it from and would otherwise show "edited" with no time for ever.
-          ...(prev?.editedAt || pm.editedAt ? { editedAt: prev?.editedAt ?? pm.editedAt } : {}),
-          ...((pm.reactions ?? []).length > 0 ? { reactions: pm.reactions } : {}),
-          ...(pm.serverTimestamp != null ? { serverTimestamp: pm.serverTimestamp } : {}),
-        };
+          userId,
+        });
       });
       await storage.saveMessages(toStore, deviceKey());
+      // Memory takes what storage now holds for a row it shows unverified, in the same pass.
+      const convoForProven = getConversation(contactName);
+      const provenMessages =
+        convoForProven && provenRowsIntoMemory(convoForProven.messages, toStore, userId);
+      if (convoForProven && provenMessages) {
+        setConversation(contactName, { ...convoForProven, messages: provenMessages });
+      }
     }
 
     // The conversation-level state the page carried - read watermarks and the shared floor - applied
@@ -1283,7 +1461,11 @@ export async function replayConversationHistory(params: {
     // All of them need the post-batch-save DB state and touch independent fields,
     // so they can be merged and written back in a single saveMessages call.
     const needsPostUpdate =
-      storage && (reactionUpdates.size > 0 || deletedMessages.size > 0 || editedMessages.size > 0);
+      storage &&
+      (reactionUpdates.size > 0 ||
+        rowPatches.size > 0 ||
+        deletedMessages.size > 0 ||
+        editedMessages.size > 0);
     if (needsPostUpdate) {
       try {
         const allMessages = await storage!.getMessages(id, deviceKey());
@@ -1291,6 +1473,10 @@ export async function replayConversationHistory(params: {
         const updatesById = new Map<string, StoredMessage>();
 
         for (const m of allMessages) {
+          // First, what a replayed bundle was allowed to change (bundleVetting.ts): the mutations
+          // below then apply on top of it.
+          const patch = rowPatches.get(m.id);
+          if (patch) updatesById.set(m.id, mergeStoredMessage(m, patch));
           if (reactionUpdates.has(m.id)) {
             updatesById.set(m.id, {
               ...(updatesById.get(m.id) ?? m),
@@ -1307,11 +1493,17 @@ export async function replayConversationHistory(params: {
               ...(updatesById.get(m.id) ?? m),
               isDeleted: true,
               content: chat_system_message_deleted(),
+              // The original bytes go with the message; the author's signed tombstone stays.
+              authorship: null,
+              editProof: null,
+              ...(deletion.proof ? { deleteProof: deletion.proof } : {}),
             });
           } else if (edit && replayMutationIsAuthorised(m, edit.by, 'edit')) {
             updatesById.set(m.id, {
               ...(updatesById.get(m.id) ?? m),
               isEdited: true,
+              // The author's signed edit, so a bundle this device writes proves the edited body.
+              ...(edit.proof ? { editProof: edit.proof } : {}),
               // The accumulator holds the replacement TEXT; the body it replaces is this row's,
               // and only here is it known. Writing the text itself dropped the reply reference the
               // body carries - see `applyEditToBody`.
