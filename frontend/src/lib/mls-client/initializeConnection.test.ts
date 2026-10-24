@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 const getTokenMock = vi.hoisted(() => vi.fn(() => Promise.resolve('jwt-access-token')));
 const getIsTabLeaderMock = vi.hoisted(() => vi.fn(() => true));
 

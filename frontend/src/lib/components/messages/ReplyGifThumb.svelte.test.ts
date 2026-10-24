@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A QUOTED GIF IS A SMALL DIMMED PICTURE, NOT ITS ADDRESS (user, 2026-10-05).
  *

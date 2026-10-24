@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The live viewer's screens, mounted: connecting, playing with the LIVE badge and the time on air,
  * "live complet" with a retry that plays, the end, the neutral "indisponible", a reconnect that never

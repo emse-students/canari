@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE GUEST'S RETURN FROM LYDIA (WP-P2): what it shows comes from the server, read with the receipt
  * and with nothing else from its URL.

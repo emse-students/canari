@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE CONNECTION STRIP HAS THREE STATES (WP-OFF-5): offline, slow, and nothing. The slow one is a
  * small fixed icon (no strip), driven by `connectivity.slow`, and never stacks on the

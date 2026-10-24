@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DEVICE THAT KEPT ITS ID BUT LOST ITS STATE IS A NEW DEVICE (lead decision, 2026-10-22).
  *

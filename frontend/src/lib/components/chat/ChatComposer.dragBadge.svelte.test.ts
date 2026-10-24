@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE DROP BADGE LEAVES WHEN THE DRAG DOES, HOWEVER IT ENDS (user, 2026-09-25: *"l'indicateur de
  * depot des fichiers reste si on annule le depot"*).

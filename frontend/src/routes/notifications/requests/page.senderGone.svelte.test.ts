@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * AN ACCEPTANCE THE SERVER VOIDED SAYS WHY (D38b, review of #2116). When the member who asked no
  * longer speaks for the association, the server voids the request and answers 409 with the code

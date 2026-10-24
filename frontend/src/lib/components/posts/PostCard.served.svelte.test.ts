@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A CARD TAKES THE SERVER'S ROW WHEN ITS PARENT HANDS IT A NEW ONE FOR THE SAME POST (review of
  * #1896). The feed draws its stored copy first - no rights, `canVote: false` - and the keyed list

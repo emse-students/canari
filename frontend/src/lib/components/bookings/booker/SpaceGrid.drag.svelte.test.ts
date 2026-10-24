@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * DRAGGING OVER THE GRID PICKS A RANGE (user, 2026-10-21): press a free unit and drag along the
  * resource's column. Pinned: a mouse drags at once, a finger must hold first (a quick drag is a

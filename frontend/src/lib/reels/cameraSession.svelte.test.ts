@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The camera session gives back what an acquisition RETURNS, even when the acquisition finishes after
  * the member has moved on (left the tab, switched lens, backgrounded the app). Pinned by ordering,

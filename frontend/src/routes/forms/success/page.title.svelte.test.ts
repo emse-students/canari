@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PAYMENT RETURN'S TITLE SAYS WHAT THE PAGE SAYS (iPhone 12, v1.2.9-alpha.3: "Paiement reussi"
  * over "Paiement introuvable" for an unknown submission).

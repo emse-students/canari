@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE TWO WAYS PAST THE PIN GATE ARE NEVER SCROLLED TO.
  *

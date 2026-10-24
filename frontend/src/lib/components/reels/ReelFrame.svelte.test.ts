@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The ONE reel frame, through the real component: edge to edge with square corners when the screen has
  * its shape, rounded over a backdrop when it does not, and a stage that holds its height only while

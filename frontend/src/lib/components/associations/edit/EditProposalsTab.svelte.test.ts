@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A REQUEST TO AN AUTHOR, DRAWN FOR AN OFFICER WHO MAY NOT SEE THE POST (D38b, review of #2116).
  * The server sends `subjectId`, `subject` and `toUser` all null to such a caller; the queue then

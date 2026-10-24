@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The capture screen end to end, with the camera, the canvas and the recorder replaced: the shutter
  * waits for the server's cap and a decoded frame, ONE tap takes a photo, a press held past the

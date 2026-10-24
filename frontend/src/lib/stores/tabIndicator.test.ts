@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setTabRinging, setTabUnread, startTabIndicator } from './tabIndicator';
 import { flushMacrotask } from '../../test/flush';

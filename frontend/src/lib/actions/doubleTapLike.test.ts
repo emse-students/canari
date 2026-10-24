@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE DOUBLE TAP THAT LIKES A POST (`doubleTapLike`, user 2026-10-19), driven with the events an
  * engine sends: the taps are `click`s (what the engine already called a tap), the drags and second

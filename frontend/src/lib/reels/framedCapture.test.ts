@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * What is saved is what the preview showed: the crop rectangle, the saved size, the constraints asked
  * of the camera and the bitrate that follows the pixels. All pure - no camera, no canvas.

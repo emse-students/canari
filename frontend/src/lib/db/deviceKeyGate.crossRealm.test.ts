@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The storage gate across REALMS: two tabs of one account open the SAME IndexedDB, each with its own
  * copy of the gate module (its own in-realm hold, its own key in memory). The in-realm hold cannot

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Break the app-wide import cycle (auth store -> composables -> mlsService -> subclasses ->
 // BaseMlsService) the same way `TauriMlsService.resumeReload.test.ts` does.
 vi.mock('$lib/services/WebMlsService', async (importOriginal) => ({
