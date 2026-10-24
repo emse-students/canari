@@ -16,6 +16,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { DEV_RESET_JOB, DEV_RESET_WORKFLOW, devWindowVerdict, estateWindow, mayDeployDev, restartsIn } from '../deploy.mjs';
+import { devContainerStartsCommand } from '../estate-target.mjs';
 import { gate } from '../watch.mjs';
 
 let failures = 0;
@@ -105,6 +106,20 @@ ok('a run with no tag at all is counted', mayDeployDev({ title: 'v1.4.1' }));
   ok('restartsIn keeps the containers started inside the window only', restarted.length === 1 && restarted[0].id === 'canari-dev-nginx-1' && restarted[0].sha === 'dev');
   const v = verdict({ starts: [at('dev.aaa')], end: at('dev.aaa', T0 + 10 * MIN), restarts: { asked: true, restarted } });
   ok('a dev container that started inside the window is a redeploy, build unchanged and no run', v.asked && v.overlapped.length === 1);
+}
+{
+  // The four-field shape `devContainerStartsCommand` prints since it lists stopped containers too.
+  const all = [
+    '/canari-dev-chat-gateway-1 2026-10-20T08:00:00Z 2026-10-24T10:04:00Z false',
+    '/canari-dev-migrate-1 2026-10-19T08:00:00Z 2026-10-19T08:00:05Z false',
+    '/canari-dev-redis-1 2026-10-20T08:00:00Z 0001-01-01T00:00:00Z true',
+    '/canari-dev-edge-1 2026-10-24T09:59:57Z 0001-01-01T00:00:00Z true',
+  ].join('\n');
+  const r = restartsIn(all, T0, 'dev');
+  ok('a container that STOPPED inside the window and stayed down is counted, as stopped', r.some((x) => x.id === 'canari-dev-chat-gateway-1' && x.status === 'stopped'));
+  ok('a one-off that stopped long before the window, and a container up all along, are not', !r.some((x) => x.id === 'canari-dev-migrate-1' || x.id === 'canari-dev-redis-1'));
+  ok('a start 3 s before the window is counted (host clock skew tolerance)', r.some((x) => x.id === 'canari-dev-edge-1'));
+  ok('the dev read lists stopped containers too', /docker ps -aq/.test(devContainerStartsCommand()) && !/status=running/.test(devContainerStartsCommand()));
 }
 {
   const v = verdict({ starts: [at('dev.aaa')], end: at('dev.aaa'), restarts: { asked: false, why: 'ssh 255' } });

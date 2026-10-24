@@ -148,6 +148,11 @@ ok('--no-build: an APK whose build recorded a passing verdict for this origin ma
 ok('--no-build: an unknown APK (CI, by hand, an older rig) is refused', /never checked/.test(installVerdict(REC, 'cc', DEV).why ?? ''));
 ok('--no-build: an APK built for ANOTHER estate is refused', /built for http:\/\/localhost:8081/.test(installVerdict(REC, 'bb', DEV).why ?? ''));
 ok('--no-build: a failed or absent verdict is refused', !installVerdict([{ apkSha256: 'dd', origin: DEV }], 'dd', DEV).ok);
+{
+  const OLD = [{ apkSha256: 'ee', origin: DEV, bundleOk: true, ref: 'v1.4.0', acceptedDeadProductionLiteral: ['push-service-fallback'] }];
+  ok('--no-build: an APK that passed by an acceptance is REFUSED without the flag again', /accept-dead-production-literal again/.test(installVerdict(OLD, 'ee', DEV).why ?? ''));
+  ok('--no-build: and installed when the flag is passed again', installVerdict(OLD, 'ee', DEV, { acceptDeadLiterals: true }).ok);
+}
 
 // ── the build ENVIRONMENT names no production origin, from the process or a .env file ──────────────
 const planned = { ...dev.env };

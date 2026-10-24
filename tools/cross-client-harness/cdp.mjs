@@ -155,11 +155,7 @@ export const RESOLVE = `(function (sel) {
  * and still short enough that a poll loop keeps polling.
  */
 export async function listTargets(p = port, timeoutMs = 2000) {
-  const res = await fetch(`http://127.0.0.1:${p}/json/list`, {
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const all = await res.json();
-  const pages = all.filter((t) => t.type === 'page' && !String(t.url).startsWith('devtools://'));
+  const pages = await pagesOn(p, timeoutMs);
   // THE ONE ATTACH PATH REFUSES A FOREIGN PAGE (R1 review, 2026-10-24). Every runner finds the tab it
   // drives here, so a profile still sitting on production - or on any page that is not the estate,
   // a Tauri scheme, an inert page or an identity provider - stops the run before a CDP socket exists.
@@ -167,6 +163,33 @@ export async function listTargets(p = port, timeoutMs = 2000) {
   await ensureEstate();
   for (const t of pages) refuseForeignPage(String(t.url));
   return pages;
+}
+
+/** Every page target on a devtools endpoint, bounded (see {@link listTargets}), judged by nobody yet. */
+async function pagesOn(p, timeoutMs) {
+  const res = await fetch(`http://127.0.0.1:${p}/json/list`, { signal: AbortSignal.timeout(timeoutMs) });
+  const all = await res.json();
+  return all.filter((t) => t.type === 'page' && !String(t.url).startsWith('devtools://'));
+}
+
+/**
+ * The pages of a browser the rig does NOT own, for a caller that will attach to ONE of them: the
+ * phone's own Chrome, where the IdP form opens beside whatever tabs the phone's user left there
+ * (R1 low finding). Judging every tab there would stop a sign-in on a news page nobody drives.
+ *
+ * NOTHING IS WEAKENED FOR WHAT THE RIG DRIVES: the caller picks its candidates, and every one it
+ * connects to goes through {@link judgedTarget} first; every navigation it sends is judged by
+ * `connect` as before. A browser the rig launches and drives is listed with {@link listTargets}.
+ */
+export async function untrustedBrowserPages(p = port, timeoutMs = 2000) {
+  await ensureEstate();
+  return pagesOn(p, timeoutMs);
+}
+
+/** `target` unchanged once its page passes the allowlist, or a refusal - for {@link untrustedBrowserPages}. */
+export function judgedTarget(target) {
+  refuseForeignPage(String(target.url));
+  return target;
 }
 
 /**

@@ -162,7 +162,11 @@ describe('the canonical origin a build advertises', () => {
   it('keeps the production names in this module: no other source reads the two constants', () => {
     // A bundler inlines an imported string constant into its consumer's chunk, so a constant read
     // elsewhere puts a production origin in a chunk the test rig cannot tell from a request target.
-    const files = sourceFiles({ under: ['src'], extensions: ['ts', 'svelte'], tests: 'exclude' });
+    const files = sourceFiles({
+      under: ['src'],
+      extensions: ['ts', 'js', 'svelte'],
+      tests: 'exclude',
+    });
     expect(files.length).toBeGreaterThan(100);
     const readers = files
       .filter(({ path }) => !path.endsWith('lib/utils/publicAppUrl.ts'))

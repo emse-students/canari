@@ -175,7 +175,7 @@ export const IDP_HOSTS = ['miconnect.emse.fr', 'auth.canari-emse.fr', 'cas.emse.
  * the error page Chrome shows when a navigation failed (a NET row that cut the link lands there).
  * Exact URLs - a prefix would let `about:blank#...` style tricks and any `chrome://` page through.
  */
-export const INERT_PAGES = ['about:blank', 'chrome://newtab/', 'chrome://new-tab-page/', 'chrome-error://chromewebdata/'];
+export const INERT_PAGES = ['about:blank', 'chrome://newtab/', 'chrome://new-tab-page/', 'chrome-native://newtab/', 'chrome-error://chromewebdata/'];
 
 /**
  * Whether a page may be attached to or navigated to by a rig whose estate is `estateOrigin` - an
@@ -298,13 +298,15 @@ export function devLogsCommand(service, since) {
 }
 
 /**
- * `<name> <State.StartedAt>` for every running container of dev's compose project, one per line -
- * the restart witness `deploy.mjs` reads for a dev window (R4). Read-only, and an empty project
- * prints nothing, which the reader treats as unanswered rather than as "nothing restarted".
+ * `<name> <StartedAt> <FinishedAt> <Running>` for EVERY container of dev's compose project, running
+ * or not, one per line - the restart witness `deploy.mjs` reads for a dev window (R4). A container
+ * that stopped inside the window and stayed down is a disruption too, so stopped ones are listed
+ * (R4 low finding). Read-only, and an empty project prints nothing, which the reader treats as
+ * unanswered rather than as "nothing restarted".
  */
 export const devContainerStartsCommand = () =>
-  `docker ps -q --filter label=com.docker.compose.project=${DEV_PROJECT} --filter status=running ` +
-  `| xargs -r docker inspect --format '{{.Name}} {{.State.StartedAt}}'`;
+  `docker ps -aq --filter label=com.docker.compose.project=${DEV_PROJECT} ` +
+  `| xargs -r docker inspect --format '{{.Name}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.State.Running}}'`;
 
 /** Chrome and Nest colour their output; a rule matching a bare word must not meet an escape. */
 // oxlint-disable-next-line no-control-regex -- ESC is the character this must match; that IS the rule.
