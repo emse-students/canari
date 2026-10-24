@@ -946,6 +946,11 @@ and the server holds the person outside until a member answers:
   a member client older than the rule still auto-Adds a link joiner, and that Add legitimately lifts
   the flag. It holds once `minClientVersion` floors at this build, with migration 038 deployed with
   it ([legacy-compatibility](../legacy-compatibility.md)).
+- **WHEN THE FLOOR IS RAISED (user, 2026-10-24): once BOTH stores serve the version carrying this
+  change** - not at the deploy, not on a date. Until then an older client meets the tolerated
+  **409 `awaiting_admission`** path above (it falls back to asking a member) and an older member's
+  automatic Add is honoured through the Welcome lift. That tolerance is the shim, and its removal
+  condition is that floor, with no calendar date.
 
 The other reading was refused: treating the link as the member's decision would mean a member's
 device honouring a server-written flag, the very trust in server rows this policy removes.

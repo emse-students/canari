@@ -94,7 +94,7 @@ REST: those rows need a count, then a migration.
 | `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 | Send-ledger entry with no epoch (`sendRatchetLedger.ts`, `parseKey`) | floor past the first stable carrying #2269 | NO (unreleased) | `mls_send_ledger_<user>` in `localStorage` on devices not yet updated | 1 parse branch + 1 debt arm | waits for the floor ([diary](#no-date-yet---a-send-ledger-entry-with-no-epoch-written-by-a-client-older-than-2026-10-23)) |
 | Plaintext live key: the `"liveKey"` column, `openLiveKey`'s plaintext arm, `LivesService.sealPlaintextKeys` (migration 110) | 0 rows with `"liveKey" IS NOT NULL` on both estates, read AFTER the first deploy carrying 110 has fully replaced the previous replica | not a version question (server only) | `lives."liveKey"` | 1 arm + 1 sweep step + a migration dropping the column, the index and `lives_key_one_form` | owed: the count below, then that migration ([lives](services/lives.md#the-live-key-at-rest)) |
-| A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
+| A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -125,6 +125,12 @@ can tell it from a member's Add. The server honours it as one: the Welcome that 
 lifts the joiner's `awaitingAdmission` (a commit older than `admits` declares nobody, so the Welcome
 is the one door that sees its Add), and without that lift the joiner would sit `active` under a flag
 refusing every commit of theirs.
+**When the floor is raised (user, 2026-10-24):** once BOTH stores serve the version carrying #2358 -
+never at the deploy, never on a date. Until then an older client gets the tolerated 409
+`awaiting_admission` path (the external-join base refused as a wait, not a 403, so it asks a member
+instead of retiring the conversation), and an older member's automatic Add is honoured through the
+Welcome lift. That tolerance is the shim; its removal condition is that floor, and there is no
+calendar date.
 **The rule becomes TRUE when** `minClientVersion` reaches the first stable carrying #2358, both stores
 serving it - AND migration 038 is deployed with that build: the column is what holds a link joiner
 outside (the base, the commit gate, the joiner's own membership read), and the server reads it on
