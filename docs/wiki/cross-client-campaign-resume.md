@@ -1,5 +1,9 @@
 # Resuming the cross-client campaign
 
+> **OBSOLETE (2026-10-24), to be deleted with the next `CLAUDE.md` update.** It describes the
+> 2026-09-03 restart onto the local estate. The `1.4.1` campaign on dev and its bring-up are
+> [cross-client-campaign-1-4-1](cross-client-campaign-1-4-1.md#3-what-the-rig-must-gain-before-a-row-on-dev-means-anything).
+
 The campaign was paused on 2026-08-30 for want of a phone. **It does not resume - it RESTARTS, from
 zero, on a rig that does not exist yet.** That is the honest description of what 2026-09-03 did to
 it, and this page is the only copy of what that costs and in what order it is paid.
