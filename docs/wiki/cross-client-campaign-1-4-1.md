@@ -205,9 +205,9 @@ arrivals were, so it is recorded in the row's detail and never decides it.
 | --- | --- | --- | --- | --- | --- | --- |
 | OFF-1 | Cut after the stage's checkpoint, before the POST leaves | reconnect resubmits, accepted, merged once | W1 W2 | `cut()` at the checkpoint (R3 `hold` then cut) | U | 20 min |
 | OFF-2 | Cut after the POST reached the server | the reconnect's resubmission answers `duplicate` | W1 W2 | `lose-answer` + `cutHard()` | U | 20 min |
-| OFF-3 | The committer stays offline while the others advance three epochs | on return its stage is refused `epoch_mismatch`, CLEARED, the device catches up and re-issues its intent if it still holds | W1 W2 W4 | `cutHard()` for the duration | U | 30 min |
+| OFF-3 | The committer stays offline while the others advance three epochs | on return its stage is refused `epoch_mismatch`, CLEARED, the device catches up and re-issues its intent if it still holds | W1 W2 W4 W5 | W1's Add of W5 held then failed under `cutHard()`; W2 Adds W4 and refreshes its leaf twice (`archive/offline.mjs`) | U | 30 min |
 | OFF-4 | A RECEIVER offline across ten commits and a hundred messages | every commit applied in order, every message once, no rung-2 repair needed | W1 W2 | `cutHard()` on W2 | U | 20 min |
-| OFF-5 | The phone loses both radios in the middle of an Add it is making | as OFF-2 on A1; the settle runs at the next connection, not at the next app open only | +A1 | `svc wifi disable; svc data disable` | B | 30 min |
+| OFF-5 | The phone loses both radios in the middle of an Add it is making | as OFF-2 on A1; the settle runs at the next connection, not at the next app open only | A1 W2 | `hold-answer` on the Add, then `svc wifi disable; svc data disable` (and the USB reverse on the local estate), the answer failed | B | 30 min |
 
 #### KILL - the process dies mid-commit
 
@@ -286,9 +286,9 @@ arrivals were, so it is recorded in the row's detail and never decides it.
 
 | Id | Question | `PASS` entails | Devices | Fault | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| NET-1 | A slow lossy link (800 ms, 50 kB/s) while a four-device Add runs | completes or settles; no `lock_budget_spent` that is not followed by a clean retry | W1 W2 W4 W5 | `emulateNetworkConditions` | U | 20 min |
-| NET-2 | The socket flaps every 10 s for five minutes while commits and messages flow | 4.0 holds at the end; every message once | W1 W2 | `cutHard()` in a loop | U | 20 min |
-| NET-3 | A captive portal: every API call answered `200 text/html` | no logout, no stage cleared, a typed transport failure; recovery when it ends | W1 W2 | `status 200 + HTML` on `/api/*` | U | 20 min |
+| NET-1 | A slow lossy link (800 ms, 50 kB/s) while a four-device Add runs | completes or settles; no `lock_budget_spent` that is not followed by a clean retry | W1 W2 W4 W5 | `net.mjs` `degrade` (latency and both throughputs; CDP has no loss rate, so the lossy half is not reproduced) | U | 20 min |
+| NET-2 | The socket flaps every 10 s for five minutes while commits and messages flow | 4.0 holds at the end; every message once | W1 W2 | W2 `cutHard()` on every other 5 s tick; W1 sends each tick, refreshes its leaf every 18 | U | 20 min |
+| NET-3 | A captive portal: every API call answered `200 text/html` | no logout, no stage cleared, a typed transport failure; recovery when it ends | W1 W2 W4 | `status-unsent 200` + HTML on `/api/*` for 20 s from the submission of W1's Add of W4 | U | 20 min |
 
 **Total for the blocking matrix, five runs per concurrency row: about 17 hours of runs**, of which
 about 12 are `U` (browsers alone) and about 5 are `B` (a bench phone on the desk). **Nothing in it

@@ -1044,7 +1044,7 @@ asserts R5 ownership of every conversation the row writes in, and reads the serv
 when an armed fault never fired, `FAIL` on any own assertion or invariant, else `PASS` - and
 `recordObserved` then gates it on every seat's window, the deploy exclusion (R4) and the server window
 judged by the row id (R6). The invariant (R8) runs after every row, with its reload. A row's own
-judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`), pinned by
+judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`), pinned by
 `archive/<group>-selftest.mjs`.
 
 ```sh
@@ -1100,6 +1100,23 @@ and holds rung 1's `GET /api/mls/commits/` while W1 sends live; GAP-2 captures a
 pull and puts it in front of a later one, three epochs on; GAP-3 starts the first page `after` the
 2050th queued frame. Rows left out are not ACKed, so nothing is deleted on the server. The
 transforms are `gaprows.mjs`, pinned by `archive/gap-selftest.mjs`.
+
+```sh
+bun archive/offline.mjs --row OFF-3|NET-1|NET-2|NET-3|RM-8   # browsers; NET-2 is five minutes
+bun archive/offline.mjs --row OFF-5                          # A1, class B: the radios go mid-Add
+```
+
+**AN OFFLINE ROW TAKES A SEAT'S LINK AWAY FOR A DURATION**, where a settle row loses one answer.
+OFF-3 holds W1's Add before the server, cuts W1 and fails the held request, then lets W2 move the
+group three epochs (an Add of W4, two refreshes of the leaf that Add dated); on the return the kept
+commit must be refused `epoch_mismatch`, cleared and re-issued. OFF-5 is OFF-2 on A1 with the radios
+(`svc wifi/data disable`, and the USB reverse on the local estate) as the cut. NET-1 uses `net.mjs`
+`degrade` (latency and both throughputs; CDP has no loss rate, and the record says so). NET-2 cuts
+W2's socket on every other 5 s tick for five minutes while W1 sends each tick and refreshes its
+leaf every 18. NET-3's portal answers every `/api/` call `200 text/html`, armed through
+`addMembers`' `beforeSubmit` so the picker's search is not what it breaks. RM-8 leaves under `cut()`
+and asks only that the server and W2 agree. Judgements in `offlinerows.mjs`, pinned by
+`archive/offline-selftest.mjs`.
 
 ## Rules that make a result trustworthy
 

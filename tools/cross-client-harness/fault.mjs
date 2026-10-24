@@ -133,6 +133,7 @@ export function compileRules(rules) {
     if (!(typeof r.match === 'string' && r.match !== '') && !(r.match instanceof RegExp))
       throw new Error(`armFault: rule ${index} has no 'match'`);
     const parsed = parseFault(r.fault);
+    if (r.contentType !== undefined && r.body === undefined) throw new Error(`armFault: rule ${index} names a content type for no body`);
     if (r.body !== undefined && MODES[parsed.mode].arg !== 'status')
       throw new Error(`armFault: rule ${index} gives a body to '${parsed.mode}', which sends none`);
     for (const [fn, mode] of [
@@ -147,7 +148,7 @@ export function compileRules(rules) {
       match: r.match,
       method: r.method ?? null,
       ...parsed,
-      body: fulfilBody(r.body),
+      body: fulfilBody(r.body, r.contentType),
       transform: r.transform ?? null,
       url: r.url ?? null,
       spec: r.fault,
@@ -161,14 +162,16 @@ export function compileRules(rules) {
  * base64-encoded, and a JSON body without its content type is not parsed as JSON by the client.
  *
  * @param {string | object | undefined} body
+ * @param {string} [contentType] the header to send instead of the one the body's type implies
  * @returns {{ responseHeaders: Array<{name: string, value: string}>, body: string }}
  */
-export function fulfilBody(body) {
+export function fulfilBody(body, contentType) {
   if (body === undefined) return { responseHeaders: [], body: '' };
   const json = typeof body !== 'string';
   const text = json ? JSON.stringify(body) : body;
   return {
-    responseHeaders: [{ name: 'Content-Type', value: json ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8' }],
+    // `contentType` overrides the default - NET-3's captive portal answers `text/html`.
+    responseHeaders: [{ name: 'Content-Type', value: contentType ?? (json ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8') }],
     body: Buffer.from(text, 'utf8').toString('base64'),
   };
 }

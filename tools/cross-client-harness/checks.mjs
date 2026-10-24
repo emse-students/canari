@@ -486,6 +486,14 @@ export const PHASES = {
     scripts: ['gap.mjs --row GAP-1', 'gap.mjs --row GAP-2', 'gap.mjs --row GAP-4'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
+  // A SEAT WITHOUT A WORKING LINK FOR A WHILE (OFF-3, NET-1..3, RM-8), browsers only. NET-2 alone is
+  // five minutes. OFF-5 is NOT here: it is class B, played on A1 - `bun archive/offline.mjs --row OFF-5`.
+  // OFF-4 is BLOCKED-ON-ACCOUNT and has no row to run.
+  OFFLINE: {
+    title: '1.4.1 - away while others move on, a slow link, a flapping socket, a captive portal',
+    scripts: ['offline.mjs --row OFF-3', 'offline.mjs --row NET-1', 'offline.mjs --row NET-2', 'offline.mjs --row NET-3', 'offline.mjs --row RM-8'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
 };
 
 /**
