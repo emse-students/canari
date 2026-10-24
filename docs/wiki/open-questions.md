@@ -341,7 +341,7 @@ would be a threshold nobody has measured against the population it would run on.
 > **Already shipped, do not re-open:** _"ne garder que les messages les plus recents (dernier mois),
 > et le reste recuperable en demandant l'historique a un appareil mobile"_ is exactly the device
 > window plus the scrollback range request delivered in the history-reconciliation rework - web keeps
-> 90 days, mobile and desktop 5 years, and reaching the top of the scrollback asks a peer for the
+> 90 days, mobile and desktop 5 years CLAIMED (the local garbage collector prunes at 90 days everywhere today - [backlog](backlog.md)), and reaching the top of the scrollback asks a peer for the
 > range below the window. See [history-reconciliation](protocols/history-reconciliation.md) and
 > `historyWindow.ts`.
 

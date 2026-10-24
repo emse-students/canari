@@ -228,6 +228,13 @@ Two consequences, both handled where the assumption lived:
   Over-delivering there costs the receiver disk and nothing else - and under-delivering would lose
   messages the joiner has no other way to obtain. It is bounded by the sender's own window anyway.
 
+  **What is actually enforced today (verified 2026-10-22): 90 days on EVERY platform.** The window
+  above is what a device CLAIMS (`historyWindow.ts:39-47`, `deviceWindowMs()`), but the only local
+  deletion is the garbage collector in `ChatBackgroundService.svelte:1789-1802`, which calls
+  `deleteOldMessages(90 days)` every 6 hours with no platform check, on IndexedDB
+  (`db/indexeddb.ts:924`) and on SQLite (`db/sqlite.ts:773`) alike. So a native device prunes at 90
+  days while claiming 5 years - an open decision, in [backlog](../backlog.md) (P2, local retention).
+
 ### Completeness is asked from the requester's side
 
 A device is complete when it holds everything that exists in

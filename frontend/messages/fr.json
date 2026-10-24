@@ -3663,6 +3663,7 @@
   "reels_viewer_next": "CanaReel suivant",
   "reels_viewer_load_error": "Les CanaReels suivants n'ont pas pu être chargés.",
   "reels_rail_label": "Actions du CanaReel",
+  "reels_rail_drawer_label": "Choisir une réaction",
   "reels_rail_like": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

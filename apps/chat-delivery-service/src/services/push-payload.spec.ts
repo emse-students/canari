@@ -57,6 +57,30 @@ describe('decideProtoCarriage: a typed outcome per packet kind', () => {
     );
   });
 
+  it('names a welcome as the reason it is carried by reference', () => {
+    const c = decideProtoCarriage({ ...baseInput, isWelcome: true }, 'AAEC');
+    expect(c).toMatchObject({ kind: 'by-reference', reason: 'welcome' });
+  });
+
+  // A Graine seed bundle is routinely kilobytes - a history answer is up to a 255 KiB page - so a
+  // key-distribution frame over the inline budget is ordinary, not the fixed fields growing. It was
+  // reported `over-budget` at warn for every multi-seed answer to an offline device.
+  it('carries key material over the budget by reference, never as over-budget', () => {
+    const input = { ...baseInput, silent: true, isKeyDistribution: true };
+    const c = decideProtoCarriage(input, 'A'.repeat(100_000));
+    expect(c).toMatchObject({ kind: 'by-reference', reason: 'key-material', proto: '' });
+  });
+
+  it('still inlines key material that fits, which the native mirror reads seeds from', () => {
+    const input = { ...baseInput, silent: true, isKeyDistribution: true };
+    expect(decideProtoCarriage(input, 'AAEC')).toMatchObject({ kind: 'inlined', proto: 'AAEC' });
+  });
+
+  it('keeps accusing an over-budget frame when the server could not say it was key material', () => {
+    const input = { ...baseInput, silent: true, isKeyDistribution: undefined };
+    expect(decideProtoCarriage(input, 'A'.repeat(100_000)).kind).toBe('over-budget');
+  });
+
   it('reports nothing to carry as empty', () => {
     expect(decideProtoCarriage({ ...baseInput }, '').kind).toBe('empty');
   });

@@ -13,7 +13,8 @@
  *      and fails on an id nothing reports), never by a clock.
  *
  * And the reader that retirement check uses (`image-scan.sh --allowlist-ids`, a grep) must see
- * exactly the entries a real YAML parse sees: an entry it missed would never be retired.
+ * exactly the entries a real YAML parse sees: an entry it missed would never be retired. The same
+ * holds for `--allowlist-purls`, which retires a purl-scoped entry on its own package.
  *
  * Usage: bun .github/scripts/tests/image-scan-allowlist.test.mjs   (no arguments, no network)
  */
@@ -72,6 +73,33 @@ if (run.exitCode !== 0) {
   if (missed.length) fail(`image-scan.sh does not read ${missed.join(', ')}, so nothing would ever retire them`);
   if (invented.length) fail(`image-scan.sh reads ${invented.join(', ')}, which no entry names`);
   if (!missed.length && !invented.length) console.log(`  ok   image-scan.sh reads the same ${read.length} ids a YAML parse does`);
+}
+
+// The purl half of the retirement check: one advisory allowlisted on two packages stays reported by
+// id while either remains, so each purl is retired on its own `id package version` triple.
+console.log('the retirement check reads every purl-scoped entry on its package:');
+const triples = [
+  ...new Set(
+    entries.flatMap((e) =>
+      (e?.purls ?? []).map((p) => {
+        const nameVersion = String(p).split('?')[0].split('/').pop();
+        const at = nameVersion.indexOf('@');
+        if (at < 1) fail(`${e?.id}: purl ${p} names no version, so it would cover every build of the package`);
+        return `${e?.id} ${nameVersion.slice(0, at)} ${decodeURIComponent(nameVersion.slice(at + 1))}`;
+      }),
+    ),
+  ),
+].sort();
+const purlRun = Bun.spawnSync(['bash', scanScript, '--allowlist-purls']);
+if (purlRun.exitCode !== 0) {
+  fail(`image-scan.sh --allowlist-purls exited ${purlRun.exitCode}: ${purlRun.stderr.toString().trim()}`);
+} else {
+  const read = purlRun.stdout.toString().split('\n').filter(Boolean).sort();
+  const missed = triples.filter((t) => !read.includes(t));
+  const invented = read.filter((t) => !triples.includes(t));
+  if (missed.length) fail(`image-scan.sh does not read ${missed.join(', ')}, so that purl would never retire`);
+  if (invented.length) fail(`image-scan.sh reads ${invented.join(', ')}, which no entry names`);
+  if (!missed.length && !invented.length) console.log(`  ok   image-scan.sh reads the same ${read.length} purls a YAML parse does`);
 }
 
 if (failures) {
