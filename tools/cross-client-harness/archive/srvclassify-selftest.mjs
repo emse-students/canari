@@ -29,6 +29,10 @@ import {
   BENIGN_RULES,
   NOTABLE_RULES,
   SEVERE_RULES,
+  ROW_RULES,
+  rowNamed,
+  rowVerdict,
+  srvReport,
 } from '../srvlog.mjs';
 
 let failures = 0;
@@ -913,6 +917,106 @@ check(
   matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [ChannelService] [ROSTER] presence read: 0/2 member(s) online'),
   true
 );
+
+// --- R6 (1.4.1 campaign): the lines EXPECTED IN ONE ROW AND DIRT IN EVERY OTHER --------------
+// Every fixture below is the server's own template literal (origin/main, 2026-10-24) with its
+// identifiers filled in. Each family is pinned three ways: expected in a row it names, dirt in a row
+// it does not name (and with no row at all), and a LOOKALIKE - the same tag in a shape nobody has
+// read, which is dirt everywhere. The throttled lines get a `repeat=` the throttle never prints.
+{
+  const W = (ctx, msg) => `[Nest] 1  - 10/24/2026, 12:43:51 PM    WARN [${ctx}] ${msg}`;
+  const L = (ctx, msg) => `${NEST}[${ctx}] ${msg}`;
+  const D = (ctx, msg) => `[Nest] 1  - 10/24/2026, 12:43:51 PM   DEBUG [${ctx}] ${msg}`;
+  const E = (ctx, msg) => `[Nest] 1  - 10/24/2026, 12:43:51 PM   ERROR [${ctx}] ${msg}`;
+  const G = '00000000-0000-4000-8000-000000000001';
+  const DEV = 'web-aaaaaaaa-msglwqh6-vegy';
+  const verdictIn = (line, row) => {
+    const v = rowVerdict(line, row);
+    return v === null ? 'unclaimed' : v.expected ? 'expected' : v.rule === null ? 'unread-shape' : 'out-of-row';
+  };
+  // [name, line, a row that expects it (or null: none may), a row that must not]
+  const FAMILY = [
+    ['a waiting seat refused a member route', W('MembersController', `[ROSTER_READ] REFUSED group=${G} caller=aaaaaaaa - the caller's seat awaits a member's admission (409 awaiting_admission, repeat=1, said at 1, 10, 100...)`), 'ADM-1', 'FLOOR-1'],
+    ['... with its target, at the 100th refusal', W('MembersController', `[MEMBERSHIP] REFUSED group=${G} caller=aaaaaaaa target=bbbbbbbb - the caller's seat awaits a member's admission (409 awaiting_admission, repeat=100, said at 1, 10, 100...)`), 'ADM-4', 'ADM-7'],
+    ['... on a calls scope', W('CallsService', `[ring-end] REFUSED group=${G} caller=aaaaaaaa - the caller's seat awaits a member's admission (409 awaiting_admission, repeat=10, said at 1, 10, 100...)`), 'ADM-4', 'DUP-1'],
+    ['the external-join base withheld', L('MessagingService', `[GROUP_INFO] group=${G} user=${'a'.repeat(64)} awaits a member's admission - base withheld (repeat=1, said at 1, 10, 100...)`), 'ADM-5', 'ADM-1'],
+    ["a waiting seat's ask relayed", L('MessagingService', `[WELCOME_REQ][welcome-req-81fb5450] START group=${G} requester=aaaaaaaa:${DEV} members=3 ask=awaiting-member repeat=10 (said at 1, 10, 100...)`), 'ADM-6', 'DEV-1'],
+    ["a member's Decline withdrew the ask", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=withdrawn`), 'ADM-2', 'ADM-1'],
+    ['a Decline answered already-admitted', L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=already-admitted`), 'ADM-3', 'ADM-5'],
+    ['a Decline refused to a non-member', W('MembersController', `[JOIN_DECLINE] REJECT group=${G} caller=none target=bbbbbbbb - not an admitted member, or their own ask`), 'ADM-4', 'ADM-2'],
+    ["a member's Add admitted the joiner", L('MessagingService', `[COMMIT][commit-1234abcd] ADMITTED group=${G} users=1 door=admits - a member's Add answered their invitation-link ask`), 'ADM-1', 'FLOOR-2'],
+    ['a stored Welcome admitted the joiner', L('MessagingService', `[BG_WELCOME][bg-wlc-1234abcd] ADMITTED group=${G} users=1 door=welcome - a member's Add answered their invitation-link ask`), 'ADM-6', 'DEV-7'],
+    ["the waiting seat's own commit refused", W('MessagingService', `[COMMIT][commit-1234abcd] REJECT committer_not_member group=${G} device=aaaaaaaa:${DEV} kind=external reason=awaiting_admission`), 'ADM-4', 'ADM-5'],
+    ['a ring skipping an unadmitted callee', L('CallsService', `[ring] call=c-1 group=${G} not rung: 1 callee(s) hold no admitted seat: aaaaaaaa`), 'ADM-4', 'FLOOR-1'],
+    ['an uninvited-entry report from a non-member', W('MessagingController', `[UNINVITED_ENTRY] REJECT not-a-member reporter=aaaaaaaa group=${G}`), 'ADM-7', 'ADM-1'],
+    ['an UNINVITED ENTRY recorded', W('MessagingController', `[UNINVITED_ENTRY] kind=new-person reporter=aaaaaaaa group=${G} entrant=bbbbbbbb epoch=4 key=abcd1234`), null, 'ADM-7'],
+    ['... and its repeat', D('MessagingController', `[UNINVITED_ENTRY] repeat reporter=aaaaaaaa group=${G} entrant=bbbbbbbb epoch=4 - already counted`), null, 'ADM-4'],
+    ['a background Welcome starting', L('PushController', `[BG_WELCOME][bg-wlc-1234abcd] START group=${G} sender=aaaaaaaa:tauri-aaaa target=bbbbbbbb:${DEV} baseEpoch=4`), 'DEV-7', 'DEV-1'],
+    ['... its commit accepted', L('PushController', `[BG_WELCOME][bg-wlc-1234abcd] commit accepted -> activeEpoch=5`), 'DEV-7', 'FLOOR-3'],
+    ['... its Welcome stored', L('PushController', `[BG_WELCOME][bg-wlc-1234abcd] DONE Welcome stored with the commit`), 'DEV-7', 'KILL-3'],
+    ['... a stale phone refused', W('PushController', `[BG_WELCOME][bg-wlc-1234abcd] REJECT commit epoch_mismatch (server epoch: 6, sent base: 4) - no Welcome, answered 409`), 'DEV-7', 'OFF-5'],
+    ['our own commit answered duplicate', L('MessagingService', `[COMMIT][commit-1234abcd] DUPLICATE group=${G} device=${DEV} baseEpoch=4 - already accepted, answered again`), 'DUP-1', 'FLOOR-1'],
+    ['... in a TOK row too, by family', L('MessagingService', `[COMMIT][commit-1234abcd] DUPLICATE group=${G} device=${DEV} baseEpoch=4 - already accepted, answered again`), 'TOK-2', 'CC-1'],
+    ['a revoked device committing', W('MessagingService', `[COMMIT][commit-1234abcd] REJECT device_revoked group=${G} device=${DEV} sender=aaaaaaaa`), 'DEV-2', 'DEV-1'],
+    ['a removal exceeding the actor', W('ChannelService', `[WORKSPACE] refused removal - target holds more than the actor workspace=w-1 target=bbbbbbbb by=aaaaaaaa locked=true`), 'RM-6', 'RM-4'],
+    ['an access rewrite refused, salon changed', W('ChannelService', `[CHANNEL_ACCESS] refused - the salon changed since it was read channel=c-1 by=aaaaaaaa`), 'RM-4', 'RM-6'],
+    ['privacy refused, minted group kept', W('ChannelService', `[CHANNEL_GRAINE] privacy refused, minted group kept channel=c-1 group=g-1 by=aaaaaaaa`), 'RM-4', 'RM-6'],
+    ['a departure superseded, retried', W('ChannelService', `[KEY_DISTRIBUTION] departure superseded, retrying workspace=w-1 user=bbbbbbbb reason=kicked attempt=1/3`), 'RM-5', 'RM-4'],
+    ['a departure SUPERSEDED for good', W('ChannelService', `[KEY_DISTRIBUTION] departure SUPERSEDED - granted a private salon since its read workspace=w-1 user=bbbbbbbb reason=kicked salons=1`), 'RM-5', 'RM-6'],
+    ['a departure cancelled before its roster write', W('ChannelService', `[KEY_DISTRIBUTION] departure CANCELLED before its roster write scope=channel:c-1 user=bbbbbbbb departure=d-1 reason=access_removed - rolled back, retryable`), 'RM-4', 'RM-6'],
+    ['a departure abandoned, settling what it began', W('ChannelService', `[KEY_DISTRIBUTION] departure ABANDONED reason=kicked begun=1: The departure could not be completed, retry. - settling what it began`), 'RM-5', 'FLOOR-1'],
+    ['a salon grant refused', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=not_allowed`), 'RM-5', 'RM-4'],
+    ['a salon gone before its roster write', W('ChannelService', `[CHANNEL] salon gone before its roster write channel=c-1 user=bbbbbbbb`), null, 'RM-5'],
+  ];
+  for (const [name, line, row, other] of FAMILY) {
+    if (row) check(`R6 expected   ${name} (${row})`, verdictIn(line, row), 'expected');
+    check(`R6 dirt       ${name} (in ${other})`, verdictIn(line, other), 'out-of-row');
+    check(`R6 dirt       ${name} (no row named)`, verdictIn(line, null), 'out-of-row');
+  }
+  // LOOKALIKES: the family's tag in a shape nobody read - dirt even in the row the family serves.
+  const LOOKALIKE = [
+    ['a refusal said at the 2nd retry: the throttle is broken', W('MembersController', `[ROSTER_READ] REFUSED group=${G} caller=aaaaaaaa - the caller's seat awaits a member's admission (409 awaiting_admission, repeat=2, said at 1, 10, 100...)`), 'ADM-1'],
+    ['a base withheld at repeat=11', L('MessagingService', `[GROUP_INFO] group=${G} user=aaaaaaaa awaits a member's admission - base withheld (repeat=11, said at 1, 10, 100...)`), 'ADM-5'],
+    ['an ask relayed at repeat=3', L('MessagingService', `[WELCOME_REQ][welcome-req-81fb5450] START group=${G} requester=aaaaaaaa:${DEV} members=3 ask=awaiting-member repeat=3 (said at 1, 10, 100...)`), 'ADM-1'],
+    ['a Decline with an outcome nobody declared', L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=evicted`), 'ADM-2'],
+    ['a door nobody declared', L('MessagingService', `[COMMIT][commit-1234abcd] ADMITTED group=${G} users=1 door=link - a member's Add answered their invitation-link ask`), 'ADM-1'],
+    ['an uninvited-entry line of a new kind', W('MessagingController', `[UNINVITED_ENTRY] ACCEPT reporter=aaaaaaaa group=${G}`), 'ADM-7'],
+    ['a background Welcome line nobody read', W('PushController', `[BG_WELCOME][bg-wlc-1234abcd] Welcome LOST group=${G}`), 'DEV-7'],
+    ['a departure line of a new outcome', W('ChannelService', `[KEY_DISTRIBUTION] departure SUPERSEDED twice workspace=w-1`), 'RM-5'],
+    ['a grant refused with an undeclared outcome', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=banned`), 'RM-5'],
+  ];
+  for (const [name, line, row] of LOOKALIKE) check(`R6 lookalike  ${name}`, verdictIn(line, row), 'unread-shape');
+
+  // NEVER JUDGED PER ROW: an ERROR line gates as it always did, in the row of its family too.
+  check('R6 [ADMISSION] at ERROR is never a row line', verdictIn(E('MessagingService', `[ADMISSION] group=${G} user=aaaaaaaa holds 1 active device(s) under a seat still flagged awaitingAdmission - a Welcome reached them past the lift; read as admitted`), 'ADM-1'), 'unclaimed');
+  check('R6 an ERROR carrying a family tag is still an ERROR', verdictIn(E('PushController', `[BG_WELCOME][bg-wlc-1234abcd] DONE Welcome stored with the commit`), 'DEV-7'), 'unclaimed');
+  // AND THE ORDINARY SIBLINGS ARE NOT CLAIMED: the plain START, a committer_not_member with no
+  // awaiting reason.
+  check('R6 a plain WELCOME_REQ START is not an ask', verdictIn(`${NEST}[MessagingService] [WELCOME_REQ][welcome-req-81fb5450] START group=${G} requester=aaaaaaaa:${DEV} members=3`, null), 'unclaimed');
+  check('R6 a non-member external commit is not a waiting seat', verdictIn(W('MessagingService', `[COMMIT][commit-1234abcd] REJECT committer_not_member group=${G} device=aaaaaaaa:${DEV} kind=external`), null), 'unclaimed');
+  check('R6 FAMILY-* names a family, not a prefix of a longer word', rowNamed(['DUP-*'], 'DUPX-1'), false);
+  check('R6 an exact id is exact', rowNamed(['ADM-5'], 'ADM-50'), false);
+  check('R6 every rule names its rows as ids or families', ROW_RULES.every((r) => r.rows.every((x) => /^[A-Z]+-(\d+|\*)$/.test(x))), true);
+
+  // THE NEW NOTABLE LINES: narration in every row.
+  for (const [name, line] of [
+    ['the hourly sweep of invitation-link asks', L('AppController', `[CRON] cleanupStalePendingInvitations: 0 invitation-link ask(s) awaiting a member - {}`)],
+    ['the community removal lock taken', D('ChannelService', `[WORKSPACE] removal lock held workspace=w-1`)],
+    ['a removal of a non-member', D('ChannelService', `[WORKSPACE] removal of a non-member, nothing to compare workspace=w-1 target=bbbbbbbb`)],
+  ])
+    check(`R6 notable    ${name}`, matches(NOTABLE_RULES, line) && verdictIn(line, null) === 'unclaimed', true);
+
+  // AND THE BUCKETS srvReport BUILDS FROM THEM, over an injected reader (no estate is reached).
+  const dup = L('MessagingService', `[COMMIT][commit-1234abcd] DUPLICATE group=${G} device=${DEV} baseEpoch=4 - already accepted, answered again`);
+  const asRow = (row) => srvReport((s) => (s === 'chat-delivery-service' ? [dup] : []), '1m', { row })['chat-delivery-service'];
+  const inDup = asRow('DUP-1');
+  check('R6 srvReport: DUP-1 keeps its own line, reported and clean', [inDup.clean, inDup.expectedCount, inDup.outOfRowCount ?? 0, inDup.notableCount ?? 0], [true, 1, 0, 0]);
+  const inFloor = asRow('FLOOR-1');
+  check('R6 srvReport: FLOOR-1 is NOT clean on the same line', [inFloor.clean, inFloor.outOfRowCount, inFloor.lines], [false, 1, 1]);
+  check('R6 srvReport: the out-of-row line says which rows expect it', /expected only in DUP-\*/.test(inFloor.outOfRow[0]), true);
+  check('R6 srvReport: no row named is not clean either', asRow(null).clean, false);
+}
+
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');
 process.exit(failures ? 1 : 0);

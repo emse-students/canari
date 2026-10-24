@@ -25,6 +25,15 @@ check('naming the service and the count', dirty.dirt['core-service'].unexplained
 check('and the line', dirty.dirt['core-service'].unexplained.lines, ['totally unclassified line']);
 check('other services are not blamed', Object.keys(dirty.dirt), ['core-service']);
 
+// THE ROW DECIDES A 1.4.1 LINE (`srvlog.mjs` `ROW_RULES`): the same window is clean as DUP-1's and
+// dirty as anybody else's, and the ledger names the line under `outOfRow`.
+const dupLine = '[Nest] 1  - 10/24/2026, 12:43:51 PM     LOG [MessagingService] [COMMIT][commit-1234abcd] DUPLICATE group=g-1 device=web-a baseEpoch=4 - already accepted, answered again';
+const dupReader = (service) => (service === 'chat-delivery-service' ? [dupLine] : []);
+check('a duplicate commit is clean in the DUP-1 row that armed it', takeServerWindow(dupReader, 's', [], 'DUP-1').clean, true);
+const elsewhere = takeServerWindow(dupReader, 's', [], 'FLOOR-1');
+check('and dirty in FLOOR-1', elsewhere.clean, false);
+check('recorded under outOfRow, with its count', elsewhere.dirt['chat-delivery-service'].outOfRow.count, 1);
+
 const down = takeServerWindow(() => {
   throw new Error('docker unreachable');
 }, '2026-10-01T00:00:00.000Z');

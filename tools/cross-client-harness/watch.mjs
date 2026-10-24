@@ -2840,7 +2840,8 @@ export function logcatReport(lines, label = 'A1') {
  */
 export function dirtOf(rep) {
   const out = {};
-  for (const bucket of ['severe', 'errors', 'exceptions', 'badHttp', 'wsEvents', 'unexplained'])
+  // `outOfRow` is the server's alone (`srvlog.mjs` `ROW_RULES`): a 1.4.1 line another row expects.
+  for (const bucket of ['severe', 'errors', 'exceptions', 'badHttp', 'wsEvents', 'unexplained', 'outOfRow'])
     if (rep?.[bucket]?.length) out[bucket] = rep[bucket];
   // THE EXPLANATION TRAVELS WITH THE FINDING, and only when there IS one.
   //
