@@ -618,16 +618,28 @@ window with a durable row and a lock:
   submissions), with the external join's attempt loop and `admitNewcomer`'s tree re-read above it.
   Each such refusal proves an eviction landed in between, which is what bounds the retries. A departure in progress still refuses an external join
   (`NOT_A_MEMBER`, `reason=departure_in_progress`): no leaf enters the tree for a person with no seat.
-- **A device row is inserted only beside its key package, read under the lock.** Every writer that
-  INSERTS one reads the device's `KeyPackage` row `FOR SHARE` under the seat lock first
+- **A device row that ADMITS a device is inserted only beside its key package, read under the
+  lock.** Every such writer reads the device's `KeyPackage` row `FOR SHARE` under the seat lock first
   (`heldKeyPackages`): `writeClaimedSeat` (the committer's seat, an activation, the group's creator -
-  which also checks the revocation denylist), a commit's admits (`ADMIT_REFUSED reason=no_key_package`),
-  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. An account erasure deletes the
-  account's key packages FIRST, in a transaction of its own, so a writer either commits before it -
-  and its row is there for the erasure's discovery - or finds no key package and writes nothing.
-  The erasure then cuts every group it found, under each group's seat lock (`eraseSeats`: rows,
-  queue and routes together), so a run interrupted anywhere leaves what it had not cut still named
-  by a row for the retry. `recordSeatEviction` creates no row for an account it is not beginning a
+  which also checks the revocation denylist), a commit's admits (`ADMIT_REFUSED reason=no_key_package`;
+  the admit is dropped and the commit accepted, since the leaf belongs to an account that is going),
+  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. The one exception is deliberate:
+  the demotion (`deactivateDeviceMembership`, the stale-device cron among its callers) upserts a
+  `pending` row without that read - the cron demotes precisely a device with no recent key package -
+  and removes the route itself. An account erasure deletes the account's key packages FIRST, in a
+  transaction of its own, so a writer either holds one and the delete waits for it - its row is
+  then there for the erasure's discovery - or finds none and writes nothing. The erasure cuts every
+  group it found, under each group's seat lock (`eraseSeats`: rows, queue and routes together), so
+  a run interrupted anywhere leaves what it had not cut still named by a row for the retry.
+  **The ordering does not stop the account itself**: every (re)connection republishes its key
+  package (`register-device`), and a token issued before the deletion is honoured for up to an
+  hour. So the run ends with a SWEEP - the key packages deleted again, then every group a device row
+  names NOW cut through the same `eraseSeats` - and its last transaction deletes what is left: only
+  a demotion's route-less `pending` row can be (one written after it names a device with no key
+  package, which `cleanupStaleDevices` collects). A republish after the sweep is the FINAL PASS's,
+  which core starts once every token expired, so nothing can follow it - termination is that pass's,
+  never the ordering's ([account-erasure](../account-erasure.md)). Proven on PostgreSQL in
+  `seat-lock.integration.spec.ts` ("a key package republished after the first delete"). `recordSeatEviction` creates no row for an account it is not beginning a
   departure for, so an eviction after the erasure leaves nothing naming it.
 - **A key group's admits are asked like a join.** An admit writes a `pending` seat its device later
   promotes by reporting itself, so in a key group each admitted person is asked of social-service

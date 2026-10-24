@@ -256,11 +256,19 @@ before the erasure is the group's generation, which names no one, never the acco
 on PostgreSQL with the whole erasure run between a claim and its check
 (`seat-lock.integration.spec.ts`, "a claim in flight across a whole account erasure"). **A seat
 written while the erasure runs cannot outlive it either**: the account's key packages are deleted
-first, in a transaction of their own, and every writer that inserts a device row reads its device's
-key package `FOR SHARE` under the seat lock, so a late writer finds none and writes nothing. Every
-group the account's rows still name is then cut under its own seat lock, its rows and its routes
-together, so a run that stops anywhere leaves each uncut group still named for the retry; an
-eviction after the erasure writes no row naming the account. The cost of the ordering is that an
+first, in a transaction of their own, and every writer that admits a device reads its device's key
+package `FOR SHARE` under the seat lock, so the delete waits for a writer holding one and a later
+writer finds none and writes nothing. Every group the account's rows still name is then cut under
+its own seat lock, its rows and its routes together, so a run that stops anywhere leaves each uncut
+group still named for the retry; an eviction after the erasure writes no row naming the account.
+**The ordering alone does not hold during the first pass**: a device of the account that reconnects
+with a token still valid republishes its key package (`register-device`), and a writer may seat it
+again. The run therefore ends with a sweep - the key packages deleted again, every group a device row
+names then cut through the same `eraseSeats`, a WARN line when it found anything - and its last
+transaction deletes the one row that can still appear, a demotion's route-less `pending` row. A
+republish after the sweep is left to the final pass, which starts once no token can act as the
+account and so meets no republish at all: that pass is what terminates it, not the ordering (proven
+on PostgreSQL, `seat-lock.integration.spec.ts`, "a key package republished after the first delete"). The cost of the ordering is that an
 account's MLS data waits for social's final pass, the account itself being deactivated at once. The claim is
 `FOR UPDATE SKIP LOCKED` with a lease, so several workers never run one job twice at once; a
 completion write is guarded by `"completedAt" IS NULL`, so a pass that outlived its lease cannot

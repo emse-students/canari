@@ -32,6 +32,10 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       orphanGroups?: string[];
       /** Device rows the final transaction still finds and deletes. */
       leftRows?: number;
+      /** Groups a device row names when the sweep reads them: a seat a republished key package let in. */
+      lateGroups?: string[];
+      /** Key packages the sweep's second delete still finds: the account reconnected meanwhile. */
+      lateKeyPackages?: number;
     } = {}
   ) {
     process.env.INTERNAL_SECRET = SECRET;
@@ -56,13 +60,17 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
         },
       }),
     };
+    let keyPackageDeletes = 0;
     const manager = {
-      // The key packages, deleted on their own before anything is read.
+      // The key packages, deleted on their own before anything is read, and again by the sweep.
       getRepository: (entity: unknown) => ({
         delete: (where: unknown) => {
           steps.push(entity === KeyPackage ? 'keyPackages' : 'other');
           txDeletes.push({ entity, where });
-          return Promise.resolve({ affected: 2 });
+          keyPackageDeletes += 1;
+          return Promise.resolve({
+            affected: keyPackageDeletes === 1 ? 2 : (opts.lateKeyPackages ?? 0),
+          });
         },
       }),
       // The account's eviction rows when asked for them; every other statement is a raw DELETE.
@@ -89,12 +97,15 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       invite: repo(),
       interval: repo(),
     };
-    // A Graine distribution group: a device membership and NO dm_group_members row.
+    // A Graine distribution group: a device membership and NO dm_group_members row. The first read
+    // is the discovery; the second is the sweep's, after every discovered group was cut.
     repos.deviceGroup.find.mockImplementation(async () => {
-      steps.push('discovery');
-      return [...(opts.deviceGroups ?? []), ...(opts.orphanGroups ?? [])].map((groupId) => ({
-        groupId,
-      }));
+      const sweep = steps.includes('discovery');
+      steps.push(sweep ? 'sweep' : 'discovery');
+      const groups = sweep
+        ? (opts.lateGroups ?? [])
+        : [...(opts.deviceGroups ?? []), ...(opts.orphanGroups ?? [])];
+      return groups.map((groupId) => ({ groupId }));
     });
     repos.group.findBy.mockImplementation(async () =>
       [...(opts.deviceGroups ?? []), ...(opts.evictionGroups ?? [])].map((id) => ({
@@ -155,8 +166,10 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     expect(sql).toMatch(/"isWelcome" IS NOT TRUE/);
     expect(params).toEqual([USER]);
     // ...and what was queued FOR the account still goes - Welcomes included - with its device
-    // rows, in one transaction (`endDeviceMemberships`). The key packages went before, on their own.
+    // rows, in one transaction (`endDeviceMemberships`). The key packages went before, on their
+    // own, twice: first, and again by the sweep.
     expect(txDeletes).toEqual([
+      { entity: KeyPackage, where: { userId: USER } },
       { entity: KeyPackage, where: { userId: USER } },
       { entity: QueuedMessage, where: { recipientId: USER } },
       { entity: DeviceGroupMembership, where: { userId: USER } },
@@ -208,12 +221,49 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
   });
 
   it('deletes the key packages before it reads which groups to cut, and cuts each before the last delete', async () => {
-    // No seat can be inserted once the key packages are gone, so the discovery that follows reads
-    // every row there will ever be; each group's rows then go with their routes, under the lock.
-    const { controller, steps } = make({ deviceGroups: ['g-1', 'g-2'] });
+    // A writer holding a key package makes its delete wait, so the discovery that follows reads
+    // every row such a writer wrote; each group's rows then go with their routes, under the lock.
+    // The sweep then finds nothing: no device reconnected meanwhile.
+    const { controller, steps, messagingService } = make({ deviceGroups: ['g-1', 'g-2'] });
     await controller.deleteUserData(USER, SECRET);
 
-    expect(steps).toEqual(['keyPackages', 'discovery', 'cut g-1', 'cut g-2']);
+    expect(steps).toEqual([
+      'keyPackages',
+      'discovery',
+      'cut g-1',
+      'cut g-2',
+      'keyPackages',
+      'sweep',
+    ]);
+    expect(messagingService.eraseSeats).toHaveBeenCalledTimes(2);
+  });
+
+  it('a key package republished during the erasure is deleted again, and the seat it let in is cut with its routes', async () => {
+    // The account reconnected after the first delete (a token still valid), its key package came
+    // back, and a writer seated it in a group the discovery never saw. The final transaction alone
+    // would delete that row and leave its route and the key package behind.
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { controller, steps, txDeletes, messagingService } = make({
+      deviceGroups: ['g-1'],
+      lateGroups: ['g-late'],
+      lateKeyPackages: 1,
+    });
+    await controller.deleteUserData(USER, SECRET);
+
+    expect(steps).toEqual([
+      'keyPackages',
+      'discovery',
+      'cut g-1',
+      'keyPackages',
+      'sweep',
+      'cut g-late',
+    ]);
+    expect(txDeletes.filter((d) => d.entity === KeyPackage)).toHaveLength(2);
+    expect(messagingService.eraseSeats).toHaveBeenLastCalledWith('g-late', USER);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/republished 1 key package\(s\).*1 group\(s\) cut again, routes=2/)
+    );
+    warn.mockRestore();
   });
 
   it('cuts a group with no group row left through the same seat lock, rows and routes together', async () => {

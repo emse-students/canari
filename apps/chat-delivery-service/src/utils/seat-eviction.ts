@@ -92,16 +92,21 @@ export async function withSeatLock<T>(
 }
 
 /**
- * Which of `devices` still have their key package, read `FOR SHARE` in `m` - the read EVERY writer
- * that INSERTS a device row makes first, under the group's seat lock, so the result is the set of
- * `userId:deviceId` keys it may write a row for.
+ * Which of `devices` still have their key package, read `FOR SHARE` in `m` - the read every writer
+ * that ADMITS a device into a group (an `active` row, or a `pending` one owed a Welcome) makes
+ * first, under the group's seat lock, so the result is the set of `userId:deviceId` keys it may
+ * write a row for. ONE writer inserts without it, deliberately: the demotion
+ * (`MessagingService.deactivateDeviceMembership`), which upserts a `pending` row and removes its
+ * route itself - the stale-device cron demotes precisely a device with no recent key package, so
+ * requiring one would make it a no-op. The erasure's last transaction deletes such a row.
  *
  * THE KEY PACKAGE IS WHAT AN ACCOUNT ERASURE TAKES FIRST, in a transaction of its own
- * (`InternalController.deleteUserData`). A row inserted after that delete committed would name an
- * erased account with nothing left to find it, so a writer either holds the key package before the
- * delete - which then waits for it, and the erasure's per-group cut, run after, takes the row - or
- * finds it gone and writes nothing. A writer that only UPDATES a row needs no read: a deleted row
- * matches nothing.
+ * (`InternalController.deleteUserData`), and AGAIN before its last sweep. A writer either holds the
+ * key package before a delete - which then waits for it, and the per-group cut run after takes the
+ * row with its routes - or finds it gone and writes nothing. The account itself can republish one
+ * while a token it holds is still valid, which is what the sweep and the erasure's final pass (run
+ * once no token is) are for. A writer that only UPDATES a row needs no read: a deleted row matches
+ * nothing.
  */
 export async function heldKeyPackages(
   m: EntityManager,

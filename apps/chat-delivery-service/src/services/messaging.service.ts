@@ -2296,7 +2296,10 @@ export class MessagingService {
           }
           // EVERY ADMIT INSERTS A ROW, SO EACH IS WRITTEN ONLY BESIDE ITS KEY PACKAGE, read `FOR
           // SHARE` here, in any kind of group ({@link heldKeyPackages}): a device whose account is
-          // being erased gets no row, which the erasure could no longer find.
+          // being erased gets no row, which the erasure could no longer find. The admit is DROPPED
+          // and the commit still accepted, unlike an overtaken claim above: the leaf it adds belongs
+          // to an account that is going, so no one is owed a seat or a retry, and refusing the
+          // commit would stall every other change it carries for the group.
           const keyed = await heldKeyPackages(m, admitted);
           admitted = admitted.filter((a) => {
             if (keyed.has(`${a.userId}:${a.deviceId}`)) return true;

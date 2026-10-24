@@ -753,11 +753,17 @@ export class InternalController {
     this.logger.log(`[INTERNAL_DELETE] starting user=${who}`);
     const manager = this.groupRepo.manager;
 
-    // THE KEY PACKAGES GO FIRST, AND ALONE. Every writer that inserts a device row reads its key
-    // package `FOR SHARE` under the group's seat lock (`heldKeyPackages`), so once this commits no
-    // new row of the account can appear anywhere: one that committed before it is a row the
-    // discovery below reads. Nothing is deleted by reading something an earlier step deleted, so a
-    // run interrupted at any point leaves every row it had not cut still there for the retry.
+    // THE KEY PACKAGES GO FIRST, AND ALONE. Every writer that ADMITS a device into a group reads its
+    // key package `FOR SHARE` under the group's seat lock (`heldKeyPackages`), so this delete waits
+    // for every such writer holding one, and a writer after it finds none and writes nothing: the
+    // discovery below reads every row they wrote. What this does NOT stop is the account itself
+    // bringing a key package back - every (re)connection republishes it (`register-device`), and
+    // nothing refuses a token issued before the deletion for up to an hour. That is why the run
+    // ends with a sweep (below), and why termination is the FINAL PASS's, never this ordering's:
+    // core calls this route once more after every token the account held expired
+    // (`credentialsExpireAt`), and in that pass nothing can republish, so this delete holds.
+    // Nothing is deleted by reading something an earlier step deleted, so a run interrupted at any
+    // point leaves every row it had not cut still there for the retry.
     const keyPackages = await manager.getRepository(KeyPackage).delete({ userId });
 
     // Every group the account is still recorded in, through EITHER membership table - a Graine
@@ -817,18 +823,46 @@ export class InternalController {
       );
     }
 
+    // ── The sweep: what a key package republished during this run let in ──
+    // A device that reconnected since the first delete (a token still valid, so never in the final
+    // pass) brought its key package back, and a writer may have admitted it into a group, routes
+    // included. Its key package goes AGAIN - waiting, as the first delete did, for every writer
+    // holding it - and every group a device row names NOW is cut through the same seat-locked
+    // eviction as above ({@link MessagingService.eraseSeats}), rows and routes together. A key
+    // package republished after THIS delete is the final pass's: that pass starts once no token can
+    // act as the account, so no republish can follow it.
+    const lateKeyPackages = await manager.getRepository(KeyPackage).delete({ userId });
+    const lateRows = await this.deviceGroupRepo.find({
+      where: { userId },
+      select: { groupId: true },
+    });
+    const lateGroups = [...new Set(lateRows.map((r) => r.groupId))];
+    let lateRoutes = 0;
+    for (const groupId of lateGroups) {
+      lateRoutes += (await this.messagingService.eraseSeats(groupId, userId)).toRemove;
+    }
+    if ((lateKeyPackages.affected ?? 0) > 0 || lateGroups.length > 0) {
+      this.logger.warn(
+        `[INTERNAL_DELETE] user=${who} republished ${lateKeyPackages.affected ?? 0} key package(s) ` +
+          `during the erasure; ${lateGroups.length} group(s) cut again, routes=${lateRoutes} - ` +
+          `a device still holding a valid token; the final pass is what this cannot outrun`
+      );
+    }
+
     // ── User's own records ────────────────────────────────────────────────
     // Everything still queued FOR the account (a frame with no group included) and any device row
-    // left, in one transaction ({@link endDeviceMemberships}). Every group the rows named was cut
-    // above, and every writer of an `active` row reads the key package deleted first, so a row met
-    // here is one written since the discovery by a path that inserts without that read - the
-    // self-reported demotion (`deactivateDeviceMembership`), whose `pending` row carries no route.
-    // It goes with the rest, and the count says it happened.
+    // left, in one transaction ({@link endDeviceMemberships}). Every group a row named was cut above,
+    // so a row met here was written after the sweep's read, and only ONE writer inserts a device
+    // row without reading its key package: the demotion (`deactivateDeviceMembership`, the hourly
+    // stale-device cron among its callers, which demotes exactly a device with no recent key
+    // package). Its row is `pending` and it removes the route itself, unconditionally, after the
+    // write - so deleting the row here is the whole of its cleanup. One the cron writes after THIS
+    // transaction names a device with no key package, which `cleanupStaleDevices` collects.
     const departed = await manager.transaction((tx) => endDeviceMemberships(tx, { userId }, 'all'));
     if (departed.memberships > 0) {
       this.logger.warn(
         `[INTERNAL_DELETE] ${departed.memberships} device row(s) of user=${who} written after the ` +
-          `discovery, deleted now - a writer that inserts without reading the key package`
+          `sweep, deleted now - a demotion, the one writer that inserts without the key package`
       );
     }
     const [, sentQueued] = (await manager.query(
@@ -858,7 +892,7 @@ export class InternalController {
     this.logger.log(
       `[INTERNAL_DELETE] done user=${who} sentQueued=${sentQueued} ` +
         `deviceMemberships=${departed.memberships} queuedFor=${departed.queued} ` +
-        `keyPackages=${keyPackages.affected ?? 0}`
+        `keyPackages=${keyPackages.affected ?? 0} lateKeyPackages=${lateKeyPackages.affected ?? 0}`
     );
     return { ok: true };
   }

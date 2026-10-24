@@ -281,7 +281,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     await q(`DELETE FROM dm_group_members`);
     await seat(SENDER);
     await seat(PEER);
-    // Every writer that inserts a device row reads its key package under the lock; an erasure
+    // Every writer that admits a device reads its key package under the lock; an erasure
     // case below deletes PEER's, so it is put back here.
     for (const who of [SENDER, PEER]) await keyPackageFor(who);
   });
@@ -602,6 +602,54 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       expect(await evictionRowsOf(PEER)).toBe(0);
     });
 
+    it('a key package republished after the first delete leaves no key package, no seat and no route', async () => {
+      // The account reconnects mid-erasure with a token still valid: `register-device` brings its
+      // key package back, and a peer's commit then seats it in a group the discovery never saw -
+      // with its route. Injected right after the discovered group's cut, the one point between the
+      // first delete and the final transaction where the test can stand.
+      const LATE = '00000000-0000-4000-8000-0000000000e9';
+      const lateRoutes = setOf(`group:members:${LATE}`);
+      const route = `${PEER.userId}:${PEER.deviceId}`;
+      await q(
+        `INSERT INTO dm_groups (id, "isGroup", "activeEpoch") VALUES ($1, true, 1)
+         ON CONFLICT DO NOTHING`,
+        [LATE]
+      );
+      const cut = service.eraseSeats.bind(service);
+      const erase = jest
+        .spyOn(service, 'eraseSeats')
+        .mockImplementationOnce(async (groupId: string, userId: string) => {
+          const done = await cut(groupId, userId);
+          await keyPackageFor(PEER);
+          const claim = await claimSeat(ds.manager, LATE, PEER.userId);
+          await expect(
+            service.activateDeviceMembership(PEER.userId, PEER.deviceId, LATE, {
+              authority: 'accepted_commit',
+              claim,
+            })
+          ).resolves.toEqual({ ok: true });
+          expect(lateRoutes.has(route)).toBe(true);
+          return done;
+        });
+      try {
+        await internal().deleteUserData(PEER.userId, SECRET);
+      } finally {
+        erase.mockRestore();
+      }
+
+      const keyPackages: unknown[] = await q(`SELECT 1 FROM key_package WHERE "userId" = $1`, [
+        PEER.userId,
+      ]);
+      expect(keyPackages).toHaveLength(0);
+      const rows: unknown[] = await q(
+        `SELECT 1 FROM dm_device_group_memberships WHERE "userId" = $1`,
+        [PEER.userId]
+      );
+      expect(rows).toHaveLength(0);
+      expect(lateRoutes.has(route)).toBe(false);
+      expect(routes.has(route)).toBe(false);
+    });
+
     it('is refused after it when the account held no seat, only a departure in progress', async () => {
       // Seats cut and roster gone: the eviction row is all that still names the group.
       await service.evictSeats(GROUP, PEER.userId, 'begin');
@@ -895,9 +943,10 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
   });
 
   /**
-   * EVERY WRITER THAT INSERTS A DEVICE ROW READS ITS KEY PACKAGE UNDER THE LOCK. An account erasure
-   * deletes the key packages first, on their own; a row inserted after that would name an erased
-   * account with nothing left to find it. Each case is a device whose key package is already gone.
+   * EVERY WRITER THAT ADMITS A DEVICE READS ITS KEY PACKAGE UNDER THE LOCK (the demotion, which
+   * writes a route-less `pending` row, is the one exception - see `heldKeyPackages`). An account
+   * erasure deletes the key packages first, on their own, and again before its sweep. Each case is a
+   * device whose key package is already gone.
    */
   describe('no device row is inserted without its key package', () => {
     const GONE = { userId: 'erased-gone', deviceId: 'dev-eg' };
