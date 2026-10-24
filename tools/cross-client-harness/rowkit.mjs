@@ -85,3 +85,71 @@ export function composeVerdict({ own = [], invariant = null, vacuousFaults = [],
  */
 export const invariantDetail = (inv) =>
   inv ? inv.passes.map((p) => ({ pass: p.pass, ok: p.ok, failures: p.failures, approximations: p.approximations })) : null;
+
+/**
+ * What a row's armed faults PUT IN FRONT OF THE PAGE, one entry per acted record (`fault.mjs`): a
+ * fulfilled status (`status N`, `status-unsent N`) or a transport failure (`lose-answer`, and a
+ * `hold` / `hold-answer` the row chose to `fail()`, or one the PAGE abandoned while it was held - its
+ * own deadline fired, DUP-6 - which leaves the record's answer in error). A delayed or released
+ * request provoked nothing.
+ *
+ * @param {object[]} records `armFault(...).disarm()` records
+ * @returns {{method: string, url: string, status: number|null}[]} `status: null` is a transport failure
+ */
+export function provokedFailures(records) {
+  const out = [];
+  for (const r of records ?? []) {
+    if (r.done === 'fulfillRequest' && Number.isInteger(r.gave)) out.push({ method: r.method, url: r.url, status: r.gave });
+    else if (r.done === 'failRequest') out.push({ method: r.method, url: r.url, status: null });
+    else if (r.answerError && (r.mode === 'hold' || r.mode === 'hold-answer')) out.push({ method: r.method, url: r.url, status: null });
+  }
+  return out;
+}
+
+/**
+ * A WATCH REPORT WITH EXACTLY THE FAILURES THE ROW'S OWN FAULTS PROVOKED FORGIVEN, and nothing else.
+ *
+ * `ignoringExpectedRefusal` forgives by PATH and STATUS, so it cannot forgive a transport failure
+ * (`POST .../api/mls/commit -> net::ERR_CONNECTION_RESET`) and it forgives EVERY matching line, so a
+ * second, unprovoked 503 on the same path would vanish with the first. Here each provoked failure
+ * (`provokedFailures`) forgives ONE `badHttp` line naming the same method, url and outcome, and ONE
+ * `Failed to load resource` echo Chrome writes beside it for that url - a count, never a pattern.
+ * What was forgiven is kept under `forgivenAsProvoked`, so the record still says the fault happened.
+ *
+ * @param {object} rep a `report()` result
+ * @param {object[]} records the fault records of THIS page (`armFault(...).disarm()`)
+ */
+export function forgivingProvoked(rep, records) {
+  const owed = provokedFailures(records);
+  if (!owed.length) return rep;
+  const parse = (line) => /^(\S+)\s+(\S+)\s+->\s+(\S+)$/.exec(line);
+  const outcomeOk = (p, outcome) => (p.status === null ? !/^\d+$/.test(outcome) : outcome === String(p.status));
+  const badLeft = [...rep.badHttp];
+  const errLeft = [...rep.errors];
+  const forgiven = { badHttp: [], errors: [] };
+  for (const p of owed) {
+    const bi = badLeft.findIndex((l) => {
+      const m = parse(l);
+      return !!m && m[1].toUpperCase() === String(p.method).toUpperCase() && m[2] === p.url && outcomeOk(p, m[3]);
+    });
+    if (bi >= 0) forgiven.badHttp.push(...badLeft.splice(bi, 1));
+    const echo = p.status === null ? /Failed to load resource: net::ERR_\w+/ : new RegExp(`Failed to load resource: the server responded with a status of ${p.status}(?!\\d)`);
+    const ei = errLeft.findIndex((l) => echo.test(l) && l.endsWith(` ${p.url}`));
+    if (ei >= 0) forgiven.errors.push(...errLeft.splice(ei, 1));
+  }
+  return {
+    ...rep,
+    badHttp: badLeft,
+    errors: errLeft,
+    // THE SAME BUCKETS `report` JUDGES, minus only what was forgiven: a socket close or an
+    // unexplained line still breaks the row.
+    clean:
+      errLeft.length === 0 &&
+      badLeft.length === 0 &&
+      rep.exceptions.length === 0 &&
+      (rep.wsEvents ?? []).length === 0 &&
+      rep.severe.length === 0 &&
+      rep.unexplained.length === 0,
+    forgivenAsProvoked: { provoked: owed.length, ...forgiven },
+  };
+}

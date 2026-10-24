@@ -192,10 +192,10 @@ arrivals were, so it is recorded in the row's detail and never decides it.
 | Id | Question | `PASS` entails | Devices | Fault | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
 | DUP-1 | The commit lands and its ANSWER is lost | the stage is kept, the resubmission (same bytes) is answered `duplicate`, merged once; one commit-log row; the group sends again | W1 W2 | `lose-answer` on the commit POST | U | 20 min |
-| DUP-2 | DUP-1, and another member commits before our resubmission | still `duplicate` at an epoch past `base + 1`; merged; our leaf correct; NOT `epoch_mismatch` | W1 W2 W4 | `lose-answer`, then W4 commits, then release | U | 30 min |
+| DUP-2 | DUP-1, and another member commits before our resubmission | still `duplicate` at an epoch past `base + 1`; merged; our leaf correct; NOT `epoch_mismatch` | W1 W2 W4 W5 | `lose-answer`, the resubmission held (`hold x2`), W4 - at the new epoch - Adds W5, then release. W5 because W4's commit must be one it can make: an Add (`archive/settle.mjs`) | U | 30 min |
 | DUP-3 | The first request stalls past the server's 5 s commit lock while our resubmission arrives | the gate answers the resubmission from its log (`duplicate`) or refuses it and the FIRST lands; never two epochs for one commit. **Hard to arm from a client** - the stall must be inside the server transaction; `delay` on the response stage is not that. **NOT PLAYED ON THE BENCH** (Q2 settled 2026-10-24): unit coverage only | - | - | - | - |
-| DUP-4 | A resubmission is answered `409 SEAT_CLAIM_OVERTAKEN` | the stage is KEPT, not rebuilt; the next settlement decides for good | W1 W2 | `status 409` once on the resubmission (R3) | U | 20 min |
-| DUP-5 | The commit is answered `503` | outcome unknown, stage kept, sends blocked IN THAT GROUP ONLY, settled at the next gateway connection, then sends resume | W1 W2 | `status 503` once | U | 20 min |
+| DUP-4 | A resubmission is answered `409 SEAT_CLAIM_OVERTAKEN` | the stage is KEPT, not rebuilt; the next settlement decides for good | W1 W2 | `lose-answer once`, then `status 409 once` carrying the `SEAT_CLAIM_OVERTAKEN` body (the client types the refusal by its `code`); the next send settles | U | 20 min |
+| DUP-5 | The commit is answered `503` | outcome unknown, stage kept, sends blocked IN THAT GROUP ONLY, settled at the next gateway connection, then sends resume | W1 W2 W4 | `status 503` while armed (the first request, its resubmission and the blocked send's settle); W1 Adds W4 so W2, already a member, can show the blocked send absent while a side group's arrives; then `cutHard` and back | U | 20 min |
 | DUP-6 | The commit request never answers (30 s `write` deadline) | `RequestDeadlineError`, one resubmission, a second expiry keeps the stage; **decrypts in another group keep flowing during the hold** (the MLS lock is not held unbounded) | W1 W2 | `hold` > 30 s twice, a second group sending meanwhile | U | 30 min |
 | DUP-7 | An Add accepted only through a later resubmission still delivers its Welcome, once | the joiner receives exactly one Welcome; a reload mid-settlement re-sends only the uncleared recipients | W1 + new device W3 | `lose-answer` on the Add, reload between merge and Welcome send | U | 30 min |
 
@@ -278,7 +278,7 @@ arrivals were, so it is recorded in the row's detail and never decides it.
 
 | Id | Question | `PASS` entails | Devices | Fault | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| TOK-1 | The commit POST is answered `401` once | refresh, then the SAME bytes resubmitted; merged once; no logout | W1 W2 | `status 401 once` | U | 20 min |
+| TOK-1 | The commit POST is answered `401` once | refresh, then the SAME bytes resubmitted; merged once; no logout | W1 W2 | `status-unsent 401 once` - a real 401 is the auth guard's, before the gate | U | 20 min |
 | TOK-2 | The refresh itself fails as TRANSPORT during a commit | no logout; outcome unknown kept; settled once the network answers | W1 W2 | `lose-answer` on the refresh | U | 20 min |
 | TOK-3 | The access token really expires (1 h TTL) while the socket stays open, then a commit and a reconnect | the gateway (access tokens only since #2319) is re-authenticated; the settlement runs at the reconnection | W1 W2 | wait 61 min | U | 75 min wall clock, unattended |
 
