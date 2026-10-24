@@ -1417,12 +1417,12 @@ the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multi
 ### iOS project
 
 `canari.xcodeproj/project.pbxproj` is **hand-maintained** (not xcodegen). Key details:
-- Two targets: `Canari` (app) + `CanariNotifications` (NSE)
+- Three targets: `Canari` (app) + `CanariNotifications` (NSE) + `CanariShare` (the Share Extension, `canari_Share/`, [sharing](sharing.md#share-in-ios---the-path)); both extensions are embedded by the app's "Embed Foundation Extensions" phase, and `.github/scripts/ios-extensions.sh` FAILS both `ios.yml` builds unless `PlugIns/` holds exactly the two
 - Custom URL scheme, `NS*UsageDescription` keys
 - `FirebaseAppDelegateProxyEnabled` — must stay enabled
 - Localized `InfoPlist.strings` (fr/en `PBXVariantGroup`)
 - `aps-environment: production` for TestFlight/App Store
-- Provisioning profiles: two named profiles matching `PROVISIONING_PROFILE_SPECIFIER`, team "Les Rootz" `4CLNB8SR6L`
+- Provisioning profiles: three named profiles matching `PROVISIONING_PROFILE_SPECIFIER` - `Canari`, `CanariNotifications`, `CanariShare` (secrets `APPLE_PROVISIONING_PROFILE`, `_NSE`, `_SHARE`) - team "Les Rootz" `4CLNB8SR6L`. The share extension's carries the App Group only
 - **The app needs iOS 16** (owner decision 2026-10-22). The WebView carries a Content-Security-Policy
   with `'wasm-unsafe-eval'`, which WebKit before 16 does not know - it refuses WebAssembly, so the MLS
   engine would not load. Stated in four places that must agree: `IPHONEOS_DEPLOYMENT_TARGET` (the
@@ -1480,14 +1480,15 @@ Uninstall then reinstall clears the local data and leaves the server's PIN alone
 
 **Signing stays on the workstation, and that is the design**: the key of a certificate that installs
 on a real phone is not handed to a CI secret store to save one command. The team's development
-certificate, the phone's UDID and two development profiles (`fr.emse.canari`, `.notifications`) were
-created through the App Store Connect API, and `rcodesign` signs the appex first and the app second.
+certificate, the phone's UDID and three development profiles (`fr.emse.canari`, `.notifications`,
+`.share` - the last as `share.mobileprovision`) were created through the App Store Connect API, and
+`rcodesign` signs each appex first, by its bundle id, and the app last.
 
 **The iPhone counterpart of `adb` is `tools/ios-device/`**, and needs no Mac:
 
 | Script | What it is |
 | --- | --- |
-| `sign-install.mjs <unsigned.ipa>` | signs (appex, then app), stops the running app, installs |
+| `sign-install.mjs <unsigned.ipa>` | signs (both appex, then app), stops the running app, installs |
 | `install.py <signed.ipa>` | AFC push to `/PublicStaging`, then the installation proxy. `pymobiledevice3 apps install` hung 25 minutes on the 45 MB archive |
 | `wda-daemon.py` | keeps the WebDriverAgent runner alive and forwards its port 8100 to `localhost` over usbmux; the runner lives exactly as long as the process that started it |
 | `ios.mjs` | `launch`, `shot`, `tree`, `find`, `tap <text or x,y>`, `type` (`type -` reads stdin, for a secret), `swipe`, `button`, `size`, `long`, `gesture`, `webview`, `url` - plain W3C WebDriver, **coordinates in POINTS** (390x844 on an iPhone 12, a screenshot pixel is 3 of them). The campaign rig drives the WebView's input and the system screens through it ([cross-client-ios](../cross-client-ios.md)) |
@@ -2674,6 +2675,14 @@ interpolated content-bearing name (`text`, `body`, `senderName`, `seed`, `token`
 one; a measure (`.length`, `isEmpty`) is allowed, and a name that is not content is allowlisted
 by `file|expression` with its reason. The harness rules reading those lines (`watch.mjs`) match
 these shapes.
+
+**An Apple error's TEXT is content (2026-10-24)**: a `localizedDescription` (or
+`localizedFailureReason`, `localizedRecoverySuggestion`) often quotes the file it failed on - a
+shared file's name, a path. Only a Swift `Logger` call redacts it (an interpolation is private
+unless marked `.public`), so the scan exempts it THERE alone, unmarked; `NSLog`, Swift `print` and
+`os_log` write it whole, and there a line says the error's domain and code instead -
+`CanariErrorReason(error)` (`canari_push.h`) in Objective-C, `errorReason(error)` in the NSE. A file
+NAME is content for the same reason: `take_picked_file` says a copy's share id, never its path.
 
 ### FCM message cache
 
