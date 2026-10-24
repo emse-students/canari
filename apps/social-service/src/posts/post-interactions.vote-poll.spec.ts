@@ -186,20 +186,40 @@ describe('PostInteractionsService.votePoll enforces the poll', () => {
     expect(post.polls[0].options[0].votes).toEqual([]);
   });
 
-  it('refuses a user id that would shadow a property of the map it is written into', async () => {
-    // `Object.create(null)` stops the shadowing; it does not stop the map CARRYING the key, which
-    // then travels to every reader of the poll and to JSON. The channel poll has refused this
-    // since CodeQL #2477/#2476 and the post poll had only the null prototype.
-    const { service } = makeService({
+  it.each(['__proto__', 'constructor', 'prototype', '__defineGetter__', '__defineSetter__'])(
+    'refuses the user id %s, which would shadow a property of the map, and saves nothing',
+    async (hostile) => {
+      // `Object.create(null)` stops the shadowing; it does not stop the map CARRYING the key, which
+      // then travels to every reader of the poll and to JSON. The channel poll has refused this
+      // since CodeQL #2477/#2476 and the post poll had only the null prototype.
+      const { service, post, saved } = makeService({
+        id: 'p1',
+        multipleChoice: true,
+        options: options(),
+        votesByUser: {},
+      });
+
+      await expect(
+        service.votePoll('post-1', 'p1', { userId: hostile, optionIds: ['a'] })
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(saved).toEqual([]);
+      expect(Object.keys(post.polls[0].votesByUser)).toEqual([]);
+    }
+  );
+
+  it('writes the vote into a prototype-less map, as an own entry beside the others', async () => {
+    const { service, post } = makeService({
       id: 'p1',
       multipleChoice: true,
       options: options(),
-      votesByUser: {},
+      votesByUser: { u0: ['b'] },
     });
 
-    await expect(
-      service.votePoll('post-1', 'p1', { userId: '__proto__', optionIds: ['a'] })
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await service.votePoll('post-1', 'p1', { userId: 'u1', optionIds: ['a'] });
+
+    const map = post.polls[0].votesByUser;
+    expect(Object.getPrototypeOf(map)).toBeNull();
+    expect({ ...map }).toEqual({ u0: ['b'], u1: ['a'] });
   });
 
   describe('an anonymous poll', () => {

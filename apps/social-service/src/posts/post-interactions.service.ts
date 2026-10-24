@@ -9,7 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
-import { isUnsafeObjectKey } from '../common/object-keys';
+import { isUnsafeObjectKey, withOwnEntry } from '../common/object-keys';
 import {
   ANONYMOUS_NOTIFICATION_ACTOR_ID,
   ANONYMOUS_NOTIFICATION_ACTOR_NAME,
@@ -497,11 +497,9 @@ export class PostInteractionsService {
         for (const opt of poll.options) {
           if (selectedIds.includes(opt.id)) opt.votes.push(data.userId);
         }
-        // Null-prototype object prevents prototype pollution via crafted userId keys.
-        if (!poll.votesByUser || Object.getPrototypeOf(poll.votesByUser) !== null) {
-          poll.votesByUser = Object.assign(Object.create(null), poll.votesByUser);
-        }
-        poll.votesByUser[data.userId] = selectedIds;
+        // A new null-prototype map, the key written as an own entry (`withOwnEntry`), never by
+        // assignment: the id was refused above, and the write itself cannot walk a prototype.
+        poll.votesByUser = withOwnEntry<string[]>(poll.votesByUser, data.userId, selectedIds);
         updated = true;
       }
 
