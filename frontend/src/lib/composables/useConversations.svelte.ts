@@ -76,6 +76,7 @@ import {
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
 import { readLandingPreview } from '$lib/utils/chat/landingPreview';
+import { reportFollowerTabRefusal } from '$lib/utils/chat/conversationRefusalMessage';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
@@ -2053,6 +2054,9 @@ export function useConversations() {
         log: ctx.log,
       });
       await loadGroupMembers(convo.id, ctx);
+    } catch (e) {
+      // `processBulkAddition` lets only this refusal through; anything else is its own to report.
+      if (!reportFollowerTabRefusal(e)) throw e;
     } finally {
       pendingInvites = null;
     }
@@ -2235,6 +2239,7 @@ export function useConversations() {
       ctx.log(`${memberId} retire du groupe.`);
     } catch (e) {
       ctx.log(`Erreur retrait membre: ${String(e)}`);
+      reportFollowerTabRefusal(e);
     }
   }
 

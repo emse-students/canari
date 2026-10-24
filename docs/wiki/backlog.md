@@ -207,10 +207,59 @@ Reasoning and numbers:
 ## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)
 
 A QUESTION first: measure that group's unreadable-frame rate against the communities' and decide
-whether a group conversation above some size should be backed by Graine. Leaves never self-update
-either, so MLS post-compromise security is never exercised. A periodic update commit would heal a
-stolen leaf, at the price of more commits, which is the desync class itself
+whether a group conversation above some size should be backed by Graine
 ([dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#dms-and-group-conversations)).
+
+## P2 - Community key groups: no periodic leaf refresh and no revoked-device removal yet (2026-10-22, re-decided 2026-10-23)
+
+Conversations refresh their leaves and drop revoked devices
+([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)). Two halves are deferred for
+key groups, and they are NOT the same question:
+
+- **The refresh.** Seeds rotate on departures only since 2026-10-22 (`graineOutboundVerdict`), and
+  a refresh is not one, so it would not mint a seed by itself. Its cost is that each refresh moves
+  the epoch: every sender's next send REDISTRIBUTES its seed (one frame per sender per refresh), and
+  a redistributed session takes the reused caps (50 messages, 24 h FROM ITS MINT), so a session past
+  a day rotates. One refresh per active device per week keeps every sender's session under a day
+  old in a busy community. Owed before it is turned on: a redistribution that does not tighten the
+  caps for a refresh-only epoch move (or caps counted from the redistribution), and the rotation rate
+  re-measured with it.
+- **The revoked device's leaf.** The roster collector (`reconcileDistributionGroupRoster`) does not
+  read the `revoked` answer, so a revoked device's leaf stays in every key group it was in and can
+  read every seed distributed there until the group is re-created. The server now refuses its
+  COMMITS (`validateCommit`, `DEVICE_REVOKED`) and its routing is purged, so it receives nothing new
+  through the delivery service - what is left is the cryptographic half. Owed: the same allowlist
+  there, staged on the published branch like the conversation one; a removal IS a departure, so it
+  rotates, as it should.
+
+## P2 - A forked holder's republished base can send honest members to rung 2 (review of #2269, 2026-10-24, not built)
+
+The commits no person asks for (the leaf refresh, the revoked-leaf removal) are staged only on the
+branch the server publishes (`assertOnPublishedBranch`, `publishedBranch.ts`), and a `diverged`
+answer - same epoch number, another group context - is read as a FORK of THIS device: the group is
+marked in the epoch-gap registry and handed to rung 2 (forget + re-Welcome). That reading trusts the
+base. A base minted by the commit gate is trustworthy (stored in the transaction that accepted the
+commit), but the holder republish (`putGroupInfo`, `republishStaleBase`) checks only that the epoch
+RISES - not that the GroupInfo is on the branch the commit log holds. Scenario: the published base is
+stale (a legacy commit, a failed write), a device that forked at epoch E republishes ITS GroupInfo
+for E, and the server takes it because E is above the stale epoch. Every honest member at E then
+reads `diverged`, accuses itself, and forgets the group for a re-Welcome - while the forked device,
+the one actually off the branch, matches the base and keeps going. Owed, in order: a count of
+`[FORK]` lines per group on production after #2269 ships (more than one member per group at the same
+epoch accuses the base, not the members); then either the server checks a republished base against
+the commit log's row for that epoch (its confirmed transcript hash), or a `diverged` is read as
+`unproven` (nothing staged, nothing escalated) unless the base was minted by the gate. Code unchanged
+in #2269 by decision of the review.
+
+## P3 - A commit left unresolved past the commit-log horizon reads as refused (2026-10-22)
+
+A commit whose submission got no answer is settled by resubmitting it, and the gate's duplicate
+answer reads the commit-log row at its base epoch
+([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)). Rows are kept 365 days and the
+last 20 000 epochs per group, so a commit left unresolved longer than that (a device offline for a
+year, or a group that moved 20 000 epochs) is answered `epoch_mismatch` even if it had landed: the
+device clears it and falls to rung 2. Owed only if a measurement ever shows it: a count of
+`DUPLICATE` versus refused resubmissions older than a day.
 
 ## P3 - Names in the clear: conversation, community and salon names (user, 2026-10-21, not designed)
 
@@ -726,6 +775,7 @@ tab-swipe gestures (no touch input was driven).
 
 | What | The measurement that closes it |
 | --- | --- |
+| the checkpoint every commit awaits under the MLS lock before its first request (`checkpointStageBeforeSend`, the leaf-refresh PR #2269): ~1.4-2 s per commit on a Mi 9T DEBUG capture, a burst of N commits ~2N checkpoints ([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)) | in the pre-release carrying #2269, on a RELEASE build on the Mi 9T AND the iPhone 12: the `[COMMIT]` stage-checkpoint duration of one commit (a leaf refresh or an invite), and of a burst (a group creation adding several devices), read from the device log; the rig rows LEAF-REFRESH-1..4 ([cross-client-testing](cross-client-testing.md)) on the same build |
 | the organiser alert for a payment over capacity (#2228, D3; owed only once `FORM_ORGANISER_ALERT_ENABLED` is `true`) | first the client floor: `minClientVersion` at or above the version carrying #2228 on both estates, both stores serving it; then on the Mi 9T AND the iPhone 12, one payment landing on a full form on dev: the push arrives with the title only, a tap (app killed AND backgrounded) opens `/forms` with that form's responses accordion open and in view, and the bell row reads the alert sentence ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)) |
 | a video filmed with the new-post composer's camera is a CanaReel, with a deletion notice and "Garder comme post" (user, 2026-10-19: one camera, one behaviour; component tests only) | check CR on the Mi 9T and the iPhone 12, next pre-release ([device-verification](device-verification.md#cr-the-composers-camera-films-a-canareel---owed-on-both-phones)) |
 | calls lot 1 (#1997, #2010): 1:1 audio peer to peer on dev builds, never placed on a phone - BLOCKED 2026-10-18, no tag carries it ([bench readings](device-readings-calls-live-2026-10-18.md#1-calls---blocked-no-build-within-reach-carries-lot-1)) | after the next pre-release: a call PC <-> Mi 9T and Mi 9T <-> iPhone 12 on dev - setup time, the selected pair (direct or Cloudflare TURN), audio heard both ways, the ring on a throttled uplink, and a key mismatch on a build with #2013 |

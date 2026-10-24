@@ -35,6 +35,11 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     deleteDevice: vi.fn().mockResolvedValue(undefined),
     endDocumentAfterRefusedRotation: vi.fn(),
+    // The burns owed to epochs ahead of the state: a rotation drops them with the ledger.
+    owedSendBurns: new Map(),
+    unprovenSendRatchets: new Set(),
+    owedBurnInFlight: new Map(),
+    sendRatchetsNotDurable: BaseMlsService.prototype['sendRatchetsNotDurable'],
     // Real rotation: the assertions below are about what it does.
     rotateDeviceIdentity: BaseMlsService.prototype['rotateDeviceIdentity'],
     ...keyPackageWaitFields(),

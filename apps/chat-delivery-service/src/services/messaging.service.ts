@@ -280,6 +280,8 @@ export interface KeyGroupBaseForPush {
 export interface ValidateCommitResult {
   accepted: boolean;
   newEpoch?: number;
+  /** True when this exact commit had already been accepted: a resubmission, answered again. */
+  duplicate?: boolean;
   currentEpoch?: number;
   reason?: string;
 }
@@ -751,6 +753,19 @@ export class MessagingService {
   ) {}
 
   /**
+   * Whether `userId:deviceId` is on the revocation denylist under the one active-revocation rule -
+   * read by the PAIR, on the `(userId, deviceId)` unique index. Shared by every gate that must
+   * refuse a revoked device (routing, the commit gate), so they cannot disagree on what "revoked" is.
+   */
+  private async isDeviceRevoked(userId: string, deviceId: string): Promise<boolean> {
+    const revoked = await this.revokedDeviceRepo.findOne({
+      where: activeRevocationWhere({ userId, deviceId }),
+      select: { id: true },
+    });
+    return Boolean(revoked);
+  }
+
+  /**
    * Whether a device may be given - or keep - an `active` routing membership.
    *
    * A device good enough to be MESSAGED must be at least as valid as one good enough to be
@@ -777,10 +792,7 @@ export class MessagingService {
     userId: string,
     deviceId: string
   ): Promise<{ ok: boolean; reason?: 'revoked' | 'no_key_package' }> {
-    const revoked = await this.revokedDeviceRepo.findOne({
-      where: activeRevocationWhere({ userId, deviceId }),
-    });
-    if (revoked) return { ok: false, reason: 'revoked' };
+    if (await this.isDeviceRevoked(userId, deviceId)) return { ok: false, reason: 'revoked' };
     const keyPackage = await this.keyPackageRepo.findOne({
       where: { userId, deviceId },
       select: { id: true },
@@ -2014,6 +2026,25 @@ export class MessagingService {
       });
     }
     this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'COMMIT');
+    // THE DEVICE IS NOT REVOKED - asked FIRST, so a revoked device is told the reason that is true.
+    // A revocation purges the static KeyPackage, so the ownership check below would refuse it as
+    // `device_not_owned`, a coincidence of the purge and not a rule, and the answer its client acts
+    // on. A revoked device is exactly the one whose leaf members are removing, and a commit from it
+    // would move the epoch of every group it still holds, its Remove of THEIR leaves included.
+    // Refused before the lock and before the duplicate answer: a resubmission is a commit too, and a
+    // revoked device is told so rather than told it landed. Read by the pair, on the
+    // `(userId, deviceId)` unique index the denylist already carries - no migration.
+    if (await this.isDeviceRevoked(committer, deviceId)) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] REJECT device_revoked group=${groupId} device=${deviceId} ` +
+          `sender=${sanitizeLogValue(committer)}`
+      );
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.DEVICE_REVOKED, 'this device was revoked', {
+          error: 'device_revoked',
+        })
+      );
+    }
     // AND THE DEVICE IS THE CALLER'S: the commit activates `senderId:deviceId`, so a device
     // registered to anyone else is refused. The static KeyPackage row is the registry, and it is
     // unique on the PAIR - read by the pair, never by the device id alone.
@@ -2107,7 +2138,19 @@ export class MessagingService {
     );
     const admitAnswer = await this.claimKeyGroupAdmits(groupId, body.admits, baseEpoch, traceId);
     if (admitAnswer && !(admitAnswer instanceof Map)) {
-      return { accepted: false, currentEpoch: admitAnswer.epochMismatch, reason: 'epoch_mismatch' };
+      return (
+        (await this.answerIfAlreadyAccepted(
+          groupId,
+          baseEpoch,
+          commitProto,
+          deviceId,
+          traceId
+        )) ?? {
+          accepted: false,
+          currentEpoch: admitAnswer.epochMismatch,
+          reason: 'epoch_mismatch',
+        }
+      );
     }
     const admitClaims = admitAnswer instanceof Map ? admitAnswer : null;
 
@@ -2178,12 +2221,23 @@ export class MessagingService {
       }
 
       // Strict epoch gate: the submitted baseEpoch must match the server's activeEpoch exactly.
-      // A genuinely uninitialized group (just created) OR freshly re-bootstrapped
-      // (reset-epoch -> activeEpoch=0 then force_create_group restarting at MLS epoch 0)
-      // always has its first commit at baseEpoch 0: activeEpoch==0 therefore legitimately only
+      // A genuinely uninitialized group (just created) always has its first commit at
+      // baseEpoch 0: activeEpoch==0 therefore legitimately only
       // accepts baseEpoch==0. The old bypass (accepting any baseEpoch when activeEpoch==0)
       // let an inconsistent device fast-forward the counter (e.g. baseEpoch=5 -> activeEpoch=6)
       // and desynchronize everyone (H4).
+      // A RESUBMISSION OF A COMMIT THIS GATE ALREADY ACCEPTED IS ANSWERED AS ACCEPTED
+      // (`answerIfAlreadyAccepted`) - here, and at every other place that refuses on the epoch.
+      if (baseEpoch < group.activeEpoch) {
+        const duplicate = await this.answerIfAlreadyAccepted(
+          groupId,
+          baseEpoch,
+          commitProto,
+          deviceId,
+          traceId
+        );
+        if (duplicate) return duplicate;
+      }
       if (baseEpoch !== group.activeEpoch) {
         this.logger.warn(
           `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} activeEpoch=${group.activeEpoch}`
@@ -2470,6 +2524,26 @@ export class MessagingService {
           }
         });
       } catch (e) {
+        // EVERY REFUSAL BELOW FIRST ASKS WHETHER THESE BYTES ALREADY LANDED. This transaction may
+        // have waited on the seat lock past the Redis lock's 5 s, behind an EARLIER request of the
+        // same commit from the same device that has since committed: its row is then in the log,
+        // and what failed here is only this copy of an accepted commit. NOT asked on
+        // `log_row_exists`: that advance found the epoch still on the base, so no request of ours
+        // advanced from it, and the row it collided with is a defect the error line below reports.
+        if (
+          e instanceof SeatClaimOvertaken ||
+          e instanceof WelcomeSeatGone ||
+          (e instanceof EpochAdvanceLost && e.lost === 'epoch_moved')
+        ) {
+          const duplicate = await this.answerIfAlreadyAccepted(
+            groupId,
+            baseEpoch,
+            commitProto,
+            deviceId,
+            traceId
+          );
+          if (duplicate) return duplicate;
+        }
         // A seat this commit writes stood on a claim an eviction overtook: nothing was written, and
         // the client rebuilds the commit and submits it again (`RefusalCode.SEAT_CLAIM_OVERTAKEN`).
         if (e instanceof SeatClaimOvertaken) {
@@ -3113,6 +3187,35 @@ export class MessagingService {
         error: 'committer_not_member',
       })
     );
+  }
+
+  /**
+   * The answer to a commit this gate ALREADY ACCEPTED from this device at `baseEpoch` - accepted,
+   * `duplicate` - or `null` when it did not.
+   *
+   * A committer whose first submission got no answer cannot tell "not landed yet" from "never
+   * landed", and resending the SAME bytes is how it learns which - only if EVERY refusal on the epoch
+   * recognises them. The log row is the proof: keyed by base epoch, written in the transaction that
+   * moves the epoch, holding the bytes verbatim, so it exists exactly when that advance committed.
+   * Nothing is advanced or fanned out again; the first acceptance did both. Called by each place that
+   * would otherwise refuse on the epoch or on a seat - the admits pre-check, the strict gate, and the
+   * advance's lost or rolled-back transaction - because a client reads any of those as a refusal and
+   * clears a commit the group holds.
+   */
+  private async answerIfAlreadyAccepted(
+    groupId: string,
+    baseEpoch: number,
+    commitProto: string,
+    deviceId: string,
+    traceId: string
+  ): Promise<ValidateCommitResult | null> {
+    const prior = await this.commitLogRepo.findOne({ where: { groupId, baseEpoch } });
+    if (!prior || prior.commit !== commitProto || prior.senderDeviceId !== deviceId) return null;
+    this.logger.log(
+      `[COMMIT][${traceId}] DUPLICATE group=${groupId} device=${deviceId} baseEpoch=${baseEpoch} ` +
+        '- already accepted, answered again'
+    );
+    return { accepted: true, newEpoch: baseEpoch + 1, duplicate: true };
   }
 
   /**

@@ -174,6 +174,7 @@
   "chat_modal_error_block_check_unavailable": "Impossible de vérifier que ce contact peut être joint. Réessayez dans un instant.",
   "chat_modal_error_peer_has_no_device": "Ce contact ne s'est jamais connecté à Canari : il doit ouvrir l'application une fois avant de pouvoir recevoir un message.",
   "chat_modal_error_creation_failed": "La création a échoué et rien n'a été conservé. Réessayez dans un instant.",
+  "chat_error_follower_tab": "Canari est ouvert dans un autre onglet : faites-le depuis cet onglet, ou fermez-le et rechargez celui-ci.",
   "chat_modal_creation_in_progress_label": "Création en cours…",
   "chat_modal_community_name_label": "Nom de l'association ou du groupe",
   "chat_modal_community_name_placeholder": "ex : BDE 2026",

@@ -18,6 +18,7 @@ import {
 } from './BaseMlsService.keyPackageFixture';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
+import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
@@ -94,6 +95,23 @@ describe('BaseMlsService.externalJoin', () => {
 
     expect(await externalJoin(ctx, 'g')).toEqual({ joined: false, reason: 'no_base_published' });
     expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+  });
+
+  /**
+   * AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as `runCommitTransaction` does: the
+   * tree it would join into is a copy no disk and no other tab follows.
+   */
+  it('refuses on a follower tab, before fetching or building anything', async () => {
+    const leadership = await import('$lib/mls-client/tabLeader');
+    vi.spyOn(leadership, 'getTabLeadership').mockReturnValue('follower');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = makeCtx();
+
+    await expect(externalJoin(ctx, 'g')).rejects.toBeInstanceOf(FollowerTabCommitError);
+    expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 
   // ── The refusal that must not become a `false` ──────────────────────────────

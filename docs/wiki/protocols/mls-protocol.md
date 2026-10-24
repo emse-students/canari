@@ -13,7 +13,7 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 | Protocol | MLS RFC 9420 |
 | Cipher suite | MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 |
 | Forward secrecy | Per epoch (key ratchet on every commit) |
-| Post-compromise security | Devices can be removed and re-added |
+| Post-compromise security | Every device refreshes its own leaf at most every 7 days of activity per conversation ([periodic leaf refresh](#the-periodic-leaf-refresh)); a revoked device's leaf is removed by the stray-leaf collector |
 | Server role | Routing + persistence of encrypted blobs only |
 
 ## Non-negotiable invariants (post-2026-06 rewrite)
@@ -912,17 +912,20 @@ being served twice, the pool prekey must not - and
 `apps/chat-delivery-service/src/controllers/devices.controller.static-fallback.spec.ts` pins the
 server's side of the promise, so the pair cannot drift apart silently.
 
-### The 84-day lifetime outlives the device, and a leaf is NEVER updated
+### The 84-day lifetime outlives the device
 
 A KeyPackage carries a `Lifetime` (OpenMLS default: 84 days, `not_before` backdated one hour for
-clock skew), and the leaf node minted from it carries that same lifetime into the ratchet tree. The
-tree keeps it: **nothing in this product ever updates a leaf.** There is no periodic self-update
-commit, and the only thing that takes a leaf out of a tree is another member committing a Remove.
+clock skew), and the leaf node minted from it carries that same lifetime into the ratchet tree. A
+device that keeps sending replaces that leaf (every commit it builds carries a path, and the
+[periodic leaf refresh](#the-periodic-leaf-refresh) makes one at least every 7 days of activity) and
+the replacement has no lifetime at all. A device that stops running does not.
 
 So a device that stops running - wiped, reinstalled, abandoned, or reset through the button on the
 login page - leaves a leaf behind in every group it was in, and on day 85 that leaf elapses. Purging
 the device's server-side footprint does not touch it: `DELETE mls/devices/:userId/:deviceId` deletes
-routing rows, and a ratchet tree is not a routing row.
+routing rows, and a ratchet tree is not a routing row. What takes the leaf out is a member's commit:
+the stray-leaf collector removes the leaf of a device the server names as REVOKED
+([below](#a-revoked-devices-leaf-is-removed-from-every-conversation)), and only that.
 
 **Until 2026-09-11 that elapsed leaf closed the group to everybody else.** RFC 9420 7.3 recommends
 validating leaf lifetimes when a ratchet tree is IMPORTED, and OpenMLS did so on both paths a device
@@ -957,6 +960,288 @@ join nor a Welcome is refused - and that a KeyPackage already elapsed is still r
 beside a good one, so the assertion distinguishes "that package was refused" from "the batch fell
 over". Remove either `skip_lifetime_validation()` and two of the three tests fail with the
 production error.
+
+### The periodic leaf refresh
+
+Post-compromise security in MLS comes from a member replacing its own leaf's encryption key: once it
+has, an attacker who copied the old key material stops reading new epochs. Every commit a device
+builds already does that (openmls gives every member commit a path - an Add or a Remove refreshes the
+committer's leaf too, pinned in `frontend/mls-core/tests/self_update.rs`), so a device that commits
+often is already refreshing. The periodic refresh covers the device that only SENDS.
+
+**The commit.** `MlsManager::stage_self_update` (`frontend/mls-core/src/self_update.rs`) stages an
+empty commit with a forced path: no proposal store is consumed (a queued external proposal is never
+swept in), membership is unchanged, the leaf's HPKE key and path secrets are new. It goes through
+`BaseMlsService.runCommitTransaction` like every other commit - stage, server validation
+(`submitCommit`), then merge or clear, with the successor base attached - so the single-writer and
+commit-gate rules hold unchanged. A refused refresh clears its pending commit and retries nothing.
+
+**A submit with no answer (every commit, not only the refresh).** A transport failure or a non-OK
+answer to `submitCommit` used to leave the staged commit pending; the next checkpoint persisted it,
+and openmls then refused every commit the device staged in that group. Reading the server's log at
+that moment does not answer it either: an empty log says "not landed YET" as well as "never", so a
+clear decided from it races the request still in flight. So the answer is made definitive
+(`commitSubmission.ts`): `runCommitTransaction` RESUBMITS THE SAME BYTES, and the commit gate answers
+a commit it already accepted from that device at that base epoch as accepted again (`duplicate`,
+[chat-delivery](../services/chat-delivery.md)). Accepted or duplicate -> merge; a refusal (another
+commit took the epoch, or a 4xx, sent only before the gate) -> clear and catch up; still no answer
+(a transport failure, a 5xx, or `concurrent_commit` - a lock our own first request may hold) -> the
+staged commit is KEPT (already on disk, see below), and `CommitOutcomeUnknownError` (a `TransportFailureError`)
+is thrown. Until a resubmission answers, the group takes no commit and no send. The resubmission runs
+at the next gateway connection (before the pending messages are drained), before the next send or
+commit in the group, and a commit replay settles it from the log only when the log holds a row AT its
+base epoch, which is decided for good. No clock decides anything.
+
+**No submission holds the MLS lock unbounded.** Every submission - the first and each resubmission - is
+awaited INSIDE the global MLS lock, which also guards the incoming processing of every group, so a
+POST hung on a half-open connection or a captive portal froze decryption in every conversation. Since
+the periodic refresh makes an unasked commit ordinary, `submitCommit` runs under the `write` head
+deadline (`requestDeadline.ts`: 30 s plus the time its body needs to leave). Its expiry is a
+`RequestDeadlineError`, a transport failure - NO ANSWER, never a refusal - so it takes the path above:
+the same bytes are resubmitted once, and a second expiry keeps the stage as unknown. The deadline does
+not decide the outcome; the next resubmission does (`BaseMlsService.unresolvedCommit.test.ts`, "a
+commit gate that never answers"). ONE budget bounds the whole hold of a transaction, settlement and
+rebuilds included: `COMMIT_LOCK_HOLD_BUDGET_MS`, three `write` deadlines (the settlement's
+resubmission, the first request, its resubmission - each deadline also stretched by its body's upload
+time), read before each request and again after the checkpoint that precedes the first. A request it
+does not let start leaves the outcome unknown, or - for a first request - is never sent, its stage
+cleared and the commit refused (`lock_budget_spent`).
+
+**The server's commit lock lives 5 s; the client waits 30 s - so a resubmission can overlap its own
+first request.** The Redis lock (`EX 5`, `messaging.service.ts`) expires while a first request
+stalled inside its transaction (waiting on the seat lock, say) is still running. The resubmission
+then passes the lock, reads the base still active, waits on the group row, and when the first
+request commits it loses the advance (`EpochAdvanceLost`) - while a third device's commit, queued
+behind, may already have moved the epoch past `base + 1`. A key group's Add with admits is refused
+even earlier, by the admits pre-check, before the lock. **So the gate asks its commit log before
+EVERY refusal on the epoch or a seat** (`answerIfAlreadyAccepted`): the admits pre-check, the strict
+gate, and the lost or rolled-back advance (`EpochAdvanceLost`, `SeatClaimOvertaken`,
+`WelcomeSeatGone`). The row is keyed by base epoch and written in the transaction that moves the
+epoch, so when this request finds it holding the same bytes from the same device, the answer is
+`duplicate`, whatever epoch the group has reached. On a resubmission, then (`commitSubmission.ts`):
+
+- `epoch_mismatch` is definitive at any epoch: our own commit would have been answered `duplicate`;
+- a `409 SEAT_CLAIM_OVERTAKEN` is UNKNOWN: the stage is kept, never cleared and never rebuilt, and the
+  next settlement decides. The gate reads seat claims per REQUEST, so the 409 refuses only the copy
+  that got it - a first request still on its way reads its own claims and may land. Only a FIRST
+  request the gate answered `409` is rebuilt. A REAL 409 (an eviction overtook the claim) costs one
+  settlement, not the group: the next resubmission reads fresh claims too, and is answered for good
+  - accepted, `duplicate`, or refused on the epoch.
+
+**One store, one call.** What a resubmission needs - the commit, its successor base, its Welcome,
+and the client's intent (whom it excludes, admits and removes) - is kept BESIDE the staged commit in
+the MLS state itself (`mls-core/src/pending_submission.rs`), and written by the SAME platform call
+that stages the commit (`*_recorded` in the crate; the WASM stage bindings and the Tauri stage
+commands take the intent as an argument). Every commit that goes through the gate is staged this way,
+the one-commit device replacement (`replace_device_recorded`) included: its record carries its
+Welcome, so a settled replacement owes it to the device it re-admits as an Add does. It used to be two calls, and a checkpoint - which does not
+take the MLS lock - could run between them and save a staged commit with no record; a device killed
+after sending then read "no record" as "never sent" and cleared a commit the server had accepted. One
+call leaves no such moment. The request is composed from the record (`composeSubmission`), so the
+first submission and every resubmission are the same bytes. A staged commit found with no record was
+never submitted through the gate, and is cleared. The crate ties the record's life to the staged
+commit: a new stage, the merge, the clear, a forget, or another member's commit (which clears ours)
+each end it, and only live ones are saved - in a `#[serde(default)]` field of the state, so an older
+state loads with none and an older build drops the field when it saves. The client keeps a derived
+in-memory index of the groups holding one, so a send does not cross into the platform to ask.
+
+**On disk before the first request leaves.** One call makes the stage and its record inseparable;
+it does not make them durable. `runCommitTransaction` therefore awaits a structural checkpoint
+between the stage and the first `submitCommit` (`checkpointStageBeforeSend`). Before that, a crash
+after the send and before the next checkpoint reloaded the state from BEFORE the stage: the server
+might hold the commit, and the device could neither merge it nor resubmit it (it fell to rung 1 or 2).
+Now any crash after the send reloads the stage and its record, and the resubmission at the next
+connection merges or clears it. The checkpoint the kept-unresolved path used to await afterwards
+is gone: the state it wrote is already on disk.
+
+**A checkpoint that throws sends nothing, and WHERE it threw decides the stage** (2026-10-23), read
+from the type (`checkpointWroteNothing`, `utils/hex.ts`):
+
+- **It stored nothing** - refused by the version guard or an ended document
+  (`MlsStateWriteRefusedError`), or failed before anything was stored (`MlsCheckpointNotWrittenError`:
+  the export and seal, or the IndexedDB transaction, which stores all of it or none). The commit never
+  left and this write did not save it, so the stage is CLEARED and the failure is definitive
+  (`CommitStageNotSavedError`). Kept unknown instead, a checkpoint that keeps failing (a full quota)
+  blocked every send in the group for the rest of the session. If the clear itself fails, the stage
+  stays and the outcome is unknown.
+- **Anything else** may have thrown after its write landed (the native checkpoint is one call, so its
+  failure is always this kind), and the stage may be on disk; clearing it and reporting a failure was
+  contradicted by the next reload, whose settle landed the commit. It is kept, reported as
+  `CommitOutcomeUnknownError` like an unanswered commit, and the settle that decides it awaits its own
+  checkpoint before the resubmission: no request leaves carrying a commit that is not on disk. That
+  settle checkpoint is paid only when a kept commit is settled.
+
+**A follower tab does not commit** (`FollowerTabCommitError`, refused before anything is staged, by
+`externalJoin` too - a join is a commit - and by `createGroup`, at the service's own entry: a group
+created in a follower's copy is one the leader never holds). Its
+state is a copy loaded once: the version guard refuses its writes once the leader has written, so the
+checkpoint above would fail on every follower commit; and before that checkpoint existed, a commit
+sent from a follower moved the group past the state the leader keeps, because the leader cannot read
+a commit of its own leaf back (`OwnPrivateMessage`). Commits are reached from a follower's UI
+(`groupActions.ts`, `groupCreation.ts`, `actions.ts`); refusing them by the leadership fact is the
+gate the outbox already applies to sends. The member is told, by type: a creation answers the
+`follower-tab` refusal, and an invite or a removal shows the same sentence
+(`reportFollowerTabRefusal`, `conversationRefusalMessage.ts`) - do it in the main tab. A community's
+or a salon's key group refused this way (`leaveKeyGroupToMainTab`, `followerTabKeyGroup.ts`) tells
+the member on a gesture (creating a community or a salon, joining a salon) and goes on without the
+group; on a load it is logged and the load goes on, since the main tab enters it.
+
+**Cost: one checkpoint per commit, awaited under the MLS lock**, which blocks decrypts and sends in
+every group while it runs. The live web path is the WASM ChaCha20 seal
+(`MLS_STATE_SEAL_V2_WRITER_ENABLED` is still `false`): **~196-200 ms for a 7.7 MB state in desktop
+Chrome** (seal + IndexedDB put, [performance-audit](../frontend/performance-audit-2026-10-12.md));
+the v2 WebCrypto seal's ~47 ms is not live yet. On a phone it is far more: the Mi 9T capture of
+2026-10-13 (a DEBUG build) read **~1.4-2 s per checkpoint**, with a checkpoint in flight ~93 % of the
+time after a sign-in ([community-open-slowness](../frontend/community-open-slowness-mi9t-2026-10-13.md#finding-2---after-a-sign-in-the-checkpoint-runs-93--of-the-time-and-each-one-costs-more)).
+A request for durability made while a checkpoint is running waits for the NEXT one, so one commit
+costs up to two checkpoints, and **a burst of N commits serialises to ~2N under the lock** - on that
+phone, several seconds of blocked decrypts for a handful of commits. Commits are rare next to
+checkpoints (the fleet ceiling is ~200 a day, see the leaf-refresh interval above, against 247
+checkpoints in 432 s on ONE phone after a sign-in), but the burst cost is real where commits cluster:
+a group creation adding several devices, a roster reconcile. **Owed: a release-build phone
+measurement** of a commit's checkpoint (Mi 9T and iPhone 12). Desktop native release figures
+(`mls-core/tests/heavy_state_checkpoint.rs`, 2026-10-22: export + seal 12.3 ms at 7.7 MB, without the
+file write) are a floor, not a phone.
+
+**A record that cannot be read decides nothing.** "No record" proves the commit never left; a record
+that does not decode (the crate's CBOR, or the intent inside it) proves nothing, and the bytes a
+resubmission or a log comparison would need are the unreadable part. Clearing would be one guess,
+merging the other. So the staged commit is KEPT and the group is marked in the epoch-gap registry,
+which keeps sends out of it and hands it to the sync watchdog's rung 2 (forget + re-Welcome) - the
+one repair right whichever way the commit went - with a `[COMMIT] ... UNREADABLE` line at error level.
+
+**An Add accepted only through a later resubmission still delivers its Welcome, once**: the Welcome is
+a separate request after the accept, and the call that staged the Add is gone by then, so the
+settlement sends it. The owed Welcome is STATE (`mls-core/src/owed_welcome.rs`): the merge writes
+"owed to these devices", with the ratchet tree of the epoch the Add created, in the same platform call
+(`merge_pending_commit_owing_welcome`); the client awaits a checkpoint, sends, and clears each
+recipient as its send returns. A reload mid-settlement therefore finds the Add merged and only the
+uncleared recipients owed - it never re-merges and re-sends the whole Add - and a failed send stays
+owed for the next connection. A joiner handed a copy of a Welcome for a group it holds treats it as a
+redelivery before the core sees it (`setupMessageHandler`); the core itself refuses such a copy
+(its key package is spent) and leaves the group untouched (`mls-core/tests/owed_welcome.rs`).
+
+**What is left.** A commit-log row pruned before the resubmission reads as a refusal: rows are kept
+365 days and the last 20 000 epochs of each group (`COMMIT_LOG_RETENTION_MS`,
+`COMMIT_LOG_MAX_PER_GROUP` in `messaging.service.ts`), so the window is a commit left unresolved for a
+year, or one its group moved 20 000 epochs past. A state saved before this change can hold a staged
+commit with no submission that WAS sent (the old lost-answer defect); it is cleared at the next
+settlement, and if it had landed that device is one epoch behind its own commit (rung 2).
+
+**Staged only on the branch the server publishes.** The server's gate compares epoch NUMBERS, so a
+device that merged a commit nobody else did is at the right number on the wrong branch, and its
+refresh would be accepted and break every healthy member. The two commits a MECHANISM decides on
+its own - `refreshOwnLeaf` and the revoked-leaf removal (`removeMemberDevice`, next section) - go
+through ONE check, `BaseMlsService.assertOnPublishedBranch` (`mls-client/publishedBranch.ts`): it
+reads the published base (outside the MLS lock) and, under the lock, stages only when its epoch is
+ours and our group context - tree hash and confirmed transcript hash - is the one it describes
+(`MlsManager::own_context_matches_base`); otherwise nothing is staged and `UnpublishedBranchError`
+says why (`no-base`, `other-epoch`, `diverged`). **`diverged` is a fork, and it is handed to the
+recovery ladder where it is thrown** (2026-10-23): the group is marked in the epoch-gap registry,
+which keeps every send out of it and hands it to the sync watchdog's rung 2 (forget + re-Welcome),
+with a `[FORK] ... DIVERGES` line at error level - the route an unreadable submission record
+already takes, for the same reason: rung 1 (replaying the log) cannot help a device that is not
+behind but beside. The evidence is the base the server stored WITH the accepted commit (strictly
+monotonic, so the first base of an epoch owns it); a commit from a client too old to carry one
+leaves the base to a holder's repair, which is the one way that base could itself be a branch.
+The **signature key is not rotated**: one device key signs every leaf and every KeyPackage of the
+device, and a stolen signature key is answered by revocation (next section), not by a refresh.
+
+**The trigger is durable state, not a timer.** After `sendMessage` delivers a conversation frame -
+`DELIVERY.visible` or `DELIVERY.mutation`, an allowlist by identity, because a seed is shaped exactly
+like a mutation and an addressed seed is a fresh object - the service hands the group to
+`refreshLeafIfDue` (`frontend/src/lib/mls-client/leafRefresh.ts`), outside the send barrier and
+single-flight per group. It refreshes only when the leaf is DUE:
+
+| Leaf age basis | Source | Due when |
+|---|---|---|
+| Admitted from a KeyPackage | `not_before + 1 h` read from the tree (`own_leaf_minted_at`), and an observation OF THAT LEAF in the ledger | the later of: older than the interval, and the observation plus the offset |
+| Replaced by an own commit | the ledger `mls_leaf_refresh:<userId>:<deviceId>` (`{groupId: {at, epoch}}`), written after EVERY accepted own commit and external join | older than the interval |
+| Replaced by a commit, observed (no refresh of ours on record) | the observation `{at, epoch, observed: true, mintedAtSec: null}` | the observation plus the offset |
+| No entry, an entry of another incarnation, or one dated in the future | first sight: an observation is recorded | never on first sight |
+
+**The first refresh is spread, or it is a herd** (review, 2026-10-23). The day this ships, every
+leaf is older than the interval, so a decision on age alone makes every seat refresh at its first
+send: ~1600 commits in the first week, back to back in the 109-seat group, where a slow device
+keeps only two past epochs (`max_past_epochs`) and loses the frames sealed in the epochs it
+skipped. So a leaf this device holds no refresh of its own for is first OBSERVED - a ledger entry
+written at its first send, naming the leaf by `own_leaf_minted_at`, never due then - and its first
+refresh is owed at the observation plus an offset in `[0, 7 d)` derived from `(deviceId, groupId)`
+alone (`leafRefreshOffsetMs`: FNV-1a with MurmurHash3's finaliser, `utils/hash32.ts`, the hash
+`historyRangeOf` already used). No clock and no random draw per run choose the day: a reload, a
+second tab or a retry read the same one. The 109 seats of one group land on ~16 a day instead of
+109 on day one (`leafRefresh.test.ts` pins the spread and the determinism). After its first
+refresh each seat's next one follows its own, so the spread holds without being re-applied, and a
+young leaf (a fresh admission) is still owed at its own seven days - the offset only ever delays.
+
+It skips a community key group, a group this device was removed from, a group in an epoch gap (the
+[recovery ladder](mls-recovery-ladder.md) owns it), a group HELD by something that needs its epoch to
+stay put (`holdLeafRefresh`: `CallService` holds its call's group from the ring until the call is
+over, because each end derives the media keys from the CURRENT epoch one after the other - another
+device of either user is not held, see [calls](../frontend/modules/calls.md)), and a second attempt at the epoch a first one
+failed at in this session - the epoch moving is what makes another attempt different. The ledger is
+capped at 512 groups and is swept with the account's local keys.
+
+**The interval is read on this device's clock, and that is acknowledged rather than derived away.**
+It is a duration, and no durable MLS fact measures one: an epoch moves on commits, so a quiet group
+would never be due and a busy one would be due hourly. What a WRONG clock would mean: it decides only
+WHEN a refresh is owed, never what a commit contains. A clock ahead makes refreshes early - at most
+one per group per forward jump, since the refresh it causes is dated by the same clock; a clock
+behind makes them late. A ledger date in the FUTURE (a clock that was ahead has come back) is not
+believed - the leaf is observed again - so the delay is bounded by one interval rather than by how
+far ahead that clock was. The cost of a wrong clock is therefore timing, bounded on both sides, and
+never traffic beyond one refresh per group per jump.
+
+**Why 7 days.** It matches the 7-day cap of a Graine session, so a compromise of either half heals in
+the same bound, and it is twelve times inside the 84-day leaf lifetime. A refresh is owed only after
+ACTIVITY, so a silent device adds nothing.
+
+**What it costs, on the fleet measured 2026-10-21** ([dm-vs-community-encryption](dm-vs-community-encryption.md)):
+at most one refresh per device seat per group per 7 days, and only for a seat that sent.
+
+| Scope | Seats | Ceiling (every seat sends weekly) | Today's commits |
+|---|---|---|---|
+| 236 one-to-one conversations | median 6 seats | ~200 commits/day | ~30/day (903 per 30 days) |
+| 15 group conversations | max 109, median 11 | ~15.6/day for the largest alone | ~8/day (241 per 30 days) |
+
+The ceiling is not the expectation: only seats that send count, and an own commit (Add, Remove)
+already resets the clock. A commit races like any other: a lost epoch race is a refusal, logged, and
+the next send after the epoch moves tries again.
+
+**Community key groups are excluded, deliberately - re-decided on main's rotation rule
+(2026-10-23).** Since 2026-10-22 a key group's seeds rotate on a DEPARTURE, not on every epoch
+(`graineOutboundVerdict`, [graine-removal-tracker](graine-removal-tracker.md)), and a refresh is not
+one: it removes no leaf, brings no user and keeps the signature key, so it continues the clean run.
+Its real cost is therefore not a seed per refresh but this: each refresh moves the epoch, so every
+sender's next send in that scope REDISTRIBUTES its seed - one extra frame per sender per refresh -
+and a redistributed session takes the reused caps (50 messages, 24 hours FROM ITS MINT), so any
+session already past a day ROTATES instead. With one refresh per active device per week, a
+community whose devices refresh daily keeps every sender's session under a day old: the rotation
+rate the departure-only rule was written to bring down returns through the caps. A key group's
+leaves are refreshed by its own Adds and Removes meanwhile; what refreshing them would need (a
+refresh that does not tighten the caps, or caps counted from the redistribution) is in
+[backlog](../backlog.md).
+
+### A revoked device's leaf is removed from every conversation
+
+Revoking a device (`DELETE mls/devices/:userId/:deviceId`) writes a `revoked_device` row and purges
+routing; it cannot touch a tree. The roster batch (`POST /api/mls/group-rosters`) now also answers,
+per answered group, the ACTIVE revocations of the people on that roster (`revoked`, as
+`userId:deviceId`). `removeStrayLeaves` (`frontend/src/lib/utils/chat/strayLeaves.ts`) removes a leaf
+whose whole identity is in that list, by device (`removeMemberDevice`), after the departures and on a
+fresh tree and a fresh answer. It is an ALLOWLIST: a leaf the routing table merely forgot is never a
+candidate, and a device never removes its own leaf. Like the refresh, nobody asked for this commit,
+so it is staged only on the published branch (`assertOnPublishedBranch` above; a refusal is logged
+`[STRAY] ... NOT removed` and nothing is staged). Key groups are not covered yet: their roster
+collector (`reconcileDistributionGroupRoster`) does not read the `revoked` answer, a separate
+question from the refresh's cost ([backlog](../backlog.md)).
+
+**And the revoked device cannot commit** (2026-10-23). The commit gate (`validateCommit`) refuses a
+commit from a device under an active revocation - `403 DEVICE_REVOKED`, FIRST: before the ownership
+check, the lock and the duplicate answer, read by the pair on the denylist's existing
+`(userId, deviceId)` unique index ([chat-delivery](../services/chat-delivery.md)). The revocation
+purges the static KeyPackage, so an ownership check asked first answers `device_not_owned` - true by
+coincidence, and not the answer the device's client acts on.
 
 ### Static fallback key package
 

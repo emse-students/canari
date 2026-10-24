@@ -28,6 +28,13 @@ export const SEAT_CLAIM_OVERTAKEN_REASON = 'seat_claim_overtaken';
  */
 export const SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS = 3;
 
+/**
+ * The reason a commit carries when it was not even staged because its transaction had spent the
+ * MLS lock budget (`COMMIT_LOCK_HOLD_BUDGET_MS`, `commitSubmission.ts`) settling an earlier commit
+ * of the group. Nothing was sent; the settlement moved the group, so a retry builds on its result.
+ */
+export const COMMIT_LOCK_BUDGET_SPENT_REASON = 'lock_budget_spent';
+
 export class CommitRefusedError extends Error {
   /**
    * @param reason - the server's refusal reason (`epoch_mismatch`, `concurrent_commit`, ...).

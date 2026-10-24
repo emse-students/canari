@@ -453,34 +453,90 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     });
 
     // ── WP-GHOST-1: a device that may not be INVITED may not be ROUTED TO either ──────────────
-    // The commit path promotes the COMMITTING device, so without these two guards a device its
-    // owner had deleted could re-enrol itself in every group it still held MLS state for - and
-    // then be messaged forever, invisible in the device list and uncollectable by the GC.
-    it('refuses to promote a device on the revocation denylist', async () => {
+    // The commit path promotes the COMMITTING device, so a device its owner had deleted could
+    // re-enrol itself in every group it still held MLS state for - and then be messaged forever,
+    // invisible in the device list and uncollectable by the GC. Since 2026-10-23 its COMMIT is
+    // refused at the door, so it is neither promoted nor allowed to move any group's epoch.
+    it('refuses a commit from a device on the revocation denylist, before anything moves', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 1 });
       deviceGroupRepo.findOne.mockResolvedValue(null);
       groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'user-2' });
       revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
-      jest
-        .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
+      const fanOut = jest.spyOn(service, 'sendMessage');
 
-      const res = await service.validateCommit(
-        {
-          groupId: 'group-1',
-          deviceId: 'device-revoked',
-          baseEpoch: 1,
-          proto: externalCommitFrame('group-1', 1n, 'user-2:device-revoked'),
-          senderId: 'user-2',
-        },
-        'user-2'
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-revoked',
+            baseEpoch: 1,
+            proto: externalCommitFrame('group-1', 1n, 'user-2:device-revoked'),
+            senderId: 'user-2',
+          },
+          'user-2'
+        )
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'DEVICE_REVOKED', error: 'device_revoked' },
+      });
+
+      // Read by the PAIR, under the one active-revocation rule (the unique index it already has).
+      expect(revokedDeviceRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ userId: 'user-2', deviceId: 'device-revoked' }),
+        })
       );
-
-      // The COMMIT itself is still accepted - it is cryptographically valid and other members
-      // must apply it. Only the routing membership is refused.
-      expect(res.accepted).toBe(true);
+      expect(redis.set).not.toHaveBeenCalled();
+      expect(transaction).not.toHaveBeenCalled();
+      expect(commitInsertBuilder.execute).not.toHaveBeenCalled();
+      expect(fanOut).not.toHaveBeenCalled();
       expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
       expect(redis.sadd).not.toHaveBeenCalledWith('group:members:group-1', 'user-2:device-revoked');
+    });
+
+    it('refuses a member commit from a revoked device that still holds an active row', async () => {
+      // The routing purge and the denylist are two writes: a row that outlived the purge must not
+      // be what lets the revoked device commit.
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      deviceGroupRepo.findOne.mockResolvedValue({ deviceId: 'device-1' });
+      revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
+
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-1',
+            baseEpoch: 5,
+            proto: memberCommitFrame('group-1', 5n),
+            senderId: 'user-1',
+          },
+          'user-1'
+        )
+      ).rejects.toMatchObject({ response: { code: 'DEVICE_REVOKED' } });
+      expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it('names the revocation, not the ownership, when the revocation also purged the KeyPackage', async () => {
+      // The ordinary shape of a revoked device: denylisted AND its static KeyPackage gone. The
+      // answer its client acts on must be the true one, so the denylist is asked first.
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      deviceGroupRepo.findOne.mockResolvedValue({ deviceId: 'device-1' });
+      revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
+      keyPackageRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-1',
+            baseEpoch: 5,
+            proto: memberCommitFrame('group-1', 5n),
+            senderId: 'user-1',
+          },
+          'user-1'
+        )
+      ).rejects.toMatchObject({ response: { code: 'DEVICE_REVOKED', error: 'device_revoked' } });
+      expect(transaction).not.toHaveBeenCalled();
     });
 
     it('refuses a commit from a device with no static KeyPackage, before promoting anything', async () => {
@@ -526,6 +582,74 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(res.reason).toBe('epoch_mismatch');
       expect(commitInsertBuilder.execute).not.toHaveBeenCalled();
       expect(fanOut).not.toHaveBeenCalled();
+    });
+
+    /**
+     * A RESUBMISSION OF THE SAME COMMIT IS ANSWERED, NOT REFUSED. A committer whose first submission
+     * got no answer cannot tell "not landed yet" from "never landed"; resending the SAME bytes makes
+     * the answer definitive only if the gate recognises its own accepted commit. Before this it
+     * answered `epoch_mismatch`, and the committer cleared a commit everyone else had applied.
+     */
+    describe('a resubmission of an accepted commit', () => {
+      const resend = (proto = memberCommitFrame('group-1', 5n)) =>
+        service.validateCommit(
+          { groupId: 'group-1', deviceId: 'device-1', baseEpoch: 5, proto, senderId: 'user-1' },
+          'user-1'
+        );
+
+      it('is an idempotent success: no second advance, no second fan-out', async () => {
+        groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 6 });
+        commitLogRepo.findOne.mockResolvedValue({
+          groupId: 'group-1',
+          baseEpoch: 5,
+          commit: memberCommitFrame('group-1', 5n),
+          senderDeviceId: 'device-1',
+        });
+        const fanOut = jest.spyOn(service, 'sendMessage');
+
+        await expect(resend()).resolves.toEqual({ accepted: true, newEpoch: 6, duplicate: true });
+        expect(commitLogRepo.findOne).toHaveBeenCalledWith({
+          where: { groupId: 'group-1', baseEpoch: 5 },
+        });
+        expect(transaction).not.toHaveBeenCalled();
+        expect(fanOut).not.toHaveBeenCalled();
+      });
+
+      it('is refused, not answered as accepted, once the device is revoked', async () => {
+        // A resubmission is a commit too: a revoked device is told so, never told it landed.
+        groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 6 });
+        commitLogRepo.findOne.mockResolvedValue({
+          groupId: 'group-1',
+          baseEpoch: 5,
+          commit: memberCommitFrame('group-1', 5n),
+          senderDeviceId: 'device-1',
+        });
+        revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
+
+        await expect(resend()).rejects.toMatchObject({ response: { code: 'DEVICE_REVOKED' } });
+        expect(commitLogRepo.findOne).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['other bytes took the epoch', { commit: 'b3RoZXI=', senderDeviceId: 'device-1' }],
+        [
+          'the same bytes from another device',
+          { commit: memberCommitFrame('group-1', 5n), senderDeviceId: 'device-2' },
+        ],
+        ['the log row is gone', null],
+      ])('is still a mismatch when %s', async (_n, row) => {
+        groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 6 });
+        commitLogRepo.findOne.mockResolvedValue(
+          row && { groupId: 'group-1', baseEpoch: 5, ...row }
+        );
+
+        await expect(resend()).resolves.toEqual({
+          accepted: false,
+          currentEpoch: 6,
+          reason: 'epoch_mismatch',
+        });
+        expect(transaction).not.toHaveBeenCalled();
+      });
     });
 
     it('refuses a commit with no proto instead of advancing the epoch past it', async () => {
@@ -602,6 +726,45 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(fanOut).not.toHaveBeenCalled();
     });
 
+    /**
+     * THE COMMIT THAT MOVED THE BASE MAY BE THIS ONE. The Redis lock lives 5 s and the client waits
+     * 30 s: an earlier request of the SAME bytes from the SAME device can pass the read with this
+     * one, commit first, and leave this copy to lose the advance - while a third device's commit,
+     * queued behind, has already moved the epoch past `base + 1` by the re-read. Its log row is
+     * committed when the update affects nothing, so it decides, not the epoch.
+     */
+    it('answers a lost advance as a duplicate when its OWN earlier request made it', async () => {
+      groupRepo.findOne
+        .mockResolvedValueOnce({ id: 'group-1', activeEpoch: 5 })
+        .mockResolvedValue({ id: 'group-1', activeEpoch: 7 });
+      commitLogRepo.findOne.mockResolvedValueOnce({
+        groupId: 'group-1',
+        baseEpoch: 5,
+        commit: memberCommitFrame('group-1', 5n),
+        senderDeviceId: 'device-1',
+      });
+      const fanOut = jest.spyOn(service, 'sendMessage');
+      groupUpdate.mockResolvedValueOnce({ affected: 0 });
+
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-1',
+            baseEpoch: 5,
+            proto: memberCommitFrame('group-1', 5n),
+            senderId: 'user-1',
+          },
+          'user-1'
+        )
+      ).resolves.toEqual({ accepted: true, newEpoch: 6, duplicate: true });
+      expect(commitLogRepo.findOne).toHaveBeenCalledWith({
+        where: { groupId: 'group-1', baseEpoch: 5 },
+      });
+      expect(commitInsertBuilder.execute).not.toHaveBeenCalled();
+      expect(fanOut).not.toHaveBeenCalled();
+    });
+
     it('refuses an advance whose base already has a logged commit, rather than logging neither', async () => {
       // The advance and the log row say the same thing or the commit is refused: a log row from
       // another commit at this base would be replayed in place of the one accepted.
@@ -622,6 +785,35 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         )
       ).resolves.toEqual({ accepted: false, currentEpoch: 5, reason: 'epoch_mismatch' });
       expect(fanOut).not.toHaveBeenCalled();
+      // The epoch still stood on the base: no request of ours advanced from it, so nothing is asked.
+      expect(commitLogRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['other bytes took the base', { commit: 'b3RoZXI=', senderDeviceId: 'device-1' }],
+      [
+        'the same bytes came from another device',
+        { commit: memberCommitFrame('group-1', 5n), senderDeviceId: 'device-2' },
+      ],
+    ])('still refuses a lost advance when %s', async (_n, row) => {
+      groupRepo.findOne
+        .mockResolvedValueOnce({ id: 'group-1', activeEpoch: 5 })
+        .mockResolvedValue({ id: 'group-1', activeEpoch: 6 });
+      commitLogRepo.findOne.mockResolvedValueOnce({ groupId: 'group-1', baseEpoch: 5, ...row });
+      groupUpdate.mockResolvedValueOnce({ affected: 0 });
+
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-1',
+            baseEpoch: 5,
+            proto: memberCommitFrame('group-1', 5n),
+            senderId: 'user-1',
+          },
+          'user-1'
+        )
+      ).resolves.toEqual({ accepted: false, currentEpoch: 6, reason: 'epoch_mismatch' });
     });
   });
 
@@ -1475,6 +1667,53 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
           });
 
+          // The seat this copy met can be the one its OWN earlier request wrote, committed while
+          // this one waited on the seat lock: the log row says so, and a 409 would make the client
+          // drop the commit the group holds.
+          it('answers a duplicate, not a 409, when the commit that overtook the claim is its own', async () => {
+            fetchSpy.mockImplementationOnce(async () => {
+              await service.evictSeats('group-1', 'user-2', 'begin');
+              await service.evictSeats('group-1', 'user-2', { settles: 1 });
+              return entitled(true);
+            });
+            commitLogRepo.findOne.mockResolvedValueOnce({
+              groupId: 'group-1',
+              baseEpoch: 5,
+              commit: MEMBER_COMMIT,
+              senderDeviceId: 'device-1',
+            });
+
+            await expect(admitUser2()).resolves.toEqual({
+              accepted: true,
+              newEpoch: 6,
+              duplicate: true,
+            });
+            expect(groupUpdate).not.toHaveBeenCalled();
+          });
+
+          it.each([
+            ['other bytes', { commit: 'b3RoZXI=', senderDeviceId: 'device-1' }],
+            [
+              'the same bytes from another device',
+              { commit: MEMBER_COMMIT, senderDeviceId: 'device-2' },
+            ],
+          ])('still answers the 409 when the logged commit is %s', async (_n, row) => {
+            fetchSpy.mockImplementationOnce(async () => {
+              await service.evictSeats('group-1', 'user-2', 'begin');
+              await service.evictSeats('group-1', 'user-2', { settles: 1 });
+              return entitled(true);
+            });
+            commitLogRepo.findOne.mockResolvedValueOnce({
+              groupId: 'group-1',
+              baseEpoch: 5,
+              ...row,
+            });
+
+            await expect(admitUser2()).rejects.toMatchObject({
+              response: { code: 'SEAT_CLAIM_OVERTAKEN', seat: 'admit' },
+            });
+          });
+
           it('asks nobody for a commit built on another epoch', async () => {
             tables({
               keyPackages: [ownKey, { userId: 'user-2', deviceId: 'device-2' }],
@@ -1486,6 +1725,33 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
               accepted: false,
               currentEpoch: 6,
               reason: 'epoch_mismatch',
+            });
+            expect(fetchSpy).not.toHaveBeenCalled();
+            expect(groupUpdate).not.toHaveBeenCalled();
+          });
+
+          // A resubmission of an Add whose first answer was lost reaches this check BEFORE the
+          // gate's: refused here, the committer cleared the commit the group had applied.
+          it('answers a resubmission of its OWN accepted Add as a duplicate, before asking anyone', async () => {
+            tables({
+              keyPackages: [ownKey, { userId: 'user-2', deviceId: 'device-2' }],
+              devices: [ownDevice],
+              group: { distributionWorkspaceId: 'ws-1', activeEpoch: 6 },
+            });
+            commitLogRepo.findOne.mockResolvedValueOnce({
+              groupId: 'group-1',
+              baseEpoch: 5,
+              commit: MEMBER_COMMIT,
+              senderDeviceId: 'device-1',
+            });
+
+            await expect(admitUser2()).resolves.toEqual({
+              accepted: true,
+              newEpoch: 6,
+              duplicate: true,
+            });
+            expect(commitLogRepo.findOne).toHaveBeenCalledWith({
+              where: { groupId: 'group-1', baseEpoch: 5 },
             });
             expect(fetchSpy).not.toHaveBeenCalled();
             expect(groupUpdate).not.toHaveBeenCalled();
@@ -1798,6 +2064,32 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         });
         expect(groupUpdate).not.toHaveBeenCalled();
         expect(txQueuedRepo.save).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
+      // The seat this copy found gone may have been taken by its OWN earlier request, committed
+      // while it waited on the seat lock: the log row decides, not the seat.
+      it('answers a duplicate, not a refusal, when its own earlier request landed the Welcome', async () => {
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        const sent = fanOut();
+        txErasedDevices.add('user-2:phone-2');
+        commitLogRepo.findOne.mockResolvedValueOnce({
+          groupId: 'group-1',
+          baseEpoch: 5,
+          commit: MEMBER_COMMIT,
+          senderDeviceId: 'device-1',
+        });
+
+        await expect(withWelcome()).resolves.toEqual({
+          accepted: true,
+          newEpoch: 6,
+          duplicate: true,
+        });
+        expect(groupUpdate).not.toHaveBeenCalled();
         expect(sent).not.toHaveBeenCalled();
       });
 

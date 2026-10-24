@@ -32,7 +32,7 @@ in the comparison below follows from that difference.
 | **Member added** | A commit plus a Welcome. MLS gives the newcomer nothing from before, **but the adding device then pushes its whole local history** (`sendFullHistoryBundle`), so a new member of a group conversation reads the past. That was never decided, and the user reversed it on 2026-10-21: [history-reconciliation](history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21). | The newcomer joins the key group by external commit, with nobody online needed, then receives a bundle of every seed held (`shared`) or none (`joined`). |
 | **New device of a member** | A `welcome_request`, an online device adds it, and a Welcome follows. Its past comes from peers, re-encrypted message by message. | An external join of the key group and the same history bundle: seeds only, with the ciphertexts read from the server. |
 | **Member leaves** | A Remove commit, and the next epoch excludes them. | A Remove commit on the key group, made by whoever reconciles the roster next ([§4.6](channel-encryption.md#46-ordering-rule-remove-then-distribute)). Every sender rotates at its next send. The leaver keeps what it could already read. |
-| **Rotation** | Every commit is a new epoch. No device ever self-updates ([mls-protocol](mls-protocol.md#the-84-day-lifetime-outlives-the-device-and-a-leaf-is-never-updated)). | Per sender, at the next send after a key-group Remove or a new user, after 100 messages, or after 7 days (50 and 24 hours once re-distributed); a new device of a present user re-distributes the session instead ([`graineOutboundVerdict`](../../../frontend/src/lib/utils/graine/sessionManager.ts), [graine-removal-tracker](graine-removal-tracker.md), 2026-10-22, not yet shipped). |
+| **Rotation** | Every commit is a new epoch. Every device refreshes its own leaf at its next send once 7 days have passed since its last commit in that group ([mls-protocol](mls-protocol.md#the-periodic-leaf-refresh)); key groups are excluded. | Per sender, at the next send after a key-group Remove or a new user, after 100 messages, or after 7 days (50 and 24 hours once re-distributed); a new device of a present user re-distributes the session instead ([`graineOutboundVerdict`](../../../frontend/src/lib/utils/graine/sessionManager.ts), [graine-removal-tracker](graine-removal-tracker.md), 2026-10-22, not yet shipped). |
 | **Where the past lives** | On the devices. The server keeps a capped Redis stream and per-device queues, but cannot decrypt either for a later joiner. | On the server, as ciphertext. Devices hold only the keys. |
 
 ## What each system is good at
@@ -166,10 +166,11 @@ and this page carries the reasoning.
 
 ### DMs and group conversations
 
-1. **Leaves never self-update, so MLS's post-compromise security is never exercised.** A periodic
-   update commit (per device, say monthly) would heal a stolen leaf key. Its cost is more commits,
-   which is the failure class this product already fights. So this item waits on the desync work, and
-   it is listed so that the choice is visible.
+1. **Leaves refresh themselves since 2026-10-22, every 7 days of activity per device and group**
+   ([mls-protocol](mls-protocol.md#the-periodic-leaf-refresh), with the commit ceiling on these fleet
+   numbers), and a revoked device's leaf is removed by the stray-leaf collector. Community key groups
+   are excluded: a refresh there is no departure, but it costs every sender a seed redistribution
+   and the tighter reused caps (the cost is on that page).
 2. **The large group conversation is the shape §3 rejected for salons.** 109 device seats carry
    messages over MLS. Two things are worth doing: measure its unreadable-frame rate against the
    communities' (`LOST frame` against `reportUnreadableChannelMessage`), and decide whether a group

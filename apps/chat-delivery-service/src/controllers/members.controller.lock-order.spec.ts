@@ -51,6 +51,7 @@ describe('MembersController - lock order of an add and a removal', () => {
       repo() as never,
       repo() as never,
       repo() as never,
+      repo() as never, // RevokedDevice
       redis as never,
       recorded.dataSource
     );

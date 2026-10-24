@@ -50,6 +50,7 @@ type Ctx = ReturnType<typeof makeCtx>;
 
 /** Prototype methods invoked through `.call`, so the real implementations are the ones under test. */
 const proto = BaseMlsService.prototype as unknown as {
+  settleUnresolvedCommitFromLog(groupId: string, commitAtBase: string | null): Promise<string>;
   registerDistributionGroup(scope: DistributionScope, groupId: string): void;
   isDistributionGroup(groupId: string): boolean;
   isDistributionBaseSettled(groupId: string): boolean;
@@ -175,6 +176,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     fetchCommitsSince: vi
       .fn()
       .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),
+    // REAL: with no unresolved commit recorded it settles nothing, which is the case here.
+    settleUnresolvedCommitFromLog: proto.settleUnresolvedCommitFromLog,
+    groupsWithPendingCommit: vi.fn(async () => []),
     registerDistributionGroup: proto.registerDistributionGroup,
     isDistributionBaseSettled: proto.isDistributionBaseSettled,
     groupInfoChannel: proto.groupInfoChannel,
