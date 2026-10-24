@@ -87,6 +87,14 @@ export const SITE = "http://localhost:8081";
 export const DEV_SSH_HOST = "<ssh alias of the host carrying canari-dev>";
 
 /**
+ * DEV'S IDENTITY-PROVIDER VALUES, required by `a1apk.mjs` to build an APK for dev and ignored
+ * otherwise - the pre-release pipeline takes the same pair from its `DEV_AUTHENTIK_*` secrets
+ * (`android.yml`), and there is no fallback to the local estate's pair. Neither is a secret: the dev
+ * web estate serves both in its own bundle, which is where to read them.
+ */
+export const DEV_AUTHENTIK = { url: "<https://... dev's VITE_AUTHENTIK_URL>", clientId: "<dev's VITE_AUTHENTIK_CLIENT_ID>" };
+
+/**
  * Devtools ports. The Chrome profiles ARE the devices; A1 is an adb forward.
  *
  * W3 IS THE SCRATCH DEVICE, and the only one anything here may wipe. It holds the OWNER account,

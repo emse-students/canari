@@ -18,11 +18,12 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-85 scripts.
+86 scripts.
 
 | script | what it is |
 |---|---|
-| `a1apk.mjs` | BUILD THE A1 APK AGAINST THE LOCAL ESTATE, INSTALL IT, AND PROVE THE PHONE IS RUNNING IT. |
+| `a1apk.mjs` | BUILD THE A1 APK AGAINST THE ESTATE `SITE` NAMES (LOCAL OR DEV), INSTALL IT, AND PROVE THE PHONE IS RUNNING IT. |
+| `a1plan.mjs` | WHAT AN A1 APK BUILD MUST BE FOR THE ESTATE `SITE` NAMES - the decisions of `a1apk.mjs`, pure. |
 | `accounts.mjs` | The ONE reader of `test-accounts.json`. |
 | `apkbuild.mjs` | WHETHER THE APK ON THE PHONE IS ANY COMMIT AT ALL - the provenance a build stamp cannot carry. |
 | `arm.mjs` | The one module in this harness that WRITES to the estate's database (local or dev; production is refused by R1), and the distinction it turns on. |
@@ -212,10 +213,11 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-42 scripts.
+43 scripts.
 
 | script | what it is |
 |---|---|
+| `archive/a1plan-selftest.mjs` | THE A1 APK IS BUILT FOR THE ESTATE `SITE` NAMES, AND NEVER FOR PRODUCTION. |
 | `archive/caption-selftest.mjs` | EVERY PARAGLIDE KEY THE RIG NAMES MUST STILL RESOLVE THROUGH THE HELPER THAT NAMES IT. |
 | `archive/checks-selftest.mjs` | Asserts that every phase DECLARES the devices its scripts actually drive. |
 | `archive/classify-selftest.mjs` | THE CLASSIFIER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
@@ -312,4 +314,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-251 scripts in total.
+253 scripts in total.

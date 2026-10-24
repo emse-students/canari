@@ -51,8 +51,8 @@ const FILE = join(STATE_DIR, 'a1-builds.ndjson');
  * different artefacts. Reading whichever happens to exist would silently record the estate's stamp
  * against the phone's APK the first time the order of those two commands changed.
  */
-function packagedStamp() {
-  const at = join(REPO, 'frontend', 'build', '_app', 'version.json');
+function packagedStamp(repo = REPO) {
+  const at = join(repo, 'frontend', 'build', '_app', 'version.json');
   if (!existsSync(at)) {
     throw new Error(
       `no ${at} - frontend/build does not hold the adapter-static shape, so this is not the bundle ` +
@@ -64,7 +64,7 @@ function packagedStamp() {
 }
 
 /** `git` output as text, trimmed - a throw here is a repository that cannot be read. */
-const git = (...args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 'utf8' }).trim();
+const gitIn = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
 
 /**
  * Write down what the tree looked like when this APK was built.
@@ -72,10 +72,12 @@ const git = (...args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 
  * Called by `a1apk.mjs` after the build and BEFORE the install: the record has to exist by the time
  * anything asks the phone what it is running.
  *
+ * @param {string} [repo] the tree the APK was built from - this checkout, or a `--ref` worktree
  * @returns the record, so the caller can print it rather than re-deriving it
  */
-export function recordApkBuild() {
-  const builtAt = packagedStamp();
+export function recordApkBuild(repo = REPO, artefact = {}) {
+  const git = (...args) => gitIn(repo, ...args);
+  const builtAt = packagedStamp(repo);
   // The commit is recorded as the tree's HEAD rather than resolved from the timestamp: at build
   // time HEAD is a FACT, where the timestamp derivation is what this module exists to qualify.
   const head = git('rev-parse', '--short', 'HEAD');
@@ -88,9 +90,26 @@ export function recordApkBuild() {
   const diffSha = dirty
     ? createHash('sha256').update(git('diff', 'HEAD')).update(porcelain).digest('hex').slice(0, 12)
     : null;
-  const record = { builtAt, head, dirty, diffSha, recordedAt: new Date().toISOString() };
+  // `artefact`: the APK's sha256, the origin it was planned for and its bundle verdict, which
+  // `installVerdict` in `a1plan.mjs` requires before a `--no-build` install (R2 review).
+  const record = { builtAt, head, dirty, diffSha, recordedAt: new Date().toISOString(), ...artefact };
   appendFileSync(FILE, `${JSON.stringify(record)}\n`);
   return record;
+}
+
+/** Every recorded build, oldest first; a truncated line is skipped, never fatal. */
+export function apkBuilds() {
+  if (!existsSync(FILE)) return [];
+  const out = [];
+  for (const line of readFileSync(FILE, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      console.log(`[apkbuild] skipped an unparseable record: ${line.slice(0, 80)}`);
+    }
+  }
+  return out;
 }
 
 /**

@@ -365,13 +365,61 @@ name in `SERIAL_OF`, or `ANDROID_SERIAL` - adb's own variable, which `useDevice`
 every adb this rig shells out to inherits the binding. A device name carries its platform: `W*` is a
 Chrome profile, `A*` is Android.
 
-**THE APK MUST BE BUILT WITH THE LOCAL-ESTATE OVERLAY OR IT REFUSES THE ESTATE IT IS POINTED AT.**
+**ON THE LOCAL ESTATE, THE APK MUST BE BUILT WITH THE LOCAL-ESTATE OVERLAY OR IT REFUSES THE ESTATE IT IS POINTED AT.**
 `tauri.conf.json` names capability `default` alone, whose fetch scope is `https://**`;
 `src-tauri/tauri.local.conf.json` adds `local-estate`, and `a1apk.mjs` passes it. Without it the
 phone reaches the IdP, authenticates, comes back - and then shows the product's own red
 `url not allowed on the configured scope: http://localhost:8081/...` under the PIN field, because
 `https://**` matches port 443 and `http://**` matches port 80, neither of which is 8081. See
 [`frontend/src-tauri/capabilities/local-estate.json`](../../frontend/src-tauri/capabilities/local-estate.json).
+
+**ON DEV THE APK TAKES NEITHER THE OVERLAY NOR THE REVERSE (R2, 2026-10-24).** `a1apk.mjs` asks
+`a1plan.mjs` what the estate `SITE` names needs: dev (`https://dev.canari-emse.fr`) sits inside the
+default `https://**` scope and the default CSP, the phone reaches it over its radios (so `adb reverse`
+is skipped and `estateReverse` is a logged no-op, and cutting the radios really takes the phone
+offline), and the identity provider is dev's: `DEV_AUTHENTIK` in the machine-local `names.mjs`, the
+pair the pre-release pipeline takes from its `DEV_` secrets, refused when absent. It is still a
+`--debug` build, so CDP reaches the WebView. The packaged bundle - EVERY file under
+`build/_app/immutable` (chunks, nodes, entry) - must name the estate AND no production origin in
+any spelling (`https://`, `http://`, `wss://`, `ws://`, a bare `//`, upper case, a trailing dot).
+ONE allowance, and it is scoped to a CHUNK: `publicAppUrl.ts`'s two link constants
+(`DEFAULT_PUBLIC_APP_ORIGIN`, `LEGACY_PUBLIC_APP_ORIGIN`, read from that source file) as whole
+string literals, inside the one chunk that also carries `PUBLIC_APP_HOSTS` - that module's own
+chunk. **They were NOT always "never a request target"**: until #2385 the root layout started the
+push service with `historyBaseUrl || DEFAULT_PUBLIC_APP_ORIGIN`, and `seo/site.ts` read the legacy
+constant; the bundler inlined both into the layout's node, which is where the first dev build put
+them. #2385 removed the fallback and made every consumer call a function of that module, so a
+production literal anywhere else is a real target again and is refused. A dev APK therefore builds
+only from a tree carrying #2385, and a `--ref` older than it (v1.4.0 included) is REFUSED for that
+fallback - which is the right answer: that client really can call production.
+**`--accept-dead-production-literal` IS THE ONE EXCEPTION, FOR THE FLOOR/OLD-CLIENT ROWS ADM-5..7
+ONLY (decided 2026-10-24)**. It is never a default and nothing implies it. It is accepted only with
+`--build-only --ref <tag>`, and only for a ref whose layout still carries the fallback; on any tree
+carrying #2385 it is refused, since there is nothing to accept. It lets through at most ONE
+occurrence of each of two compiled shapes, and every other production spelling, in every chunk,
+stays refused:
+- `push-service-fallback`: `.historyBaseUrl||"<canonical origin>",` (the layout before #2385).
+- `legacy-apex-comparison`: `!=="<legacy origin>"?` (`seo/site.ts` before #2385 comparing the baked
+  origin with the legacy apex - a comparison, never a request target).
+
+Why the fallback may be accepted:
+- A signed-in dev build always has `historyBaseUrl` set (it is the baked delivery URL), so the
+  fallback is unreachable.
+- The worst case is an old client sending a DEV token to production, which refuses it.
+The acceptance is written into the build's `a1-builds.ndjson` record (`acceptedDeadProductionLiteral`
+names each shape accepted, beside the occurrences and the ref), and a `--no-build` install of that APK prints it. A tag predating the
+constants themselves cannot be checked at all, and `linkModuleOf` says so rather than guessing.
+The build ENVIRONMENT is checked before the build: no `VITE_*` value in the process or an
+unoverridden `frontend/.env*` line (`export VITE_X=` included) may name production, because the
+bundle cannot tell a baked target from a constant and the environment can. A `--ref` build takes
+its identity-provider pair from the MAIN checkout's machine configuration, never from the tag.
+`--build-only` touches no phone, not even `adb`; `--build-only --ref <tag>` builds an OLD client in
+its own detached worktree (system temp, `a1-ref-<tag>`) and keeps the APK in `STATE_DIR/apks/`.
+**`--no-build` installs only an APK this rig recorded**: a Tauri APK embeds the frontend
+brotli-compressed inside `lib/<abi>/libmines_app_lib.so`, so there is nothing to unzip and rescan;
+instead every build appends its APK's sha256, origin and bundle verdict to `a1-builds.ndjson`, and
+`installVerdict` refuses an artefact whose hash was never recorded as passing for this estate.
+Installing is a deliberate gesture: an `install -r` keeps the enrolment, an uninstall costs the device.
 
 **An atom takes no verdict**, writes nothing to `results.ndjson` and asserts nothing about the
 application. That is what makes it reusable: a row decides what an outcome MEANS, and two rows may
@@ -771,7 +819,7 @@ next one's symptom names the wrong cause.
   which `bun run dev` shares and needs same-origin; and the packaged bundle is then GREPPED for
   `SITE`, because an APK silently pointing at production fails a row for a reason nobody can see.
 
-- **A1 MUST STAY A LOCAL `--debug` BUILD, and the CI artefact cannot replace it (measured
+- **A1 MUST STAY A `--debug` BUILD (local or dev), and the CI artefact cannot replace it (measured
   2026-08-28).** The pipeline produces a RELEASE APK: not debuggable, and signed with the release
   keystore, so `adb install -r` fails on the signature mismatch and the only way through would be an
   uninstall - which destroys the very data a footprint row measures. And **`run-as` needs
