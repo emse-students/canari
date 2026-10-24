@@ -172,6 +172,9 @@ const NOT_CONTENT: Record<string, string> = {
   'canari_ios.mm|NSStringFromClass([content class])': 'class name',
   // A comparison of two seeds: the line prints true or false.
   'push.rs|same_seed(held_seed, seed.seed_b64)': 'comparison',
+  // `token` on a key-group join settlement is its OUTCOME LABEL (a settled or stopped reason), never a credential.
+  'CanariFirebaseMessagingService.kt|settlement.token': 'outcome label',
+  'CanariFirebaseMessagingService.kt|stop.token': 'outcome label',
 };
 
 interface Finding {

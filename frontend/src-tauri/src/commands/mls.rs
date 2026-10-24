@@ -57,9 +57,23 @@ pub(crate) async fn initialiser_mls(
     // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when it
     // did. `state_on_disk` is only honoured when the caller supplied no bytes, so a caller that
     // does supply them (old-PIN recovery, the migration retry) keeps deciding what is loaded.
+    //
+    // EITHER WAY THE FOREGROUND IS MARKED BEFORE ANY BYTES ARE TRUSTED, and the disk read happens
+    // under the write lock: a background engine (a key-group join from a push, channel-encryption
+    // section 26) then either wrote before this read or sees the mark and gives up - never lands
+    // between the read and this manager's first persist, which would erase it.
     let encrypted_state = match (encrypted_state, opts.state_on_disk) {
-        (None, Some(true)) => crate::commands::storage::read_mls_state_blob(&app),
-        (supplied, _) => supplied,
+        (None, Some(true)) => {
+            let path = tauri::Manager::path(&app)
+                .app_data_dir()
+                .map_err(|e| e.to_string())?
+                .join("mls.bin");
+            crate::concurrency::foreground_load_mls_bin(&path)?
+        }
+        (supplied, _) => {
+            crate::concurrency::mark_foreground_manager_loading();
+            supplied
+        }
     };
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();

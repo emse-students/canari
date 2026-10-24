@@ -251,6 +251,11 @@
         sentAt={sentAt ?? new Date()}
         {bleed}
         onOpen={() => (showReelViewer = true)}
+        {upload}
+        {uploadFailed}
+        {orphan}
+        {onCancelUpload}
+        {onRetryUpload}
       />
     {:else if mediaRef.type === 'image' || mediaRef.type === 'video'}
       <MediaFrame

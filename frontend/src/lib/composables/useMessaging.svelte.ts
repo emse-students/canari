@@ -71,7 +71,7 @@ import {
 import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import { MediaService, refusedBeforePreparation } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
-import { chatReelDeclaration, isChatReelTake } from '$lib/reels/chatReelWriter';
+import { chatReelPendingDeclaration, isChatReelTake } from '$lib/reels/chatReelWriter';
 import { capturePosterOf } from '$lib/reels/capturePoster';
 import {
   applyEditToBody,
@@ -1480,10 +1480,10 @@ export function useMessaging() {
             // (the optimistic message shows a skeleton + pending clock until then).
             const type = mediaTypeFromMime(entry.file.type);
             // A chat reel's declaration, made at the send so its 30 days count from it. Empty for
-            // anything else: an ordinary attachment is encoded exactly as before.
-            const reelDeclaration = entry.reelDurationMs
-              ? chatReelDeclaration(entry.reelDurationMs / 1000, sentAt)
-              : {};
+            // anything else: an ordinary attachment is encoded exactly as before. The take is RAW
+            // (RC-5): its intent and expiry are declared now, its LENGTH once the outbox has
+            // prepared it - the encoder is what measures it.
+            const reelDeclaration = entry.prepareRaw ? chatReelPendingDeclaration(sentAt) : {};
             const placeholder = serializeEnvelope(
               mkMediaEnvelope(
                 {
@@ -1532,6 +1532,7 @@ export function useMessaging() {
                   caption: captionForFile,
                   ...(entry.voiceNote ? { voiceNote: true } : {}),
                   ...reelDeclaration,
+                  ...(entry.prepareRaw ? { prepare: entry.prepareRaw } : {}),
                   fileBytes,
                 },
                 status: 'pending',
@@ -1746,18 +1747,6 @@ export function useMessaging() {
         const placeholder = await placeholderForImageFile(entry.file);
         if (placeholder) entry = { ...entry, placeholder };
       }
-      if (entry.reelDurationMs) {
-        // The tile's ThumbHash comes from the take's first picture, the one the camera kept.
-        const poster = capturePosterOf(file);
-        if (poster) {
-          const { placeholderForImageFile } = await import('$lib/utils/mediaPlaceholder');
-          const placeholder = await placeholderForImageFile(
-            new File([poster], 'poster.jpg', { type: poster.type })
-          );
-          if (placeholder) entry = { ...entry, placeholder };
-        }
-        ctx.log(`[MEDIA] a chat reel of ${entry.reelDurationMs} ms staged`);
-      }
       readyFiles.push(entry);
     }
     return readyFiles;
@@ -1793,16 +1782,7 @@ export function useMessaging() {
         `[MEDIA] video prepared: ${(prepared.sourceBytes / 1024 / 1024).toFixed(1)} Mo -> ` +
           `${(prepared.outputBytes / 1024 / 1024).toFixed(1)} Mo, ${prepared.width}x${prepared.height}`
       );
-      return {
-        file: prepared.file,
-        width: prepared.width,
-        height: prepared.height,
-        // The take is prepared into a NEW file: the chat camera's mark follows it here, with the
-        // prepared length, or a reel would be sent as an ordinary video.
-        ...(isChatReelTake(file)
-          ? { reelDurationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)) }
-          : {}),
-      };
+      return { file: prepared.file, width: prepared.width, height: prepared.height };
     } catch (e) {
       if (!isVideoPrepareError(e)) throw e;
       const message = videoPrepareFailureMessage(e);
@@ -1831,7 +1811,14 @@ export function useMessaging() {
       ctx.log(`[MEDIA] ${files.length} file(s) not staged: no conversation is open`);
       return;
     }
-    const readyFiles = await prepareMediaFiles(files, ctx);
+    // A CANAREEL FILMED IN A DM OR A GROUP IS SENT AT ONCE, RAW (RC-5): the review's "Send" was the
+    // send, and the take is safer in the outbox - durable, encrypted, prepared there and resumed
+    // after a kill - than in a staging list a reload empties. A salon never takes one (RC-8).
+    const takes = isChannelConversationId(stagedIn) ? [] : files.filter(isChatReelTake);
+    for (const take of takes) await sendChatReelTake(take, ctx);
+    const others = files.filter((f) => !takes.includes(f));
+    if (others.length === 0) return;
+    const readyFiles = await prepareMediaFiles(others, ctx);
     if (readyFiles.length === 0) return;
     // ASKED AFTER THE PREPARATION, which can take seconds: a sign-out during it has already emptied
     // the queues (`forgetAccount`), and staging now would hand this account's file to the next one.
@@ -1865,6 +1852,29 @@ export function useMessaging() {
     // file name the recorder chose - which is a distinction carried in prose. So the gesture is
     // declared here and travels with the message; see `MediaRef.voiceNote`.
     await handleSendChat(ctx, '', { files: ready.map((f) => ({ ...f, voiceNote: true })) });
+  }
+
+  /**
+   * Queues the chat camera's RAW take as its own message, at once (reels-in-chat RC-5). Nothing is
+   * prepared here: the outbox prepares it inside the upload task, where a kill, a cancel and a weak
+   * link are already handled, and the bubble shows the preparation's progress. Only the ThumbHash
+   * of the camera's first picture is computed now, so the tile has its picture from the first frame.
+   */
+  async function sendChatReelTake(file: File, ctx: MessagingContext) {
+    let placeholder: string | undefined;
+    const poster = capturePosterOf(file);
+    if (poster) {
+      const { placeholderForImageFile } = await import('$lib/utils/mediaPlaceholder');
+      placeholder =
+        (await placeholderForImageFile(new File([poster], 'poster.jpg', { type: poster.type }))) ??
+        undefined;
+    }
+    ctx.log(
+      `[MEDIA] a chat reel take of ${file.size} bytes sent raw - the outbox prepares it${placeholder ? '' : ' (no poster)'}`
+    );
+    await handleSendChat(ctx, '', {
+      files: [{ file, prepareRaw: 'chat-reel', ...(placeholder ? { placeholder } : {}) }],
+    });
   }
 
   /** Removes a staged (not yet sent) file from the pending media queue by its index. */
