@@ -9,7 +9,8 @@
  * predates it reads what it always read.
  *
  * `MAINTENANCE`, `ACCOUNT_ERASURE_PENDING` and `ACCOUNT_ERASURE_BLOCKED` are coded in
- * `auth.controller.ts` and worded by the client already; they are not repeated here.
+ * `auth.controller.ts`, and `USER_ID_INVALID` in `users/user-id.ts`; the sign-in flow words them
+ * (`frontend/src/lib/stores/auth.ts`), so they are not repeated here.
  */
 export const RefusalCode = {
   /** 400 - a block aimed at oneself. */
