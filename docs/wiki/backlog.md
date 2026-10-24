@@ -1584,6 +1584,11 @@ and FAILS the day an ignored id is no longer reported, naming the ignore, its pr
 (`.github/scripts/stream-json-premise.sh`) and this entry as what to delete. The reasoning is in
 [cicd](cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
 
+`RUSTSEC-2026-0387` (crypto-bigint 0.5.5) is ignored in all four Rust trees since 2026-10-24, each
+with its statement in `.cargo/audit.toml`; REACHABLE IN CODE in call-service's DTLS only. Lifted by the
+webrtc 0.21 port and p256 0.14 reaching jsonwebtoken and openmls_rust_crypto; the cargo retirement
+step fails when it is gone ([cicd](cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24)).
+
 ### P2 - TWO of the hosts that take security updates are not reported on, and a library nothing restarts (the rest closed 2026-09-03)
 
 The mechanism and report exist since 2026-09-03 ([host-updates](infrastructure/host-updates.md)). **The shared
