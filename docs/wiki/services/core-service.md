@@ -16,11 +16,13 @@ The core-service is the authentication and user management hub. It:
 
 ## Auth model
 
-- **Access token**: JWT HS256, 1-hour TTL, stateless, stored in memory only (never localStorage).
+- **Access token**: JWT HS256, 1-hour TTL, stateless, stored in memory only (never localStorage). It
+  carries `sid`, the session it was minted for - a label, not an authorisation: a push registration
+  is bound to it ([sessions](../sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
 - **Refresh token**: HttpOnly cookie, 7-day idle TTL, **backed by a row in `auth_sessions`** and
   rotated on each use.
 - **WebSocket auth**: cookie `canari_ws_token` carrying the access token.
-- **Nginx verification**: `GET /api/auth/verify` injects `X-User-Id`, `X-Logged-In`, `X-Global-Admin` on success.
+- **Nginx verification**: `GET /api/auth/verify` injects `X-User-Id`, `X-Logged-In`, `X-Global-Admin` and `X-Session-Id` on success.
 
 ### Sessions (`auth_sessions`)
 

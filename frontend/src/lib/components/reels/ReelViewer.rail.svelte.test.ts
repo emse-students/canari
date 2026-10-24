@@ -219,8 +219,8 @@ it('the comments open in a sheet over the reel, as a history entry of their own'
 
   await click('[data-reel-rail-comments]');
 
-  expect(q('[data-reel-comments-sheet]')).not.toBeNull();
-  expect(q('[data-reel-comments-sheet]')!.textContent).toContain('text c1');
+  expect(q('[data-comments-drawer-sheet]')).not.toBeNull();
+  expect(q('[data-comments-drawer-sheet]')!.textContent).toContain('text c1');
   // The reel is still mounted under it: the sheet covers its lower part, it does not replace it.
   expect(q('[data-reel-slide="a"]')).not.toBeNull();
   expect(vi.mocked(pushHistoryOverlay).mock.calls.length).toBe(pushedBefore + 1);
@@ -236,7 +236,7 @@ it('Back closes the sheet and leaves the viewer open', async () => {
   back();
   await settle();
 
-  expect(q('[data-reel-comments-sheet]')).toBeNull();
+  expect(q('[data-comments-drawer-sheet]')).toBeNull();
   expect(onClose).not.toHaveBeenCalled();
 });
 
@@ -247,7 +247,7 @@ it('Escape closes the sheet, not the viewer', async () => {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
   await settle();
 
-  expect(q('[data-reel-comments-sheet]')).toBeNull();
+  expect(q('[data-comments-drawer-sheet]')).toBeNull();
   expect(onClose).not.toHaveBeenCalled();
 });
 
@@ -255,12 +255,12 @@ it('the X and a tap on the reel above close the sheet', async () => {
   await render(post('a'), 'alice');
 
   await click('[data-reel-rail-comments]');
-  await click('[data-reel-comments-close]');
-  expect(q('[data-reel-comments-sheet]')).toBeNull();
+  await click('[data-comments-drawer-close]');
+  expect(q('[data-comments-drawer-sheet]')).toBeNull();
 
   await click('[data-reel-rail-comments]');
-  await click('[data-reel-comments-backdrop]');
-  expect(q('[data-reel-comments-sheet]')).toBeNull();
+  await click('[data-comments-drawer-backdrop]');
+  expect(q('[data-comments-drawer-sheet]')).toBeNull();
 });
 
 it('a post of one picture is a photo page, with the rail and no player', async () => {
@@ -349,4 +349,106 @@ it('a request the server never answers is aborted by its deadline: rolled back, 
   await click('[data-reel-rail-heart]');
   expect(addReaction).toHaveBeenCalledTimes(2);
   warn.mockRestore();
+});
+
+// The heart's reaction drawer (user, 2026-10-23): a long press, the card's reaction set.
+
+function pointerEvent(type: string): Event {
+  return Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
+    pointerType: 'touch',
+    button: 0,
+    clientX: 0,
+    clientY: 0,
+  });
+}
+
+/** Holds the heart past the long-press threshold, then lets go: the browser's click follows. */
+async function holdHeart() {
+  vi.useFakeTimers();
+  try {
+    q('[data-reel-rail-heart]')!.dispatchEvent(pointerEvent('pointerdown'));
+    vi.advanceTimersByTime(600);
+  } finally {
+    vi.useRealTimers();
+  }
+  q('[data-reel-rail-heart]')!.dispatchEvent(pointerEvent('pointerup'));
+  await click('[data-reel-rail-heart]');
+}
+
+it("a long press opens the drawer with the card's eight reactions and sends nothing", async () => {
+  await render(post('a'), 'alice');
+  expect(q('[data-reel-rail-drawer]')).toBeNull();
+
+  await holdHeart();
+
+  expect(q('[data-reel-rail-drawer]')).not.toBeNull();
+  expect(document.querySelectorAll('[data-reel-rail-drawer-item]').length).toBe(8);
+  // The click that ended the hold is swallowed: no heart toggled, no request.
+  expect(addReaction).not.toHaveBeenCalled();
+  expect(q('[data-reel-rail-heart]')!.getAttribute('aria-expanded')).toBe('true');
+});
+
+it('a tap on a reaction in the drawer sends that reaction and closes it', async () => {
+  vi.mocked(addReaction).mockResolvedValue({ ok: true, reactions: { alice: 'Rire' } });
+  await render(post('a'), 'alice');
+  await holdHeart();
+
+  await click('[data-reel-rail-drawer-item="Rire"]');
+
+  expect(addReaction).toHaveBeenCalledWith('a', 'Rire');
+  expect(q('[data-reel-rail-drawer]')).toBeNull();
+  expect(q('[data-reel-rail-emoji]')).not.toBeNull();
+});
+
+it('picking the kind the reader holds takes it back; another kind replaces it', async () => {
+  vi.mocked(removeReaction).mockResolvedValue({ ok: true, reactions: {} });
+  await render(post('a', { reactions: { alice: 'Rire' } }), 'alice');
+  await holdHeart();
+  expect(q('[data-reel-rail-drawer-item="Rire"]')!.getAttribute('aria-checked')).toBe('true');
+
+  await click('[data-reel-rail-drawer-item="Rire"]');
+  expect(removeReaction).toHaveBeenCalledTimes(1);
+
+  vi.mocked(addReaction).mockResolvedValue({ ok: true, reactions: { alice: 'Triste' } });
+  await holdHeart();
+  await click('[data-reel-rail-drawer-item="Triste"]');
+  expect(addReaction).toHaveBeenCalledWith('a', 'Triste');
+});
+
+it('a tap outside and Escape close the drawer without sending, and Escape keeps the viewer open', async () => {
+  const { onClose } = await render(post('a'), 'alice');
+  await holdHeart();
+  await click('[data-reel-rail-drawer-dismiss]');
+  expect(q('[data-reel-rail-drawer]')).toBeNull();
+
+  await holdHeart();
+  q('[data-reel-rail-drawer-item="Rire"]')!.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  );
+  await settle();
+  expect(q('[data-reel-rail-drawer]')).toBeNull();
+  expect(addReaction).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+it('the keyboard reaches the drawer: ArrowUp on the heart, and the context menu key', async () => {
+  await render(post('a'), 'alice');
+  q('[data-reel-rail-heart]')!.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true })
+  );
+  await settle();
+  expect(q('[data-reel-rail-drawer]')).not.toBeNull();
+  expect(q('[data-reel-rail-drawer]')!.getAttribute('role')).toBe('menu');
+
+  q('[data-reel-rail-drawer]')!.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  );
+  await settle();
+  expect(q('[data-reel-rail-drawer]')).toBeNull();
+
+  const menu = new Event('contextmenu', { bubbles: true, cancelable: true });
+  q('[data-reel-rail-heart]')!.dispatchEvent(menu);
+  await settle();
+  expect(menu.defaultPrevented).toBe(true);
+  expect(q('[data-reel-rail-drawer]')).not.toBeNull();
 });

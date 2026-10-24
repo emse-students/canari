@@ -972,10 +972,11 @@ export class MessagingService {
           `(senderName=${Buffer.byteLength(senderName, 'utf8')}B groupName=${Buffer.byteLength(groupName, 'utf8')}B)`
       );
     } else if (carriage.kind === 'by-reference') {
-      // A Welcome is fetched by `queuedMessageId` through fetch-proto (ciphertext + ratchet tree),
-      // by design: expected, so debug, not a line per welcome.
+      // A Welcome (ciphertext + ratchet tree) or a key-distribution frame over the budget (a seed
+      // bundle, up to a 255 KiB page) is fetched by `queuedMessageId` through fetch-proto: expected,
+      // so debug, not a line per frame.
       this.logger.debug(
-        `[PUSH_SEND][${traceId}] welcome carried by reference: ${carriage.bytes}B, budget ${carriage.budget}B`
+        `[PUSH_SEND][${traceId}] ${carriage.reason} carried by reference: ${carriage.bytes}B, budget ${carriage.budget}B`
       );
     }
 
