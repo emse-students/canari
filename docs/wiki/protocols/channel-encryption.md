@@ -632,18 +632,216 @@ joins again on its next recovery pass. A key group's Welcome TARGET is asked the
 `apps/chat-delivery-service/src/internal/distribution-entitlement.ts`,
 `apps/social-service/src/internal/internal-distribution-entitlement.controller.ts`.
 
-**The answer is read before the commit lock, and an eviction can land after it - documented, with its
-bound, not closed.** The entitlement is asked in `validateCommit` before the lock is taken, and the
-committer is activated inside it, after the transaction. A departure in social-service
-(`evictFromDistributionGroup` on chat-delivery's internal controller) that runs in that gap deletes
-the leaver's rows first, and the activation then writes an `active` row back. A conversation's
-external commit has the same window between `isOnRoster` and the activation. Re-asking inside the
-lock would narrow the gap and not close it, because the eviction does not take the commit lock. The
-bound is the one every departure already has: the leaver's leaf is in the tree either way, and the
-removal commit that a remaining member makes when it next opens the community deactivates the row.
-Until then the device keeps receiving the group's frames. That leaver loses the immediate,
-server-enforced cut an eviction gives, and keeps only the cryptographic cut of the commit. The window is the duration of one commit's transaction, and closing it
-means making the eviction and the activation exclude each other.
+**A seat is written against a CLAIM, under one per-group lock, and no HTTP call runs under it
+(2026-10-22).** The gate's answer is read before the epoch moves, but the seat is written later, so a
+departure could run in between. `apps/chat-delivery-service/src/utils/seat-eviction.ts` closes that
+window with a durable row and a lock:
+
+- **The generation is the group's.** `dm_groups."seatGeneration"` (migration `036_seat_evictions.sql`)
+  is moved by every eviction of ANYONE from the group, first thing under the lock
+  (`bumpSeatGeneration`). Nothing naming an account has to survive for an earlier claim to be
+  refused, so an account erasure deletes the account's rows below. **The cost, accepted:** a claim
+  in a group where someone else was evicted meanwhile is refused once (`evicted_since_claim`) and its
+  writer retries with a fresh claim - evictions are rare, and an overtaken claim already meant one
+  refusal and a retry.
+- **The row.** `dm_seat_evictions`, one per (group, person): a `generation` of that person's
+  evictions and `owedDeparture`, the NAME of a key group's departure in progress (the person's
+  generation of the eviction that began it), or null. It refuses a claim only through
+  `owedDeparture`; naming a departure is all it is still for.
+- **The lock.** A transaction-scoped Postgres advisory lock on `seat:<groupId>`, released by the
+  commit or the rollback and never by a clock. Every writer that evicts or creates a seat holds it:
+  `evictFromDistributionGroup` (`evictSeats`), `removeGroupMember` (the conversation removal, its
+  roster write and its eviction record in one transaction), the commit's advance (its admits), an
+  account erasure (`eraseSeats`, per group), the commit's advance for its own committer (written in
+  that transaction, so an accepted commit never leaves a leaf without its seat),
+  `activateDeviceMembership` for a key group's publisher, and the two writers of a `pending` seat - a device
+  registration and an invite acceptance (`writePendingSeats`, shared, against the group row and the
+  roster re-read under it).
+- **One order.** Every writer takes the seat lock, then the `dm_groups` row, then
+  `dm_group_members` and its interval, then `queued_message`, then `dm_device_group_memberships`, and
+  writes `dm_seat_evictions` last; an eviction's `dm_groups` write is its generation, so it comes
+  first. A group's end (`GROUP_OWNED_TABLES`) deletes in the same order: the tombstone writes the
+  group row first, and the 90-day reaper locks it `FOR UPDATE` before deleting what it owns. It is
+  written once, in `utils/seat-eviction.ts`.
+- **The epoch moves from the base the gate read, or not at all.** The gate reads the epoch outside
+  the advance's transaction, and the advance may wait on the seat lock. The advance is
+  `UPDATE ... WHERE "activeEpoch" = base`: of two commits at one base, the second matches nothing and
+  is refused `epoch_mismatch`, whatever the Redis commit lock's 5 s did. A commit-log row already
+  holding that base refuses the advance too, so the log and the epoch never disagree.
+- **The claim.** Before the check that decides a seat (the roster, or
+  `isEntitledToDistributionGroup` over HTTP, always outside the lock) `claimSeat` reads the group's
+  generation and the person's `owedDeparture`. Under the lock `seatClaimHolds` re-reads both - a
+  database read only - and the seat is written only if the generation has not moved and no departure
+  is owed. An eviction therefore ran before the claim
+  (the check sees it), between claim and write (nothing is written), or after the write (it deletes
+  the seat). An activation without a claim is refused and logged at error. The commit gate reads the
+  claim too: a key-group external commit whose author has a departure in progress is refused there
+  (`NOT_A_MEMBER`, logged `reason=departure_in_progress`) before the epoch moves, without asking.
+- **A report promotes under the same lock, and every Redis route follows the commit.** The report's
+  one conditional UPDATE (`promoteReportedSeat`) runs under the seat lock. The route
+  (`group:members:<g>`) is then written by `routeActiveSeat`, after the seat's own transaction
+  committed, under the lock again and only if the seat is still `active`. The gateway reads that set
+  alone - its live broadcast and its election of a peer to answer a request re-check nothing in the
+  database (chat-delivery's queued fan-out reads the active rows) - so a route written for a seat an
+  eviction already deleted would keep a device reached. The two other route writers - a send's
+  reconciliation of the set (`MEMBERS_CACHE_REPAIRED`) and an election door's reload of an empty one
+  (`MEMBERS_CACHE_RELOADED`) - find the missing entries first (`SMISMEMBER`) and add only those still
+  `active` when re-read under the seat lock (`restoreRoutes`).
+- **A send's queued rows cannot outlive a seat.** A send reads its recipients with no lock; its queue
+  write (`enqueueForLiveGroup`) takes the seat lock SHARED before the group row, re-reads who still
+  holds a seat and queues and delivers only to them (a commit's removed devices excepted, logged
+  `SEAT_GONE_NOT_QUEUED`). An eviction waits for the write and its delete then takes those rows; sends
+  into one group never wait for each other.
+- **A commit re-reads its claims in the advance's transaction, and an overtaken one refuses it
+  whole.** Under the seat lock, before the epoch moves, the committer's claim (an external joiner, or
+  a member whose seat is not yet `active`) and each admit's are re-read. A claim an unrelated
+  eviction overtook (`evicted_since_claim`: the group's generation moved) refuses the WHOLE commit
+  with a 409 `SEAT_CLAIM_OVERTAKEN` (`seat: committer|admit`): nothing advances, and the client
+  rebuilds and resubmits at once on a fresh claim. That holds for EVERY commit, an ordinary
+  conversation's included - a pending member's own add or remove carries a committer claim too - so
+  the rebuild lives in `runCommitTransaction` itself (up to `SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS`
+  submissions), with the external join's attempt loop and `admitNewcomer`'s tree re-read above it.
+  Each such refusal proves an eviction landed in between, which is what bounds the retries. A departure in progress still refuses an external join
+  (`NOT_A_MEMBER`, `reason=departure_in_progress`): no leaf enters the tree for a person with no seat.
+- **A device row that ADMITS a device is inserted only beside its key package, read under the
+  lock.** Every such writer reads the device's `KeyPackage` row `FOR SHARE` under the seat lock first
+  (`heldKeyPackages`): `writeClaimedSeat` (the committer's seat, an activation, the group's creator -
+  which also checks the revocation denylist), a commit's admits (`ADMIT_REFUSED reason=no_key_package`;
+  the admit is dropped and the commit accepted, since the leaf belongs to an account that is going),
+  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. **Two known exceptions.** The
+  demotion (`deactivateDeviceMembership`, the stale-device cron among its callers), deliberately:
+  it upserts a `pending` row without that read - the cron demotes precisely a device with no recent
+  key package - and removes the route itself. And `addGroupMember` (a group invite, and the opening
+  of a 1:1 DM), a pre-existing writer not yet converted: it reads the key packages outside any lock
+  and writes the roster row and `pending` seats with no seat lock, so **an erased account can be
+  re-enrolled by a peer's invite, roster row included, even after the erasure's final pass**
+  ([backlog](../backlog.md), P2 "addGroupMember can enrol an erased account after the final erasure
+  pass"). An account erasure deletes the account's key packages FIRST, in a
+  transaction of its own, so a writer either holds one and the delete waits for it - its row is
+  then there for the erasure's discovery - or finds none and writes nothing. The erasure cuts every
+  group it found, under each group's seat lock (`eraseSeats`: rows, queue and routes together), so
+  a run interrupted anywhere leaves what it had not cut still named by a row for the retry.
+  **The ordering does not stop the account itself**: every (re)connection republishes its key
+  package (`register-device`), and a token issued before the deletion is honoured for up to an
+  hour. So the roster rows go once every group was cut (`writePendingSeats` seats a registering
+  device only where its owner is on the roster), and the run ends with a SWEEP - the key packages
+  deleted again, then every group a device row names NOW cut through the same `eraseSeats`. **No
+  device row is deleted outside `eraseSeats`**, because the row is what names the route: a seat
+  admitted after the sweep's read stays whole, row and route, for the FINAL PASS, which core starts
+  once every token expired, so no republish can follow it - termination is that pass's, never the
+  ordering's ([account-erasure](../account-erasure.md)). After it, only a demotion's route-less
+  `pending` row can appear, naming a device with no key package, which `cleanupStaleDevices`
+  collects. Proven on PostgreSQL in `seat-lock.integration.spec.ts` ("a key package republished
+  after the first delete", "a seat admitted after the sweep's read"). `recordSeatEviction` creates no row for an account it is not beginning a
+  departure for, so an eviction after the erasure leaves nothing naming it.
+- **A key group's admits are asked like a join.** An admit writes a `pending` seat its device later
+  promotes by reporting itself, so in a key group each admitted person is asked of social-service
+  (`claimKeyGroupAdmits`, before the commit lock) against a claim re-read under the seat lock: not
+  entitled or departing is `ADMIT_REFUSED`, evicted since is the whole-commit 409 above. The group's epoch is read first, so a
+  commit on another epoch is answered `epoch_mismatch` without asking anyone; the distinct people are
+  then asked in parallel. Unanswered is a 503 for the whole commit, before the epoch moves.
+- **The Welcome store and the key-group eviction take the same seat lock.** A key group has no roster
+  row in chat-delivery, so a Welcome's target is asked of social-service (`resolveWelcomeTarget`)
+  against a claim read before the question. Both stores re-read that claim under the seat lock - a
+  sent Welcome in `enqueueForLiveGroup` (shared), a commit-carried one in the advance's transaction -
+  and refuse `welcome_target_not_member` (`reason=evicted_since_claim` or `departure_in_progress`)
+  when an eviction overtook it - unless the target is also the commit's admit, whose overtaken claim
+  has already refused the whole commit with the 409. The target's `pending` row is written in that same transaction
+  (`ensurePendingSeat`), so an eviction either runs wholly before the store or deletes what it wrote.
+  Evictions and removals end the device rows and the queue through `endDeviceMemberships`, under the
+  lock.
+- **One departure function, two evictions, a named outcome.** Every departure in social-service -
+  `leaveWorkspace`, `kickFromWorkspace` and the account erasure (`removeFromWorkspace`, the community's
+  group and every private salon naming the person), `leaveChannel`, `removeMemberFromChannel`,
+  `updateChannelAccess` - goes through `ChannelService.departDistributionGroups`. It evicts BEFORE the
+  roster write (so a failed eviction aborts a departure that is still retryable), and chat-delivery
+  answers the departure's name; the roster write and a `departed` row in `distribution_departures`
+  (social migration `108`) commit in ONE transaction; then it evicts again with
+  `?phase=after_roster_write&departure=<name>`, which settles that departure and no later one.
+- **The drain asks for an OUTCOME, never the entitlement.** A failed second eviction is logged
+  `[KEY_DISTRIBUTION] second eviction FAILED` and the departure stays owed. The hourly sweep
+  (`drainOwedSeatEvictions`, `[SEAT_DRAIN]`) asks social-service how THAT departure ended
+  (`internal/distribution-groups/departure-outcome`). The entitlement could not answer: it says `true`
+  both before the roster write commits and after a rejoin, and settling on the first lets a seat be
+  written for a person whose departure then commits. The question decides: with no `departed` row
+  yet, social-service writes `cancelled` under the same primary key, so the roster write can no
+  longer commit under that name (it is refused with `DEPARTURE_SUPERSEDED` and rolls back; the person
+  stays a member). The drain applies the outcome under the seat lock only if that departure is still
+  the one owed: `departed` cuts again and settles, `cancelled` settles. It re-reads the row right
+  before asking and skips one that is gone (an account erasure deletes it). A person no longer
+  entitled with nothing recorded is answered `departed` and NOTHING is written - no roster write can
+  restore them under that name, and an erased account's id is not written back after its erasure.
+- **A rejoin after a lost second eviction waits for the drain - deliberately.** While a departure is
+  owed, every claim of that person is refused (`departure_in_progress`), so a person who left, whose
+  second eviction was lost, and who is then re-admitted cannot join the key group until the next
+  hourly pass settles that departure. It is NOT settled at the claim: settling means asking the
+  departure's outcome, and the question DECIDES an undecided departure `cancelled` - so a join
+  attempted by the departing person's own client, while an admin's removal of them is still in flight,
+  would cancel that removal. The drain asks only of a departure its second eviction left behind, at
+  most an hour late; the client's recovery pass retries the join, and nothing is lost but the wait.
+- **An abandoned departure is settled at once.** When a later first eviction or the roster
+  transaction fails, `departDistributionGroups` decides each departure it had begun (`cancelled`, the
+  person still on the roster) and calls
+  `POST mls/distribution-groups/:scope/:scopeId/members/:userId/departures/:departure/cancel`, which
+  settles it under the seat lock and evicts nothing (`settleCancelledDeparture`). Each step logs; one
+  that fails is left to the drain, and the original error is rethrown. The leaving user sees
+  `DEPARTURE_SUPERSEDED` as a retry sentence (`chat_community_departure_retry_error`).
+- **The roster write holds the community's removal lock.** Its transaction opens with
+  `pg_advisory_xact_lock(hashtextextended('community_removal:' || <workspaceId>, 0))`
+  (`COMMUNITY_REMOVAL_LOCK_SQL`); every caller passes the community the departure belongs to. A
+  caller may re-check a permission inside `rosterWrite` against writes serialised on that lock; a
+  refusal thrown there rolls the transaction back (no `departed` record, no roster change) and ends
+  as an abandoned departure, settled `cancelled` above. The first evictions run before the
+  transaction, so no HTTP call is made under the lock. Proven on PostgreSQL
+  (`distribution-departure.integration.spec.ts`, "a refusal re-checked under the community removal
+  lock").
+- **Records end with their group.** A community's deletion deletes the `distribution_departures` rows
+  of its group and its salons' groups in its transaction; a salon group retired deletes its own; an
+  account erasure deletes the account's (`account-erasure.ts`). chat-delivery's `dm_seat_evictions`
+  rows go with their group's purge and with the account's erasure, whose chat-delivery part runs only
+  once social's part - the removals that write those rows - has completed
+  ([account-erasure](../account-erasure.md#ordering-failure-classes-and-operating-it)).
+- **A rolling deploy.** Both migrations (036, 108) are applied before any service is replaced
+  (`deploy-environment.sh` runs `apply_migrations` first). A first eviction answered by an older
+  chat-delivery names no departure: social-service logs `first eviction named NO departure` and evicts
+  plainly after the roster write. An older social-service never names one either, so a newer
+  chat-delivery's departure begun by it stays owed until the drain asks, and is answered from the
+  roster as above.
+
+The interleavings are asserted without a clock in `messaging.commit-log.spec.ts` ("against a
+departure that races it": an eviction while the activation holds the lock, a stale HTTP answer after
+the whole departure, an activation between the two evictions, a late settlement against a newer
+departure, the drain, the admits), in `messaging.one-active-writer.spec.ts` (a report under the lock,
+no route for a seat evicted after its commit), in `members.controller.exclusions.spec.ts` (the
+removal's order under the lock), and in social-service's `distribution-group.spec.ts`: the order
+`evict -> roster -> evict&departure`, the erasure taking the same path, the abandoned departure's
+settlement and the rolling-deploy path. The first-writer-wins race is run against PostgreSQL in
+`distribution-departure.integration.spec.ts` (a transaction held open, the other side waited on
+through `pg_blocking_pids`, then committed or rolled back): the question asked while the roster write
+is in flight reads `departed`, or `cancelled` when it rolls back; a roster write arriving while the
+question is in flight is refused with `DEPARTURE_SUPERSEDED` and the member stays. chat-delivery's
+seat lock is run against PostgreSQL (migration 036 applied) in `seat-lock.integration.spec.ts`, CI job
+`test-chat-delivery-integration`: a claim overtaken while it waits on the lock, a departure refusing claims
+until settled, a send's queue write waiting for an eviction and queueing nothing for that seat, an
+eviction waiting for a send and deleting what it queued, two sends not waiting for each other, a
+route restore waiting for an eviction and writing nothing, a claim refused after a whole account
+erasure with no eviction row of the account left, and a claim overtaken by SOMEONE ELSE's eviction
+refused once and holding on its retry.
+
+**`POST /mls/commit` is rate-limited per user (2026-10-22):** `MLS_COMMIT_LIMIT_PER_MINUTE` (600)
+through `UserThrottlerGuard`, after `HeaderAuthGuard`. A refusal is the throttler's `429` before the
+gate, so the epoch has not moved. Its body is `{ code: 'RATE_LIMITED', retryAfterMs }`, read by
+`refusalFromResponse` into `ApiRefusalError.retryAfterMs`. The client records that wait once for the
+process (`frontend/src/lib/mls-client/commitRateLimit.ts`) because the quota is per ACCOUNT: the
+staged-commit path rolls its commit back and throws `CommitRefusedError('rate_limited')` carrying the
+wait, an external join returns `{ reason: 'rate_limited', retryAfterMs }`, and while the wait holds
+neither stages nor builds anything. The sync watchdog's recovery sweep and its stuck-gap escalations
+stop for the rest of the tick instead of collecting one `429` per group. The number sits above what a
+client's serial commit path produces during a restore and is owed a check against the production
+maximum per user and minute (`mls_commit_log`). The background Welcome's commit
+(`POST /mls/push/send-welcome-and-commit`) and the push-triggered key-group join of #2266
+(`POST /mls/push/key-group-join`), both PushSecret routes, are not throttled, so they do not count
+against this quota.
 
 **What creation writes, and what it deliberately does not.** The `dm_groups` row, and nothing else:
 no `dm_group_members`, no `DeviceGroupMembership`. Both absences are asserted directly in
@@ -1393,9 +1591,11 @@ softening of the window: pinning is somebody deliberately saying this one outliv
 deleting it silently at a year would destroy the one kind of message a human explicitly marked as
 durable. Pinned sets are small and bounded per channel.
 
-**The seeds are swept on the SAME window, and the window is asked for rather than copied.** The
-obvious implementation gives the device its own one-year timer, and that is two windows meant to be
-one - the shape that drifts. Instead:
+**The seeds are swept on the SAME window, and the window is asked for; the client holds only a
+FLOOR equal to it.** The obvious implementation gives the device its own one-year timer, and that is
+two windows meant to be one - the shape that drifts. Instead the server answers liveness and the
+window, and the device bounds that window from below (`GRAINE_RETENTION_FLOOR_DAYS`, pinned equal to
+`CHANNEL_MESSAGE_RETENTION_DAYS` by `retentionFloorPin.test.ts`):
 
 1. `sweepExpiredGraineSeeds` (post-boot, tab-leader only) reads the session ids it holds out of the
    ENCRYPTED rows - id and date, never the seed, so an undecryptable row is swept like any other.
@@ -1411,9 +1611,15 @@ Two refusals carry the design:
 - **A session younger than the window is never dropped, whatever the answer says.** "No message
   names this session" has two causes the answer cannot separate - its messages expired, or it has
   none yet - and only the first is a reason to delete. The window travels back with the answer
-  (`retentionDays`) so the client still holds no copy of it, and it is sent as DAYS rather than as
-  a cutoff instant so both sides of the comparison stay on the device's own clock. A server
-  answering `retentionDays <= 0` gets nothing swept: with no window every session looks old enough.
+  (`retentionDays`); the client holds a floor equal to it, never a second clock, and it is sent as DAYS rather than as
+  a cutoff instant so both sides of the comparison stay on the device's own clock.
+  **Client-side bounds on server-provided retention (2026-10-22):** the answer is bounded from below
+  by `GRAINE_RETENTION_FLOOR_DAYS` = 365 (`retention.ts`), the product window above. An honest
+  server answers exactly that, so the bound changes nothing; an answer below it (zero and negative
+  included) is logged at `error` and the sweep runs with the floor, so no seed younger than a year is
+  ever dropped on a remote number. A non-numeric answer is refused outright. There is no ceiling: it
+  could only delete SOONER than the server says, and the server already decides which sessions are
+  live. **Changing `CHANNEL_MESSAGE_RETENTION_DAYS` means changing the floor in the same change.**
 - **A chunk that went unanswered abandons the whole run.** A failed ask reads exactly like "the
   server names nothing", and acting on it would delete every seed on the device the first time the
   API is down. The server refuses a list over `MAX_LIVE_SESSION_QUERY` = 500 rather than truncating

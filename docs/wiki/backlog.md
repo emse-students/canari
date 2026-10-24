@@ -117,6 +117,32 @@ on a phone or desktop. No decision that 90 days is intended was found. Whether n
 (gate the GC on `deviceWindowMs()`) or the claim is lowered is a product decision; nothing was
 changed. Until it is taken, a native device claims coverage it deleted.
 
+## P2 - addGroupMember can enrol an erased account after the final erasure pass (review of #2258, 2026-10-24)
+
+`MembersController.addGroupMember` (`POST mls/groups/:groupId/members`: a group invite, and the
+opening of a 1:1 DM) is the one admitting writer the seat lock never converted. It reads the
+target's key packages outside any transaction or lock, then writes the roster row, its membership
+interval and `pending` device rows with no seat lock and no `heldKeyPackages`. Nothing refuses an id
+whose account was erased, so any member holding a valid token can POST an erased uuid and recreate a
+roster row naming that person, even after chat-delivery's final erasure pass (no key package is
+left, so no device row; the roster row and interval are enough to name them). Pre-existing, not a
+regression of #2258, which only names it as the second known exception to "every writer that admits
+a device reads its key package under the lock" ([channel-encryption](protocols/channel-encryption.md),
+[account-erasure](account-erasure.md)). Fix direction (from the review): route it through
+`writePendingSeats(enrol=true)`, which already takes the seat lock, re-reads the group and reads
+`heldKeyPackages`; and refuse the target itself, either by a roster-level tombstone that the erasure
+writes and that names no one once its own window ends, or by asking core whether the account exists.
+
+## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
+
+`deleteUserData` tombstones the DMs its discovery found. A DM opened with the account after that
+read (by the account while a token is valid, or by a peer through `addGroupMember`) loses the
+account's roster row to the roster delete and its device rows to the sweep's cut, but its
+`dm_groups` row and the other party's side stay: a 1:1 conversation with one member left. The final
+pass does not find it either, since nothing of the account names it any more. Small and rare (a DM
+opened inside the erasure window); fix with the P2 above, or by having the sweep tombstone any DM
+whose roster the account was on.
+
 ## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
 `withholdReason` places a copy with no `serverTimestamp` against every window widened by
@@ -460,14 +486,26 @@ an unanswered call is a `503 entitlement_unavailable`, never an acceptance
 Owed before a stable: the rate of `[ENTITLEMENT] UNANSWERED` lines on dev, then production, against
 the ~77 key-group joins/day.
 
-## P3 - An external commit's activation can follow an eviction it raced (2026-10-22)
+## P3 - The key-group seat lock: what it does not yet carry (2026-10-22)
 
-The entitlement or roster answer is read before the commit lock, and the activation runs inside it. An
-eviction that lands between the two leaves an `active` row behind, cut only by the next member
-removal commit. The bound and the reasoning are in [channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live).
-The fix makes the eviction and the activation exclude each other. Before choosing between a shared
-lock and a conditional activation, count how often `[DISTRIBUTION_GROUP] evict` and an `ADMITS` or
-activation line for the same user and group fall within one second of each other on production.
+Every seat-creating write (a commit's committer and its admits, a key group's publisher) and every
+eviction share one per-group advisory lock, and a seat claim is the group's own generation,
+`dm_groups."seatGeneration"`, which every eviction moves (chat-delivery migration 036; a claim an
+unrelated eviction overtook refuses the whole commit with a retryable 409 `SEAT_CLAIM_OVERTAKEN`).
+`dm_seat_evictions` only names a key-group departure in progress, and an erasure deletes its rows;
+every key-group departure, account erasure included, goes through one function and
+records its outcome in `distribution_departures` (social migration 108), which the hourly drain asks
+for ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+Both migrations are applied by the release's deploy before the new containers start, and may ride the
+next stable (user, 2026-10-22). The first-writer-wins race runs against PostgreSQL in CI
+(`distribution-departure.integration.spec.ts`), and chat-delivery's seat lock orderings too
+(`seat-lock.integration.spec.ts`, `test-chat-delivery-integration`). A rejoin after a lost second eviction
+waits for the hourly drain, by design ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+Owed: (1) the counts of `[KEY_DISTRIBUTION] second eviction FAILED`, `departure ABANDONED`,
+`abandoned departure NOT settled`, `first eviction named NO departure`, `DEPARTURE_SUPERSEDED`,
+`route NOT written`, `ROUTE_NOT_RESTORED`, `SEAT_GONE_NOT_QUEUED` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
+unnamed line only during the deploy itself); (2) the latency of a key group's commit with admits
+(the questions are asked in parallel, one round trip) measured on dev.
 
 ## P2 - The mobile sign-in returns through a custom scheme: PKCE binds the code, not the app (2026-10-23)
 
@@ -484,15 +522,16 @@ refuses a callback with no verifier
 Owed first: whether `ASWebAuthenticationSession` and the Custom Tab both hand an `https` callback on a
 claimed host back to the app on the bench phones, a reading, since no gate here sees it.
 
-## P3 - `POST /mls/commit` has no rate limit (2026-10-22)
+## P3 - The commit rate limit is not yet checked against production (2026-10-22)
 
-Neither an edge `limit_req` nor the configured `ThrottlerModule` applies to the commit route. A key
-group's external commit costs a social-service call, one or two queries and a log line on each
-service, so a crafted stream of them costs every one of those. A limit must not refuse legitimate
-bursts: a device that rejoins many groups after a restore commits once per group in quick succession.
-Measure first: the maximum number of commits per user per minute on production over 30 days
-(`mls_commit_log`, grouped by sender device and minute). Set the limit above that maximum, then add a
-test that the route answers `429` past it and never below it.
+`POST /mls/commit` is limited to 600 commits per user per minute since 2026-10-22, and a refusal
+carries its wait (`RATE_LIMITED`, `retryAfterMs`) so the client's sweeps stop on it
+([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+The push-triggered key-group joins of #2266 go through `POST /mls/push/key-group-join` (PushSecret),
+which has no throttler, so they do NOT count against this per-user quota. Owed: the production
+maximum per user and minute over 30 days (`mls_commit_log` joined to its sender device's user,
+grouped by minute), and the count of `[THROTTLE] REFUSED MessagingController.validateCommit` lines
+on dev then production, expected 0.
 
 ## P2 - A push registration is not bound to the session that made it (2026-10-22) - DECIDED: build it (user, 2026-10-23)
 
@@ -516,15 +555,10 @@ lastError)` written in the SAME transaction as the session delete and drained li
 `account_erasure_jobs` until chat-delivery answers 2xx. Together these make a session's end and its
 push ending one durable fact.
 
-## P3 - A refused membership report is silent on the client (2026-10-22)
+## Note - a kicked device's membership report (2026-10-22)
 
-A report of `active` now promotes an existing seat only, and is refused (`403 NOT_A_MEMBER`, with
-`reason` `no_seat`, `kicked` or `not_on_roster`) otherwise. `updateInvitationStatus` in
-`mlsDeliveryApi.ts` ignores the status code, so a device whose pending row was purged (the 14-day
-cleanup) before it processed its Welcome stays unrouted with no client-side line; the server's
-`REFUSED ... reason=` warn is the only trace. Owed: log a non-2xx answer at warn on the client.
-
-A kicked device's report is refused until an ADMITTING commit clears the kick, and only clients from
+A refused report of `active` is warned on the client since 2026-10-22 (`[MEMBERSHIP] report of
+active REFUSED`, with the status, code and reason). A kicked device's report is refused until an ADMITTING commit clears the kick, and only clients from
 `0.18.28` (`commitAdmits.ts`) send admits. Measured on production 2026-10-22: `min_client_version` is
 `1.2.7` (enforced by the client, which refuses to sign in below it), and of the 398 devices that
 committed in the 30 days before, 0 reporting a version below `0.18.28` and 0 reporting none committed
@@ -742,7 +776,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret** (environment `development`; today only the repository-level production `FIREBASE_SERVICE_ACCOUNT_JSON` exists): without it dev sends no push and T1, the push-to-banner latency, cannot be measured | 1 secret | [the notification latency P2](#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11) |
 | **send the DSI the log-retention request** (the host's logs and security tooling: each kept 90 days at most, as the privacy policy promises) - the text is ready, in French | 1 e-mail | [dsi-log-retention-request](infrastructure/dsi-log-retention-request.md) |
 | **decide whether a container whose live log is past 60 days is RECREATED unattended** by the daily `log-retention` job (today it only goes red and a human recreates it); it is a production restart, of postgres and redis included | 1 decision | [logging](infrastructure/logging.md#the-90-day-ceiling-2026-10-16) |
-| **read the WebCrypto checkpoint seal on both bench phones, then take draft #2074 out of draft** (decided 2026-10-18: an alpha first, a stable only if clean) | 1 reading | [the P2](#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12) |
+| **set production's `minClientVersion`, and the web rollback floor, to the release tag carrying the hardened v2 reader (#2074)** once it is a stable - the condition the separate writer flip waits on | 1 setting, 1 decision | [the P2](#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **set the `DEV_KLIPY_API_KEY` secret** (environment `development`, the same KLIPY key is fine - KLIPY moves no money and believes nothing about production): since the GIF search moved to the server, dev without it answers "GIF search is not configured" | 1 click | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
@@ -1276,7 +1310,11 @@ Ranked, measured and located on [performance-audit-2026-10-12](frontend/performa
 
 ### P2 - the web checkpoint is 82 % WASM ChaCha20 seal - BUILT, WRITER OFF (draft PR, 2026-10-12)
 
-The framed `state_blob` v2 (WebCrypto AES-GCM on the web, read by `mls-core` everywhere, opened by WebCrypto in the browser) takes a 7.7 MB checkpoint from ~198 to ~47 ms and the cold-start load from ~240 to ~97 ms ([performance-audit](frontend/performance-audit-2026-10-12.md#the-webcrypto-seal-v2---measured-2026-10-12)). **Owed: the one-line flip of `MLS_STATE_SEAL_V2_WRITER_ENABLED`, which is DRAFT #2074** (both conditions checked there: the reader is in the stable `v1.2.7` and `minClientVersion` is at it; decided 2026-10-18: an alpha first, read on both bench phones, a stable only if clean) ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)). Then the encrypt worker and `encryptMlsStateOnMainThread` have no checkpoint caller left and are deleted.
+The framed `state_blob` v2 (WebCrypto AES-GCM on the web, read by `mls-core` everywhere, opened by WebCrypto in the browser) takes a 7.7 MB checkpoint from ~198 to ~47 ms and the cold-start load from ~240 to ~97 ms ([performance-audit](frontend/performance-audit-2026-10-12.md#the-webcrypto-seal-v2---measured-2026-10-12)). **READER FIRST (#2074, review 2026-10-23): the HARDENED reader ships, the writer stays OFF** - a WebCrypto refusal is `unreadable_now` and re-read, never `STATE_ALTERED`, and the verdict on the bytes comes typed from `mls-core` ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)). Why the writer waits: `v1.2.7` turns a refused v2 blob into a PIN-recovery prompt and `v1.4.0` into `STATE_ALTERED`, which rotates the identity irreversibly - [the PIN-rotation P1](#p1---a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user-actually-holds-does-not-get-them-back-in-measured-2026-09-08) again, for any v2 blob reaching such a build (an old tab re-initialising, a web rollback). **Owed, in order:** (1) the release carrying #2074 reaches a stable tag; (2) production's `minClientVersion` AND the allowed web rollback floor are both set at or past that tag (today `minClientVersion` is `1.2.7`); (3) ONLY THEN the flip of `MLS_STATE_SEAL_V2_WRITER_ENABLED` to `true`, in its OWN pull request, an alpha first and read on both bench phones' BROWSERS (user, 2026-10-18), with the reader enumeration of mls-protocol re-checked on `main`; (4) once a stable carries the flip, delete the encrypt worker and `encryptMlsStateOnMainThread` (kept until then so a revert stays one line).
+
+### P2 - unreadable right now on every start has no exit but the user
+
+A web state that WebCrypto refuses and `mls-core` does not prove altered (`unreadable_now`, #2074) is re-read 3 times per start and then stops the login with the blob untouched - with no exit in code if the same browser refuses it on EVERY start. Decided, not forgotten: no silent repair (installing what `mls-core` opened is a second load path behind a failed primary one; rotating is the irreversible loss the branch refuses). The remedy is the user's and `auth_local_state_unreadable_now` names it: free memory, restart the browser; meanwhile the app or another browser (other devices); support before any reset ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)). **Owed:** it can only happen once a v2 blob exists, so after the writer flip ([the P2 above](#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12)) - count the `stayed unreadable after 3 reads` and `bytes that mls-core OPENS` lines per browser, and only if one recurs, decide what the product offers after N starts (an explicit, user-chosen reset; an export first). Nothing before a measurement.
 
 ### P2 - IndexedDB message pages read the whole conversation
 
@@ -2182,7 +2220,7 @@ Swiping right from the leftmost tab opens the camera, and nothing says so. Wante
 - **The double-tap window stays 250 ms**: #1784 (draft) only stops a double tap from also opening the info panel.
 - **Releases while the user is away**: pre-releases freely; a stable only if clean, and never carrying the PIN change (#1777) or the notification landing (#1770), which both want a phone reading first.
 - **Reaper pass 2 is DONE**: 118 devices revoked, 30 940 queued rows removed ([second pass](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#second-pass---2026-10-12)).
-- **The WebCrypto checkpoint seal: DECIDED 2026-10-18 - an alpha first, read on both bench phones, a stable only if clean.** It is built with the writer off and the flip is draft #2074 ([the P2](#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12)). The other levers (fewer or smaller checkpoints) change durability instead, and wait for the TAB-3b answer ([performance audit, #1776](https://github.com/emse-students/canari/pull/1776)).
+- **The WebCrypto checkpoint seal: DECIDED 2026-10-18 - an alpha first, read on both bench phones, a stable only if clean.** Re-sequenced 2026-10-23: #2074 ships the hardened reader with the writer OFF, and the flip is a later pull request gated on both floors reaching that reader's tag ([the P2](#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12)). The other levers (fewer or smaller checkpoints) change durability instead, and wait for the TAB-3b answer ([performance audit, #1776](https://github.com/emse-students/canari/pull/1776)).
 - **Production log retention: DECIDED 2026-10-18 - fewer lines, no retention change.** The per-message `LOG` lines roll the container log over in ~20 minutes ([prod-queue-and-epoch-audit](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md)); they are aggregated per batch since #2018 (`v1.3.0`, [prod-queue-and-epoch-audit](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md)).
 
 **Open pull requests at the end of 2026-10-12** (re-read with `gh pr list --state open`, this list goes stale):

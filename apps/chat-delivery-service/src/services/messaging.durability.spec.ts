@@ -45,6 +45,8 @@ describe('MessagingService - visibility vs durability', () => {
     hvals: jest.fn().mockResolvedValue([]),
     publish: jest.fn().mockResolvedValue(1),
     smembers: jest.fn().mockResolvedValue([]),
+    // Nobody routed yet, unless a test says otherwise: the reconciliation then re-reads and writes.
+    smismember: jest.fn(async (_key: string, ...members: string[]) => members.map(() => 0)),
     pipeline: jest.fn(() => pipelineDouble()),
     hgetall: jest.fn().mockResolvedValue({}),
     hdel: jest.fn().mockResolvedValue(1),
@@ -121,10 +123,15 @@ describe('MessagingService - visibility vs durability', () => {
     manager: {
       transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
         cb({
+          // The shared seat lock the write takes first (`messaging.send-race.spec.ts` asserts it).
+          query: async () => [],
+          // The seats re-read under it are the roster fake's, so nobody is evicted in between.
           getRepository: (entity: { name?: string }) =>
             entity?.name === 'Group'
               ? { find: async () => [{ id: 'g1', deletedAt: null }] }
-              : queuedMessageRepo,
+              : entity?.name === 'DeviceGroupMembership'
+                ? deviceGroupRepo
+                : queuedMessageRepo,
         })
       ),
     },
@@ -151,7 +158,15 @@ describe('MessagingService - visibility vs durability', () => {
    * Groups. An addressed frame is accepted on a key-distribution group only, so the default row is
    * one; a test about a conversation group says so.
    */
-  const groupRepo = emptyRepo();
+  const groupRepo = {
+    ...emptyRepo(),
+    // The seat lock's transaction, which re-reads the roster before a route is written.
+    manager: {
+      transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
+        cb({ query: async () => [], getRepository: () => deviceGroupRepo })
+      ),
+    },
+  };
 
   /**
    * Static KeyPackages - the server-side proof that a device is addressable at all (WP-GHOST-1).
@@ -926,14 +941,17 @@ describe('MessagingService - visibility vs durability', () => {
         ];
         // The fake evaluates the one operator the send path uses, so the RULE is what is tested.
         deviceGroupRepo.find.mockImplementation(
-          async ({ where }: { where: { status: string; admittedAtEpoch?: { value: number } } }) =>
-            where.status === 'active'
-              ? active
-              : pending.filter(
-                  (p) =>
-                    p.admittedAtEpoch !== null &&
-                    p.admittedAtEpoch <= (where.admittedAtEpoch?.value ?? -1)
-                )
+          async ({ where }: { where: { status?: string; admittedAtEpoch?: { value: number } } }) =>
+            // No status is the write's re-read of who holds a seat at all.
+            where.status === undefined
+              ? [...active, ...pending]
+              : where.status === 'active'
+                ? active
+                : pending.filter(
+                    (p) =>
+                      p.admittedAtEpoch !== null &&
+                      p.admittedAtEpoch <= (where.admittedAtEpoch?.value ?? -1)
+                  )
         );
         keyPackageRepo.find.mockResolvedValue([...active, ...pending]);
       };
@@ -991,12 +1009,17 @@ describe('MessagingService - visibility vs durability', () => {
       // noise is what let the old one go unread on 100 % of traffic.
       threeDevices();
       silencePush();
-      redis.sadd.mockResolvedValueOnce(0);
+      redis.smismember.mockImplementationOnce(async (_key: string, ...members: string[]) =>
+        members.map(() => 1)
+      );
       const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => {});
 
       await service.sendMessage(send({ durable: true }));
 
       expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('MEMBERS_CACHE_REPAIRED'));
+      // Nor does it write, or take the seat lock a write needs, on the ordinary send.
+      expect(redis.sadd).not.toHaveBeenCalled();
+      expect(groupRepo.manager.transaction).not.toHaveBeenCalled();
     });
 
     it('accuses when it actually had to repair the routing set', async () => {
@@ -1005,7 +1028,6 @@ describe('MessagingService - visibility vs durability', () => {
       // Reaching this line means an owner did not write, and the fix belongs there.
       threeDevices();
       silencePush();
-      redis.sadd.mockResolvedValueOnce(2);
       const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => {});
 
       await service.sendMessage(send({ durable: true }));

@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { MessagingController } from './messaging.controller';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { MessagingService } from '../services/messaging.service';
 
 /**
@@ -39,6 +40,8 @@ describe('MessagingController - POST mls/commit passes a client commit only', ()
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })

@@ -134,6 +134,7 @@ jobs:
           LYDIA_PROVIDER_TOKEN: ${{ secrets.LYDIA_PROVIDER_TOKEN }}
           LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.LYDIA_PROVIDER_PRIVATE_TOKEN }}
           LYDIA_KEY_ENCRYPTION_SECRET: ${{ secrets.LYDIA_KEY_ENCRYPTION_SECRET }}
+          LIVE_KEY_ENCRYPTION_SECRET: ${{ secrets.LIVE_KEY_ENCRYPTION_SECRET }}
           # `production` or `homologation`, said explicitly: the template's own default is
           # `homologation`, which would send production's Provider pair to Lydia's sandbox.
           LYDIA_ENV: ${{ secrets.LYDIA_ENV }}

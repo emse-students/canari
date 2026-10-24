@@ -21,6 +21,7 @@ import {
   DEFAULT_MODERATOR_PERMISSIONS,
   PIN_REQUIRES_MODERATION,
 } from './permissions';
+import { fakeDepartureManager } from './departure-transaction.fake-spec';
 
 /** A well-formed Graine v2 signature: every salon row carries one (channel-encryption 21.8). */
 const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
@@ -132,6 +133,9 @@ describe('ChannelService security hardening', () => {
       ),
     };
 
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo })),
+    });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,

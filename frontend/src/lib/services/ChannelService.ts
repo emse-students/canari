@@ -1137,9 +1137,10 @@ export class ChannelService {
   /**
    * Of the Graine sessions this device holds, which ones the server still has messages for.
    *
-   * The retention sweep's one question. `retentionDays` comes back with the answer so the client
-   * never compiles in a copy of the window - the server owns that number, and the device needs it
-   * only to refuse dropping a session too young to have lost anything.
+   * The retention sweep's one question. `retentionDays` comes back with the answer because the
+   * server owns that number, and the device needs it only to refuse dropping a session too young to
+   * have lost anything. The sweep bounds it from below (`GRAINE_RETENTION_FLOOR_DAYS`): a remote
+   * number may lengthen a local deletion's delay, never shorten it under the product window.
    *
    * @param sessionIds At most 500; the server REFUSES a longer list rather than truncating it,
    *   because a truncated answer would read as "the rest are dead" and cost live seeds.
