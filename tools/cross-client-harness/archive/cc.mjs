@@ -25,7 +25,7 @@ import { send } from '../chat.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
 import { addMembers, removeMember } from './addmember.mjs';
 import { checkInvariant } from '../invariant.mjs';
-import { CC_ROWS, doubleRemoveOwn, parseCommitLines, rebuiltRaceOwn, refreshRaceOwn } from '../ccrows.mjs';
+import { CC_ROWS, doubleRemoveOwn, parseCommitLines, rebuiltRaceOwn, refreshRaceOwn, refusalCodes } from '../ccrows.mjs';
 import {
   armLeafRefresh,
   assertRowOwns,
@@ -160,6 +160,7 @@ async function play() {
       fromEpoch,
       releasedAt: race.releasedAt,
       decisions: parsed,
+      refusalCodes: refusalCodes(parsed),
       faultRecords: race.records,
       outcomes: race.outcomes,
       ...(armed ? { armedAt: armed.at, ledgerAfter } : {}),

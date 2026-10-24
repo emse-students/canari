@@ -54,7 +54,7 @@ export const CC_ROWS = {
  * membership change of someone not yet in, i.e. a FIFTH campaign account. Recorded on
  * `cross-client-campaign-1-4-1-runners.md`.
  */
-export const CC5_PREMISE = 'CC-5 needs every seat to have committed once (a fifth campaign account), see the runners page';
+export const CC5_PREMISE = 'BLOCKED-ON-ACCOUNT: CC-5 needs every seat to have committed once (a fifth campaign account), see the runners page';
 
 /**
  * The `[COMMIT]` decisions among server lines, in order.
@@ -82,18 +82,33 @@ const onRoster = (view, user) => (view.roster ?? []).some((r) => lower(r.userId)
 const activeSeats = (view, user) => (view.seats ?? []).filter((s) => lower(s.userId) === lower(user) && s.status === 'active' && !s.kicked);
 
 /**
- * THE LOSER'S REFUSAL, as the plan names it: `epoch_mismatch`. A `concurrent_commit` (the gate's
- * Redis lock was held) is ALSO a refusal of the second commit, but it is not the one the plan's
- * `PASS` names - so it FAILS with its own words and goes to the lead as a question about the row,
- * rather than being folded into a pass.
+ * The refusals that are the gate's NORMAL answer to the losing commit of a same-epoch race:
+ * `epoch_mismatch` (the strict epoch gate, or the transaction that lost the advance) and
+ * `concurrent_commit` (the gate's Redis lock was held while the winner was validated). Which one the
+ * loser meets depends on how close the two arrivals were, not on the product being right or wrong.
  */
-function oneEpochRefusal(rejects) {
-  const kinds = rejects.map((r) => r.reason);
-  if (rejects.length === 1 && kinds[0] === 'epoch_mismatch') return { what: 'exactly ONE refusal, epoch_mismatch', ok: true };
-  if (rejects.length === 1 && kinds[0] === 'concurrent_commit') {
-    return { what: 'the loser was refused by the commit LOCK (concurrent_commit), not the epoch gate the plan names - a question for the row', ok: false };
-  }
-  return { what: `exactly ONE refusal, epoch_mismatch (${rejects.length}: ${kinds.join(',') || 'none'})`, ok: false };
+export const RACE_REFUSALS = ['epoch_mismatch', 'concurrent_commit'];
+
+/** The refusal codes the gate returned, in order - recorded in the row's detail. */
+export const refusalCodes = (parsed) => parsed.rejects.map((r) => r.reason);
+
+/**
+ * THE ROW'S CONTRACT IS THE OUTCOME, NOT THE REFUSAL CODE (lead, 2026-10-24): exactly ONE winner of
+ * the shared epoch, and the loser refused with a TYPED race refusal - which of the two codes is
+ * named in the detail. A refusal of any other kind (`commit_malformed`, `device_revoked`...) is not
+ * the race and fails. The plan's CC rows say so.
+ */
+function oneWinnerLoserRefused(parsed, fromEpoch) {
+  const first = parsed.accepts.filter((a) => a.newEpoch === fromEpoch + 1);
+  const codes = refusalCodes(parsed);
+  const untyped = codes.filter((c) => !RACE_REFUSALS.includes(c));
+  return [
+    { what: `exactly ONE winner of epoch ${fromEpoch} (${first.length} accepted to ${fromEpoch + 1})`, ok: first.length === 1 },
+    {
+      what: `the loser refused with a typed race refusal (${codes.join(',') || 'none'})`,
+      ok: codes.length >= 1 && untyped.length === 0,
+    },
+  ];
 }
 
 /** Both gestures reached their own post-condition (an Add's picker closed, a Remove's roster shrank, a send left). */
@@ -113,8 +128,8 @@ const gesturesEnded = (outcomes) =>
  */
 export function rebuiltRaceOwn({ fromEpoch, view, parsed, added, removed = [], outcomes }) {
   const out = [...gesturesEnded(outcomes)];
-  out.push({ what: `TWO commits accepted since the release (${parsed.accepts.length})`, ok: parsed.accepts.length === 2 });
-  out.push(oneEpochRefusal(parsed.rejects));
+  out.push({ what: `TWO commits accepted since the release - the loser's rebuilt one landed (${parsed.accepts.length})`, ok: parsed.accepts.length === 2 });
+  out.push(...oneWinnerLoserRefused(parsed, fromEpoch));
   out.push({ what: `the active epoch moved by exactly two (${fromEpoch} -> ${view.activeEpoch})`, ok: view.activeEpoch === fromEpoch + 2 });
   const moved = commitsSince(view.commitEpochs, fromEpoch);
   out.push({ what: `the commit log holds two rows since ${fromEpoch} (${moved.join(',') || 'none'})`, ok: moved.length === 2 });
@@ -135,7 +150,7 @@ export function rebuiltRaceOwn({ fromEpoch, view, parsed, added, removed = [], o
 export function doubleRemoveOwn({ fromEpoch, view, parsed, removed, outcomes }) {
   const out = [...gesturesEnded(outcomes)];
   out.push({ what: `ONE commit accepted, and no rebuilt second Remove (${parsed.accepts.length})`, ok: parsed.accepts.length === 1 });
-  out.push(oneEpochRefusal(parsed.rejects));
+  out.push(...oneWinnerLoserRefused(parsed, fromEpoch));
   out.push({ what: `the active epoch moved by exactly one (${fromEpoch} -> ${view.activeEpoch})`, ok: view.activeEpoch === fromEpoch + 1 });
   out.push({ what: `${removed.slice(0, 8)} removed: off the roster, no active seat (no leaf)`, ok: !onRoster(view, removed) && activeSeats(view, removed).length === 0 });
   return out;
@@ -157,6 +172,7 @@ export function refreshRaceOwn({ fromEpoch, view, parsed, added, armed, ledgerAf
     ok: !!ledgerAfter && !ledgerAfter.observed && ledgerAfter.at > (armed?.at ?? Infinity),
   });
   out.push({ what: `at least two commits accepted since the release (${parsed.accepts.length})`, ok: parsed.accepts.length >= 2 });
+  out.push(...oneWinnerLoserRefused(parsed, fromEpoch));
   out.push({ what: `the epoch moved by every accepted commit (${fromEpoch} -> ${view.activeEpoch}, ${parsed.accepts.length} accepted)`, ok: view.activeEpoch === fromEpoch + parsed.accepts.length });
   return out;
 }
