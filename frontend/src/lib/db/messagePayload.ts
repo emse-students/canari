@@ -12,6 +12,7 @@
  */
 
 import type { StoredMessage, StoredMessagePatch } from './types';
+import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 
 /** Identity fields stored in plaintext columns rather than inside the encrypted payload. */
 export interface StoredMessageRowKeys {
@@ -35,7 +36,20 @@ export function toMessagePayload(msg: StoredMessage): Record<string, unknown> {
   if (msg.isDeleted) payload.isDeleted = true;
   if (msg.isEdited) payload.isEdited = true;
   if (msg.editedAt) payload.editedAt = msg.editedAt;
+  if (msg.authorship) payload.authorship = msg.authorship;
+  if (msg.editProof) payload.editProof = msg.editProof;
+  if (msg.deleteProof) payload.deleteProof = msg.deleteProof;
+  if (msg.restoredUnverified) payload.restoredUnverified = true;
   return payload;
+}
+
+/** Read a recorded author proof out of an untrusted decrypted payload, or `undefined`. */
+function recordedAuthorship(value: unknown): RecordedAuthorship | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { body, proof, group } = value as Record<string, unknown>;
+  return typeof body === 'string' && typeof proof === 'string' && typeof group === 'string'
+    ? { body, proof, group }
+    : undefined;
 }
 
 /**
@@ -83,5 +97,9 @@ export function fromMessagePayload(
     isDeleted: payload.isDeleted === true ? true : undefined,
     isEdited: payload.isEdited === true ? true : undefined,
     editedAt: positiveNumber(payload.editedAt),
+    authorship: recordedAuthorship(payload.authorship),
+    editProof: recordedAuthorship(payload.editProof),
+    deleteProof: recordedAuthorship(payload.deleteProof),
+    restoredUnverified: payload.restoredUnverified === true ? true : undefined,
   };
 }
