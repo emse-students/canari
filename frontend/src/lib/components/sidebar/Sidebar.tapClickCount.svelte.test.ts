@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * ONE TAP ON A SALON ROW IS ONE CLICK - THE BROWSER'S - AND ONE ACTIVATION.
  *

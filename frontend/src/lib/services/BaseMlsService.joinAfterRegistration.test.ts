@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Same import-cycle break as `BaseMlsService.externalJoin.test.ts`.
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));

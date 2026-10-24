@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Enter on a focused salon row opened nothing for whoever may reorder salons: the row is the
  * draggable of a `svelte-dnd-action` zone, and the library claims Enter and Space as "start a

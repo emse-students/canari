@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * WHAT A CARD SHOWS OF ITS COMMENTS (`CommentsPreview`): nothing for a post nobody commented on, else
  * the newest comment, the count and a line to write one - and every tap opens the sheet.

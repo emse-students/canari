@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Stub Tauri internals before any import: the CJS `@tauri-apps/api/core` reads this global.
 const tauriInvokeStub = vi.fn((cmd: string) => {
   if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);

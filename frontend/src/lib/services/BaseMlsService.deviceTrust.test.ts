@@ -31,6 +31,9 @@ type Proto = {
 };
 const proto = BaseMlsService.prototype as unknown as Proto;
 
+/** The intent the transaction hands its stage, which the platform records with the commit. */
+const INTENT = new Uint8Array([7]);
+
 function makeCtx(verdict: KeyPackageVerdict) {
   const staged = {
     commit: new Uint8Array([1]),
@@ -46,10 +49,12 @@ function makeCtx(verdict: KeyPackageVerdict) {
     exportRatchetTree: vi.fn(async () => new Uint8Array([4])),
     handOverDeviceEvents: vi.fn(async () => {}),
     // Runs the stage function and hands back what the real transaction would after a merge.
-    runCommitTransaction: vi.fn(async (_g: string, stage: () => Promise<typeof staged>) => {
-      const s = await stage();
-      return { welcome: s.welcome, ratchetTree: new Uint8Array([4]), addedDeviceIds: [] };
-    }),
+    runCommitTransaction: vi.fn(
+      async (_g: string, stage: (intent: Uint8Array) => Promise<typeof staged>) => {
+        const s = await stage(INTENT);
+        return { welcome: s.welcome, ratchetTree: new Uint8Array([4]), addedDeviceIds: [] };
+      }
+    ),
   };
 }
 
@@ -86,9 +91,11 @@ describe('BaseMlsService.addMember - the device a package was fetched for', () =
 
     await proto.addMember.call(ctx, 'g1', device, ['Bob:web-1']);
 
-    expect(ctx.stageAddMembers).toHaveBeenCalledWith('g1', [
-      { keyPackage: device.keyPackage, identity: 'Bob:web-1' },
-    ]);
+    expect(ctx.stageAddMembers).toHaveBeenCalledWith(
+      'g1',
+      [{ keyPackage: device.keyPackage, identity: 'Bob:web-1' }],
+      INTENT
+    );
   });
 
   // NOT A TRUST QUESTION, SO NOT A TRUST ERROR: an expired package keeps reaching the Add, which
@@ -109,10 +116,14 @@ describe('BaseMlsService.addMembersBulk - every package travels with its identit
 
     await proto.addMembersBulk.call(ctx, 'g1', [device, other]);
 
-    expect(ctx.stageAddMembers).toHaveBeenCalledWith('g1', [
-      { keyPackage: device.keyPackage, identity: 'Bob:web-1' },
-      { keyPackage: other.keyPackage, identity: 'carol:ios-2' },
-    ]);
+    expect(ctx.stageAddMembers).toHaveBeenCalledWith(
+      'g1',
+      [
+        { keyPackage: device.keyPackage, identity: 'Bob:web-1' },
+        { keyPackage: other.keyPackage, identity: 'carol:ios-2' },
+      ],
+      INTENT
+    );
   });
 });
 
@@ -183,10 +194,10 @@ describe('BaseMlsService.replaceMember - one commit, vetted first', () => {
       runCommitTransaction: vi.fn(
         async (
           _g: string,
-          stage: () => Promise<typeof staged>,
+          stage: (intent: Uint8Array) => Promise<typeof staged>,
           _opts?: { excludeDeviceIds?: string[]; exportTree?: boolean }
         ) => {
-          const s = await stage();
+          const s = await stage(INTENT);
           return { welcome: s.welcome, ratchetTree: new Uint8Array([4]) };
         }
       ),
@@ -200,11 +211,19 @@ describe('BaseMlsService.replaceMember - one commit, vetted first', () => {
     expect(ctx.stageReplaceDevice).not.toHaveBeenCalled();
   });
 
+  // A REPLACEMENT GOES THROUGH THE GATE LIKE EVERY COMMIT, SO ITS STAGE RECORDS THE INTENT: a stage
+  // with no record is cleared as never sent, and a replacement whose answer was lost could not be
+  // resubmitted.
   it('stages the replacement for the identity the package was fetched for, in one transaction', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     const ctx = ctxWith('pinned');
     const out = await replace.call(ctx, 'g1', device, ['Bob:web-1']);
-    expect(ctx.stageReplaceDevice).toHaveBeenCalledWith('g1', 'Bob:web-1', device.keyPackage);
+    expect(ctx.stageReplaceDevice).toHaveBeenCalledWith(
+      'g1',
+      'Bob:web-1',
+      device.keyPackage,
+      INTENT
+    );
     expect(ctx.runCommitTransaction).toHaveBeenCalledTimes(1);
     expect(ctx.runCommitTransaction.mock.calls[0][2]).toEqual({
       excludeDeviceIds: ['Bob:web-1'],

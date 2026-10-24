@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * ESCAPE IS LISTENED FOR ONLY WHILE A POPOVER IS OPEN.
  *

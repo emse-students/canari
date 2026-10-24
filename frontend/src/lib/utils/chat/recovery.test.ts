@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
 }));

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Break the app-wide import cycle (auth store -> composables -> mlsService -> subclasses ->
 // BaseMlsService) that otherwise loads the concrete services before BaseMlsService is defined.
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
@@ -24,6 +25,7 @@ describe('TauriMlsService.openLocalStateWithKey - the group caches', () => {
     localStorage.clear();
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'lister_groupes') return ['group-held'];
+      if (cmd === 'obtenir_epoch') return 3;
       return undefined;
     });
   });
@@ -54,8 +56,8 @@ describe('TauriMlsService.openLocalStateWithKey - the group caches', () => {
   });
 
   it('burns the generations this device sent but never checkpointed, as init does', async () => {
-    noteFrameEmitted('user-1', 'group-held');
-    noteFrameEmitted('user-1', 'group-held');
+    noteFrameEmitted('user-1', 'group-held', 3);
+    noteFrameEmitted('user-1', 'group-held', 3);
     const svc = new TauriMlsService();
     (svc as unknown as { deviceId: string }).deviceId = 'device-1';
 

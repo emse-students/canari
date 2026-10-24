@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A SALON TEXT IS SHOWN AT ONCE, AND A REFUSAL NEVER MAKES IT VANISH (WP-OFF-1, WP-OFF-2).
  *

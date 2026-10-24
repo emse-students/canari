@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The camera tab draws one clear state per outcome of the first open (CanaReels, C5): opening, each of
  * the three refusals with its own sentence and a retry, and the live preview with its lens controls.

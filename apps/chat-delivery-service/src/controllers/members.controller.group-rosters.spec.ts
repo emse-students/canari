@@ -12,6 +12,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 
 /**
@@ -23,6 +24,7 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
 describe('MembersController.getGroupRosters - many rosters, one read, the same refusal per group', () => {
   let controller: MembersController;
   let groupMemberRepo: { find: jest.Mock };
+  let revokedRepo: { find: jest.Mock };
 
   const ROWS = [
     { groupId: 'g-a', userId: 'alice' },
@@ -34,6 +36,7 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
 
   beforeEach(async () => {
     groupMemberRepo = { find: jest.fn().mockResolvedValue(ROWS) };
+    revokedRepo = { find: jest.fn().mockResolvedValue([]) };
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MembersController],
       providers: [
@@ -43,6 +46,7 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
         { provide: getRepositoryToken(KeyPackage), useValue: {} },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
         { provide: getRepositoryToken(QueuedMessage), useValue: {} },
+        { provide: getRepositoryToken(RevokedDevice), useValue: revokedRepo },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: {} },
         { provide: 'REDIS_CLIENT', useValue: {} },
         { provide: DataSource, useValue: {} },
@@ -107,8 +111,63 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
     expect(await controller.getGroupRosters({ groupIds: [] }, 'alice', undefined)).toEqual({
       rosters: {},
       refused: [],
+      revoked: {},
     });
     expect(groupMemberRepo.find).not.toHaveBeenCalled();
+    expect(revokedRepo.find).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A REVOKED DEVICE KEEPS ITS LEAF UNTIL A MEMBER REMOVES IT, and the member needs to KNOW which
+   * leaves are revoked - an allowlist, never "every leaf the routing table forgot". So each answered
+   * group names the revoked devices of the people on its roster, from the ONE active-revocation
+   * rule every other read of the table applies.
+   */
+  describe('revoked devices of each answered roster', () => {
+    it('names the revoked devices of roster members, per answered group', async () => {
+      revokedRepo.find.mockResolvedValue([
+        { userId: 'bob', deviceId: 'phone-1' },
+        { userId: 'carol', deviceId: 'web-2' },
+      ]);
+
+      const got = await controller.getGroupRosters(
+        { groupIds: ['g-a', 'g-b'] },
+        'alice',
+        undefined
+      );
+
+      expect(got.revoked).toEqual({ 'g-a': ['bob:phone-1'], 'g-b': ['carol:web-2'] });
+      // ONE query, over every answered roster's users, under the ban window.
+      expect(revokedRepo.find).toHaveBeenCalledTimes(1);
+      const where = revokedRepo.find.mock.calls[0][0].where;
+      expect([...where.userId.value].sort((a, b) => a.localeCompare(b))).toEqual([
+        'alice',
+        'bob',
+        'carol',
+      ]);
+      expect(where.revokedAt).toBeDefined();
+    });
+
+    it('never names a device of a refused group', async () => {
+      revokedRepo.find.mockResolvedValue([{ userId: 'dave', deviceId: 'x' }]);
+
+      const got = await controller.getGroupRosters(
+        { groupIds: ['g-a', 'g-other'] },
+        'alice',
+        undefined
+      );
+
+      expect(got.revoked).toEqual({});
+      expect(JSON.stringify(got)).not.toContain('dave');
+      const where = revokedRepo.find.mock.calls[0][0].where;
+      expect([...where.userId.value].sort((a, b) => a.localeCompare(b))).toEqual(['alice', 'bob']);
+    });
+
+    it('asks nothing when no roster was answered', async () => {
+      const got = await controller.getGroupRosters({ groupIds: ['g-other'] }, 'alice', undefined);
+      expect(got.revoked).toEqual({});
+      expect(revokedRepo.find).not.toHaveBeenCalled();
+    });
   });
 
   it('refuses a body that is not a list, a malformed id, and more than the cap', async () => {

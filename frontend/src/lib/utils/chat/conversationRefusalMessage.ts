@@ -1,5 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import type { ConversationRefusal } from '$lib/utils/chat/groupCreation';
+import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
+import { showToast } from '$lib/stores/toast.svelte';
 
 /**
  * THE ONE PLACE A REFUSAL BECOMES A SENTENCE, AND THE REASON IT IS A TABLE.
@@ -19,6 +21,7 @@ const SENTENCES: Record<ConversationRefusal, () => string> = {
   blocked: () => m.chat_modal_error_blocked(),
   'block-check-unavailable': () => m.chat_modal_error_block_check_unavailable(),
   'peer-has-no-device': () => m.chat_modal_error_peer_has_no_device(),
+  'follower-tab': () => m.chat_error_follower_tab(),
   'creation-failed': () => m.chat_modal_error_creation_failed(),
 };
 
@@ -30,4 +33,21 @@ const SENTENCES: Record<ConversationRefusal, () => string> = {
  */
 export function conversationRefusalMessage(reason: ConversationRefusal): string {
   return SENTENCES[reason]();
+}
+
+/**
+ * Tells the member, when a group action failed because this tab may not commit
+ * (`FollowerTabCommitError`), that it must be done in the main tab. Read from the error's TYPE,
+ * never its text. Every other failure is left to the caller's own handling.
+ *
+ * @param e - what the group action threw.
+ * @returns whether the failure was that refusal and was shown.
+ */
+export function reportFollowerTabRefusal(e: unknown): boolean {
+  if (!(e instanceof FollowerTabCommitError)) return false;
+  console.warn(
+    `[GROUP] a group action was refused in a follower tab (${e.groupId.slice(0, 8)}...)`
+  );
+  showToast(conversationRefusalMessage('follower-tab'));
+  return true;
 }

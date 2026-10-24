@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE ADMIN QUEUE'S LIVE ROW (WP-L8, client half): what a moderator reads about a reported live,
  * and the one control that acts on it.

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PERMISSION GRID SHOWS EVERY ROLE WITHOUT A SIDEWAYS SCROLL, AT ANY WIDTH.
  *

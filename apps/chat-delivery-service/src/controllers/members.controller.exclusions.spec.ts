@@ -13,6 +13,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 
 /**
@@ -246,6 +247,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
           },
         },
         { provide: getRepositoryToken(QueuedMessage), useValue: {} },
+        { provide: getRepositoryToken(RevokedDevice), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: {} },
         { provide: 'REDIS_CLIENT', useValue: redis },
         { provide: DataSource, useValue: dataSource },

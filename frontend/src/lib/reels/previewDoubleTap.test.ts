@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A double tap on the camera preview flips the lens (user, 2026-10-22), also while another finger
  * HOLDS the shutter - which is how a take is filmed, and why the taps are read from the pointers and

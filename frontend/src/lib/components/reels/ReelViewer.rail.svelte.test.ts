@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE CANAREELS RAIL AND ITS COMMENTS SHEET (user, 2026-10-19, Instagram's Reels): the heart on the
  * card's reaction path (`posts/postReaction.ts`), the comments over the playing reel as a history

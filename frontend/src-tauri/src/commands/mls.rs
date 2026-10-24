@@ -9,6 +9,7 @@ use crate::state::{
     decrypt_messages_batch, AppState, BatchDecryptItem, DecryptedFrame, KeyPackageBatchResult,
     PendingDb,
 };
+use mls_core::pending_submission::PendingSubmissionRead;
 use mls_core::{DecryptErrorKind, MlsManager};
 use std::sync::Mutex;
 
@@ -581,6 +582,7 @@ pub(crate) fn ajouter_membres_bulk(
     group_id: String,
     key_packages_bytes: Vec<Vec<u8>>,
     expected_identities: Vec<String>,
+    intent: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<StagedBulkAdd, String> {
     let mut lock = state
@@ -594,22 +596,32 @@ pub(crate) fn ajouter_membres_bulk(
     // ratchet tree via exporter_ratchet_tree.
     let refs: Vec<&[u8]> = key_packages_bytes.iter().map(|v| v.as_slice()).collect();
     // The fifth element is the external-join base for the epoch the commit creates: submitted WITH
-    // the commit by the caller, never published on its own (COMM-22).
+    // the commit by the caller, never published on its own (COMM-22). Recorded with `intent` in
+    // this same call, under this same lock: no checkpoint holds the staged commit without it.
     let expected: Vec<&str> = expected_identities.iter().map(String::as_str).collect();
-    let ((commit, welcome, added, skipped), group_info) = manager
-        .add_members_bulk_with_base(&group_id, &refs, &expected)
+    let (record, skipped) = manager
+        .add_members_recorded(&group_id, &refs, &expected, intent)
         .map_err(|e| e.to_string())?;
-    Ok((commit, welcome, added, skipped, group_info))
+    let welcome = (!record.welcome.is_empty()).then_some(record.welcome);
+    Ok((
+        record.commit,
+        welcome,
+        record.added_indices,
+        skipped,
+        record.group_info,
+    ))
 }
 
 /// Stages ONE commit that removes the device `identity`'s leaf and adds it back from `key_package`
 /// (the repair of a device whose leaf is still in the tree), without merging (C7-A). Returns
-/// `(commit, welcome, group_info)` - see `MlsManager::replace_device_with_base`.
+/// `(commit, welcome, group_info)` - see `MlsManager::replace_device_with_base`. Recorded with
+/// `intent` in this same call, under this same lock (`MlsManager::replace_device_recorded`).
 #[tauri::command]
 pub(crate) fn remplacer_appareil(
     group_id: String,
     identity: String,
     key_package: Vec<u8>,
+    intent: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<mls_core::ReplaceDeviceResult, String> {
     let mut lock = state
@@ -617,9 +629,10 @@ pub(crate) fn remplacer_appareil(
         .lock()
         .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
-    manager
-        .replace_device_with_base(&group_id, &identity, &key_package)
-        .map_err(|e| e.to_string())
+    let record = manager
+        .replace_device_recorded(&group_id, &identity, &key_package, intent)
+        .map_err(|e| e.to_string())?;
+    Ok((record.commit, record.welcome, record.group_info))
 }
 
 /// Whether `key_package` may be added as `expected_identity` (`userId:deviceId`), without staging
@@ -821,6 +834,7 @@ pub(crate) fn lister_identites_membres(
 pub(crate) fn retirer_membres(
     group_id: String,
     user_ids: Vec<String>,
+    intent: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<mls_core::StagedRemovalResult, String> {
     let mut lock = state
@@ -831,7 +845,8 @@ pub(crate) fn retirer_membres(
 
     let id_slices: Vec<&str> = user_ids.iter().map(|s| s.as_str()).collect();
     manager
-        .remove_members_for_users(&group_id, &id_slices)
+        .remove_members_for_users_recorded(&group_id, &id_slices, intent)
+        .map(|r| (r.commit, r.group_info))
         .map_err(|e| e.to_string())
 }
 
@@ -839,6 +854,7 @@ pub(crate) fn retirer_membres(
 pub(crate) fn retirer_membres_par_appareil(
     group_id: String,
     device_identities: Vec<String>,
+    intent: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<mls_core::StagedRemovalResult, String> {
     let mut lock = state
@@ -849,8 +865,185 @@ pub(crate) fn retirer_membres_par_appareil(
 
     let id_slices: Vec<&str> = device_identities.iter().map(|s| s.as_str()).collect();
     manager
-        .remove_members_for_devices(&group_id, &id_slices)
+        .remove_members_for_devices_recorded(&group_id, &id_slices, intent)
+        .map(|r| (r.commit, r.group_info))
         .map_err(|e| e.to_string())
+}
+
+/// Stages a refresh of this device's own leaf in `group_id` (`MlsManager::stage_self_update_recorded`):
+/// an empty commit with a path and no proposal, recorded with `intent` in the same call. Merged by
+/// `confirmer_commit` or cleared by `annuler_commit` on the server's answer, like every other staged
+/// commit.
+#[tauri::command]
+pub(crate) fn rafraichir_feuille(
+    group_id: String,
+    intent: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<mls_core::StagedSelfUpdateResult, String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager
+        .stage_self_update_recorded(&group_id, intent)
+        .map(|r| (r.commit, r.group_info))
+        .map_err(|e| e.to_string())
+}
+
+/// When this device's leaf in `group_id` was minted (Unix seconds), or `None` once a commit
+/// replaced it (`MlsManager::own_leaf_minted_at`).
+#[tauri::command]
+pub(crate) fn date_feuille(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<Option<u64>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .own_leaf_minted_at(&group_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Whether this device's current context in `group_id` is the one the served base `group_info`
+/// describes (`MlsManager::own_context_matches_base`) - the fork gate of the periodic refresh.
+#[tauri::command]
+pub(crate) fn contexte_correspond_base(
+    group_id: String,
+    group_info: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<bool, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .own_context_matches_base(&group_id, &group_info)
+        .map_err(|e| e.to_string())
+}
+
+/// The record of a staged commit, as `soumission_en_attente` hands it to TypeScript: the same
+/// three answers, in the same order, as the WASM binding's array.
+#[derive(serde::Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub(crate) enum SoumissionLue {
+    None,
+    Unreadable,
+    #[serde(rename_all = "camelCase")]
+    Recorded {
+        intent: Vec<u8>,
+        base_epoch: u64,
+        commit: Vec<u8>,
+        group_info: Vec<u8>,
+        welcome: Option<Vec<u8>>,
+        added_indices: Vec<u32>,
+    },
+}
+
+/// The record of `group_id`'s staged commit (`MlsManager::pending_submission`).
+#[tauri::command]
+pub(crate) fn soumission_en_attente(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<SoumissionLue, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(match manager.pending_submission(&group_id) {
+        PendingSubmissionRead::None => SoumissionLue::None,
+        PendingSubmissionRead::Unreadable => SoumissionLue::Unreadable,
+        PendingSubmissionRead::Recorded(r) => SoumissionLue::Recorded {
+            intent: r.intent,
+            base_epoch: r.base_epoch,
+            commit: r.commit,
+            group_info: r.group_info,
+            welcome: (!r.welcome.is_empty()).then_some(r.welcome),
+            added_indices: r.added_indices,
+        },
+    })
+}
+
+/// Every group holding a staged commit (`MlsManager::groups_with_pending_commit`).
+#[tauri::command]
+pub(crate) fn groupes_commit_en_attente(
+    state: tauri::State<AppState>,
+) -> Result<Vec<String>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.groups_with_pending_commit())
+}
+
+/// Merges `group_id`'s accepted Add and, in the same call, records its Welcome as owed to
+/// `recipients` (`MlsManager::merge_pending_commit_owing_welcome`).
+#[tauri::command]
+pub(crate) fn confirmer_commit_welcome_du(
+    group_id: String,
+    recipients: Vec<String>,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager
+        .merge_pending_commit_owing_welcome(&group_id, recipients)
+        .map_err(|e| e.to_string())
+}
+
+/// One owed Welcome, as `welcomes_dus` hands it to TypeScript.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WelcomeDu {
+    group_id: String,
+    welcome: Vec<u8>,
+    ratchet_tree: Vec<u8>,
+    recipients: Vec<String>,
+}
+
+/// Every Welcome still owed (`MlsManager::owed_welcomes`).
+#[tauri::command]
+pub(crate) fn welcomes_dus(state: tauri::State<AppState>) -> Result<Vec<WelcomeDu>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager
+        .owed_welcomes()
+        .into_iter()
+        .map(|w| WelcomeDu {
+            group_id: w.group_id,
+            welcome: w.welcome,
+            ratchet_tree: w.ratchet_tree,
+            recipients: w.recipients,
+        })
+        .collect())
+}
+
+/// `recipient` was sent `group_id`'s owed Welcome (`MlsManager::welcome_delivered`).
+#[tauri::command]
+pub(crate) fn welcome_remis(
+    group_id: String,
+    recipient: String,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager.welcome_delivered(&group_id, &recipient);
+    Ok(())
 }
 
 /// Confirms (merges) a *staged* commit (ADD or REMOVE) AFTER the server accepts it

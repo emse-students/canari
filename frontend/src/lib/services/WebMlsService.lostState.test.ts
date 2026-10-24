@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DEVICE THAT KEPT ITS ID BUT LOST ITS STATE IS A NEW DEVICE (lead decision, 2026-10-22).
  *
@@ -31,6 +32,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     deviceId: '',
     delivery: { userId: '', deviceId: '' },
     client: null,
+    owedSendBurns: new Map(),
+    unprovenSendRatchets: new Set(),
+    owedBurnInFlight: new Map(),
     stateWasExpected: false,
     restoreDeviceIdFromNative: vi.fn().mockResolvedValue(null),
     persistDeviceIdNatively: vi.fn().mockResolvedValue(undefined),

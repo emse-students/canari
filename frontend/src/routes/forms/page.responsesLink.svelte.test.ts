@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A LINK NAMING ONE FORM'S RESPONSES (`/forms?responses=<id>`, the organiser alert for a payment
  * over capacity) opens that form's accordion on the list once it has loaded - and a link naming a

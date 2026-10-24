@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The backdrop paints ONCE per source, on an event, and has no per-frame work: no timer, no animation
  * frame, no second video (Mi 9T, 2026-10-16: a 250 ms re-sample cost ~25 ms a read and holed the

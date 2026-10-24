@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE EMISSION HALF OF THE ADMISSION POLICY: no AUTOMATIC Add brings a new user into a group.
  *

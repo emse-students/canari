@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DeviceEvent } from '$lib/mls-client/deviceTrust';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';

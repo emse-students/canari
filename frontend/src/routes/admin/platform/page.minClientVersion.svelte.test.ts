@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE /admin/platform SCREEN, the one control that can lock out every client (mechanism-audit,
  * finding 3). The CEILING itself (a `minClientVersion` above the server's own version) lives on the

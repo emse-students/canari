@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * WHAT THE GATE DOES BETWEEN TWO ATTEMPTS (iPhone 12, `1.2.9-alpha.2`, 2026-10-16).
  *

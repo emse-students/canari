@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE BROADCASTER'S SCREEN, mounted over a fake camera and server: the one-screen rules with the
  * server's numbers, the battery warning, Start, the on-air badge and the quiet reconnecting state,

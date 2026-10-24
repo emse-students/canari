@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * MINESWEEPER FULL-SCREEN CHROME (user, 2026-10-07): the board fills the screen and the only
  * visible control besides the HUD is a floating leaderboard button. Pinned: no tab bar, the

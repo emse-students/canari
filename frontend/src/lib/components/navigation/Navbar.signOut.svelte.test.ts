@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A SIGN-OUT CAN WAIT UP TO THE LOGOUT DEADLINE FOR THE SERVER'S REVOCATION (30 s), so the button
  * says it is busy and a second tap is ignored - it would otherwise send a second logout.

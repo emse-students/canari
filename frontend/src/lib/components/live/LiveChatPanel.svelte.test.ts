@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE LIVE CHAT PANEL, MOUNTED: a line is TEXT (a link or markup stays text, C15), my own line says
  * "You", a failed line shows its reason and offers retry only where retrying can help, the hide

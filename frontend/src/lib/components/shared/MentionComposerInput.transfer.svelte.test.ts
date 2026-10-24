@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * NOTHING BUT TEXT EVER ENTERS THE BODY, AND MEDIA GOES WHERE MEDIA IS KEPT.
  *

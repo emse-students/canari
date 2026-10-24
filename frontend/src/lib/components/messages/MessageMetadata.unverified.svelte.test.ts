@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A RESTORED MESSAGE WHOSE AUTHOR NOTHING PROVES IS SHOWN, MARKED, AND EXPLAINED ON TAP.
  *

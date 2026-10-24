@@ -134,6 +134,8 @@ export const ACCOUNT_KEY = {
   notReadySince: (userId: string, groupId: string) => `mls_not_ready_since:${userId}:${groupId}`,
   /** `WebMlsService` / `TauriMlsService`: the name this device announces for the account. */
   deviceName: (userId: string, deviceId: string) => `device-name:${userId}:${deviceId}`,
+  /** `leafRefresh.ts`: when this device's own commits last replaced its leaf, per group. */
+  leafRefresh: (userId: string, deviceId: string) => `mls_leaf_refresh:${userId}:${deviceId}`,
   /**
    * `refusedDevices.ts`: the devices THIS device refused for a changed key, never fetched again - a
    * JSON array of `userId:deviceId`, keyed by this device because the pins are its own.
@@ -200,6 +202,7 @@ function keyPrefixes(userId: string): string[] {
     ACCOUNT_KEY.historyAudit(userId, ''),
     ACCOUNT_KEY.notReadySince(userId, ''),
     ACCOUNT_KEY.deviceName(userId, ''),
+    ACCOUNT_KEY.leafRefresh(userId, ''),
     ACCOUNT_KEY.refusedDevices(userId, ''),
   ];
 }

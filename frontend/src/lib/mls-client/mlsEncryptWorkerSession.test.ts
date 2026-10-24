@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Stub global fetch early to prevent WASM fetches via happy-dom when Worker modules are loaded.
 globalThis.fetch = vi.fn().mockResolvedValue(new Response(new Uint8Array()));
 

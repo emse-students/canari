@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The vault's THREE ways of not returning a key, and why each one owes a different line - and,
  * since 2026-10-14, the account it belongs to.

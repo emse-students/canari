@@ -1,5 +1,6 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import type { OwedWelcome, PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
@@ -50,6 +51,7 @@ import { getToken } from '$lib/stores/auth';
 import {
   loadMlsState,
   saveMlsState,
+  MlsCheckpointNotWrittenError,
   MlsStateWriteRefusedError,
   type MlsStateWriteLatch,
   toBase64,
@@ -962,7 +964,7 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** WASM client wrapper - calls `this.client.create_group` to create a new local MLS group. */
-  async createGroup(groupId: string): Promise<void> {
+  protected async createGroupImpl(groupId: string): Promise<void> {
     this.client.create_group(groupId);
   }
 
@@ -1024,9 +1026,24 @@ export class WebMlsService extends BaseMlsService {
    *
    * And on `ended`: the latch is handed to the write and read IN ITS TRANSACTION, after this capture
    * and its off-thread seal - a refused rotation may have set it while this one was encrypting.
+   *
+   * EVERY OTHER FAILURE IS TYPED BY WHERE IT HAPPENED ({@link MlsCheckpointNotWrittenError}): the
+   * export and seal, or the IndexedDB transaction, which stores all of it or none of it. A caller
+   * deciding whether a commit's stage can be on disk reads that, never the text.
    */
   protected async writeCheckpoint(deviceKeyB64: string, latch: MlsStateWriteLatch): Promise<void> {
-    const outcome = await saveMlsState(this.userId, await this.saveState(deviceKeyB64), latch);
+    let sealed: Uint8Array;
+    try {
+      sealed = await this.saveState(deviceKeyB64);
+    } catch (e) {
+      throw new MlsCheckpointNotWrittenError('export', e);
+    }
+    let outcome: Awaited<ReturnType<typeof saveMlsState>>;
+    try {
+      outcome = await saveMlsState(this.userId, sealed, latch);
+    } catch (e) {
+      throw new MlsCheckpointNotWrittenError('store', e);
+    }
     if (outcome === 'stale' || outcome === 'collision' || outcome === 'ended')
       throw new MlsStateWriteRefusedError(outcome);
   }
@@ -1248,7 +1265,8 @@ export class WebMlsService extends BaseMlsService {
    */
   protected async stageAddMembers(
     groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; identity: string }>
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>,
+    intent: Uint8Array
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -1259,7 +1277,8 @@ export class WebMlsService extends BaseMlsService {
     const res = this.client.add_members_bulk(
       groupId,
       devices.map((d) => d.keyPackage),
-      devices.map((d) => d.identity)
+      devices.map((d) => d.identity),
+      intent
     );
     return {
       commit: res[0] as Uint8Array,
@@ -1270,13 +1289,15 @@ export class WebMlsService extends BaseMlsService {
     };
   }
 
-  /** WASM client wrapper - `replace_device`, `[commit, welcome, group_info]`, staged not merged. */
+  /** WASM client wrapper - `replace_device`, `[commit, welcome, group_info]`, staged not merged
+   *  and recorded with `intent` in the same call. */
   protected async stageReplaceDevice(
     groupId: string,
     identity: string,
-    keyPackage: Uint8Array
+    keyPackage: Uint8Array,
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }> {
-    const res = this.client.replace_device(groupId, identity, keyPackage);
+    const res = this.client.replace_device(groupId, identity, keyPackage, intent);
     return {
       commit: res[0] as Uint8Array,
       welcome: res[1] as Uint8Array,
@@ -1322,27 +1343,93 @@ export class WebMlsService extends BaseMlsService {
   /** WASM client wrapper - stages a Remove commit for all devices of the given users (no merge). */
   protected async stageRemoveMembers(
     groupId: string,
-    userIds: string[]
+    userIds: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const jsArray = userIds.reduce((arr, id) => {
       arr.push(id);
       return arr;
     }, [] as string[]);
-    const res = this.client.remove_members(groupId, jsArray);
+    const res = this.client.remove_members(groupId, jsArray, intent);
     return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
   }
 
   /** WASM client wrapper - stages a Remove commit for specific device identities (no merge). */
   protected async stageRemoveMembersByDevice(
     groupId: string,
-    deviceIdentities: string[]
+    deviceIdentities: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const jsArray = deviceIdentities.reduce((arr, id) => {
       arr.push(id);
       return arr;
     }, [] as string[]);
-    const res = this.client.remove_members_by_device(groupId, jsArray);
+    const res = this.client.remove_members_by_device(groupId, jsArray, intent);
     return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
+  }
+
+  /** WASM client wrapper - stages a refresh of this device's own leaf (no merge). */
+  protected async stageSelfUpdate(
+    groupId: string,
+    intent: Uint8Array
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
+    const res = this.client.self_update(groupId, intent);
+    return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
+  }
+
+  /** WASM client wrapper - when this device's leaf was minted, `null` once a commit replaced it. */
+  protected async ownLeafMintedAt(groupId: string): Promise<number | null> {
+    return this.client.own_leaf_minted_at(groupId) ?? null;
+  }
+
+  /** WASM client wrapper - whether this device's context is the one the served base describes. */
+  protected async ownContextMatchesBase(groupId: string, groupInfo: Uint8Array): Promise<boolean> {
+    return this.client.own_context_matches_base(groupId, groupInfo);
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.pendingSubmission}. */
+  protected async pendingSubmission(groupId: string): Promise<PendingSubmissionRead> {
+    const res = this.client.pending_submission(groupId) as unknown[];
+    if (res[0] === 'none' || res[0] === 'unreadable') return { status: res[0] };
+    return {
+      status: 'recorded',
+      record: {
+        intent: res[1] as Uint8Array,
+        baseEpoch: res[2] as number,
+        commit: res[3] as Uint8Array,
+        groupInfo: res[4] as Uint8Array,
+        welcome: (res[5] as Uint8Array | undefined) ?? undefined,
+        addedIndices: res[6] as number[],
+      },
+    };
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.mergePendingCommitOwingWelcome}. */
+  protected async mergePendingCommitOwingWelcome(
+    groupId: string,
+    recipients: string[]
+  ): Promise<void> {
+    this.client.merge_pending_commit_owing_welcome(groupId, recipients);
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.owedWelcomes}. */
+  protected async owedWelcomes(): Promise<OwedWelcome[]> {
+    return (this.client.owed_welcomes() as unknown[][]).map((w) => ({
+      groupId: w[0] as string,
+      welcome: w[1] as Uint8Array,
+      ratchetTree: w[2] as Uint8Array,
+      recipients: w[3] as string[],
+    }));
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.welcomeDelivered}. */
+  protected async welcomeDelivered(groupId: string, recipient: string): Promise<void> {
+    this.client.welcome_delivered(groupId, recipient);
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */
+  protected async groupsWithPendingCommit(): Promise<string[]> {
+    return this.client.groups_with_pending_commit();
   }
 
   /** WASM client wrapper - merges the pending staged commit (server accepted). */

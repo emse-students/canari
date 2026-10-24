@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DOUBLE TAP ON A REEL IN THE VIEWER LIKES IT, AND NEVER UNLIKES IT (user, 2026-10-19) - on the
  * card's own reaction path (`posts/postReaction.ts`): one request for a reel not yet reacted to,

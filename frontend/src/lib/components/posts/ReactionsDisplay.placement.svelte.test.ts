@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE "WHO REACTED" PANEL HAD THREE FAULTS AND THEY ARE ONE WIRING QUESTION.
  *

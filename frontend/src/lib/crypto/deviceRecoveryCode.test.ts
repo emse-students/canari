@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { ACCOUNT_KEY, accountLocalStorageKeysIn } from '$lib/utils/accountLocalKeys';
 import {
   backupOwedAfterKeyMove,

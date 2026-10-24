@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE SUBSCRIBE MODAL ORDERS WHAT WORKS ON THE PLATFORM READING IT.
  *

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE TYPING BUBBLE WENT UNDER THE COMPOSER WITH THE KEYBOARD CLOSED (user report, phone app,
  * 2026-10-13). The thread reserves `--chat-composer-height` under its last row; that height is the

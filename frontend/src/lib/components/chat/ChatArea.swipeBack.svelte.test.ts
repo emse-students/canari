@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE CONVERSATION'S LEFT-EDGE SWIPE IS A BACK, AND A BACK CLOSES WHAT IS ON TOP.
  *

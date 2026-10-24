@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE "SEEN BY" HEADS: three at most, then `+N` (user, 2026-10-02). Where each head is anchored is
  * `seenByAnchors`' job and is pinned in `readState.test.ts`; this file pins only the drawing, which

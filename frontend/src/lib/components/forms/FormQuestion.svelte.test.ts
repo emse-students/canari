@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A QUESTION CARD HANDS ITS ANSWER BACK - the one thing moving it out of the page could break.
  *

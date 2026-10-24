@@ -29,21 +29,32 @@
   const SIZES = (new URLSearchParams(location.search).get('groups') ?? '5,20,40,80')
     .split(',')
     .map(Number);
-  const inert = Array.from({ length: INERT }, (_, i) => mk('inert-' + i));
-  const senders = [0, 1, 2].map((i) => mk('sender-' + i));
+  const inertIds = Array.from({ length: INERT }, (_, i) => 'inert-' + i);
+  const senderIds = [0, 1, 2].map((i) => 'sender-' + i);
+  const inert = inertIds.map(mk);
+  const senders = senderIds.map(mk);
   const me = mk('me');
   const enc = new TextEncoder();
+  // `add_members_bulk(group, key packages, the identity expected of each, the commit's intent)`:
+  // each member's identity is `userId:deviceId`, and the bench has no intent to record.
+  const identities = (ids) => ids.map((u) => u + ':d');
+  const NO_INTENT = new Uint8Array();
   function build(gid) {
     me.create_group(gid);
     const bulk = INERT - EPOCHS;
-    me.add_members_bulk(gid, inert.slice(0, bulk).map(kp));
+    me.add_members_bulk(
+      gid,
+      inert.slice(0, bulk).map(kp),
+      identities(inertIds.slice(0, bulk)),
+      NO_INTENT
+    );
     me.merge_pending_commit(gid);
-    const added = me.add_members_bulk(gid, senders.map(kp));
+    const added = me.add_members_bulk(gid, senders.map(kp), identities(senderIds), NO_INTENT);
     me.merge_pending_commit(gid);
     const tree = me.export_ratchet_tree(gid);
     for (const s of senders) s.process_welcome(added[1], tree);
-    for (const c of inert.slice(bulk)) {
-      const a = me.add_members_bulk(gid, [kp(c)]);
+    for (let i = bulk; i < INERT; i++) {
+      const a = me.add_members_bulk(gid, [kp(inert[i])], identities([inertIds[i]]), NO_INTENT);
       me.merge_pending_commit(gid);
       for (const s of senders) s.process_incoming_message_with_sender(gid, a[0]);
     }

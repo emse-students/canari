@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * IMPORTING THE VERSION STORE MUST NOT PUT A REQUEST ON THE WIRE.
  *

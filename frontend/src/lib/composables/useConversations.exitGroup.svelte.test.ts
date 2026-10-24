@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Leaving or deleting a group must state the departure locally BEFORE it performs it remotely.
  *

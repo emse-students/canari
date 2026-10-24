@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PHONE AGENDA ROLLS FORWARD FROM TODAY, AND THREE THINGS MAKE THAT TRUE ON SCREEN.
  *
