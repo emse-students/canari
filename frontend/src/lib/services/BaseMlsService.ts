@@ -49,6 +49,11 @@ import {
   snapshotEmitted,
 } from '$lib/mls-client/sendRatchetLedger';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
+import {
+  MlsStateUnreadableNowError,
+  MlsStateVerdictError,
+  type MlsStateVerdictCode,
+} from '$lib/mls-client/mlsStateSeal';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
@@ -248,6 +253,17 @@ function assertResolvedIdentity(seam: string, userId: string, deviceId: string):
     throw new UnresolvedIdentityError(seam, 'deviceId');
   }
 }
+
+/**
+ * The recovery each verdict of `mls-core`'s deterministic reader maps to - the same one the prefix
+ * of the identical native error reaches through the string arms of `classifyStateLoadFailure`.
+ */
+const STATE_LOAD_FAILURE_OF_VERDICT: Record<MlsStateVerdictCode, StateLoadFailure> = {
+  STATE_ALTERED: 'altered',
+  STATE_KEY_MISMATCH: 'rotated',
+  STATE_UNDECRYPTABLE: 'undecryptable',
+  IDENTITY_MISMATCH: 'mismatch',
+};
 
 export abstract class BaseMlsService implements IMlsService {
   // ── Platform identity ─────────────────────────────────────────────────────
@@ -633,8 +649,9 @@ export abstract class BaseMlsService implements IMlsService {
    * therefore a two-release sequence; see `docs/wiki/backlog.md`.
    *
    * **`rotated` AND `altered` ARE THE TWO HALVES OF `undecryptable` THAT A KEY FINGERPRINT
-   * SEPARATES**, and since step 2 framed every save (2026-10-17) both fire. `mls-core` (and the web's
-   * v2 reader) throws `STATE_KEY_MISMATCH` when a FRAMED state's header names a key other than the
+   * SEPARATES**, and since step 2 framed every save (2026-10-17) both fire. `mls-core` (the web's v2
+   * opener for `STATE_KEY_MISMATCH` only - a WebCrypto refusal is `unreadable_now` unless `mls-core`
+   * confirms the tag, `loadAndInitWasm`) throws `STATE_KEY_MISMATCH` when a FRAMED state's header names a key other than the
    * one in hand - the old PIN opens it - and `STATE_ALTERED` when the header names THE KEY IN HAND
    * and the tag still fails: the bytes were altered and no PIN ever will (CORRUPT-1, CORRUPT-2). No
    * guess, no failed decrypt to interpret - the blob says so. A LEGACY blob, written before the flip
@@ -653,6 +670,12 @@ export abstract class BaseMlsService implements IMlsService {
    * and hands the user to the PIN modal ({@link isKeystoreKeyUnavailable}).
    */
   protected classifyStateLoadFailure(error: unknown): StateLoadFailure {
+    // A TYPE, read before any code: the web's WebCrypto refusal is not a verdict on the bytes, and
+    // its message must never be able to reach a needle below.
+    if (error instanceof MlsStateUnreadableNowError) return 'unreadable_now';
+    // A TYPE too: `mls-core`'s deterministic reader judged bytes WebCrypto refused, and its verdict
+    // crossed the WASM boundary as a code (`state_blob_verdict`), never as prose.
+    if (error instanceof MlsStateVerdictError) return STATE_LOAD_FAILURE_OF_VERDICT[error.code];
     const errStr = String(error);
     if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
     if (errStr.includes('STATE_KEY_MISMATCH')) return 'rotated';

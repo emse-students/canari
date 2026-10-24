@@ -18,6 +18,7 @@ import {
   KeyChangeInterruptedError,
   KeyChangeSupersededError,
   LocalStateUnopenableError,
+  LocalStateUnreadableNowError,
   moveSealedStoresOnly,
   performPinChange,
   thisTabMayChangeDeviceKey,
@@ -521,6 +522,9 @@ export function savedStateFailure(
   }
   if (reason.reason === 'rotated') {
     return new LoginFailure('local_state_sealed_under_old_pin', m.auth_local_state_old_pin());
+  }
+  if (reason.reason === 'unreadable_now') {
+    return new LoginFailure('local_state_unreadable_now', m.auth_local_state_unreadable_now());
   }
   return new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
 }
@@ -2883,6 +2887,12 @@ export async function recoverPinImpl(
     if (e instanceof DeviceKeyMismatchError) {
       cb.log('[PIN_RECOVER] The old PIN does not open the local MLS state - nothing was changed.');
       throw new LocalizedError(m.auth_pin_old_incorrect());
+    }
+    if (e instanceof LocalStateUnreadableNowError) {
+      cb.log(
+        '[PIN_RECOVER] The local MLS state could not be read right now - nothing changed, no reset offered.'
+      );
+      throw new LocalizedError(m.auth_local_state_unreadable_now());
     }
     if (e instanceof LocalStateUnopenableError) {
       cb.log(

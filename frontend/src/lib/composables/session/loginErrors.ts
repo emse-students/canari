@@ -46,6 +46,14 @@ export type LoginErrorCode =
    * and offers the old-PIN recovery without the "otherwise damaged" branch the fingerprint ruled out.
    */
   | 'local_state_sealed_under_old_pin'
+  /**
+   * PIN accepted, and the browser's WebCrypto refused this device's v2 state on every read of this
+   * start, while nothing PROVED the bytes altered (`MlsStateUnreadableNowError`: WebKit names an
+   * engine fault and a failed tag alike). Nothing was rotated or written; the next start reads it
+   * again. Deliberately in NONE of the predicates below: no old PIN helps, a reset would destroy a
+   * state nothing showed to be broken, and it is not an ordinary outcome - it accuses the engine.
+   */
+  | 'local_state_unreadable_now'
   /** Biometric mode with nothing in the platform keystore yet. */
   | 'keystore_empty'
   /** This device was revoked; local state has been wiped and it must re-register. */
