@@ -12,6 +12,7 @@ import { Group } from '../entities/group.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
@@ -457,6 +458,7 @@ describe('InternalController - the community distribution group', () => {
       // Dropping it would show a deleted banner to the one person who had asked for silence.
       expect(purged).toEqual([
         QueuedMessage,
+        QueuedPayload,
         GroupMember,
         DeviceGroupMembership,
         MlsCommitLog,

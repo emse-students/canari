@@ -391,6 +391,14 @@ else
     fail "CALL_E2E_ENCRYPTION is not false"
   fi
 
+  # The key-group shared-payload WRITER ships OFF, behind its readers (chat-delivery.md, migration
+  # 034): turning it on is a deliberate edit of this expectation in a LATER release, never a default.
+  if grep -q '^QUEUED_PAYLOAD_SHARED_WRITES=false$' "$out"; then
+    pass "QUEUED_PAYLOAD_SHARED_WRITES is the literal false - the readers ship before the writer"
+  else
+    fail "QUEUED_PAYLOAD_SHARED_WRITES is not false"
+  fi
+
   # DEPLOY_BUILD must never be written in production: /api/version reports `build`, and production's
   # version already names its content because it is built from a tag.
   if grep -qE '^DEPLOY_BUILD=.+' "$out"; then

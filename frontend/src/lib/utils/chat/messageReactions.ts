@@ -1,4 +1,6 @@
 import type { MessageReaction } from '$lib/types';
+import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 
 /**
  * Reactions as a convergent set: one entry per `(user, emoji)` pair, each carrying the time it last
@@ -51,7 +53,7 @@ export function canAddDistinctReactionEmoji(reactions: MessageReaction[], emoji:
 
 /** Normalise an entry from the wire or from disk: the user id is the pair's identity. */
 function normalise(reaction: MessageReaction): MessageReaction {
-  return { ...reaction, userId: reaction.userId.toLowerCase() };
+  return { ...reaction, userId: canonicalUserId(reaction.userId) };
 }
 
 /**
@@ -68,10 +70,13 @@ export function applyReaction(
   userId: string,
   emoji: string,
   at: number,
-  removed = false
+  removed = false,
+  proof?: RecordedAuthorship
 ): MessageReaction[] | null {
   if (!emoji) return null;
-  const next = normalise({ emoji, userId, at, removed });
+  // The reactor's signed frame rides with the state it set, so a history bundle can prove it to a
+  // device that never saw the frame (`restoredAuthorship.ts`). A newer state without one drops it.
+  const next = normalise({ emoji, userId, at, removed, ...(proof ? { proof } : {}) });
   const key = pairKey(next);
   const index = reactions.findIndex((r) => pairKey(normalise(r)) === key);
 
