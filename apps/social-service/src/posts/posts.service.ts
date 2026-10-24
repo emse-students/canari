@@ -44,7 +44,11 @@ import { pageComments, type CommentOrder } from './comment-page';
 import { CommentIdentityService } from './comment-identity';
 import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
-import { ASSOCIATIONS_FEED_AT_SQL, IN_ASSOCIATIONS_FEED_SQL } from './associations-feed-sql';
+import {
+  inAssociationsFeedSql,
+  republishedFeedAtSql,
+  republishedForViewerSql,
+} from './republished-feed-sql';
 import {
   postVisibleToViewerSql,
   readInFeedAudience,
@@ -251,7 +255,8 @@ export class PostsService {
    * at the same instant), so an `OFFSET` page can neither repeat nor skip a row.
    *
    * `at` is the instant a row is placed at: its `publishedAt`, except in the Associations feed,
-   * where a carried post sits at its latest republication (`ASSOCIATIONS_FEED_AT_SQL`).
+   * and "Suivis", where a carried post sits at its latest counted republication
+   * (`republishedFeedAtSql`).
    */
   private listOrderSql(kind: PostKind | undefined, at = 'posts."publishedAt"'): string {
     return kind === 'reel'
@@ -1192,9 +1197,10 @@ export class PostsService {
   /**
    * Returns paginated posts for one of four feeds:
    * - "associations": what associations publish or republish, a carried post at its latest
-   *   republication (`associations-feed-sql.ts`)
+   *   republication (`republished-feed-sql.ts`)
    * - "all": every post, pinned first
-   * - "followed": posts from associations and users the viewer follows
+   * - "followed": posts from associations and users the viewer follows, and what a followed
+   *   association republished, placed at that republication
    * - "custom": personal posts filtered by promo year and/or formation
    *
    * Non-admin viewers with a promo year set cannot see posts published before
@@ -1289,7 +1295,7 @@ export class PostsService {
 
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
-      // What associations publish AND republish (`associations-feed-sql.ts`): a member's post an
+      // What associations publish AND republish (`republished-feed-sql.ts`): a member's post an
       // association carries is in it, so `blockedAuthorSql` applies as in every other arm - it
       // exempts association and anonymous posts by itself.
       const bp = blockedAt(promoCutoff ? 4 : 3);
@@ -1297,7 +1303,7 @@ export class PostsService {
         `SELECT ${this.postSelectBody(bp)}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
-       WHERE ${IN_ASSOCIATIONS_FEED_SQL}
+       WHERE ${inAssociationsFeedSql(`$${3 + tail.length}`)}
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
          ${reelFilters}
@@ -1305,7 +1311,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
          ${visibleAt(3 + tail.length)}
-       ${this.listOrderSql(kind, ASSOCIATIONS_FEED_AT_SQL)}
+       ${this.listOrderSql(kind, republishedFeedAtSql(`$${3 + tail.length}`))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
@@ -1342,6 +1348,9 @@ export class PostsService {
          -- author's name removes, because the leak is membership, not the name.
          OR (posts."associationId" IS NULL AND posts."authorId" = ANY($4::text[])
              AND NOT posts.anonymous)
+         -- What a followed association REPUBLISHED (republished-feed-sql.ts), never anonymous.
+         OR (NOT COALESCE(posts.anonymous, false)
+             AND ${republishedForViewerSql(`$${5 + tail.length}`, '$3')})
        )
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
@@ -1350,7 +1359,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ${this.listOrderSql(kind)}
+       ${this.listOrderSql(kind, republishedFeedAtSql(`$${5 + tail.length}`, '$3'))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );

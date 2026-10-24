@@ -27,6 +27,19 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P3 - What a republication still does not move in the feeds (review of #2384, 2026-10-24)
+
+- **The promo cutoff reads `publishedAt`**, so a post published before the reader's promo opens
+  and republished since stays out of every feed for that reader. Deliberately left: whether a
+  repost should reopen an old post is a decision, not a fix.
+- **The placement is a correlated `MAX` per row** (`republished-feed-sql.ts`): fine at today's
+  republication count; if that table grows, a `LEFT JOIN` on a per-post `MAX` grouped once replaces
+  it. Measure with `EXPLAIN ANALYZE` on the Associations feed first.
+- **The "new" marker** (`isNew`, `routes/posts/+page.svelte`) compares `publishedAt`, so an old post
+  just republished is placed at the top without the marker.
+- **[posts](frontend/modules/posts.md) says the feed order has no unique tie-breaker**; every arm has
+  ordered by `posts.id` last since then - the note is stale and should go.
+
 ## P2 - The nightly archive is mostly one group's undelivered queue (measured 2026-10-24)
 
 The archive went from 80 MB (10-11) to 716 MB (10-13) and holds ~650 MB since. The cause is

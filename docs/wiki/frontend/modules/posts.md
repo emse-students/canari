@@ -17,22 +17,30 @@
 | Tab (`feed=`) | Content |
 |---|---|
 | Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication |
-| Suivis (`followed`) | Posts from the associations and members the reader follows (never an anonymous post) |
+| Suivis (`followed`) | Posts from the associations and members the reader follows (never an anonymous post), and what a followed association republished, placed at that republication |
 | Tout (`all`) | Every post the reader may see |
 
-**A republication is an association publishing, so the Associations feed carries it (user,
-2026-10-24).** The arm of `listPosts` read `posts."associationId" IS NOT NULL` alone, so a member's
-post the BDE republished (D38b) never entered that feed, only "Tout" under its own date - the client
-filters nothing per tab, so the server's clause was the whole cause. The two clauses now live in
-`apps/social-service/src/posts/associations-feed-sql.ts`: a row is in the feed when an association
-published it OR a `post_republications` row names it (an `EXISTS`, never a join, so a post carried
-twice, or published by one association and carried by another, is still one row), and it is placed
-at `GREATEST(publishedAt, latest republishedAt)` - pinned posts still first, the CanaReels list of
-that feed with no pin. Visibility is untouched (`postVisibleToUserSql` already lets a republisher's
-audience read the post), and since a member's post can now be in the arm, `blockedAuthorSql`
+**A republication is an association publishing, so the feeds of what associations publish carry it
+(user, 2026-10-24).** The Associations and Suivis arms of `listPosts` read `posts."associationId"`
+alone, so a member's post the BDE republished (D38b) entered neither, only "Tout" under its own
+date. The client filters nothing per tab, so the server's clauses were the whole cause. The clauses
+now live in `apps/social-service/src/posts/republished-feed-sql.ts`:
+
+- a row is in Associations when an association published it OR a republication of it COUNTS for
+  the reader; in Suivis, when a followed association republished it (never an anonymous post). It
+  is an `EXISTS`, never a join, so a post carried twice is still one row;
+- it is placed at `GREATEST(publishedAt, latest counted republishedAt)` - pinned posts still first,
+  the CanaReels list with no pin;
+- a republication COUNTS only when it is by an association the reader sees
+  (`associationVisibleToUserSql`, read grants included) - and, in Suivis, one they follow - so a
+  republisher the reader cannot see neither admits a post nor moves it.
+
+Visibility of the post itself is untouched (`postVisibleToUserSql` already lets a republisher's
+audience read it), and since a member's post can now be in the Associations arm, `blockedAuthorSql`
 applies there as in the others. Proven against PostgreSQL by
-`associations-feed-sql.integration.spec.ts`. The card still shows the post's own `publishedAt`;
-only its place is the repost's.
+`republished-feed-sql.integration.spec.ts`. The card still shows the post's own `publishedAt`; only
+its place is the repost's. What a republication still does not move is in
+[backlog](../../backlog.md#p3---what-a-republication-still-does-not-move-in-the-feeds-review-of-2384-2026-10-24).
 
 Posts are loaded via `GET /api/posts` (social-service), paginated with infinite scroll (`IntersectionObserver`).
 
