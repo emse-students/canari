@@ -185,6 +185,23 @@ entries:
       title: "Inscription à MiConnect"
       designation: "enrollment"
       authentication: "require_unauthenticated"
+  # ONLY A SOURCE STARTS AN ENROLMENT (2026-10-23). The flow is reachable by URL; opened directly it
+  # has no identity to write, so the user write fails - but that is a property of the write stage, not
+  # a decision. This policy makes it one, as authentik's own `default-source-enrollment-if-sso` does
+  # for its default flow: the flow plans only when a source (CAS, SAML) handed it an identity.
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-enrollment-from-a-source"
+    attrs:
+      execution_logging: true
+      expression: "return ak_is_sso_flow"
+  - model: authentik_policies.policybinding
+    identifiers:
+      # The flow's policy-binding row, found the way the stage bindings below are: a !Find on the
+      # flow itself resolves, but never matches the stored target, so a second apply would re-create it.
+      target: !Find [authentik_policies.policybindingmodel, [flow__slug, "miconnect-enrollment"]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-enrollment-from-a-source"]]
+      order: 0
   - model: authentik_stages_prompt.promptstage
     identifiers:
       name: "miconnect-enrollment-ask-affiliations"

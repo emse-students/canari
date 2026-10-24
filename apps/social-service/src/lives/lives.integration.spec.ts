@@ -2694,6 +2694,43 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       });
     });
 
+    it('a REMOVED viewer reports what they saw before the removal, and the live itself - never a line after it', async () => {
+      const live = await start();
+      const before = await say(BOB, live.id, 'avant');
+      await lives.mayWatch(CAROL, live.id);
+      await lives.removeViewer(ALICE, live.id, CAROL);
+      const after = await say(BOB, live.id, 'apres');
+      // The removal is pinned to the first line's instant: "no later than" is the boundary, and the
+      // second line, written in a later transaction, is strictly after it.
+      await q(
+        `UPDATE live_removed_viewers SET "removedAt" =
+           (SELECT "createdAt" FROM live_chat_messages WHERE id = $1)
+          WHERE "liveId" = $2 AND "viewerId" = $3`,
+        [before.id, live.id, CAROL]
+      );
+
+      expect(await refusal(reportLine(CAROL, after.id, 'apres'))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      await expect(reportLine(CAROL, before.id, 'avant')).resolves.toMatchObject({
+        contentType: 'live_chat',
+        reportedUserId: BOB,
+      });
+      await expect(
+        reports().createReport({
+          reporterId: CAROL,
+          contentType: 'live',
+          contentId: live.id,
+          reason: 'inappropriate',
+        })
+      ).resolves.toMatchObject({ contentType: 'live', reportedUserId: ALICE });
+      // Only the removed viewer is bounded: another viewer reports the later line.
+      await expect(reportLine(DAVE, after.id, 'apres')).resolves.toMatchObject({
+        contentType: 'live_chat',
+      });
+    });
+
     it('THE INDEX ITSELF refuses a repeat the dedup read did not see, as ALREADY_REPORTED', async () => {
       // The dedup read is made blind, so only `content_reports_reporter_content_uniq` stands
       // between the two saves - what two requests racing past the read meet.

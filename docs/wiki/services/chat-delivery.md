@@ -674,6 +674,13 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   state is sealed beside `mls.bin` with the digest of the bytes it was built from, installed by a
   compare-and-swap on `accepted`, and deleted on anything else. A transport failure or a 5xx is
   `unknown`: not installed, because installing a refusal is the fork this exists to prevent.
+- **The KeyPackage is bound to the requester, as the foreground's Add binds it.** The phone hands
+  Rust the `userId:deviceId` the push named (`WelcomeRequest.requester`). A package whose credential
+  names another device, or that device under a key the phone never pinned for it, is refused BEFORE
+  anything is staged (`MlsManager::key_package_verdict`, the check the Add re-runs). The answer's
+  reason is the skip's wire name: `identity-mismatch` or `signature-key-changed`, logged at ERROR.
+  Pinned by `a_substituted_key_package_is_refused_on_the_background_path` and
+  `a_key_package_under_an_unpinned_key_is_refused_on_the_background_path`.
 - **No catch-up and no retry.** The background never applies the group's commits to `mls.bin` (the
   foreground's replay owns that, and what it does around a commit); a stale phone is refused, and the
   request is left to the foreground or another member. An `epoch_mismatch` whose server epoch is
@@ -2267,3 +2274,13 @@ the push; the iOS NSE processes no Welcome at all. So inlining a Welcome could n
 (a message that fits), `by-reference` (every Welcome, whatever its size; debug line, expected),
 `over-budget` (a MESSAGE that did not fit: the fixed fields grew; `warn`), `empty`. No client change
 and no native work was needed. `push-payload.spec.ts` pins the 4608 B case.
+
+**Key material over the budget is carried by reference too (2026-10-22).** A Graine seed bundle is
+routinely kilobytes, and since a history answer is paged at up to 255 KiB
+([channel-encryption §4.4](../protocols/channel-encryption.md#44-joining-and-what-a-share-link-is-worth)),
+every multi-seed answer to an offline device was logged `over-budget` at warn, once per page.
+`isKeyDistribution` (the `dm_groups` distribution columns the push already reads) now makes such a
+frame `by-reference` with `reason: 'key-material'`, at debug. Key material that fits is still inlined,
+because the native mirror reads seeds from it. A frame whose group row could not be read
+(`isKeyDistribution` undefined) still reports `over-budget`. The device behaviour is unchanged: a push
+with an empty `proto` was already fetched by `queuedMessageId`.

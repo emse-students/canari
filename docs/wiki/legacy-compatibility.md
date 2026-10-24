@@ -90,6 +90,7 @@ REST: those rows need a count, then a migration.
 | Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
 | `canari_post_feed_kind` drop (`posts/retiredFeedKind.ts`, run by the feed's `load`) | every device that ran a `1.2.9-alpha.2`/`.3` has opened the feed once on a later build | not a version question (alphas only) | one device-global `localStorage` key | 1 module + 1 call | remove with the first stable after `1.2.9` ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)) |
 | Plaintext native cache reader (`native_cache::open_file`/`open_line`, the `Plaintext` arm, and the one-pass migration) | floor >= the release carrying the at-rest seal | NO (unreleased) | `graine_seeds.json`, `fcm_message_cache*.ndjson` on devices not yet updated | 2 match arms + 3 migration functions | waits for the floor ([diary](#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal)) |
+| OIDC callback with no PKCE `code_verifier` (`auth.controller.ts`, `oidcCallback`) | floor >= the first stable carrying the client half, AND the `without a PKCE verifier` warning silent for a week on production | NO (unreleased) | none | 1 branch: refuse instead of warn | waits for the floor ([diary](#no-date-yet---an-oidc-callback-with-no-pkce-verifier)) |
 | `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 | Plaintext live key: the `"liveKey"` column, `openLiveKey`'s plaintext arm, `LivesService.sealPlaintextKeys` (migration 110) | 0 rows with `"liveKey" IS NOT NULL` on both estates, read AFTER the first deploy carrying 110 has fully replaced the previous replica | not a version question (server only) | `lives."liveKey"` | 1 arm + 1 sweep step + a migration dropping the column, the index and `lives_key_one_form` | owed: the count below, then that migration ([lives](services/lives.md#the-live-key-at-rest)) |
 
@@ -144,6 +145,22 @@ knows the type), on BOTH estates, once BOTH Play AND the App Store serve that ve
 ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
 pins it, run by someone else.
 
+### No date yet - a bare `userId` MLS credential, written by builds before 2026-07-24
+
+**Site:** `canonical_user_of` / `is_legacy_bare_identity` in `frontend/mls-core/src/device_trust.rs`,
+and its twin `canonicalUserOf` in `frontend/src/lib/mls-client/leafIdentity.ts`.
+**Shim (2026-10-22):** builds before device identities (61ac71d7c9, 2026-07-24) minted a credential
+naming the user alone, with no `:` and no device, and a tree a device still holds may carry such a leaf.
+The one canonical reader treats it as naming its user (ASCII-lowercased) and NO device. So
+`remove_members_for_users` removes it with its user, and the native push sender check accepts it as
+that user. `canonical_identity` still refuses it, so it is never pinned and never matches
+`user:device`. Tests: `tests/legacy_bare_leaf.rs`, `a_push_from_a_bare_legacy_leaf_is_its_users`
+(`background.rs`) and the bare cases of `leafIdentity.test.ts`.
+**Removal condition:** no held tree carries a bare leaf. This is measured on the device: every load's
+state-composition line ends `N legacy bare leaves` (`MlsManager::legacy_bare_leaves`). Remove the shim
+when that reads 0 on the bench phones and on the rig's clients, and no build older than 61ac71d7c9 can
+still commit into a group. Then the bare arm goes from both readers, and a bare identity names nobody.
+
 ### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 
 **Site:** `flushProfileBatch` in `frontend/src/lib/stores/user.ts` (`legacyAnswer`).
@@ -157,6 +174,29 @@ and `displayName.ts` warned, backed off 120 s and asked again.
 **Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
+
+### No date yet - an OIDC callback with no PKCE verifier
+
+**Site:** `oidcCallback` in `apps/core-service/src/auth/auth.controller.ts`, the branch that logs
+`OIDC callback without a PKCE verifier` and redeems the code anyway.
+**Shim (2026-10-23):** core-service forwards a `code_verifier` to MiConnect when the client sends one,
+and says so in `GET /api/version` (`oidcPkce: true`). A client sends a `code_challenge` only after
+reading that capability ([auth](frontend/modules/auth.md#login-flow)), so a callback with no verifier
+is one of: a build older than the client half, a new build that read no capability, or a caller that
+is not the app.
+**The order the two halves ship in, and the constraint it adds:** core-service first, the client
+later. A core-service older than the capability DROPS the verifier, and MiConnect refuses a
+challenged code redeemed without one, so a client that challenged it could not sign in. The
+capability makes a new client facing an old server send no challenge at all. That is a CAPABILITY,
+not a fallback: it states what the server CAN do, read before the request, and there is no failed
+path behind it. **core-service is never rolled back below the first release whose `/api/version`
+publishes `oidcPkce: true`**: a client that read the capability before the rollback still
+challenges, and its sign-in fails against the older server until it reads `/api/version` again.
+**Removal condition:** `minClientVersion` at or above the first stable carrying the client half, on
+both estates with both stores serving it, AND the warning silent on production for a week. Then the
+branch becomes a 400, which is what makes PKCE REQUIRED rather than offered. It also needs the
+redirect hardening in [backlog](backlog.md#p2---the-mobile-sign-in-returns-through-a-custom-scheme-pkce-binds-the-code-not-the-app-2026-10-23)
+to close what PKCE alone does not.
 
 ### No date yet - the exclusions route answered without `withheld`, by a server older than 2026-10-22
 

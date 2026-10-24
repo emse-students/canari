@@ -64,6 +64,8 @@
     onpublished?: (identity: string) => void;
     /** "Garder comme post": the publish step's caption and identity, back to the composer. */
     onkept?: (caption: string, identity: string) => void;
+    /** A `chat` camera that may film a reel message (`chatReelWriter.ts`); photos only otherwise. */
+    chatFilms?: boolean;
   }
 
   let {
@@ -75,6 +77,7 @@
     composerIdentity,
     onpublished,
     onkept,
+    chatFilms = false,
   }: Props = $props();
 
   /**
@@ -137,5 +140,6 @@
     {composerIdentity}
     {onpublished}
     {onkept}
+    {chatFilms}
   />
 </div>

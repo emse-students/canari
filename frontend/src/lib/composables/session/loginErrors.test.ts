@@ -12,8 +12,13 @@
  * exhaustive case below fails the day that happens, which is the only moment anyone can answer it.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { m } from '$lib/paraglide/messages';
 import {
   LoginFailure,
+  hardwareKeyLoginFailure,
+  withholdsResetForUnreadKey,
   isExpectedLoginOutcome,
   isRecoverableWithOldPin,
   loginErrorCode,
@@ -31,6 +36,8 @@ const EVERY_CODE: LoginErrorCode[] = [
   'device_revoked',
   'server_unreachable',
   'state_written_by_another_tab',
+  'hardware_key_unavailable',
+  'hardware_key_unreadable',
   'other',
 ];
 
@@ -128,6 +135,60 @@ describe('provesLocalStateExists - is this device new, which is a different ques
     expect(EVERY_CODE.filter(provesLocalStateExists)).toEqual([
       'local_state_unopenable',
       'local_state_sealed_under_old_pin',
+      'hardware_key_unavailable',
     ]);
+  });
+});
+
+describe('hardware_key_unavailable - a phone whose keystore lost the at-rest key', () => {
+  it('proves a local state exists, so the reset is offered', () => {
+    expect(provesLocalStateExists('hardware_key_unavailable')).toBe(true);
+  });
+
+  it('is NOT recoverable with an old PIN - no PIN derives a hardware-held key', () => {
+    expect(isRecoverableWithOldPin('hardware_key_unavailable')).toBe(false);
+  });
+
+  it('accuses: a keystore losing its entry is never an ordinary outcome', () => {
+    expect(isExpectedLoginOutcome('hardware_key_unavailable')).toBe(false);
+  });
+});
+
+describe('hardware_key_unreadable - a key that could not be read, and may still exist', () => {
+  it('withholds the reset and the old-PIN recovery, and accuses', () => {
+    expect(withholdsResetForUnreadKey('hardware_key_unreadable')).toBe(true);
+    expect(withholdsResetForUnreadKey('hardware_key_unavailable')).toBe(false);
+    expect(isRecoverableWithOldPin('hardware_key_unreadable')).toBe(false);
+    expect(isExpectedLoginOutcome('hardware_key_unreadable')).toBe(false);
+  });
+});
+
+describe('hardwareKeyLoginFailure - "lost" only when the read PROVES the key gone', () => {
+  const log = () => {};
+
+  it('calls an empty entry or another key in it lost, and offers the reset', () => {
+    for (const refusal of ['absent', 'mismatch'] as const) {
+      const failure = hardwareKeyLoginFailure(refusal, log);
+      expect(failure.code, refusal).toBe('hardware_key_unavailable');
+      expect(failure.message, refusal).toBe(m.auth_hardware_key_unavailable());
+    }
+  });
+
+  it('calls a failed read - a keychain error, a phone not yet unlocked - unreadable: retry, no reset', () => {
+    for (const refusal of ['unreadable', 'not-hardware'] as const) {
+      const failure = hardwareKeyLoginFailure(refusal, log);
+      expect(failure.code, refusal).toBe('hardware_key_unreadable');
+      expect(failure.message, refusal).toBe(m.auth_hardware_key_unreadable());
+      expect(failure.message, refusal).not.toBe(m.auth_hardware_key_unavailable());
+    }
+  });
+
+  it('is what every hardware-key failure of the unlock and the recovery throws', () => {
+    // WHY A SOURCE TEST: the four sites run inside the login, the migration finish and the PIN
+    // recovery, each over a live MLS client and the keystore. What they throw is decided above.
+    const source = readFileSync(join(__dirname, 'sessionAuth.ts'), 'utf8');
+    expect(source).not.toContain("new LoginFailure('hardware_key_unavailable'");
+    expect(source).not.toContain('new LocalizedError(m.auth_hardware_key_unavailable())');
+    expect(source.match(/throw hardwareKeyLoginFailure\(/g)?.length).toBe(5);
   });
 });

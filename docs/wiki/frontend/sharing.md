@@ -12,8 +12,9 @@ builds on the IN half later and is not started.
 | --- | --- | --- |
 | S1+S2 | Share IN on Android: the intent filter, the native copy, the "Envoyer a..." picker, the composer staging | built (this page) |
 | S3 | Share OUT (Android + iOS): `share_text` / `share_staged`, message and post menus | built - [share-out](share-out.md) |
-| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a new signing profile | **set aside (user, 2026-10-22)** - blocked on an App ID and a provisioning profile only the user can make ([backlog](../backlog.md)) |
-| S5 | Conversation suggestions in the sheet (Android Direct Share, iOS `INSendMessageIntent`) | not started - a privacy decision comes with it |
+| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a new signing profile; **the iOS conversation suggestions (`INSendMessageIntent`) follow it**, since they need that extension | in review - the App ID and both profiles exist (user, 2026-10-22) |
+| S5 | Conversation suggestions in the Android sheet (Direct Share / sharing shortcuts) | built (Android), [below](#share-suggestions-android---lot-s5) |
+| S6 | A post's or a reel's share sheet, Instagram's: send into a conversation, copy the link, the system sheet; a shared reel's card opens the viewer | built, design decided 2026-10-23 - [below](#a-post-or-a-reel-shared-from-its-sheet---lot-s6) |
 
 ## Share IN, Android - the path
 
@@ -88,6 +89,159 @@ builds on the IN half later and is not started.
    files then go through `handleFilesSelected` - the same size ceiling, compression and video
    re-encode as a picked file. **The member sends with Send. A share is never sent on its own.**
 
+## Share suggestions, Android - lot S5
+
+Android's share sheet shows Canari's recent conversations as direct targets, like Messenger
+(user, 2026-10-22). Picking one opens the same "Envoyer a..." picker with that conversation first
+and highlighted; **the member still taps it, and still sends with Send** - a suggestion is a
+preselection, never a destination by itself.
+
+- **What is published** (`sharing/shareTargets.ts`): the picker's own destinations
+  (`sharing/shareDestinations.ts`, the names the picker shows; a salon carries its community),
+  restricted to conversations that can receive (`lifecycle === 'active'`) and whose name is known,
+  ordered by the sidebar's one recency key (`compareConversationRecency`), the top
+  `MAX_SHARE_TARGETS` (5). Each is a DYNAMIC shortcut `c:<conversation id>`, labelled with the
+  name, in the share-target category of `res/xml/shortcuts.xml` (the `android.app.shortcuts`
+  meta-data on MainActivity, hand-maintained; its types are the SEND filter's). A tap from the
+  launcher's long-press menu, where dynamic shortcuts also appear, opens the conversation's
+  `fr.emse.canari://chat/<id>` link like a notification. No icon: the avatar bitmap
+  (`avatarBitmap.ts`) rasterises a node already on screen, and the initials disc lives in the app
+  module the plugin cannot reach.
+- **When**: `IncomingShareHost` calls `syncShareTargets` whenever the list, the setting or the session
+  changes; the list is sent only when its ordered ids and names differ from what the native side
+  was last told (`shareTargetsNative.ts`) - idempotence from that state, no debounce and no clock.
+  A signed-out or still-loading session publishes nothing and erases nothing: the gate is
+  `conversationSourcesSettled`, whose restore half (`conversationsRestored`) is reset at sign-out
+  with the map (`invalidateRestores`), so the next account never publishes from a list still
+  loading. The conversation map is read only when a publish is due, so a disabled or signed-out
+  state does not re-run on every message.
+- **Native** (`tauri-plugin-gallery`, `ShareTargets.kt`, beside S3's commands): `publish_share_targets`
+  adds by its own ids and removes the ids it published before and no longer names;
+  `clear_share_targets` removes every id it ever recorded. The ids are recorded in the plugin's
+  preferences (`ShortcutRecord`) BEFORE the platform is touched, and a record that cannot be
+  written aborts the call, so a later process removes exactly them - an allowlist, never a
+  pattern. A publish answers what the platform LISTS afterwards (`present`, read back with
+  `getDynamicShortcuts`, since the per-activity cap can evict a push at once) and the stale ids it
+  could not remove (`leftover`); a leftover makes the page forget what it told the native side, so
+  the next call is sent whatever it asks. It never calls `setDynamicShortcuts` or `removeAllDynamicShortcuts`:
+  the long-lived `chat_<group>` shortcuts that make message notifications conversations
+  (`CanariFirebaseMessagingService.publishConversationShortcut`) share the dynamic set. NOT
+  long-lived: the sheet needs no cached copy, so removing the dynamic shortcut removes it
+  everywhere. Capped at `getMaxShortcutCountPerActivity`.
+- **Erased at sign-out, with the notifications' conversation shortcuts** (an account switch
+  included, the user's rule for the pending share too: nothing of an account stays for the next
+  one). `clearAuthUnderway` calls `eraseAccountShortcuts` beside `discardSharedOut`, for
+  `clearAuth` and `clearAuthLocally` alike. It ALWAYS asks the native side to clear the
+  suggestions (only the native record knows for certain; the setting's own clear may skip when the
+  page knows it published nothing), resets the "last told" state so the next account publishes its
+  own, and calls `clear_conversation_shortcuts`. The calls are queued, so they land after any
+  publish already in flight.
+- **The conversation shortcuts** (`chat_<group>`, long-lived, a name and a Person each): the
+  messaging service pushes them only through `ConversationShortcuts.push` (in the plugin, which the
+  app module depends on), which records the id before pushing - an unrecorded push is refused - and
+  keeps at most `ConversationShortcuts.CAP` (30): past it, the conversation whose notification is
+  the oldest is removed. The sign-out clear removes every recorded id with
+  `removeLongLivedShortcuts` (the dynamic shortcut and, on API 30+, the system's cached copy),
+  disables the pinned ones, and empties the record only on success.
+- **The hint is checked against the account**: `IncomingShare.kt` copies `EXTRA_SHORTCUT_ID` into
+  `pending_share.json` as `target` only when it has the `c:` shape; the page parses it
+  (`conversationIdFromShareTarget`) and preselects it only if the signed-in account's list holds
+  that conversation (`suggestionIfHeld`) - a stale shortcut from another account targets nothing,
+  and says so in the log.
+- **The setting** "Suggestions dans le partage" (Settings > Preferences, Android app only, ON by
+  default, per device): off clears at once. The names leave Canari for the system (launcher, share
+  sheet), which the user accepted knowingly; the privacy policy (section 7) and the register (C22)
+  say so.
+
+**Known limits.** Android 9 (API 28, the app's minimum) does not list them: that needs
+`androidx.sharetarget` and its chooser service, not shipped for one API level. A shortcut the
+member PINNED from the launcher menu cannot be removed by any app: it is disabled at the next
+publish or clear that drops it, and the launcher decides whether its label stays. iOS: none - the
+suggestions need the Share Extension, so they are part of S4.
+
+## A post or a reel, shared from its sheet - lot S6
+
+**Asked by the user on 1.4.0 (2026-10-23):** *"Le partage d'un post/reel devrait permettre de
+partager dans l'app, et avoir un 'copier le lien', comme sur instagram"* - and to look at the design
+together. The design was proposed with six questions, and the user answered them the same day
+(the decisions close the section).
+
+**What existed before it.** A post's menu had "Partager" (the system sheet on the phone apps, a
+copied link elsewhere) and, on the phone apps only, "Copier le lien"; the reel rail's send was the
+same "Partager" ([share-out](share-out.md)). Nothing sent a post INTO a conversation. But the pieces
+were all there: a link to `/posts/<id>` pasted in a conversation already draws an in-app card
+(`LinkPreviewCard` -> `canariLinkPreview.ts`), and a share from another app already travels
+picker -> landing -> composer (lots S1+S2, above).
+
+**Instagram's sheet, read on the user's phone (2026-10-23).** A bottom sheet with a grabber; a
+search field with an "add people" icon; a three-column grid of recent conversations and people
+(round avatar, name under it, a green dot when active, stacked avatars for a group), scrolling; a
+fixed bottom row of round labelled actions scrolling sideways - "Copier le lien" first, WhatsApp,
+"Ajouter a la story", "Partager" (the system sheet), Snapchat... The post behind is dimmed. A tap
+on a person SELECTS it (several can be), and a "write a message" field and a Send button appear.
+
+**What is built (`PostShareSheet.svelte`).** "Partager" in a post's menu, the rail's send and the
+post page's header all open it. Canari has no presence and no story, so neither is copied.
+- A grabber, the search field (name or community), and the grid of the picker's own destinations
+  (`shareCandidates`, the function `ForwardMessageModal` now reads too), **most recent first**
+  (`compareConversationRecency`, the sidebar's key); a salon shows its community under its name.
+- The bottom row: **"Copier le lien"** first, then **"Partager via..."** (the system sheet) where
+  one exists (`canShareOut`, the phone apps). On the web "Partager" no longer means "copy": the
+  sheet is the same everywhere, minus the system row.
+- **A tap on a conversation sends the post's link INTO it the way a share from another app goes**
+  (`sendPostLinkInApp`): `incomingShare.offerTo` offers the link with its destination already
+  picked - so the S1 picker never opens for it - `landShareOn` opens that conversation as a tapped
+  notification would, and the chat page puts the link in the composer (`takeFor`). **The member
+  sends with Send; a word can be typed first**, which is Instagram's message field without a second
+  one. The navigation drains the overlay stack, so the sheet and the reel viewer close with it.
+- The sheet is loaded on its first open (`import()`), never with a card: it reads the conversation
+  list (`globalChatSingleton`), which a feed scrolled past must not pay for.
+- `offerTo` stamps the share with the page's current FLOOR (the last sign-out it saw): it was made
+  after it, so the fence cannot refuse it, and a sign-out still drops it like any held share
+  (`eraseIncomingShare` -> `incomingShare.drop`).
+
+**What the link reveals, and to whom.** The link is `https://canari.emse.fr/posts/<id>`
+(`postShareUrl`), the same for every row: the id and nothing else.
+- **In a conversation**, the card is fetched by EACH READER under their own session (`getPost`): a
+  reader the post's spaces exclude, or who is signed out, gets the fallback card ("unavailable",
+  the route's generic label) - not a word of the post. The message itself stays end-to-end
+  encrypted; an in-app link never goes through the server's link-preview fetch (`isInAppHref`
+  branch), so no server learns which post was sent where.
+- **Opened**, the link is the app's (Universal / App Link, `/posts/*` is claimed) or the web page,
+  both behind sign-in and the post's own audience - a reader who may not see it gets "not found".
+- **Pasted outside Canari** (copy, system sheet), an unfurler reads the server-rendered card: an
+  ASSOCIATION post's text and picture to anyone holding the link, whatever its spaces; a personal
+  post gets the generic card. **Kept as it is, by the user's decision** (2026-10-23, below;
+  [seo](seo.md#a-shared-post-and-the-ten-days-it-previewed-as-nothing)).
+- No new data is collected: no share count, no log of who shared what to whom.
+
+**Decided by the user (2026-10-23), on the six questions this section first asked.**
+1. **A shared reel's card opens the reel in the reels viewer**, not its page - BUILT. The in-app
+   preview carries the post whole when it is a reel (`reelPost`, `canariLinkPreview.ts`; it is the
+   post the READER's session read), and a tap on the card mounts `ReelViewer` on it (loaded on the
+   tap, like the card's `PostMedia`), continuing with the other reels. There was no deep-link entry
+   into the viewer to reuse: it is opened by its owner, as `PostContent` and `ReelsEntryButton`
+   do. A tap before the card has read its post still opens the page - the card does not know yet.
+2. **The post page's header "Partager" opens the same sheet** - BUILT (`routes/posts/[postId]`);
+   its in-place "Lien copie !" is gone, and its string with it.
+3. **No sender warning** about recipients outside the post's spaces: it would be a new question
+   asked of the server about other members. Not to be built.
+4. **No dedicated MLS message type**: a shared post is its link and the in-app card. Not to be
+   built.
+5. **The external link preview stays as it is** ([seo](seo.md#a-shared-post-and-the-ten-days-it-previewed-as-nothing));
+   the open question it was is closed.
+6. **One destination per share stays**; sending to several at once from the sheet is LATER, not
+   now. It would mean building the chat page's messaging context outside it.
+
+**Owed**: on the Mi 9T and the iPhone - the sheet from a feed card, from a reel (it must sit above
+the viewer) and from the post page; a tap lands in the conversation with the link in the composer,
+Send draws the card; a tap on a reel's card opens the viewer; the recipient without the post's space
+sees "unavailable"; "Copier le lien" and "Partager via..." from both. Tests:
+`PostShareSheet.svelte.test.ts`, `sharePost.test.ts`, `shareDestinations.test.ts`,
+`incomingShare.svelte.test.ts` (`offerTo`), `ReelViewer.rail` (the send opens the sheet),
+`LinkPreviewCard.reel.svelte.test.ts` and `canariLinkPreview.test.ts` (a reel's card opens the
+viewer, a post's its page).
+
 ## Decisions
 
 - **Destinations are conversations and salons, never a post** (user, 2026-10-11): a post's text is
@@ -137,6 +291,12 @@ builds on the IN half later and is not started.
   the member sends by hand, in a conversation they chose, so the residual is low.
 
 ## Owed
+
+- **S5 on the Mi 9T**: the suggestions appear in the sheet after a few conversations; picking one
+  opens the picker with it preselected; the toggle off removes them; a sign-out removes them; a
+  second account never sees the first's - nor its conversation shortcuts (a notification's
+  conversation header, the launcher's long-press menu). `adb logcat -s ShareTargets GalleryPlugin IncomingShare`
+  and the page's `[SHARE]` lines tell each step.
 
 - A reading on the Mi 9T: text from Chrome, one and several pictures from the gallery, a PDF from
   Files, a video; cold start, warm, and with the PIN gate up. And the native half no JVM test reaches:

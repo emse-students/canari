@@ -106,18 +106,15 @@
   let frameReachesBottom = $state(true);
 
   /**
-   * The room under the caption and the rail: a reel's leaves the player's bar free, a photo page
-   * has no bar. Plus the bottom safe-area inset when the frame reaches the screen bottom.
+   * The room under the caption and the rail: the bottom safe-area inset when the frame reaches the
+   * screen bottom, plus a rem that clears the player's progress line (a reel's is 32 px of touch
+   * target, 2 px drawn, on that edge - no bar to leave room for since 2026-10-23).
    */
   const bottomPad = $derived(
-    page === 'photo'
-      ? frameReachesBottom
-        ? 'pb-[calc(var(--safe-area-inset-bottom,0px)+1rem)]'
-        : 'pb-4'
-      : frameReachesBottom
-        ? 'pb-[calc(var(--safe-area-inset-bottom,0px)+4.5rem)]'
-        : 'pb-18'
+    frameReachesBottom ? 'pb-[calc(var(--safe-area-inset-bottom,0px)+1rem)]' : 'pb-4'
   );
+  /** The rail carries a reel's tools (save, sound) even when it carries no social action. */
+  const showRail = $derived(!!rail || page === 'reel');
 
   function setExpanded(next: boolean) {
     console.debug(`[reel-viewer] caption ${next ? 'expanded' : 'folded'} on ${post.id}`);
@@ -171,11 +168,12 @@
   });
 </script>
 
-<!-- THE SAVE IS IN THE PLAYER'S BAR, BESIDE THE VOLUME, FOR EVERY REEL (user, 2026-10-09): public or
-     not, the member's own or anybody's. It saves what the viewer holds - the ref with its key that
-     the player itself decrypts - so nothing here asks the server who owns the reel. -->
-{#snippet barActions()}
-  <ReelSaveButton reel={post} />
+<!-- THE SAVE IS IN THE RAIL, UNDER THE SEND, FOR EVERY REEL (user, 2026-10-09: public or not, the
+     member's own or anybody's; moved from the player's bar 2026-10-23, the sound under it). It
+     saves what the viewer holds - the ref with its key that the player itself decrypts - so nothing
+     here asks the server who owns the reel. -->
+{#snippet railTools()}
+  <ReelSaveButton reel={post} rail />
 {/snippet}
 
 <!-- A DOUBLE TAP ON THE REEL LIKES IT (`doubleTapLike`), the letterbox bands included. Nothing is
@@ -200,7 +198,13 @@
           <PostMedia {media} {authToken} galleryMode />
         {/if}
       {:else if active && video}
-        <PostMedia media={video} {authToken} galleryMode {barActions} />
+        <PostMedia
+          media={video}
+          {authToken}
+          galleryMode
+          minimalPlayer
+          playerSafeBottom={frameReachesBottom}
+        />
       {:else}
         <VideoPoster />
       {/if}
@@ -217,7 +221,7 @@
          letterboxed frame sits well above the home indicator, and the inset there would leave the
          caption about one line. -->
     <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent pl-4 text-white {rail
+      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent pl-4 text-white {showRail
         ? 'pr-16'
         : 'pr-4'} {expanded ? 'pt-4' : 'pt-16'} {bottomPad}"
       data-reel-caption
@@ -279,7 +283,7 @@
       {/if}
     </div>
 
-    {#if rail}
+    {#if showRail}
       <!-- THE RAIL, BOTTOM-RIGHT, ON THE CAPTION'S BASELINE (Instagram's, measured on the Mi 9T:
            the column's centre ~30 dp from the edge, anchored to the bottom). Over the caption
            (`z-30`), which leaves it the room (`pr-16`). Out of the double tap (`data-no-double-tap`)
@@ -289,9 +293,12 @@
           {readerReaction}
           reactionCount={reactionTotal(post.reactions)}
           commentCount={commentCountOf(post)}
-          onHeart={rail.onHeart}
-          onComments={rail.onComments}
-          onSend={rail.onSend}
+          onHeart={rail?.onHeart}
+          onReact={rail?.onReact}
+          onComments={rail?.onComments}
+          onSend={rail?.onSend}
+          tools={page === 'reel' ? railTools : undefined}
+          sound={page === 'reel'}
         />
       </div>
     {/if}

@@ -1,6 +1,7 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
@@ -264,6 +265,18 @@ export class LocalStateNotReadyError extends Error {
   constructor(readonly reason: unknown) {
     super(`the opened local state could not be made ready: ${String(reason)}`);
     this.name = 'LocalStateNotReadyError';
+  }
+}
+
+/**
+ * What a pending {@link IMlsService.whenGroupDrained} rejects with when its service is destroyed
+ * (sign-out): the group will never be drained by THIS client, and a waiter left pending would hold
+ * the account that left in memory until a reload.
+ */
+export class GroupDrainAbandonedError extends Error {
+  constructor(readonly groupId: string) {
+    super(`the MLS service ended before key group ${groupId.slice(0, 8)} drained`);
+    this.name = 'GroupDrainAbandonedError';
   }
 }
 
@@ -667,12 +680,70 @@ export interface IMlsService {
    * (throws), broadcasts the commit, and returns the Welcome + post-merge ratchet tree for the
    * caller to deliver to the new device. `excludeDeviceIds` are skipped in the commit broadcast
    * (typically the inviter self and the invitee).
+   *
+   * The package is checked against `userId:deviceId`, the device it was fetched for, and against
+   * the signature key pinned for that device on first sight; either refusal throws a
+   * `DeviceTrustRefusedError` before anything is staged (`deviceTrust.ts`).
    */
   addMember(
     groupId: string,
-    keyPackageBytes: Uint8Array,
+    device: { keyPackage: Uint8Array; userId: string; deviceId: string },
     excludeDeviceIds?: string[]
   ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+  /**
+   * {@link addMember} for a device whose leaf is STILL in the tree: removes that leaf and adds the
+   * device back in ONE commit, so no epoch has the user out of the tree (no departure, see
+   * {@link removalEpochs}). Same vetting, same typed refusal, same transaction.
+   */
+  replaceMember(
+    groupId: string,
+    device: { keyPackage: Uint8Array; userId: string; deviceId: string },
+    excludeDeviceIds?: string[]
+  ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+  /**
+   * Whether a package may be added as `userId:deviceId`, staging nothing - the same check the Add
+   * runs in Rust, taken BEFORE a destructive step (the removal of a stale leaf it would replace).
+   */
+  vetKeyPackage(
+    keyPackage: Uint8Array,
+    userId: string,
+    deviceId: string
+  ): Promise<KeyPackageVerdict>;
+  /**
+   * The identity (`userId:deviceId`) of the leaf of `groupId` carrying `keyPackage`'s signature
+   * key, or `null` when no leaf does. Asked after an Add refused as a DUPLICATE SIGNATURE KEY: the
+   * refusal says the key is in the tree, not whose leaf holds it, and assuming it is the identity
+   * the package was fetched for would vouch for, or replace, a device on another device's key.
+   * Throws for a group this device does not hold or a package it cannot read.
+   */
+  leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null>;
+  /**
+   * The new devices (first sight or a changed key) recorded from merged signed commits since the
+   * last call, oldest first; taking them forgets them. The new-device notices take them through
+   * `setDeviceEventConsumer`.
+   */
+  takeDeviceEvents(): Promise<DeviceEvent[]>;
+  /**
+   * Registers who device events are handed to - after each drain, after this device's own Adds,
+   * and once at registration for what the state already holds - or removes it with `null`. The
+   * new-device notices (`deviceNotices.svelte.ts`) are the one consumer.
+   */
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void;
+  /**
+   * The pin of `userId:deviceId` - the signature keys this device has seen for it in a signed tree
+   * it merged or joined (`DevicePin`) - or `null` for a device it never saw: THE SINGLE SOURCE OF
+   * TRUST for "a key this device has seen", for any verifier of a device-key signature, since a key
+   * the server published alone proves nothing against the server. `null`, and a contradiction with
+   * an `anchored: false` pin, mean UNVERIFIED, never FORGED. See `BaseMlsService.pinnedSignatureKeys`.
+   */
+  pinnedSignatureKeys(userId: string, deviceId: string): Promise<DevicePin | null>;
+  /**
+   * The epochs at which this device saw `userId` leave `groupId`'s tree (its last leaf removed by a
+   * merged commit, live or caught up), oldest first. Per USER, and only commits this device merged.
+   * Empty means NOT SEEN, never "never happened". Never user-visible. See
+   * `BaseMlsService.removalEpochs`.
+   */
+  removalEpochs(groupId: string, userId: string): Promise<number[]>;
   /**
    * Adds multiple devices to a group in a single STAGED MLS commit (C7-A unified regime): stages
    * the commit, validates server-side, merges on accept / rolls back on reject (throws), broadcasts
@@ -685,11 +756,13 @@ export interface IMlsService {
    * Devices dropped because their KeyPackage was **invalid/undeserializable** (expired, wrong
    * ciphersuite, lost private key, corrupted bytes) are reported in `skipped` WITH a typed reason
    * (`SkippedKeyPackageReason`, classified in Rust) so the caller can surface a non-silent member
-   * loss and say why instead of letting them disappear. [[C5]]
+   * loss and say why instead of letting them disappear. [[C5]] A package whose credential does
+   * not name `userId:deviceId`, or carries a key other than the one pinned for that device, is one
+   * of those skips (`identity-mismatch`, `signature-key-changed`).
    */
   addMembersBulk(
     groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; deviceId: string }>,
+    devices: Array<{ keyPackage: Uint8Array; deviceId: string; userId: string }>,
     excludeDeviceIds?: string[]
   ): Promise<{
     welcome?: Uint8Array;
@@ -777,6 +850,8 @@ export interface IMlsService {
     Array<{
       keyPackage: Uint8Array;
       deviceId: string;
+      /** The `userId` asked for, carried so an Add can check each package names this device. */
+      userId: string;
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
@@ -1033,6 +1108,28 @@ export interface IMlsService {
    * an outbox flush, a re-encrypted bundle whose epoch depends on every commit applied.
    */
   waitForGroupQueueIdle(caller: string, groupId: string): Promise<void>;
+  /**
+   * Whether this device has merged everything the server holds for `groupId`, as a FACT read now,
+   * never waited for: the last pull listed the whole mailbox, no pull is running, the socket that
+   * pull was trusted with is still open, and the scheduler holds nothing of the group (nothing
+   * queued, parked or being applied). `false` is "not known to be drained", never "behind".
+   *
+   * For a decision that must not be taken on a group state the server may still be holding commits
+   * for - the admission gate's first observation of a voucher (channel-encryption section 25). It
+   * reads the evidence {@link waitForGroupQueueIdle} and {@link waitForMessageQueueIdle} stand on.
+   */
+  isGroupDrained(groupId: string): boolean;
+  /**
+   * Resolves the first time {@link isGroupDrained} holds for `groupId` - at once when it holds now.
+   *
+   * AN EVENT, NEVER A POLL: it is re-checked only where a piece of that evidence can change - the
+   * scheduler finishing a frame of the group, and a pull ending. Never await it inside a frame of
+   * the group itself: that frame is the group's current work, so the group cannot be drained until
+   * it returns. A caller chains on it instead (the admission gate's parked asks, section 25).
+   *
+   * @throws {GroupDrainAbandonedError} (as a rejection) when the service is destroyed first.
+   */
+  whenGroupDrained(groupId: string): Promise<void>;
   /**
    * Tells the service the local conversation store is now authoritative.
    *

@@ -33,7 +33,8 @@ import { NotificationPreference } from '../entities/notification-preference.enti
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
-import { sanitizeIdentityValue } from '../utils/sanitize';
+import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
+import { parseSessionId } from '../utils/session-id';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { endDeviceMemberships } from '../utils/group-membership';
 import { MessagingService } from '../services/messaging.service';
@@ -198,6 +199,97 @@ export class InternalController {
     });
     this.logger.log(`[INTERNAL_MLS_DEVICES] user=${userId.slice(0, 8)} count=${count}`);
     return { count };
+  }
+
+  /**
+   * Which session a device's push registration is bound to - the first half of the compare-and-
+   * delete core-service's outbox (`SessionPushEndService`) runs when a session that named this
+   * device ends. core-service reads the binding HERE, then decides whether that session is still
+   * live, then deletes only if the row still names what it read: a liveness check taken before the
+   * read could miss a session that signed in and registered in between.
+   */
+  @Get('push/users/:userId/devices/:deviceId')
+  async readDevicePushBinding(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Param('userId') userIdRaw: string,
+    @Param('deviceId') deviceIdRaw: string
+  ): Promise<{ registered: boolean; sessionId: string | null }> {
+    this.assertInternalSecret(headerSecret);
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw, 'deviceId');
+    const row = await this.pushTokenRepo.findOne({
+      where: { userId, deviceId },
+      select: { id: true, sessionId: true },
+    });
+    this.logger.debug(
+      `[PUSH_SESSION_END] binding read user=${userId.slice(0, 8)} device=${deviceId} ` +
+        `registered=${!!row} session=${row?.sessionId?.slice(0, 8) ?? 'none'}`
+    );
+    return { registered: !!row, sessionId: row?.sessionId ?? null };
+  }
+
+  /**
+   * Ends the push registrations an ended SESSION leaves behind - called by core-service's outbox
+   * (`SessionPushEndService`) for every session it deletes deliberately: the logout, an owner
+   * revoking a device, "sign out everywhere else", and a refresh-token replay.
+   *
+   * THE SERVER HALF OF "A SIGN-OUT ENDS THE DEVICE'S PUSH REGISTRATION". The device deletes its own
+   * token too (`push_registration.rs`), and each half stands alone: this one holds for a device that
+   * is offline, uninstalled or never runs its sign-out, the device's for a call that never arrives
+   * here. Deleting the row removes the destination AND the push secret on it, so the background
+   * paths authenticated by that secret (`refresh-token`, `fetch-proto`, ...) are refused from here on
+   * - `refresh-token` only ever UPDATES a row, so it cannot bring one back.
+   *
+   * Two deletes, each exact:
+   * - BY SESSION, always: the row `sessionId` registered (migration 037), whichever device it is on -
+   *   a session that registered before it ever named its device is covered too. A re-sign-in's
+   *   registration rewrote the row with its own session and is never reached.
+   * - THE DEVICE'S STALE ROW, when `device` and `ifBoundTo` are given: the row of that device, only
+   *   if it is still bound to exactly what core-service read through `readDevicePushBinding` and
+   *   judged not live (`none` = NULL, a row written before rows named a session). A registration
+   *   written since the read changed the binding, so the compare fails and nothing goes.
+   *
+   * Idempotent: an answer of `removed: 0` is the ordinary second call, and a success. 2xx only when
+   * the deletes ran, so the caller's retry stops on the truth; a 400 is an address no retry can fix.
+   */
+  @Delete('push/users/:userId/sessions/:sessionId')
+  async endSessionPushRegistration(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Param('userId') userIdRaw: string,
+    @Param('sessionId') sessionIdRaw: string,
+    @Query('device') deviceRaw: string | undefined,
+    @Query('ifBoundTo') ifBoundToRaw: string | undefined
+  ): Promise<{ removed: number }> {
+    this.assertInternalSecret(headerSecret);
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const sessionId = parseSessionId(sessionIdRaw, 'sessionId');
+    if (!sessionId) throw new BadRequestException('sessionId is required');
+    const deviceId = deviceRaw === undefined ? null : sanitizeQueryValue(deviceRaw, 'device');
+    if ((deviceId === null) !== (ifBoundToRaw === undefined)) {
+      throw new BadRequestException('device and ifBoundTo go together');
+    }
+    const ifBoundTo =
+      ifBoundToRaw === undefined || ifBoundToRaw === 'none'
+        ? null
+        : parseSessionId(ifBoundToRaw, 'ifBoundTo');
+
+    const bySession = await this.pushTokenRepo.delete({ userId, sessionId });
+    let stale = 0;
+    if (deviceId !== null) {
+      const res = await this.pushTokenRepo.delete({
+        userId,
+        deviceId,
+        sessionId: ifBoundTo === null ? IsNull() : ifBoundTo,
+      });
+      stale = res.affected ?? 0;
+    }
+    const removed = (bySession.affected ?? 0) + stale;
+    this.logger.log(
+      `[PUSH_SESSION_END] user=${userId.slice(0, 8)} session=${sessionId.slice(0, 8)} ` +
+        `device=${deviceId ?? 'unnamed'} ifBoundTo=${ifBoundToRaw ?? 'n/a'} ` +
+        `removedBySession=${bySession.affected ?? 0} removedStale=${stale}`
+    );
+    return { removed };
   }
 
   /**

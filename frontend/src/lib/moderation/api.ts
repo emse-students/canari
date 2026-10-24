@@ -143,7 +143,8 @@ export async function createReport(
 /**
  * Reports ONE line of a live chat (`contentType: 'live_chat'`, WP-L8b). `contentId` is the
  * message's server id, `liveId` names its live, and `message` is the plaintext the reporter's
- * client opened - the server cannot read it (the live key goes with the live), so it signs what it
+ * client opened. The server DOES open the sealed line with the live key it still holds and
+ * refuses a text that does not match it (400 `LIVE_CHAT_REPORT_MISMATCH`), then signs what it
  * receives for staff ([lives](docs/wiki/services/lives.md), "A reported chat line is kept until
  * handled"). The reported account is read by the server from its own row, never sent. Throws
  * {@link ModerationApiError}.

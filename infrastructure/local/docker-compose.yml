@@ -58,7 +58,7 @@ services:
 
   postgres:
     # Same rule. The tag pinned the MAJOR only, so every patch arrived unannounced.
-    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
     ports:
       - "5432:5432"
     environment:

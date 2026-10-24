@@ -56,6 +56,16 @@ export class ChannelMember {
   @Column({ type: 'jsonb', default: {}, select: false, insert: false, update: false })
   clearedMarks?: Record<string, number>;
 
+  /**
+   * The signed admission this member was given (migration 107): an opaque voucher a member's device
+   * signed - the admin who added them, or the member whose invite link they followed. The server
+   * stores and serves it and cannot forge it; members check it before handing over the community's
+   * past (channel-encryption section 25). Null for a member admitted before the proof existed, or
+   * through a link that carried none.
+   */
+  @Column({ type: 'text', nullable: true, default: null })
+  admissionVoucher: string | null;
+
   /** Display order of this member's workspaces in their own sidebar (ascending). Personal, not shared across members. */
   @Column({ type: 'int', default: 0 })
   sortOrder: number;

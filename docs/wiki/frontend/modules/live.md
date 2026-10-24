@@ -1,4 +1,4 @@
-# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, WP-L7's push, the WP-L5 viewer and broadcaster behind a dev-only switch and WP-L8's server half 2026-10-19)
+# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, the WP-L1 bench measured 2026-10-19, WP-L7's push, the WP-L5 viewer and broadcaster behind a dev-only switch and WP-L8's server half 2026-10-19)
 
 > **Turning lives on in production** - the gates, the order, the viewer-cap ladder and the HELD privacy wording: [live-production](live-production.md) (2026-10-21), the only copy.
 >
@@ -56,8 +56,8 @@ reached by API, and is unaffected.
 | Reports | `content_reports` (social-service) is the only report store. | [moderation-and-blocking](../../moderation-and-blocking.md) |
 | State of calls | `CALLS_ENABLED = false` since 0.14.15; the switches move in two groups since 2026-10-21 (`CALLS_COMPILED` for in-app calls, `CALLS_NATIVE_RING_COMPILED` for the native ring, which the first production calls ship without); the SFU has never placed a real call; webrtc 0.20 is a port, not a bump. | [calls](calls.md) |
 
-**The egress arithmetic, which is an ESTIMATE until a bench measures it.** The ~1.5 Mb/s per viewer
-of C9 is a planning figure, not a measurement. Whatever the path, **the host sends one copy per
+**The egress arithmetic.** The ~1.5 Mb/s per viewer
+of C9 was a planning figure; **WP-L1 measured ~3.1 Mb/s from an Android broadcaster and ~2.3 Mb/s from an iPhone** ([below](#wp-l1---measured-2026-10-19)), so use 3.1. Whatever the path, **the host sends one copy per
 viewer**:
 
 ```
@@ -65,7 +65,7 @@ egress(Mb/s) = viewers x bitrate(Mb/s)          (summed over simultaneous lives)
 max viewers  = usable uplink(Mb/s) / bitrate     usable = the share of the host's link left to Canari
 ```
 
-At 2.5 Mb/s (720p, as C3), 100 Mb/s of usable uplink is 40 viewers and 1 Gb/s is 400 - **and the
+At 3.1 Mb/s (720p from the Mi 9T, measured), 100 Mb/s of usable uplink is 32 viewers and 1 Gb/s is 322 - **and the
 usable figure is unknown**, because the link speed is undocumented and the link is shared with the
 DSI's co-tenants. For option A the same bytes are also billed to Cloudflare TURN: 30 viewers for
 60 minutes at 1.5 Mb/s is 45 Mb/s x 3600 s = about **20 GB per live-hour**, so the default 950 GB
@@ -83,11 +83,11 @@ Three shapes, compared honestly.
 | Ingest | WebRTC to `call-service` | RTMP or WebRTC (WHIP) to an ingest server _(unverified: public descriptions, not read)_ | the broadcaster's phone encodes ONE quality (720p, as C3 for reels) into short fMP4 segments, seals each with the live key, uploads them like encrypted media parts |
 | Server work | forwards every packet to every viewer | **transcodes** into several qualities, packages HLS/DASH | **stores only** - no transcoding, consistent with C3 |
 | Delivery | one stream per viewer, relay-only through Cloudflare TURN (verified above) | identical cacheable segments through a CDN | identical sealed segments served as files by **our nginx on the host** - there is no CDN in front of production |
-| Latency | sub-second | ~2-6 s with low-latency HLS, more with classic HLS _(unverified)_ | **~5-10 s** _(estimate: segment length + upload + polling; to be measured)_ |
+| Latency | sub-second | ~2-6 s with low-latency HLS, more with classic HLS _(unverified)_ | **5.8-7.3 s glass-to-glass, p50, measured on dev** with 2 s segments ([WP-L1](#wp-l1---measured-2026-10-19)) |
 | Quality | one bitrate for all (no simulcast) | adaptive bitrate, several tiers | **one quality for all**; a viewer on a weak network stalls or buffers rather than dropping to a lower tier |
 | Cost per extra viewer | a WebRTC peer connection in the SFU process, plus a full stream through the host AND through TURN (~950 GB/month shared with calls) | a CDN hit | one file read answered by nginx (no app, no database, no media process) - but still **one copy out of the host's uplink** |
 | Scales to | **tens** of viewers | very large audiences | **uplink / bitrate** viewers (formula above), unknown until measured; not the whole network |
-| Chat and reactions | in step with the picture | slightly ahead of the picture | **slightly ahead of the picture** (5-10 s); reactions shown against the viewer's playback position need a timestamp in the segment |
+| Chat and reactions | in step with the picture | slightly ahead of the picture | **slightly ahead of the picture** (6-7 s measured); reactions shown against the viewer's playback position need a timestamp in the segment |
 
 **What the repository says about C, read 2026-10-15.**
 
@@ -120,28 +120,151 @@ Three shapes, compared honestly.
   (Cloudflare Stream or similar) would do B for us, but it transcodes and sees the plaintext (no E2E),
   costs per minute delivered, and is a new service for the DSI to accept _(all unverified: no price,
   no DSI answer, nothing in the repo uses it)_.
-- **Playback in the WebViews** goes through Media Source Extensions in the segmented reader today
-  _(unverified for a live, growing source on iOS WebKit, where MSE availability has differed from
-  Chromium)_ - a WP-L1 reading on both phones, before anything else is built.
-  **Read 2026-10-18 in Chrome and Safari** (not yet in the app's WebViews): a MediaRecorder fMP4
-  chunk appends to a growing `MediaSource` / `ManagedMediaSource` for 36-42 min with no error
+- **Playback in the WebViews** goes through Media Source Extensions in the segmented reader today.
+  **Read 2026-10-18 in Chrome and Safari**: a MediaRecorder fMP4 chunk appends to a growing
+  `MediaSource` / `ManagedMediaSource` for 36-42 min with no error
   ([bench readings](../../device-readings-calls-live-2026-10-18.md#2-live-wp-l1---capture-into-short-fmp4-segments-and-a-growing-mse-source-30-42-min)).
+  **Read 2026-10-19 through the dev ingest**, in the Android app's WebView and in iOS Safari, as
+  broadcaster and viewer: 0 append errors, 0 refusals ([WP-L1](#wp-l1---measured-2026-10-19)).
 
 **Recommendation.**
 
 - **C, and say plainly what "no cap" becomes: a cap set by the host's uplink, to be MEASURED
-  (WP-L1).** Its price: **one quality, about 5-10 s behind real time, chat and reactions slightly
+  (WP-L1).** Its price: **one quality, about 6-7 s behind real time (measured), chat and reactions slightly
   ahead of the video.** C still beats A on this host: no TURN relay and no TURN budget, no per-viewer
   WebRTC peer in a media process, nginx serving files.
 - **A only as an optional small-audience, low-latency mode** (a few viewers, sub-second), if the user
   wants it at all. It reuses the revived call path and nothing else needs it.
 - **On quality, the answer to L8's question**: Twitch and Facebook deliver several tiers because their
-  servers transcode. With C the bitrate per viewer is the broadcaster's single encode, about
-  1.5-2.5 Mb/s at 720p (C3 targets 2.5 Mb/s for reels). Adaptive bitrate needs server transcoding,
+  servers transcode. With C the bitrate per viewer is the broadcaster's single encode, **measured
+  at 3.1 Mb/s (Mi 9T) and 2.3 Mb/s (iPhone 12) at 720p** ([WP-L1](#wp-l1---measured-2026-10-19)). Adaptive bitrate needs server transcoding,
   which contradicts C3 (*"il faut que la charge serveur soit minimale"*), unless the phone encodes two
   tiers itself, which doubles its uplink and its battery cost. So **one tier in v1**.
 
+## WP-L1 - measured (2026-10-19)
+
+**The transport works end to end, in the Android app's own WebView, on the dev ingest built by
+WP-L2/L3, with both phone engines as broadcaster and as viewer.** Nothing in it refutes C. The
+latency is **about 6-7 s glass-to-glass**, the upload costs a fraction of a segment's duration on
+Wi-Fi, and the two real costs are the Android broadcaster's battery and what the app does when it
+leaves the foreground. The 2026-10-18 capture-only readings (no upload, in Chrome and Safari) are on
+[device-readings-calls-live-2026-10-18](../../device-readings-calls-live-2026-10-18.md#2-live-wp-l1---capture-into-short-fmp4-segments-and-a-growing-mse-source-30-42-min);
+this section adds the network half and the in-app engine.
+
+**The rig** ([`tools/live-bench/`](../../../../tools/live-bench/README.md), throwaway, not shipped): a
+script evaluated in an inspectable page records with `MediaRecorder` (H.264 + AAC fMP4, a timeslice
+equal to the segment length, `videoKeyFrameIntervalDuration` the same), seals each chunk with
+AES-GCM-256, and `PUT`s it to `/api/lives/:id/segments/:i` on `dev.canari-emse.fr` (`LIVE_ENABLED`
+is on there). Viewers poll the manifest every 500 ms, `GET` each new segment from media-service,
+open it and append it to `MediaSource` / `ManagedMediaSource`, joining at the newest segment. Every
+page syncs its clock to the manifest's `serverNow` (min-RTT, error under 90 ms), so
+**glass-to-glass = now - (recorder start + the media time on screen)**, across devices. Pages:
+
+- **Mi 9T, the Canari app** (`fr.emse.canari` 1.3.0 tester build, Android System WebView 152): its
+  WebView is inspectable and the app talks to dev. Uploads went through the app's own Tauri HTTP
+  `fetch`, as product code would.
+- **iPhone 12, Safari** (iOS 27.0.1), signed in to dev with a test account: the TestFlight
+  WKWebView is NOT inspectable, so iOS is Safari's WebKit, not the app's.
+- **PC, Chrome** on dev (a third viewer on a wired link).
+
+All on Wi-Fi, both phones on USB power. Runs: **A** Mi 9T broadcasting, 21.8 min clean then a
+background test; **B** iPhone broadcasting, 22.2 min clean then a background test (36.5 min in all);
+**C** four 4-5 min variants from the Mi 9T (1 s and 4 s segments, 480p, 720p at a lower target).
+
+### The broadcaster
+
+| Reading | Mi 9T, app WebView (run A) | iPhone 12, Safari (run B) |
+| --- | --- | --- |
+| Capture | 720x1280 portrait, 30 fps, `video/mp4;codecs=avc1.42E01F,mp4a.40.2` | 1280x720 landscape, 30 fps, the same string |
+| Bitrate for a 2.5 Mb/s target | **3.08 Mb/s mean**; every 2 s fragment 3.11 p50, 3.76 max | **2.32 Mb/s mean**; 2.35 p50, 2.64 max per segment |
+| Encoder floor (run C) | a **1.5 Mb/s** target at 720p gives **2.60 Mb/s**; **480p** (480x854) at 1.2 Mb/s gives **2.59 Mb/s** - the Android encoder does not go lower with 2 s keyframes, whatever the size | not measured |
+| Segment size (2 s) | 780 kB p50, 1 583 kB max (a merged pair, below) | 587 kB p50, 661 kB max |
+| Segment cadence | 2.03 s p50 but **82 of 567 chunks (14 %) carry TWO 2 s fragments** at once (4.0 s) | 2.029 s p50, 2.056 s max - regular |
+| Segment structure | segment 0 is the **init alone** (`ftyp,moov`, 1.2 kB); 567/567 media segments box-aligned and **starting on a keyframe** | segment 0 is **init + first media**; 657/657 box-aligned, starting on a keyframe |
+| Seal (AES-GCM per segment) | 5.3 ms p50, 19 ms p90, 40 ms max | 2.0 ms p50, 25 ms max |
+| Upload (`PUT`, ready -> stored) | **650 ms p50**, 1.05 s p90 (10.3 Mb/s); one Wi-Fi hiccup of 22.6 s left a 14-segment backlog that drained by itself | **286 ms p50**, 434 ms p90 (17 Mb/s) |
+| Refusals by the ingest | 0 in 567 (no 409, 413, 429, 503) | 0 in 1 070 |
+| Battery, on USB (a 400 mA port) | **100 -> 88 % in 17.8 min, ~40 %/h DRAINED while plugged**; battery 30.6 -> 38.1 C; thermal status 0 throughout | not readable: at 100 % on the charger |
+| App to the background for 20 s | the camera track **ENDS** 5.9 s after `hidden` (no `mute`), and stays ended on return: capture is dead until a new `getUserMedia`. The Tauri `fetch` fails (`TransportFailureError`) while hidden. The live then **ended itself 77 s after its last stored segment** (the 60 s window plus the 30 s sweep), viewers got `410` | the track **mutes** at once and **unmutes** on return; capture resumed, a 22 s gap, the live survived (under 60 s) |
+
+### The viewers
+
+| Reading | iPhone Safari watching the Mi 9T (A) | Mi 9T app watching the iPhone (B) | PC Chrome (A / B) |
+| --- | --- | --- | --- |
+| Engine | `ManagedMediaSource`, `isTypeSupported` true, appends 0 errors | `MediaSource`, 0 append errors | `MediaSource` |
+| Join | init, then the newest segment, seek to its end - 0 failures | same | same |
+| Recorder handover -> playable here | 1.9 s p50, 3.0 s p90 | 1.9 s p50, 2.2 s p90 | 1.9 / 1.7 s p50 |
+| Segment `GET` | 0.94 s p50 (780 kB) | 1.26 s p50 (587 kB) | 0.97 / 1.14 s p50 |
+| **Glass-to-glass** | **7.3 s p50, 7.5 s p90** | **5.8 s p50, 5.9 s p90** | 7.3 / 6.2 s p50 |
+| Stalled | 3.2 % of the time (23 stalls in 19 min) | **0 stalls in 21 min** | 4.8 % / 0.2 % |
+| Dropped frames | 1 of 33 828 | 123 of 37 904 | 860 of 31 765 / 123 of 37 997 |
+
+**Where the 6-7 s goes** (run B, the regular encoder): the segment's own 2 s; the upload, 0.3 s;
+half a poll, 0.25 s; the `GET`, 1.2 s; and the player sitting **3.0 s behind its buffer's end**
+(p50). Run A is a second worse because one Android chunk in seven is 4 s long. The download leg is
+the dev path's: a segment `GET` is TTFB 0.10 s then 1.1 s of transfer (~4.2 Mb/s, HTTP/3), the
+manifest 0.10 s, and a 2.1 MB static asset from nginx over the same path reads at ~7.9 Mb/s - so the
+`GET` is bound by dev's route (Cloudflare tunnel and the old VM's relay) and by media-service
+streaming from Garage, **neither of which is production's path**.
+
+### Segment length and quality (run C, Mi 9T broadcasting, 4-5 min each)
+
+| Variant | Uplink | Upload p50 | Glass-to-glass p50 (iPhone / PC) | Stalled (iPhone / PC) |
+| --- | --- | --- | --- | --- |
+| 720p, **1 s** | 3.09 Mb/s | 0.46 s | 6.3 / 6.1 s | 6.8 % / 7.3 % |
+| 720p, **2 s** (run A) | 3.08 Mb/s | 0.65 s | 7.3 / 7.3 s | 3.2 % / 4.8 % |
+| 720p, **4 s** | 3.15 Mb/s | 1.00 s | 7.7 / 7.7 s | **14 % / 15 %** |
+| **480p**, 2 s, 1.2 Mb/s target | 2.59 Mb/s | 0.58 s | 7.2 / 7.2 s | 7.6 % / 6.4 % |
+| 720p, 2 s, 1.5 Mb/s target | 2.60 Mb/s | - | - | - |
+
+**Recommendation, from these numbers.**
+
+- **Quality: 720p, one tier, the target asked at 2.0 Mb/s.** 480p saves 16 % of the Android uplink
+  (3.08 -> 2.59 Mb/s) because the encoder floors at ~2.6 Mb/s, and buys no latency; a 720p request
+  under 2.5 Mb/s already lands on that floor. Plan the egress on **~3.1 Mb/s per viewer for an
+  Android broadcaster and ~2.3 Mb/s for an iPhone** - so the host-uplink formula above uses 3.1, not
+  1.5.
+- **Segment: 2 s, keyframe every 2 s.** 1 s saves about a second but doubles the requests (an
+  ingest at the server's one-per-second floor, a `GET` per second per viewer) and stalled twice as
+  often; 4 s is worse on every column.
+- **For WP-L5's player**: hold about one segment of buffer (the bench's 1 s-behind-the-end target
+  starved at 4 s segments and drifted to 3 s behind at 2 s), and **seek to the live edge after any
+  gap** (seen after both background tests: 22 s behind, then caught up by a seek). Join on the init
+  plus the newest segment - it worked on every join, on both engines, because every segment starts
+  on a keyframe.
+- **For WP-L5's broadcaster**: retry an index until it lands and never skip one (the ingest is
+  in-order; the bench lost an index to a 14 s background failure and every later one was
+  `409 LIVE_SEGMENT_OUT_OF_ORDER`); show the Android broadcaster that leaving the app ends the camera
+  (re-acquire on return, inside the 60 s window); warn below ~60 % battery on Android.
+- **GO for WP-L5 on this transport.** No iOS blocker was found: Safari's WebKit records fMP4 with
+  keyframe-aligned segments, uploads at 17 Mb/s, and plays a growing source through
+  `ManagedMediaSource` with no append error; the app's WKWebView already plays `ManagedMediaSource`
+  for segmented posts (the iPhone 12 column of the R2 table in
+  [media-service](../../services/media-service.md#segmented-media-play-while-downloading-canareels-r2---the-reader-release-2026-10-01)).
+
+**What could NOT be measured, and why.**
+
+- **The iOS app's WKWebView as broadcaster or live viewer**: the TestFlight build is not
+  inspectable, and a bench build (`ios.yml` with devtools) would replace it. Safari and WKWebView
+  share WebKit; `getUserMedia` + `MediaRecorder` in the WKWebView are already exercised by the
+  CanaReels camera, and `ManagedMediaSource` by the segmented reader - but **a background test of the
+  app's camera on iOS** (does the track mute, as in Safari, or end, as in the Android WebView) is owed.
+- **Battery unplugged**: both phones stayed on USB, so the Mi 9T figure is a drain the port could not
+  cover (a floor, not the real rate) and the iPhone's is unreadable. The 2026-10-18 unplugged capture
+  without upload was ~59 %/h on the Mi 9T and ~14-28 %/h on the iPhone; with the upload it can only
+  be higher. A 30 min unplugged run with the upload needs the cables pulled by hand.
+- **Heat on the iPhone** (no temperature in `diagnostics battery`), and the Mi 9T's CPU and GPU
+  temperatures during run A (the sampler read a cached value; fixed for run C: CPU4 up to 56.5 C,
+  GPU up to 49.8 C, thermal status 0).
+- **Cellular**: no SIM in either phone; every number is Wi-Fi.
+- **Production's path and the host's usable uplink** (Q3): dev goes through a Cloudflare tunnel and
+  the old VM's relay, so the `GET` times above say nothing about production; the uplink is the
+  DSI's answer, and WP-L4's nginx serving is not built.
+- **Many viewers**: three at a time here, which says nothing about the server at 30 or 300.
+
 ## Uncapped audience - the plan (2026-10-20)
+
+> **Revised 2026-10-21 by [live-scaling](live-scaling.md)** (the owner: no VISIBLE ceiling): Cloudflare's terms are now read and restrict the Cache Rule below, so the delivery recommendation there is an R2 bucket; the bounds, the options and the staged path are on that page.
 
 The user, 2026-10-20: *"Je ne veux pas de plafond."* **Restated 2026-10-21 as a STANDING WISH: no
 visible audience ceiling for a live, "the technique must follow".** The cap of 24 is a TEMPORARY
@@ -177,7 +300,7 @@ and bounded by a short edge TTL.
 | TTL | Short, minutes: a viewer lags the live by 5-10 s and a manifest lists 10 segments, so a segment is useful for about a minute. Short TTL is also the bound on retention outside the host. A single-file purge by URL at the end is possible but is not the control (the key is) |
 | The path from edge to host | **The tunnel, which measured ~19 Mb/s on a MISS whatever the parallelism**, and it also carries dev and the SSH path ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md) 2b, 3d). Only MISSES cross it: one fetch per segment per edge location. At 3 Mb/s a live that one location fills costs the tunnel 3 Mb/s, so **about six lives whose segments are all missed**, whatever the audience - this is the number that replaces the cap, and it moves with how many edge locations the audience spans (**tiered caching** collapses them to one upper tier; its availability on this plan is _unverified_) |
 | The tunnel's weakness | It dropped in a 22h band in September and was not re-observed since ([cloudflare-edge](../../infrastructure/cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it)); a 1033 stops every live's segments at once. Viewers already past the cache would keep playing for the TTL. An accepted, stated failure mode, not one to hide behind a second path |
-| Cloudflare's terms | **The risk to settle FIRST.** The self-serve terms have restricted serving video or a disproportionate share of non-HTML content through the CDN unless a Cloudflare video or storage product carries it _(from memory of the published text, unverified against today's)_. Segments are exactly that content. Read the current terms and, if in doubt, ask Cloudflare before building: an account action would take the whole zone, production's old name included |
+| Cloudflare's terms | **READ 2026-10-21: video through the CDN needs a Paid Service (Developer Platform, Images, Stream) unless Enterprise - this Cache Rule is the restricted case ([live-scaling](live-scaling.md#a-segments-from-cloudflare-not-from-the-host)).** Was: **The risk to settle FIRST.** The self-serve terms have restricted serving video or a disproportionate share of non-HTML content through the CDN unless a Cloudflare video or storage product carries it _(from memory of the published text, unverified against today's)_. Segments are exactly that content. Read the current terms and, if in doubt, ask Cloudflare before building: an account action would take the whole zone, production's old name included |
 | Cost | No per-GB charge for CDN traffic on the plans in use _(unverified)_; the alternatives that the terms bless are **R2** (an object store with no egress fee: sealed segments written there instead of Garage - a second store, a second erase path, and a change to the ingest) and **Stream** (transcodes, sees plaintext, per-minute price: refused by the E2E design). R2 is the one to price if the terms refuse the cache |
 | What it does NOT remove | Everything that is not a segment: the manifest, the key, the chat, the seats, below |
 
@@ -264,7 +387,7 @@ only when 2-6 hold.
 
 User calls, taken after the server half (WP-L2, WP-L3) was built. They supersede L7 and change what blocks a stable.
 
-- **D1 - lives come BEFORE the calls revival** (supersedes L7 of 2026-10-15). WP-L0 no longer precedes the lives; calls stay dev-only (`CALLS_COMPILED = false`, [calls](calls.md)).
+- **D1 - lives come BEFORE the calls revival** (supersedes L7 of 2026-10-15). WP-L0 no longer precedes the lives; in-app calls were compiled in by the flip PR of 2026-10-22 (`CALLS_COMPILED = true`, held shut by the server's `calls_mode`; [calls](calls.md)).
 - **D2 - bitrate is fixed at launch by the server.** v1 picks 720p or 480p from the TOTAL live load at the moment the live starts, and never changes it mid-live. The server transcodes nothing. Mid-live adaptive bitrate is NOT v1: MediaRecorder cannot reliably change resolution or bitrate without a new init segment.
 - **D3 - any member may start a live in v1, so WP-L8 is a RELEASE BLOCKER.** Moderation (hide message, remove viewer, block, report a live, staff remote cut) and the per-account limits already built must exist before any stable. Apple guideline 1.2 and the Play UGC answers (Q2) precede any store submission.
 - **D4 - a "X est en live" notification**, like "X a publié", is wanted. The server half (WP-L7) is built (#2106, spaces respected like a post); a tap lands on the feed, and the client LIVE card and the live's own viewer route are owed.
@@ -335,8 +458,11 @@ draft. `frontend/src/lib/live/liveCrypto.ts` exports `sealLiveSegment(keyHex, li
 - **WebCrypto, not WASM.** WASM holds the MLS group state; media content keys are SubtleCrypto
   (`$lib/mediaCrypto`), and the live key is a media key of that kind, so the media path is the
   precedent. The key is imported non-extractable for each call.
-- **Random IVs under one key** are safe at this volume: a 2 s segment over the longest live the
-  server allows is a few thousand seals per key, far below GCM's 2^32 random-IV bound.
+- **Random IVs under one key** are safe at this volume. The assumption: about 1000 accounts
+  chatting at once, each at the C6 ceiling of 3 messages per 5 s (2160 per account per hour), so a
+  live hour is about 2 million chat seals plus 1800 segments (2 s each), about 2^21 seals under one
+  key. The collision chance for random 96-bit IVs is then about 2^-55, and the count far below
+  GCM's 2^32 random-IV bound; ten times the chatters still leaves it below 2^25.
 
 **A segment that does not open is a `LiveSegmentOpenError`**, typed at the throw, `reason`
 `malformed` (under 28 bytes) or `unauthentic` (GCM refused it: wrong key, live, index, version, or a
@@ -734,8 +860,8 @@ followers (L10), safety and age (L11).
 | Q2 | **Apple / Google policy for live UGC.** | Apple's guideline 1.2 asks UGC apps for a way to filter, report and block, and published contact info; Google Play has a UGC policy of the same kind _(both unverified against today's text - read them during WP-L0)_. L6 and L11 cover report, block and cut-off; say so in the review notes, with the video Apple asks for. |
 | Q3 | **The bench, and the uplink figure.** | For C: a phone publishing segments to the LOCAL estate, read by 1 then 30 headless viewers, measuring latency, nginx CPU, the phone's uplink, battery and heat over 30-60 min. **The host's usable uplink is a separate reading, and asking the DSI for the link speed and what share Canari may use comes first** (a load test on a shared host is not ours to run unasked). Dev is no stand-in for it: `dev.canari-emse.fr` still goes through the old VM's relay and a Cloudflare tunnel. For A (if kept): the SFU with 1 then 30 subscribers, CPU/RSS and TURN bytes. |
 | Q4 | **The key design** (key in the row, rotation when a viewer is removed). | A random 32-byte **live key** in the live row, served like a post CEK to any member who may watch (L2; spaces respected since 2026-10-19). It protects against the storage, a cache and the SFU, **not against a removed viewer**, who already holds it and could re-read the row. So removal is enforced **by the server** (the manifest and the key refused to that account), and rotation is NOT the mechanism: state that limit rather than rotating a key every member can fetch. |
-| Q5 | **The broadcaster's network drops.** | With C, the upload is resumable: a **60 s window** _(to confirm on the bench)_ in which viewers see "reconnecting"; after it the live ends. The end is a DURABLE state on the row (`ended_at`), not a timer on the clients. |
-| Q6 | **Background and screen lock on phones.** | The broadcaster's camera stops when the app leaves the foreground on both platforms _(unverified on our builds)_; treat it as a drop (Q5) and say so on screen. No background modes are added for live - they are what App Review refused once. |
+| Q5 | **The broadcaster's network drops.** | With C, the upload is resumable: a **60 s window** in which viewers see "reconnecting"; after it the live ends. **Measured on dev (WP-L1)**: a live whose broadcaster stopped sending ended 77 s after its last stored segment (the window plus the 30 s sweep) and viewers read `410` on their next poll; a 22 s gap was survived and caught up by a seek to the edge. The end is a DURABLE state on the row (`ended_at`), not a timer on the clients. |
+| Q6 | **Background and screen lock on phones.** | The broadcaster's camera stops when the app leaves the foreground. **Measured (WP-L1)**: in the Android app's WebView the track ENDS ~6 s after `hidden` and stays ended (a new `getUserMedia` is needed) while the app's `fetch` fails; in iOS Safari it MUTES and resumes on return; the iOS app's WKWebView is not measured. Treat it as a drop (Q5) and say so on screen. No background modes are added for live - they are what App Review refused once. |
 | Q7 | **TURN usage.** | Only path A uses TURN (Cloudflare's TURN product; nothing on the host). If A is kept, first check that the host may reach it over UDP at all (outbound is filtered upstream), then ask the DSI for an inbound UDP range in the same request as the calls revival, so viewers reach the SFU directly and TURN relays only those who need it. |
 | Q8 | **What does the broadcaster's local save record?** | Its own segments, kept on the phone and offered to the gallery at the end (the C6 save path), never the chat. Confirm. |
 | Q9 | **Can a live be scheduled / shown as "upcoming"?** | Not in v1. |
@@ -749,7 +875,7 @@ Q1 = C; since 2026-10-19 WP-L0 no longer precedes the lives ([D1](#decisions-of-
 | WP | What | Starting point | Done when |
 | --- | --- | --- | --- |
 | **WP-L0** | **Calls revival**: `CALLS_COMPILED`'s switches in one commit (the native ring's `CALLS_NATIVE_RING_COMPILED` later, on its own readings), the SIXTH (no names in a silent invite) and the SEVENTH (`none` level vs. a ring) decided, rung 15 CALL + CALL-13 on real hardware, the by-hand relay-path call, then **the screen recording App Review asks for**. | `frontend/src/lib/features.ts` `CALLS_ENABLED` and the switch table in [calls](calls.md) | the board rows `PASS`; the video recorded; a build accepted with calls on |
-| **WP-L1** | **The C feasibility bench, before any product code**: on both phones, record 720p into short fMP4 segments for 30-60 min, seal and upload them, and play a growing source through MSE in the WebView. **And the host's usable uplink**, from the DSI's answer first (Q3), which sets the viewer cap L8 turns into. | `frontend/src/lib/mediaSegmented.ts`, the camera of [reels](reels.md), the segmented reader | latency, phone uplink, battery and heat measured on Mi 9T and iPhone 12, and the host's usable uplink, written here; or a refutation of C |
+| **WP-L1** (**the phone half measured 2026-10-19, [above](#wp-l1---measured-2026-10-19); the host's uplink and the unplugged battery are owed**) | **The C feasibility bench, before any product code**: on both phones, record 720p into short fMP4 segments for 30-60 min, seal and upload them, and play a growing source through MSE in the WebView. **And the host's usable uplink**, from the DSI's answer first (Q3), which sets the viewer cap L8 turns into. | `frontend/src/lib/mediaSegmented.ts`, the camera of [reels](reels.md), the segmented reader | latency, phone uplink, battery and heat measured on Mi 9T and iPhone 12, and the host's usable uplink, written here; or a refutation of C |
 | **WP-L2** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **The live row and its key**: a `lives` record (broadcaster, as-association, key, `started_at`, `ended_at`), removed-viewer list, the end as durable state. | social-service posts / reels server ([reels (server)](../../services/reels.md)) | API tests: key served as a post CEK to members; refused to a removed viewer; nothing after `ended_at` |
 | **WP-L3** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **Segment ingest and the manifest**: a growing sealed object or one object per segment, a manifest viewers poll, deletion at `ended_at` plus a sweep (Q10). | the upload session ([media-streaming-upload](../../services/media-streaming-upload.md)) | specs: a segment out of order is refused; the manifest stops at `ended_at`; everything is gone after the sweep |
 | **WP-L4** (**built 2026-10-19, server and nginx, [lives](../../services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4); cap 24 viewers from the measured ~90 Mb/s, [viewer cap](../../services/lives.md#the-viewer-cap-wp-l4)**) | **Segments served by nginx**: an unauthenticated route for sealed live segments answered by Canari's own nginx (cache or static files), never reaching media-service or the database; the per-host viewer cap from WP-L1's uplink figure, refused with a clear "live full" screen. | `infrastructure/local/Dockerfile.frontend` (Canari's nginx), `GET /api/media/public/:id` as the model | a second viewer's fetch is served without a media-service log line; viewer N+1 past the cap is refused |

@@ -26,7 +26,20 @@ describe('parseSharedManifest', () => {
       files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
       refused: 2,
       epoch: 5,
+      target: null,
     });
+  });
+
+  it('keeps the share-sheet suggestion as a conversation id, and ignores a malformed one', () => {
+    const target = (value: unknown) =>
+      parseSharedManifest(JSON.stringify({ text: 'hi', target: value }))?.target;
+    expect(target('c:0f8b8f8e-6d1c-4b3e-9a51-2d4f1c9e7a10')).toBe(
+      '0f8b8f8e-6d1c-4b3e-9a51-2d4f1c9e7a10'
+    );
+    expect(target('chat_0f8b8f8e')).toBeNull();
+    expect(target('c:../mls.bin')).toBeNull();
+    expect(target(42)).toBeNull();
+    expect(target(undefined)).toBeNull();
   });
 
   it('keeps only well-formed file entries', () => {
@@ -83,8 +96,22 @@ describe('drainNativeShare', () => {
     expect(incomingShare.pending).toEqual({
       text: 'look',
       files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
+      suggested: null,
     });
     expect(invoke.mock.calls.filter(([cmd]) => cmd === 'take_picked_file')).toEqual([]);
+  });
+
+  it('hands the suggestion to the store as a hint', async () => {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'read_and_clear_pending_share'
+        ? {
+            manifest: JSON.stringify({ text: 'look', files: [], refused: 0, target: 'c:abc' }),
+            epoch: 0,
+          }
+        : undefined
+    );
+    await drainNativeShare();
+    expect(incomingShare.pending?.suggested).toBe('abc');
   });
 
   it('counts a corrupt manifest as one lost share', async () => {

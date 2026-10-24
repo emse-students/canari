@@ -7,7 +7,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures::{sink::SinkExt, stream::StreamExt};
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use redis::AsyncCommands;
 use std::sync::{
     Arc,
@@ -15,7 +14,7 @@ use std::sync::{
 };
 use tokio::sync::mpsc;
 
-use crate::models::{AuthParams, Claims};
+use crate::models::{AuthParams, TokenRejection, decode_access_claims};
 use crate::state::AppState;
 
 /// Heartbeat cadence: one WebSocket ping every this many seconds.
@@ -220,11 +219,8 @@ pub async fn ws_handler(
         return (StatusCode::UNAUTHORIZED, "Missing auth token").into_response();
     };
 
-    let validation = Validation::new(Algorithm::HS256);
-    let key = DecodingKey::from_secret(state.jwt_secret.as_bytes());
-
-    match decode::<Claims>(&token, &key, &validation) {
-        Ok(token_data) => {
+    match decode_access_claims(&token, state.jwt_secret.as_bytes()) {
+        Ok(claims) => {
             // Enforce a hard cap to prevent resource exhaustion under a connection flood.
             const MAX_CONNECTIONS: usize = 1_000;
             let total: usize = {
@@ -236,7 +232,7 @@ pub async fn ws_handler(
                     "[ws] Connection limit reached ({}/{}) - rejecting upgrade for {}",
                     total,
                     MAX_CONNECTIONS,
-                    token_data.claims.sub
+                    claims.sub
                 );
                 return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response();
             }
@@ -270,16 +266,20 @@ pub async fn ws_handler(
             let addressed_history =
                 crate::addressing::declares_addressed_history(params.caps.as_deref());
             ws.on_upgrade(move |socket| {
-                handle_socket(
-                    socket,
-                    state,
-                    token_data.claims.sub,
-                    device_id,
-                    addressed_history,
-                )
+                handle_socket(socket, state, claims.sub, device_id, addressed_history)
             })
         }
-        Err(_) => (StatusCode::UNAUTHORIZED, "Invalid parameters").into_response(),
+        Err(TokenRejection::NotAnAccessToken(kind)) => {
+            tracing::warn!(
+                "[ws] upgrade refused: a '{}' token is not an access token",
+                kind
+            );
+            (StatusCode::UNAUTHORIZED, "Invalid parameters").into_response()
+        }
+        Err(TokenRejection::Invalid(e)) => {
+            tracing::debug!("[ws] upgrade refused: {}", e);
+            (StatusCode::UNAUTHORIZED, "Invalid parameters").into_response()
+        }
     }
 }
 
