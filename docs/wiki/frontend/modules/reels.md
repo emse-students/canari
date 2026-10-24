@@ -584,7 +584,7 @@ below; **owed on both phones**
   the first send and drawn inside the viewer, so above it). Sending INTO a conversation lands the
   link in that conversation's composer, and a tap on that link's card there opens the reel in this
   viewer ([sharing S6](../sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)).
-- **The comments sheet** (`ReelCommentsSheet`): the POST's own thread - `PostComments` in its
+- **The comments sheet** (`ReelCommentsSheet`, whose drawer is the shared `shared/CommentsDrawer` - a post's thread opens in the SAME one on a phone, 2026-10-23, see [posts](posts.md)): the POST's own thread - `PostComments` in its
   `docked` mode (the list scrolls, the composer stays at the bottom), written through
   `posts/postCommentThread.svelte.ts`, the class the card now uses too, and reported through
   `posts/reportComment.ts`, also the card's. No new request. 60 % of the screen, `rounded-t-3xl`,

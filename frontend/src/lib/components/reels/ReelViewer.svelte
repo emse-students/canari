@@ -81,7 +81,7 @@
    * caption scrolls its own text (`ReelSlide`) - a swipe there must not turn the reel.
    */
   const NOT_A_GESTURE =
-    'button, [data-video-controls], [data-reel-caption-open], [data-reel-rail], [data-reel-comments]';
+    'button, [data-video-controls], [data-reel-caption-open], [data-reel-rail], [data-comments-drawer]';
 
   markViewerLayer();
 
