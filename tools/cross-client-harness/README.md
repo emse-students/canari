@@ -133,8 +133,8 @@ pinned by `archive/campaign-selftest.mjs`):
   `comm.openCommunitySettings` (the one panel where a community is deleted, left, re-roled, purged of
   members, re-permissioned or has its invite rotated); `comm.openChannelSettings` (salon delete,
   access revoke, privacy, write policy); `arm.expireInvite` (a database write); `purge-devices.mjs`
-  (every `--only` id, in full - a prefix is a family); `archive/grp.mjs` `removeMember` and
-  `leaveGroup`; `archive/del1.mjs`'s inline delete. Every other destructive runner reaches these.
+  (every `--only` id, in full - a prefix is a family); `archive/addmember.mjs` `removeMember`
+  and `leaveGroup` (moved out of `archive/grp.mjs` for the race rows); `archive/del1.mjs`'s inline delete. Every other destructive runner reaches these.
 - **`cleanup.mjs` on dev needs `--only <ids> --expect N`**: the name shapes choose candidates, then
   only the named ids, each owned, with the expected count, are taken - anything off refuses the
   whole sweep. `--dry` prints the exact flags.
@@ -1044,7 +1044,25 @@ asserts R5 ownership of every conversation the row writes in, and reads the serv
 when an armed fault never fired, `FAIL` on any own assertion or invariant, else `PASS` - and
 `recordObserved` then gates it on every seat's window, the deploy exclusion (R4) and the server window
 judged by the row id (R6). The invariant (R8) runs after every row, with its reload. A row's own
-judgements live in `<group>rows.mjs` (`floorrows.mjs`), pinned by `archive/floor-selftest.mjs`.
+judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`), pinned by
+`archive/<group>-selftest.mjs`.
+
+```sh
+bun archive/cc.mjs --row 1|2|3|4         # CC-1..4: two commits at one epoch, released together
+bun archive/run.mjs CC --repeat 5        # the set of five the plan's verdict is
+```
+
+**A race** is `mlsrow.mjs` `raceCommits`: each racing seat's `POST /api/mls/commit` is held before
+the server (`fault.mjs` `hold once`, so a rebuilt retry passes), the gestures start together, and
+once every seat holds its request they are released in one `Promise.all`. A seat whose request
+never arrived makes the row `VACUOUS`. The evidence is the gate's own `[COMMIT]` lines since the
+release (`ACCEPT`, `REJECT epoch_mismatch`, `REJECT concurrent_commit`) - a refusal is answered `201
+{accepted: false}`, so no client network log can tell it from an acceptance. **CC-4 arms the leaf
+refresh on the device** (`armLeafRefresh`: the refresh ledger is the device's own `localStorage`,
+backdated eight days on a leaf its own commit produced), inside the race so no earlier frame spends
+it. **CC-5 is BLOCKED-ON-ACCOUNT** - it needs a fifth campaign account (`ccrows.mjs` `CC5_PREMISE`).
+The contract is the OUTCOME: one winner, the loser refused with either race refusal and rebuilt;
+which code it met is recorded in the detail (`refusalCodes`), never judged.
 
 ## Rules that make a result trustworthy
 

@@ -170,13 +170,18 @@ on, built by the same single bulk Add. Runner: `tools/cross-client-harness/archi
 
 #### CC - concurrent commits
 
+**The contract is the OUTCOME, not the refusal code** (lead, 2026-10-24): exactly one winner, the
+loser rebuilt on the new epoch and its change landed or was refused with a typed reason, no fork,
+the invariant clean. Which of the gate's two race refusals the loser met depends on how close the
+arrivals were, so it is recorded in the row's detail and never decides it.
+
 | Id | Question | `PASS` entails | Devices | Fault | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| CC-1 | Two members Add two different users at the SAME epoch, released together | exactly one accepted first; the other refused `epoch_mismatch`, cleared, rebuilt on the new epoch and accepted; both users in, one tree | W1 W2 + targets | `hold` both submits, release together (R3) | U | 30 min |
+| CC-1 | Two members Add two different users at the SAME epoch, released together | exactly one winner of the shared epoch; the loser refused with a typed race refusal (`epoch_mismatch` or `concurrent_commit` - the code is recorded, not judged), cleared, rebuilt on the new epoch and accepted; both users in, one tree | W1 W2 + targets | `hold` both submits, release together (R3) | U | 30 min |
 | CC-2 | A member Adds while another Removes someone, same epoch | as CC-1; the removed user holds no leaf at the end, the added one does | W1 W2 W4 | as CC-1 | U | 30 min |
 | CC-3 | Two members Remove the SAME member at once | one commit lands; the other is refused and does NOT rebuild a second Remove of a leaf already gone | W1 W2 W4 | as CC-1 | U | 30 min |
-| CC-4 | A leaf refresh (unasked commit) races a member's Add | both land in some order, no stage left, no Add lost | W1 W2 | the refresh must be DUE (Q3: ONE Redis key written on dev for a campaign device), then `hold` | U | 30 min |
-| CC-5 | Burst: four devices each commit within 200 ms, ten rounds | every round converges; the server log shows no 5xx and no lock wait over the budget | W1 W2 W4 W5 | none | U | 30 min |
+| CC-4 | A leaf refresh (unasked commit) races a member's Add | both land in some order, no stage left, no Add lost | W1 W2 | the refresh must be DUE: W1's own `localStorage` refresh ledger backdated on a leaf its own commit produced (no server write - Q3's Redis key does not exist), then `hold` | U | 30 min |
+| CC-5 | **BLOCKED-ON-ACCOUNT** (a fifth campaign account). Burst: four devices each commit within 200 ms, ten rounds | every round converges; the server log shows no 5xx and no lock wait over the budget | W1 W2 W4 W5 | none | U | 30 min |
 
 #### DUP - duplicate and retried commits (the settlement)
 
