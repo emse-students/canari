@@ -72,7 +72,7 @@ derives it from the running pid every time and refuses to report success until C
 1. **Node 24+** (a global `WebSocket` is assumed - there is no Playwright or Puppeteer here), `adb`
    on `PATH`, and Chrome installed.
 2. **Bring the estate up, and point `SITE` at it.** `make run-services` builds and starts
-   `infrastructure/local/docker-compose.yml`; `make dump-prod` copies production's database into it.
+   `infrastructure/local/docker-compose.yml`. Its database holds no production data (never copied to a workstation).
    Then `SITE` in `names.mjs` is `http://localhost:8081` - nginx, the single entry point, NOT the vite
    dev server. **The dev server is not an estate**: it serves no `_app/version.json`, so every client
    on it reports a build the rig cannot compare and the preflight cannot gate. Two facts the estate
@@ -920,13 +920,12 @@ The browser report attributes every console line to the ORIGIN that emitted it (
 - **Runs against the LOCAL estate since 2026-09-03** - `SITE` in `names.mjs`, one constant, and
   every file derives its host from it rather than spelling one (89 literals were swept out on
   2026-09-04 for exactly that reason). The estate is `infrastructure/local/docker-compose.yml`, built
-  and served by nginx on `${CANARI_LOCAL_API_PORT:-8081}`; `make dump-prod` fills its database with a
-  copy of production. **Two things do NOT become local with it.** The identity provider is still
+  and served by nginx on `${CANARI_LOCAL_API_PORT:-8081}`; its database holds no production data (production data is never copied to a workstation).
+  **Two things do NOT become local with it.** The identity provider is still
   `auth.canari-emse.fr` by decision 8 of the workflow migration, so the accounts and their passwords
   are production's - and the local Authentik client is a SEPARATE provider (`Canari Local`), which is
   where a local redirect URI has to be declared or the login dies on "Redirect URI Error". And the
-  object store starts EMPTY: `make dump-prod` copies the database, not Garage, so every avatar and
-  every attachment older than this estate 404s. That is not a defect and no row may report it as one.
+  object store starts EMPTY, so a row whose question is about media uploads what it then reads.
 - **Every test message goes in the two-test-account DM and nowhere else.** Anything needing a channel
   uses the `Canari Test Venue` community, never MiTV - a private channel there is readable by every
   association admin. **A prod dump does not hand that venue over**: its rows belong to whichever

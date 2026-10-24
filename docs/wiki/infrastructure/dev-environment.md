@@ -255,9 +255,10 @@ reference, and verified the strips. Two facts were known from the start and are 
 nothing: the server holds only ciphertext, so copied conversations were unreadable on a fresh dev
 client, and login comes from Authentik, not from this database. What the copy really bought -
 realistic posts, associations and a calendar - the seed provides with invented people. The strip
-list survives in [`copy-strips.sh`](../../../infrastructure/lib/copy-strips.sh) for the LOCAL copy
-into a developer's own stack (`pull-prod-dump.sh` + `restore-into-local.sh`), the one copy of
-production left, which the owner has yet to decide on. Its last finding stays true of that local
+list survives in [`copy-strips.sh`](../../../infrastructure/lib/copy-strips.sh), with no caller: the
+local copy into a developer's own stack, the last one, was REMOVED on 2026-10-24 (owner decision).
+**Production data is never copied to a workstation; local work uses the fictional seed**
+(`tools/dev-seed/seed.ts`, committed as `infrastructure/dev/seed.sql`). Its last finding stays true of any
 copy: strip (d) empties every post's `images`, reels included, so a copied reel arrives with no
 video ([reels](../frontend/modules/reels.md#reels-2-and-3-never-play-was-two-reels-with-no-video-iphone-12-v129-alpha4-2026-10-16));
 the seed carries no reel, so dev no longer shows one.

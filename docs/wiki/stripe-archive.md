@@ -57,7 +57,7 @@ below 1.2.4 was declared, accepted and routed until `minClientVersion` reached 1
 
 | Name | State | Step |
 | --- | --- | --- |
-| Columns `associations."stripeAccountId"` and `"stripeOnboardingComplete"`, `users."stripeCustomerId"` | no longer mapped by any entity, read and written by nothing | **DROP** in a migration once the previous release (which still maps them) is no longer a rollback target; the strips in `copy-strips.sh`, `copy-prod-to-dev.sh`, `restore-into-local.sh` go in the same change. Dropping earlier gains nothing and a rollback would crash on the missing column |
+| Columns `associations."stripeAccountId"` and `"stripeOnboardingComplete"`, `users."stripeCustomerId"` | no longer mapped by any entity, read and written by nothing | **DROP** in a migration once the previous release (which still maps them) is no longer a rollback target; the strips in `copy-strips.sh` go in the same change. Dropping earlier gains nothing and a rollback would crash on the missing column |
 | `submissions."stripeSessionId"`, `purchase_records."stripePaymentIntentId"` | LIVE: they hold the Lydia order reference | a rename is expand, then contract: add `paymentRef`, backfill by `UPDATE`, ship code reading and writing the new column, drop the old one a release later. No measured need to rename yet, so it is not started |
 | `paymentMethod: 'stripe'` on rows | data at rest, read as `online`, never written (the DTO refuses it since floor 1.2.7) | [legacy-compatibility](legacy-compatibility.md) |
 
