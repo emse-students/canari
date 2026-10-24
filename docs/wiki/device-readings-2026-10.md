@@ -1122,7 +1122,7 @@ The second is a local build, which costs the Mi 9T's enrolment if installed over
 
 | # | Reading | Pass | Source |
 | --- | --- | --- | --- |
-| N1 | **CALL-WS-V6** (#2167): the PC's mobile hotspot with broken IPv6 (bench P6), the Mi 9T on it | `Connected to Chat Gateway` within a second; ONE `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` means the attempt errored rather than hung: record which); no `[WS] native socket completed ... closing it` WARN; **the iPhone's call RINGS the phone**; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete the backlog item with this reading | [backlog](backlog.md#p1---call-ws-v6-is-fixed-on-a-branch-and-owed-one-phone-reading-2026-10-20) |
+| N1 | **CALL-WS-V6** (#2167): the PC's mobile hotspot with broken IPv6 (bench P6), the Mi 9T on it | `Connected to Chat Gateway` within a second; ONE `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` means the attempt errored rather than hung: record which); no `[WS] native socket completed ... closing it` WARN; **the iPhone's call RINGS the phone**; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete the backlog item with this reading | [backlog](backlog.md#p1---call-ws-v6-shipped-in-v131-2167-owed-one-phone-reading-2026-10-20) |
 | N2 | **A relayed call on a phone.** The rig read forced TURN relay clean over UDP, TCP and TLS 443 on all three engines (#2165); no PHONE has read a relayed call. Take any call that goes through Cloudflare TURN (a throttled uplink, or the hotspot of N1) and record `relayed=yes` in `[CALL_REPORT]` and the `selected path pair=` line | audio both ways; `relayed=yes` where it is relayed (`relayed=` can over-count, see CALL-PATH-LINE in the backlog) | [calls B10](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [backlog](backlog.md#p3---call-path-line-the-selected-path--relayed-line-over-counts-relayed-calls-2026-10-20-not-built) |
 | N3 | The Tier B audio cells K1, K9, K12 (Mi 9T / iPhone / desktop) and K6 (both phones) of [the matrix](frontend/modules/calls-revival-plan.md#7-the-test-matrix) | as the cells | calls B10 |
 
@@ -1234,3 +1234,46 @@ account.**
 | PAUSE-WARN | `[WS] pauseSocket: native disconnect failed: Trying to work with closed connection` logged as a warning for a socket that was already closed (P3 noise) | Mi 9T console 08:57:14.173 |
 | CAMERA-LEAK | 26 `W/MessageQueue ... Handler on a dead thread` from `CameraCaptureSessionImpl.finalize` at 08:53:20, when the app was backgrounded: a camera capture session left for the garbage collector instead of being closed. The camera was last used by the camera-swipe session before this reading, so the source is not separated | Mi 9T logcat, pid 32161 |
 | (rig) shade tap = background | Opening the shade to tap a notification backgrounds the app, so its pause/resume runs once per tap. Expected, but it explains PAUSE-WARN | Mi 9T console 08:57:14 |
+
+## 2026-10-22 - v1.4.0-alpha.1 sideloaded on the Mi 9T, the iPhone at its PIN gate
+
+Moved from the backlog's verification table on 2026-10-24.
+
+**READ 2026-10-22 on the Mi 9T: `v1.4.0-alpha.1` (SIDELOADED, what it covers).** Artefact: the release
+asset `app-universal-release.apk` of the tag (versionName `1.4.0`, versionCode `100400001`, signed by
+the association's release key, SHA-256 prefix `e25c0e9f89ccb2f5`), installed with `adb install` after
+uninstalling Play's 1.3.1 (a bench phone, a new device, `installerPackageName` null). **A sideload
+proves the CODE, not the Play-signed path**: Play serves 1.4.0 on the `internal` track only, and that
+phone's Google account got 1.3.1 from the listing (not an internal tester; the opt-in is a human click).
+Read: the build talks to `https://dev.canari-emse.fr` (banner "Environnement de test"); sign-in held
+(the phone browser's IdP session was still alive, so no credential was typed) and the PIN gate passed; feed, calendar, forms, shop, notifications,
+settings and dashboard all open; the comments sheet (#2207) opens full screen (present within the 2.5 s the probe
+waited, not a latency measurement) with the box pinned above the keyboard, and closes; 299 log lines for the app's process, 0 console warnings or
+errors, 0 `FATAL`/`ANR`/`SIGABRT`. **NOT read:** a DM and a community open (the bench owner has no
+conversation and no community on dev, and nothing was created there), the live features (dev-only
+behind their kill switches), share-in/out, push (a dev push cannot be read), the feed left-edge and
+tab-swipe gestures (no touch input was driven).
+
+**SECOND PASS, same day: the gestures are read on the Mi 9T, the iPhone is blocked at its PIN gate.**
+- **Gestures, driven as real touch with `adb shell input swipe` on the `/posts` feed, each from a fresh
+  feed (7 variants, 7 outcomes as designed):** a swipe to the right opens `/camera` from the left edge
+  at 200 ms and at 900 ms, over 730 px and 300 px, and from mid-screen at 1200 ms (never Back); a swipe
+  to the left goes to `/communities` at 900 ms from the right edge band, at 1200 ms and at 200 ms. One
+  earlier 900 ms edge swipe, first batch, did NOTHING (1 of 2 identical trials: the second batch ran it
+  again and it opened the camera): not reproduced, not explained.
+- **The iPhone 12 carries a TestFlight build** (signer `TestFlight Beta Distribution`, `aps-environment`
+  production): it held 1.3.1 (100300105), TestFlight served `1.4.0 (100400001)`, and an in-place update
+  (data kept, the same device) installed it. **It is now 1.4.0, still behind the encryption PIN gate,
+  and NOT READ**: the `owner` bench account's PIN was refused ("PIN incorrect : ce PIN ne correspond
+  pas a celui enregistre pour ce compte") on one or two attempts, so the account enrolled on that
+  phone is not `owner` or its PIN differs. The accounts file maps no device to an account
+  (`ownerByDevice()` is empty) and a TestFlight build has no inspector bridge. The other bench PINs
+  were NOT tried: an automated session's attempt to type a second account's PIN was refused by its
+  permission layer, and the wrong-PIN policy is documented only for the web client (PIN-2: five wrong
+  PINs, no lockout a correct one cannot clear, `mls.bin` untouched), not measured on the iPhone.
+- **The dev DM reading is blocked for the same reason.** Chrome w2's dev origin holds a saved session
+  whose subject matches the bench account key `third` (not `peer`), and its PIN gate refused the `peer`
+  PIN once. Nothing was created on dev. **OWED TO THE USER: say which bench account the iPhone and the
+  w2 profile hold on dev (the file wants a `clients` list per account, which today says nothing for
+  them), or type the PIN once on the phone yourself.**
+
