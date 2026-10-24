@@ -149,7 +149,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     getEpoch: vi.fn().mockReturnValue(0),
     forgetGroup: vi.fn(),
     externalJoin: vi.fn().mockResolvedValue({ joined: true }),
-    processIncomingMessage: vi.fn().mockResolvedValue(new Uint8Array([9, 9])),
+    processIncomingMessage: vi
+      .fn()
+      .mockResolvedValue({ plaintext: new Uint8Array([9, 9]), author: 'unsigned' }),
     // The durable half of the registry, and the net that collects what the drain refused - REAL,
     // because registering a group is what drives both.
     distributionGroupStore: null as ReturnType<typeof makeStore> | null,
@@ -742,7 +744,7 @@ describe('the durable registry', () => {
     const plaintext = new TextEncoder().encode('{"kind":"seed-request"}');
     const { ctx } = wired([{ groupId: 'g-salon', workspaceId: 'ws-1', channelId: 'chan-1' }], {
       getLocalGroups: vi.fn().mockReturnValue(['g-salon']),
-      processIncomingMessage: vi.fn().mockResolvedValue(plaintext),
+      processIncomingMessage: vi.fn().mockResolvedValue({ plaintext, author: 'unsigned' }),
     });
     await proto.hydrateDistributionGroups.call(ctx);
 
@@ -991,7 +993,7 @@ describe('a frame from an epoch this device has not reached', () => {
         if (tree.epoch < 5) {
           throw new Error(`Process error: epoch gap [msg_epoch=5, group_epoch=${tree.epoch}]`);
         }
-        return seed;
+        return { plaintext: seed, author: 'unsigned' };
       }),
       fetchCommitsSince: vi.fn(async () => ({
         commits: [4, 5, 6].map((baseEpoch) => ({ baseEpoch, proto: 'zA==' })), // 0xcc

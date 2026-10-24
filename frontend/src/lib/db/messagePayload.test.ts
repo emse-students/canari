@@ -63,6 +63,46 @@ describe('message payload round trip', () => {
     });
   });
 
+  it('keeps the author proofs a history bundle relays, and the unverified marker', () => {
+    // The proofs live in the SEALED payload and nowhere else: a row that dropped them on reload
+    // would relay its messages unproven from then on (history-reconciliation, authorship).
+    const proof = { body: 'Ym9keQ==', proof: 'cHJvb2Y=', group: 'g-1' };
+    const full = roundTrip({
+      ...BASE,
+      authorship: proof,
+      editProof: proof,
+      deleteProof: proof,
+      restoredUnverified: true,
+    });
+    expect(full).toMatchObject({
+      authorship: proof,
+      editProof: proof,
+      deleteProof: proof,
+      restoredUnverified: true,
+    });
+  });
+
+  it('stores no proof cleared with null, and refuses a malformed one on read', () => {
+    // A deletion purges the original bytes at rest by patching `authorship: null`.
+    const purged = toMessagePayload(
+      mergeStoredMessage(
+        { ...BASE, authorship: { body: 'a', proof: 'b', group: 'g' } },
+        { authorship: null }
+      )
+    );
+    expect(purged.authorship).toBeUndefined();
+    const hostile = fromMessagePayload(KEYS, {
+      senderId: 'alice',
+      content: 'x',
+      authorship: { body: 42, proof: 'b', group: 'g' },
+      editProof: { body: 'a', proof: 'b' },
+      restoredUnverified: 'yes',
+    });
+    expect(hostile.authorship).toBeUndefined();
+    expect(hostile.editProof).toBeUndefined();
+    expect(hostile.restoredUnverified).toBeUndefined();
+  });
+
   it('omits empty optionals rather than storing them', () => {
     const payload = toMessagePayload({ ...BASE, reactions: [], editedAt: 0 });
 

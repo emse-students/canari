@@ -1,4 +1,5 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
@@ -10,6 +11,7 @@ import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
 import type { GroupExclusions, GroupRosterBatch, SentFrame } from './mlsDeliveryApi';
+import type { ForkFinding } from './integrityFindings';
 
 export type { FrameDelivery };
 export type { DistributionScope };
@@ -177,8 +179,23 @@ export type MlsBatchProcessResult =
        * path carries none (a stub) or the frame had no plaintext.
        */
       sender?: string | null;
+      /**
+       * mls-core's verdict on the frame's author proof, beside a plaintext and only with it: absent
+       * when the path carries none (a stub) or the frame had no plaintext. Only `verified` lets a
+       * proof be recorded (`recordAuthorship`).
+       */
+      author?: AuthorVerdict;
     }
   | { ok: false; error: string };
+
+/**
+ * One decrypted application frame: the plaintext, and mls-core's verdict on the author proof it
+ * may end with. The verdict is the ONLY thing that says a proof was checked - see `recordAuthorship`.
+ */
+export interface DecryptedApplication {
+  plaintext: Uint8Array;
+  author: AuthorVerdict;
+}
 
 /** Options for {@link IMlsService.init}. */
 export interface MlsInitOptions {
@@ -789,7 +806,8 @@ export interface IMlsService {
     delivery?: FrameDelivery
   ): Promise<SentFrame>;
   /**
-   * Decrypts and processes an incoming MLS message for the group, returning the plaintext or null.
+   * Decrypts and processes an incoming MLS message for the group, returning the plaintext with
+   * mls-core's author-proof verdict, or null for a commit or a proposal.
    *
    * `envelope` is the sender the delivery server named for this frame. When given, it is checked
    * against the sender OpenMLS verified, and a disagreement throws a `SenderMismatchError`: the
@@ -800,7 +818,7 @@ export interface IMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     envelope?: EnvelopeSender
-  ): Promise<Uint8Array | null>;
+  ): Promise<DecryptedApplication | null>;
   /**
    * Decrypts a page of ciphertexts in ratchet order with a single WASM crossing when available.
    * Per-message failures are returned in the result vector instead of aborting the batch.
@@ -1263,6 +1281,12 @@ export interface IMlsService {
    * against that leaf, so no new key has to be distributed or trusted.
    */
   signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
+  /**
+   * Hands over the fork findings mls-core recorded since the last call, and forgets them
+   * (`mls-core/src/fork_check.rs`): frames whose signed epoch fingerprint was not this device's at
+   * the same epoch. Asked after a same-epoch refusal, where a fork is seen.
+   */
+  takeForkFindings(): Promise<ForkFinding[]>;
   /** Returns the (userId, deviceId) pairs currently in a group. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */

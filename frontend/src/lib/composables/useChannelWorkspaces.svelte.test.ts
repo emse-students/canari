@@ -113,6 +113,12 @@ vi.mock('$lib/utils/graine/distributionGroup', () => ({
   enterPrivateSalonGroup: vi.fn().mockResolvedValue(true),
 }));
 
+const requestCommunityHistory = vi.fn().mockResolvedValue(undefined);
+vi.mock('$lib/utils/graine/repair', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/graine/repair')>()),
+  requestCommunityHistory: (...args: unknown[]) => requestCommunityHistory(...args),
+}));
+
 import { useChannelWorkspaces, type ChannelWorkspaceContext } from './useChannelWorkspaces.svelte';
 // NOT MOCKED, DELIBERATELY: the channel-to-community map is the fact the send path reads, so the
 // test asserting it survives a failed join has to read the real one.
@@ -1572,5 +1578,45 @@ describe('useChannelWorkspaces - the membership notice', () => {
       targetUserId: 'second',
       roleName: 'Modérateur',
     });
+  });
+});
+
+describe('useChannelWorkspaces - the history rule moving under an open session', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listUserWorkspaces.mockReset();
+    listChannels.mockReset();
+  });
+
+  async function loadedWith(historyVisibility: 'shared' | 'joined') {
+    listUserWorkspaces.mockResolvedValue([
+      { ...makeWorkspaceDto('ws1', 'Community', 'community'), historyVisibility },
+    ]);
+    listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
+    const store = useChannelWorkspaces();
+    const promise = store.loadChannelWorkspacesFromBackend(makeContext());
+    await tick();
+    await promise;
+    requestCommunityHistory.mockClear();
+    return store;
+  }
+
+  // 2026-10-22: a switch to `shared` never reached the members already in - they held seeds
+  // floored at their arrival, and nothing asked for the past again. The broadcast is the moment.
+  it('asks the seed layer for the history again when the broadcast moves the rule', async () => {
+    const store = await loadedWith('joined');
+
+    store.handleWorkspaceUpdated({ workspaceId: 'ws1', historyVisibility: 'shared' });
+
+    expect(requestCommunityHistory).toHaveBeenCalledWith('ws1');
+  });
+
+  it('asks nothing when the broadcast repeats the rule already held', async () => {
+    const store = await loadedWith('shared');
+
+    store.handleWorkspaceUpdated({ workspaceId: 'ws1', historyVisibility: 'shared' });
+    store.handleWorkspaceUpdated({ workspaceId: 'ws1', imageMediaId: 'img-2' });
+
+    expect(requestCommunityHistory).not.toHaveBeenCalled();
   });
 });

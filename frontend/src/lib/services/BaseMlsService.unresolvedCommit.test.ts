@@ -22,6 +22,7 @@ import {
 } from '$lib/mls-client/commitSubmission';
 import { readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { MlsCheckpointNotWrittenError, MlsStateWriteRefusedError } from '$lib/utils/hex';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
@@ -699,9 +700,9 @@ abstract class SendHarness extends BaseMlsService {
       ...primitives(state),
     });
   }
-  protected async encryptForSend(groupId: string): Promise<Uint8Array> {
+  protected async encryptForSend(groupId: string): Promise<AuthoredFrame> {
     this.encrypted.push(groupId);
-    return sealedFrame(5, groupId);
+    return { sealed: sealedFrame(5, groupId), authorProof: new Uint8Array([4]) };
   }
 }
 const Harness = SendHarness as unknown as new (

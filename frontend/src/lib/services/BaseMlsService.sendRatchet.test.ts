@@ -16,6 +16,7 @@ import {
   sendRatchetEntries,
 } from '$lib/mls-client/sendRatchetLedger';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 
 /**
@@ -102,7 +103,7 @@ function session(model: RatchetModel, peer: Peer, disk: { state: ModelState }) {
     getLocalGroups: () => [G],
     freshEpoch: vi.fn(async () => model.state.epoch),
     getEpoch: () => model.state.epoch,
-    encryptForSend: vi.fn(async () => model.seal()),
+    encryptForSend: vi.fn(async () => ({ sealed: model.seal(), authorProof: new Uint8Array([4]) })),
     skipSendGenerations: vi.fn(async (_g: string, count: number) => {
       model.burn(count);
       return count;
@@ -132,7 +133,7 @@ function session(model: RatchetModel, peer: Peer, disk: { state: ModelState }) {
     skipSendGenerations: Mock<(groupId: string, count: number) => Promise<number>>;
     persistCheckpoint: Mock<() => Promise<void>>;
     delivery: { postApplicationMessage: Mock<(...a: unknown[]) => Promise<unknown>> };
-    encryptForSend: Mock<(...a: unknown[]) => Promise<Uint8Array>>;
+    encryptForSend: Mock<(...a: unknown[]) => Promise<AuthoredFrame>>;
   };
   return {
     svc: typed,

@@ -104,9 +104,10 @@ pub fn encrypt_mls_state_blob_with_key(
 
 // ----------------------------------------------------
 
-/// `{ data: Uint8Array, sender: string | null }` for one decrypted application message - the ONE
-/// shape both the single decrypt and the batch hand to JavaScript, so the two cannot disagree on
-/// what a sender is called.
+/// `{ data: Uint8Array, sender: string | null, author: 'unsigned' | 'verified' | 'refused' }` for
+/// one decrypted application message - the ONE shape both the single decrypt and the batch hand to
+/// JavaScript, so the two cannot disagree on what a sender is called. `author` is the author-proof
+/// verdict (`mls_core::authorship`); a proof is left at the end of `data` only when `verified`.
 fn application_to_js(app: &mls_core::IncomingApplication) -> JsValue {
     let obj = js_sys::Object::new();
     let data = js_sys::Uint8Array::from(app.plaintext.as_slice());
@@ -116,6 +117,11 @@ fn application_to_js(app: &mls_core::IncomingApplication) -> JsValue {
         .as_deref()
         .map_or(JsValue::NULL, JsValue::from_str);
     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("sender"), &sender);
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("author"),
+        &JsValue::from_str(app.author.code()),
+    );
     obj.into()
 }
 
@@ -648,21 +654,49 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Encrypts raw bytes (e.g. a proto-encoded AppMessage) as the MLS application payload.
+    /// Encrypts a proto-encoded AppMessage WITH its author's signature appended
+    /// (`mls_core::authorship`). Returns `{ ciphertext: Uint8Array, authorProof: Uint8Array }`;
+    /// `authorProof` is the encoded proof, which the sender stores on its own copy so a history
+    /// bundle it later writes carries the same proof its peers received.
     #[wasm_bindgen]
-    pub fn send_message_bytes(
+    pub fn send_authored_message_bytes(
         &mut self,
         group_id: String,
         message_bytes: Vec<u8>,
-    ) -> Result<Vec<u8>, JsValue> {
+    ) -> Result<JsValue, JsValue> {
         log::debug!(
-            "send_message_bytes to group: {} ({} bytes)",
+            "send_authored_message_bytes to group: {} ({} bytes)",
             group_id,
             message_bytes.len()
         );
-        self.manager
-            .send_message(&group_id, &message_bytes)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        let frame = self
+            .manager
+            .send_authored_message(&group_id, &message_bytes)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let obj = js_sys::Object::new();
+        let ciphertext = js_sys::Uint8Array::from(frame.ciphertext.as_slice());
+        let proof = js_sys::Uint8Array::from(frame.author_proof.as_slice());
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("ciphertext"), &ciphertext);
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("authorProof"), &proof);
+        Ok(obj.into())
+    }
+
+    /// Hands over the fork findings recorded since the last call (`mls_core::fork_check`), as an
+    /// array of `{ kind, groupId, epoch, peer, detail }`. `kind` is `fork`, `unproven` or
+    /// `contradiction`.
+    #[wasm_bindgen]
+    pub fn take_fork_findings(&self) -> js_sys::Array {
+        let out = js_sys::Array::new();
+        for f in self.manager.take_fork_findings() {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&obj, &"kind".into(), &f.kind.code().into());
+            let _ = js_sys::Reflect::set(&obj, &"groupId".into(), &f.group_id.as_str().into());
+            let _ = js_sys::Reflect::set(&obj, &"epoch".into(), &JsValue::from_f64(f.epoch as f64));
+            let _ = js_sys::Reflect::set(&obj, &"peer".into(), &f.peer.as_str().into());
+            let _ = js_sys::Reflect::set(&obj, &"detail".into(), &f.detail.as_str().into());
+            out.push(&obj);
+        }
+        out
     }
 
     /// Advances the send ratchet by `count` generations without emitting anything, repairing a

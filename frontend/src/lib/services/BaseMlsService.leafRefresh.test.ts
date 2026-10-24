@@ -14,6 +14,7 @@ import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { recordingStage } from '../../test/recordingStage';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 
 /** Any intent: the refresh only hands it on to its stage. */
 const INTENT = new Uint8Array([9]);
@@ -209,8 +210,8 @@ abstract class SendHarness extends BaseMlsService {
   protected async groupsWithPendingCommit(): Promise<string[]> {
     return [];
   }
-  protected async encryptForSend(): Promise<Uint8Array> {
-    return sealedFrame(1);
+  protected async encryptForSend(): Promise<AuthoredFrame> {
+    return { sealed: sealedFrame(1), authorProof: new Uint8Array([4]) };
   }
 }
 const Harness = SendHarness as unknown as new () => SendHarness;
