@@ -98,6 +98,8 @@ import type { TabOutboxEvent } from '$lib/mls-client/tabMessageSync';
 import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { OutboxEntry } from '$lib/db';
+import type { StoredMessage } from '$lib/db/types';
+import { toBase64 } from '$lib/utils/hex';
 import type { Conversation } from '$lib/types';
 
 /**
@@ -135,9 +137,13 @@ function textEntry(id: string, conversationId: string, sentAt: number): OutboxEn
 /** Minimal in-memory IStorage covering the outbox + saveMessage surface the flusher touches. */
 function makeStorage(seed: OutboxEntry[] = []) {
   const map = new Map<string, OutboxEntry>(seed.map((e) => [e.id, structuredClone(e)]));
+  const rows = new Map<string, StoredMessage>();
   return {
     _map: map,
     saveMessage: vi.fn().mockResolvedValue(undefined),
+    // The stored message rows - only what a test seeds; the flusher reads them to keep their proofs.
+    _messages: rows,
+    getMessage: vi.fn(async (id: string) => rows.get(id) ?? null),
     saveOutboxEntry: vi.fn(async (e: OutboxEntry) => {
       map.set(e.id, structuredClone(e));
     }),
@@ -198,7 +204,7 @@ function makeMls(
 
 /** What `sendMessage` answers for a frame the server took: the sealed bytes and its receive time. */
 function accepted(): SentFrame {
-  return { sealed: new Uint8Array(), receivedAt: 1_700_000_000_000 };
+  return { sealed: new Uint8Array(), authorProof: new Uint8Array(), receivedAt: 1_700_000_000_000 };
 }
 
 function convoWith(id: string, messageIds: string[]): Conversation {
@@ -475,6 +481,78 @@ describe('outbox flusher', () => {
       expect.objectContaining({ id: 'm1', serverTimestamp: 1_700_000_000_000 }),
       'device-key'
     );
+  });
+
+  describe("keeps this device's own signature on what it sent (history-reconciliation, authorship)", () => {
+    const PROOF = new Uint8Array([7, 7]);
+    const ORIGINAL = { body: 'b3JpZ2luYWw=', proof: 'cHJvb2Y=', group: 'g1' };
+    function signingMls() {
+      const mlsService = makeMls();
+      mlsService.sendMessage.mockImplementation(async () => ({
+        ...accepted(),
+        authorProof: PROOF,
+      }));
+      return mlsService;
+    }
+    function control(event: string): OutboxEntry {
+      return {
+        id: 'm1',
+        conversationId: 'g1',
+        sentAt: 50,
+        kind: 'control',
+        controlProto: encodeAppMessage(mkSystem(event, JSON.stringify({ messageId: 'm1' }))),
+        status: 'pending',
+        attempts: 0,
+        createdAt: 50,
+      };
+    }
+
+    it('records a sent message with its proof and the group it was signed in', async () => {
+      const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+      const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+      const outbox = createOutbox(makeDeps({ mlsService: signingMls(), storage, conversations }));
+
+      await outbox.flush();
+
+      expect(storage.saveMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'm1',
+          authorship: expect.objectContaining({ proof: toBase64(PROOF), group: 'g1' }),
+        }),
+        'device-key'
+      );
+    });
+
+    it('keeps the message proof the row holds and adds the signed edit beside it', async () => {
+      const storage = makeStorage([control('edit_message')]);
+      storage._messages.set('m1', { id: 'm1', authorship: ORIGINAL } as StoredMessage);
+      const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+      const outbox = createOutbox(makeDeps({ mlsService: signingMls(), storage, conversations }));
+
+      await outbox.flush();
+
+      expect(storage.saveMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'm1',
+          authorship: ORIGINAL,
+          editProof: expect.objectContaining({ proof: toBase64(PROOF), group: 'g1' }),
+        }),
+        'device-key'
+      );
+    });
+
+    it('drops the original bytes on a deletion and keeps only the signed tombstone', async () => {
+      const storage = makeStorage([control('delete_message')]);
+      storage._messages.set('m1', { id: 'm1', authorship: ORIGINAL } as StoredMessage);
+      const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+      const outbox = createOutbox(makeDeps({ mlsService: signingMls(), storage, conversations }));
+
+      await outbox.flush();
+
+      const row = storage.saveMessage.mock.calls.at(-1)[0];
+      expect(row.authorship).toBeUndefined();
+      expect(row.deleteProof).toMatchObject({ proof: toBase64(PROOF), group: 'g1' });
+    });
   });
 
   it('sends a control entry silently (silent=true) then deletes it', async () => {

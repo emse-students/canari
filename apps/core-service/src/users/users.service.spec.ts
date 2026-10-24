@@ -1,4 +1,6 @@
+import { Logger } from '@nestjs/common';
 import type { DataSource, Repository } from 'typeorm';
+import { InvalidUserIdError } from './user-id';
 import { UsersService } from './users.service';
 import type { UserBlocksService } from './user-blocks.service';
 import { User } from './entities/user.entity';
@@ -108,6 +110,21 @@ describe('UsersService notepad', () => {
  * The MiConnect profile is REPLACED at every sign-in (WP3): a claim that vanished at authentik must
  * clear the column, and `promo`/`formation` follow the first cursus entry.
  */
+describe('UsersService.create - the administrator mint point', () => {
+  it.each(['Élise', 'alice:dev', ''])('refuses an id that is not mintable (%j)', async (id) => {
+    const save = jest.fn();
+    const userRepository = {
+      create: jest.fn().mockImplementation((u: Partial<User>) => u),
+      save,
+    } as unknown as Repository<User>;
+    const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await expect(service.create({ id } as never)).rejects.toBeInstanceOf(InvalidUserIdError);
+    expect(save).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+});
+
 describe('UsersService.findOrCreateFromOidc profile', () => {
   const profile = {
     miconnectUuid: 'uuid-1',

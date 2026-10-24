@@ -308,6 +308,23 @@ The v1 WRITER is already gone (G2-5): `sealWithGraine` lives only in the test fi
   On the same day, `channel_messages."signature"` becomes `NOT NULL` (a migration), and the DTO's
   `signature?` and the `?? null` in `ChannelService.sendMessage` go with it.
 
+### No date yet - a restored private message with no author signature, from a client before signed authorship
+
+**Site:** `vetRestoredMessage` in `frontend/src/lib/utils/chat/restoredAuthorship.ts`, the
+`unverified` verdict, and the `restoredUnverified` marker it writes (`MessageMetadata.svelte`).
+**Shim:** a `history_bundle` message with no author proof is KEPT and drawn normally, under a small
+"non verifie" marker that explains itself on tap ([history-reconciliation](protocols/history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22)).
+It exists because every message a client sent before signed authorship carries no proof, and
+hiding them would empty restored history.
+**What is NOT shimmed (lead decision, 2026-10-22):** an edit, deletion or reaction in a bundle
+still needs its author's signature, and an unsigned one is dropped. The cost is accepted: a
+mutation made by an author on an older client is missing from restored history until that author
+updates (their later, signed mutations travel normally).
+**Removal condition:** `minClientVersion` is a signing build on BOTH stores, AND the oldest unsigned
+message has left every retention window that can still restore it. Then an unsigned message is
+refused like any other proof-less entry, and the marker, its strings and the `restoredUnverified`
+field go with it.
+
 ### No date yet - the salon push HELD for its seed, for a sender that attaches no seed frame
 
 **Site:** `CanariFirebaseMessagingService.handleChannelMessage`, the branch after `openSeedFrame`

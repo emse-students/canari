@@ -380,6 +380,39 @@ identically. Read as an epoch gap it produced the worst possible outcome: a repl
 commits, reported `healed=true` because `epoch >= activeEpoch` was trivially satisfied, and ACKed the
 message off the server (WP-PENDING-2).
 
+### Fork detection: a signed epoch fingerprint in every application frame (2026-10-22)
+
+Two members can hold two different trees for one conversation at the SAME epoch number - a fork -
+and each side sees only the other's frames refused (`same-epoch-refusal`). To tell the two apart,
+every application frame carries, in the MLS `PrivateMessage`'s authenticated data
+(set with `group.set_aad`, cleared again on every exit), a signed claim of the sender's view:
+
+- `fp = SHA-256(lp("canari-mls-epoch-fp-v1") lp(epoch_authenticator))[..16]`;
+- signed with the sender's credential key over `lp("canari-mls-fork-v1") lp(groupId) be64(epoch)
+  lp(fp) lp(identity)`; AAD = `version(1) lp(identity) fp sig`.
+
+**Why the AAD and not the ciphertext.** A member on the other branch of a fork cannot decrypt the
+frame at all, so a fingerprint inside the ciphertext would only ever reach members that agree - a
+check that can never fire. The AAD is readable before the decrypt, on exactly the arm that fails -
+and so by everything that handles the frame's bytes; who that is, and what the `userId:deviceId` in
+it adds, is stated in
+[history-reconciliation](history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22).
+
+**The verdicts** (`mls-core/src/fork_check.rs`), judged on the same-epoch refusal and on success:
+
+| Verdict | Means | Logged |
+| --- | --- | --- |
+| no claim | an older sender | nothing |
+| agrees | same fingerprint, so the frame itself is damaged, not the tree | warn |
+| `fork` | a different fingerprint, signed by the sender's key in OUR tree | ERROR, recorded |
+| `unproven` | a different fingerprint we cannot attribute | warn, recorded |
+| `contradiction` | the frame decrypted at our epoch yet claims another fingerprint | ERROR, recorded |
+
+Findings are bounded (64) and handed over by `take_fork_findings` (WASM) / `prendre_constats_fork`
+(Tauri); the client drains them after a same-epoch refusal and reports each through the integrity
+finding path ([history-reconciliation](history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22)).
+The UI comes later.
+
 ### A frame from a PAST epoch is two events, and only `content_type` separates them (2026-08-11)
 
 `process_incoming_on_group` compares the frame's epoch to the group's before deciding anything, and

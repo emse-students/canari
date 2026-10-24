@@ -41,8 +41,12 @@ export function createSequentialDecryptSession(
       const results: MlsBatchProcessResult[] = [];
       for (const bytes of messageBytesList) {
         try {
-          const plaintext = await service.processIncomingMessage(groupId, bytes);
-          results.push({ ok: true, plaintext });
+          const decrypted = await service.processIncomingMessage(groupId, bytes);
+          results.push(
+            decrypted
+              ? { ok: true, plaintext: decrypted.plaintext, author: decrypted.author }
+              : { ok: true, plaintext: null }
+          );
         } catch (e) {
           results.push({ ok: false, error: String(e) });
         }
