@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Break the app-wide import cycle (auth store -> composables -> mlsService -> subclasses ->
 // BaseMlsService) that otherwise loads the concrete services before BaseMlsService is defined.
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
@@ -70,6 +71,7 @@ function commitCtx(accepted: boolean) {
         'checkpointStageBeforeSend',
         'submitRecorded',
         'resubmitUnresolved',
+        'resubmitOnce',
       ].map((name) => [
         name,
         (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],

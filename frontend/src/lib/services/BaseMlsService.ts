@@ -171,6 +171,7 @@ import {
   CommitRefusedError,
   SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS,
   SEAT_CLAIM_OVERTAKEN_REASON,
+  COMMIT_LOCK_BUDGET_SPENT_REASON,
 } from '$lib/mls-client/CommitRefusedError';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { commitRateLimitRemainingMs, noteCommitRateLimited } from '$lib/mls-client/commitRateLimit';
@@ -182,6 +183,11 @@ import {
   encodeIntent,
   isDefinitiveCommitRefusal,
   resubmissionVerdict,
+  confirmationVerdict,
+  mayBeOwnOverlap,
+  COMMIT_LOCK_HOLD_BUDGET_MS,
+  commitLockHoldEndsAt,
+  mayStartCommitRequest,
   type CommitIntent,
   type CommitSubmission,
   type OwedWelcome,
@@ -4025,10 +4031,27 @@ export abstract class BaseMlsService implements IMlsService {
         // nothing - the epoch, the tree and the log stand where they were - and it reaches EVERY
         // commit that writes a seat, an ordinary conversation's included: a pending member's own
         // add or remove carries its committer's claim. Rebuilt here, under the same lock, no caller
-        // has to know about it; only the last refusal of the bound is handed up. The gate answers it
-        // inside the advance's transaction, AFTER its duplicate answer, so it proves that no earlier
-        // request of these bytes landed either: a resubmission refused this way is refused for good.
-        const clear = () => this.clearPendingCommit(groupId);
+        // has to know about it; only the last refusal of the bound is handed up.
+        //
+        // ONLY A FIRST REQUEST THE GATE ANSWERED IS REBUILT. The 409 refuses the request that got
+        // it, and nothing more: a resubmission can meet it because our own first request - still
+        // inside its transaction once the server's 5 s commit lock expired, while this client waits
+        // up to 30 s - wrote the seat first. So after a first request that got no answer, a 409
+        // keeps the stage (`resubmitUnresolved`), never clears or rebuilds it.
+        //
+        // A STAGE LEFT ON A FAILED CLEAR IS STILL UNRESOLVED, so every clear here notes the group
+        // when it fails: the next settlement reads it again.
+        const clear = async () => {
+          try {
+            await this.clearPendingCommit(groupId);
+          } catch (clearErr) {
+            this.unresolvedGroups?.add(groupId);
+            throw clearErr;
+          }
+        };
+        // ONE BUDGET FOR THE WHOLE HOLD, settlement and rebuilds included (`COMMIT_LOCK_HOLD_BUDGET_MS`):
+        // the lock this runs under guards the incoming processing of every group.
+        const holdEndsAt = commitLockHoldEndsAt();
         for (let attempt = 1; ; attempt++) {
           // NOT STAGED AT ALL while the server still refuses this account's commits: the answer is
           // already known (`commitRateLimit.ts`), and nothing is left to roll back.
@@ -4043,11 +4066,24 @@ export abstract class BaseMlsService implements IMlsService {
           // A PREVIOUS COMMIT WHOSE OUTCOME IS UNKNOWN IS SETTLED FIRST, and nothing is staged on
           // top of it while it stays unknown: openmls holds it pending, and the epoch this commit
           // would be built on is exactly what that outcome decides.
-          if ((await this.settleUnresolvedLocked(groupId)) === 'unknown') {
+          if ((await this.settleUnresolvedLocked(groupId, holdEndsAt)) === 'unknown') {
             throw new CommitOutcomeUnknownError(
               groupId,
               this.getEpoch(groupId),
               'the previous commit of this group is still unresolved'
+            );
+          }
+          // NOTHING IS STAGED THAT THE BUDGET CANNOT SEE ANSWERED: a stage whose first request
+          // cannot start would only be rolled back.
+          if (!mayStartCommitRequest(holdEndsAt)) {
+            const epoch = this.getEpoch(groupId);
+            console.warn(
+              `[COMMIT] ${groupId.slice(0, 8)}... not staged on ${epoch} (attempt ${attempt}) - the MLS lock budget of ${COMMIT_LOCK_HOLD_BUDGET_MS} ms is spent`
+            );
+            throw new CommitRefusedError(
+              attempt > 1 ? SEAT_CLAIM_OVERTAKEN_REASON : COMMIT_LOCK_BUDGET_SPENT_REASON,
+              epoch,
+              attempt > 1 ? epoch : undefined
             );
           }
           // WHAT THIS CLIENT KNOWS OF THE COMMIT GOES INTO THE STAGE ITSELF, and the platform records
@@ -4144,7 +4180,7 @@ export abstract class BaseMlsService implements IMlsService {
                 `[COMMIT] ${groupId.slice(0, 8)}... refused by the commit rate limit at epoch ${baseEpoch} - staged commit rolled back`
               );
               noteCommitRateLimited(e.retryAfterMs);
-              await this.clearPendingCommit(groupId).catch((clearErr: unknown) =>
+              await clear().catch((clearErr: unknown) =>
                 console.error(
                   `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the rate-limited commit:`,
                   String(clearErr).slice(0, 120)
@@ -4160,7 +4196,7 @@ export abstract class BaseMlsService implements IMlsService {
             if (isDefinitiveCommitRefusal(e)) {
               // The gate ANSWERED, and refused before reaching the epoch: nothing landed.
               if (await rebuildOnOvertakenClaim(clear, groupId, baseEpoch, attempt, e)) continue;
-              await this.clearPendingCommit(groupId).catch((clearErr: unknown) =>
+              await clear().catch((clearErr: unknown) =>
                 console.error(
                   `[COMMIT] ${groupId.slice(0, 8)}... could not clear the refused commit at ` +
                     `${baseEpoch}: ${String(clearErr)}`
@@ -4175,19 +4211,27 @@ export abstract class BaseMlsService implements IMlsService {
               `[COMMIT] ${groupId.slice(0, 8)}... no answer to the commit from epoch ${baseEpoch} ` +
                 `(${String(e).slice(0, 120)}) - resubmitting the same commit`
             );
-            const answer = await this.resubmitUnresolved(submission);
+            const answer = await this.resubmitUnresolved(submission, holdEndsAt);
             if (answer.verdict === 'unknown') {
               // KEPT: the staged commit and its record stay in the state - already on disk, by the
-              // checkpoint before the first request - and a later resubmission decides.
+              // checkpoint before the first request - and a later resubmission decides. Never
+              // rebuilt: the first request's outcome is what is unknown.
               this.unresolvedGroups?.add(groupId);
-              throw new CommitOutcomeUnknownError(groupId, baseEpoch, answer.error ?? e);
+              throw new CommitOutcomeUnknownError(
+                groupId,
+                baseEpoch,
+                answer.error ?? answer.answer?.reason ?? e
+              );
             }
             if (answer.answer === undefined) {
-              // Refused by a 4xx: the gate answered the resubmission, and nothing landed.
-              if (await rebuildOnOvertakenClaim(clear, groupId, baseEpoch, attempt, answer.error)) {
-                continue;
-              }
-              await this.clearPendingCommit(groupId).catch(() => {});
+              // Refused by a 4xx that is neither a 429 nor a 409 (`resubmitUnresolved` reads both as unknown): the gate
+              // answered these bytes before reaching the epoch, and nothing landed.
+              await clear().catch((clearErr: unknown) =>
+                console.error(
+                  `[COMMIT] ${groupId.slice(0, 8)}... could not clear the commit refused on resubmission at ` +
+                    `${baseEpoch}: ${String(clearErr).slice(0, 120)}`
+                )
+              );
               throw answer.error;
             }
             validation = answer.answer;
@@ -4196,7 +4240,12 @@ export abstract class BaseMlsService implements IMlsService {
             // Rejected: roll back the staged commit. The local epoch never moved, so there is NO
             // fork. Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
             // retryable failure rather than a fork to heal. [[C7]]
-            await this.clearPendingCommit(groupId).catch(() => {});
+            await clear().catch((clearErr: unknown) =>
+              console.error(
+                `[COMMIT] ${groupId.slice(0, 8)}... could not clear the refused commit at ` +
+                  `${baseEpoch}: ${String(clearErr).slice(0, 120)}`
+              )
+            );
             // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
             await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
             throw new CommitRefusedError(
@@ -4259,30 +4308,79 @@ export abstract class BaseMlsService implements IMlsService {
    * A 429 IS UNKNOWN HERE, never a refusal: the per-user commit limit answers before the gate, so it
    * says nothing of the EARLIER request of these bytes, which may have landed. Clearing on it could
    * leave this device behind its own accepted commit; the stage is kept and the limit remembered.
+   *
+   * SO ARE THE TWO ANSWERS AN OVERLAP WITH THAT EARLIER REQUEST PRODUCES. The server's commit lock
+   * lives 5 s and the first request may have waited 30 s, so it can still be inside its transaction
+   * when this one arrives: this one then loses the advance to it (`epoch_mismatch` with
+   * `base + 1`, {@link mayBeOwnOverlap}) or meets the seat it wrote (`409 SEAT_CLAIM_OVERTAKEN`).
+   * Neither refuses these bytes, so neither clears nor rebuilds. The epoch answer is CONFIRMED by
+   * one more resubmission, at once, whose answer is definitive ({@link confirmationVerdict}); the 409
+   * is kept for the next settlement.
+   *
+   * No request starts once `holdEndsAt` would be passed ({@link mayStartCommitRequest}): the outcome
+   * then stays unknown.
    */
-  private async resubmitUnresolved(submission: CommitSubmission): Promise<{
+  private async resubmitUnresolved(
+    submission: CommitSubmission,
+    holdEndsAt: number
+  ): Promise<{
     verdict: ResubmissionVerdict;
     answer?: Awaited<ReturnType<MlsDeliveryApi['submitCommit']>>;
     error?: unknown;
   }> {
     const short = submission.groupId.slice(0, 8);
+    const from = `the commit from epoch ${submission.baseEpoch}`;
+    const sent = await this.resubmitOnce(submission, holdEndsAt, (answer) =>
+      resubmissionVerdict(answer, submission.baseEpoch)
+    );
+    if (sent.answer === undefined || !mayBeOwnOverlap(sent.answer, submission.baseEpoch)) {
+      return sent;
+    }
+    console.warn(
+      `[COMMIT] ${short}... resubmission of ${from} lost the epoch to ${submission.baseEpoch + 1} - ` +
+        'possibly to its own earlier request; confirming with one more resubmission'
+    );
+    return this.resubmitOnce(submission, holdEndsAt, confirmationVerdict, 'confirmation');
+  }
+
+  /** One request of {@link resubmitUnresolved}, its answer read by `read`. */
+  private async resubmitOnce(
+    submission: CommitSubmission,
+    holdEndsAt: number,
+    read: (answer: Awaited<ReturnType<MlsDeliveryApi['submitCommit']>>) => ResubmissionVerdict,
+    what = 'resubmission'
+  ): Promise<{
+    verdict: ResubmissionVerdict;
+    answer?: Awaited<ReturnType<MlsDeliveryApi['submitCommit']>>;
+    error?: unknown;
+  }> {
+    const short = submission.groupId.slice(0, 8);
+    const from = `the commit from epoch ${submission.baseEpoch}`;
+    if (!mayStartCommitRequest(holdEndsAt)) {
+      const error = new Error(
+        `the MLS lock budget of ${COMMIT_LOCK_HOLD_BUDGET_MS} ms is spent - no ${what} sent`
+      );
+      console.warn(`[COMMIT] ${short}... ${what} of ${from}: unknown (${error.message})`);
+      return { verdict: 'unknown', error };
+    }
     try {
       const answer = await this.submitRecorded(submission);
-      const verdict = resubmissionVerdict(answer);
+      const verdict = read(answer);
       console.log(
-        `[COMMIT] ${short}... resubmission of the commit from epoch ${submission.baseEpoch}: ` +
+        `[COMMIT] ${short}... ${what} of ${from}: ` +
           `${verdict}${answer.duplicate ? ' (duplicate of an accepted commit)' : ''}` +
-          `${answer.reason ? ` (${answer.reason})` : ''}`
+          `${answer.reason ? ` (${answer.reason}${answer.currentEpoch !== undefined ? `, server at ${answer.currentEpoch}` : ''})` : ''}`
       );
       return { verdict, answer };
     } catch (e) {
       const rateLimited = e instanceof ApiRefusalError && e.status === 429;
       if (rateLimited) noteCommitRateLimited(e.retryAfterMs);
       const verdict: ResubmissionVerdict =
-        !rateLimited && isDefinitiveCommitRefusal(e) ? 'refused' : 'unknown';
+        !rateLimited && !isSeatClaimOvertaken(e) && isDefinitiveCommitRefusal(e)
+          ? 'refused'
+          : 'unknown';
       console.warn(
-        `[COMMIT] ${short}... resubmission of the commit from epoch ${submission.baseEpoch}: ` +
-          `${verdict} (${String(e).slice(0, 120)})`
+        `[COMMIT] ${short}... ${what} of ${from}: ${verdict} (${String(e).slice(0, 120)})`
       );
       return { verdict, error: e };
     }
@@ -4364,9 +4462,13 @@ export abstract class BaseMlsService implements IMlsService {
    *   one-call stage makes a proof, not a guess;
    * - `unknown`: still no answer, or a record that cannot be read
    *   ({@link escalateUnreadableSubmission}); the staged commit and its record stay.
+   *
+   * `holdEndsAt` is the lock-hold budget of the caller's transaction ({@link commitLockHoldEndsAt}):
+   * this settlement's requests count against it.
    */
   private async settleUnresolvedLocked(
-    groupId: string
+    groupId: string,
+    holdEndsAt: number
   ): Promise<'none' | 'merged' | 'cleared' | 'unknown'> {
     if (!(await this.groupsWithPendingCommit()).includes(groupId)) {
       this.unresolvedGroups?.delete(groupId);
@@ -4396,7 +4498,7 @@ export abstract class BaseMlsService implements IMlsService {
       this.unresolvedGroups?.add(groupId);
       return 'unknown';
     }
-    const answer = await this.resubmitUnresolved(submission);
+    const answer = await this.resubmitUnresolved(submission, holdEndsAt);
     if (answer.verdict === 'unknown') {
       this.unresolvedGroups?.add(groupId);
       return 'unknown';
@@ -4406,9 +4508,11 @@ export abstract class BaseMlsService implements IMlsService {
       await this.mergeSettled(submission);
       return 'merged';
     }
-    await this.clearPendingCommit(groupId).catch((e: unknown) =>
-      console.warn(`[COMMIT] ${short}... could not clear the refused commit: ${String(e)}`)
-    );
+    await this.clearPendingCommit(groupId).catch((e: unknown) => {
+      // Still staged, so still unresolved: the next settlement reads it again.
+      this.unresolvedGroups?.add(groupId);
+      console.warn(`[COMMIT] ${short}... could not clear the refused commit: ${String(e)}`);
+    });
     console.log(
       `[COMMIT] ${short}... the kept commit from epoch ${submission.baseEpoch}: refused - cleared`
     );
@@ -4529,7 +4633,9 @@ export abstract class BaseMlsService implements IMlsService {
     for (const groupId of pending) {
       try {
         const outcome = await this.runUnderMlsLock(() =>
-          runAsEpochAdvance(groupId, () => this.settleUnresolvedLocked(groupId))
+          runAsEpochAdvance(groupId, () =>
+            this.settleUnresolvedLocked(groupId, commitLockHoldEndsAt())
+          )
         );
         if (outcome === 'merged' || outcome === 'cleared') moved = true;
       } catch (e) {

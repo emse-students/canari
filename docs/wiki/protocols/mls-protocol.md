@@ -998,9 +998,29 @@ POST hung on a half-open connection or a captive portal froze decryption in ever
 the periodic refresh makes an unasked commit ordinary, `submitCommit` runs under the `write` head
 deadline (`requestDeadline.ts`: 30 s plus the time its body needs to leave). Its expiry is a
 `RequestDeadlineError`, a transport failure - NO ANSWER, never a refusal - so it takes the path above:
-the same bytes are resubmitted once, and a second expiry keeps the stage as unknown. The lock is held
-at most two deadlines. The deadline does not decide the outcome; the next resubmission does
-(`BaseMlsService.unresolvedCommit.test.ts`, "a commit gate that never answers").
+the same bytes are resubmitted once, and a second expiry keeps the stage as unknown. The deadline does
+not decide the outcome; the next resubmission does (`BaseMlsService.unresolvedCommit.test.ts`, "a
+commit gate that never answers"). ONE budget bounds the whole hold of a transaction, settlement and
+rebuilds included: `COMMIT_LOCK_HOLD_BUDGET_MS`, three `write` deadlines (a first request, its
+resubmission, one confirmation - below), and a request it does not let start leaves the outcome
+unknown, or refuses a commit not yet staged (`lock_budget_spent`).
+
+**The server's commit lock lives 5 s; the client waits 30 s - so a resubmission can overlap its own
+first request.** The Redis lock (`EX 5`, `messaging.service.ts`) expires while a first request
+stalled inside its transaction (waiting on the seat lock, say) is still running. The resubmission
+then passes the lock, reads the base still active, waits on the group row, and when the first
+request commits it is answered `epoch_mismatch` with `base + 1` (`EpochAdvanceLost`) - or the seat
+recheck answers `409 SEAT_CLAIM_OVERTAKEN`. Neither refuses these bytes: both can be the trace of OUR
+commit landing. So on a resubmission (`commitSubmission.ts`):
+
+- `epoch_mismatch` at exactly `base + 1` is not read as a refusal; ONE more resubmission is sent at
+  once, and its answer is definitive (`confirmationVerdict`). The epoch has moved past the base and
+  never walks back, so it cannot pass the strict gate, and the gate reads the duplicate check and
+  the epoch from one group read while the advance writes the log row with the epoch: ours is answered
+  `duplicate`, anyone else's is a refusal. A refusal two or more epochs past the base was always
+  definitive;
+- a `409` is UNKNOWN: the stage is kept, never cleared and never rebuilt, and the next settlement
+  decides. Only a FIRST request the gate answered `409` is rebuilt.
 
 **One store, one call.** What a resubmission needs - the commit, its successor base, its Welcome,
 and the client's intent (whom it excludes, admits and removes) - is kept BESIDE the staged commit in

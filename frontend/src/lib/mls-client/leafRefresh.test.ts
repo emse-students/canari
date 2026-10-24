@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import type { Mock } from 'vitest';
 import {
   LEAF_REFRESH_INTERVAL_MS,

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Break the app-wide import cycle (auth store -> composables -> mlsService -> subclasses ->
 // BaseMlsService) that otherwise loads the concrete services before BaseMlsService is defined.
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
@@ -9,7 +10,10 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 }));
 
 import { BaseMlsService } from './BaseMlsService';
-import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import {
+  COMMIT_LOCK_BUDGET_SPENT_REASON,
+  CommitRefusedError,
+} from '$lib/mls-client/CommitRefusedError';
 import {
   CommitOutcomeUnknownError,
   CommitStageNotSavedError,
@@ -148,6 +152,7 @@ function ctx(
     'escalateUnreadableSubmission',
     'submitRecorded',
     'resubmitUnresolved',
+    'resubmitOnce',
     'awaitCommitCheckpoint',
     'checkpointStageBeforeSend',
     'mergeSettled',
@@ -422,15 +427,79 @@ describe('runCommitTransaction - a submission that got no answer', () => {
     expect(c.clearPendingCommit).not.toHaveBeenCalled();
   });
 
-  it('clears, catches up and refuses when another commit took the epoch', async () => {
+  it('clears, catches up and refuses when another commit took the epoch, two past the base', async () => {
     const c = ctx(
-      submitting(lost(), { accepted: false, reason: 'epoch_mismatch', currentEpoch: 6 })
+      submitting(lost(), { accepted: false, reason: 'epoch_mismatch', currentEpoch: 7 })
     );
     await expect(run(c)).rejects.toBeInstanceOf(CommitRefusedError);
+    expect(c.delivery.submitCommit).toHaveBeenCalledTimes(2);
     expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
-    expect(c.catchUpOnRefusedCommit).toHaveBeenCalledWith(G, 5, 6);
+    expect(c.catchUpOnRefusedCommit).toHaveBeenCalledWith(G, 5, 7);
     expect(c.mergePendingCommit).not.toHaveBeenCalled();
     expect(c.state.size).toBe(0);
+  });
+
+  // THE SERVER'S COMMIT LOCK LIVES 5 s AND THIS CLIENT WAITS 30 s: a first request stalled inside its
+  // transaction can still be running when the resubmission arrives, which then loses the advance to
+  // it and is answered `epoch_mismatch` with `base + 1` - the epoch OUR commit made.
+  describe('an answer our own first request, still running, may have caused', () => {
+    const overlap = { accepted: false, reason: 'epoch_mismatch', currentEpoch: 6 };
+
+    it('KEEPS the commit, never merged nor cleared, when its confirmation gets no answer', async () => {
+      const c = ctx(submitting(lost(), overlap, lost()));
+      c.unresolvedGroups = new Set() as never;
+      const err = await run(c).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CommitOutcomeUnknownError);
+      expect(c.delivery.submitCommit).toHaveBeenCalledTimes(3);
+      expect(c.clearPendingCommit).not.toHaveBeenCalled();
+      expect(c.mergePendingCommit).not.toHaveBeenCalled();
+      expect(c.catchUpOnRefusedCommit).not.toHaveBeenCalled();
+      expect(c.state.get(G)).toMatchObject({ status: 'recorded', record: { baseEpoch: 5 } });
+      expect((c.unresolvedGroups as unknown as Set<string>).has(G)).toBe(true);
+    });
+
+    it('merges when the confirmation is answered as the DUPLICATE the first request made', async () => {
+      const c = ctx(submitting(lost(), overlap, { accepted: true, duplicate: true }));
+      await run(c);
+      expect(c.delivery.submitCommit).toHaveBeenCalledTimes(3);
+      expect(c.delivery.submitCommit.mock.calls[2]).toEqual(c.delivery.submitCommit.mock.calls[0]);
+      expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
+      expect(c.clearPendingCommit).not.toHaveBeenCalled();
+    });
+
+    it('clears and catches up when the confirmation refuses at base + 1 again - the row is another device', async () => {
+      const c = ctx(submitting(lost(), overlap, overlap));
+      await expect(run(c)).rejects.toBeInstanceOf(CommitRefusedError);
+      expect(c.delivery.submitCommit).toHaveBeenCalledTimes(3);
+      expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
+      expect(c.catchUpOnRefusedCommit).toHaveBeenCalledWith(G, 5, 6);
+      expect(c.mergePendingCommit).not.toHaveBeenCalled();
+    });
+
+    it('KEEPS the commit, and never rebuilds it, on a 409 SEAT_CLAIM_OVERTAKEN to the resubmission', async () => {
+      const overtaken = new ApiRefusalError(409, 'SEAT_CLAIM_OVERTAKEN', 'not accepted');
+      const c = ctx(submitting(lost(), overtaken));
+      const stage = stagerOf(c);
+      const err = await run(c, stage).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CommitOutcomeUnknownError);
+      expect(stage).toHaveBeenCalledTimes(1);
+      expect(c.delivery.submitCommit).toHaveBeenCalledTimes(2);
+      expect(c.clearPendingCommit).not.toHaveBeenCalled();
+      expect(c.mergePendingCommit).not.toHaveBeenCalled();
+      expect(c.state.has(G)).toBe(true);
+    });
+  });
+
+  it('notes the group unresolved when the clear of a refused first request fails', async () => {
+    const refusal = new ApiRefusalError(403, null, 'Commit submission HTTP error (403)');
+    const c = ctx(submitting(refusal));
+    c.unresolvedGroups = new Set() as never;
+    c.clearPendingCommit.mockRejectedValueOnce(new Error('state busy'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(run(c)).rejects.toBe(refusal);
+    expect((c.unresolvedGroups as unknown as Set<string>).has(G)).toBe(true);
+    expect(c.state.has(G)).toBe(true);
+    error.mockRestore();
   });
 
   it('clears WITHOUT resubmitting a 4xx - the gate answered, and it refused', async () => {
@@ -500,6 +569,25 @@ describe('runCommitTransaction - a group whose last commit is unresolved', () =>
     await run(c, stage);
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(2);
     expect(stage).toHaveBeenCalledTimes(1);
+  });
+
+  it('stages nothing once the settlement spent the lock budget its first request would need', async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    // The settlement's resubmission is answered after two deadlines: one more does not fit.
+    const submit = vi.fn(async () => {
+      now += 2 * DEADLINE_MS.write + 1;
+      return { accepted: true, duplicate: true };
+    });
+    const c = ctx(submit, { state: kept() });
+    const stage = stagerOf(c);
+    const err = await run(c, stage).catch((e: unknown) => e);
+    clock.mockRestore();
+    expect(err).toBeInstanceOf(CommitRefusedError);
+    expect((err as CommitRefusedError).reason).toBe(COMMIT_LOCK_BUDGET_SPENT_REASON);
+    expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
+    expect(stage).not.toHaveBeenCalled();
+    expect(submit).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -611,6 +699,30 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
 
   it('keeps both when the resubmission gets no answer either', async () => {
     const c = ctx(submitting(lost()), { state: kept() });
+    await c.settleUnresolvedCommits();
+    expect(c.clearPendingCommit).not.toHaveBeenCalled();
+    expect(c.mergePendingCommit).not.toHaveBeenCalled();
+    expect(c.state.has(G)).toBe(true);
+  });
+
+  it('confirms an answer at base + 1 before deciding, and merges the duplicate it gets', async () => {
+    const c = ctx(
+      submitting(
+        { accepted: false, reason: 'epoch_mismatch', currentEpoch: 6 },
+        { accepted: true, duplicate: true }
+      ),
+      { state: kept() }
+    );
+    await c.settleUnresolvedCommits();
+    expect(c.delivery.submitCommit).toHaveBeenCalledTimes(2);
+    expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
+    expect(c.clearPendingCommit).not.toHaveBeenCalled();
+  });
+
+  it('keeps the commit on a 409 to the settlement - it may be our own first request', async () => {
+    const c = ctx(submitting(new ApiRefusalError(409, 'SEAT_CLAIM_OVERTAKEN', 'not accepted')), {
+      state: kept(),
+    });
     await c.settleUnresolvedCommits();
     expect(c.clearPendingCommit).not.toHaveBeenCalled();
     expect(c.mergePendingCommit).not.toHaveBeenCalled();

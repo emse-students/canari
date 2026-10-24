@@ -75,6 +75,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
         'checkpointStageBeforeSend',
         'submitRecorded',
         'resubmitUnresolved',
+        'resubmitOnce',
       ].map((name) => [
         name,
         (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],
@@ -324,8 +325,64 @@ describe('BaseMlsService - a commit refused by the rate limit (429)', () => {
     // The first request may have landed; the throttler answered the second before the gate. A
     // clear here could leave this device behind its own accepted commit.
     await expect(runCommit(ctx, 'g')).rejects.toBeInstanceOf(CommitOutcomeUnknownError);
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(2);
     expect(ctx.clearPendingCommit).not.toHaveBeenCalled();
+    expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
+    expect(await ctx.recorder.pendingSubmission()).toMatchObject({
+      status: 'recorded',
+      record: { baseEpoch: 195 },
+    });
     expect(commitRateLimitRemainingMs()).toBeGreaterThan(29_000);
+  });
+
+  it('never rebuilds on a 409 to the RESUBMISSION: our own first request may have written the seat', async () => {
+    // The server's commit lock lives 5 s and the first request may wait 30 s, so it can still be
+    // inside its transaction when the resubmission meets the seat it wrote. Kept, never rebuilt.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit
+      .mockRejectedValueOnce(new ApiRefusalError(502, null, 'Commit submission HTTP error (502)'))
+      .mockRejectedValueOnce(overtaken());
+    const stageFn = vi.fn(async () => ({
+      commit: new Uint8Array([1]),
+      groupInfo: new Uint8Array([2]),
+    }));
+
+    const err = await (
+      BaseMlsService.prototype as unknown as {
+        runCommitTransaction: (
+          g: string,
+          s: (intent: Uint8Array) => Promise<unknown>
+        ) => Promise<unknown>;
+      }
+    ).runCommitTransaction
+      .call(ctx, 'g', ctx.recorder.wrap(stageFn))
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(CommitOutcomeUnknownError);
+    expect(stageFn).toHaveBeenCalledTimes(1);
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(2);
+    expect(ctx.clearPendingCommit).not.toHaveBeenCalled();
+    expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
+  });
+
+  it('notes the group unresolved when the clear after a first-request 429 fails', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const ctx = makeCtx({
+      clearPendingCommit: vi.fn().mockRejectedValue(new Error('locked')),
+      unresolvedGroups: new Set<string>(),
+    });
+    ctx.delivery.submitCommit.mockRejectedValue(
+      new ApiRefusalError(429, 'RATE_LIMITED', 'Commit submission HTTP error (429)')
+    );
+
+    const refused = await runCommit(ctx, 'g').catch((e: unknown) => e);
+
+    expect((refused as CommitRefusedError).reason).toBe('rate_limited');
+    expect((ctx as unknown as { unresolvedGroups: Set<string> }).unresolvedGroups.has('g')).toBe(
+      true
+    );
   });
 
   it('refuses the next commit BEFORE staging it while the wait holds - no second 429 is collected', async () => {
