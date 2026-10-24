@@ -24,6 +24,7 @@
   import { resolve } from '$app/paths';
   import { CAMERA_PLACE } from '$lib/navigation/places';
   import CameraOverlay from '$lib/components/reels/CameraOverlay.svelte';
+  import { chatReelAllowed } from '$lib/reels/chatReelWriter';
   import GlassMenuButton, {
     type GlassMenuItem,
   } from '$lib/components/shared/GlassMenuButton.svelte';
@@ -122,6 +123,11 @@
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /**
+     * The conversation takes a CanaReel filmed here (a DM or a group - never a salon). Only effective
+     * while the writer switch is on (`CHAT_REEL_WRITER_ENABLED`, off until RC-5 and RC-7).
+     */
+    reelMessages?: boolean;
+    /**
      * Sends a finished recording immediately, as its own message.
      *
      * The recording does NOT go through `onFilesSelected`, and the difference is the gesture:
@@ -163,6 +169,7 @@
     onCancelEdit,
     onConfirmEdit,
     onFilesSelected,
+    reelMessages = false,
     onSendVoiceNote,
     pendingFiles = [],
     onRemovePendingFile,
@@ -216,7 +223,10 @@
 
   /** A photo taken with the in-app camera: sent exactly like one picked from the library. */
   function onCameraCapture(file: File) {
-    Log.d('ChatComposer', `camera photo taken (${file.size} bytes)`);
+    Log.d(
+      'ChatComposer',
+      `camera ${file.type.startsWith('video/') ? 'reel' : 'photo'} taken (${file.size} bytes)`
+    );
     onFilesSelected?.([file]);
   }
   let isDragOver = $state(false);
@@ -1310,6 +1320,7 @@
       {#if cameraOpen}
         <CameraOverlay
           destination="chat"
+          chatFilms={chatReelAllowed(!reelMessages)}
           oncapture={onCameraCapture}
           onclose={() => (cameraOpen = false)}
         />

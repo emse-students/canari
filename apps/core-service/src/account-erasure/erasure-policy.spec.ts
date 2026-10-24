@@ -93,6 +93,7 @@ describe('erasure policy', () => {
     expect(sql).toContain('DELETE FROM profile_changes WHERE "userId" = $1');
     expect(sql).toContain('DELETE FROM profile_correction_requests WHERE "userId" = $1');
     expect(sql).toContain('DELETE FROM auth_sessions WHERE "userId" = $1');
+    expect(sql).toContain('DELETE FROM session_push_endings WHERE "userId" = $1');
     expect(CORE_ERASURE_STATEMENTS[CORE_ERASURE_STATEMENTS.length - 1].sql).toBe(
       'DELETE FROM users WHERE id = $1'
     );

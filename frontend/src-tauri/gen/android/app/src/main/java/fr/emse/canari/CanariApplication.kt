@@ -167,22 +167,24 @@ class CanariApplication : Application() {
     }
 
     internal fun processPendingPushSecret() {
-        try {
-            val file = File(MlsContextLoader.tauriDataDir(this), "pending_push_secret.txt")
-            if (!file.exists()) return
-            // Read raw bytes first so the overwrite covers the exact file size, including
-            // any trailing newline. secret.length is a char count and diverges from byte
-            // count for multi-byte UTF-8 sequences, leaving secret bytes unzeroed.
-            val rawBytes = file.readBytes()
-            val secret = rawBytes.toString(Charsets.UTF_8).trim()
-            if (secret.isNotEmpty()) {
-                PushSecretKeystore.store(this, secret)
-                Log.i(TAG, "processPendingPushSecret: secret stored in the Keystore")
+        synchronized(PushSecretKeystore.handoffLock) {
+            try {
+                val file = File(MlsContextLoader.tauriDataDir(this), "pending_push_secret.txt")
+                if (!file.exists()) return@synchronized
+                // Read raw bytes first so the overwrite covers the exact file size, including
+                // any trailing newline. secret.length is a char count and diverges from byte
+                // count for multi-byte UTF-8 sequences, leaving secret bytes unzeroed.
+                val rawBytes = file.readBytes()
+                val secret = rawBytes.toString(Charsets.UTF_8).trim()
+                if (secret.isNotEmpty()) {
+                    PushSecretKeystore.store(this, secret)
+                    Log.i(TAG, "processPendingPushSecret: secret stored in the Keystore")
+                }
+                file.writeBytes(ByteArray(rawBytes.size) { 0 })
+                file.delete()
+            } catch (e: Exception) {
+                Log.e(TAG, "processPendingPushSecret: push secret transfer failed: ${e.message}", e)
             }
-            file.writeBytes(ByteArray(rawBytes.size) { 0 })
-            file.delete()
-        } catch (e: Exception) {
-            Log.e(TAG, "processPendingPushSecret: push secret transfer failed: ${e.message}", e)
         }
     }
 

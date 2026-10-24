@@ -99,6 +99,22 @@ export const incomingShare = {
     target = null;
     return true;
   },
+  /**
+   * A share made INSIDE Canari - a post's or a reel's link sent from its share sheet
+   * (`posts/sharePost.ts`) - offered with its destination already picked, in one step, so the
+   * "Envoyer a..." picker of `IncomingShareHost` never opens for it. It is a text and no file, and
+   * it travels the same road as a share from another app: the landing, then the composer, then the
+   * member's own Send.
+   *
+   * Its epoch is the FLOOR: it was made by the page now signed in, after every sign-out this page
+   * has seen, so the fence cannot refuse it - and a sign-out still drops it (`drop`, called by
+   * `eraseIncomingShare` before anything else).
+   */
+  offerTo(text: string, conversationId: string): boolean {
+    if (!this.offer({ text, files: [] }, floor)) return false;
+    this.chooseTarget(conversationId);
+    return true;
+  },
   /** Records the destination the member picked (a conversation id, as `notifNav` lands on). */
   chooseTarget(conversationId: string): void {
     if (!pending) return;

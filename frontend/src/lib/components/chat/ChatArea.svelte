@@ -1681,6 +1681,7 @@
           onCancelEdit={editSession.cancel}
           onConfirmEdit={editSession.confirm}
           {onFilesSelected}
+          reelMessages={!isChannel}
           {onSendVoiceNote}
           {pendingFiles}
           {onRemovePendingFile}
