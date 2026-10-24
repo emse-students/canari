@@ -278,6 +278,8 @@ export class AdminStorageController {
   private async measureMlsTables(): Promise<MlsTableUsage[]> {
     const MLS_TABLES = [
       'queued_message',
+      // The key-group ciphertexts the queue's records point at - stored once per fan-out.
+      'queued_payload',
       'one_time_key_package',
       'key_package',
       'mls_commit_log',
