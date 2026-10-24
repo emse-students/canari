@@ -51,27 +51,60 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
     createdAt: new Date(BASE + atMs),
   });
 
+  /**
+   * When set, the fake orders like PostgreSQL does: by the ORDER BY it was given and NOTHING else,
+   * so rows that tie on every given key come back in an order that differs from one query to the
+   * next (here: reversed on every other read) - which is what an OFFSET over a non-total order is
+   * allowed to do. Off for the tests that do not mean to exercise it, which hand the table in order.
+   */
+  let honourOrder: boolean;
+  let reads: number;
+
   const queryBuilder = () => {
-    const state = { skip: 0, take: 0, hideAddressed: false };
+    const state = { skip: 0, take: 0, hideAddressed: false, order: [] as string[] };
     const qb = {
+      leftJoinAndSelect: () => qb,
       where: () => qb,
       // The one condition this fake honours: the SQL filter that withholds addressed rows.
       andWhere: (condition: string) => {
         if (/q\.addressed = false/.test(condition)) state.hideAddressed = true;
         return qb;
       },
-      orderBy: () => qb,
-      skip: (n: number) => {
+      orderBy: (key: string) => {
+        state.order = [key];
+        return qb;
+      },
+      addOrderBy: (key: string) => {
+        state.order.push(key);
+        return qb;
+      },
+      // `offset`/`limit`, the SQL ones: the payload join is many-to-one, so it cannot multiply rows
+      // and TypeORM's two-query `skip`/`take` pagination would only double the read.
+      offset: (n: number) => {
         state.skip = n;
         return qb;
       },
-      take: (n: number) => {
+      limit: (n: number) => {
         state.take = n;
         return qb;
       },
       getMany: async () => {
         asked.push({ skip: state.skip, take: state.take });
-        const rows = state.hideAddressed ? table.filter((r) => !r.addressed) : table;
+        let rows = state.hideAddressed ? table.filter((r) => !r.addressed) : table;
+        if (honourOrder) {
+          const flip = reads++ % 2 === 1;
+          const key = (r: Partial<QueuedMessage>, k: string) =>
+            k === 'q.createdAt' ? +(r.createdAt as Date) : k === 'q.id' ? String(r.id) : '';
+          rows = [...rows].sort((a, b) => {
+            for (const k of state.order) {
+              const x = key(a, k);
+              const y = key(b, k);
+              if (x !== y) return x < y ? -1 : 1;
+            }
+            // A tie on every declared key: the database owes no order, and gives a different one.
+            return (table.indexOf(a) - table.indexOf(b)) * (flip ? -1 : 1);
+          });
+        }
         return rows.slice(state.skip, state.skip + state.take);
       },
     };
@@ -104,6 +137,8 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
     jest.clearAllMocks();
     asked = [];
     table = [];
+    honourOrder = false;
+    reads = 0;
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagingService,
@@ -283,6 +318,53 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
     const page = await fetch(5);
 
     expect(page.map((m) => m.id)).toEqual(['m0', 'm1', 'm2', 'm3', 'tie1', 'tie2']);
+  });
+
+  it('hands every row exactly once when a createdAt tie spans a chunk boundary - the id breaks it', async () => {
+    // One transaction writes a whole fan-out under one `now()`, so a device's queue can hold more
+    // rows sharing one `createdAt` than a chunk reads. The chunks page with OFFSET, and an OFFSET
+    // over an order with ties may hand one row twice and skip another, because the database owes
+    // the tied rows no order and need not repeat it. `q.id` after `createdAt` makes it total;
+    // without it this fake, ordering only by what it was told, duplicates and drops rows here.
+    honourOrder = true;
+    const tied = PENDING_FETCH_CHUNK_ROWS * 2 + 7;
+    // Ids that sort in a different order than they were inserted, so insertion order is no help.
+    table = Array.from({ length: tied }, (_, i) =>
+      row(`r${String((i * 37) % tied).padStart(3, '0')}`, 10, 5)
+    );
+
+    const page = await fetch(1000);
+
+    const ids = page.map((m) => m.id as string);
+    expect(asked.length).toBeGreaterThan(2);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect([...ids].sort()).toEqual(table.map((r) => r.id as string).sort());
+  });
+
+  it('serves a shared record with its payload, and WITHHOLDS one whose payload is gone', async () => {
+    // Never an empty frame: the device would ACK it, and the record - the only evidence of the
+    // loss - would go with it.
+    table = [
+      {
+        ...row('shared', 0, 0),
+        proto: undefined,
+        payloadId: 'p-1',
+        payload: { proto: 'U0hBUkVE' },
+      },
+      { ...row('orphan', 0, 1), proto: undefined, payloadId: 'p-gone', payload: null },
+      row('inline', 10, 2),
+    ] as Array<Partial<QueuedMessage>>;
+    const errorSpy = jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
+
+    const page = await fetch(500);
+
+    expect(page.map((m) => [m.id, m.proto])).toEqual([
+      ['shared', 'U0hBUkVE'],
+      ['inline', 'x'.repeat(10)],
+    ]);
+    expect(errorSpy.mock.calls.map(([m]) => String(m)).join('\n')).toContain('orphan->p-gone');
+    expect(queuedMessageRepo.delete).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it('returns what the queue holds and stops, when that is less than a page', async () => {
