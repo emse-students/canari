@@ -235,7 +235,7 @@ one unchanged. **None is built here.**
 | F4 | **Keep a salon's last decoded page locally and draw it first** (ledger row 9): stop deleting before the load, render the stored rows, merge the server page after (`mergeMessagePage` already merges) | 4 | first open in a process: 1.9 s -> the in-memory render (~0.56 s, then F6) at 1x, 6.2 s -> ~1.9 s at slow3g + cpu4; offline: history shown |
 | F5 | **Issue the history request at the tap**, not after the pane mounts | 4 | 323 ms (1x), 1.1 s (cpu4) on a first-ever open |
 | F6 | **Mount the visible bubbles first**: the render window opens on the last ~20 rows and grows after the first frame | 5 | the 340 ms long task of a 56-row page scales with rows: a cached reopen 564 -> ~200 ms at 1x (estimate, to be measured), 1.9 s -> ~0.6 s at 4x |
-| F7 | **A body that crosses the bridge once, and one native call for a page's signatures.** The body: read a first-party JSON response in one transfer instead of `plugin-http`'s chunked channel reads (or route these GETs through the WebView's own `fetch`, which already carries the refresh POST - `utils/fetchRouting.ts` holds why reads go to the plugin, and that reasoning decides which). **Built for `window.fetch` on 2026-10-15: every first-party `GET`/`HEAD` is the WebView's ([mobile](mobile.md#a-response-body-through-the-http-plugin-takes-seconds-at-launch-so-every-first-party-read-is-native-2026-10-15)); a salon's history page goes through `TauriMlsService`'s own plugin `fetch` and is NOT changed**; the signatures: batch `graine_verify_signature` for the page | 4 | body: **888 of the 1114 ms** of a 116 kB page at 1x, 3.4 of 3.7 s at 4x (measured, section 5); signatures: the ~800 ms of the decode that is not a long task, at 200 rows (inferred from the split, to be measured with the batch) |
+| F7 | **A body that crosses the bridge once, and one native call for a page's signatures.** The body: read a first-party JSON response in one transfer instead of `plugin-http`'s chunked channel reads (or route these GETs through the WebView's own `fetch`, which already carries the refresh POST - `utils/fetchRouting.ts` holds why reads go to the plugin, and that reasoning decides which). **Built for `window.fetch` on 2026-10-15: every first-party `GET`/`HEAD` is the WebView's ([mobile](mobile.md#a-response-body-through-the-http-plugin-takes-seconds-at-launch-so-every-first-party-read-is-native-2026-10-15)); a salon's history page goes through `TauriMlsService`'s own plugin `fetch` and is NOT changed**; the signatures: batch `graine_verify_signature` for the page - **built 2026-10-22, [below](#f7s-second-half-one-engine-call-for-a-pages-signatures-built-2026-10-22)** | 4 | body: **888 of the 1114 ms** of a 116 kB page at 1x, 3.4 of 3.7 s at 4x (measured, section 5); signatures: the ~800 ms of the decode that is not a long task, at 200 rows (inferred from the split, to be measured with the batch) |
 
 **F1 + F4 + F6 are what reach the 200 ms budget**; F2, F3, F5, F7 shorten the network refresh that
 follows and the first-ever case (new device, first sign-in), which no cache can serve.
@@ -565,6 +565,31 @@ community.
 **Owed:** the same table on the phone with the built code, from the next pre-release. Evidence is in
 `<harness-dir>/a1-bench/r1015-first-mount/`: `runs.ndjson`, the profiles, the
 traces, and `src128/` (the dumped `1.2.8` chunks the profiles resolve against).
+
+### F7's second half: one engine call for a page's signatures, built 2026-10-22
+
+**What changed.** `loadChannelHistory` and `searchChannelHistory` decode through
+`decodeChannelMessagePage`, which opens the page with `openChannelMessagePage`. The 200 awaited
+`graine_verify_signature` invokes, each carrying three JSON number arrays, are ONE
+`graine_verify_signatures` invoke carrying one base64 string (WASM on the web: one call, one
+slice). The Rust command is `async` and verifies on a blocking thread, where the single one ran on
+the main thread. Semantics, keys, refusals and logs are the single path's
+([channel-encryption](../protocols/channel-encryption.md), "Where each half lives"); the rules
+that keep them identical are on that page and in `channelSeal.ts`.
+
+**Measured without a device** (this workstation, so a shape and not the phone's number):
+
+- Rust, release, 200 checks: 10.2 ms as 200 single calls, 11.1 ms as one packed batch. The
+  verification costs the same; the batch removes the crossings, not a check
+  (`cargo test --release -p mls-core page_of_200 -- --ignored --nocapture`).
+- The bridge payload of a 200-row page: **356 504 characters over 200 invokes** as number arrays,
+  **135 488 in one invoke** as the packed base64 string; built in 6.6 ms vs 1.9 ms on desktop V8
+  (`CANARI_BENCH=1`, `graineV2.test.ts`).
+
+**Owed: the Mi 9T re-measure** with `community-open.mjs`, cold, ten-community bench, `salon>msgs`
+and the "decode + render after the history" link of section 5 (1623 ms at 1x, of which ~800 ms was
+not a long task and was inferred to be these invokes), against the 200 ms budget of section 4. It
+needs a build carrying this change, so the next pre-release.
 
 ## 7. Not measured, and owed
 

@@ -34,7 +34,7 @@
  */
 
 import { ACCOUNT_KEY } from '../accountLocalKeys';
-import { forgetCommunityRecord } from './communityRecords';
+import { forgetWorkspaceRecord } from './workspaceRecords';
 
 /** Where one community stands - see the module comment. */
 type ClosedHistoryState = 'closed' | 'widened';
@@ -134,5 +134,5 @@ export function settleHistoryWidening(userId: string, workspaceId: string): bool
 
 /** The community left this device: whatever was recorded about its past goes with it. */
 export function forgetHistoryClosedSeen(userId: string, workspaceId: string): void {
-  forgetCommunityRecord(readAll, writeAll, userId, workspaceId);
+  forgetWorkspaceRecord(userId, workspaceId, readAll, writeAll);
 }

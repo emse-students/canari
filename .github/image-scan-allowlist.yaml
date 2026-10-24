@@ -141,6 +141,14 @@ vulnerabilities:
     paths:
       - "usr/local/lib/node_modules/npm/**"
     statement: "A dependency of the npm CLI bundled in node:24-alpine; frontend-ssr runs node index.js and never invokes npm."
+  # undici 6.28.0 at usr/local/lib/node_modules/npm/node_modules/undici (2026-10-24): npm's own copy.
+  # node:24-alpine is a floating tag already at the newest Node 24 (24.22.1, 2026-10-20, npm 11.19.1),
+  # so there is nothing to move to; the next rebuild retires this. Node's built-in fetch (the
+  # healthcheck's) is compiled into the node binary and is not this file.
+  - id: CVE-2026-109869
+    paths:
+      - "usr/local/lib/node_modules/npm/**"
+    statement: "undici 6.28.0 bundled with the npm CLI in node:24-alpine; frontend-ssr runs node index.js and never invokes npm, and node's own fetch is built into the binary, not this copy."
 
   # --- brotli-libs 1.2.0-r1, in the Alpine 3.24 images (decided 2026-10-24) ---------------------
   # Reported in adminer, nginx:1.31.8-alpine (the edge), nginx:stable-alpine (the frontend base) and
@@ -155,6 +163,16 @@ vulnerabilities:
     purls:
       - "pkg:apk/alpine/brotli-libs@1.2.0-r1"
     statement: "brotli-libs 1.2.0-r1 in adminer, nginx:1.31.8-alpine, nginx:stable-alpine and postgres:18-alpine, pulled in only by libcurl (all four) and freetype (nginx): it decodes brotli in HTTP responses curl fetches and in WOFF2 fonts, not in request bodies these servers accept - the dependency graph was verified, runtime use was not. No patched upstream image yet (Alpine fixed 2026-10-22; official nginx/postgres/adminer images rebuilt only with 1.2.0); remove when the pins are rebuilt."
+  # The same advisory as Debian's libbrotli1 1.1.0-2+b7, in ghcr.io/goauthentik/server:2026.8.5
+  # (Debian 13), reported 2026-10-24 and fixed in Debian's 1.1.0-2+deb13u1. 2026.8.5 (2026-10-21) is
+  # the newest authentik release, and this repository does not rebuild that image, so there is no pin
+  # to move. Scoped by purl to that one build: the retirement check reads each purl's package, so this
+  # half retires on its own even while the Alpine half above is still reported. Which authentik
+  # processes load libbrotli1 was NOT verified.
+  - id: CVE-2026-111497
+    purls:
+      - "pkg:deb/debian/libbrotli1@1.1.0-2+b7"
+    statement: "Debian libbrotli1 1.1.0-2+b7 in authentik 2026.8.5, the newest authentik release, an upstream image this repository does not build, so the fix is not ours to ship; which processes load it was not verified. Remove when an authentik release ships 1.1.0-2+deb13u1."
 
   # --- the identity provider, ghcr.io/goauthentik/server:2026.8.5 -------------------------------
   # An upstream image this repository cannot rebuild, and which one is RUN is the host's `.env`

@@ -60,6 +60,11 @@ export const ACCOUNT_KEY = {
    */
   historyClosedSeen: (userId: string) => `canari_graine_history_closed_seen:v1:${userId}`,
   /**
+   * `graine/pagedHistoryAnswer.ts`: per community, the history ask in flight and which pages of a
+   * paged answer to it arrived - request ids and page numbers only, no key material.
+   */
+  pagedHistoryAnswer: (userId: string) => `canari_graine_paged_history_answer:v1:${userId}`,
+  /**
    * `salonUnsent.ts`: the PLAINTEXT of salon messages not yet sent (lower-cased, as it always was) -
    * the one key here whose content alone makes leaving it behind a leak.
    */
@@ -164,6 +169,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.historyClosedSeen(userId),
+    ACCOUNT_KEY.pagedHistoryAnswer(userId),
     ACCOUNT_KEY.salonUnsent(userId),
     ACCOUNT_KEY.salonReadMarks(userId),
     ACCOUNT_KEY.dmReadMarks(userId),
