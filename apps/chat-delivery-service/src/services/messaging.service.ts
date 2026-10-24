@@ -57,8 +57,11 @@ import {
 } from '../internal/distribution-entitlement';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
+  ADMITTED_SEAT,
   awaitingAdmissionRefusal,
+  callerSeatStandings,
   endDeviceMemberships,
+  refuseAwaitingSeat,
   exclusionWindows,
   openMissingIntervals,
   partingKey,
@@ -2795,7 +2798,7 @@ export class MessagingService {
       : // A seat still AWAITING a member's admission (an invitation link's ask) is no membership:
         // its holder may not Welcome anyone - a Welcome lifts the flag - nor read the log or report.
         !!(await this.groupMemberRepo.findOne({
-          where: { groupId, userId, awaitingAdmission: false },
+          where: { groupId, userId, ...ADMITTED_SEAT },
         }));
     return { isMember, isKeyDistribution };
   }
@@ -5517,16 +5520,22 @@ export class MessagingService {
       return new Set();
     }
 
-    const memberships = await this.groupMemberRepo.find({
-      where: { userId: authUserId, groupId: In(deliverable) },
-      select: { groupId: true },
-    });
-    const memberIds = new Set(memberships.map((m) => m.groupId));
+    // A SEAT STILL AWAITING A MEMBER'S ADMISSION READS NO HISTORY (review of #2358, F1): the person
+    // is not in the group yet. The single read answers it the 409 `awaiting_admission` (a pending
+    // member who waits, never the 403 its client would retire the conversation on); the batch omits
+    // the group like any other it may not read.
+    const standings = await callerSeatStandings(this.groupMemberRepo, deliverable, authUserId);
+    const memberIds = new Set(
+      [...standings].filter(([, standing]) => standing === 'admitted').map(([gid]) => gid)
+    );
 
     if (rejectForbidden && groupIds.length === 1) {
       const gid = groupIds[0];
       if (!deliverableIds.has(gid)) {
         return new Set();
+      }
+      if (standings.get(gid) === 'awaiting') {
+        throw refuseAwaitingSeat(this.logger, 'HISTORY', gid, authUserId);
       }
       if (!memberIds.has(gid)) {
         throw new ForbiddenException('Not a member of this group');

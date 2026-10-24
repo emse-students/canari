@@ -126,14 +126,21 @@ describe('MembersController - lock order of an add and a removal', () => {
       return { controller, statements: recorded.statements };
     }
 
-    it('refuses a caller who holds no seat, or a seat still awaiting a member, and writes nothing', async () => {
-      for (const seat of [null, { awaitingAdmission: true }]) {
-        const { controller, statements } = await declineAs(seat);
-        await expect(controller.declineJoinRequest('g-1', 'bob', 'alice')).rejects.toMatchObject({
-          response: { code: 'NOT_A_MEMBER' },
-        });
-        expect(statements).toEqual([]);
-      }
+    it('refuses a caller who holds no seat (403) and writes nothing', async () => {
+      const { controller, statements } = await declineAs(null);
+      await expect(controller.declineJoinRequest('g-1', 'bob', 'alice')).rejects.toMatchObject({
+        response: { code: 'NOT_A_MEMBER' },
+      });
+      expect(statements).toEqual([]);
+    });
+
+    it('answers a caller whose own seat still waits the 409 awaiting_admission, and writes nothing', async () => {
+      const { controller, statements } = await declineAs({ awaitingAdmission: true });
+      await expect(controller.declineJoinRequest('g-1', 'bob', 'alice')).rejects.toMatchObject({
+        status: 409,
+        response: { error: 'awaiting_admission' },
+      });
+      expect(statements).toEqual([]);
     });
 
     it('refuses the asker declining their own ask', async () => {

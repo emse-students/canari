@@ -265,6 +265,54 @@ export class NotAGroupMemberError extends Error {
 }
 
 /**
+ * The delivery service ANSWERED 409 `awaiting_admission`: this account holds a seat in `groupId`
+ * that an invitation link wrote and no member has admitted yet - a pending member who WAITS, never
+ * {@link NotAGroupMemberError}'s "not a member", on which a caller retires the conversation.
+ *
+ * Every membership-gated read refuses such a seat this way (`callerSeatStanding` on the server,
+ * review of #2358). Typed at the throw so a caller reads `instanceof` rather than a status beside a
+ * body field; an {@link ApiRefusalError} still, so a reader of the status alone keeps working.
+ */
+export class AwaitingAdmissionError extends ApiRefusalError {
+  constructor(readonly groupId: string) {
+    super(
+      409,
+      'awaiting_admission',
+      `group ${groupId}: this account's seat awaits a member's admission (409 awaiting_admission)`
+    );
+    this.name = 'AwaitingAdmissionError';
+  }
+}
+
+/**
+ * {@link AwaitingAdmissionError} when `res` is the server's 409 `awaiting_admission`, else null. The
+ * body is read from a CLONE, so a caller that classifies the response further is not starved; a 409
+ * with any other body (another conflict) is not this answer.
+ */
+export async function awaitingAdmissionFrom(
+  res: Response,
+  groupId: string
+): Promise<AwaitingAdmissionError | null> {
+  if (res.status !== 409) return null;
+  try {
+    const body: unknown = await res.clone().json();
+    if (
+      body &&
+      typeof body === 'object' &&
+      (body as { error?: unknown }).error === 'awaiting_admission'
+    ) {
+      return new AwaitingAdmissionError(groupId);
+    }
+  } catch {
+    // Not JSON: an edge page, not the delivery service's answer - the caller's own branch reads it.
+    console.debug(
+      `[AWAITING_ADMISSION] group ${groupId}: a 409 whose body is not JSON - not this answer`
+    );
+  }
+  return null;
+}
+
+/**
  * The delivery service could not be ASKED: `fetch` itself rejected (no route, DNS, a reset
  * connection - on Tauri `plugin-http` rejects with the reqwest sentence, `error sending request
  * for url ...`, as a bare string). A status code is an answer; this is the absence of one, so
@@ -1298,6 +1346,8 @@ export class MlsDeliveryApi {
       { headers: await this.auth() }
     );
     if (res.status === 403) throw new NotAGroupMemberError(groupId);
+    const awaiting = await awaitingAdmissionFrom(res, groupId);
+    if (awaiting) throw awaiting;
     if (!res.ok) {
       throw await refusalFromResponse(res, 'GroupInfo fetch HTTP error');
     }
@@ -1830,6 +1880,8 @@ export class MlsDeliveryApi {
       headers: await this.auth(),
     });
     if (res.status === 403) throw new NotAGroupMemberError(groupId);
+    const awaiting = await awaitingAdmissionFrom(res, groupId);
+    if (awaiting) throw awaiting;
     if (!res.ok) throw await refusalFromResponse(res, 'getGroupMembers failed');
     return await res.json();
   }
@@ -1838,6 +1890,7 @@ export class MlsDeliveryApi {
    * Returns user-level members from dm_group_members for `groupId`.
    * THROWS on transport/HTTP failure: a `[]` must not mask a network failure (audit S2).
    * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
+   * A seat still awaiting a member's admission is answered {@link AwaitingAdmissionError}.
    */
   getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]> {
     // Simultaneous askers share ONE request (membership guards, stray sweeps and peer resolution all
@@ -1846,6 +1899,8 @@ export class MlsDeliveryApi {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
         headers: await this.auth(),
       });
+      const awaiting = await awaitingAdmissionFrom(res, groupId);
+      if (awaiting) throw awaiting;
       if (!res.ok) throw await refusalFromResponse(res, 'getGroupUserMembers failed');
       return await res.json();
     });
@@ -1861,7 +1916,8 @@ export class MlsDeliveryApi {
    *
    * CLASSIFIED AT THE THROW: a gateway 403 is {@link ExclusionsRefusedError} (this account is not on
    * the roster - never on its own a reason to repair this device), an edge 403 a {@link SendEdgeRefusedError} (the
-   * network path), any other status an {@link ApiRefusalError} carrying it; a transport failure is
+   * network path), a seat still awaiting a member's admission an {@link AwaitingAdmissionError}, any
+   * other status an {@link ApiRefusalError} carrying it; a transport failure is
    * whatever `f` raised, untouched.
    */
   async getGroupExclusions(groupId: string, forUserId?: string): Promise<GroupExclusions> {
@@ -1919,6 +1975,8 @@ export class MlsDeliveryApi {
         if (responseOrigin(res) === 'edge') throw new SendEdgeRefusedError(groupId, res.status);
         throw new ExclusionsRefusedError(groupId);
       }
+      const awaiting = await awaitingAdmissionFrom(res, groupId);
+      if (awaiting) throw awaiting;
       if (!res.ok) {
         throw new ApiRefusalError(
           res.status,

@@ -39,7 +39,7 @@ import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import {
-  awaitingAdmissionRefusal,
+  refuseAwaitingSeat,
   callerSeatStanding,
   endDeviceMemberships,
   writePendingSeats,
@@ -99,10 +99,7 @@ export class InvitationsController {
     if (headerGlobalAdmin === 'true') return;
     const standing = await callerSeatStanding(this.groupMemberRepo, groupId, callerUserId);
     if (standing === 'awaiting') {
-      this.logger.warn(
-        `[MEMBERSHIP] REFUSED group=${groupId} caller=${callerUserId.slice(0, 8)} - the caller's seat awaits a member's admission`
-      );
-      throw awaitingAdmissionRefusal();
+      throw refuseAwaitingSeat(this.logger, 'INVITATIONS', groupId, callerUserId);
     }
     if (standing === null) {
       throw new ForbiddenException(

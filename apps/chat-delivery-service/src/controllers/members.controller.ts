@@ -47,11 +47,12 @@ import {
   partingKey,
   withdrawAwaitingSeat,
   callerSeatStanding,
-  awaitingAdmissionRefusal,
+  refuseAwaitingSeat,
   withheldWindows,
   type AwaitingSeatWithdrawal,
   type ExclusionWindow,
 } from '../utils/group-membership';
+import { cutUserId } from '../utils/log-repeat';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 
@@ -141,10 +142,13 @@ export class MembersController {
     if (standing === 'admitted') return;
     if (standing === 'awaiting') {
       if (allowSelfLeave && caller === targetUserId) return;
-      this.logger.warn(
-        `[MEMBERSHIP] REFUSED group=${safeGroupId} caller=${caller.slice(0, 8)} target=${targetUserId.slice(0, 8)} - the caller's seat awaits a member's admission`
+      throw refuseAwaitingSeat(
+        this.logger,
+        'MEMBERSHIP',
+        safeGroupId,
+        caller,
+        ` target=${cutUserId(targetUserId)}`
       );
-      throw awaitingAdmissionRefusal();
     }
 
     // Group-creation bootstrap: the creator adds its own userId while the group is still empty.
@@ -185,10 +189,7 @@ export class MembersController {
     const standing = await callerSeatStanding(this.groupMemberRepo, safeGroupId, caller);
     if (standing === 'admitted') return;
     if (standing === 'awaiting') {
-      this.logger.warn(
-        `[MEMBERSHIP] roster read REFUSED group=${safeGroupId} caller=${caller.slice(0, 8)} - the caller's seat awaits a member's admission`
-      );
-      throw awaitingAdmissionRefusal();
+      throw refuseAwaitingSeat(this.logger, 'ROSTER_READ', safeGroupId, caller);
     }
     throw new ForbiddenException(
       refusalBody(RefusalCode.NOT_A_MEMBER, 'Caller is not a member of this group')
@@ -878,13 +879,21 @@ export class MembersController {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
-    const callerSeat = caller
-      ? await this.groupMemberRepo.findOne({
-          where: { groupId: safeGroupId, userId: caller },
-          select: { id: true, awaitingAdmission: true },
-        })
+    const standing = caller
+      ? await callerSeatStanding(this.groupMemberRepo, safeGroupId, caller)
       : null;
-    if (!caller || !callerSeat || callerSeat.awaitingAdmission || caller === safeUserId) {
+    // A caller whose own seat still waits is a pending member, not a stranger: the 409 its client
+    // reads as "wait", never the 403 it would retire the conversation on (its own ask included).
+    if (caller && standing === 'awaiting') {
+      throw refuseAwaitingSeat(
+        this.logger,
+        'JOIN_DECLINE',
+        safeGroupId,
+        caller,
+        ` target=${cutUserId(safeUserId)}`
+      );
+    }
+    if (!caller || standing !== 'admitted' || caller === safeUserId) {
       this.logger.warn(
         `[JOIN_DECLINE] REJECT group=${safeGroupId} caller=${caller ?? 'none'} target=${safeUserId} - not an admitted member, or their own ask`
       );
@@ -970,12 +979,20 @@ export class MembersController {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     const forUser = sanitizeOptionalQueryValue(forUserId, 'for');
+    // Every seat is COUNTED below, a waiting one included (a wider withholding, never a narrower
+    // one); only an ADMITTED seat may ASK - a waiting one is a pending member, answered the 409.
+    const standing = caller
+      ? await callerSeatStanding(this.groupMemberRepo, safeGroupId, caller)
+      : null;
+    if (caller && standing === 'awaiting') {
+      throw refuseAwaitingSeat(this.logger, 'GROUP_EXCLUSIONS', safeGroupId, caller);
+    }
     const members = await this.groupMemberRepo.find({
       where: { groupId: safeGroupId },
       select: { userId: true, joinedAt: true },
     });
     const memberIds = new Set(members.map((m) => m.userId));
-    if (!caller || !memberIds.has(caller)) {
+    if (!caller || standing !== 'admitted') {
       this.logger.warn(
         `[GROUP_EXCLUSIONS] REFUSED group=${safeGroupId} caller=${caller ? caller.slice(0, 8) : 'unidentified'} - not a current member`
       );

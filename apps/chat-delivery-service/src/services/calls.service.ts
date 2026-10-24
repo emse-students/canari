@@ -24,6 +24,7 @@ import { resolveUserDisplayName } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
+import { ADMITTED_SEAT, callerSeatStanding, refuseAwaitingSeat } from '../utils/group-membership';
 import { voipRingPayload } from './call-ring-payload';
 import { incomingCallAlertBody } from './push-payload';
 import {
@@ -329,13 +330,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     this.logger.debug(`[calls] initiateCall user=${userId} group=${groupId}`);
     await this.assertCallsOpen(`initiate group=${groupId}`, userId);
 
-    const membership = await this.groupMemberRepo.findOne({
-      where: { groupId, userId },
-    });
-    if (!membership) {
-      this.logger.warn(`[calls] user ${userId} is not a member of group ${groupId}`);
-      throw new ForbiddenException('Not a member of this group');
-    }
+    await this.assertMembership(userId, groupId, 'calls');
 
     const others = await this.otherMemberIds(groupId, userId);
     await this.refuseIfBlocked(userId, others, `initiate group=${groupId}`);
@@ -384,13 +379,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     this.logger.debug(`[calls] requestRoomToken user=${userId} group=${groupId} room=${roomId}`);
     await this.assertCallsOpen(`join-token room=${roomId}`, userId);
 
-    const membership = await this.groupMemberRepo.findOne({
-      where: { groupId, userId },
-    });
-    if (!membership) {
-      this.logger.warn(`[calls] user ${userId} is not a member of group ${groupId}`);
-      throw new ForbiddenException('Not a member of this group');
-    }
+    await this.assertMembership(userId, groupId, 'calls');
 
     const roomSecret = process.env.CALL_ROOM_SECRET?.trim();
     if (!roomSecret) {
@@ -525,14 +514,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     this.logger.debug(`[ICE] getIceServers user=${userId} group=${groupId} call=${callId}`);
     await this.assertCallsOpen(`ice-servers call=${callId}`, userId);
 
-    const membership = await this.groupMemberRepo.findOne({
-      where: { groupId, userId },
-    });
-
-    if (!membership) {
-      this.logger.warn(`[ICE] user ${userId} is not a member of group ${groupId}`);
-      throw new ForbiddenException('Not a member of this group');
-    }
+    await this.assertMembership(userId, groupId, 'ICE');
 
     // TURN OFF BY CONFIGURATION is decided BEFORE TURN's own configuration is checked: an estate set
     // to a budget of 0 needs no TURN secrets, and must answer STUN only rather than 503.
@@ -878,7 +860,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     );
 
     const members = await this.groupMemberRepo.find({
-      where: { groupId },
+      where: { groupId, ...ADMITTED_SEAT },
       select: { userId: true },
     });
     const memberIds = [...new Set(members.map((m) => m.userId))];
@@ -931,10 +913,13 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     return false;
   }
 
-  /** Every OTHER user holding a membership row in `groupId` (rows are per device, so deduped). */
+  /**
+   * Every OTHER user holding an ADMITTED membership row in `groupId` (rows are per device, so
+   * deduped): a seat awaiting a member's admission is rung by nobody ({@link ADMITTED_SEAT}).
+   */
   private async otherMemberIds(groupId: string, userId: string): Promise<string[]> {
     const members = await this.groupMemberRepo.find({
-      where: { groupId },
+      where: { groupId, ...ADMITTED_SEAT },
       select: { userId: true },
     });
     return [...new Set(members.map((m) => m.userId))].filter((id) => id !== userId);
@@ -965,7 +950,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * The callees this conversation may RING: each member's call permission (`callsAllowed`, resolved
+   * The callees this conversation may RING - admitted members only ({@link ADMITTED_SEAT}) - and
+   * among them each member's call permission (`callsAllowed`, resolved
    * against `notifLevel` by {@link callsAllowedFor}). A member who refused calls here is not pushed
    * at all - no CallStyle, no CallKit, whatever build the phone runs - and the caller is not told
    * why (the call simply goes unanswered, like any other). Read with the ring, never cached, so a
@@ -978,7 +964,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     calleeIds: string[]
   ): Promise<string[]> {
     const rows = await this.groupMemberRepo.find({
-      where: { groupId, userId: In(calleeIds) },
+      where: { groupId, userId: In(calleeIds), ...ADMITTED_SEAT },
       select: { userId: true, notifLevel: true, callsAllowed: true },
     });
     const withheld = new Set(
@@ -989,13 +975,30 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         `[ring] call=${callId} group=${groupId} withheld from ${withheld.size} member(s) - calls not allowed in this conversation: ${[...withheld].map(cutUserId).join(',')}`
       );
     }
-    return calleeIds.filter((id) => !withheld.has(id));
+    // ONLY a callee whose ADMITTED seat was read: one with none - gone since the ring was planned,
+    // or a seat still awaiting a member's admission - is rung by nobody, rather than passing for
+    // want of a row to withhold it.
+    const seated = new Set(rows.map((r) => r.userId));
+    const unseated = calleeIds.filter((id) => !seated.has(id));
+    if (unseated.length > 0) {
+      this.logger.log(
+        `[ring] call=${callId} group=${groupId} not rung: ${unseated.length} callee(s) hold no admitted seat: ${unseated.map(cutUserId).join(',')}`
+      );
+    }
+    return calleeIds.filter((id) => seated.has(id) && !withheld.has(id));
   }
 
-  /** Membership guard shared by the ring endpoints. */
+  /**
+   * THE membership guard of every call route - initiate, the room token, the ICE servers and the
+   * ring endpoints. A seat still awaiting a member's admission places, joins and rings nothing: it is
+   * answered the 409 `awaiting_admission` ({@link callerSeatStanding}), never the 403 of no seat.
+   */
   private async assertMembership(userId: string, groupId: string, scope: string): Promise<void> {
-    const membership = await this.groupMemberRepo.findOne({ where: { groupId, userId } });
-    if (!membership) {
+    const standing = await callerSeatStanding(this.groupMemberRepo, groupId, userId);
+    if (standing === 'awaiting') {
+      throw refuseAwaitingSeat(this.logger, scope, groupId, userId);
+    }
+    if (standing === null) {
       this.logger.warn(`[${scope}] user ${userId} is not a member of group ${groupId}`);
       throw new ForbiddenException('Not a member of this group');
     }

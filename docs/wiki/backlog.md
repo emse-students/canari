@@ -72,6 +72,24 @@ with no one asked, and the commit's `admits` lifts their `awaitingAdmission`. "H
 Remove (the server's exclusion intervals, or `removeStrayLeaves` run before the sweep decides) -
 [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
 
+## P2 - Three delivery routes check no membership at all (re-review of #2358, already on main)
+
+`POST mls/history-request`, `POST mls/base-refresh-request` and `POST mls/notify-reaction` relay to
+a group's members without asking whether the caller holds a seat in it, admitted or not: anyone
+authenticated can make the members' devices answer, or notify them, in a group they are not in. The
+waiting seat of #2358 is only one such caller. Owed: the same caller predicate as the other routes
+(`callerSeatStanding`, `utils/group-membership.ts`), an integration case per route, and a look at
+what an older client sends there before it is refused -
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
+## P3 - Calls: the waiting-seat exclusion is built and has never run against a live call (re-review of #2358)
+
+Every call route refuses a seat awaiting a member's admission (409) and the ring's callees are
+admitted seats only (`ADMITTED_SEAT`), proven against PostgreSQL by `admission.integration.spec.ts`.
+`calls_mode` is `off` on production, so no ring has gone through it. Owed: one ring on dev with a
+pending link joiner in the conversation, read in the `[ring]` lines (`not rung: ... hold no
+admitted seat`) - [calls](frontend/modules/calls.md).
+
 ## P3 - The Android background answer refuses a newcomer and tells nobody (review of #2358)
 
 `prepare_welcome_background_with_key` refuses a `welcome_request` from a user absent from the tree

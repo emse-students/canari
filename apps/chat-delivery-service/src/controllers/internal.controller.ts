@@ -33,6 +33,7 @@ import { NotificationPreference } from '../entities/notification-preference.enti
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
+import { ADMITTED_SEAT } from '../utils/group-membership';
 import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
 import { parseSessionId } from '../utils/session-id';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
@@ -299,7 +300,8 @@ export class InternalController {
    * `POST /internal/presence/shared-communities`; each service answers about the tables it owns.
    *
    * `dm_group_members` is the authority (a row per person per conversation, hard-deleted on leave),
-   * so a key-distribution group - which has no such row - can never widen the audience. A tombstoned
+   * so a key-distribution group - which has no such row - can never widen the audience. Only an
+   * ADMITTED seat counts, on either side ({@link ADMITTED_SEAT}). A tombstoned
    * conversation (`deletedAt` set) no longer counts: its members stopped sharing it.
    *
    * Answers the SUBSET, lowercased like every stored id. The viewer is never in it: "may I see
@@ -319,8 +321,11 @@ export class InternalController {
     const targets = userIds.filter((id) => id !== viewerId);
     if (targets.length === 0) return { userIds: [] };
 
+    // ADMITTED SEATS ONLY, BOTH WAYS (review of #2358, F1): a seat an invitation link wrote, that no
+    // member has admitted yet, shares nothing - its holder may not see the members' presence, nor
+    // they its holder's, until a member's Add lets them in.
     const viewerRows = await this.groupMemberRepo.find({
-      where: { userId: viewerId },
+      where: { userId: viewerId, ...ADMITTED_SEAT },
       select: { groupId: true },
     });
     const viewerGroupIds = [...new Set(viewerRows.map((r) => r.groupId))];
@@ -334,7 +339,7 @@ export class InternalController {
     });
     if (liveGroups.length === 0) return { userIds: [] };
     const shared = await this.groupMemberRepo.find({
-      where: { groupId: In(liveGroups.map((g) => g.id)), userId: In(targets) },
+      where: { groupId: In(liveGroups.map((g) => g.id)), userId: In(targets), ...ADMITTED_SEAT },
       select: { userId: true },
     });
     const visible = new Set(shared.map((r) => r.userId));

@@ -958,7 +958,16 @@ and the server holds the person outside until a member answers:
   group in `refused`) are all answered **409 `awaiting_admission`** for such a seat. Counted as a
   membership, a person still waiting enrolled an accomplice whose seat read as not awaiting, who then
   read the base and entered by external commit with no member's Add. Leaving is the one thing it may
-  do (the removal of its own seat).
+  do (the removal of its own seat). The re-review (F1) found four reads that never asked the flag;
+  they go through the same helpers now: the history (`GET mls/history/:groupId` answers the 409,
+  the batch omits the group; `callerSeatStandings`), the exclusion windows, a Decline by a caller
+  whose own seat waits (409, never `NOT_A_MEMBER`), and every call route (initiate, room token, ICE,
+  ring, ring-end). WHO SHARES a conversation reads one `where` fragment, `ADMITTED_SEAT`: the
+  presence audience (both directions) and the call ring's callees, so a waiting seat neither sees nor
+  is seen online, and is rung by nobody. Each refusal is one WARN at the 1st, 10th, 100th... repeat
+  per (route, group, person) (`refuseAwaitingSeat`), and the client types it at the throw
+  (`AwaitingAdmissionError`, a 409 `ApiRefusalError`) on the roster, members, exclusions and base
+  reads.
 - **The wait is quiet on the server.** The waiting device asks a member on every recovery cadence
   for up to the 14 days of its ask, and an older client meets the withheld base each time: the
   `[WELCOME_REQ]` lines of such an ask and the `[GROUP_INFO] base withheld` line are said at the 1st,

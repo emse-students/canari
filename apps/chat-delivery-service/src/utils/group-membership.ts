@@ -1,10 +1,11 @@
 import { ConflictException, Logger } from '@nestjs/common';
-import { IsNull, Not, type EntityManager, type Repository } from 'typeorm';
+import { In, IsNull, Not, type EntityManager, type Repository } from 'typeorm';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { Group } from '../entities/group.entity';
+import { RepeatCounter, cutUserId } from './log-repeat';
 import { heldKeyPackages, takeSharedSeatLock, withSeatLock } from './seat-eviction';
 
 const seatsLogger = new Logger('GroupMembership');
@@ -381,7 +382,7 @@ export async function callerSeatStanding(
   repo: Pick<Repository<GroupMember>, 'findOne'>,
   groupId: string,
   userId: string
-): Promise<'admitted' | 'awaiting' | null> {
+): Promise<SeatStanding | null> {
   const seat = await repo.findOne({
     where: { groupId, userId },
     select: { id: true, awaitingAdmission: true },
@@ -389,6 +390,40 @@ export async function callerSeatStanding(
   if (!seat) return null;
   return seat.awaitingAdmission ? 'awaiting' : 'admitted';
 }
+
+/** Where a person stands on a group's roster when they hold a seat: see {@link callerSeatStanding}. */
+export type SeatStanding = 'admitted' | 'awaiting';
+
+/**
+ * {@link callerSeatStanding} for MANY groups at once, in one query: each group `userId` holds a seat
+ * in, with its standing. A group absent from the map is one they hold no seat in. For a read that
+ * spans groups (the history batch), so it asks the same question as the single read, not its own.
+ */
+export async function callerSeatStandings(
+  repo: Pick<Repository<GroupMember>, 'find'>,
+  groupIds: readonly string[],
+  userId: string
+): Promise<Map<string, SeatStanding>> {
+  const standings = new Map<string, SeatStanding>();
+  if (groupIds.length === 0) return standings;
+  const seats = await repo.find({
+    where: { userId, groupId: In([...groupIds]) },
+    select: { groupId: true, awaitingAdmission: true },
+  });
+  for (const seat of seats) {
+    standings.set(seat.groupId, seat.awaitingAdmission ? 'awaiting' : 'admitted');
+  }
+  return standings;
+}
+
+/**
+ * THE `where` FRAGMENT OF AN ADMITTED SEAT, spread into every roster read that names WHO SHARES a
+ * conversation - a fan-out (a call's ring), an audience (presence), a membership test written as a
+ * filter. The same fact {@link callerSeatStanding} reads for one caller: a seat an invitation link
+ * wrote, that no member has admitted yet, shares nothing of the group. One constant rather than a
+ * filter per site, which is how four of them were missed (review of #2358, F1).
+ */
+export const ADMITTED_SEAT = { awaitingAdmission: false } as const;
 
 /**
  * The refusal of a seat still awaiting a member's admission: a 409 `awaiting_admission`, NEVER the
@@ -400,6 +435,33 @@ export function awaitingAdmissionRefusal(): ConflictException {
     error: 'awaiting_admission',
     message: 'a member has not admitted this person yet',
   });
+}
+
+/**
+ * One count for every refusal of a waiting seat, keyed by (route, group, user): a joiner's client
+ * retries its reads while it waits, and the line is the same every time.
+ */
+const awaitingRefusalRepeats = new RepeatCounter();
+
+/**
+ * {@link awaitingAdmissionRefusal}, with its WARN line: printed at the 1st, 10th, 100th... refusal of
+ * one person on one route of one group ({@link RepeatCounter}), with the ordinal, so a client waiting
+ * for a member does not write the same line once per retry. Every refusal site goes through it.
+ */
+export function refuseAwaitingSeat(
+  log: Pick<Logger, 'warn'>,
+  route: string,
+  groupId: string,
+  userId: string,
+  detail = ''
+): ConflictException {
+  const nth = awaitingRefusalRepeats.hit(`${route}|${groupId}|${userId}`);
+  if (nth !== null) {
+    log.warn(
+      `[${route}] REFUSED group=${groupId} caller=${cutUserId(userId)}${detail} - the caller's seat awaits a member's admission (409 awaiting_admission, repeat=${nth}, said at 1, 10, 100...)`
+    );
+  }
+  return awaitingAdmissionRefusal();
 }
 
 /** The key {@link expireUnansweredAsks} names a person's seat in a group by. */

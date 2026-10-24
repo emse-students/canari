@@ -41,6 +41,8 @@ import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { InvitationsController } from '../controllers/invitations.controller';
 import { MembersController } from '../controllers/members.controller';
+import { InternalController } from '../controllers/internal.controller';
+import { CallsService } from './calls.service';
 import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
 import { expireUnansweredAsks, seatKey } from '../utils/group-membership';
 import { STALE_PENDING_INVITATION_MS } from '../retention.constants';
@@ -656,6 +658,119 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
           expect.objectContaining({ userId: MEMBER.userId, awaitingAdmission: false }),
         ])
       );
+    });
+
+    /** The routes that read the flag nowhere before the re-review of #2358 (F1). */
+    it('cannot read the history, one group or in a batch', async () => {
+      await acceptLink();
+
+      await expect(
+        refusalOf(service.getHistory(GROUP, undefined, JOINER.userId, undefined))
+      ).resolves.toEqual(AWAITING);
+      const authorize = (
+        service as unknown as {
+          authorizeHistoryGroups: (
+            ids: string[],
+            user: string,
+            admin: undefined,
+            reject: boolean
+          ) => Promise<Set<string>>;
+        }
+      ).authorizeHistoryGroups.bind(service);
+      await expect(authorize([GROUP], JOINER.userId, undefined, false)).resolves.toEqual(new Set());
+      await expect(
+        service.getHistoryBatch([{ groupId: GROUP }], JOINER.userId, undefined)
+      ).resolves.toMatchObject({ histories: { [GROUP]: [] } });
+      // The member it is withheld from the joiner for still reads it.
+      await expect(authorize([GROUP], MEMBER.userId, undefined, true)).resolves.toEqual(
+        new Set([GROUP])
+      );
+    });
+
+    it('cannot read the exclusion windows a history answer is filtered on', async () => {
+      await acceptLink();
+
+      await expect(refusalOf(members().getGroupExclusions(GROUP, JOINER.userId))).resolves.toEqual(
+        AWAITING
+      );
+      await expect(members().getGroupExclusions(GROUP, MEMBER.userId)).resolves.toMatchObject({
+        addressedAnswers: true,
+      });
+    });
+
+    it('shares no presence with the members, in either direction', async () => {
+      await acceptLink();
+      await q(
+        `INSERT INTO dm_group_members ("groupId", "userId", role) VALUES ($1, $2, 'member')`,
+        [GROUP, OTHER.userId]
+      );
+      const internal = new InternalController(
+        null as never,
+        null as never,
+        null as never,
+        ds.getRepository(Group),
+        ds.getRepository(GroupMember),
+        null as never,
+        null as never,
+        null as never,
+        null as never,
+        null as never,
+        null as never,
+        redis as unknown as Redis,
+        null as never
+      );
+      Object.defineProperty(internal, 'secret', { value: 'it-secret', writable: true });
+      const audience = (viewerId: string, userIds: string[]) =>
+        internal.presenceSharedConversations('it-secret', { viewerId, userIds });
+
+      await expect(audience(MEMBER.userId, [JOINER.userId, OTHER.userId])).resolves.toEqual({
+        userIds: [OTHER.userId],
+      });
+      await expect(audience(JOINER.userId, [MEMBER.userId, OTHER.userId])).resolves.toEqual({
+        userIds: [],
+      });
+    });
+
+    it('places, joins and rings no call, and no ring reaches it', async () => {
+      await acceptLink();
+      await q(
+        `CREATE TABLE IF NOT EXISTS platform_config (id int PRIMARY KEY, calls_mode text NOT NULL)`
+      );
+      await q(
+        `INSERT INTO platform_config (id, calls_mode) VALUES (1, 'audio_video')
+         ON CONFLICT (id) DO UPDATE SET calls_mode = EXCLUDED.calls_mode`
+      );
+      const calls = new CallsService(
+        ds.getRepository(GroupMember),
+        ds.getRepository(PushToken),
+        redis as unknown as Redis,
+        null as never,
+        null as never
+      );
+
+      await expect(refusalOf(calls.initiateCall(JOINER.userId, GROUP))).resolves.toEqual(AWAITING);
+      await expect(
+        refusalOf(calls.requestRoomToken(JOINER.userId, GROUP, 'room'))
+      ).resolves.toEqual(AWAITING);
+      await expect(refusalOf(calls.getIceServers(JOINER.userId, GROUP, 'call'))).resolves.toEqual(
+        AWAITING
+      );
+      await expect(
+        refusalOf(calls.ringGroup(JOINER.userId, GROUP, 'call', false))
+      ).resolves.toEqual(AWAITING);
+      await expect(
+        refusalOf(calls.endRing(JOINER.userId, GROUP, 'call', 'cancelled'))
+      ).resolves.toEqual(AWAITING);
+
+      // A member's ring: the waiting seat is neither a callee nor ringable.
+      const fanOut = calls as unknown as {
+        otherMemberIds: (groupId: string, userId: string) => Promise<string[]>;
+        membersWhoTakeCalls: (groupId: string, callId: string, ids: string[]) => Promise<string[]>;
+      };
+      await expect(fanOut.otherMemberIds(GROUP, MEMBER.userId)).resolves.toEqual([]);
+      await expect(
+        fanOut.membersWhoTakeCalls(GROUP, 'call', [JOINER.userId, MEMBER.userId])
+      ).resolves.toEqual([MEMBER.userId]);
     });
   });
 
