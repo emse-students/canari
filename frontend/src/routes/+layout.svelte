@@ -22,7 +22,7 @@
   import {
     clearEdgeExclusionsForNewDocument,
     excludeLeftEdgeOver,
-    wantsFeedLeftEdgeExclusion,
+    wantsTabLeftEdgeExclusion,
   } from '$lib/mobile/edgeGestureExclusion';
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
   import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
@@ -306,16 +306,23 @@
   /** Whether this screen can swipe at all - `isSwipeNavArmed` owns the reasoning. */
   const swipeNavArmed = $derived(isSwipeNavArmed(pathname, swipeNavViewport));
 
-  // THE FEED'S LEFT EDGE IS THE CAMERA SWIPE'S, NOT ANDROID'S BACK (Mi 9T, 2026-10-21: a swipe
-  // started in the left 30 CSS px was taken as Back, 8 of 8). Declared on the feed alone and only
-  // while its swipe can happen; the cleanup removes it on every route change, keyboard rise,
-  // covering overlay or viewport change, so the left-edge Back is untouched everywhere else (and
-  // closes a reel viewer or a modal over the feed). A no-op off Android.
-  const feedLeftEdgeExcluded = $derived(
-    wantsFeedLeftEdgeExclusion(pathname, swipeNavArmed, isKeyboardOpen, screenCover.covered)
+  // A TAB'S LEFT EDGE IS THE SECTION SWIPE'S, NOT ANDROID'S BACK (Mi 9T, 2026-10-21: a swipe
+  // started in the left 30 CSS px was taken as Back, 8 of 8 on the feed; owner 2026-10-24: on every
+  // tab root). Declared only while the swipe to the previous section can happen; the cleanup
+  // removes it on every route change, keyboard rise, covering overlay or viewport change, so the
+  // left-edge Back is untouched everywhere else (and closes a reel viewer or a modal over a tab).
+  // A no-op off Android.
+  const tabLeftEdgeExcluded = $derived(
+    wantsTabLeftEdgeExclusion(
+      pathname,
+      swipeNavArmed,
+      isKeyboardOpen,
+      screenCover.covered,
+      isMobileConvoOpen
+    )
   );
   $effect(() => {
-    if (!feedLeftEdgeExcluded || !pageScrollWrap) return;
+    if (!tabLeftEdgeExcluded || !pageScrollWrap) return;
     return excludeLeftEdgeOver(pageScrollWrap);
   });
 

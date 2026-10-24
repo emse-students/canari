@@ -4,7 +4,7 @@ import {
   clearEdgeExclusionsForNewDocument,
   excludeLeftEdgeOver,
   excludeRightEdgeOver,
-  wantsFeedLeftEdgeExclusion,
+  wantsTabLeftEdgeExclusion,
 } from './edgeGestureExclusion';
 
 function makeList(top: number, bottom: number, paddingBottom: string): HTMLElement {
@@ -114,31 +114,36 @@ describe('excludeRightEdgeOver', () => {
   });
 });
 
-describe('wantsFeedLeftEdgeExclusion', () => {
-  it('holds on the feed while its swipe to the camera can happen', () => {
-    expect(wantsFeedLeftEdgeExclusion('/posts', true, false, false)).toBe(true);
-  });
+describe('wantsTabLeftEdgeExclusion', () => {
+  type Opts = { armed?: boolean; kb?: boolean; cover?: boolean; convo?: boolean };
+  const wants = (path: string, o: Opts = {}) =>
+    wantsTabLeftEdgeExclusion(
+      path,
+      o.armed ?? true,
+      o.kb ?? false,
+      o.cover ?? false,
+      o.convo ?? false
+    );
 
-  it('never holds elsewhere, so the left-edge Back keeps working there', () => {
-    for (const path of [
-      '/posts/abc',
-      '/camera',
-      '/chat',
-      '/communities',
-      '/calendar',
-      '/settings',
-    ]) {
-      expect(wantsFeedLeftEdgeExclusion(path, true, false, false)).toBe(false);
+  it('holds on every tab root that has a previous section, the feed included', () => {
+    for (const path of ['/posts', '/communities', '/chat', '/dashboard']) {
+      expect(wants(path), path).toBe(true);
     }
   });
 
-  it('stands down when the swipe cannot happen: not armed, or the keyboard up', () => {
-    expect(wantsFeedLeftEdgeExclusion('/posts', false, false, false)).toBe(false);
-    expect(wantsFeedLeftEdgeExclusion('/posts', true, true, false)).toBe(false);
+  it('never holds on the camera (nothing to its left), a nested route or a non-tab route', () => {
+    for (const path of ['/camera', '/posts/abc', '/chat/abc', '/communities/x', '/settings', '/']) {
+      expect(wants(path), path).toBe(false);
+    }
+  });
+
+  it('stands down when the swipe cannot happen: not armed, keyboard up or phone conversation open', () => {
+    expect(wants('/posts', { armed: false })).toBe(false);
+    expect(wants('/chat', { kb: true })).toBe(false);
+    expect(wants('/chat', { convo: true })).toBe(false);
   });
 
   it('stands down under a full-screen overlay, whose Back must close it', () => {
-    // A reel viewer, a media viewer, a modal or the composer's camera over the feed.
-    expect(wantsFeedLeftEdgeExclusion('/posts', true, false, true)).toBe(false);
+    expect(wants('/posts', { cover: true })).toBe(false);
   });
 });

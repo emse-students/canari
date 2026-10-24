@@ -1,6 +1,5 @@
 import { Log } from '$lib/utils/Log';
-import { CAMERA_PLACE } from '$lib/navigation/places';
-import { swipeNavTargetHref } from '$lib/utils/swipeNavigation';
+import { MOBILE_SWIPE_PLACES, swipeNavTargetHref } from '$lib/utils/swipeNavigation';
 
 /** The JavaScript interface `MainActivity` registers as `canariGestures` (Android only). */
 type GestureBridge = {
@@ -92,45 +91,41 @@ export function excludeRightEdgeOver(list: HTMLElement): () => void {
 }
 
 /**
- * The LEFT edge over the posts feed, while the feed is shown.
+ * The LEFT edge over a tab root's page area, while its swipe to the previous section can happen.
  *
- * WHY: the swipe right from the feed opens the camera, and one started inside Android's left
+ * WHY: the swipe right from a tab (from the feed it opens the camera), when started inside Android's left
  * back-gesture inset (`mEdgeWidthLeft=74` physical px, 30 CSS px on the Mi 9T) is taken by the
  * system as Back - 8 of 8 on 2026-10-21, the page saw only `touchstart > touchcancel`. Native keeps
  * 200 dp around the MIDDLE of the span, where a thumb starts that swipe.
  */
-export function excludeLeftEdgeOver(feed: HTMLElement): () => void {
-  return excludeEdgeOver('left', feed);
+export function excludeLeftEdgeOver(page: HTMLElement): () => void {
+  return excludeEdgeOver('left', page);
 }
-
-/** The feed's own path; its post pages (`/posts/<id>`) keep the left-edge Back to return to it. */
-const FEED_PATH = '/posts';
 
 /**
  * Whether the LEFT-edge exclusion is wanted on this screen - the only place it may exist.
  *
- * ONLY THE FEED ITSELF, AND ONLY WHILE ITS SWIPE TO THE CAMERA CAN HAPPEN: the swipe is armed on
- * this layout (`isSwipeNavArmed`), the camera is the feed's `prev` (so a reordering of the swipe
- * places drops the exclusion instead of leaving it on a feed that no longer swipes there), and the
- * keyboard is down (the tab swipe stands down while it is up, and Back is then what closes it), and
- * nothing covers the screen (`screenCover.covered`: a reel viewer, a full-screen media viewer, a
- * modal, the composer's camera - each is closed by Back, and the feed's swipe is not reachable
- * under it). A post page, a conversation, the camera and every other route keep the system Back
- * from the left edge untouched.
+ * EVERY TAB ROOT WHOSE SWIPE HAS A `prev`, AND ONLY WHILE THAT SWIPE CAN HAPPEN (owner, 2026-10-24:
+ * the in-app swipe between sections must win the left edge, not only on the feed). The swipe is
+ * armed on this layout (`isSwipeNavArmed`), the pathname IS a place of the swipe's own list (a
+ * nested route - a post page, a conversation, a sub-page - keeps the left-edge Back to return to
+ * its parent), a place lies to its LEFT (`swipeNavTargetHref(.., 'prev')`: the camera, first of the
+ * list, has none and keeps Back, and a reordering drops the exclusion instead of leaving it on a
+ * screen that no longer swipes there), no phone conversation is open over the tab (`swipeBack`
+ * owns that edge and Back closes it), the keyboard is down (the tab swipe stands down while it is
+ * up, and Back is then what closes it), and nothing covers the screen (`screenCover.covered`: a
+ * reel viewer, a media viewer, a modal, the composer's camera - each is closed by Back).
  */
-export function wantsFeedLeftEdgeExclusion(
+export function wantsTabLeftEdgeExclusion(
   pathname: string,
   swipeNavArmed: boolean,
   keyboardOpen: boolean,
-  screenCovered: boolean
+  screenCovered: boolean,
+  mobileConvoOpen: boolean
 ): boolean {
-  return (
-    swipeNavArmed &&
-    !keyboardOpen &&
-    !screenCovered &&
-    pathname === FEED_PATH &&
-    swipeNavTargetHref(pathname, 'prev') === CAMERA_PLACE.href
-  );
+  if (!swipeNavArmed || keyboardOpen || screenCovered || mobileConvoOpen) return false;
+  const isTabRoot = MOBILE_SWIPE_PLACES.some((place) => place.href === pathname);
+  return isTabRoot && swipeNavTargetHref(pathname, 'prev') !== null;
 }
 
 /**
