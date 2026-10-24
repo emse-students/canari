@@ -1275,7 +1275,7 @@ those groups' first pages itself, which is the path every group took before the 
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ optional iOS `voipToken`) |
+| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ iOS `voipToken`: a token, or `null` from a build without the native ring, which clears it) |
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
 | GET / PUT | `/api/mls/notification-preferences` | JWT | The account's switched-off notification categories (`{ disabled: string[] }`); PUT replaces the set and refuses an unknown id |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background push service |
@@ -1655,8 +1655,10 @@ per member token:
 - **iOS with a `voipToken`** → **direct APNs VoIP push** (`ApnsVoipService`) - the single
   deliberate exception to the all-FCM rule, because FCM cannot carry `apns-push-type: voip`
   and only a VoIP push may wake CallKit from a killed state. ES256 provider JWT (cached 40 min)
-  over node:http2, topic `<bundle>.voip`, `apns-expiration` now+45 s; a 410 response clears the
-  stored `voipToken`.
+  over node:http2, topic `<bundle>.voip`, `apns-expiration` = the ring's answer deadline; a 410
+  response clears the stored `voipToken`. The payload carries ids and the deadline, never a name,
+  and is sent only while the ring is live; without the APNs key such a device is not rung (ERROR,
+  no FCM alert instead) - [calls](../frontend/modules/calls.md#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22).
 - **iOS without `voipToken`** (legacy builds) → FCM alert banner ("📞 Appel entrant").
 
 `/api/calls/ring-end` (reason `answered`/`cancelled`/`ended`) is sent to **all** members
@@ -2337,7 +2339,7 @@ be pushed is a population question, answered by `tools/cross-client-harness/devi
 | `APNS_VOIP_KEY_ID` | no | Key ID of the APNs auth key |
 | `APNS_VOIP_TEAM_ID` | no | Apple Developer Team ID (`4CLNB8SR6L`) |
 | `APNS_VOIP_TOPIC` | no | VoIP topic, default `fr.emse.canari.voip` |
-| `APNS_VOIP_SANDBOX` | no | `true` to target the APNs sandbox (dev builds) |
+| `APNS_VOIP_SANDBOX` | no | `true` to target the APNs sandbox - Xcode debug builds only; a TestFlight build (dev estate included) is `aps-environment production` |
 
 ### The push avatar log line
 

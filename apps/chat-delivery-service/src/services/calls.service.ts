@@ -24,6 +24,7 @@ import { resolveUserDisplayName } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
+import { voipRingPayload } from './call-ring-payload';
 import { incomingCallAlertBody } from './push-payload';
 import {
   METER_TIMEOUT_MS,
@@ -175,6 +176,16 @@ function callRoomKey(roomId: string): string {
 
 function callAnswerByKey(roomId: string): string {
   return `call:room:${roomId}:answer_by`;
+}
+
+/**
+ * Written by `ring-end` for a room it names: the ring is over (answered, cancelled, ended). Read
+ * before every APNs VoIP push, because Apple requires each one to raise a CallKit call - a push for
+ * a call already over would flash a ring for nothing. Its TTL is the ring window: past it, the
+ * answer deadline alone already refuses the push.
+ */
+function callRingEndedKey(roomId: string): string {
+  return `call:room:${roomId}:ring_ended`;
 }
 
 /** What `prepareRing` hands the background fan-out. */
@@ -745,7 +756,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * Rings every OTHER member of the group about an incoming call:
    *  - Android tokens -> high-priority FCM data push `type=call_ring` (native CallStyle
    *    notification, instant - no MLS decrypt on the ring path).
-   *  - iOS tokens WITH a voipToken -> direct APNs VoIP push (CallKit full-screen ring).
+   *  - iOS tokens WITH a voipToken -> direct APNs VoIP push (CallKit full-screen ring), ids only,
+   *    and only while the ring is live (`liveRingDeadline`).
    *  - iOS tokens WITHOUT a voipToken (pre-WP-XP-5 builds) -> regular FCM alert push so
    *    the callee at least sees a banner.
    * Best-effort per device; failures never abort the fan-out.
@@ -812,6 +824,12 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     // skipped, and `rang=0/N` on its own reads as "nobody was reachable" when the truth is that
     // this server never asked anyone. iOS VoIP goes straight to APNs and is unaffected.
     const fcmReady = this.firebaseReady('ring');
+    // A device holds a voipToken only when its binary carries the native ring (the TS bridge sends
+    // one under CALLS_NATIVE_RING_COMPILED and clears it otherwise): that token IS the device's
+    // statement that it reports every VoIP push to CallKit. Without the APNs key such a device is
+    // not rung at all - an FCM alert in its place would be a second path hiding the missing key.
+    const voipReady =
+      tokens.some((pt) => pt.platform === 'ios' && pt.voipToken) && this.apnsVoipReady();
 
     const dataFields: Record<string, string> = {
       type: 'call_ring',
@@ -830,7 +848,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     for (const pt of tokens) {
       const delivered =
         pt.platform === 'ios' && pt.voipToken
-          ? await this.ringIosVoip(pt, dataFields)
+          ? voipReady && (await this.ringIosVoip(pt, { groupId, callId, callerId }))
           : fcmReady && (await this.ringViaFcm(pt, dataFields));
       if (delivered) rang++;
     }
@@ -853,6 +871,11 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       `[ring] endRing user=${userId} group=${groupId} call=${callId} reason=${reason}`
     );
     await this.assertMembership(userId, groupId, 'ring-end');
+    // The mark spares a late VoIP push; the ring-end pushes below stop rings ALREADY showing, so a
+    // Redis failure here is logged and never keeps them from leaving.
+    await this.markRingEnded(groupId, callId, reason).catch((e: unknown) =>
+      this.logger.error(`[ring-end] call=${callId} could not be marked ended`, e as Error)
+    );
 
     const members = await this.groupMemberRepo.find({
       where: { groupId },
@@ -993,9 +1016,75 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Direct APNs VoIP push -> CallKit ring. Clears the voipToken on APNs 410. */
-  private async ringIosVoip(pt: PushToken, dataFields: Record<string, string>): Promise<boolean> {
-    const result = await this.apnsVoip.sendVoipPush(pt.voipToken as string, dataFields);
+  /**
+   * Whether the APNs VoIP key is configured, named when it is not. Asked once per fan-out, and only
+   * when a callee device holds a voipToken: a server without the key cannot ring a phone whose
+   * binary carries the native ring, and `rang=N/M` alone would not say why.
+   */
+  private apnsVoipReady(): boolean {
+    if (this.apnsVoip.isConfigured()) return true;
+    this.logger.error(
+      '[ring] a callee device holds a VoIP token and APNS_VOIP_* is not configured - it is not rung'
+    );
+    return false;
+  }
+
+  /**
+   * Records that the ring of `callId` is over, for the VoIP fan-out to read. Written only for a room
+   * bound to `groupId`: `ring-end` is gated on membership of the GROUP it names, so a member of
+   * another conversation must not be able to silence this call's ring.
+   */
+  private async markRingEnded(groupId: string, callId: string, reason: string): Promise<void> {
+    const binding = await this.readRoomBinding(callId);
+    if (!binding || binding.groupId !== groupId) {
+      this.logger.debug(`[ring-end] call=${callId} names no room of group=${groupId} - not marked`);
+      return;
+    }
+    await this.redis.set(callRingEndedKey(callId), reason, 'EX', CALL_RING_TIMEOUT_SEC);
+  }
+
+  /**
+   * The answer deadline (epoch ms) of a ring that is STILL LIVE, or null when a VoIP push must not
+   * be sent: the ring ended (`ring-end` was called) or its answer window is closed. Apple requires
+   * every VoIP push to raise a CallKit call, so a push for a call already over is a ring for
+   * nothing. Read before each device, never once per fan-out: each APNs request can take seconds.
+   */
+  private async liveRingDeadline(callId: string): Promise<number | null> {
+    const [answerByRaw, endedReason] = await Promise.all([
+      this.redis.get(callAnswerByKey(callId)),
+      this.redis.get(callRingEndedKey(callId)),
+    ]);
+    if (endedReason !== null) {
+      this.logger.log(`[ring] call=${callId} VoIP push withheld - the ring ended (${endedReason})`);
+      return null;
+    }
+    const answerBy = answerByRaw === null ? NaN : Number(answerByRaw);
+    if (!Number.isFinite(answerBy)) {
+      this.logger.warn(`[ring] call=${callId} VoIP push withheld - no answer window is open`);
+      return null;
+    }
+    if (answerBy <= Date.now()) {
+      this.logger.log(`[ring] call=${callId} VoIP push withheld - the answer window closed`);
+      return null;
+    }
+    return answerBy;
+  }
+
+  /**
+   * Direct APNs VoIP push -> CallKit ring, with a payload that names nobody (`voipRingPayload`).
+   * Sent only while the ring is live; clears the voipToken on APNs 410.
+   */
+  private async ringIosVoip(
+    pt: PushToken,
+    ring: { groupId: string; callId: string; callerId: string }
+  ): Promise<boolean> {
+    const ringUntilMs = await this.liveRingDeadline(ring.callId);
+    if (ringUntilMs === null) return false;
+    const result = await this.apnsVoip.sendVoipPush(
+      pt.voipToken as string,
+      voipRingPayload({ ...ring, ringUntilMs }),
+      Math.floor(ringUntilMs / 1000)
+    );
     if (result === 'gone') {
       await this.pushTokenRepo.update({ id: pt.id }, { voipToken: null });
       this.logger.warn(`[ring] cleared expired voipToken user=${pt.userId} device=${pt.deviceId}`);

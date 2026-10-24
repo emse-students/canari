@@ -96,7 +96,7 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
 | --- | --- | --- | --- |
 | B0 | **No video in production.** `CALLS_VIDEO_ENABLED` was `CALLS_ENABLED`, so the flip would have shipped it; and the flag only hid the buttons - an invite with `hasVideo: true` (a modified client, or a later build) made `acceptCall` open the camera with no control on screen to close it | **built in #2171**: `CALLS_VIDEO_ENABLED = deployEnvironment() === 'development'` (`features.test.ts`), and `CallService` holds it at every boundary - the invite rings as audio (`incomingHasVideo`), `startCall` and `acceptCall` never ask for video, `cameraOn` (every camera open) refuses, and a peer's video m-line is answered `recvonly`, decrypted (so the E2E path check still judges it) and never shown. `inactive` would be possible (either side may renegotiate after the first remote description) and would spare the peer's video bandwidth and CPU; it is not taken because the path check's treatment of a negotiated m-line carrying nothing is unmeasured on a phone, and until video ships only a modified client sends one - when video ships, the floor rises past the audio-only stable or `inactive` is built. Pinned by `CallService.p2p.test.ts` ("an audio-only build", and "judges the peer's HIDDEN video": frames -> conclusive, packets with no frame -> ended) | code done; **owed on a phone**: that a receiver transform whose track has NO SINK is still fed frames (unproven on WebKit) - CALL-L1 row 13, no false `CallE2eBypassedError` on the iPhone and the Mi 9T |
 | B1 | The scope of the native ring | **decided** (Q1): not in the first release | B2' |
-| B2 | The native ring: WP-C5 (Android: names from the phone's local copy, out of the `call_ring` payload; `canUseFullScreenIntent`; decision 7 natively) and WP-C6 (iOS: no PushKit token was ever registered; every VoIP push must report a CallKit call; the answer with MLS behind the PIN). **Also to gate in the SAME commit as the native-ring switches**: both rings still ANNOUNCE a video call for a `hasVideo` invite (Android `CanariFirebaseMessagingService.kt` `setIsVideo` / `notif_incoming_video_call`, iOS `canari_push.mm` CallKit `update.hasVideo`) - on an audio-only build they must announce audio | **later - not the first release**. **Latent for this work package:** once `kCanariCallsEnabled` flips, tapping the generic FCM alert while the app is not in the foreground goes through `CanariHandleFcmData` (`canari_push.mm`, the `call_ring` branch) and raises a CallKit ring with EMPTY names - gate that branch then | its own chantier, with video or after |
+| B2 | The native ring: WP-C5 (Android: names from the phone's local copy, out of the `call_ring` payload; `canUseFullScreenIntent`; decision 7 natively) and WP-C6 (iOS: no PushKit token was ever registered; every VoIP push must report a CallKit call; the answer with MLS behind the PIN). **Also to gate in the SAME commit as the native-ring switches**: both rings still ANNOUNCE a video call for a `hasVideo` invite (Android `CanariFirebaseMessagingService.kt` `setIsVideo` / `notif_incoming_video_call`, iOS `canari_push.mm` CallKit `update.hasVideo`) - on an audio-only build they must announce audio | **later - not the first release**; **Latent for this work package:** once `kCanariCallsEnabled` flips, tapping the generic FCM alert while the app is not in the foreground goes through `CanariHandleFcmData` (`canari_push.mm`, the `call_ring` branch) and raises a CallKit ring with EMPTY names - gate that branch then; the iPhone half (WP-C6) is designed and partly built behind the switch, [below](#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22) | its own chantier, with video or after |
 | B2' | **Two facts instead of one**: `CALLS_COMPILED` for in-app calls and background continuation (`audio`, the microphone foreground service, the microphone purpose strings), a second constant for the native ring (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`), each set asserted by `callsCompiled.test.ts`. **And the iOS FCM ALERT**: no iPhone has a `voipToken`, so `CallsService.ringViaFcm` would send EVERY iPhone callee a visible alert titled with the caller's name in clear (against decision 6), opening an app that may not answer in time - removed, or decided. That branch IS reachable in the first release (unlike the native ring), and its body says "Appel entrant" whatever `hasVideo` is - if kept, it must never announce video | **built in the flip PR (2026-10-22)**: the two facts exist (`CALLS_NATIVE_RING_COMPILED`); the iPhone FCM alert is GENERIC - title "Canari", body "Appel entrant" / "Incoming call" from `push_token.locale` (`incomingCallAlertBody`), and the caller and conversation names are removed from the iOS data and APNs keys too (FCM merges `data` into the payload); pinned in `calls.service.spec.ts`. The iPhone's notification extension has a `call_ring` case that KEEPS the server's wording and only files it (thread, deep link without `acceptCall`, `canariCallId`, time-sensitive) - without it the type fell to the MLS ladder and the alert was overwritten; the APNs request carries `apns-expiration` (+60 s, which only bounds APNs STORE-AND-FORWARD for a phone that was off - a delivered banner stays until removed) and `apns-collapse-id` (the callId); `call_ring_end` removes the delivered banner by `canariCallId` (best effort) and so does app activation (the banner's `deepLink` is a chat link, cleared with the message banners). Android keeps its names | a draft |
 | B3 | **The review of #1997, crypto half**: one key per direction + AAD on every frame, the key-mismatch toast (F5) | **built (#2176)**: #2013 ported onto `main` (per-direction keys, AAD on every frame, the mismatch notice), adversarially reviewed | CALL-L1 rows 1-4 re-read on it |
 | B4 | **The `fp=` log line printed 4 bytes of the call key** | **built (#2176)**: a SHA-256 fingerprint per direction (`send_fp`/`recv_fp`, `utils/callKeys.ts`), first in #2171 | done |
@@ -324,6 +324,104 @@ neither form is in this repository - and decide together with B5's wording, so t
 **What remains after these drafts**: the owner's answers to the table, the demo pair, the video
 (recorded during the Tier B runs, never staged), and the listing texts
 ([store-listings](../../store-listings.md#2-the-current-play-texts-and-what-is-stale-2026-10-09)).
+
+## The native ring on the iPhone - PushKit and CallKit (WP-C6, owner 2026-10-22)
+
+**The decision.** The iPhone gets a NATIVE ring like Messenger: a call rings a closed or locked
+iPhone on the full-screen CallKit screen, through an APNs VoIP push. It is built behind its own
+switch, `CALLS_NATIVE_RING_COMPILED` (`features.ts`, off), in parallel with the audio enablement
+(draft #2299 flips `CALLS_COMPILED` and makes the iPhone's FCM ring alert generic meanwhile). The
+design-first pull request built everything below that a text test or a unit test can hold, and
+flips nothing: `kCanariCallsEnabled` stays `NO`, `voip` stays out of `Info.plist`.
+
+**One fact for "this phone takes VoIP pushes": a `voipToken` on its `push_token` row.** The column
+exists since WP-XP-5 (migration `010_push_token_voip.sql`), so **no migration and no number is
+taken** (chat-delivery's next free one stays where the open pull requests leave it). The token
+reaches the server two ways: at `POST /api/mls/push/register` from the TS bridge
+(`voipRegistrationField`, `mobile/voipRegistration.ts`), and at `POST /api/mls/push/refresh-token`
+from the native `PKPushRegistry` callback (`CanariPersistVoipToken`) when PushKit rotates it. The
+field has THREE meanings (`parseVoipTokenField`, `utils/voip-token.ts`): a token; an explicit `null`,
+sent by every iPhone binary WITHOUT the ring, which CLEARS the column - so a phone back on a build
+without the ring is never sent a push it cannot honour; and absent (an old client, or a ring build
+whose PushKit has not answered yet), which leaves it alone. APNs `410` clears it too
+(`ringIosVoip`). Not covered: PushKit's `didInvalidatePushToken` deletes the local file but tells
+the server nothing - the stale token is cleared by the next `410`; a `refresh-token` that accepts
+`null` would close it (owed with the flip).
+
+**How the server sends it: APNs directly, not FCM.** FCM cannot carry `apns-push-type: voip`, so
+`ApnsVoipService` (chat-delivery) is the one direct-APNs sender: HTTP/2, an ES256 provider JWT from
+an APNs AUTH KEY (`.p8`), topic `fr.emse.canari.voip`, priority 10, `apns-expiration` = the ring's
+answer deadline. **What exists**: the sender, its five variables (`APNS_VOIP_KEY_P8`, `_KEY_ID`,
+`_TEAM_ID`, `_TOPIC`, `_SANDBOX`) in `docker-compose.prod.yml` and both serve workflows, and the
+three production secrets (repository secrets, set 2026-07-23 - names read, never values). **What is
+missing**: the three `DEV_APNS_VOIP_*` secrets `serve-dev.yml` reads (absent on 2026-10-22, so dev
+cannot ring a VoIP device), and any proof that the production key still signs (no VoIP push was ever
+sent). A key is team-wide: no VoIP certificate is needed with token auth. **`APNS_VOIP_SANDBOX`
+stays unset on dev too**: a TestFlight build is signed `aps-environment production` and its tokens
+belong to the production gateway; only an Xcode debug build needs the sandbox.
+
+**Apple's hard rule, and what it decides.** Since iOS 13 EVERY VoIP push must report a CallKit call
+before its completion handler returns; an app that does not is killed, and repeated misses stop
+VoIP delivery to it. So the rule is split in two:
+
+| Case | The server (never sends the push) | The phone (reports whatever arrives) |
+| --- | --- | --- |
+| `calls_mode` `off` (or video asked under `audio`) | `ring` refused before any fan-out (`assertCallsOpen`) | - |
+| A block between caller and callee | `ring` refused (`refuseIfBlocked`) | - |
+| The callee refused calls here, or the conversation is at `none` with no choice made | not in the fan-out (`membersWhoTakeCalls`, `callsAllowedFor`) | - |
+| The ring ended (`ring-end`: answered, cancelled, ended) | withheld: `ring-end` writes `call:room:<id>:ring_ended` for a room of ITS group, read before each device (`liveRingDeadline`) | a push that crossed it rings until `call_ring_end` or the deadline |
+| The answer window closed | withheld (`answer_by` in the past) | a push held by APNs and delivered late: reported and ENDED at once (`ringUntil` past) |
+| A binary without the ring | no token (cleared by its explicit `null`) | - |
+| The APNs key missing | the device is NOT rung, ERROR once per fan-out - no FCM alert in its place | - |
+| A malformed or unknown payload | - | reported and ended at once |
+
+The phone's half is `CanariReportVoipCall` (`canari_push.mm`): synchronous on the registry's main
+queue, before `completion()`; a call already rung by the MLS invite is reported again under the same
+UUID (CallKit refuses the duplicate, which still honours the contract, and nothing new rings).
+
+**The name: never in the push.** The VoIP payload is `{type, groupId, callId, callerId, hasVideo,
+ringUntil}` (`voipRingPayload`, `call-ring-payload.ts`, its key set pinned by a test) - ids and the
+server's deadline, never `callerName`/`groupName` (decision 6). The phone writes the caller on the
+CallKit screen from ITS copy of names (`display_names.json`, under the owner rule a mention uses -
+`CanariCallerDisplayName`), and "Appel Canari" / "Canari call" (`notif.call.unknown_caller`) for a
+caller it never named. APNs still sees the two ids and the timing: pseudonymous metadata, the same
+level as every message push. The Android payload is untouched here (WP-C5).
+
+**Ring timeout and ring-end.** The ring ends at the earliest of: the server's answer deadline
+(`ringUntil`, capped at the native 60 s) - so the phone never rings past the window `room-token`
+enforces; `call_ring_end` (FCM, `content-available`, priority 5, `CanariHandleBackgroundFrame`);
+the MLS `call_hangup` once the app runs; the user's decline (local only, as on Android). **Named
+limitation**: Apple throttles priority-5 background pushes, so a CANCELLED call may ring on a closed
+iPhone until its deadline. To measure on the bench (K7) before anything is built; if it is bad, the
+remedy is a `PushSecret`-authenticated ring-state read by the ringing call, never a VoIP push for
+the end (each one would have to report a new call).
+
+**Answering from the lock screen, and the audio hand-off.** CallKit's answer cannot start audio:
+the MLS keys are behind the app's PIN in the web view. The answer writes `pending_call_accept.json`
+and fires the `acceptCall` deep link; from the lock screen the user unlocks (Face ID), opens Canari
+from CallKit's button, enters the PIN; the web view drains the accept and joins when the MLS invite
+arrives over the socket. On `didBecomeActive` the CallKit call is ended (`AnsweredElsewhere`), so
+WebKit owns the audio session from then on, and the `audio` background mode (`CALLS_COMPILED`)
+keeps the call alive when the phone locks again (WP-C-BG-I). Cost, accepted by this design: the
+caller hears it ring until the callee has unlocked, inside the 60 s window; Messenger connects at
+once because its keys are not behind a PIN. Keeping the CallKit call for the whole call (the green
+pill, the system in-call screen) means handing CallKit's `didActivateAudioSession` to WebKit, which
+nothing here has measured - a later lot.
+
+**Declarations.** `voip` in `UIBackgroundModes` (the flip; `audio` comes with `CALLS_COMPILED`,
+`remote-notification` is there). **No new entitlement**: PushKit and CallKit need none; the App ID
+keeps its Push Notifications capability (`aps-environment production`). App Review: the 2.5.4
+refusal of 2026-08-31 is answered by a build that rings - the review notes and video show a locked
+iPhone ringing. CallKit is not allowed on the China mainland storefront.
+
+**The flip, ONE commit (described, not made):** `CALLS_NATIVE_RING_COMPILED = true`;
+`kCanariCallsEnabled = YES`; `voip` in `Info.plist`; and - the constant is SHARED with Android -
+the Kotlin `CALLS_ENABLED` and `USE_FULL_SCREEN_INTENT`, so either WP-C5 lands first or the
+constant is split per platform (the owner's call). `callsCompiled.test.ts` asserts all of it agrees.
+Preconditions: `CALLS_COMPILED` on (asserted), the `DEV_APNS_VOIP_*` secrets, K6/K7/K8 on the iPhone.
+
+**Uncompiled**: the Objective-C of this lot was written on Windows and is held only by
+`nativeRingVoip.test.ts` (text) until the iOS CI job compiles it and K6/K7/K8 run it.
 
 ## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
 
@@ -1874,8 +1972,8 @@ The separate `POST /api/calls/ring` and `POST /api/calls/ring-end` endpoints han
 When the app is killed, CallKit is the only way to show an incoming call UI. The flow:
 
 1. Caller's client → `POST /api/calls/ring`
-2. Backend sends **direct APNs VoIP push** to iOS devices with a `voipToken` (ES256 JWT, topic `<bundle>.voip`).
-3. `PKPushRegistry` delivers the VoIP push → `CanariReportIncomingCall` reports a CallKit call.
+2. Backend sends **direct APNs VoIP push** to iOS devices with a `voipToken` (ES256 JWT, topic `<bundle>.voip`), ids only, while the ring is live.
+3. `PKPushRegistry` delivers the VoIP push → `CanariReportVoipCall` reports a CallKit call. The design, the rules and what is owed: [the native ring on the iPhone](#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22).
 4. User answers → writes `pending_call_accept.json` → fires accept deep link.
 5. App unlocks → TS store drains `pendingCallAccept` → `CallService` auto-accepts when the matching MLS invite arrives over WS.
 6. CallKit session ended on `didBecomeActive` (handed over to in-app WebRTC).

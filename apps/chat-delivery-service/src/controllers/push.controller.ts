@@ -35,6 +35,7 @@ import {
   sanitizeQueryValue,
 } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
+import { parseVoipTokenField } from '../utils/voip-token';
 import { PAYLOAD_RELATION, materializeDeliveries } from '../utils/queued-payload';
 import { parseSessionId } from '../utils/session-id';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
@@ -297,7 +298,7 @@ export class PushController {
       token: string;
       deviceId: string;
       platform?: string;
-      voipToken?: string;
+      voipToken?: string | null;
       locale?: string;
     },
     @Headers('x-user-id') userIdRaw: string,
@@ -312,12 +313,10 @@ export class PushController {
     }
     const token = body.token.trim().slice(0, 500);
     const platform: 'android' | 'ios' = body.platform === 'ios' ? 'ios' : 'android';
-    // PushKit VoIP token (iOS, WP-XP-5): present when the native registry already fired at
-    // registration time; otherwise attached later via POST /mls/push/refresh-token.
-    const voipToken =
-      typeof body.voipToken === 'string' && body.voipToken.trim()
-        ? body.voipToken.trim().slice(0, 255)
-        : undefined;
+    // PushKit VoIP token (iOS, WP-C6): a token, an explicit null from a binary without the native
+    // ring (clears the column), or nothing (left alone) - see `parseVoipTokenField`. A ring build
+    // whose registry has not fired yet attaches it later via POST /mls/push/refresh-token.
+    const voipToken = platform === 'ios' ? parseVoipTokenField(body.voipToken) : undefined;
 
     // The language this device reads, for the ONE sentence this server still composes
     // (`APNS_FALLBACK_BODY`). Stored raw and bounded rather than validated against a list: a value
@@ -346,14 +345,15 @@ export class PushController {
         platform,
         pushSecret,
         sessionId,
-        ...(voipToken ? { voipToken } : {}),
+        ...(voipToken !== undefined ? { voipToken } : {}),
         ...(locale ? { locale } : {}),
       },
       { conflictPaths: ['userId', 'deviceId'] }
     );
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform} ` +
-        `locale=${locale ?? 'unstated'} session=${sessionId ? sessionId.slice(0, 8) : 'none'}`
+        `locale=${locale ?? 'unstated'} voip=${voipToken === undefined ? 'unstated' : voipToken === null ? 'none' : 'set'} ` +
+        `session=${sessionId ? sessionId.slice(0, 8) : 'none'}`
     );
     // rawSecret returned ONCE - the client must persist it.
     return { status: 'registered', pushSecret: rawSecret };
