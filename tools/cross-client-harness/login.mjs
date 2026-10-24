@@ -21,7 +21,8 @@ import { forwardIdpBrowser } from './phone.mjs';
 import { WEBVIEW_MATCH as IOS_WEBVIEW, signInThroughSheet } from './phone-ios.mjs';
 import { isIosName } from './phone-platform.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
-import { PORTS, SITE } from './names.mjs';
+import { PORTS } from './names.mjs';
+import { SITE } from './site.mjs';
 import { DEEP, FORM_SHAPE, stageTable, tickScript } from './idpform.mjs';
 
 const argv = process.argv.slice(2);

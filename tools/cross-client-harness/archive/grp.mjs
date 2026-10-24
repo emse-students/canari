@@ -72,7 +72,8 @@ import {
   report,
   watch,
 } from '../watch.mjs';
-import { OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
+import { SITE } from '../site.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const { W1, W2 } = PORTS;

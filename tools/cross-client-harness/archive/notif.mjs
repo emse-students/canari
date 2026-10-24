@@ -17,7 +17,8 @@ import { gate, logcatReport, logcatSince, report, watch } from '../watch.mjs';
 import { mark, record, exitOnRecorded } from '../results.mjs';
 import { requireFreshFcmLink } from '../fcmlink.mjs';
 import * as phone from '../phone.mjs';
-import { PORTS, SITE, peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
+import { SITE } from '../site.mjs';
 
 // THE PHONE THIS RUNNER DRIVES, DECLARED. Every row below is written for A1 - `PORTS.A1`,
 // `peerNameFor('A1')` - and with a second phone on the bench `serial()` refuses to choose rather

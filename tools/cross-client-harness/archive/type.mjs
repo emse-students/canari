@@ -38,7 +38,8 @@ import { gate, ignoringOfflineCut, report, watch } from '../watch.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { awaitOffline, awaitOnline, whoIs } from './presence.mjs';
 import { errorDetail, record } from '../results.mjs';
-import { OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
+import { SITE } from '../site.mjs';
 
 const { W1, W2 } = PORTS;
 

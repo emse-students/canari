@@ -10,12 +10,14 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
+import { refuseProductionPage } from './estate-target.mjs';
 import { GATE_EXPR } from './gate-probe.mjs';
 import { isWebKitAgent } from './webkit-console.mjs';
 import { contentTypeOf, fileInjectionExpression } from './webkit-files.mjs';
 import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, parkPointer, pressKey, realClick, reloadAndWait, stablePoint, until } from './cdp.mjs';
 // For the device check in `goto`: the phone is the one client a reload costs something on.
-import { PORTS, SITE, VENUE } from './names.mjs';
+import { PORTS, VENUE } from './names.mjs';
+import { SITE } from './site.mjs';
 
 /**
  * THE SUBSTRING THAT IDENTIFIES THE APP'S OWN TAB, and it is DERIVED rather than spelt.
@@ -266,6 +268,9 @@ export async function client(port, match = null, { focus = true, allowMany = fal
     );
   const t = hits[0];
   if (!t) throw new Error(`no target on ${port} matching ${match}; have ${targets.map((x) => x.url).join(' | ')}`);
+  // A PROFILE KEEPS THE TAB IT LAST HAD, and `SITE` only decides where the rig navigates: a page
+  // still sitting on production would be driven with the campaign's accounts. Refused by host.
+  refuseProductionPage(t.url);
   const cx = connect(t.webSocketDebuggerUrl);
   await cx.ready;
   await cx.send('Runtime.enable');

@@ -16,7 +16,8 @@
 import { spawn, execSync } from "node:child_process";
 import { join } from "node:path";
 import { connect } from "./cdp.mjs";
-import { SITE, STATE_DIR } from "./names.mjs";
+import { STATE_DIR } from "./names.mjs";
+import { SITE } from "./site.mjs";
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";

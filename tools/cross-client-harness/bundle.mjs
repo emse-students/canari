@@ -33,7 +33,8 @@ import { pathToFileURL } from 'node:url';
 
 import { APP_TAB, client, evaluate } from './chat.mjs';
 import { LOCAL } from './estate.mjs';
-import { ORIGIN, PORTS, SITE } from './names.mjs';
+import { PORTS } from './names.mjs';
+import { ORIGIN, SITE } from './site.mjs';
 
 const ID = /__sveltekit_[a-z0-9]+/;
 

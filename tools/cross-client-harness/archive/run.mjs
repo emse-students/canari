@@ -36,7 +36,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { PHASES, devicesFor } from '../checks.mjs';
 import { awaitQuiet } from '../deploy.mjs';
 import { groupTombstones, sweepDismissed } from './dismiss.mjs';
-import { srvLines } from '../estate.mjs';
+import { ESTATE, srvLines, verifyTarget } from '../estate.mjs';
+import { SITE } from '../site.mjs';
 import { srvReport, srvSummary } from '../srvlog.mjs';
 import { client } from '../chat.mjs';
 import * as phone from '../phone.mjs';
@@ -314,6 +315,17 @@ async function preflight(devices, { quiet = false } = {}) {
   // the second holds a stale `names.mjs` of the same shape: editing it changes nothing and says
   // nothing (venue rename, 2026-09-04). The resolved path on line one is what makes that visible.
   console.log(`  ..   rig state: ${STATE_DIR}`);
+
+  // WHICH ESTATE, VERIFIED BEFORE EVERY RUN (R1, 2026-10-24). `site.mjs` has already refused
+  // anything but the local estate and dev at import; this RESOLVES the containers the run's reads
+  // will reach - on dev by compose label on its host - and names them, so the first line of every
+  // run says which database and which Redis it is about. A target that does not resolve is a
+  // problem, not a warning: a row whose reads fail mid-run records the rig's fault as the app's.
+  try {
+    console.log(`  ok   estate: ${ESTATE} (${SITE}) - ${verifyTarget().join(', ')}`);
+  } catch (e) {
+    problems.push(`the ${ESTATE} estate's containers could not be resolved: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   // PRODUCTION MUST BE STILL BEFORE A CHECK TOUCHES IT. Prod IS the test server, and a push to
   // `main` restarts every container under whatever is running: on 2026-08-21 a commit touching only

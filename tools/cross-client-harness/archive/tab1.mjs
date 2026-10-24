@@ -40,7 +40,8 @@ import { reloadAndWait } from '../cdp.mjs';
 import { background } from './tabs.mjs';
 import { mark, recordObserved } from '../results.mjs';
 import { ignoringExpectedLog, report, watch } from '../watch.mjs';
-import { ORIGIN, PORTS, SITE, peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
+import { ORIGIN, SITE } from '../site.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Long enough for a notification that is going to be posted to have been posted. */

@@ -18,7 +18,7 @@
  *
  * Usage:
  *   bun cdp.mjs --port 9223 targets
- *   bun cdp.mjs --port 9223 nav https://canari-emse.fr
+ *   bun cdp.mjs --port 9223 nav https://dev.canari-emse.fr
  *   bun cdp.mjs --port 9223 snapshot            # compact list of interactive elements
  *   bun cdp.mjs --port 9223 eval "location.href"
  *   bun cdp.mjs --port 9223 click "text=Se connecter"
@@ -36,6 +36,7 @@
  * - A per-page WebSocket survives same-target navigations, which is all this campaign needs.
  */
 
+import { refuseProductionPage } from './estate-target.mjs';
 import { WebKitInputUnsupported, isWebKitInputTarget, webkitInput } from './webkit-input.mjs';
 
 /** True only when this file is the process entry point, so it can also be imported as a module. */
@@ -1085,6 +1086,10 @@ async function main() {
     ? targets.find((t) => t.url.includes(targetMatch) || t.title.includes(targetMatch))
     : targets[targetIndex];
   if (!target) throw new Error(`no target matching ${targetMatch ?? targetIndex}`);
+  // THIS CLI DRIVES WHATEVER PAGE IT IS POINTED AT, so it refuses one on production - and a
+  // navigation TO production - by itself: it reads no `SITE` to be refused through.
+  refuseProductionPage(target.url);
+  if (cmd === 'nav') refuseProductionPage(argv[0]);
 
   const cx = connect(target.webSocketDebuggerUrl);
   await cx.ready;

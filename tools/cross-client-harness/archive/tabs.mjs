@@ -20,7 +20,7 @@
  * which is invisible to every caller and fixes the whole TAB phase in one place.
  */
 import { evaluate, listTargets } from '../cdp.mjs';
-import { SITE } from '../names.mjs';
+import { SITE } from '../site.mjs';
 
 /**
  * Closes every app tab but the front one, and every blank, so the browser has ONE identity.

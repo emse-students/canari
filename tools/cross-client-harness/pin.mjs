@@ -16,7 +16,8 @@ import { declineBiometricOffer } from './chat.mjs';
 import { networkInterfaces } from 'node:os';
 import { estateVerdict, localAliases } from './estate-origins.mjs';
 import { GATE_EXPR, KEYPAD_EXPR } from './gate-probe.mjs';
-import { PORTS, SITE } from './names.mjs';
+import { PORTS } from './names.mjs';
+import { SITE } from './site.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
 
 const argv = process.argv.slice(2);

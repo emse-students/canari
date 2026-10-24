@@ -71,6 +71,21 @@ export const DISPLAY_NAME_OF = { owner: "<owner display name>", peer: "<peer dis
  */
 export const SITE = "http://localhost:8081";
 
+/*
+ * **ONLY TWO VALUES ARE ACCEPTED (2026-10-24): the local estate above, or `https://dev.canari-emse.fr`.**
+ * Anything else - production under either of its names first - is REFUSED by `site.mjs` the moment
+ * any rig module loads, and no rig code path can reach production's containers at all
+ * (`estate-target.mjs`). Every module reads `SITE` and `ORIGIN` through `site.mjs`, never from here.
+ */
+
+/**
+ * THE SSH ALIAS OF THE HOST CARRYING DEV'S COMPOSE PROJECT (`canari-dev`), required when `SITE` is
+ * dev and ignored otherwise. `estate.mjs` runs `docker` there to find dev's containers BY LABEL.
+ * Machine-local wiring: the alias and the host map behind it are in the private operations notes and
+ * never in this public repository.
+ */
+export const DEV_SSH_HOST = "<ssh alias of the host carrying canari-dev>";
+
 /**
  * Devtools ports. The Chrome profiles ARE the devices; A1 is an adb forward.
  *

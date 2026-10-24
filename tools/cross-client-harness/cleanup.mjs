@@ -41,7 +41,8 @@ import { deleteChannel, deleteCommunity, enterCommunities, openCommunity } from 
 import { isGroupDebris } from './debris.mjs';
 import { deleteGroup } from './groupnav.mjs';
 import { psql } from './estate.mjs';
-import { PORTS, SITE, VENUE } from './names.mjs';
+import { PORTS, VENUE } from './names.mjs';
+import { SITE } from './site.mjs';
 
 /**
  * AN ALLOWLIST, and it is only as good as its enumeration. COMM-12 builds TWO venues per run and
