@@ -171,6 +171,16 @@ and withdrawing the group's queued entries on a leave would only silence the lin
 ordering: step 2 must wait for the notice's DELIVERY, not its durable write. A parked entry for a
 group the device has left should also be withdrawn rather than wait for a sign-in.
 
+## P3 - Three edges of the exit drain, left by the review of #2259 (2026-10-24)
+
+Mechanism: [chat](frontend/modules/chat.md#an-exit-takes-the-groups-queue-with-it-before-its-server-step-grp-6-2026-10-22).
+(1) An exit the server keeps REFUSING stays owed for ever, by design. Every later enqueue for that
+group is then refused, a re-add included, and the enqueue RESOLVES. A text or a file now says so at
+`warn`; nothing clears the owed exit on a re-add. (2) A FOLLOWER tab's exit cannot send, so it
+withdraws the group's texts the leader could still have sent. (3) `resuming` marks set by an exit
+drain for entries it then withdrew are never deleted. They are one id each per page life. The owed-exit
+check also costs one `getPendingGroupExits` read per enqueue and per lane pass on the hot path.
+
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 
 Every device joining a community's key group commits, and the outbound rotation rotated on any
