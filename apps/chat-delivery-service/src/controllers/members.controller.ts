@@ -36,9 +36,11 @@ import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import {
   ensureGroupMember,
+  endDeviceMemberships,
   endGroupMembership,
   exclusionWindows,
   openMissingIntervals,
+  stretchStart,
   partingKey,
   withheldWindows,
   type ExclusionWindow,
@@ -725,19 +727,25 @@ export class MembersController {
       }
     }
 
-    // Remove all per-device memberships for this user in the group: from here on no application
-    // frame is queued for them, and no frame they send is accepted.
-    const deviceMembershipDelete = await this.deviceGroupRepo.delete({
-      groupId: safeGroupId,
-      userId: safeUserId,
+    // The device rows, the Welcomes still queued for them, the live row and the open interval go in
+    // ONE transaction. Without the device rows no application frame is queued for them and no frame
+    // they send is accepted; the interval is what makes this removal hold against a later re-add
+    // (user, 2026-10-14); and a Welcome left behind would let the removed person enter the epoch it
+    // was built for ({@link endDeviceMemberships}) - a self-leave makes no commit that would undo it.
+    //
+    // THE ROSTER ROW FIRST, THEN THE DEVICE ROWS - the order `addGroupMember` takes them in, so an
+    // add and a removal of the same person wait for each other instead of deadlocking; and the
+    // order a Welcome store re-checks the seat in (`validateCommit`, `sendWelcome`), so a store
+    // racing this removal either commits first and is deleted here, or finds no seat.
+    const { devices, ended } = await this.dataSource.transaction(async (manager) => {
+      const ended = await endGroupMembership(manager, safeGroupId, safeUserId);
+      const devices = await endDeviceMemberships(
+        manager,
+        { userId: safeUserId, groupId: safeGroupId },
+        'welcomes'
+      );
+      return { devices, ended };
     });
-
-    // The live row goes and the membership interval closes in ONE transaction: the interval is what
-    // makes this removal hold against a later re-add (user, 2026-10-14), so a removal that deleted
-    // the row and not the interval would be a removal a re-add silently undoes.
-    const ended = await this.dataSource.transaction((manager) =>
-      endGroupMembership(manager, safeGroupId, safeUserId)
-    );
     if (ended.deleted > 0 && ended.closed === 0) {
       // A member with no open interval: enrolled by a writer running pre-030 code during the deploy
       // that applied the migration. Their exclusion window starts nowhere, so a re-add will NOT
@@ -755,7 +763,7 @@ export class MembersController {
     }
 
     this.logger.log(
-      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0} intervalClosed=${ended.closed}`
+      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${devices.memberships} intervalClosed=${ended.closed} queuedWelcomesDropped=${devices.queued}`
     );
     return { status: 'removed' };
   }
@@ -800,13 +808,20 @@ export class MembersController {
    * "nothing withheld".
    *
    * **`for` answers only for a person with a device ADDED SINCE THE CALLER ARRIVED** - a device row
-   * in this group created at or after the caller's own arrival (compared case-insensitively). That
+   * in this group created at or after the start of the caller's CURRENT interval (its recorded
+   * admission when earlier; `for` compared case-insensitively). Not the caller's first arrival: a
+   * member who left and came back did not witness what was added while they were out. That
    * is who an inviter's push is for: a newcomer, or a new device of a member of any age. It is a
    * DURABLE fact, never a status: the invitee's row turns `active` the moment its Welcome is
    * processed, possibly while the push is still reading its windows chunk by chunk, and a status
    * predicate then starved the push it was written for. The caller witnessed that add, so the
    * arrival it reads is one the group showed it. Anybody else has no entry: a member cannot read the
    * arrival of somebody whose devices all predate their own.
+   *
+   * **`addressedAnswers: true`** says this server routes an addressed history answer on a
+   * conversation (step A, docs/wiki/protocols/history-answer-addressing.md). It rides this route
+   * because every answerer reads it per chunk anyway: a client running ahead of an older server sees
+   * the field missing and keeps the broadcast answer, rather than learning it by a refused send.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/exclusions')
@@ -817,6 +832,7 @@ export class MembersController {
   ): Promise<{
     exclusions: Record<string, ExclusionWindow[]>;
     withheld: Record<string, ExclusionWindow[]>;
+    addressedAnswers: true;
   }> {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
@@ -870,7 +886,7 @@ export class MembersController {
     const readByUser = async () => {
       const rows = await this.dataSource.manager.find(GroupMembershipInterval, {
         where: { groupId: safeGroupId, userId: In([...counted]) },
-        select: { userId: true, joinedAt: true, leftAt: true },
+        select: { userId: true, joinedAt: true, leftAt: true, admittedAt: true },
       });
       const grouped = new Map<string, GroupMembershipInterval[]>();
       for (const row of rows) {
@@ -926,12 +942,13 @@ export class MembersController {
       if (windows.length > 0) exclusions[userId] = windows;
     }
     const withheld: Record<string, ExclusionWindow[]> = {};
-    // The caller's arrival: their earliest interval or device row, whichever the server recorded
-    // first. None recorded answers `for` for nobody.
-    const callerArrival = Math.min(
-      ...(byUser.get(caller) ?? []).map((r) => r.joinedAt.getTime()),
-      firstDeviceAt.get(caller)?.getTime() ?? Infinity
-    );
+    // The caller's arrival for `for` is the start of their CURRENT stretch - the open interval, from
+    // its recorded admission when one preceded the enrolment. Not their first arrival: a caller who
+    // left and came back did not witness what was added while they were out. No open interval
+    // answers `for` for nobody - including a caller with device rows but no open interval (admitted,
+    // not yet enrolled): `for` answers nobody until their enrolment opens one, the safe direction.
+    const current = (byUser.get(caller) ?? []).find((r) => r.leftAt === null);
+    const callerArrival = current ? stretchStart(current) : Infinity;
     const forCounted = forUser
       ? [...counted].find(
           (u) =>
@@ -949,6 +966,6 @@ export class MembersController {
         group?.createdAt ?? null
       );
     }
-    return { exclusions, withheld };
+    return { exclusions, withheld, addressedAnswers: true };
   }
 }

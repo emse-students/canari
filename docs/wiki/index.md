@@ -78,6 +78,7 @@
 - [Chat module](frontend/modules/chat.md) — Conversations, groups, channels, communities
 - [Calls module](frontend/modules/calls.md) — WebRTC audio/video calls, CallKit, SFU relay
 - [Lives in production](frontend/modules/live-production.md) - the gates, the order of the switch, the read-only preflight, the viewer-cap steps from 24 to none, and the HELD privacy wording
+- [Live scaling](frontend/modules/live-scaling.md) - no visible audience ceiling: what bounds a live's audience (the host uplink, ~24), the five options, R2 for the segments, the staged path and the owner's decisions
 - [Live](frontend/modules/live.md) — Livestream plan (R4/C9): the user's 2026-10-15 decisions, open questions, work packages; not started
 - [Associations module](frontend/modules/associations.md) — Club management, members, calendar, shop, documents
 - [Forms module](frontend/modules/forms.md) — Form builder, submissions, cash/Stripe payments
@@ -146,6 +147,7 @@
 - [Device verification runbook](device-verification.md) — The ordered Android + iOS pass: what compiling never proves, and the log line that is the verdict for each check
 - [Device readings, 2026-10](device-readings-2026-10.md) — the Mi 9T and iPhone 12 alpha passes of 2026-10-05 to 10-07: what passed, with the evidence, and the bench traps met
 - [Bench readings for calls and live, 2026-10-18](device-readings-calls-live-2026-10-18.md) - calls BLOCKED (no tag carries lot 1); the WP-L1 live bench on both phones: 720p fMP4 segments for 36-42 min, a growing MSE source with 0 append errors, bitrate, battery and heat
+- [`v1.4.0-alpha.4` read on the Mi 9T, sideloaded, 2026-10-22](device-readings-v1.4.0-alpha.4.md) - version, feed, comments sheet and a CanaReel shot and played; DM and group read, salon and push not read; the log lines left unexplained
 - [Testing methodology](testing-methodology.md) — How a result earns belief: the harness faults distilled into rules, plus the environment traps that read as application bugs
 - [Test suite reform](test-suite-reform.md) — The whole test estate measured (2026-10-18): where the 16-minute frontend job goes, the gaps found, and the ordered work packages WP-T1..T8, and the generated inventory of every suite with its deletion candidates (`tools/test-inventory`)
 - [Mechanism audit](mechanism-audit.md) - What every part of the app is covered by, measured across the board, the unit tests and the hand pass - and the five things nothing watches

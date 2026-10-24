@@ -23,7 +23,12 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
 describe('MembersController - membership intervals and the exclusions read', () => {
   let controller: MembersController;
   let members: Array<{ userId: string; joinedAt: Date }>;
-  let intervals: Array<{ userId: string; joinedAt: Date; leftAt: Date | null }>;
+  let intervals: Array<{
+    userId: string;
+    joinedAt: Date;
+    leftAt: Date | null;
+    admittedAt?: Date | null;
+  }>;
   let healInserts: Array<{ userId: string; joinedAt: Date; leftAt: null }>;
   let txDeletes: Array<{ entity: unknown; where: unknown }>;
   let txUpdates: Array<{ entity: unknown; where: Record<string, unknown> }>;
@@ -81,6 +86,11 @@ describe('MembersController - membership intervals and the exclusions read', () 
       getRepository: (entity: unknown) => ({
         delete: (where: unknown) => {
           txDeletes.push({ entity, where });
+          if (entity === DeviceGroupMembership) {
+            order.push('devices-deleted');
+            const { userId } = where as { userId: string };
+            deviceRows = deviceRows.filter((d) => d.userId !== userId);
+          }
           return Promise.resolve({ affected: 1 });
         },
         update: (where: Record<string, unknown>) => {
@@ -143,7 +153,16 @@ describe('MembersController - membership intervals and the exclusions read', () 
         find: intervalFind,
         transaction: (fn: (m: unknown) => Promise<unknown>) => fn(healTx),
       },
-      transaction: (fn: (m: unknown) => Promise<unknown>) => fn(txManager),
+      // A failed transaction rolls back: the device rows it deleted are there again.
+      transaction: async (fn: (m: unknown) => Promise<unknown>) => {
+        const before = [...deviceRows];
+        try {
+          return await fn(txManager);
+        } catch (e) {
+          deviceRows = before;
+          throw e;
+        }
+      },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -332,6 +351,51 @@ describe('MembersController - membership intervals and the exclusions read', () 
     expect(got.withheld.carol).toEqual([{ from: 0, until: T('2026-10-02T00:00:00Z').getTime() }]);
   });
 
+  it("keeps a person's arrival once the device row that proved it was purged - their next device keeps the span", async () => {
+    // carol's first device entered the tree on the 2nd, her enrolment says the 7th, and the
+    // enrolment recorded the admission on her interval. That device was then revoked: its row is
+    // gone, and her new phone's row dates from the 9th (review of #2226).
+    intervals = intervals.map((i) =>
+      i.userId === 'carol' ? { ...i, admittedAt: T('2026-10-02T00:00:00Z') } : i
+    );
+    deviceRows = deviceRows.map((d) =>
+      d.userId === 'carol' ? { ...d, deviceId: 'c2', createdAt: T('2026-10-09T00:00:00Z') } : d
+    );
+    const got = await controller.getGroupExclusions('g-1', 'alice', 'carol');
+    expect(got.withheld.carol).toEqual([{ from: 0, until: T('2026-10-02T00:00:00Z').getTime() }]);
+    expect(intervalFind).toHaveBeenCalledWith(
+      GroupMembershipInterval,
+      expect.objectContaining({ select: expect.objectContaining({ admittedAt: true }) })
+    );
+  });
+
+  it("decides `for` against the caller's CURRENT interval - a returner reads no arrival from while they were away", async () => {
+    // bob was out from the 3rd to the 5th; dave was added on the 4th, while bob was away. bob's
+    // first arrival (the 1st) must not make dave's arrival readable to him.
+    members.push({ userId: 'dave', joinedAt: T('2026-10-04T00:00:00Z') });
+    intervals.push({ userId: 'dave', joinedAt: T('2026-10-04T00:00:00Z'), leftAt: null });
+    deviceRows.push({ userId: 'dave', deviceId: 'd1', createdAt: T('2026-10-04T00:00:00Z') });
+
+    const fromBob = await controller.getGroupExclusions('g-1', 'bob', 'dave');
+    expect(Object.keys(fromBob.withheld)).toEqual(['bob']);
+
+    // A device dave adds after bob came back is one bob witnessed, and is answered.
+    deviceRows.push({ userId: 'dave', deviceId: 'd2', createdAt: T('2026-10-06T00:00:00Z') });
+    const later = await controller.getGroupExclusions('g-1', 'bob', 'dave');
+    expect(later.withheld.dave).toEqual([{ from: 0, until: T('2026-10-04T00:00:00Z').getTime() }]);
+  });
+
+  it("counts the admission recorded on the caller's current interval as the start of it", async () => {
+    // carol's enrolment says the 7th, but her device was admitted on the 6th - the moment she was
+    // added. A device added on the 6th 12:00 was added while she was in.
+    intervals = intervals.map((i) =>
+      i.userId === 'carol' ? { ...i, admittedAt: T('2026-10-06T00:00:00Z') } : i
+    );
+    deviceRows.push({ userId: 'alice', deviceId: 'a2', createdAt: T('2026-10-06T12:00:00Z') });
+    const got = await controller.getGroupExclusions('g-1', 'carol', 'alice');
+    expect(got.withheld.alice).toEqual([{ from: 0, until: T('2026-10-01T00:00:00Z').getTime() }]);
+  });
+
   it('withholds the gaps only in a 1:1, and in a key group', async () => {
     // bob's second device was added on the 6th, after alice arrived.
     deviceRows = deviceRows.map((d) =>
@@ -395,10 +459,28 @@ describe('MembersController - membership intervals and the exclusions read', () 
   it('a removal deletes the live row AND closes the interval in one transaction', async () => {
     await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
 
-    expect(txDeletes).toEqual([{ entity: GroupMember, where: { groupId: 'g-1', userId: 'bob' } }]);
+    expect(txDeletes).toContainEqual({
+      entity: GroupMember,
+      where: { groupId: 'g-1', userId: 'bob' },
+    });
     expect(txUpdates).toHaveLength(1);
     expect(txUpdates[0].entity).toBe(GroupMembershipInterval);
     expect(txUpdates[0].where).toMatchObject({ groupId: 'g-1', userId: 'bob' });
+  });
+
+  it('a removal takes the Welcomes still queued for the removed person, in the same transaction', async () => {
+    // A queued Welcome is pulled by its device whatever the roster says: left behind, it would let
+    // the removed person enter the epoch it was built for and read what members seal there.
+    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+
+    expect(txDeletes).toContainEqual({
+      entity: QueuedMessage,
+      where: { recipientId: 'bob', groupId: 'g-1', isWelcome: true },
+    });
+    expect(txDeletes).toContainEqual({
+      entity: DeviceGroupMembership,
+      where: { userId: 'bob', groupId: 'g-1' },
+    });
   });
 
   it("a removal by ANOTHER member names the removed person's devices as parting, before their rows go", async () => {
@@ -415,10 +497,10 @@ describe('MembersController - membership intervals and the exclusions read', () 
       'bob:b2',
       'alice'
     );
-    expect(order).toEqual(['parting-recorded', 'devices-deleted', 'interval-closed']);
+    expect(order).toEqual(['parting-recorded', 'interval-closed', 'devices-deleted']);
   });
 
-  it('a crash after the device rows went still leaves the entry - a retry could not re-derive it', async () => {
+  it('a crash rolls the whole removal back, and the entry written before it is still there', async () => {
     failTx = true;
 
     await expect(controller.removeGroupMember('g-1', 'bob', 'alice', undefined)).rejects.toThrow(
@@ -431,11 +513,12 @@ describe('MembersController - membership intervals and the exclusions read', () 
       'bob:b2',
       'alice'
     );
-    // The retry finds no device rows to derive an entry from - which is why it was written first.
-    redis.hset.mockClear();
+    // The device rows went in the same transaction, so they are back, and a retry writes the same
+    // entry again - which is idempotent - before it removes them for good.
+    expect(deviceRows.filter((d) => d.userId === 'bob')).toHaveLength(2);
     failTx = false;
     await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
-    expect(redis.hset).not.toHaveBeenCalled();
+    expect(deviceRows.filter((d) => d.userId === 'bob')).toHaveLength(0);
   });
 
   it('a self-leave makes no commit, and names nobody as parting', async () => {

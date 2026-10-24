@@ -593,7 +593,8 @@ prose naming a mechanism that does not exist - which is the failure `CLAUDE.md` 
 decision was *"si les 4 raisons ne changent aucun comportement et que personne ne les lira jamais,
 on arrete de les porter"*, and both halves of that condition measured true.
 
-`shouldRotateGraineSession` now returns a boolean. The three triggers and what each one buys are
+`shouldRotateGraineSession` returned a boolean (replaced 2026-10-22 by `graineOutboundVerdict`,
+[graine-removal-tracker](graine-removal-tracker.md)). The three triggers and what each one buys are
 distinguished in
 [channel-encryption section 4.2](channel-encryption.md#42-rotation-does-not-delete-anything), where
 a human reads them and can act on them, and that page now also records what it would take to watch

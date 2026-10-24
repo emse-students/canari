@@ -363,6 +363,48 @@ describe('buildPreviewInnerHtml - what the on-screen sheet points its logos at',
   });
 });
 
+describe('buildPreviewInnerHtml - a logo URL is an attribute value and nothing more', () => {
+  // The mock above passes an absolute URL through untouched, so this proves the sheet ITSELF
+  // escapes what it interpolates, whatever the resolver lets by.
+  const odd = 'https://x.test/a.png" data-extra="1';
+
+  function render(events: AssociationCalendarFeedEvent[]): HTMLElement {
+    const host = document.createElement('div');
+    host.innerHTML = buildPreviewInnerHtml(events, 2026, 4, {
+      ...DEFAULT_EXPORT_OPTIONS,
+      bgDataUrl: null,
+    });
+    return host;
+  }
+
+  it('keeps a quote inside the single-logo src', () => {
+    const host = render([makeEvent({ associationLogoUrl: odd })]);
+    expect(host.querySelector('[data-extra]')).toBeNull();
+    expect(host.querySelector('img')?.getAttribute('src')).toBe(odd);
+  });
+
+  it('keeps a quote inside every band of the split watermark', () => {
+    const host = render([
+      makeEvent({
+        associationLogoUrl: odd,
+        coOwners: [
+          { associationId: 'assoc-2', name: 'Asso 2', slug: 'a2', color: null, logoUrl: odd },
+        ],
+      }),
+    ]);
+    expect(host.querySelector('[data-extra]')).toBeNull();
+    const srcs = Array.from(host.querySelectorAll('img')).map((i) => i.getAttribute('src'));
+    expect(srcs).toEqual([odd, odd]);
+  });
+
+  it('splitLogoWatermark escapes each src it is handed', () => {
+    const host = document.createElement('div');
+    host.innerHTML = splitLogoWatermark([odd, `${odd}<b>`], 40);
+    expect(host.querySelector('[data-extra]')).toBeNull();
+    expect(host.querySelector('b')).toBeNull();
+  });
+});
+
 describe('background vignette and blur', () => {
   const withBg = (extra: object) =>
     buildPreviewInnerHtml([], 2026, 4, {

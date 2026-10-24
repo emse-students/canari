@@ -1,26 +1,52 @@
 import { copyPublicShareLink } from '$lib/utils/copyShareLink';
 import { publicAppUrl } from '$lib/utils/publicAppUrl';
-import { canShareOut, shareTextOut } from '$lib/sharing/shareOut';
+import { shareTextOut } from '$lib/sharing/shareOut';
+import { landShareOn } from '$lib/sharing/shareLanding';
+import { incomingShare } from '$lib/stores/incomingShare.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
 import { Log } from '$lib/utils/Log';
 import { m } from '$lib/paraglide/messages';
 
 /**
- * HOW A POST IS SHARED: its public link, through the system share sheet on a phone, copied elsewhere.
- *
- * Two controls ask for it - the "Partager" row of a post's menu (`PostActionsMenu`) and the send
- * button of the CanaReels rail (`ReelActionRail`). On the phone apps the link goes to the OS sheet
- * (`sharing/shareOut.ts`, lot S3), and the menu keeps a "Copier le lien" row (`copyPostLink`). On
- * the web and the desktop app there is no native sheet, so sharing IS copying. Sending a post INTO
- * a conversation does not exist and is not this (docs/wiki/frontend/modules/reels.md, "The rail").
+ * HOW A POST IS SHARED: the three rows of its share sheet (`PostShareSheet`), opened by the
+ * "Partager" row of a post's menu (`PostActionsMenu`) and by the send button of the CanaReels rail
+ * (`ReelViewer`). Every row shares the SAME thing - the post's link, `/posts/<id>` on the public
+ * origin - and the link carries nothing but the id: a reader who may not see the post is refused by
+ * the page and by the in-app card alike. See `docs/wiki/frontend/sharing.md`, "A post or a reel,
+ * shared from its sheet".
  */
-export function sharePostLink(postId: string): void {
-  if (!canShareOut()) {
-    copyPostLink(postId);
+
+/** The one link every row shares. */
+export function postShareUrl(postId: string): string {
+  return publicAppUrl(`/posts/${postId}`);
+}
+
+/**
+ * Sends the post INTO a conversation: its link is offered to `conversationId` with the destination
+ * already picked, and that conversation opens with the link in its composer - the road a share from
+ * another app takes (`incomingShare`, `landShareOn`). The member writes a word if they like and
+ * sends with Send; nothing is sent from here. In the conversation the link draws the in-app card
+ * (`LinkPreviewCard`), which each reader fetches under their OWN session.
+ */
+export function sendPostLinkInApp(postId: string, conversationId: string): void {
+  Log.i(
+    'sharePost',
+    `sending the link of ${postId.slice(0, 8)} into ${conversationId.slice(0, 16)}`
+  );
+  if (!incomingShare.offerTo(postShareUrl(postId), conversationId)) {
+    Log.i('sharePost', `the link of ${postId.slice(0, 8)} was not offered`);
     return;
   }
+  landShareOn(conversationId);
+}
+
+/**
+ * Opens the system share sheet on the post's link (lot S3, `sharing/shareOut.ts`). Only offered
+ * where there is one (`canShareOut`, the phone apps): the sheet's row is not drawn elsewhere.
+ */
+export function sharePostLinkOut(postId: string): void {
   Log.d('sharePost', `sharing the public link of ${postId.slice(0, 8)}`);
-  shareTextOut(publicAppUrl(`/posts/${postId}`)).catch((e: unknown) => {
+  shareTextOut(postShareUrl(postId)).catch((e: unknown) => {
     Log.d('sharePost', `the share sheet did not open: ${String(e)}`);
     showToast(m.share_out_failed(), 'error');
   });
@@ -28,9 +54,8 @@ export function sharePostLink(postId: string): void {
 
 /**
  * Copies the post's public link, and a toast says so. A TOAST, never a confirmation drawn in the
- * control: the menu closes on the same tap, and the viewer's rail has no room for a label. The
- * rejection is logged rather than swallowed: `writeText` refuses on an unfocused document and in any
- * non-secure context.
+ * control: the sheet closes on the same tap. The rejection is logged rather than swallowed:
+ * `writeText` refuses on an unfocused document and in any non-secure context.
  */
 export function copyPostLink(postId: string): void {
   Log.d('sharePost', `copying the public link of ${postId.slice(0, 8)}`);

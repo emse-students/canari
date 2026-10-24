@@ -228,6 +228,13 @@ Two consequences, both handled where the assumption lived:
   Over-delivering there costs the receiver disk and nothing else - and under-delivering would lose
   messages the joiner has no other way to obtain. It is bounded by the sender's own window anyway.
 
+  **What is actually enforced today (verified 2026-10-22): 90 days on EVERY platform.** The window
+  above is what a device CLAIMS (`historyWindow.ts:39-47`, `deviceWindowMs()`), but the only local
+  deletion is the garbage collector in `ChatBackgroundService.svelte:1789-1802`, which calls
+  `deleteOldMessages(90 days)` every 6 hours with no platform check, on IndexedDB
+  (`db/indexeddb.ts:924`) and on SQLite (`db/sqlite.ts:773`) alike. So a native device prunes at 90
+  days while claiming 5 years - an open decision, in [backlog](../backlog.md) (P2, local retention).
+
 ### Completeness is asked from the requester's side
 
 A device is complete when it holds everything that exists in
@@ -744,9 +751,14 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   pushed the past in that window, and the push says so once per session at error
   ([legacy-compatibility](../legacy-compatibility.md)).
 - **`for` answers only for a person with a device added since the caller arrived** (a device row in
-  the group created at or after the caller's own arrival, compared case-insensitively): a newcomer,
-  or a new device of a member of any age. The caller witnessed that add. For any other member it has
-  no entry, so a member cannot read the arrival of somebody whose devices all predate their own.
+  the group created at or after the start of the caller's CURRENT interval, its recorded admission
+  when earlier; `for` compared case-insensitively): a newcomer, or a new device of a member of any
+  age. The caller witnessed that add. For any other member it has no entry, so a member cannot read
+  the arrival of somebody whose devices all predate their own. **The current interval, not the first
+  arrival** (review of #2226): measured from the first, a member who left and came back could read
+  the arrival of a person added while they were out. One consequence is the rule's own and stays: a
+  member who adds a device makes their arrival readable to members who came later, since that add
+  is one they witnessed. Each answer is a time, never a message.
   **It was a row STATUS first (`pending`), and that starved the push it exists for**: the invitee
   promotes its row to `active` as soon as it processes its Welcome, while the push may still be
   re-reading its windows chunk by chunk, so the entry vanished mid-push and the push stopped.
@@ -763,8 +775,27 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   device rows, but 4 of the 24 late joiners held a device row up to 268 hours before their first
   interval. The likeliest reading is an offline invitee whose admitted row waited. Without the device
   row, their next device would have lost those 268 hours.
+- **The arrival survives a revoked device (migration `033`, review of #2226).** A device row is not
+  durable: revoking the device (`purgeDeviceFootprint`) deletes its rows, and for a member enrolled
+  late the first row was the only record of the real arrival, so it moved later and their next
+  device lost the span. `ensureGroupMember` now copies the person's earliest device row onto the
+  interval it opens, as `admittedAt`, when it is older than the enrolment. The first arrival is the
+  earliest of every interval's `joinedAt` and `admittedAt` and of the device rows still present (an
+  invitee admitted and not yet enrolled has only those). `admittedAt` never moves a gap: the
+  2026-10-14 window still ends at the re-enrolment's `joinedAt`. **Only a row younger than the
+  person's last `leftAt` counts** (review of #2254): a removal deletes the device rows and closes
+  the interval in two transactions, and a `registerDevice` in between can leave a row of the
+  previous membership, which would date the re-add from before the removal and reopen `for` for
+  people added while they were out. **A database clock running ahead of chat-delivery's** makes a
+  genuine earlier admission look no earlier than the enrolment, so nothing is recorded and the
+  arrival is the enrolment: history lost, nothing handed out. The migration backfills every open
+  interval from the device rows present under the same bound, which is what the reader derived from
+  them already, so it changes no answer. The deploy applies it, so the release carrying it is the
+  application. Two arrivals stay lost: one a purge erased before the migration ran, and one
+  whose device is revoked between its admission and the enrolment. Both cost that person history
+  and hand nobody anything.
 - **Two clocks, bounded.** An interval is stamped by chat-delivery's process clock, and a device row
-  by the database (the transaction's start). The admitting transaction commits before the commit
+  by the database (the transaction's start; `admittedAt` is that instant, copied). The admitting transaction commits before the commit
   that lets the device read anything is fanned out, so the database instant can only be early, by at
   most one transaction. Unifying them needs a column and a migration for that bound, and was declined.
 - **The person who arrived WITH the group has no span (2026-10-22).** Nothing precedes the creation,
@@ -774,29 +805,23 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   `CREATION_ARRIVAL_BOUND_MS` (1 s, either side) of the group row's `createdAt` is the creation, and
   gets its gaps only. Measured on the local estate: the creator's interval 4 ms after the group row,
   the next member 13.5 s. A joiner's span is unchanged.
-- `sendFullHistoryBundle` passes the invitee (`userIdOfLeaf(to)`) to `entitledHistorySelection`,
-  whose filter becomes the union of gaps plus that one person's withheld windows. This is safe as a
-  broadcast because every other member is entitled to a superset of what the invitee is. For a new
-  device of a continuous member, the span ends at that member's own arrival, so the restore is
-  untouched (`groupActions.historyEntitlement.test.ts`).
+- Against a server that predates addressed answers, `sendFullHistoryBundle` still passes the invitee
+  (`userIdOfLeaf(to)`) to `entitledHistorySelection`, whose filter is the union of gaps plus that one
+  person's withheld windows.
 - Receiver hygiene: `dropOwnExcludedMessages` reads this device's own `withheld` windows, so an honest
   newcomer drops what precedes its arrival from any bundle it overhears.
 
-**The residual of C, stated as the verdict asked:** a newcomer can still read pre-arrival messages
-from broadcast answers meant for others' new devices until A lands. Answers to a request (the diff
-`sendHistoryBundleForIds` and the scrollback `sendHistoryRangeBundle`) still filter on the union of
-gaps only, since they are broadcasts with no one person to filter for. An honest client drops what it
-overhears. A modified one keeps it.
+**Step A - every answer is addressed to the device that asked, and filtered for it (built
+2026-10-22).** The diff, the scrollback AND the push go to `recipientDevices = [to]` and are filtered
+on that reader's own `withheld` windows (`readerHistorySelection`), so an answer reaches only the device
+that asked, and that device is not held to the union of everyone's gaps. The design, its six rules, what it protects against (an honest server and
+an honest answerer, nothing more: addressing is a routing control and MLS still encrypts for the whole
+group) and what it does not close are on
+[history-answer-addressing](history-answer-addressing.md), the only copy. **Owed: the rig row
+GRP-ADDR-1** ([cross-client-testing](../cross-client-testing.md)).
 
-**Step A - DESIGN FIRST, reviewed before any code: answers addressed to the asking device.** The
-design is owed as its own page. It covers the equivocation threat of lifting the `recipientDevices`
-allowlist (`messaging.service.ts`, which accepts it on a key group only), the server marking
-addressed rows, the receiver refusing an addressed frame that is not a history control (at error),
-the split-view residual through bundle contents, and why sealing to an ephemeral X25519 key was not
-chosen.
-
-**What neither closes.** An older client keeps pushing its whole store at invitation until
-`minClientVersion` is a release carrying C, and that floor moves only once both stores serve the
+**What neither closes.** An older client keeps pushing and answering by broadcast until
+`minClientVersion` is a release carrying A, and that floor moves only once both stores serve the
 reader. The server cannot refuse such a frame, because it cannot read it. What a newcomer has already
 received cannot be taken back. Tracked in [backlog](../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not).
 

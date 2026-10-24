@@ -121,10 +121,15 @@ function centredWidthOf(classes: string): number | null {
 // The same spelling every other markup gate uses: `src` is three levels up from a file in
 // `lib/components/layout`, resolved from the module's own URL rather than from a cwd.
 const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+// THE TREE IS READ ONCE, HERE, AND NOT INSIDE A TEST. Reading every `.svelte` file takes ~0.7 s on
+// its own, and a test body is charged against vitest's 5 s timeout: under the full suite, with every
+// worker reading the disk at once, a body that walked the tree timed out while asserting nothing
+// wrong. Module scope is collection time, which no per-test timeout measures.
+const markup = allMarkup(src);
 
 describe('the page column', () => {
   it('is never written by hand: no markup centres itself at a page width', () => {
-    const offenders = allMarkup(src)
+    const offenders = markup
       .flatMap(({ file, body }) =>
         classAttributes(body).map((classes) => ({ file, classes, px: centredWidthOf(classes) }))
       )

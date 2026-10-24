@@ -53,6 +53,7 @@ import {
   roleGrantsRoleManagement,
   writePolicyAllows,
 } from './permissions';
+import { narrowAdmissionVoucher } from './admission-voucher';
 
 import {
   CreateChannelDto,
@@ -1056,12 +1057,21 @@ export class ChannelService implements OnApplicationBootstrap {
 
   /**
    * Joins the caller into the invite's community: adds a workspace member with the base role.
-   * The client fetches channel keys via the existing bootstrap once it loads the workspace.
+   * The client obtains its seeds from the distribution group and the members who answer, once it
+   * loads the workspace (the server holds no channel key).
+   *
+   * `admissionVoucher` is the proof the joiner built from the link's fragment (channel-encryption
+   * section 25): what lets a member hand them the community's past. It is stored on the membership
+   * row, and on the row a member ALREADY has when they follow a newer link - that is how somebody
+   * who joined through a link without a fragment is given a proof afterwards. A link without one
+   * still admits; it just gives no past.
    */
   async acceptWorkspaceInvite(
     token: string,
-    userId: string
+    userId: string,
+    rawVoucher?: unknown
   ): Promise<{ workspaceSlug: string; alreadyMember: boolean }> {
+    const admissionVoucher = narrowAdmissionVoucher(rawVoucher);
     const invite = await this.inviteRepo.findOne({ where: { token } });
     if (!invite || !this.inviteIsValid(invite)) {
       throw new NotFoundException('Invalid or expired invitation.');
@@ -1090,7 +1100,16 @@ export class ChannelService implements OnApplicationBootstrap {
     const existing = await this.memberRepo.findOne({
       where: { workspaceId: ws.id, userId },
     });
-    if (existing) return { workspaceSlug: ws.slug, alreadyMember: true };
+    if (existing) {
+      // The joiner's OWN proof, so a newer one replaces an older one: it is about nobody else.
+      if (admissionVoucher) {
+        await this.memberRepo.update({ id: existing.id }, { admissionVoucher });
+        this.logger.log(
+          `[INVITE] admission voucher stored for an existing member workspace=${ws.id} user=${userId.slice(0, 8)}`
+        );
+      }
+      return { workspaceSlug: ws.slug, alreadyMember: true };
+    }
 
     const roles = await this.roleRepo.find({ where: { workspaceId: ws.id } });
     const baseRole = this.baseMemberRole(roles);
@@ -1113,7 +1132,12 @@ export class ChannelService implements OnApplicationBootstrap {
       if (won.length === 0) return false;
       const members = tx.getRepository(ChannelMember);
       await members.save(
-        members.create({ workspaceId: ws.id, userId, roleIds: baseRole ? [baseRole.id] : [] })
+        members.create({
+          workspaceId: ws.id,
+          userId,
+          roleIds: baseRole ? [baseRole.id] : [],
+          admissionVoucher,
+        })
       );
       return true;
     });
@@ -1145,7 +1169,9 @@ export class ChannelService implements OnApplicationBootstrap {
         memberIds
       );
     }
-    this.logger.log(`[INVITE] accepted workspace=${ws.id} user=${userId.slice(0, 8)}`);
+    this.logger.log(
+      `[INVITE] accepted workspace=${ws.id} user=${userId.slice(0, 8)} voucher=${admissionVoucher ? 'yes' : 'no'}`
+    );
     return { workspaceSlug: ws.slug, alreadyMember: false };
   }
 
@@ -2675,6 +2701,7 @@ export class ChannelService implements OnApplicationBootstrap {
    * `historyVisibility` and answered by another member over the distribution group, never here.
    */
   async inviteToChannel(channelId: string, input: ChannelInviteDto) {
+    const admissionVoucher = narrowAdmissionVoucher(input.admissionVoucher);
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
@@ -2750,8 +2777,15 @@ export class ChannelService implements OnApplicationBootstrap {
         workspaceId: channel.workspaceId,
         userId: input.targetUserId,
         roleIds: grantedRole ? [grantedRole.id] : [],
+        // The inviting device's signed admission (channel-encryption section 25). Only on a row
+        // this call creates: an existing member's proof is theirs, and a salon invitation of a
+        // member already in is not an admission to the community.
+        admissionVoucher,
       });
       await this.memberRepo.save(targetMember);
+      this.logger.log(
+        `[INVITE] member added workspace=${channel.workspaceId} user=${input.targetUserId.slice(0, 8)} voucher=${admissionVoucher ? 'yes' : 'no'}`
+      );
     }
 
     if (isNewMember) {
@@ -3054,9 +3088,8 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /** Removes a user from a specific channel without removing them from the workspace.
-   *  For private channels, removes them from allowedUsers and rotates the key.
-   *  For public channels, only rotates the key so the removed user's cached epoch key
-   *  is invalidated (the user is still a workspace member and can re-join if invited again).
+   *  For a private channel, removes them from allowedUsers and cuts them off from the channel's key
+   *  distribution; a public channel has no per-user roster to edit (the user is still a workspace member and can re-join if invited again).
    *  Requires MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by
    *  `assertActorMayRemoveMember`. */
   async removeMemberFromChannel(channelId: string, targetUserId: string, actorUserId: string) {
@@ -3188,8 +3221,15 @@ export class ChannelService implements OnApplicationBootstrap {
    * ask for history, before any salon has been opened. Reaching for an arbitrary channel to get a
    * community's roster is the kind of indirection that breaks the first time the list is empty.
    */
+  /**
+   * The community's roster. Beside each member's role and arrival it carries the two facts a
+   * member's device needs to decide whether that member's admission is proven (channel-encryption
+   * section 25): the signed `admissionVoucher` stored with the membership, and whether they created
+   * the community - the one member nobody else admitted.
+   */
   async listWorkspaceMembers(workspaceId: string, actorUserId: string, withPresence = false) {
-    await this.assertWorkspaceMember(workspaceId, actorUserId);
+    const workspace = await this.assertWorkspaceMember(workspaceId, actorUserId);
+    const creator = String(workspace.createdBy ?? '').toLowerCase();
 
     const members = await this.memberRepo.find({ where: { workspaceId } });
     const roles = await this.roleRepo.find({ where: { workspaceId } });
@@ -3203,6 +3243,8 @@ export class ChannelService implements OnApplicationBootstrap {
         userId: m.userId,
         role: this.normalizeRoleLabelToCanonical(highestRole?.name),
         joinedAt: m.createdAt,
+        isCreator: creator !== '' && m.userId.toLowerCase() === creator,
+        admissionVoucher: m.admissionVoucher ?? null,
       };
     });
     return withPresence ? this.withPresence(rows) : rows;
@@ -3836,7 +3878,7 @@ export class ChannelService implements OnApplicationBootstrap {
    *  - `mentions` -> only if the member is in `input.mentionedUserIds`;
    *  - `all` (default) -> always.
    * The sender is always skipped, as are members who cannot access the channel. The server holds
-   * the channel key but never decrypts here: the ciphertext travels inline so the device decrypts
+   * no channel key (migration 041 dropped the server-side derivation) and never decrypts here: the ciphertext travels inline so the device decrypts
    * it locally (Google/FCM never sees the plaintext), mirroring the MLS DM push path.
    *
    * `mentioned` is computed per recipient and is the ONE fact only this side knows: the MLS path

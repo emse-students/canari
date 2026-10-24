@@ -50,6 +50,8 @@ describe('InternalController - the community distribution group', () => {
   };
   /** Every entity the delete route asked to purge, in the order it asked, `Group` excluded. */
   let purged: unknown[];
+  /** Every delete run inside a transaction, with what it was keyed on. */
+  let txDeletes: Array<{ entity: unknown; where: unknown }>;
   let groupMemberRepo: { save: jest.Mock };
   let deviceGroupRepo: { save: jest.Mock; upsert: jest.Mock; delete: jest.Mock };
   let queuedMessageRepo: { delete: jest.Mock };
@@ -66,6 +68,7 @@ describe('InternalController - the community distribution group', () => {
     process.env.INTERNAL_SECRET = SECRET;
 
     purged = [];
+    txDeletes = [];
     // The tombstone and the sweep of what the group owns share ONE transaction, so the fake runs the
     // callback with a manager that hands `Group` back to this very repo - which is what keeps the
     // assertions on `groupRepo.update` measuring the real write - and every other entity to a
@@ -74,7 +77,12 @@ describe('InternalController - the community distribution group', () => {
       getRepository: jest.fn((entity: unknown) => {
         if (entity === Group) return groupRepo;
         purged.push(entity);
-        return { delete: jest.fn().mockResolvedValue({ affected: 1 }) };
+        return {
+          delete: jest.fn((where: unknown) => {
+            txDeletes.push({ entity, where });
+            return Promise.resolve({ affected: 1 });
+          }),
+        };
       }),
     };
     groupRepo = {
@@ -518,12 +526,16 @@ describe('InternalController - the community distribution group', () => {
         SECRET
       );
 
-      expect(result).toEqual({ evicted: true, memberships: 2, queued: 5, routes: 2 });
-      expect(deviceGroupRepo.delete).toHaveBeenCalledWith({ groupId: 'g-1', userId: USER });
-      expect(queuedMessageRepo.delete).toHaveBeenCalledWith({
-        groupId: 'g-1',
-        recipientId: USER,
-      });
+      expect(result).toEqual({ evicted: true, memberships: 1, queued: 1, routes: 2 });
+      // The rows and the WHOLE queue of this group for them - Welcomes included - in ONE
+      // transaction (`endDeviceMemberships`): a Welcome left behind would let them back into the
+      // epoch it was built for.
+      expect(groupRepo.manager.transaction).toHaveBeenCalledTimes(1);
+      expect(txDeletes).toEqual([
+        { entity: DeviceGroupMembership, where: { userId: USER, groupId: 'g-1' } },
+        { entity: QueuedMessage, where: { recipientId: USER, groupId: 'g-1' } },
+      ]);
+      expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
       expect(redis.srem).toHaveBeenCalledWith(
         'group:members:g-1',
         `${USER}:web-1`,
@@ -554,7 +566,7 @@ describe('InternalController - the community distribution group', () => {
       await expect(
         controller.evictFromDistributionGroup('workspace', WORKSPACE, USER, SECRET)
       ).resolves.toEqual({ evicted: false, memberships: 0, queued: 0, routes: 0 });
-      expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
+      expect(txDeletes).toEqual([]);
     });
 
     it('refuses a call carrying the wrong internal secret', async () => {
@@ -563,7 +575,7 @@ describe('InternalController - the community distribution group', () => {
       await expect(
         controller.evictFromDistributionGroup('workspace', WORKSPACE, USER, 'not-the-secret')
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
+      expect(txDeletes).toEqual([]);
     });
   });
   describe('the scope, which decides which roster is served', () => {

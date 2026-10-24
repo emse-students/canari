@@ -47,6 +47,18 @@ export const GRAINE_ROTATE_AFTER_MESSAGES = 100;
 export const GRAINE_ROTATE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * The tighter caps of a session RE-DISTRIBUTED at least once, i.e. kept across an epoch move
+ * because nobody left (`docs/wiki/protocols/graine-removal-tracker.md`, the named residual).
+ *
+ * Rotating on every Add used to bound a stolen copy of a device's seeds by accident; reuse removes
+ * that, so these are the stated bound instead: a day, not a week. 50 is above the p99 of messages one
+ * sender writes in one salon in one day (38, production 2026-10-22), so the age cap is the one that
+ * normally fires. Counted from the MINT, never from the last re-distribution.
+ */
+export const GRAINE_REUSED_ROTATE_AFTER_MESSAGES = 50;
+export const GRAINE_REUSED_ROTATE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
  * How many sessions per channel the NATIVE mirror keeps, the durable store holding the rest.
  *
  * The mirror exists for exactly one job - decrypting an incoming push before any WebView runs - so
@@ -58,18 +70,67 @@ export const GRAINE_ROTATE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 export const GRAINE_NATIVE_MIRROR_SESSIONS_PER_CHANNEL = 20;
 
 /**
- * Ceiling on the seeds one history bundle may carry, and therefore on what a newcomer receives in
- * a single message.
+ * Ceiling on the seeds one ANSWER may carry, across all of its pages.
  *
  * Sized on 2026-08-17 for a one-year community with 30 active senders rotating weekly: ~1 500 seeds
- * at ~50 bytes each, about 80 KB. Both factors were wrong by 2026-10-21: a v2 seed is ~330 bytes on
- * the wire, so this cap is ~2.6 MB in one message, and adds rotate sessions, so the largest
- * community minted 458 seeds in 8 days (`docs/wiki/protocols/dm-vs-community-encryption.md`). It is
- * a REFUSAL rather than a silent truncation
- * - a bundle quietly cut short would read as "this is all the history there is", which is the exact
- * silence this protocol exists to remove.
+ * at ~50 bytes each, about 80 KB in one message. Both factors were wrong by 2026-10-21: a v2 seed is
+ * ~330 bytes on the wire and adds rotate sessions (`docs/wiki/protocols/dm-vs-community-encryption.md`).
+ * Since 2026-10-22 it no longer bounds a MESSAGE - {@link GRAINE_BUNDLE_PAGE_MAX_BYTES} does - only
+ * the work of one answer: ~2.6 MB in about eleven pages. Reaching it is a REFUSAL stated on the
+ * wire (`truncated`) rather than a silent cut - a bundle quietly cut short would read as "this is
+ * all the history there is", which is the exact silence this protocol exists to remove.
  */
 export const GRAINE_HISTORY_BUNDLE_MAX_SEEDS = 8000;
+
+/**
+ * Ceiling on the `page_count` of one answer that a RECEIVER believes - the most pages an honest
+ * answerer can write, derived rather than chosen.
+ *
+ * `pageGraineBundle` puts at least one entry (a seed or a declined session id) on every page, and an
+ * answer carries at most {@link GRAINE_HISTORY_BUNDLE_MAX_SEEDS} entries: a history answer at most
+ * that many seeds and no decline, a named request at most that many ids split between seeds and
+ * declines (`gatherNamedSessions` reads only the first {@link GRAINE_HISTORY_BUNDLE_MAX_SEEDS}). So no
+ * honest answer has more pages than that, and in practice it has about eleven.
+ *
+ * The count arrives as a `uint32` from ANY member of the key group, and the receiver walks and
+ * stores page numbers up to it (`pagedHistoryAnswer.ts`) - so a count above this is refused, never
+ * allocated by.
+ */
+export const GRAINE_BUNDLE_MAX_PAGES = GRAINE_HISTORY_BUNDLE_MAX_SEEDS;
+
+/**
+ * Ceiling on ONE bundle message, in bytes of the encoded `AppMessage` handed to MLS - so an answer
+ * larger than this is sent as several pages (`GraineBundleMsg.page_index` / `page_count`).
+ *
+ * A seed count could not bound a message once a seed was ~330 bytes and its identifiers free to
+ * grow. Every hop the frame crosses, read from code and config on 2026-10-22 (the frame travels as
+ * base64 of the MLS frame, which adds 165-170 bytes of framing to its plaintext, measured; no
+ * padding is configured):
+ *
+ * | Hop | Limit |
+ * | --- | --- |
+ * | `POST /api/mls/send`, nginx `client_max_body_size` | 100 MB |
+ * | chat-delivery `bodyParser.json` | 10 MB of JSON |
+ * | `queued_message.proto` (Postgres `varchar`, no length) | 1 GB |
+ * | Redis `chat:messages` publish to the gateway | 512 MB |
+ * | gateway -> device WebSocket (tungstenite defaults on both ends, no override) | 16 MiB frame, 64 MiB message |
+ * | **the pending-queue page, `PENDING_PAGE_MAX_BYTES`** | **1 MiB of base64** |
+ * | a push carrying the ciphertext inline | ~3.7 KB - never a bundle page; fetched by `queuedMessageId` |
+ *
+ * The binding hop is the pending page: it is the unit an offline device catches up in, sized to
+ * cross a poor mobile link, and a single row larger than it is still delivered, alone and over
+ * budget. A page is sized so that THREE fit one pending page, so a page never crowds a catch-up:
+ *
+ * - three base64 frames fit 1 048 576 characters when each is <= 349 525, i.e. each MLS frame is
+ *   <= 262 143 bytes (4 x ceil(262 143 / 3) = 349 524);
+ * - 255 KiB = 261 120 bytes of plaintext leaves 1 023 bytes for MLS framing, which measures 170
+ *   (`frontend/mls-core/tests/application_frame_overhead.rs` pins it): a full page is a 261 290-byte
+ *   frame, 348 388 base64 characters, three of them 1 045 164 - 3 412 under the pending page.
+ *
+ * 256 KiB did NOT fit three: its frame is 349 752 characters, three of them 680 over. Against the
+ * 10 MB body limit a page is 1/29. Today's largest community (~150 KB) still answers in one message.
+ */
+export const GRAINE_BUNDLE_PAGE_MAX_BYTES = 255 * 1024;
 
 /**
  * What a community lets a newcomer read. Per community, not per channel: a member belongs to the

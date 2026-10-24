@@ -21,6 +21,13 @@ pub struct AppState {
     /// Allows `ConnectionGuard::drop` to remove exactly one entry from `connected_users`
     /// without risking a race on `is_closed()`.
     pub next_conn_id: AtomicU64,
+    /// Per connection (`conn_id`): whether its socket declared
+    /// [`crate::addressing::ADDRESSED_HISTORY_CAPABILITY`]. Read by the pub/sub loop's edge filter
+    /// ([`crate::addressing::addressed_recipients`]); the cross-process fact is the sessions hash.
+    pub session_caps: Arc<Mutex<HashMap<u64, bool>>>,
+    /// This process's identity in the shared sessions hash, so two gateway processes - which both
+    /// number their connections from 0 - never write the same session field.
+    pub instance_id: String,
     /// HS256 secret used to validate the `canari_ws_token` JWT on upgrade.
     pub jwt_secret: String,
     /// Who may see whose presence: asked of chat-delivery and social-service on every
@@ -40,6 +47,8 @@ impl AppState {
             redis_client,
             connected_users: Arc::new(Mutex::new(HashMap::new())),
             next_conn_id: AtomicU64::new(0),
+            session_caps: Arc::new(Mutex::new(HashMap::new())),
+            instance_id: uuid::Uuid::new_v4().to_string(),
             jwt_secret,
             presence_audience,
         }
@@ -56,6 +65,7 @@ impl AppState {
     /// can still report `false` until the runtime drops its receiver, so the
     /// authoritative removal is by `conn_id`.
     pub fn remove_session(&self, conn_key: &str, conn_id: u64) -> bool {
+        self.session_caps.lock().unwrap().remove(&conn_id);
         let mut map = self.connected_users.lock().unwrap();
         let Some(senders) = map.get_mut(conn_key) else {
             return false;
@@ -69,21 +79,12 @@ impl AppState {
         true
     }
 
-    /// Answer the same question WITHOUT unregistering: does any live session other
-    /// than `conn_id` hold `conn_key` right now?
-    ///
-    /// The presence key `user:online:{userId}:{deviceId}` is per DEVICE, and two
-    /// tabs of one browser share a `deviceId`. A connection leaving may therefore
-    /// only delete it when it is the last one - which is the question this answers
-    /// for the explicit `{"type":"disconnect"}` frame, whose sender is still
-    /// registered at the moment it is handled.
-    pub fn has_other_sessions(&self, conn_key: &str, conn_id: u64) -> bool {
-        let map = self.connected_users.lock().unwrap();
-        map.get(conn_key).is_some_and(|senders| {
-            senders
-                .iter()
-                .any(|(id, s)| *id != conn_id && !s.is_closed())
-        })
+    /// Record what the socket `conn_id` declared on upgrade (`caps=`).
+    pub fn note_session_caps(&self, conn_id: u64, addressed_history: bool) {
+        self.session_caps
+            .lock()
+            .unwrap()
+            .insert(conn_id, addressed_history);
     }
 }
 
@@ -122,7 +123,6 @@ mod tests {
         let state = state();
         let _rx = register(&state, KEY, 1);
 
-        assert!(!state.has_other_sessions(KEY, 1));
         assert!(!state.remove_session(KEY, 1));
         assert!(!state.connected_users.lock().unwrap().contains_key(KEY));
     }
@@ -136,9 +136,7 @@ mod tests {
         let _leaving = register(&state, KEY, 1);
         let _staying = register(&state, KEY, 2);
 
-        assert!(state.has_other_sessions(KEY, 1));
         assert!(state.remove_session(KEY, 1));
-        assert!(!state.has_other_sessions(KEY, 2));
     }
 
     /// A sender whose receiver is gone is not a session: it must not hold the
@@ -149,7 +147,6 @@ mod tests {
         let _leaving = register(&state, KEY, 1);
         drop(register(&state, KEY, 2));
 
-        assert!(!state.has_other_sessions(KEY, 1));
         assert!(!state.remove_session(KEY, 1));
         assert!(!state.connected_users.lock().unwrap().contains_key(KEY));
     }
@@ -162,7 +159,6 @@ mod tests {
         let _here = register(&state, KEY, 1);
         let _elsewhere = register(&state, "user-1:device-2", 2);
 
-        assert!(!state.has_other_sessions(KEY, 1));
         assert!(!state.remove_session(KEY, 1));
         assert!(
             state
@@ -180,7 +176,6 @@ mod tests {
     fn removing_an_unknown_connection_is_not_an_error() {
         let state = state();
 
-        assert!(!state.has_other_sessions(KEY, 99));
         assert!(!state.remove_session(KEY, 99));
     }
 }

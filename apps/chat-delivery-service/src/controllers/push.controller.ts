@@ -7,6 +7,7 @@ import {
   Param,
   Query,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   UseGuards,
   Headers,
@@ -33,6 +34,7 @@ import {
   sanitizeQueryValue,
 } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
+import { parseSessionId } from '../utils/session-id';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
@@ -42,6 +44,30 @@ import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
  * text-only notification rather than being downloaded in a background handler.
  */
 const PUSH_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * What `POST mls/push/send-welcome-and-commit` answers, typed so a native caller branches on a
+ * TOKEN and never on prose.
+ *
+ * - `accepted` (HTTP 201): the commit passed the gate at `newEpoch - 1` and the members have it.
+ *   Its Welcome was stored in the same transaction, so an acceptance always has its Welcome. The
+ *   caller installs the state it staged, and only on this answer.
+ * - `rejected` (HTTP 409): nothing was recorded, fanned out or sent. `reason` is the gate's token -
+ *   `epoch_mismatch` (the caller's base is not the group's epoch, `currentEpoch` says which is),
+ *   `concurrent_commit` (another commit held the lock), `not_a_member` (the target was removed),
+ *   `welcome_target_unknown` / `welcome_target_not_member` (the Welcome's target is refused) -
+ *   and the caller discards what it staged.
+ */
+export type BackgroundWelcomeAnswer =
+  | { status: 'accepted'; newEpoch?: number }
+  | { status: 'rejected'; reason: string; currentEpoch?: number };
+
+/** A refusal of the background Welcome route: HTTP 409 carrying the typed body. */
+function backgroundWelcomeRefusal(
+  answer: Extract<BackgroundWelcomeAnswer, { status: 'rejected' }>
+): ConflictException {
+  return new ConflictException(answer);
+}
 
 /**
  * What a blind salon banner may say it lacked - the four terms of the phone's own test
@@ -287,6 +313,13 @@ export class PushController {
   /**
    * Register or refresh a push token for a device.
    * Upserts on (userId, deviceId) - one token per device per user.
+   *
+   * The row is BOUND TO THE SESSION that registered it: `X-Session-Id` is the `sid` claim of the
+   * caller's access token, set by nginx from core-service's verify (never by the client - nginx
+   * overwrites it on every authenticated location). Ending that session deletes this row and no
+   * other, so a re-sign-in on the same device, which rewrites the row with its own session, is never
+   * undone by the old session's end. Written on EVERY registration, null included: a row rewritten
+   * by a token without the claim must not keep naming a session that did not write it.
    */
   @UseGuards(ThrottlerGuard, HeaderAuthGuard)
   @Post('mls/push/register')
@@ -299,10 +332,12 @@ export class PushController {
       voipToken?: string;
       locale?: string;
     },
-    @Headers('x-user-id') userIdRaw: string
+    @Headers('x-user-id') userIdRaw: string,
+    @Headers('x-session-id') sessionIdRaw?: string
   ) {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const sessionId = parseSessionId(sessionIdRaw, 'X-Session-Id');
 
     if (typeof body.token !== 'string' || !body.token.trim()) {
       throw new BadRequestException('token is required');
@@ -342,6 +377,7 @@ export class PushController {
         token,
         platform,
         pushSecret,
+        sessionId,
         ...(voipToken ? { voipToken } : {}),
         ...(locale ? { locale } : {}),
       },
@@ -349,7 +385,7 @@ export class PushController {
     );
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform} ` +
-        `locale=${locale ?? 'unstated'}`
+        `locale=${locale ?? 'unstated'} session=${sessionId ? sessionId.slice(0, 8) : 'none'}`
     );
     // rawSecret returned ONCE - the client must persist it.
     return { status: 'registered', pushSecret: rawSecret };
@@ -727,18 +763,25 @@ export class PushController {
   }
 
   /**
-   * Sends a Welcome to the target device and broadcasts the accompanying commit
-   * to all current group members. Called by the background service after creating
-   * the Welcome package via Rust JNI (nativeCreateWelcomeBackground).
+   * Sends a Welcome to the target device once the accompanying commit has passed the gate.
+   * Called by the Android background service after staging the Welcome via Rust JNI
+   * (`nativePrepareWelcomeBackground`).
    *
-   * The commit is validated (epoch-gated) before any Welcome or broadcast, exactly like the
-   * foreground `/api/mls/commit` path: this keeps the server's `activeEpoch` in phase with the real
-   * MLS epoch so subsequent foreground commits are not rejected as `epoch_mismatch` (C6). A
-   * rejected commit yields neither a Welcome nor a broadcast.
+   * The commit is validated (epoch-gated) before any Welcome, exactly like the foreground
+   * `/api/mls/commit` path: this keeps the server's `activeEpoch` in phase with the real MLS epoch
+   * so subsequent foreground commits are not rejected as `epoch_mismatch` (C6). `validateCommit`
+   * records the commit, stores its Welcome in the same transaction, fans the commit out and
+   * delivers the Welcome from its stored row; this route only authenticates and answers.
    *
    * `baseEpoch` and `commitPayload` are BOTH required, and both are handed to `validateCommit` -
-   * the payload as `proto`, which is what makes the commit replayable. Passing one without the
-   * other is what broke this route: see the CHANGELOG entry for this fix.
+   * the payload as `proto`, which is what makes the commit replayable. `groupInfo`, the base of the
+   * epoch the commit creates, rides with it and is published in the same transaction (COMM-22).
+   *
+   * THE ANSWER SAYS WHAT HAPPENED, IN ITS STATUS AND ITS BODY ({@link BackgroundWelcomeAnswer}).
+   * `201 {status: 'accepted'}` is the one answer after which the phone installs the state it
+   * staged; every refusal is a `409 {status: 'rejected', reason}`. A refusal used to be a 201
+   * too, and the phone - which reads the status code - logged "Welcome sent" for a Welcome the
+   * server had refused (2026-10-22, docs/wiki/backlog.md).
    *
    * Auth: PushSecret (no JWT).
    */
@@ -756,6 +799,8 @@ export class PushController {
       ratchetTreePayload?: string;
       commitPayload: string;
       baseEpoch: number;
+      /** The external-join base of the epoch this commit creates (COMM-22), base64. */
+      groupInfo?: string;
     }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
@@ -775,8 +820,8 @@ export class PushController {
     //
     // `baseEpoch` was optional, and its absence meant "broadcast without validating" - the exact
     // hole `validateCommit`'s own `proto` guard exists to close, reached by the one door that
-    // skipped it. Both native callers send it whenever their JNI reports one, and the current JNI
-    // always does (`nativeCreateWelcomeBackground` puts `baseEpoch` in its result unconditionally),
+    // skipped it. The native caller sends it whenever its JNI reports one, and the current JNI
+    // always does (`nativePrepareWelcomeBackground` puts `baseEpoch` in its result unconditionally),
     // so the only client that can omit it now is one whose NATIVE code predates that. Such a client
     // is told it is too old instead of silently advancing an epoch nothing recorded.
     if (typeof body.baseEpoch !== 'number' || !Number.isFinite(body.baseEpoch)) {
@@ -803,15 +848,15 @@ export class PushController {
       this.logger.warn(
         `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} not in dm_group_members (removed) - re-add refused`
       );
-      return { status: 'rejected', reason: 'not_a_member' };
+      throw backgroundWelcomeRefusal({ status: 'rejected', reason: 'not_a_member' });
     }
 
     // The background commit advances the real epoch: validate it first (same as foreground path)
     // to keep activeEpoch in sync, otherwise the next foreground commit is wrongly rejected (C6).
-    // Validate BEFORE sending the Welcome: a rejection must neither broadcast the commit nor deliver
-    // a Welcome into a state other members won't adopt.
+    // A rejection neither broadcasts the commit nor stores a Welcome into a state other members
+    // won't adopt.
     //
-    // `proto` is the commit itself, and it is the same value broadcast below. Without it
+    // `proto` is the commit itself, the value recorded and fanned out. Without it
     // `validateCommit` refuses outright - a commit it cannot record may not move the counter,
     // because `IDX_mls_commit_log_group_epoch` is UNIQUE and no later call can refill a skipped
     // epoch.
@@ -826,45 +871,47 @@ export class PushController {
         proto: body.commitPayload,
         // The one device this re-add commit puts in the tree, recorded with the advance.
         admits: [{ userId: targetUserId, deviceId: targetDeviceId }],
+        // THE BASE OF THE EPOCH THIS COMMIT CREATES, published in the advance's own transaction
+        // exactly as the foreground's `submitCommit` does (COMM-22). Only the committer can export
+        // it; without it the published base stays one epoch behind and every external join is
+        // refused as stale until a member that holds the tree republishes it.
+        ...(typeof body.groupInfo === 'string' && body.groupInfo
+          ? { groupInfo: body.groupInfo }
+          : {}),
+        // ITS WELCOME, held to the Welcome's bar before the epoch moves and stored in the same
+        // transaction as the advance - so an accepted commit always has its Welcome.
+        welcome: {
+          userId: targetUserId,
+          deviceId: targetDeviceId,
+          payload: body.welcomePayload,
+          ...(typeof body.ratchetTreePayload === 'string'
+            ? { ratchetTree: body.ratchetTreePayload }
+            : {}),
+        },
       },
       userId
     );
     if (!validation.accepted) {
       this.logger.warn(
-        `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - neither Welcome nor broadcast`
+        `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - no Welcome, answered 409`
       );
-      return {
+      throw backgroundWelcomeRefusal({
         status: 'rejected',
-        reason: validation.reason,
+        reason: validation.reason ?? 'unspecified',
         currentEpoch: validation.currentEpoch,
-      };
+      });
     }
     this.logger.log(
       `[BG_WELCOME][${traceId}] commit accepted -> activeEpoch=${validation.newEpoch}`
     );
 
-    // Send Welcome to target device (null authUserId skips membership check)
-    await this.messagingService.sendWelcome(undefined, {
-      targetDeviceId,
-      targetUserId,
-      senderUserId: userId,
-      welcomePayload: body.welcomePayload,
-      ratchetTreePayload: body.ratchetTreePayload,
-      groupId,
-    });
-
-    // Broadcast commit to all existing group members (sender + target excluded)
-    await this.messagingService.sendMessage({
-      proto: body.commitPayload,
-      groupId,
-      senderId: userId,
-      senderDeviceId: deviceId,
-      isCommit: true,
-      excludeDeviceIds: [`${targetUserId}:${targetDeviceId}`],
-    });
-
-    this.logger.log(`[BG_WELCOME][${traceId}] DONE`);
-    return { status: 'done' };
+    // THE WELCOME WAS STORED WITH THE ADVANCE (`ValidateCommitBody.welcome`) and delivered from
+    // that row by `validateCommit`, which also fanned the commit out, excluding the admitted target.
+    // There is no second call left to fail after the epoch moved, so an acceptance always has its
+    // Welcome.
+    this.logger.log(`[BG_WELCOME][${traceId}] DONE Welcome stored with the commit`);
+    const answer: BackgroundWelcomeAnswer = { status: 'accepted', newEpoch: validation.newEpoch };
+    return answer;
   }
 
   /**

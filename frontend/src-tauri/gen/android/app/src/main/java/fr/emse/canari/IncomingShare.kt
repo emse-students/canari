@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import android.util.Log
+import androidx.core.content.pm.ShortcutManagerCompat
 import fr.emse.canari.share.ShareRules
 import fr.emse.canari.share.SharedFileName
 import org.json.JSONArray
@@ -38,6 +39,7 @@ object IncomingShare {
     private const val TAG = "IncomingShare"
     private const val PENDING_FILE = "pending_share.json"
     private const val INBOX_DIR = "shared_inbox"
+    private const val EPOCH_FILE = "share_epoch"
 
     /** Whether `intent` is a share this activity accepts. */
     fun isShare(intent: Intent?): Boolean =
@@ -50,15 +52,21 @@ object IncomingShare {
     fun capture(context: Context, intent: Intent, onReady: () -> Unit) {
         val text = sharedText(intent)
         val uris = sharedUris(intent)
-        Log.i(TAG, "share received: action=${intent.action} type=${intent.type} text=${text.length} chars, ${uris.size} stream(s)")
+        val target = suggestedTarget(intent)
+        Log.i(TAG, "share received: action=${intent.action} type=${intent.type} text=${text.length} chars, ${uris.size} stream(s), suggestion=${target != null}")
         if (text.isEmpty() && uris.isEmpty()) {
             Log.w(TAG, "share carried neither text nor a stream - ignored")
             return
         }
         val appContext = context.applicationContext
+        // READ WHEN THE CAPTURE STARTS, not when it ends: a copy still running when the member signs
+        // out belongs to the session that ended, and its manifest must say so (`share_epoch`,
+        // advanced by every sign-out - see `commands/handoff.rs`).
+        // Unreadable is read as 0, which is STALE: the file exists only once a sign-out advanced it.
+        val epoch = shareEpoch(appContext) ?: 0L
         Thread {
             try {
-                if (runCapture(appContext, text, uris, intent.type)) onReady()
+                if (runCapture(appContext, text, uris, intent.type, epoch, target)) onReady()
             } catch (e: Exception) {
                 Log.e(TAG, "share capture failed: ${e.message}", e)
             }
@@ -77,7 +85,7 @@ object IncomingShare {
      * its files, and a staging in progress is never cut.
      */
     @Synchronized
-    private fun runCapture(context: Context, text: String, uris: List<Uri>, intentType: String?): Boolean {
+    private fun runCapture(context: Context, text: String, uris: List<Uri>, intentType: String?, epoch: Long, target: String?): Boolean {
         val shareId = UUID.randomUUID().toString()
         val dir = File(inboxDir(context), shareId).also { it.mkdirs() }
         try {
@@ -107,16 +115,26 @@ object IncomingShare {
             }
             if (text.isEmpty() && files.length() == 0) {
                 deleteDir(dir, "share $shareId kept nothing")
-                return reportRefusals(context, refused)
+                return reportRefusals(context, refused, epoch)
             }
             val payload = JSONObject()
                 .put("id", shareId)
+                .put("epoch", epoch)
                 .put("text", text)
                 .put("files", files)
                 .put("refused", refused)
+            if (target != null) payload.put("target", target)
             // CLAIMED, NOT PEEKED AT: the older manifest is renamed away first, so the page cannot drain
             // it between this capture reading its id and deleting its copies.
             val replaced = claimPending(context)
+            // A NEWER SESSION'S SHARE IS NEVER REPLACED BY AN OLDER ONE: captures queue on this lock in
+            // no set order, so one started before a sign-out can run after one started since. The
+            // older is dropped - it could only ever be discarded as stale by the page.
+            if (replaced != null && replaced.optLong("epoch", 0) > epoch) {
+                writePending(context, replaced)
+                deleteDir(dir, "share $shareId from a signed-out session (epoch $epoch)")
+                return false
+            }
             if (!writePending(context, payload)) {
                 deleteDir(dir, "share $shareId not handed over")
                 if (replaced != null) writePending(context, replaced)
@@ -137,16 +155,47 @@ object IncomingShare {
 
     /**
      * A share that kept nothing still has refusals the member must hear about. They are added to the
-     * share still waiting, if there is one - which stays as it was - or handed over alone.
+     * share still waiting when both come from the SAME session (epoch) - which stays as it was - or
+     * handed over alone. A count never crosses a sign-out: it would tell one account that another
+     * shared something, or be discarded with a stale share and tell nobody.
      */
-    private fun reportRefusals(context: Context, refused: Int): Boolean {
+    private fun reportRefusals(context: Context, refused: Int, epoch: Long): Boolean {
         if (refused == 0) return false
         val waiting = claimPending(context)
-        val payload = waiting?.put("refused", waiting.optInt("refused", 0) + refused)
-            ?: JSONObject().put("id", UUID.randomUUID().toString()).put("text", "")
+        val waitingEpoch = waiting?.optLong("epoch", 0) ?: epoch
+        if (waiting != null && waitingEpoch > epoch) {
+            writePending(context, waiting)
+            Log.w(TAG, "$refused refusal(s) from a signed-out session (epoch $epoch) dropped")
+            return false
+        }
+        if (waiting != null && waitingEpoch < epoch) {
+            // The waiting share is from a signed-out session: stale, so it goes, and these stand alone.
+            waiting.optString("id").takeIf { it.isNotEmpty() }?.let { id ->
+                deleteDir(File(inboxDir(context), id), "stale share $id (epoch $waitingEpoch)")
+            }
+        }
+        val payload = waiting?.takeIf { waitingEpoch == epoch }
+            ?.put("refused", waiting.optInt("refused", 0) + refused)
+            ?: JSONObject().put("id", UUID.randomUUID().toString()).put("epoch", epoch).put("text", "")
                 .put("files", JSONArray()).put("refused", refused)
         Log.w(TAG, "a share kept nothing: $refused refusal(s) reported")
         return writePending(context, payload)
+    }
+
+    /**
+     * The share epoch the page's sign-outs advance (`share_epoch` in the Tauri data directory, written
+     * whole by a rename); 0 before the first sign-out, null when unreadable (said, at the level that
+     * accuses: the page's drain refuses every share until it reads again - `commands/handoff.rs`).
+     */
+    private fun shareEpoch(context: Context): Long? {
+        val file = File(MlsContextLoader.tauriDataDir(context), EPOCH_FILE)
+        if (!file.exists()) return 0
+        return try {
+            file.readText().trim().toLong()
+        } catch (e: Exception) {
+            Log.e(TAG, "the share epoch is unreadable: ${e.message}")
+            null
+        }
     }
 
     private fun pendingFile(context: Context) = File(MlsContextLoader.tauriDataDir(context), PENDING_FILE)
@@ -169,13 +218,27 @@ object IncomingShare {
         }
     }
 
-    /** The id of the manifest waiting to be drained, read without claiming it. */
-    private fun pendingShareId(context: Context): String? = try {
-        val file = pendingFile(context)
-        if (file.exists()) JSONObject(file.readText()).optString("id").takeIf { it.isNotEmpty() } else null
-    } catch (e: Exception) {
-        Log.w(TAG, "the waiting share manifest is unreadable: ${e.message}")
-        null
+    /**
+     * The id of the manifest waiting to be drained, if it is from the CURRENT session. One from a
+     * session that has since signed out (a copy that finished after the sign-out, with the page not
+     * mounted to drain it) is claimed and dropped here, so its copies go with the sweep instead of
+     * waiting, on disk, for the next account to drain them.
+     */
+    private fun currentPendingShareId(context: Context): String? {
+        val waiting = try {
+            val file = pendingFile(context)
+            if (file.exists()) JSONObject(file.readText()) else return null
+        } catch (e: Exception) {
+            Log.w(TAG, "the waiting share manifest is unreadable: ${e.message}")
+            return null
+        }
+        val current = shareEpoch(context)
+        if (current == null || waiting.optLong("epoch", 0) < current) {
+            claimPending(context)
+            Log.i(TAG, "a waiting share from a signed-out session dropped (epoch ${waiting.optLong("epoch", 0)} < $current)")
+            return null
+        }
+        return waiting.optString("id").takeIf { it.isNotEmpty() }
     }
 
     /**
@@ -204,7 +267,8 @@ object IncomingShare {
     }
 
     /**
-     * Deletes every copy in the inbox that the waiting manifest does not name - once per process,
+     * Deletes every copy in the inbox that the waiting manifest of the current session does not name
+     * (`currentPendingShareId`) - once per process,
      * from the first `onCreate`, before any capture.
      *
      * Then, and only then, nobody can be using them: no page is alive yet to stage a share or hold
@@ -218,11 +282,23 @@ object IncomingShare {
     fun sweepOrphansOnce(context: Context) {
         if (sweptThisProcess) return
         sweptThisProcess = true
-        val keep = pendingShareId(context)
+        val keep = currentPendingShareId(context)
         val orphans = inboxDir(context).listFiles().orEmpty().filter { it.name != keep }
         if (orphans.isEmpty()) return
         Log.i(TAG, "sweeping ${orphans.size} share(s) left by an earlier process")
         for (entry in orphans) deleteDir(entry, "orphan share")
+    }
+
+    /**
+     * The conversation suggestion the member picked in the share sheet (sharing lot S5), as the
+     * shortcut id the page published (`c:<conversation id>`), or null. Only a HINT: the page
+     * preselects it only if the signed-in account holds that conversation.
+     */
+    private fun suggestedTarget(intent: Intent): String? {
+        val id = intent.getStringExtra(ShortcutManagerCompat.EXTRA_SHORTCUT_ID) ?: return null
+        if (id.startsWith("c:") && id.length in 3..200) return id
+        Log.w(TAG, "a shortcut id not of the suggestion shape was ignored")
+        return null
     }
 
     private fun sharedText(intent: Intent): String {
