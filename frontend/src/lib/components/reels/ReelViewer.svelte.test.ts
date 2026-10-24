@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The reel viewer as a reader meets it: the touched reel first and playing, the next one preloaded
  * but silent, the next page asked for near the end, a step down and back, and the X closing it. The

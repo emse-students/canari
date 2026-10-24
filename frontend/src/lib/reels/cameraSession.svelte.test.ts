@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The camera session gives back what an acquisition RETURNS, even when the acquisition finishes after
  * the member has moved on (left the tab, switched lens, backgrounded the app). Pinned by ordering,
@@ -6,6 +7,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CameraSession } from './cameraSession.svelte';
 import { CameraAccessError, type CameraFacing } from './cameraAccess';
+import { giveMediaStreamGetTracks } from './mediaStreamTracks.test-helper';
+
+giveMediaStreamGetTracks();
 
 function fakeStream(torch = false) {
   const stop = vi.fn();
@@ -245,5 +249,199 @@ describe('CameraSession', () => {
 
     expect(session.microphone).toBe(false);
     expect(session.phase).toBe('live');
+  });
+});
+
+/** A lens track and a microphone track, real enough for `new MediaStream([...])`. */
+function lensTrack(caps: Record<string, unknown> = {}, settings: Record<string, unknown> = {}) {
+  return {
+    kind: 'video',
+    readyState: 'live',
+    stop: vi.fn(),
+    getCapabilities: () => caps,
+    getSettings: () => settings,
+    applyConstraints: vi.fn().mockResolvedValue(undefined),
+    addEventListener: vi.fn(),
+  };
+}
+function micTrack() {
+  return { kind: 'audio', readyState: 'live', stop: vi.fn(), addEventListener: vi.fn() };
+}
+function streamOf(...tracks: { kind: string }[]): MediaStream {
+  return new MediaStream(tracks as unknown as MediaStreamTrack[]);
+}
+
+describe('CameraSession - a lens flip DURING A TAKE (user, 2026-10-22)', () => {
+  async function liveTake() {
+    const lens = deferredOpener();
+    const front = lensTrack();
+    const mic = micTrack();
+    const session = new CameraSession(() => Promise.resolve(streamOf(front, mic)), lens.open);
+    await session.start();
+    return { session, lens, front, mic };
+  }
+
+  it('replaces the LENS only: the microphone is never stopped and joins the new stream', async () => {
+    const { session, lens, front, mic } = await liveTake();
+    const flipped = session.flipDuringTake();
+    // The old lens is given back BEFORE the other one is asked for: a phone opens one at a time.
+    expect(front.stop).toHaveBeenCalled();
+    expect(lens.calls[0].facing).toBe('environment');
+    // The phase stays live, so the shutter under the member's finger is never unmounted.
+    expect(session.phase).toBe('live');
+    expect(session.flipping).toBe(true);
+
+    const back = lensTrack();
+    lens.calls[0].resolve(streamOf(back));
+    await flipped;
+
+    expect(session.flipping).toBe(false);
+    expect(session.facing).toBe('environment');
+    expect(session.stream!.getVideoTracks()).toEqual([back]);
+    expect(session.stream!.getAudioTracks()).toEqual([mic]);
+    expect(mic.stop).not.toHaveBeenCalled();
+    expect(session.microphone).toBe(true);
+  });
+
+  it('a lens that will not open ends the session in its fault - the old lens is not reopened behind the member', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { session, lens, mic } = await liveTake();
+    const flipped = session.flipDuringTake();
+    lens.calls[0].reject(new CameraAccessError('busy', 'busy'));
+    await flipped;
+    expect(session.phase).toBe('error');
+    expect(session.fault).toBe('busy');
+    expect(session.flipping).toBe(false);
+    // The take is over with the session: its microphone goes back too.
+    expect(mic.stop).toHaveBeenCalled();
+    expect(lens.calls).toHaveLength(1);
+  });
+
+  it('a lens arriving after the session stopped is given back, with nothing installed', async () => {
+    const { session, lens, mic } = await liveTake();
+    const flipped = session.flipDuringTake();
+    session.stop();
+    expect(mic.stop).toHaveBeenCalled();
+    const late = lensTrack();
+    lens.calls[0].resolve(streamOf(late));
+    await flipped;
+    expect(late.stop).toHaveBeenCalled();
+    expect(session.stream).toBeNull();
+    expect(session.phase).toBe('stopped');
+  });
+
+  it('a second flip asked while one is in flight is ignored', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { session, lens } = await liveTake();
+    void session.flipDuringTake();
+    await session.flipDuringTake();
+    expect(lens.calls).toHaveLength(1);
+  });
+});
+
+describe('CameraSession - zoom (user, 2026-10-22)', () => {
+  it('a lens with no zoom capability zooms DIGITALLY; the level is clamped and rests at 1x on a flip', async () => {
+    const lens = deferredOpener();
+    const session = new CameraSession(
+      () => Promise.resolve(streamOf(lensTrack(), micTrack())),
+      lens.open
+    );
+    await session.start();
+    expect(session.zoomRange.mode).toBe('digital');
+    session.setZoom(3);
+    expect(session.zoom).toBe(3);
+    session.setZoom(9);
+    expect(session.zoom).toBe(5);
+
+    const flipped = session.flipDuringTake();
+    lens.calls[0].resolve(streamOf(lensTrack()));
+    await flipped;
+    expect(session.zoom).toBe(1);
+
+    session.setZoom(2);
+    session.resetZoom();
+    expect(session.zoom).toBe(1);
+  });
+
+  it('a lens WITH a zoom capability is zoomed through its track, one request at a time, the latest level winning', async () => {
+    const track = lensTrack({ zoom: { min: 1, max: 8 } }, { zoom: 1 });
+    let finish: () => void = () => {};
+    track.applyConstraints.mockImplementation(() => new Promise<void>((r) => (finish = r)));
+    const session = new CameraSession(() => Promise.resolve(streamOf(track)));
+    await session.start();
+    expect(session.zoomRange).toEqual({ mode: 'hardware', min: 1, max: 8 });
+
+    session.setZoom(2);
+    session.setZoom(3);
+    session.setZoom(4);
+    expect(track.applyConstraints).toHaveBeenCalledTimes(1);
+    expect(track.applyConstraints).toHaveBeenLastCalledWith({ advanced: [{ zoom: 2 }] });
+    finish();
+    await Promise.resolve();
+    await Promise.resolve();
+    // The two levels asked meanwhile collapse into the last one.
+    expect(track.applyConstraints).toHaveBeenCalledTimes(2);
+    expect(track.applyConstraints).toHaveBeenLastCalledWith({ advanced: [{ zoom: 4 }] });
+    expect(session.zoom).toBe(4);
+  });
+
+  it('a lens that refuses its own zoom says so once, and shows its real level', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const track = lensTrack({ zoom: { min: 1, max: 8 } }, { zoom: 1 });
+    track.applyConstraints.mockRejectedValue(new Error('OverconstrainedError'));
+    const session = new CameraSession(() => Promise.resolve(streamOf(track)));
+    await session.start();
+    session.setZoom(3);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(session.zoom).toBe(1);
+    session.setZoom(5);
+    expect(track.applyConstraints).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  it('a zoom request the FLIP cut short is no refusal: nothing is accused, and the new lens still zooms', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const front = lensTrack({ zoom: { min: 1, max: 8 } }, { zoom: 6 });
+    let refuse: (err: Error) => void = () => {};
+    front.applyConstraints.mockImplementation(
+      () => new Promise<void>((_resolve, reject) => (refuse = reject))
+    );
+    const lens = deferredOpener();
+    const session = new CameraSession(
+      () => Promise.resolve(streamOf(front, micTrack())),
+      lens.open
+    );
+    await session.start();
+    session.setZoom(3);
+    expect(front.applyConstraints).toHaveBeenCalledTimes(1);
+
+    const flipped = session.flipDuringTake();
+    const back = lensTrack({ zoom: { min: 1, max: 10 } }, { zoom: 1 });
+    lens.calls[0].resolve(streamOf(back));
+    await flipped;
+    // The stopped lens rejects the request it was still running.
+    refuse(new Error('the track ended'));
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+
+    expect(error).not.toHaveBeenCalled();
+    // The level is the new lens's resting one, never the dead track's 6x.
+    expect(session.zoom).toBe(1);
+    session.setZoom(4);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(back.applyConstraints).toHaveBeenLastCalledWith({ advanced: [{ zoom: 4 }] });
+    expect(session.zoom).toBe(4);
+  });
+
+  it('the mode is logged ONCE per session at info, never per gesture or per reopen', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const session = new CameraSession(() => Promise.resolve(streamOf(lensTrack())));
+    await session.start();
+    for (let level = 1; level <= 5; level += 0.5) session.setZoom(level);
+    await session.switchFacing();
+    await session.switchFacing();
+    const zoomLines = info.mock.calls.filter((c) => String(c[0]).includes('zoom is'));
+    expect(zoomLines).toHaveLength(1);
+    expect(String(zoomLines[0][0])).toContain('digital');
   });
 });

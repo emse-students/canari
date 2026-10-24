@@ -103,8 +103,10 @@ BLANK="LYDIA_PROVIDER_PRIVATE_TOKEN LYDIA_PROVIDER_TOKEN MICONNECT_EDITOR_TOKEN"
 # LYDIA_KEY_ENCRYPTION_SECRET is here and NOT in KEEP: kept, a laptop holding a production dump
 # could decrypt every association's Lydia Business key. Regenerated, the dumped keys simply do not
 # open locally (their callbacks are refused), which is the intended outcome.
+# LIVE_KEY_ENCRYPTION_SECRET for the same reason: kept, a dump's live keys would open its chat and
+# segments; regenerated, a dumped live answers 503 LIVE_KEY_UNAVAILABLE locally.
 REGENERATE="AGENDA_SIGNING_KEY CALL_ROOM_SECRET INTERNAL_SECRET INTERNAL_SHARED_SECRET JWT_SECRET
-LIVE_REPORT_SIGNING_KEY LYDIA_KEY_ENCRYPTION_SECRET"
+LIVE_KEY_ENCRYPTION_SECRET LIVE_REPORT_SIGNING_KEY LYDIA_KEY_ENCRYPTION_SECRET"
 
 # Decided by the local topology. The values are written below, not taken from the snapshot.
 LOCAL="ALLOW_ORIGIN DELIVERY_PORT DOMAIN FRONTEND_HOST_PORT FRONTEND_URL

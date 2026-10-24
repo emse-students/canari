@@ -67,7 +67,10 @@ fn vet_validated(
 ///
 /// `None` therefore means a group built without the extension - a broken invariant, not a state to
 /// degrade around: a commit submitted without its base strands every stateless joiner (COMM-22).
-fn successor_base(group_info: Option<GroupInfo>, group_id: &str) -> Result<Vec<u8>, MlsError> {
+pub(crate) fn successor_base(
+    group_info: Option<GroupInfo>,
+    group_id: &str,
+) -> Result<Vec<u8>, MlsError> {
     let group_info = group_info.ok_or_else(|| {
         log::error!(
             "[BASE] {group_id}: OpenMLS built no GroupInfo for the staged commit - the group lacks the ratchet-tree extension"
@@ -250,6 +253,9 @@ impl MlsManager {
         // C7-A: do NOT merge here. The commit is only *staged*. The caller validates it
         // server-side THEN calls merge_pending_commit_for (accepted) or clear_pending_commit_for
         // (rejected) - never merge-before-validation again, hence no local fork on rejection.
+        // A NEW STAGED COMMIT HAS NO SUBMISSION YET: one left from an earlier commit must never be
+        // read as this one's (`pending_submission.rs`).
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         let commit = commit_msg_out
             .tls_serialize_detached()
@@ -294,6 +300,9 @@ impl MlsManager {
 
         // C7-A : stage uniquement (cf. remove_members_for_users) - merge/clear par l'appelant
         // apres validation serveur.
+        // A NEW STAGED COMMIT HAS NO SUBMISSION YET: one left from an earlier commit must never be
+        // read as this one's (`pending_submission.rs`).
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         let commit = commit_msg_out
             .tls_serialize_detached()
@@ -385,6 +394,7 @@ impl MlsManager {
             "[TRUST] {group_id}: {identity} replaced in one commit ({} leaf/leaves out, one in)",
             leaf_indices.len()
         );
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         let commit = commit_msg_out
             .tls_serialize_detached()
@@ -558,6 +568,7 @@ impl MlsManager {
             );
             self.device_trust.seed_from_tree(&leaf_keys(group));
         }
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         Ok(())
     }
@@ -768,6 +779,9 @@ impl MlsManager {
 
         let base = successor_base(group_info, group_id)?;
 
+        // A NEW STAGED COMMIT HAS NO SUBMISSION YET: one left from an earlier commit must never be
+        // read as this one's (`pending_submission.rs`).
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         Ok((
             (commit_bytes, Some(welcome_bytes), added_indices, skipped),

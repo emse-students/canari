@@ -52,4 +52,42 @@ describe('InternalDistributionEntitlementController', () => {
     }
     expect(isDistributionGroupEntitled).not.toHaveBeenCalled();
   });
+
+  describe('departure-outcome', () => {
+    const GROUP = '11111111-2222-4333-8444-555555555555';
+    const decideDistributionDeparture = jest.fn();
+    const outcomes = new InternalDistributionEntitlementController({
+      decideDistributionDeparture,
+    } as unknown as ChannelService);
+
+    beforeEach(() => decideDistributionDeparture.mockReset().mockResolvedValue('cancelled'));
+
+    it('answers the outcome the service decides, for the person exactly as named', async () => {
+      await expect(
+        outcomes.departureOutcome('shared-secret', { groupId: GROUP, userId: 'u-1', departure: 3 })
+      ).resolves.toEqual({ outcome: 'cancelled' });
+      expect(decideDistributionDeparture).toHaveBeenCalledWith(GROUP, 'u-1', 3);
+    });
+
+    it('refuses a caller without the internal secret before deciding anything', async () => {
+      await expect(
+        outcomes.departureOutcome('wrong', { groupId: GROUP, userId: 'u-1', departure: 3 })
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(decideDistributionDeparture).not.toHaveBeenCalled();
+    });
+
+    it('refuses a malformed question rather than deciding it', async () => {
+      for (const bad of [
+        { groupId: 'not-a-uuid', userId: 'u-1', departure: 3 },
+        { groupId: GROUP, userId: '', departure: 3 },
+        { groupId: GROUP, userId: 'u-1', departure: 0 },
+        { groupId: GROUP, userId: 'u-1', departure: '3' },
+      ]) {
+        await expect(outcomes.departureOutcome('shared-secret', bad)).rejects.toBeInstanceOf(
+          BadRequestException
+        );
+      }
+      expect(decideDistributionDeparture).not.toHaveBeenCalled();
+    });
+  });
 });

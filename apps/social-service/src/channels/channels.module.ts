@@ -11,10 +11,12 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { ChannelMessageFanout } from './entities/channel-message-fanout.entity';
 import { Workspace } from './entities/workspace.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
+import { DistributionDeparture } from './entities/distribution-departure.entity';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
+      DistributionDeparture,
       Workspace,
       Channel,
       ChannelRole,

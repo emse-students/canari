@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A PARRAINAGE LIST MAY REPEAT A NAME, AND A REPEATED NAME MUST NOT CRASH THE PROFILE PAGE.
  *

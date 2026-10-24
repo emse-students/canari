@@ -12,6 +12,9 @@ pub mod keystore;
 pub mod logging;
 pub mod members;
 pub mod messaging;
+pub mod owed_welcome;
+pub mod pending_submission;
+pub mod self_update;
 pub mod state;
 pub mod state_blob;
 pub mod welcome;
@@ -20,6 +23,7 @@ pub mod welcome;
 pub use device_trust::{DeviceEvent, LeafTrust};
 pub use graine_run::{CommitSummary, GraineRun, GraineRunReading};
 pub use messaging::IncomingApplication;
+pub use self_update::StagedSelfUpdateResult;
 pub use state::DatedKeyPackage;
 pub use state::MlsManager;
 pub use state::PersistedState;
@@ -212,6 +216,26 @@ pub enum DecryptErrorKind {
 }
 
 impl MlsError {
+    /// The CODE of a state-load failure that is a verdict ABOUT THE BYTES - `STATE_ALTERED`,
+    /// `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH` - or `None` for every other
+    /// variant (an engine fault, a codec error, anything this reader cannot vouch for).
+    ///
+    /// Decided HERE, on the variant, so no caller has to recognise a verdict by reading prose: the
+    /// web asks it of this reader when WebCrypto refused a v2 blob (`state_blob_verdict` in
+    /// `mls-wasm`), and an answer that is not one of these four must stay "unreadable right now"
+    /// rather than acquire someone else's recovery. Each code is the exact prefix the variant's
+    /// `Display` writes, which is what the Tauri commands surface (`e.to_string()`), so the two
+    /// boundaries name a verdict with the same word - pinned by `state_load_failure_is_typed.rs`.
+    pub fn state_verdict_code(&self) -> Option<&'static str> {
+        match self {
+            MlsError::StateAltered(_) => Some("STATE_ALTERED"),
+            MlsError::StateSealedUnderAnotherKey(_) => Some("STATE_KEY_MISMATCH"),
+            MlsError::StateUndecryptable(_) => Some("STATE_UNDECRYPTABLE"),
+            MlsError::StateIdentityMismatch(_) => Some("IDENTITY_MISMATCH"),
+            _ => None,
+        }
+    }
+
     /// Classifies an incoming decryption error from its variant / its OpenMLS message.
     /// Centralizes the substring matching previously duplicated in `src-tauri`. [[S5]]
     pub fn decrypt_kind(&self) -> DecryptErrorKind {

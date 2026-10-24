@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /** The backdrop's blur: one read of the media, then canvas-to-canvas doublings into the target. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {

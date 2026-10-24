@@ -12,6 +12,7 @@ Handles the full OIDC login flow via Authentik:
 - **Refresh rotation**: `POST /api/auth/refresh` — rotates the session's `jti`, issues a new access token, and revokes the session on a replayed token.
 - **Logout**: `POST /api/auth/logout` — deletes the session row, then clears the refresh cookie.
 - **Session management**: `GET /api/auth/sessions`, `DELETE /api/auth/sessions` (all but the current one), `DELETE /api/auth/sessions/:id`.
+- **Account restore (Android)**: `POST /api/auth/restore/{registration,assertion}[/options]` — a WebAuthn restore key bound to the session that registered it; a verified restore moves that session to the new phone ([account-restore](../../docs/wiki/account-restore.md)).
 - **Nginx verification**: `GET /api/auth/verify` — validates the JWT Bearer token for Nginx `auth_request`. Injects `X-User-Id`, `X-Logged-In`, `X-Global-Admin` headers on success.
 
 **Token model**:
@@ -86,6 +87,8 @@ Main tables:
 |---|---|
 | `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `admin`, `notesCiphertext`, `notesKey` |
 | `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp` |
+| `restore_credentials` | `id`, `userId` (FK CASCADE), `sessionId` (UNIQUE, FK `auth_sessions` CASCADE), `publicKey`, `counter`, `cloudBackup`, `createdAt` |
+| `restore_challenges_spent` | `nonce`, `expiresAt` |
 | `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion` |
 
 Migrations are numbered `.sql` files in `src/migrations/`, replayed by the CD workflow against
@@ -112,6 +115,7 @@ Requires a running PostgreSQL instance, Authentik OIDC provider, and Lydia (opti
 | `AUTHENTIK_ISSUER` | yes | Authentik issuer URL |
 | `FRONTEND_URL` | yes | OIDC redirect URI base |
 | `INTERNAL_SECRET` | yes | Shared secret for service-to-service calls |
+| `ANDROID_APP_LINK_SHA256` | no | APK signing-certificate fingerprint(s) for the restore key's origin; empty, the restore routes answer 503 |
 
 ## See also
 

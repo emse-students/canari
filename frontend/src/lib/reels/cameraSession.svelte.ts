@@ -18,6 +18,7 @@
 
 import {
   CameraAccessError,
+  openPhotoCamera,
   openReelCamera,
   releaseCamera,
   setTorch,
@@ -25,6 +26,14 @@ import {
   type CameraFacing,
   type CameraFault,
 } from './cameraAccess';
+import {
+  DIGITAL_ZOOM_RANGE,
+  clampZoom,
+  restingZoom,
+  zoomRangeFor,
+  type ZoomMode,
+  type ZoomRange,
+} from './cameraZoom';
 
 /** Where the preview stands. */
 export type CameraPhase = 'starting' | 'live' | 'error' | 'stopped';
@@ -47,6 +56,26 @@ export class CameraSession {
 
   /** The open stream carries a LIVE microphone: false with none, or once its track ended. */
   microphone = $state(false);
+
+  /**
+   * A lens flip DURING A TAKE is in flight ({@link flipDuringTake}): the old lens is stopped and the
+   * new one not yet in hand. The phase stays `live` - the shutter under the member's finger must not
+   * unmount - and the take holds its last frame meanwhile.
+   */
+  flipping = $state(false);
+
+  /** How the open lens zooms, read from its track (`cameraZoom.ts`). */
+  zoomRange = $state.raw<ZoomRange>(DIGITAL_ZOOM_RANGE);
+  /** The zoom level now: 1x on every new lens, moved only by {@link setZoom}. */
+  zoom = $state(1);
+  /** The zoom modes already logged this session: the mode is said once, never per gesture. */
+  readonly #zoomModesLogged: Partial<Record<ZoomMode, true>> = {};
+  /** The hardware level asked for and not yet applied; one `applyConstraints` is in flight at most. */
+  #zoomWanted: number | null = null;
+  #zoomApplying = false;
+  /** The open lens refused its own `zoom` capability once: its zoom stays where it is (logged). */
+  #zoomRefused = false;
+
   /** Removes the `ended` listeners of the tracks in hand; replaced at each open, run at each release. */
   #trackListeners: AbortController | null = null;
 
@@ -58,9 +87,12 @@ export class CameraSession {
    */
   #suspended = false;
   readonly #open: CameraOpener;
+  /** Opens a LENS ALONE, no microphone: a flip during a take keeps the take's microphone. */
+  readonly #openLens: CameraOpener;
 
-  constructor(open: CameraOpener = openReelCamera) {
+  constructor(open: CameraOpener = openReelCamera, openLens: CameraOpener = openPhotoCamera) {
     this.#open = open;
+    this.#openLens = openLens;
   }
 
   /** Opens `facing` (the current lens by default), releasing whatever was open first. */
@@ -91,41 +123,7 @@ export class CameraSession {
         return;
       }
       this.stream = stream;
-      const lens = stream.getVideoTracks()[0];
-      this.torchAvailable = torchSupported(lens);
-      const listening = new AbortController();
-      this.#trackListeners = listening;
-      // THE OS CAN TAKE THE LENS BACK under a live preview - another app opening the camera, the
-      // permission revoked in the settings. The track then ENDS, and a session still saying `live`
-      // would draw a frozen frame with an armed shutter. The end is the fact; it is read here. It
-      // does not say WHICH of the two took it, so the fault says only that the camera was
-      // interrupted - never "busy", which would be a guess.
-      lens?.addEventListener?.(
-        'ended',
-        () => {
-          if (generation !== this.#generation) return;
-          console.warn(`[camera-session] #${generation} the lens ended under a live preview`);
-          ++this.#generation;
-          this.#releaseCurrent();
-          this.fault = 'interrupted';
-          this.phase = 'error';
-        },
-        { signal: listening.signal }
-      );
-      // The microphone can end the same way while the lens stays: the session then films no more.
-      const live = stream.getAudioTracks().filter((t) => t.readyState !== 'ended');
-      this.microphone = live.length > 0;
-      for (const track of live) {
-        track.addEventListener?.(
-          'ended',
-          () => {
-            if (generation !== this.#generation) return;
-            console.warn(`[camera-session] #${generation} the microphone ended - photos only`);
-            this.microphone = false;
-          },
-          { signal: listening.signal }
-        );
-      }
+      this.#install(stream, generation);
       this.phase = 'live';
     } catch (err) {
       if (generation !== this.#generation) return;
@@ -151,11 +149,194 @@ export class CameraSession {
     }
   }
 
-  /** The other lens. The recorder never calls this while it records: a track cannot be swapped mid-file. */
+  /** The other lens, outside a take: everything is reopened ({@link start}). A take uses {@link flipDuringTake}. */
   switchFacing(): Promise<void> {
-    const next: CameraFacing = this.facing === 'environment' ? 'user' : 'environment';
+    const next = otherFacing(this.facing);
     console.debug(`[camera-session] switch to ${next}`);
     return this.start(next);
+  }
+
+  /**
+   * The other lens DURING A TAKE (user, 2026-10-22: a double tap flips the lens while filming).
+   *
+   * ONLY THE LENS IS REPLACED. The microphone tracks in hand are KEPT - never stopped, never asked
+   * again - so the recorder, which records them and a canvas track (`FramedStream`), sees no change
+   * in its track set and its sound runs on uninterrupted. The old lens is stopped BEFORE the new one
+   * is asked for: a phone opens one camera at a time. The new stream is the new lens plus the kept
+   * microphone. The phase stays `live` throughout ({@link flipping} says the lens is missing), so the
+   * shutter held under the member's finger is never unmounted.
+   *
+   * A NEW LENS THAT CANNOT BE OPENED ENDS THE SESSION as any refused open does (`error`, its fault):
+   * the take has lost its picture and its owner ends it (`ReelCapture`). The old lens is not reopened
+   * behind the member's back.
+   */
+  async flipDuringTake(): Promise<void> {
+    const current = this.stream;
+    if (this.phase !== 'live' || !current || this.flipping) {
+      console.warn(
+        `[camera-session] a flip during a take was asked in ${this.phase}${this.flipping ? ' (already flipping)' : ''} - ignored`
+      );
+      return;
+    }
+    const next = otherFacing(this.facing);
+    const audio = current.getAudioTracks().filter((t) => t.readyState !== 'ended');
+    const generation = ++this.#generation;
+    console.debug(
+      `[camera-session] flip to ${next} during a take, keeping ${audio.length} microphone track(s) (#${generation})`
+    );
+    this.#trackListeners?.abort();
+    this.#trackListeners = null;
+    for (const track of current.getVideoTracks()) track.stop();
+    this.flipping = true;
+    this.facing = next;
+    this.torchOn = false;
+    this.torchAvailable = false;
+    try {
+      const lens = await this.#openLens(next);
+      if (generation !== this.#generation) {
+        console.debug(`[camera-session] #${generation} lens came back after the session moved on`);
+        releaseCamera(lens);
+        return;
+      }
+      const stream = new MediaStream([...lens.getVideoTracks(), ...audio]);
+      this.stream = stream;
+      this.flipping = false;
+      this.#install(stream, generation);
+    } catch (err) {
+      if (generation !== this.#generation) return;
+      const fault = err instanceof CameraAccessError ? err.fault : 'unavailable';
+      console.error(
+        `[camera-session] #${generation} the other lens did not open during a take (${fault})`,
+        err
+      );
+      ++this.#generation;
+      this.#releaseCurrent();
+      this.fault = fault;
+      this.phase = 'error';
+    }
+  }
+
+  /**
+   * Moves the zoom to `level`, clamped to the lens's range. A HARDWARE lens is asked through its track
+   * (one request in flight, the latest level wins, so a drag never queues a backlog); a DIGITAL lens
+   * only changes {@link zoom}, which the preview and the captures read.
+   */
+  setZoom(level: number): void {
+    if (this.#zoomRefused) return;
+    const next = clampZoom(level, this.zoomRange);
+    if (next === this.zoom) return;
+    this.zoom = next;
+    if (this.zoomRange.mode !== 'hardware') return;
+    this.#zoomWanted = next;
+    if (!this.#zoomApplying) void this.#applyHardwareZoom();
+  }
+
+  /** Back to 1x (a new take). */
+  resetZoom(): void {
+    this.setZoom(restingZoom(this.zoomRange));
+  }
+
+  async #applyHardwareZoom(): Promise<void> {
+    this.#zoomApplying = true;
+    try {
+      while (this.#zoomWanted !== null) {
+        const level = this.#zoomWanted;
+        this.#zoomWanted = null;
+        const track = this.stream?.getVideoTracks()[0];
+        if (!track || this.flipping) return;
+        const generation = this.#generation;
+        try {
+          await track.applyConstraints({ advanced: [{ zoom: level } as MediaTrackConstraintSet] });
+        } catch (err) {
+          // A request still running when a flip, a reopen or a stop took its lens away is rejected
+          // by a track that is GONE: that is no refusal of the lens now in hand, so nothing is
+          // accused or changed, and a level the new lens asked for meanwhile is still applied.
+          if (generation !== this.#generation || this.flipping) {
+            console.debug(
+              `[camera-session] a zoom request of #${generation} ended with its lens (now #${this.#generation})`
+            );
+            continue;
+          }
+          // The track listed a zoom it then refused: said once for this lens, and its zoom stays put.
+          console.error('[camera-session] the lens refused its own zoom capability', err);
+          this.#zoomRefused = true;
+          this.#zoomWanted = null;
+          // The level shown is the track's own, never the one it refused.
+          const actual = (track.getSettings?.() as { zoom?: number } | undefined)?.zoom;
+          this.zoom = actual ?? restingZoom(this.zoomRange);
+          return;
+        }
+      }
+    } finally {
+      this.#zoomApplying = false;
+    }
+  }
+
+  /**
+   * Takes `stream` as the session's: the torch and the zoom read from its lens, the zoom back to 1x,
+   * and the `ended` listeners of its tracks. Shared by an open and a flip during a take.
+   */
+  #install(stream: MediaStream, generation: number): void {
+    const lens = stream.getVideoTracks()[0];
+    this.torchAvailable = torchSupported(lens);
+    this.#installZoom(lens);
+    const listening = new AbortController();
+    this.#trackListeners = listening;
+    // THE OS CAN TAKE THE LENS BACK under a live preview - another app opening the camera, the
+    // permission revoked in the settings. The track then ENDS, and a session still saying `live`
+    // would draw a frozen frame with an armed shutter. The end is the fact; it is read here. It
+    // does not say WHICH of the two took it, so the fault says only that the camera was
+    // interrupted - never "busy", which would be a guess.
+    lens?.addEventListener?.(
+      'ended',
+      () => {
+        if (generation !== this.#generation) return;
+        console.warn(`[camera-session] #${generation} the lens ended under a live preview`);
+        ++this.#generation;
+        this.#releaseCurrent();
+        this.fault = 'interrupted';
+        this.phase = 'error';
+      },
+      { signal: listening.signal }
+    );
+    // The microphone can end the same way while the lens stays: the session then films no more.
+    const live = stream.getAudioTracks().filter((t) => t.readyState !== 'ended');
+    this.microphone = live.length > 0;
+    for (const track of live) {
+      track.addEventListener?.(
+        'ended',
+        () => {
+          if (generation !== this.#generation) return;
+          console.warn(`[camera-session] #${generation} the microphone ended - photos only`);
+          this.microphone = false;
+        },
+        { signal: listening.signal }
+      );
+    }
+  }
+
+  /**
+   * Reads the new lens's zoom and rests it at 1x. The MODE is logged once per session and mode at
+   * info - it is a fact of the device worth one line, never one per gesture.
+   */
+  #installZoom(lens: MediaStreamTrack | undefined): void {
+    const range = zoomRangeFor(lens);
+    this.zoomRange = range;
+    this.#zoomWanted = null;
+    this.#zoomRefused = false;
+    if (!this.#zoomModesLogged[range.mode]) {
+      this.#zoomModesLogged[range.mode] = true;
+      console.info(
+        `[camera-session] zoom is ${range.mode} on the ${this.facing} lens (${range.min}x-${range.max}x)`
+      );
+    }
+    const rest = restingZoom(range);
+    this.zoom = rest;
+    const current = (lens?.getSettings?.() as { zoom?: number } | undefined)?.zoom;
+    if (range.mode === 'hardware' && current !== undefined && current !== rest) {
+      this.#zoomWanted = rest;
+      if (!this.#zoomApplying) void this.#applyHardwareZoom();
+    }
   }
 
   /**
@@ -231,5 +412,13 @@ export class CameraSession {
     this.microphone = false;
     this.torchOn = false;
     this.torchAvailable = false;
+    this.flipping = false;
+    this.#zoomWanted = null;
+    this.zoom = restingZoom(this.zoomRange);
   }
+}
+
+/** The lens on the other side of the phone. */
+function otherFacing(facing: CameraFacing): CameraFacing {
+  return facing === 'environment' ? 'user' : 'environment';
 }

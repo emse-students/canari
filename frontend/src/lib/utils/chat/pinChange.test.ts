@@ -42,6 +42,7 @@ const {
   DeviceKeyMismatchError,
   KeyChangeInterruptedError,
   LocalStateUnopenableError,
+  LocalStateUnreadableNowError,
   dropStoredFeedPages,
   moveSealedStoresOnly,
   performPinChange,
@@ -401,6 +402,27 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
       await everyRowUnder(s.raw, OLD);
     }
   );
+
+  it('a state unreadable RIGHT NOW is neither "old PIN incorrect" nor "damaged, reset"', async () => {
+    // A transient WebCrypto fault used to land in LocalStateUnopenableError, whose message sends the
+    // user to a destructive reset of a state nothing showed to be broken.
+    const { OLD, NEW, WRONG } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-unreadable-now', s.gated);
+    const mls = fakeMls([], WRONG, 'unreadable_now');
+
+    const failure = await performPinChange(
+      options('u-unreadable-now', mls, new Uint8Array([1])),
+      OLD,
+      NEW
+    ).catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(LocalStateUnreadableNowError);
+    expect(failure).not.toBeInstanceOf(LocalStateUnopenableError);
+    expect(failure).not.toBeInstanceOf(DeviceKeyMismatchError);
+    expect(mls.pointUnattendedUnlockAt).not.toHaveBeenCalled();
+    await everyRowUnder(s.raw, OLD);
+  });
 
   it('a state that OPENED but could not be made ready moves nothing, and keeps its type', async () => {
     const { OLD, NEW } = keys();

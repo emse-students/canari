@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE CARD'S COMMENTS ARE A PREVIEW AND A SHEET (the comment refonte, 2026-10-21). Pinned: the card
  * draws the newest comment, not the thread; a tap on the count opens the thread in a sheet; the

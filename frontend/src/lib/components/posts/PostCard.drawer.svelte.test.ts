@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A POST'S COMMENTS ON A PHONE ARE THE SHARED DRAWER (user, 2026-10-23): the same `CommentsDrawer` a
  * CanaReel's comments open in, rising over the interface, with NOTHING quoted above the thread, a

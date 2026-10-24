@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The editor's overlay gestures, through the real component: add, select, drag, pinch/twist, drop
  * on the trash, deselect, and what "apply" hands to the export. The arithmetic of the gesture is

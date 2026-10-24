@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE LIVES KILL SWITCH ON THE FEED: closing it takes the card and an open viewer away, and the
  * viewer stays CLOSED when lives reopen in the same session - hiding it used to keep `openLive`

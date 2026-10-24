@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Reporting one live-chat line, mounted: the posts' reason dialog opens over the viewer's layer for a
  * numbered line only, the report carries the live, the message id, the reason and the plaintext the

@@ -1,4 +1,5 @@
 use log::{Level, Metadata, Record};
+use mls_core::pending_submission::PendingSubmissionRead;
 use mls_core::MlsManager;
 use wasm_bindgen::prelude::*;
 
@@ -99,6 +100,40 @@ pub fn encrypt_mls_state_blob_with_key(
         mls_core::crypto::decode_base64_to_32_bytes(key_b64).map_err(|e| JsValue::from_str(&e))?;
     MlsManager::encrypt_state_blob_with_key(plain_state, &key)
         .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// What `mls-core`'s deterministic reader says about a SEALED state blob, as a CODE - never a client.
+///
+/// Answers `"OPENED"` when the blob opens under the key and belongs to `user_id:device_id`, or the
+/// verdict code `MlsError::state_verdict_code` assigns (`STATE_ALTERED`, `STATE_KEY_MISMATCH`,
+/// `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH`). REJECTS with the error's text for anything that is
+/// not a verdict about the bytes (a malformed key, a codec failure): the caller must not read a
+/// recovery into it.
+///
+/// It exists for ONE caller: the web, after WebCrypto refused a v2 blob (`loadAndInitWasm`), needs
+/// to know whether the BYTES are at fault, and WebCrypto's `OperationError` names a failed tag and
+/// an engine fault alike. The verdict used to be read by building a `WasmMlsClient` and matching the
+/// thrown message against a regex; the classification now happens here, on the variant. The loaded
+/// manager is dropped on return - a witness of the verdict, never a second load path.
+#[wasm_bindgen]
+pub fn state_blob_verdict(
+    user_id: &str,
+    device_id: &str,
+    state_bytes: Vec<u8>,
+    device_key_b64: &str,
+) -> Result<String, JsValue> {
+    let key = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64)
+        .map_err(|e| JsValue::from_str(&e))?;
+    match MlsManager::load_with_key(user_id, device_id, Some(state_bytes), &key) {
+        Ok(_) => Ok("OPENED".to_string()),
+        Err(e) => match e.state_verdict_code() {
+            Some(code) => {
+                log::warn!("state_blob_verdict: the deterministic reader answers {code}");
+                Ok(code.to_string())
+            }
+            None => Err(JsValue::from_str(&e.to_string())),
+        },
+    }
 }
 
 // ----------------------------------------------------
@@ -452,22 +487,24 @@ impl WasmMlsClient {
 
     /// Stages ONE commit that removes the device `identity`'s leaf and adds it back from
     /// `key_package`, without merging (C7-A). Returns `[commit, welcome, group_info]` - see
-    /// `MlsManager::replace_device_with_base`.
+    /// `MlsManager::replace_device_with_base`. `intent` is recorded with the staged commit in the
+    /// SAME call (`MlsManager::replace_device_recorded`), as every gated stage's is.
     #[wasm_bindgen]
     pub fn replace_device(
         &mut self,
         group_id: String,
         identity: String,
         key_package: Vec<u8>,
+        intent: Vec<u8>,
     ) -> Result<js_sys::Array, JsValue> {
-        let (commit, welcome, group_info) = self
+        let record = self
             .manager
-            .replace_device_with_base(&group_id, &identity, &key_package)
+            .replace_device_recorded(&group_id, &identity, &key_package, intent)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         let array = js_sys::Array::new();
-        array.push(&js_sys::Uint8Array::from(&commit[..]));
-        array.push(&js_sys::Uint8Array::from(&welcome[..]));
-        array.push(&js_sys::Uint8Array::from(&group_info[..]));
+        array.push(&js_sys::Uint8Array::from(&record.commit[..]));
+        array.push(&js_sys::Uint8Array::from(&record.welcome[..]));
+        array.push(&js_sys::Uint8Array::from(&record.group_info[..]));
         Ok(array)
     }
 
@@ -488,6 +525,9 @@ impl WasmMlsClient {
     /// dedup) together with its typed reason (`SkippedKeyPackageReason` wire name), so the caller
     /// can surface a non-silent member loss and say why. [[C5]]
     ///
+    /// `intent` is the client's description of the commit, recorded with it in the SAME call
+    /// (`MlsManager::add_members_recorded`): no checkpoint can hold this staged commit without the
+    /// bytes it is submitted with.
     /// `expected_identities[i]` is the `userId:deviceId` `key_packages[i]` was fetched for: a package
     /// naming another device, or the right one under a key this device never pinned for it, is
     /// skipped (`identity-mismatch`, `signature-key-changed` - see `mls_core::device_trust`). An
@@ -499,6 +539,7 @@ impl WasmMlsClient {
         group_id: String,
         key_packages: js_sys::Array,
         expected_identities: js_sys::Array,
+        intent: Vec<u8>,
     ) -> Result<js_sys::Array, JsValue> {
         log::info!(
             "add_members_bulk to group: {} ({} key packages)",
@@ -519,21 +560,21 @@ impl WasmMlsClient {
             .collect();
         let expected_refs: Vec<&str> = expected.iter().map(String::as_str).collect();
 
-        let ((commit, welcome, added_indices, skipped), group_info) = self
+        let (record, skipped) = self
             .manager
-            .add_members_bulk_with_base(&group_id, &kp_slices, &expected_refs)
+            .add_members_recorded(&group_id, &kp_slices, &expected_refs, intent)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let array = js_sys::Array::new();
-        array.push(&js_sys::Uint8Array::from(&commit[..]));
-        if let Some(w) = welcome {
-            array.push(&js_sys::Uint8Array::from(&w[..]));
-        } else {
+        array.push(&js_sys::Uint8Array::from(&record.commit[..]));
+        if record.welcome.is_empty() {
             array.push(&JsValue::UNDEFINED);
+        } else {
+            array.push(&js_sys::Uint8Array::from(&record.welcome[..]));
         }
         let indices_array = js_sys::Array::new();
-        for idx in added_indices {
-            indices_array.push(&JsValue::from_f64(idx as f64));
+        for idx in &record.added_indices {
+            indices_array.push(&JsValue::from_f64(*idx as f64));
         }
         array.push(&indices_array);
         let skipped_array = js_sys::Array::new();
@@ -554,7 +595,7 @@ impl WasmMlsClient {
             skipped_array.push(&obj);
         }
         array.push(&skipped_array);
-        array.push(&js_sys::Uint8Array::from(&group_info[..]));
+        array.push(&js_sys::Uint8Array::from(&record.group_info[..]));
         Ok(array)
     }
 
@@ -839,30 +880,33 @@ impl WasmMlsClient {
     /// `user_ids` is a JS Array of strings (usernames/identities).
     /// Returns [commit: Uint8Array, group_info: Uint8Array]: the commit to broadcast to remaining
     /// group members, and the external-join base for the epoch it creates (submitted with it).
+    /// Recorded with `intent` in the same call (`MlsManager::remove_members_for_users_recorded`).
     #[wasm_bindgen]
     pub fn remove_members(
         &mut self,
         group_id: String,
         user_ids: js_sys::Array,
+        intent: Vec<u8>,
     ) -> Result<js_sys::Array, JsValue> {
         let ids: Vec<String> = user_ids.iter().filter_map(|v| v.as_string()).collect();
         log::info!("remove_members from group: {} (users: {:?})", group_id, ids);
         let id_slices: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-        let (commit, group_info) = self
+        let record = self
             .manager
-            .remove_members_for_users(&group_id, &id_slices)
+            .remove_members_for_users_recorded(&group_id, &id_slices, intent)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(commit_and_base(&commit, &group_info))
+        Ok(commit_and_base(&record.commit, &record.group_info))
     }
 
     /// Remove specific device leaves by their `userId:deviceId` identity string.
     /// Only removes the targeted leaves, leaving other devices of the same user intact.
-    /// Returns [commit, group_info] like `remove_members`.
+    /// Returns [commit, group_info] like `remove_members`, and is recorded with `intent` the same way.
     #[wasm_bindgen]
     pub fn remove_members_by_device(
         &mut self,
         group_id: String,
         device_identities: js_sys::Array,
+        intent: Vec<u8>,
     ) -> Result<js_sys::Array, JsValue> {
         let ids: Vec<String> = device_identities
             .iter()
@@ -874,11 +918,135 @@ impl WasmMlsClient {
             ids
         );
         let id_slices: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-        let (commit, group_info) = self
+        let record = self
             .manager
-            .remove_members_for_devices(&group_id, &id_slices)
+            .remove_members_for_devices_recorded(&group_id, &id_slices, intent)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(commit_and_base(&commit, &group_info))
+        Ok(commit_and_base(&record.commit, &record.group_info))
+    }
+
+    /// Stages a refresh of this device's own leaf: an empty commit with a path and NO proposal
+    /// (`MlsManager::stage_self_update_recorded`), recorded with `intent` in the same call. Returns
+    /// [commit, group_info] like `remove_members`; merged or cleared by the caller on the server's
+    /// answer.
+    #[wasm_bindgen]
+    pub fn self_update(
+        &mut self,
+        group_id: String,
+        intent: Vec<u8>,
+    ) -> Result<js_sys::Array, JsValue> {
+        log::info!("self_update on group: {}", group_id);
+        let record = self
+            .manager
+            .stage_self_update_recorded(&group_id, intent)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(commit_and_base(&record.commit, &record.group_info))
+    }
+
+    /// When this device's leaf in `group_id` was minted, in Unix seconds, or `undefined` once a
+    /// commit replaced it (`MlsManager::own_leaf_minted_at`). An `f64`, not a `u64`: wasm-bindgen
+    /// would hand a `u64` to JS as a BigInt, and a seconds count fits a double exactly.
+    #[wasm_bindgen]
+    pub fn own_leaf_minted_at(&self, group_id: String) -> Result<Option<f64>, JsValue> {
+        self.manager
+            .own_leaf_minted_at(&group_id)
+            .map(|minted| minted.map(|s| s as f64))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Whether this device's current context in `group_id` is the one the served base
+    /// `group_info` describes - same epoch, tree hash and transcript hash
+    /// (`MlsManager::own_context_matches_base`). Gates the periodic refresh against a fork.
+    #[wasm_bindgen]
+    pub fn own_context_matches_base(
+        &self,
+        group_id: String,
+        group_info: Vec<u8>,
+    ) -> Result<bool, JsValue> {
+        self.manager
+            .own_context_matches_base(&group_id, &group_info)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// The record of `group_id`'s staged commit (`MlsManager::pending_submission`):
+    /// `["none"]`, `["unreadable"]`, or
+    /// `["recorded", intent, baseEpoch, commit, groupInfo, welcome | undefined, addedIndices]`.
+    /// The status is the first element, so the caller branches on a value, never on an error.
+    #[wasm_bindgen]
+    pub fn pending_submission(&self, group_id: String) -> js_sys::Array {
+        let out = js_sys::Array::new();
+        match self.manager.pending_submission(&group_id) {
+            PendingSubmissionRead::None => {
+                out.push(&JsValue::from_str("none"));
+            }
+            PendingSubmissionRead::Unreadable => {
+                out.push(&JsValue::from_str("unreadable"));
+            }
+            PendingSubmissionRead::Recorded(r) => {
+                out.push(&JsValue::from_str("recorded"));
+                out.push(&js_sys::Uint8Array::from(&r.intent[..]));
+                // A double, not a BigInt: an epoch fits one exactly.
+                out.push(&JsValue::from_f64(r.base_epoch as f64));
+                out.push(&js_sys::Uint8Array::from(&r.commit[..]));
+                out.push(&js_sys::Uint8Array::from(&r.group_info[..]));
+                if r.welcome.is_empty() {
+                    out.push(&JsValue::UNDEFINED);
+                } else {
+                    out.push(&js_sys::Uint8Array::from(&r.welcome[..]));
+                }
+                let indices = js_sys::Array::new();
+                for i in r.added_indices {
+                    indices.push(&JsValue::from_f64(i as f64));
+                }
+                out.push(&indices);
+            }
+        }
+        out
+    }
+
+    /// Every group holding a staged commit (`MlsManager::groups_with_pending_commit`).
+    #[wasm_bindgen]
+    pub fn groups_with_pending_commit(&self) -> Vec<String> {
+        self.manager.groups_with_pending_commit()
+    }
+
+    /// Merges `group_id`'s accepted Add and, in the same call, records its Welcome as owed to
+    /// `recipients` (`MlsManager::merge_pending_commit_owing_welcome`).
+    #[wasm_bindgen]
+    pub fn merge_pending_commit_owing_welcome(
+        &mut self,
+        group_id: String,
+        recipients: Vec<String>,
+    ) -> Result<(), JsValue> {
+        self.manager
+            .merge_pending_commit_owing_welcome(&group_id, recipients)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Every Welcome still owed (`MlsManager::owed_welcomes`), each as
+    /// `[groupId, welcome, ratchetTree, recipients]`.
+    #[wasm_bindgen]
+    pub fn owed_welcomes(&self) -> js_sys::Array {
+        let out = js_sys::Array::new();
+        for w in self.manager.owed_welcomes() {
+            let entry = js_sys::Array::new();
+            entry.push(&JsValue::from_str(&w.group_id));
+            entry.push(&js_sys::Uint8Array::from(&w.welcome[..]));
+            entry.push(&js_sys::Uint8Array::from(&w.ratchet_tree[..]));
+            let recipients = js_sys::Array::new();
+            for r in &w.recipients {
+                recipients.push(&JsValue::from_str(r));
+            }
+            entry.push(&recipients);
+            out.push(&entry);
+        }
+        out
+    }
+
+    /// `recipient` was sent `group_id`'s owed Welcome (`MlsManager::welcome_delivered`).
+    #[wasm_bindgen]
+    pub fn welcome_delivered(&mut self, group_id: String, recipient: String) {
+        self.manager.welcome_delivered(&group_id, &recipient);
     }
 
     /// Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).

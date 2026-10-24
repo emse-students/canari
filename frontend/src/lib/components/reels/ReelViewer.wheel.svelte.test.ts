@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE MOUSE WHEEL TURNS THE CANAREELS, ONE GESTURE ONE PAGE (user, 2026-10-19, desktop): a notch
  * down is the next reel, up the previous, through the arrow buttons' own step; a burst of events

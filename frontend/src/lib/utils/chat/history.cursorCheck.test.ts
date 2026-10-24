@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The replay's "was the store wiped under my cursor" check, run for every conversation on every
  * cold start, must COUNT the rows rather than decrypt them.

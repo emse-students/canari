@@ -8,6 +8,7 @@ import {
   MLS_STATE_BLOB_V2_KDF_INFO,
   MLS_STATE_BLOB_V2_KDF_SALT,
   MLS_STATE_SEAL_V2_WRITER_ENABLED,
+  MlsStateUnreadableNowError,
   isMlsStateBlobV2,
   mlsStateKeyFingerprint,
   openMlsStateBlobV2,
@@ -143,46 +144,89 @@ describe('sealMlsStateBlobV2', () => {
     expect(await openMlsStateBlobV2(blob, DEVICE_KEY_B64)).toEqual(frozen);
   });
 
-  it('the web opener answers mls-core codes: another key, a stub, an altered body or header', async () => {
+  it('the web opener answers mls-core codes for what the BYTES decide: another key, a stub', async () => {
     const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
     const other = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
     await expect(openMlsStateBlobV2(blob, other)).rejects.toThrow(/^STATE_KEY_MISMATCH: /);
     await expect(openMlsStateBlobV2(blob.slice(0, 16 + 27), DEVICE_KEY_B64)).rejects.toThrow(
       /^STATE_UNDECRYPTABLE: .*version 2/
     );
+  });
+
+  it('an altered body or header is NOT called altered by WebCrypto: unreadable now, typed', async () => {
+    // WebCrypto's OperationError names a failed tag AND an engine fault, so the web opener never
+    // claims STATE_ALTERED - `loadAndInitWasm` asks mls-core's deterministic reader for that.
+    const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
     for (const at of [16, 40, blob.length - 1]) {
       const altered = blob.slice();
       altered[at] ^= 1;
-      // The header names the key in hand, so a failed tag is ALTERATION - never an old-PIN case.
-      await expect(openMlsStateBlobV2(altered, DEVICE_KEY_B64)).rejects.toThrow(/^STATE_ALTERED: /);
+      const error = await openMlsStateBlobV2(altered, DEVICE_KEY_B64).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MlsStateUnreadableNowError);
+      expect(String(error)).not.toMatch(/STATE_ALTERED/);
+      expect((error as MlsStateUnreadableNowError).errorName).toBe('OperationError');
+      expect((error as MlsStateUnreadableNowError).keyPrepared).toBe(true);
     }
   });
 
-  it('calls ONLY an OperationError altered: any other decrypt rejection leaves untyped', async () => {
-    // `STATE_ALTERED` rotates the device identity, so a rejection that is not WebCrypto's
-    // tag-check answer must not wear it - the classifier then answers `unknown` and destroys nothing.
+  it('a WebKit-style OperationError on a ~19 MB state is unreadable now, carrying its evidence', async () => {
+    // The reviewer's case: WebKit throws OperationError under memory pressure on a large state.
+    // It used to read as STATE_ALTERED, which init answers with an irreversible identity rotation.
+    const large = new Uint8Array(19 * 1024 * 1024).fill(0x5a);
+    const blob = await sealMlsStateBlobV2(large, DEVICE_KEY_B64);
+    const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+    try {
+      const fault = new DOMException(
+        'The operation failed for an operation-specific reason',
+        'OperationError'
+      );
+      decrypt.mockRejectedValueOnce(fault);
+      const error = await openMlsStateBlobV2(blob, DEVICE_KEY_B64).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MlsStateUnreadableNowError);
+      const typed = error as MlsStateUnreadableNowError;
+      expect(typed.message).toMatch(/^STATE_UNREADABLE_NOW: /);
+      expect(String(typed)).not.toMatch(
+        /STATE_(ALTERED|KEY_MISMATCH|UNDECRYPTABLE)|IDENTITY_MISMATCH/
+      );
+      expect(typed.blobBytes).toBe(blob.length);
+      expect(typed.errorName).toBe('OperationError');
+      expect(typed.keyPrepared).toBe(true);
+      expect(typed.cause).toBe(fault);
+      // Transient: the next read of the same bytes opens them.
+      const reopened = await openMlsStateBlobV2(blob, DEVICE_KEY_B64);
+      // Buffer.compare, not toEqual: a deep equality over 19 M elements exhausts the test worker.
+      expect(Buffer.compare(Buffer.from(reopened), Buffer.from(large))).toBe(0);
+    } finally {
+      decrypt.mockRestore();
+    }
+  });
+
+  it('any other WebCrypto rejection, and a failed key derivation, are unreadable now too', async () => {
     const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
     const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
     try {
-      decrypt.mockRejectedValueOnce(new DOMException('tag mismatch', 'OperationError'));
-      await expect(openMlsStateBlobV2(blob, DEVICE_KEY_B64)).rejects.toThrow(/^STATE_ALTERED: /);
       for (const other of [
         new DOMException('key not usable for decrypt', 'InvalidAccessError'),
         new TypeError('engine fault'),
       ]) {
         decrypt.mockRejectedValueOnce(other);
-        const error = await openMlsStateBlobV2(blob, DEVICE_KEY_B64).then(
-          () => null,
-          (e: unknown) => e
-        );
-        expect(error).toBeInstanceOf(Error);
-        expect(String(error)).not.toMatch(
-          /STATE_(ALTERED|KEY_MISMATCH|UNDECRYPTABLE)|IDENTITY_MISMATCH/
-        );
+        const error = await openMlsStateBlobV2(blob, DEVICE_KEY_B64).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(MlsStateUnreadableNowError);
         expect((error as Error).cause).toBe(other);
       }
     } finally {
       decrypt.mockRestore();
+    }
+    resetMlsStateSealForTests();
+    const derive = vi.spyOn(crypto.subtle, 'deriveKey');
+    try {
+      derive.mockRejectedValueOnce(new DOMException('out of memory', 'OperationError'));
+      const error = await openMlsStateBlobV2(blob, DEVICE_KEY_B64).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MlsStateUnreadableNowError);
+      expect((error as MlsStateUnreadableNowError).keyPrepared).toBe(false);
+    } finally {
+      derive.mockRestore();
+      await Promise.resolve();
+      resetMlsStateSealForTests();
     }
   });
 
@@ -197,9 +241,21 @@ describe('sealMlsStateBlobV2', () => {
     expect(isMlsStateBlobV2(blob.slice(0, 15))).toBe(false);
   });
 
-  it('ships with the writer OFF: the reader release comes first', () => {
-    // Read-first, write-later - see MLS_STATE_SEAL_V2_WRITER_ENABLED. Flipping it is the one-line
-    // change the wiki names, and this assertion moves with it, deliberately.
+  it('ships the HARDENED reader with the writer OFF, and NEITHER v2 reader may be removed', () => {
+    // Reader first, writer later - see MLS_STATE_SEAL_V2_WRITER_ENABLED. The writer turns on in its
+    // OWN later pull request, once production's minClientVersion AND the web rollback floor are at
+    // or past the tag carrying this reader; that PR moves this assertion, deliberately. Once a
+    // browser has written v2, only a v2 reader opens that state, so this also fails if either
+    // reader leaves the tree; the Rust reader is pinned by `mls-core/tests/state_blob_v2.rs`.
     expect(MLS_STATE_SEAL_V2_WRITER_ENABLED).toBe(false);
+    const loader = readFileSync(join(import.meta.dirname, 'mlsWasmLoader.ts'), 'utf-8');
+    expect(loader).toMatch(/isMlsStateBlobV2\(state\)/);
+    expect(loader).toMatch(/openMlsStateBlobV2\(state, deviceKeyB64\)/);
+    const rust = readFileSync(
+      join(import.meta.dirname, '../../../mls-core/src/state_blob.rs'),
+      'utf-8'
+    );
+    expect(rust).toMatch(/pub fn open_v2\(/);
+    expect(rust).toMatch(/VERSION_2 =>/);
   });
 });

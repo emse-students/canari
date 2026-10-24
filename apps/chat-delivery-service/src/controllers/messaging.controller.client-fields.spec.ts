@@ -5,6 +5,7 @@ import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common'
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { MessagingController } from './messaging.controller';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { MessagingService, SendMessageBody } from '../services/messaging.service';
 
 /**
@@ -44,6 +45,8 @@ describe('MessagingController - POST mls/send accepts a client send only', () =>
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })

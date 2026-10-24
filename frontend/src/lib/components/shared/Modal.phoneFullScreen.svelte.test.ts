@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * `phoneFullScreen` HANDS THE CHILD AN UNPADDED, UNSCROLLED BODY, AND MARKS THE OVERLAY.
  *

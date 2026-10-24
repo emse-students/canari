@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { SvelteMap } from 'svelte/reactivity';
@@ -8,6 +9,7 @@ import { GraineNotReadyError } from '$lib/utils/graine/runtime';
 import { GraineUnknownChannelError } from '$lib/utils/graine/channelSeal';
 import { showToast } from '$lib/stores/toast.svelte';
 import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
+import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import { getChannelReactions } from '$lib/stores/reactionStore.svelte';
@@ -51,6 +53,7 @@ vi.mock('$lib/paraglide/messages', () => ({
     chat_send_error_seal_key_group_unsettled: vi.fn(() => 'seal: key-group-unsettled'),
     chat_send_error_seal_key_group_catching_up: vi.fn(() => 'seal: key-group-catching-up'),
     channel_action_error_conflict: vi.fn(({ action }: { action: string }) => `${action}: conflict`),
+    chat_error_follower_tab: vi.fn(() => 'follower-tab'),
   },
 }));
 
@@ -1068,6 +1071,29 @@ describe('useChannelWorkspaces - a salon joined in-session enters the group its 
     ).rejects.toThrow('group-info refused');
 
     expect(workspaceForChannel('ch-public')).toBe('ws1');
+  });
+
+  /**
+   * A FOLLOWER TAB MAY NOT ENTER THE GROUP (`FollowerTabCommitError`, from `createGroup` or
+   * `externalJoin`): the join of the salon still completes, and the member is told the main tab is
+   * where it happens - not a failed join, and not silence.
+   */
+  it('tells the member, and completes the join, when a follower tab may not enter the group', async () => {
+    vi.mocked(showToast).mockClear();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    ensureCommunityDistributionGroup.mockRejectedValueOnce(new FollowerTabCommitError('kg-1'));
+    const api = useChannelWorkspaces();
+
+    await api.registerJoinedChannel(
+      'ch-public',
+      'ws1',
+      false,
+      vi.fn().mockResolvedValue({}),
+      vi.fn()
+    );
+
+    expect(workspaceForChannel('ch-public')).toBe('ws1');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith('follower-tab');
   });
 
   /**

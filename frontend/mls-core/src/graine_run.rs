@@ -469,6 +469,8 @@ impl MlsManager {
                 None
             }
         };
+        // The merged commit's submission record ends with it (`pending_submission.rs`).
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         Ok(summary)
     }

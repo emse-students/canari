@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PNG BUTTON SITS NEXT TO THE PDF ONE AND CALLS THE SAME EXPORT (user, 2026-10-18: *"un bouton
  * pour un export png a cote du pdf"*). Pinned: both buttons exist behind the same admin gate, each

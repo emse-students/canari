@@ -13,6 +13,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 
 /**
@@ -84,12 +85,12 @@ describe('MembersController - membership intervals and the exclusions read', () 
 
     const txManager = {
       getRepository: (entity: unknown) => ({
-        delete: (where: unknown) => {
+        delete: (where: { userId: string }) => {
           txDeletes.push({ entity, where });
           if (entity === DeviceGroupMembership) {
             order.push('devices-deleted');
-            const { userId } = where as { userId: string };
-            deviceRows = deviceRows.filter((d) => d.userId !== userId);
+            deviceRows = deviceRows.filter((d) => d.userId !== where.userId);
+            return Promise.resolve({ affected: 2 });
           }
           return Promise.resolve({ affected: 1 });
         },
@@ -148,10 +149,36 @@ describe('MembersController - membership intervals and the exclusions read', () 
       }),
       createQueryBuilder: () => healBuilder,
     };
+    // One transactional manager for both transactions the controller opens on `dataSource.manager`:
+    // the interval repair's (roster read, insert) and the removal's (seat lock, device rows,
+    // membership, eviction record). A failed removal rolls its device deletes back with it.
+    const sharedTx = {
+      ...healTx,
+      getRepository: (entity: unknown) => ({
+        ...healTx.getRepository(),
+        ...txManager.getRepository(entity),
+      }),
+      query: async (sql: string, params: unknown[]) => {
+        if (sql.includes('pg_advisory_xact_lock')) order.push(`seat-lock:${String(params[0])}`);
+        if (sql.includes('INSERT INTO dm_seat_evictions')) {
+          order.push('eviction-recorded');
+          return [{ generation: 1 }];
+        }
+        return [];
+      },
+    };
     const dataSource = {
       manager: {
         find: intervalFind,
-        transaction: (fn: (m: unknown) => Promise<unknown>) => fn(healTx),
+        transaction: async (fn: (m: unknown) => Promise<unknown>) => {
+          const before = deviceRows;
+          try {
+            return await fn(sharedTx);
+          } catch (e) {
+            deviceRows = before;
+            throw e;
+          }
+        },
       },
       // A failed transaction rolls back: the device rows it deleted are there again.
       transaction: async (fn: (m: unknown) => Promise<unknown>) => {
@@ -220,6 +247,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
           },
         },
         { provide: getRepositoryToken(QueuedMessage), useValue: {} },
+        { provide: getRepositoryToken(RevokedDevice), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: {} },
         { provide: 'REDIS_CLIENT', useValue: redis },
         { provide: DataSource, useValue: dataSource },
@@ -468,6 +496,21 @@ describe('MembersController - membership intervals and the exclusions read', () 
     expect(txUpdates[0].where).toMatchObject({ groupId: 'g-1', userId: 'bob' });
   });
 
+  it('a removal takes the seat lock first and records the eviction with the roster write', async () => {
+    // An external commit whose roster check ran before this removal holds a claim this record
+    // overtakes, so its committer's seat is never written after the removal (`seat-eviction.ts`).
+    // The roster row before the device rows: the order an add takes them in.
+    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+
+    expect(order).toEqual([
+      'parting-recorded',
+      'seat-lock:seat:g-1',
+      'interval-closed',
+      'devices-deleted',
+      'eviction-recorded',
+    ]);
+  });
+
   it('a removal takes the Welcomes still queued for the removed person, in the same transaction', async () => {
     // A queued Welcome is pulled by its device whatever the roster says: left behind, it would let
     // the removed person enter the epoch it was built for and read what members seal there.
@@ -497,10 +540,10 @@ describe('MembersController - membership intervals and the exclusions read', () 
       'bob:b2',
       'alice'
     );
-    expect(order).toEqual(['parting-recorded', 'interval-closed', 'devices-deleted']);
+    expect(order.indexOf('parting-recorded')).toBeLessThan(order.indexOf('devices-deleted'));
   });
 
-  it('a crash rolls the whole removal back, and the entry written before it is still there', async () => {
+  it('a failed removal rolls its device rows back with it, and the retry names them again', async () => {
     failTx = true;
 
     await expect(controller.removeGroupMember('g-1', 'bob', 'alice', undefined)).rejects.toThrow(
@@ -513,11 +556,13 @@ describe('MembersController - membership intervals and the exclusions read', () 
       'bob:b2',
       'alice'
     );
-    // The device rows went in the same transaction, so they are back, and a retry writes the same
-    // entry again - which is idempotent - before it removes them for good.
+    // The device rows went in the removal's transaction, so they came back with its rollback:
+    // bob is still a member, and the retry derives the same entry from them.
     expect(deviceRows.filter((d) => d.userId === 'bob')).toHaveLength(2);
+    redis.hset.mockClear();
     failTx = false;
     await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+    expect(redis.hset).toHaveBeenCalledTimes(1);
     expect(deviceRows.filter((d) => d.userId === 'bob')).toHaveLength(0);
   });
 

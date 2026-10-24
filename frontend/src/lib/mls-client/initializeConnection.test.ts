@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 const getTokenMock = vi.hoisted(() => vi.fn(() => Promise.resolve('jwt-access-token')));
 const getIsTabLeaderMock = vi.hoisted(() => vi.fn(() => true));
 
@@ -84,6 +85,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     const forgetGroup = vi.fn();
     const mls = {
       connect: vi.fn().mockResolvedValue(undefined),
+      settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -157,6 +159,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     // frame) and removed. This test pins what is left - once, and not before unload.
     const mls = {
       connect: vi.fn().mockResolvedValue(undefined),
+      settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -194,6 +197,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
   it('purges WASM and notifies for deleted groups (deletedAt)', async () => {
     const mls = {
       connect: vi.fn().mockResolvedValue(undefined),
+      settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -244,6 +248,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
   it('groupe actif absent du WASM → onGroupMissing appelé', async () => {
     const mls = {
       connect: vi.fn().mockResolvedValue(undefined),
+      settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -281,6 +286,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     getIsTabLeaderMock.mockReturnValue(true);
     const mls = {
       connect: vi.fn().mockRejectedValue(new Error('gateway down')),
+      settleUnresolvedCommits: vi.fn(),
       fetchPendingMessages: vi.fn(),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -306,5 +312,47 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/Gateway inaccessible/));
     expect(mls.generateKeyPackage).not.toHaveBeenCalled();
     expect(mls.getDeviceMemberships).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A COMMIT WHOSE OUTCOME IS UNKNOWN IS SETTLED BEFORE ANYTHING IS READ. The pending frames may
+   * hold the next epoch's traffic, which this device can read only once its own commit is merged -
+   * or another member's commit, which clears ours behind the settlement's back. The resubmission
+   * answers first, then the queue is drained.
+   */
+  it('resubmits unresolved commits after connecting and BEFORE draining pending messages', async () => {
+    const order: string[] = [];
+    const mls = {
+      connect: vi.fn(async () => {
+        order.push('connect');
+      }),
+      settleUnresolvedCommits: vi.fn(async () => {
+        order.push('settle');
+      }),
+      fetchPendingMessages: vi.fn(async () => {
+        order.push('fetch');
+      }),
+      onDisconnect: vi.fn(),
+      sendDisconnect: vi.fn(),
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+      getLocalGroups: vi.fn().mockReturnValue([]),
+      getUserGroups: vi.fn().mockResolvedValue([]),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+    };
+    await initializeConnection({
+      mlsService: mls as any,
+      userId: 'u1',
+      deviceKeyB64: 'p',
+      scheduleReconnect: vi.fn(),
+      setIsWsConnected: vi.fn(),
+      setReconnectAttempts: vi.fn(),
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+    expect(order).toEqual(['connect', 'settle', 'fetch']);
   });
 });

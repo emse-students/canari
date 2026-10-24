@@ -8,7 +8,10 @@ import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isGraineReady, rawChannelId, requireGraineRuntime, workspaceForChannel } from './runtime';
 import { treeHoldsDevice } from '$lib/mls-client/leafIdentity';
-import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import {
+  CommitRefusedError,
+  SEAT_CLAIM_OVERTAKEN_REASON,
+} from '$lib/mls-client/CommitRefusedError';
 import { groupSkippedByReason } from '$lib/mls-client/skippedKeyPackage';
 
 /**
@@ -217,6 +220,16 @@ export async function admitNewcomerToDistributionGroup(
         if (e instanceof CommitRefusedError && caughtUpTo > builtOn) {
           log(
             `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: the Add built on epoch ${builtOn} lost to a commit (${e.reason}); caught up to ${caughtUpTo} - re-reading the tree`
+          );
+          continue;
+        }
+        // A WHOLE-COMMIT REFUSAL THAT MOVED NOTHING: an unrelated eviction overtook this Add's seat
+        // claim on every submission `runCommitTransaction` made, so the epoch is where it was and
+        // the tree is re-read - an evicted device may have left it - and the Add rebuilt at once.
+        // Termination is still a proof - each such refusal is an eviction that landed in between.
+        if (e instanceof CommitRefusedError && e.reason === SEAT_CLAIM_OVERTAKEN_REASON) {
+          log(
+            `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: the Add built on epoch ${builtOn} was refused because an unrelated eviction overtook its seat claim - rebuilding`
           );
           continue;
         }

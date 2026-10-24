@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A MEMBER LIST IN FAMILY-NAME ORDER THAT NEVER MOVES A ROW BECAUSE A NAME ARRIVED.
  *

@@ -94,6 +94,7 @@ MIGALLERY_API_KEY	warn	warn	secret:MIGALLERY_API_KEY	the avatar service does not
 MICONNECT_EDITOR_TOKEN	warn	skip	secret:MICONNECT_EDITOR_TOKEN	an admin's profile edit is refused (typed: not configured) - production only, because dev and production share ONE MiConnect
 GOOGLE_SAFE_BROWSING_API_KEY	warn	warn	secret:GOOGLE_SAFE_BROWSING_API_KEY	links are not checked against Safe Browsing
 KLIPY_API_KEY	warn	warn	secret:KLIPY_API_KEY	the GIF picker answers that GIF search is not configured
+ANDROID_APP_LINK_SHA256	warn	warn	secret:ANDROID_APP_LINK_SHA256	account restore on a new Android phone is unavailable (every /api/auth/restore route answers 503)
 APNS_VOIP_KEY_P8	warn	warn	secret:APNS_VOIP_KEY_P8	iOS CallKit VoIP pushes are disabled and iOS falls back to an FCM banner
 APNS_VOIP_KEY_ID	silent	silent	secret:APNS_VOIP_KEY_ID	the APNs key cannot be identified
 APNS_VOIP_TEAM_ID	silent	silent	secret:APNS_VOIP_TEAM_ID	the APNs key cannot be attributed to a team
@@ -102,6 +103,7 @@ LYDIA_PROVIDER_TOKEN	warn	warn	secret:LYDIA_PROVIDER_TOKEN	Lydia payments are un
 LYDIA_PROVIDER_PRIVATE_TOKEN	warn	warn	secret:LYDIA_PROVIDER_PRIVATE_TOKEN	Lydia payments are unavailable if selected as the active provider
 LYDIA_ENV	required	skip	secret:LYDIA_ENV	core-service cannot tell which Lydia base URL the production Provider pair belongs to, and the template default of homologation would send production credentials to the sandbox
 LYDIA_KEY_ENCRYPTION_SECRET	required	required	secret:LYDIA_KEY_ENCRYPTION_SECRET	no association can store or open its Lydia Business key, so every Lydia callback is refused and the PUT key route answers 503
+LIVE_KEY_ENCRYPTION_SECRET	required	required	secret:LIVE_KEY_ENCRYPTION_SECRET	no live key can be sealed or opened at rest, so every live start answers 503 and no viewer is served a key
 DEPLOY_BUILD	skip	computed	computed	the /api/version build field is null, so two dev deployments of one release are indistinguishable
 FRONTEND_HOST_PORT	computed	computed	computed	the host port this estate's nginx publishes - 8080 prod, 3080 dev; both estates share one machine so they may never agree
 GARAGE_API_HOST_PORT	computed	computed	computed	garage's S3 API on 127.0.0.1 - 19010 prod, 19100 dev

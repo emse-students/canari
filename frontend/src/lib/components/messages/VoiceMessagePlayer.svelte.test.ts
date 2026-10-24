@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A VOICE NOTE TAKES TURNS WITH EVERY OTHER MEDIA (user, 2026-10-02): starting one pauses the one
  * playing, whose button reads "play" again - it was paused, not ended, and keeps its place.
