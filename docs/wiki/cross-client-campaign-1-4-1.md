@@ -54,7 +54,7 @@ evidence only for the assertions that produced it.
 | [testing-methodology](testing-methodology.md) | Rules, not state. Still true; rule 5b (another origin is another device) is exactly what moving to dev costs | **KEEP.** Nothing in it is stale for this campaign |
 | [cross-client-ios](cross-client-ios.md) | Accurate about the adapter; no board row has run on I1 | **KEEP**; its row classification is re-read against the new matrix when the I1 rows are ported |
 | [the harness README](../../tools/cross-client-harness/README.md) | "the LOCAL docker estate since 2026-09-03" throughout | **REWRITE the target paragraphs** when R1 and R2 land, in the same pull request as the code |
-| [dev-environment](infrastructure/dev-environment.md), "The campaign rig needs nothing from dev ... cannot reach without an Access service token", and the "89 files" line under the owed capabilities | Both false today: the 89 literals were swept on 2026-09-04, and on 2026-10-24 `GET https://dev.canari-emse.fr/chat` answered `200` with no Access redirect | **CORRECT** both sentences with R1 - after confirming with the owner that dev is meant to be open (Q1) |
+| [dev-environment](infrastructure/dev-environment.md), "The campaign rig needs nothing from dev ... cannot reach without an Access service token", and the "89 files" line under the owed capabilities | Both false today: the 89 literals were swept on 2026-09-04, and on 2026-10-24 `GET https://dev.canari-emse.fr/chat` answered `200` with no Access redirect | **CORRECTED** - dev is open by the owner's decision (2026-10-24, Q1 settled), and the rig needs no service token |
 | `test-accounts.json` `_target` (rig root, outside the repository) | names the local estate | updated by hand when the rig is pointed at dev |
 
 **What this pull request does about it**: it adds this page, a one-line notice at the top of the
@@ -78,7 +78,7 @@ first gesture of the campaign is a new pre-release from `main` (R7).
 | The background Welcome's Add staged in `mls.bin`, settled by whoever loads it next; the route says what happened | #2287, #2329 | a killed phone answering from a stale epoch; `ACCEPTED AND NOT HELD`; the foreground overwriting a staged Add | DEV-7 |
 | Seat claims and departures serialised under one lock (`dm_seat_evictions`, `distribution_departures`) | #2258 | a claim and an eviction crossing; a deadlock | RM-1, RM-5 |
 | The removal bound: `REMOVAL_EXCEEDS_ACTOR`, a rewrite refused whole with `409 CHANNEL_ACCESS_CHANGED`, `409 DEPARTURE_SUPERSEDED` after three inline retries, salon rows locked before membership rows | #2284 | two admins editing one salon's access; a kick racing a grant; a lock-order inversion | RM-4..RM-7 |
-| A key-group frame stored once, not once per seat | #2260 | a seat that misses a frame stored for "everyone" | GAP-4, BIG-3 |
+| A key-group frame stored once, not once per seat | #2260 | a seat that misses a frame stored for "everyone" | **none on this build**: the writer is OFF on dev for 1.4.1 (see "Decided by the lead" below), so GAP-4 is not played. BIG-3 still runs, on the per-seat path |
 | Graine: rotate a seed on a removal or a new user only; the past only to a proven admission; answers scoped to readable salons; a shut phone joins a key group from the push; history addressed to the asking device | #2263, #2273, #2262, #2266, #2270 | a removed member keeping the next seed; a link joiner reading the past it may not; a phone missing a salon after a kill | GR-* |
 | KeyPackage bound to its device, device keys pinned on first sight; new-device notices | #2268, #2278 | a legitimate re-enrolment refused as an impostor; a notice missing or doubled | DEV-1, DEV-5 |
 | A revoked device no longer erases its owner's arrival; a group exit sends what it can first | #2254, #2259 | a history floor reset by a revocation; an exit half-done offline | DEV-6, RM-8 |
@@ -169,7 +169,7 @@ impossible FAILS on it), the devices, the fault, the class and the cost of FIVE 
 | CC-1 | Two members Add two different users at the SAME epoch, released together | exactly one accepted first; the other refused `epoch_mismatch`, cleared, rebuilt on the new epoch and accepted; both users in, one tree | W1 W2 + targets | `hold` both submits, release together (R3) | U | 30 min |
 | CC-2 | A member Adds while another Removes someone, same epoch | as CC-1; the removed user holds no leaf at the end, the added one does | W1 W2 W4 | as CC-1 | U | 30 min |
 | CC-3 | Two members Remove the SAME member at once | one commit lands; the other is refused and does NOT rebuild a second Remove of a leaf already gone | W1 W2 W4 | as CC-1 | U | 30 min |
-| CC-4 | A leaf refresh (unasked commit) races a member's Add | both land in some order, no stage left, no Add lost | W1 W2 | the refresh must be DUE (Q3), then `hold` | U | 30 min |
+| CC-4 | A leaf refresh (unasked commit) races a member's Add | both land in some order, no stage left, no Add lost | W1 W2 | the refresh must be DUE (Q3: ONE Redis key written on dev for a campaign device), then `hold` | U | 30 min |
 | CC-5 | Burst: four devices each commit within 200 ms, ten rounds | every round converges; the server log shows no 5xx and no lock wait over the budget | W1 W2 W4 W5 | none | U | 30 min |
 
 #### DUP - duplicate and retried commits (the settlement)
@@ -178,7 +178,7 @@ impossible FAILS on it), the devices, the fault, the class and the cost of FIVE 
 | --- | --- | --- | --- | --- | --- | --- |
 | DUP-1 | The commit lands and its ANSWER is lost | the stage is kept, the resubmission (same bytes) is answered `duplicate`, merged once; one commit-log row; the group sends again | W1 W2 | `lose-answer` on the commit POST | U | 20 min |
 | DUP-2 | DUP-1, and another member commits before our resubmission | still `duplicate` at an epoch past `base + 1`; merged; our leaf correct; NOT `epoch_mismatch` | W1 W2 W4 | `lose-answer`, then W4 commits, then release | U | 30 min |
-| DUP-3 | The first request stalls past the server's 5 s commit lock while our resubmission arrives | the gate answers the resubmission from its log (`duplicate`) or refuses it and the FIRST lands; never two epochs for one commit. **Hard to arm from a client** - the stall must be inside the server transaction; `delay` on the response stage is not that (Q2) | W1 W2 | `throttleUpload` on the first request | U | 30 min |
+| DUP-3 | The first request stalls past the server's 5 s commit lock while our resubmission arrives | the gate answers the resubmission from its log (`duplicate`) or refuses it and the FIRST lands; never two epochs for one commit. **Hard to arm from a client** - the stall must be inside the server transaction; `delay` on the response stage is not that. **NOT PLAYED ON THE BENCH** (Q2 settled 2026-10-24): unit coverage only | - | - | - | - |
 | DUP-4 | A resubmission is answered `409 SEAT_CLAIM_OVERTAKEN` | the stage is KEPT, not rebuilt; the next settlement decides for good | W1 W2 | `status 409` once on the resubmission (R3) | U | 20 min |
 | DUP-5 | The commit is answered `503` | outcome unknown, stage kept, sends blocked IN THAT GROUP ONLY, settled at the next gateway connection, then sends resume | W1 W2 | `status 503` once | U | 20 min |
 | DUP-6 | The commit request never answers (30 s `write` deadline) | `RequestDeadlineError`, one resubmission, a second expiry keeps the stage; **decrypts in another group keep flowing during the hold** (the MLS lock is not held unbounded) | W1 W2 | `hold` > 30 s twice, a second group sending meanwhile | U | 30 min |
@@ -211,7 +211,7 @@ impossible FAILS on it), the devices, the fault, the class and the cost of FIVE 
 | GAP-1 | Application frames of epoch N+2 arrive before the commits N+1, N+2 | queued, applied in order once the commits arrive; nothing dropped | W1 W2 W4 | `hold` W2's history fetch while the socket delivers | U | 30 min |
 | GAP-2 | A frame from a PAST epoch (own and others') | classified by `content_type`, never re-queued as a retryable gap | W1 W2 | replay a captured frame | U | 20 min |
 | GAP-3 | 2000+ frames in one epoch while one member is frozen (old HEAL-W3) | `TooDistantInTheFuture` reached before `GAP_QUEUED` loops; the frozen member recovers through the ladder, not a silent gap | W1 W2 | freeze W2 (`Debugger.pause`) | U | 45 min |
-| GAP-4 | A key-group frame stored ONCE, read by every seat (#2260): a community with five seats, two of them offline | every seat, on return, reads the frame once | W1 W2 W4 W5 +A1 | `cutHard()` on two seats | U+B | 30 min |
+| GAP-4 | A key-group frame stored ONCE, read by every seat (#2260): a community with five seats, two of them offline | every seat, on return, reads the frame once. **NOT PLAYED ON THIS BUILD**: it needs the shared-payload writer, which stays OFF for 1.4.1 (see "Decided by the lead" below) | W1 W2 W4 W5 +A1 | `cutHard()` on two seats | U+B | 30 min |
 
 #### RM - removal while a commit is in flight, and the removal bound
 
@@ -305,7 +305,7 @@ assumes what the one before proved.
 | 2 | R5 fixtures on dev; `bun rows.mjs`, `bun cleanup.mjs`, `bun identity.mjs` (now safe: R1) | lead | ~1 h |
 | 3 | FLOOR | lead | 40 min |
 | 4 | CC, DUP, OFF, GAP-1..3, RM-1..8, TOK-1..2, NET - the `U` rows, unattended | rig | ~10 h, one night |
-| 5 | KILL-3/4, OFF-5, GAP-4, ADM-5..7 (old APK installed, then R2's new one back), DEV-7, BIG | lead + bench | ~6 h |
+| 5 | KILL-3/4, OFF-5, ADM-5..7 (old APK installed, then R2's new one back), DEV-7, BIG | lead + bench | ~6 h |
 | 6 | ADM-1..4, ADM-8, DEV-1..6, KILL-1/2/5 - the rows that mint devices or touch PINs, last | lead | ~4 h |
 | 7 | the stable may be cut when every row of 4.2 is `PASS` on ONE build - the build of step 1 | lead | - |
 | 8 | section 4.3 | lead | after the stable |
@@ -318,18 +318,18 @@ group again: a verdict about one build does not carry to the next.
 
 ## 6. Open questions
 
-- **Q1. Is dev meant to be reachable with no Access gate?** Measured 2026-10-24: `/chat` answers
-  `200` with no Access redirect, while [dev-environment](infrastructure/dev-environment.md) says the
-  rig "cannot reach [dev] without an Access service token". Either the gate was removed on purpose
-  and the page is stale, or it is gone by accident.
-- **Q2. DUP-3 cannot be armed from a client.** The overlap needs a first request stalled INSIDE the
-  server transaction past the 5 s lock. Options: accept the unit coverage
-  (`BaseMlsService.unresolvedCommit.test.ts`, the gate's specs) and drop the row; or add a dev-only
-  delay seam on the server, which is a product change for a test.
-- **Q3. CC-4 needs a refresh that is DUE.** The interval is 7 days of activity per seat, kept in
-  Redis (`mls_leaf_refresh:<user>:<device>`). Arming it means editing that key on DEV's Redis for a
-  campaign device - a write on a server, however small. Is that allowed, or is the row run on the
-  local estate instead?
+- **Q1. SETTLED (owner, 2026-10-24): dev is reachable with NO Access gate, on purpose.** The
+  `200` measured on `/chat` is the intended state, and the rig needs no service token for dev
+  ([dev-environment](infrastructure/dev-environment.md) says so now).
+- **Q2. SETTLED (2026-10-24): DUP-3 is NOT played on the bench.** The overlap needs a first request
+  stalled INSIDE the server transaction past the 5 s lock, which no client can arm. A dev-only delay
+  seam on the server would be a product change made for a test. The unit coverage stands in for the
+  row: `BaseMlsService.unresolvedCommit.test.ts` and the gate's specs.
+- **Q3. SETTLED (2026-10-24): CC-4 may write ONE Redis key on dev for a campaign device.** The refresh
+  is due after 7 days of activity per seat, kept in `mls_leaf_refresh:<user>:<device>`. The row
+  arms it by writing that one key, for a campaign-owned device only, on dev (a fictional-seed estate
+  where the owner allows campaign writes). It writes no other key, no other device and nothing on
+  production.
 - **Q4. Can the iPhone be unlocked by the rig?** If its passcode cannot be typed over WDA, every I1
   row after a lock is `O`, and BIG-1 / FLOOR-3 need the owner for a minute.
 - **Q5. How does DEV-5 make one device id present a new key** without a product seam? Copying a
@@ -337,10 +337,24 @@ group again: a verdict about one build does not carry to the next.
 - **Q6. Which board.** This page proposes archiving the current board and opening a new one whose
   rows are section 4. The alternative - reconcile the 24 disagreeing cells and append - keeps a
   table about another estate and another version. The lead decides with the `CLAUDE.md` update.
-- **Q7. Testers on dev.** R5 confines destructive rows to campaign-owned containers, but a session
-  of KILL and NET rows still loads the shared estate. Should testers be told when a campaign night
-  runs?
-- **Q8. The `v1.4.0` debug APK for the mixed-version rows** is built from the tag with today's
+- **Q7. SETTLED (2026-10-24): no tester notice.** Dev is a sandbox. R5 already confines
+  destructive rows to campaign-owned containers, and the load of a night of KILL and NET rows is not
+  announced.
+- **Q8. SETTLED (2026-10-24): the `v1.4.0` debug APK BUILT** with `--build-only --ref v1.4.0
+  --accept-dead-production-literal` (the two dead production literals of that tag are accepted by
+  name, see the [harness README](../../tools/cross-client-harness/README.md)). The fallback below did
+  not have to be taken. The original question: the `v1.4.0` debug APK for the mixed-version rows is built from the tag with today's
   toolchain; if it no longer builds (a dependency moved), the old-client rows fall back to the
   Play internal-track `1.4.0` build, which is not inspectable over CDP - those rows then read the
   server's side only, and say so.
+
+### Decided by the lead (2026-10-24)
+
+- **`QUEUED_PAYLOAD_SHARED_WRITES` STAYS `false` on dev for the 1.4.1 campaign**, as it does on
+  production. The repo rule in [chat-delivery](services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)
+  says turning the writer on is a code change in a LATER release, never an operator flip. So this
+  campaign runs with the writer OFF.
+  - The shared-writes path keeps its unit coverage.
+  - It gets its own campaign, with its own release.
+  - The one row that depends on it, **GAP-4**, is not played on this build.
+  - BIG-3 runs on the per-seat path that 1.4.1 actually uses.

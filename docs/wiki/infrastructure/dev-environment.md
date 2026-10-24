@@ -186,9 +186,13 @@ docker exec "$DEV_PG" sh -c 'psql -U "$POSTGRES_USER" -d auth_db -c "UPDATE user
 and nothing else: `tools/cross-client-harness/site.mjs` refuses any other value when the first rig
 module loads, and `estate-target.mjs` reaches dev's database, Redis and logs by the SAME label lookup
 as the snippet above - `com.docker.compose.project=canari-dev`, one running container per service,
-the label re-read before use - over the ssh alias the private operations notes name. Dev answers
-with no Access gate (`GET /chat` -> `200`, measured 2026-10-24), and the owner confirmed it is to be
-used as it is. `deployed-wasm-check.mjs` in `serve-dev.yml` still needs no account.
+the label re-read before use - over the ssh alias the private operations notes name.
+
+**DEV IS REACHABLE WITH NO ACCESS GATE, BY THE OWNER'S DECISION (2026-10-24).** `GET /chat` answers
+`200` with no Access redirect, and that is the intended state, not a gate that went missing. Dev is a
+fictional-seed sandbox, and the owner allows the campaign to write to its database and Redis.
+**The rig therefore needs no service token for dev**, and no `CF-Access-*` header path is built or
+owed. `deployed-wasm-check.mjs` in `serve-dev.yml` still needs no account.
 
 ### The reset, and what it keeps
 
@@ -713,13 +717,11 @@ was refused for that reason. Do it in the admin UI, or approve the command expli
 exercised that script - rewriting production's deploy path with no way to test it, on the day of two
 outages, is how a third one happens. One implementation, proven before it is imposed.
 
-**One thing that cannot be verified until Access exists.** The campaign harness must reach dev
-freely (user, 2026-09-01), and it drives real Chrome over CDP rather than Playwright - so the
-mechanism is `Network.setExtraHTTPHeaders` carrying the `CF-Access-Client-Id` /
-`CF-Access-Client-Secret` pair, per attached target, not a browser-context option. It is deliberately
-NOT built yet: an arming path nobody can exercise is an untested code path in the one instrument the
-campaign depends on, and the crossing can only be proved once the Access application and its service
-token exist.
+**The campaign harness reaches dev freely (user, 2026-09-01), and with no Access gate at all
+(owner, 2026-10-24).** This paragraph used to plan a `Network.setExtraHTTPHeaders` path carrying a
+`CF-Access-Client-Id` / `CF-Access-Client-Secret` pair, to be built once an Access application
+existed. **That path is not owed any more.** Dev is open by decision (see "The campaign rig targets
+dev" above), so there is no service token to carry and nothing to arm.
 
 ## 9. A pre-release cannot measure production state - the second package id (decided 2026-09-15)
 
