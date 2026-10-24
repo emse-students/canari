@@ -28,6 +28,25 @@ filter bar is gone ([reels](reels.md#the-canareels-entry---an-icon-beside-the-ta
 The publisher's picture, name and link (`PostAuthorAvatar`, `postAuthorName`, `postAuthorHref`)
 and the text renderer (`PostMarkdown`) are shared by the card and the reel viewer's overlay.
 
+**The tab row collapses like Instagram's header (member report, 2026-10-22: the tabs were reachable
+only at the very top).** The wrapper in `routes/posts/+page.svelte` is `sticky top-0` in
+`.page-scroll-wrap` (the one scroller, at every width, so desktop behaves the same) and slides out
+with `-translate-y-full` when `tabsShown` is false: a transform on one boolean, so nothing reflows
+and the infinite scroll's position is untouched. The direction is read from that container's
+`scrollTop` by `nextScrollDirection` ([`utils/scrollDirection.ts`](../../../../frontend/src/lib/utils/scrollDirection.ts)),
+a pure step with an 8 px dead zone measured from where the reader turned; the row is always shown
+at the top, and `scrollTop` is clamped to the maximum so a bottom bounce is not an upward scroll.
+The handler is passive and logs nothing per event. `motion-reduce` drops the slide, `inert` keeps
+the hidden row out of the tab order, and **the row never hides while focus is inside it**
+(`focusin`/`focusout` drive `tabsFocused`): `inert` on a focused row would drop that focus to the
+body. The direction is **seeded at the container's `scrollTop` at mount**
+(`initialScrollDirection(top)`), not at 0, so a page restored mid-scroll does not read its whole
+offset as one scroll down and hide the row unasked. **While a search replaces the feed** the row's
+content is hidden and the wrapper is neither `sticky` nor padded, so no empty opaque band sits over
+the results. Read by code and unit test only: no phone has looked at it (the tab swipe, #1223, is a
+horizontal gesture on the same container and is not touched). **Owed ONE iPhone reading** (review,
+2026-10-23): the row when the page header unmounts with the keyboard open.
+
 ## An anonymous poll stores a tally and no voters (2026-09-30)
 
 A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creation like a form's

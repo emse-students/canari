@@ -33,7 +33,7 @@ import { NotificationPreference } from '../entities/notification-preference.enti
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
-import { sanitizeIdentityValue } from '../utils/sanitize';
+import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { MessagingService, type ActivationOutcome } from '../services/messaging.service';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
@@ -199,6 +199,36 @@ export class InternalController {
     });
     this.logger.log(`[INTERNAL_MLS_DEVICES] user=${userId.slice(0, 8)} count=${count}`);
     return { count };
+  }
+
+  /**
+   * Ends one device's push registration because the server ended that device's SESSION - called by
+   * core-service at `/api/auth/logout` and at every revocation of a session it can name a device for.
+   *
+   * THE SERVER HALF OF "A SIGN-OUT ENDS THE DEVICE'S PUSH REGISTRATION". The device deletes its own
+   * token too (`push_registration.rs`), and each half stands alone: this one holds for a device that
+   * is offline, uninstalled or never runs its sign-out, the device's for a call that never arrives
+   * here. Deleting the row removes the destination AND the push secret on it, so the background
+   * paths authenticated by that secret (`refresh-token`, `fetch-proto`, ...) are refused from here on
+   * - `refresh-token` only ever UPDATES a row, so it cannot bring one back.
+   *
+   * Idempotent: a device with no row answers `removed: 0`, which is the ordinary second call.
+   */
+  @Delete('push/users/:userId/devices/:deviceId')
+  async endDevicePushRegistration(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Param('userId') userIdRaw: string,
+    @Param('deviceId') deviceIdRaw: string
+  ): Promise<{ removed: number }> {
+    this.assertInternalSecret(headerSecret);
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw, 'deviceId');
+    const result = await this.pushTokenRepo.delete({ userId, deviceId });
+    const removed = result.affected ?? 0;
+    this.logger.log(
+      `[PUSH_SESSION_END] user=${userId.slice(0, 8)} device=${deviceId} removed=${removed}`
+    );
+    return { removed };
   }
 
   /**

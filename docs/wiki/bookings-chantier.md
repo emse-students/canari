@@ -78,6 +78,20 @@ see who else booked.
 | D43 | A PERSONAL space in the listing (review of #2029, Master's decision) | **A personal space is NEVER listed to anyone but its owner**, whatever its discoverability: it is reached by its link or QR code. No decision lets a member publish free text (a space's name and description) on a page the whole school reads, and v1 has no report button (D21). A space of an ARCHIVED association is not listed either. |
 | D41 | File retention in forms (WP-F) | **The SAME rule as D8 and D23, one mechanism with two starting points**: a file is purged N days after the EVENT (default 7, adjustable 1 to 30 by the manager), the event being the slot's end for a booking and the DATE OF THE ANSWER for a form. The answer row stays; the file goes. The user pointed out this was already decided: a duplicate question was asked and is recorded here so nobody asks it a third time. |
 
+## Redesign decided 2026-10-23
+
+| D44 | One visible level (user, 2026-10-23) | A space has ONE hidden default column; an **"Ajouter une colonne"** action reveals the columns level. Supersedes the visible space/resource split of D10 **in the UI only**: the data model is unchanged. |
+| D45 | Poster (2026-10-23) | Shown as a **banner on the space page** and a **thumbnail in the spaces list**. |
+| D46 | Desktop main view (2026-10-23) | **Days as columns, like the agenda week**; a column selector when there are several columns; the duration is chosen by click-drag. |
+| D47 | "Prochains creneaux" (2026-10-23) | **Removed.** Supersedes D14's planning. |
+| D48 | Phone view (2026-10-23) | **One day at a time, with a week strip.** |
+| D49 | Availability editing (2026-10-23) | A **visual week to paint**, with start templates: Toujours ouvert, Jours ouvres 8h-20h, Evenement ponctuel, Vide. |
+| D50 | Organiser dashboard (2026-10-23) | Upcoming bookings, who booked, quick cancel; **blocking a slot by dragging on the grid**. |
+| D51 | Settings (2026-10-23) | **Five collapsible sections in plain words.** D35 is kept, only its words are made clearer. |
+| D52 | Creation wizard (2026-10-23) | An optional **3-step wizard** as a variant. |
+| D53 | Notifications (2026-10-23) | **YES now**: organiser cancellation, confirmation to an added participant, a reminder before the slot with an adjustable delay. Supersedes D13's "no notification in v1". |
+| D54 | Method (2026-10-23) | **Mockups first**, built in parallel with the stable (user: *"Tout de suite, en parallele de la stable"*). |
+
 **Master's notes (2026-10-15):** no open pull request touches forms (open: #1896, #1897, #1898, #1884), so WP-F has no known conflict; rebase on `main` before each batch; **check the next free migration number on `main` when opening each pull request**, as other pull requests may take one.
 
 D27 was re-confirmed by the user on 2026-10-15: the history is frozen only while its space exists.
