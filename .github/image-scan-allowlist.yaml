@@ -142,27 +142,28 @@ vulnerabilities:
       - "usr/local/lib/node_modules/npm/**"
     statement: "A dependency of the npm CLI bundled in node:24-alpine; frontend-ssr runs node index.js and never invokes npm."
 
-  # --- the identity provider, ghcr.io/goauthentik/server:2026.8.0 -------------------------------
+  # --- brotli-libs 1.2.0-r1, in the Alpine 3.24 images (decided 2026-10-24) ---------------------
+  # Reported in adminer, nginx:1.31.8-alpine (the edge), nginx:stable-alpine (the frontend base) and
+  # postgres:18-alpine. Every one of those pins was already the newest upstream build: Alpine shipped
+  # the fix (1.2.1-r0) on 2026-10-22 and the official images were rebuilt that day still carrying
+  # 1.2.0-r1, so there was no patched digest to move to. Scoped by purl to that one package version,
+  # so a later brotli build is NOT covered and the rescan retires the entry the day the pins move.
+  # What was verified (Trivy's package inventory of each image): the only packages depending on
+  # brotli-libs are libcurl (all four) and freetype (both nginx). Nothing verified which processes
+  # call them at runtime.
+  - id: CVE-2026-111497
+    purls:
+      - "pkg:apk/alpine/brotli-libs@1.2.0-r1"
+    statement: "brotli-libs 1.2.0-r1 in adminer, nginx:1.31.8-alpine, nginx:stable-alpine and postgres:18-alpine, pulled in only by libcurl (all four) and freetype (nginx): it decodes brotli in HTTP responses curl fetches and in WOFF2 fonts, not in request bodies these servers accept - the dependency graph was verified, runtime use was not. No patched upstream image yet (Alpine fixed 2026-10-22; official nginx/postgres/adminer images rebuilt only with 1.2.0); remove when the pins are rebuilt."
+
+  # --- the identity provider, ghcr.io/goauthentik/server:2026.8.5 -------------------------------
   # An upstream image this repository cannot rebuild, and which one is RUN is the host's `.env`
-  # (`AUTHENTIK_TAG`), not this file. Two kinds of entry, and the statement says which:
-  #   - FIXED by 2026.8.5 (measured): retired by the upgrade to it, #2315, which must delete them;
-  #   - still in 2026.8.5 (measured): no authentik release ships the fix yet.
+  # (`AUTHENTIK_TAG`), not this file. Measured on 2026.8.0, two kinds of entry:
+  #   - FIXED by 2026.8.5: all 30 deleted on 2026-10-24, once the upgrade (#2315) and frontend-ssr's
+  #     return to node:24-alpine left no scanned image reporting them;
+  #   - still in 2026.8.5: no authentik release ships the fix yet. These remain.
   - id: CVE-2025-47273
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
-  - id: CVE-2026-102266
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-102267
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-102268
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-102271
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-102272
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-102273
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-103111
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
   - id: CVE-2026-111064
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
   - id: CVE-2026-111066
@@ -173,59 +174,13 @@ vulnerabilities:
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
   - id: CVE-2026-114138
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
-  - id: CVE-2026-11822
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-11824
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-13221
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-14456
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-41992
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-42496
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-42497
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-48962
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-54284
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-57432
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-57433
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-58050
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-59893
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-63349
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-63374
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-69244
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-71491
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-8376
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
   - id: CVE-2026-84782
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
-  - id: CVE-2026-86145
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-89157
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
-  - id: CVE-2026-89161
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
   - id: CVE-2026-97687
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
   - id: CVE-2026-97689
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
   - id: GHSA-2g87-pp6c-29x5
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
-  - id: GHSA-6q48-6c7w-9gw2
-    statement: "authentik server (): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
   - id: GHSA-6v7p-g79w-8964
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
-  - id: GHSA-pxh4-856f-4h89
-    statement: "authentik server (PyJWT): fixed in authentik 2026.8.5; retired by the upgrade to it (#2315). Upstream image."
