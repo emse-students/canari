@@ -116,6 +116,18 @@ else
   fail "local=30 offsite=5 gave local survivors '$(survivors)' and offsite '$(offsite_mtime)'"
 fi
 
+printf '\na bad value is refused before anything is deleted\n'
+# ═════════════════════════════════════════════════════════════════════════════
+for bad in -1 abc 0; do
+  if run "$bad" "" >/dev/null 2>&1; then
+    fail "LOCAL_RETENTION_DAYS=$bad was accepted"
+  elif kept 6 && kept 20; then
+    pass "LOCAL_RETENTION_DAYS=$bad is refused and every archive survives"
+  else
+    fail "LOCAL_RETENTION_DAYS=$bad deleted archives: '$(survivors)'"
+  fi
+done
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

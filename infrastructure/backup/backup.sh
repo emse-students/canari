@@ -69,6 +69,13 @@ fi
 
 POSTGRES_USER="${POSTGRES_USER:?POSTGRES_USER absent de infrastructure/.env}"
 
+# Une valeur vide, negative ou non numerique rendrait `-mtime` incoherent ("+-1" efface TOUT, y compris
+# l archive de cette nuit) : refuser avant de toucher a quoi que ce soit.
+for v in BACKUP_RETENTION_DAYS LOCAL_RETENTION_DAYS; do
+  case "${!v}" in ''|*[!0-9]*) fail "$v doit etre un entier >= 0 (recu : '${!v}')" ;; esac
+done
+[ "$LOCAL_RETENTION_DAYS" -ge 1 ] || fail "LOCAL_RETENTION_DAYS doit valoir au moins 1"
+
 if docker compose version >/dev/null 2>&1; then
   DC=(docker compose -f "$COMPOSE_FILE")
 elif command -v docker-compose >/dev/null 2>&1; then
