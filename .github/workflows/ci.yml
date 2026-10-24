@@ -684,23 +684,17 @@ jobs:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- lives-mode-migration.integration
 
-      # A SESSION'S END AND ITS PUSH ENDING, ONE TRANSACTION (core migration 016), and the delete by
-      # session that ends exactly the registration that session made (chat-delivery migration 037).
-      # Both specs build their own tables in a throwaway schema, so the boot's database is all they
-      # need (docs/wiki/sessions.md).
+      # A SESSION'S END AND ITS PUSH ENDING, ONE TRANSACTION (core migration 016). The spec builds
+      # its own tables in a throwaway schema, so the boot's database is all it needs
+      # (docs/wiki/sessions.md). Its chat-delivery half - the delete by session that ends exactly the
+      # registration that session made (migration 037) - is a `*.integration.spec.ts` like every
+      # other chat-delivery one, so `test-delivery-integration` runs it, skip-refused.
       - name: Push-ending outbox against PostgreSQL
         if: ${{ matrix.service == 'apps/core-service' }}
         working-directory: ${{ matrix.service }}
         env:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- session-push-end.integration
-
-      - name: Push registration bound to its session against PostgreSQL
-        if: ${{ matrix.service == 'apps/chat-delivery-service' }}
-        working-directory: ${{ matrix.service }}
-        env:
-          CHAT_DELIVERY_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
-        run: node --run test -- 037_push_token_session.integration
 
   # =================================================================================================
   # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
@@ -835,7 +829,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: it-probe

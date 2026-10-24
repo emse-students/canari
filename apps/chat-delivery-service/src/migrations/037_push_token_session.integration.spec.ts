@@ -6,11 +6,12 @@
  * and the device's stale row by compare-and-delete, including a NULL binding - remove what the ended
  * session left and never a newer registration of the same device.
  *
- * GATED ON `CHAT_DELIVERY_IT_DATABASE_URL`: skipped without it, and run by the `boot-nest-apps` job in
- * `ci.yml` against the database the boot just used. It needs no existing schema: it builds
- * `push_token` in the shape migration 020 left it, in a throwaway schema.
+ * GATED ON `DELIVERY_IT_DATABASE_URL`, the one name every chat-delivery integration spec reads:
+ * skipped without it, and run by the `test-delivery-integration` job in `ci.yml`, which refuses a
+ * skip. It needs no existing schema: it builds `push_token` in the shape migration 020 left it, in a
+ * throwaway schema.
  *
- *   CHAT_DELIVERY_IT_DATABASE_URL=postgres://user:pass@localhost:5432/db bun run test -- 037_push_token_session
+ *   DELIVERY_IT_DATABASE_URL=postgres://user:pass@localhost:5432/db bun run test -- 037_push_token_session
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,7 +20,7 @@ import { DataSource } from 'typeorm';
 import { PushToken } from '../entities/push-token.entity';
 import { InternalController } from '../controllers/internal.controller';
 
-const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
+const URL = process.env.DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
 const MIGRATION = readFileSync(join(__dirname, '037_push_token_session.sql'), 'utf8');
