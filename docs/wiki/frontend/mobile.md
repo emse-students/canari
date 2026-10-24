@@ -1701,7 +1701,9 @@ User decision 2026-10-14: declare exclusion rects.
 - **Owed:** a reading on the Mi 9T through the next pre-release (own bubble, x >= 406.5 CSS px,
   keyboard closed and open; then the right-edge back swipe on the list screen must still work).
 
-### The left-edge back gesture is excluded over the feed, and only there (2026-10-21)
+### The left-edge back gesture is excluded over every tab root with a section to its left (2026-10-21, widened 2026-10-24)
+
+**Widened 2026-10-24 (owner): the exclusion first covered the feed alone; it now covers every tab root whose swipe has a `prev` (`/posts`, `/communities`, `/chat`, `/dashboard`), so the section swipe wins the left edge on all of them. The scope paragraph below is the rule as now written; the rest of the section was measured on the feed and holds unchanged.** Same defect, same cost: Android takes a left-edge start as Back, and the page only ever sees a `touchcancel`.
 
 A swipe from the feed to the camera (the tab swipe's `prev` from `/posts`) started in the left
 74 physical px (30 CSS px, `EdgeBackGestureHandler mEdgeWidthLeft=74` on the Mi 9T) was taken by the
@@ -1719,14 +1721,7 @@ exclude the left edge over the feed, with the mechanism of the right edge above.
   generalised, not a copy. Below API 29 nothing is applied and the log line says `API < 29: not
   applied`. The page side is `excludeEdgeOver` in `lib/mobile/edgeGestureExclusion.ts`,
   with `excludeRightEdgeOver` (ChatArea) and `excludeLeftEdgeOver` (root layout) as its two callers.
-- **Scope:** `wantsFeedLeftEdgeExclusion` (pure, tested) - exactly `/posts`, the swipe armed on this
-  layout, the camera being the feed's `prev`, the keyboard down, and NOTHING COVERING THE SCREEN
-  (`screenCover.covered`: the reel viewer, a full-screen media viewer, a modal, the composer's
-  camera) - each of those is closed by Back, so a band left under it would make a left-edge Back
-  do nothing. A post page (`/posts/<id>`), the
-  camera, a conversation and every other route keep the left-edge Back. The root layout's `$effect`
-  reports `.page-scroll-wrap` (the page area, the bottom bar's `padding-bottom` removed) and its
-  cleanup clears the band on every route change, keyboard rise or viewport change.
+- **Scope:** `wantsTabLeftEdgeExclusion` (pure, tested) - the pathname is EXACTLY a place of the swipe's own list (`MOBILE_SWIPE_PLACES`), a place lies to its left (`swipeNavTargetHref(.., 'prev')`: the camera, first of the list, keeps Back), the swipe is armed on this layout, no phone conversation is open (`isMobileConvoOpen`: `swipeBack` owns that edge), the keyboard is down, and NOTHING COVERING THE SCREEN (`screenCover.covered`: the reel viewer, a full-screen media viewer, a modal, the composer's camera) - each of those is closed by Back, so a band left under it would make a left-edge Back do nothing. A nested route (`/posts/<id>`, a conversation), the camera and every other route keep the left-edge Back. **The cost of widening:** on a tab root the left-edge Back swipe (leave the app, or step history) is gone over the central 200 dp; the Back button and 3-button Back are untouched. The root layout's `$effect` reports `.page-scroll-wrap` (the page area, the bottom bar's `padding-bottom` removed) and its cleanup clears the band on every route change, keyboard rise or viewport change.
 - **Width:** the REAL left `systemGestures` inset + 8 dp, as on the right - 74 + 22 = 96 px on the
   Mi 9T, which covers the measured 30 CSS px band and widens with the user's back-sensitivity
   setting. A 0 inset (3-button navigation) declares nothing. **A dead zone remains inside the
