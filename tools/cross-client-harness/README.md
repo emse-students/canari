@@ -1044,7 +1044,7 @@ asserts R5 ownership of every conversation the row writes in, and reads the serv
 when an armed fault never fired, `FAIL` on any own assertion or invariant, else `PASS` - and
 `recordObserved` then gates it on every seat's window, the deploy exclusion (R4) and the server window
 judged by the row id (R6). The invariant (R8) runs after every row, with its reload. A row's own
-judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`, `killrows.mjs`), pinned by
+judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`, `killrows.mjs`, `admitrows.mjs`), pinned by
 `archive/<group>-selftest.mjs`.
 
 ```sh
@@ -1135,6 +1135,22 @@ KILL-4 has no `[CHECKPOINT]` line to time on: one un-killed run measures the sen
 and each kill lands at a fraction of it. KILL-5 holds `POST /api/mls/welcome`; RM-3 holds the roster
 delete's answer and measures how long W4's seat outlives it. Judgements in `killrows.mjs`, pinned by
 `archive/kill-selftest.mjs`.
+
+```sh
+bun archive/admit.mjs --row ADM-1|ADM-2|ADM-3|ADM-4|ADM-8   # browsers
+bun archive/admit.mjs --row ADM-5|ADM-6|ADM-7               # A1 on the v1.4.0 APK, installed first
+```
+
+**AN ADMISSION ROW FOLLOWS A GROUP LINK AND ANSWERS ITS ASK.** `archive/grouplink.mjs` mints the link
+from the panel, follows it as the joiner (the page must say the request was SENT), and reads and
+answers the ask on its own row (`[data-join-request]`, matched by person, never position) or sees
+it in the banner. ADM-3 holds the Add's commit on one member and the Decline's request on the other
+and releases them together. ADM-4 calls every member route from the waiting seat's page (the table
+is `admitrows.mjs` `memberRoutes`); each must answer `409 awaiting_admission`. ADM-5..7 REFUSE a phone
+not on the `v1.4.0` build (its own `/_app/version.json` against the tag's commit), and ask the server
+from the phone with `chat.mjs` `apiAt` - a phone's page is `tauri.localhost`, not the estate. **A1
+signs in as the owner**, so ADM-5 and ADM-7 run in a group of W2's and W4's. The link's token is never
+recorded, only its length. Judgements in `admitrows.mjs`, pinned by `archive/admit-selftest.mjs`.
 
 ## Rules that make a result trustworthy
 

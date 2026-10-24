@@ -2472,11 +2472,12 @@ export { IS_MOVING_FN, activate, clickAtPoint, dragTo, evaluate, pressKey, realC
  * app's next refresh picks up the new value like any other.
  *
  * @param method the verb; a body is sent as JSON and omitted entirely when there is none
+ * @param apiBase the API origin, when it is not the page's own (a phone - see {@link apiAt})
  * @returns `{ status, body }` - `status` null ONLY on a transport failure, which is not an answer
  *   either and is reported as itself rather than folded into a status.
  */
-async function apiCall(cx, method, path, body) {
-  const base = await origin(cx);
+async function apiCall(cx, method, path, body, apiBase = null) {
+  const base = apiBase ?? (await origin(cx));
   const raw = await evaluate(
     cx,
     `(async function () {
@@ -2517,6 +2518,16 @@ export async function apiGet(cx, path) {
  */
 export async function apiPost(cx, path, body) {
   return apiCall(cx, 'POST', path, body ?? {});
+}
+
+/**
+ * {@link apiCall} against an explicit API origin. A PHONE'S PAGE IS NOT ON THE ESTATE: its
+ * `location.origin` is `tauri.localhost` (`frontendDist` is `../build`) and the app reaches the API
+ * at the origin its build was given, so a check asking the server as the phone's own session passes
+ * that origin (`SITE`) here (ADM-5 and ADM-7 ask the base from an old APK).
+ */
+export async function apiAt(cx, apiBase, method, path, body) {
+  return apiCall(cx, method, path, method === 'GET' ? undefined : (body ?? {}), apiBase);
 }
 
 /**
