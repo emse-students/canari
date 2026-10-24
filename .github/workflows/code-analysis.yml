@@ -251,9 +251,16 @@ jobs:
         include:
           # The frontend installs its scripts (Tauri and the WASM glue need them) and is audited at
           # bun's default level; every service skips scripts and is audited at `moderate`.
+          #
+          # TWO SUPPRESSIONS, 2026-10-24, and they wait on a decision rather than a reachability
+          # argument: GHSA-pfhg-q3qv-9q6r and GHSA-27mw-82g8-phjj are LOW SvelteKit advisories fixed
+          # only in `@sveltejs/kit` 3.x, and the user put the kit 3 major after the stable, as its
+          # own chantier (Dependabot's #2154). They are deleted WITH that upgrade - and the step
+          # `Every ignored advisory is still reported` below fails the day kit 3 lands and the audit
+          # stops naming them, so they cannot outlive it.
           - tree: frontend
             install: --frozen-lockfile
-            audit: ""
+            audit: --ignore=GHSA-pfhg-q3qv-9q6r --ignore=GHSA-27mw-82g8-phjj
           - tree: apps/core-service
             install: --frozen-lockfile --ignore-scripts
             audit: --audit-level=moderate
@@ -373,8 +380,6 @@ jobs:
       # premise does not grant the ignore.
       - name: The premises behind media-service's ignores
         if: ${{ !cancelled() && matrix.tree == 'apps/media-service' }}
-        env:
-          AUDIT_FLAGS: ${{ matrix.audit }}
         run: |
           set -uo pipefail
           failed=""
@@ -424,27 +429,37 @@ jobs:
             fi
           fi
 
-          # THE RETIREMENT, ASSERTED INSTEAD OF POLLED. The audit run WITHOUT the ignores must still
-          # report every id the matrix suppresses (read from `matrix.audit`, so the list is never
-          # copied here); one that it does not report has retired itself - minio moved - and the
-          # ignore is dead weight to delete. It replaces a dated hand re-check of the registry.
-          echo "--- every ignored advisory is still reported"
-          ignored=$(printf '%s\n' "$AUDIT_FLAGS" | grep -oE -- '--ignore=GHSA-[a-z0-9-]+' | sed 's/^--ignore=//' || true)
-          unignored=$(mktemp)
-          # Through the same script as the audit above, so a registry that did not answer is told
-          # apart from one that answered "nothing": only the second can retire an ignore.
-          .github/scripts/audit-dependencies.sh apps/media-service --audit-level=moderate >"$unignored" 2>&1 || true
-          if grep -q 'was NOT audited' "$unignored"; then
-            echo "    the advisory endpoint did not answer; the audit step above carries that verdict, and nothing is concluded about the ignores."
-          # shellcheck disable=SC2086
-          elif ! bash .github/scripts/ignored-advisories-still-reported.sh "$unignored" $ignored; then
-            failed="$failed media-service(ignores-retired)"
-          fi
-
           if [ -n "$failed" ]; then
             echo "::error::a premise behind an ignore no longer holds:$failed"
             exit 1
           fi
+
+      # THE RETIREMENT, ASSERTED INSTEAD OF POLLED, for EVERY tree that suppresses something (the
+      # media-service premises above, the frontend's kit 3 wait). The audit run WITHOUT the ignores
+      # must still report every id the matrix suppresses (read from `matrix.audit`, so the list is
+      # never copied here); one that it does not report has retired itself - the dependency moved -
+      # and the ignore is dead weight to delete. It replaces a dated hand re-check of the registry.
+      - name: Every ignored advisory is still reported
+        if: ${{ !cancelled() && contains(matrix.audit, '--ignore=') }}
+        env:
+          TREE: ${{ matrix.tree }}
+          AUDIT_FLAGS: ${{ matrix.audit }}
+        run: |
+          set -uo pipefail
+          ignored=$(printf '%s\n' "$AUDIT_FLAGS" | grep -oE -- '--ignore=GHSA-[a-z0-9-]+' | sed 's/^--ignore=//' || true)
+          # The tree's own flags minus its ignores, so the level is the one the audit step used.
+          kept=$(printf '%s\n' "$AUDIT_FLAGS" | tr ' ' '\n' | grep -v -- '^--ignore=' | tr '\n' ' ' || true)
+          unignored=$(mktemp)
+          # Through the same script as the audit above, so a registry that did not answer is told
+          # apart from one that answered "nothing": only the second can retire an ignore.
+          # shellcheck disable=SC2086
+          .github/scripts/audit-dependencies.sh "$TREE" $kept >"$unignored" 2>&1 || true
+          if grep -q 'was NOT audited' "$unignored"; then
+            echo "    the advisory endpoint did not answer; the audit step above carries that verdict, and nothing is concluded about the ignores."
+            exit 0
+          fi
+          # shellcheck disable=SC2086
+          bash .github/scripts/ignored-advisories-still-reported.sh "$unignored" $ignored
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE CONTAINER IMAGES, WHICH NO AUDIT ABOVE READS (2026-10-23)
