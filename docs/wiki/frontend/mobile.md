@@ -2647,9 +2647,21 @@ sealed at rest by `src-tauri/src/native_cache.rs`, the only copy of the design:
 
   A pass at bootstrap and on each activation covers a file an older build wrote.
 - **Desktop has no reader**, so it writes no mirror and deletes one an older build left.
+- **A third sealed file: the push key-group join ledger** (`key_group_push_joins.json`, Android
+  only, [channel-encryption](../protocols/channel-encryption.md) section 26). It names key groups,
+  their join state and the salon scope the server answered - metadata, not key material, but what
+  the app's own stores seal - so it is sealed whole (`CNSEAL1`, its own purpose subkey) by
+  `mobile/key_group_join.rs`, the ledger's one reader and writer. It never existed in the clear in
+  a shipped build, so it has NO plaintext reader: a file without the marker reads as empty. The
+  push service hands the key to `nativeKeyGroupJoinClaim` / `Settle`; with no key it attempts no
+  join, and `take_key_group_push_joins` leaves the ledger for a start that can read it. Its staged
+  post-join state, `mls.bin.keygroup-join`, is sealed under the DEVICE key like `mls.bin`. The
+  sign-out sweep (`delete_mls_state`) removes both with `mls.bin`: the stage holds epoch secrets,
+  and the ledger's `joined` entries would otherwise be adopted by the next account's start.
 
 `nativeCacheSeal.test.ts` pins the alias across the five files, that every cache writer seals,
-that no native reader opens the mirror, and the iOS exclusion. A rotation of the key, a key lost
+that no native reader opens the mirror, that the join ledger is written sealed with the key handed
+over, and the iOS exclusion. A rotation of the key, a key lost
 with the Keystore entry (Android re-creates it only when the wrapping entry is GONE), or a sealed
 line under another key costs a cache entry or a richer banner, never a message: the durable stores
 are the truth.

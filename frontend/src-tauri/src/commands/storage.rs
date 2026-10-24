@@ -287,9 +287,19 @@ pub(crate) const STAGED_WELCOME_PREFIX: &str = "mls.bin.welcome-";
 /// (`mobile/background.rs`). It describes `mls.bin`, so it leaves with it.
 pub(crate) const STALE_WELCOME_LEDGER_FILE: &str = "welcome_request_stale.json";
 
+/// A push key-group join's staged post-join state beside `mls.bin` (`mobile/key_group_join.rs`). It
+/// holds that state's epoch secrets, so it leaves with `mls.bin`. Named here, not in the module that
+/// writes it, because that module is not compiled on desktop and this sweep is.
+pub(crate) const STAGED_KEY_GROUP_JOIN_FILE: &str = "mls.bin.keygroup-join";
+
+/// The ledger of key-group joins the push service attempted (`mobile/key_group_join.rs`). Its
+/// `joined` entries name groups installed in THIS `mls.bin`, which the next start writes into the
+/// registry - so it leaves with `mls.bin`, or the next account to sign in would adopt them.
+pub(crate) const KEY_GROUP_PUSH_JOIN_LEDGER_FILE: &str = "key_group_push_joins.json";
+
 /// [`delete_mls_state`] minus the `AppHandle`, so what it removes is tested on a real directory:
-/// `mls.bin`, its owner record, and the background Welcome files built from it - no epoch secret
-/// outlives the state it belongs to.
+/// `mls.bin`, its owner record, and the background Welcome and push-join files built from it - no
+/// epoch secret outlives the state it belongs to.
 fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
     log::debug!("[MLS] removing mls.bin and what was built from it");
     // `mls.bin` GOES AFTER WHAT WAS BUILT FROM IT: the staged files and the ledger describe it, so a
@@ -312,10 +322,16 @@ fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
     // ...and the owner record AFTER it: a failed removal of `mls.bin` leaves the state with the
     // record naming whose it is, never a state nobody is named for.
     let stale_ledger_tmp = format!("{STALE_WELCOME_LEDGER_FILE}.tmp");
+    let join_staged_tmp = format!("{STAGED_KEY_GROUP_JOIN_FILE}.tmp");
+    let join_ledger_tmp = format!("{KEY_GROUP_PUSH_JOIN_LEDGER_FILE}.tmp");
     let owner_tmp = format!("{MLS_STATE_OWNER_FILE}.tmp");
     for name in [
         STALE_WELCOME_LEDGER_FILE,
         stale_ledger_tmp.as_str(),
+        STAGED_KEY_GROUP_JOIN_FILE,
+        join_staged_tmp.as_str(),
+        KEY_GROUP_PUSH_JOIN_LEDGER_FILE,
+        join_ledger_tmp.as_str(),
         "mls.bin",
         MLS_STATE_OWNER_FILE,
         owner_tmp.as_str(),
@@ -1229,6 +1245,24 @@ mod tests {
             dir.join("unrelated.json").exists(),
             "only what belongs to mls.bin"
         );
+
+        // A push key-group join's staged state and its ledger go too: the stage holds epoch
+        // secrets, and the ledger's `joined` entries would be adopted by the next account's start.
+        file(&dir, "mls.bin");
+        file(&dir, "mls.bin.keygroup-join");
+        file(&dir, "mls.bin.keygroup-join.tmp");
+        file(&dir, "key_group_push_joins.json");
+        file(&dir, "key_group_push_joins.json.tmp");
+        remove_mls_state_in(&dir).unwrap();
+        for gone in [
+            "mls.bin",
+            "mls.bin.keygroup-join",
+            "mls.bin.keygroup-join.tmp",
+            "key_group_push_joins.json",
+            "key_group_push_joins.json.tmp",
+        ] {
+            assert!(!dir.join(gone).exists(), "{gone} outlived the sign-out");
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 

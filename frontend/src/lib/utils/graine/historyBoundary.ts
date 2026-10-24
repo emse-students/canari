@@ -56,13 +56,28 @@ function channels(): ChannelService {
 }
 
 /**
+ * How many session ids one floor query names at most.
+ *
+ * The ids travel in the query string (`?sessions=a,b,...`), about 37 bytes each, and a history
+ * bundle under `joined` asks for EVERY held session of the community - up to
+ * `GRAINE_HISTORY_BUNDLE_MAX_SEEDS`. One query for all of them would be a URL past what the edge
+ * accepts, refused as a whole, and a refusal here fails closed: the member would be handed nothing.
+ * 100 ids is under 4 KB of query.
+ */
+export const HISTORY_FLOOR_QUERY_MAX_SESSIONS = 100;
+
+/** How many floor queries one answer keeps in flight at once (see {@link historyFloorsFor}). */
+export const HISTORY_FLOOR_QUERY_CONCURRENCY = 4;
+
+/**
  * Where each held session becomes readable for `forUserId` - the floors their seeds must travel at.
  *
  * Grouped by channel because that is how the server authorizes the question: the caller must be
  * able to read the channel whose messages draw the floor. A repair request is built per channel, so
- * this is one call in every ordinary case and stays correct if that ever stops being true.
+ * this is one call in every ordinary case and stays correct if that ever stops being true. A channel
+ * with more sessions than {@link HISTORY_FLOOR_QUERY_MAX_SESSIONS} is asked in slices.
  *
- * @param held Sessions this device holds and was asked for.
+ * @param held Sessions this device holds (or was handed) - only their salon and id are read.
  * @param forUserId Whose arrival draws the floors.
  * @returns `sessionId -> lowest readable index`. A session ABSENT from the map has nothing that
  *   member may read and must be withheld whole.
@@ -71,23 +86,77 @@ function channels(): ChannelService {
  *   asymmetry `historyVisibilityFor` already fails closed on.
  */
 export async function historyFloorsFor(
-  held: readonly StoredGraineSession[],
+  held: readonly Pick<StoredGraineSession, 'channelId' | 'sessionId'>[],
   forUserId: string
 ): Promise<Map<string, number>> {
   const byChannel = new Map<string, string[]>();
   for (const session of held) {
-    byChannel.set(session.channelId, [
-      ...(byChannel.get(session.channelId) ?? []),
-      session.sessionId,
-    ]);
+    const ids = byChannel.get(session.channelId);
+    if (ids) ids.push(session.sessionId);
+    else byChannel.set(session.channelId, [session.sessionId]);
   }
 
-  const floors = new Map<string, number>();
+  const queries: { channelId: string; slice: string[] }[] = [];
   for (const [channelId, sessionIds] of byChannel) {
-    const answer = await channels().graineHistoryFloor(channelId, forUserId, sessionIds);
-    for (const [sessionId, floor] of Object.entries(answer)) floors.set(sessionId, floor);
+    for (let at = 0; at < sessionIds.length; at += HISTORY_FLOOR_QUERY_MAX_SESSIONS) {
+      queries.push({
+        channelId,
+        slice: sessionIds.slice(at, at + HISTORY_FLOOR_QUERY_MAX_SESSIONS),
+      });
+    }
   }
+  if (queries.length > 1) {
+    console.debug(
+      `[GRAINE] placing ${held.length} history floor(s) for ${forUserId} in ${queries.length} queries, ` +
+        `${HISTORY_FLOOR_QUERY_CONCURRENCY} at a time`
+    );
+  }
+
+  // A FEW AT A TIME, NOT ONE AFTER ANOTHER: a capped history bundle can name 8000 sessions, which
+  // is 80 queries - sequential, that held the answer for 80 round trips. Bounded so one answer does
+  // not open 80 requests at once. Any refusal fails the whole (fail-closed, the caller says so).
+  const floors = new Map<string, number>();
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < queries.length) {
+      const { channelId, slice } = queries[next++];
+      const answer = await channels().graineHistoryFloor(channelId, forUserId, slice);
+      for (const [sessionId, floor] of Object.entries(answer)) floors.set(sessionId, floor);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(HISTORY_FLOOR_QUERY_CONCURRENCY, queries.length) }, worker)
+  );
   return floors;
+}
+
+/**
+ * Applies the floors {@link historyFloorsFor} returned to a list of seeds: each kept seed RAISED to
+ * its floor, never lowered, and every session absent from `floors` withheld whole.
+ *
+ * ONE implementation for the three places a floor is applied - the two answers that hand seeds over
+ * (`gatherNamedSessions`, `gatherCommunityHistory`) and the receiver that absorbs a bundle under
+ * `joined` (`absorbSeedBundle`) - so "raise, never lower" cannot be written three ways.
+ *
+ * @returns The seeds that may travel or be kept, floors applied, and the ids withheld.
+ */
+export function applyHistoryFloors<T extends { sessionId: string; firstIndex: number }>(
+  seeds: readonly T[],
+  floors: ReadonlyMap<string, number>
+): { kept: T[]; withheld: string[] } {
+  const kept: T[] = [];
+  const withheld: string[] = [];
+  for (const seed of seeds) {
+    const floor = floors.get(seed.sessionId);
+    if (floor === undefined) {
+      withheld.push(seed.sessionId);
+      continue;
+    }
+    // RAISED, NEVER LOWERED. A held floor is what this device was given itself, and a floor that
+    // widened access would be the leak this whole boundary exists to close.
+    kept.push({ ...seed, firstIndex: Math.max(seed.firstIndex, floor) });
+  }
+  return { kept, withheld };
 }
 
 /**
