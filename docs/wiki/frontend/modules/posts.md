@@ -28,6 +28,25 @@ filter bar is gone ([reels](reels.md#the-canareels-entry---an-icon-beside-the-ta
 The publisher's picture, name and link (`PostAuthorAvatar`, `postAuthorName`, `postAuthorHref`)
 and the text renderer (`PostMarkdown`) are shared by the card and the reel viewer's overlay.
 
+**The tab row collapses like Instagram's header (member report, 2026-10-22: the tabs were reachable
+only at the very top).** The wrapper in `routes/posts/+page.svelte` is `sticky top-0` in
+`.page-scroll-wrap` (the one scroller, at every width, so desktop behaves the same) and slides out
+with `-translate-y-full` when `tabsShown` is false: a transform on one boolean, so nothing reflows
+and the infinite scroll's position is untouched. The direction is read from that container's
+`scrollTop` by `nextScrollDirection` ([`utils/scrollDirection.ts`](../../../../frontend/src/lib/utils/scrollDirection.ts)),
+a pure step with an 8 px dead zone measured from where the reader turned; the row is always shown
+at the top, and `scrollTop` is clamped to the maximum so a bottom bounce is not an upward scroll.
+The handler is passive and logs nothing per event. `motion-reduce` drops the slide, `inert` keeps
+the hidden row out of the tab order, and **the row never hides while focus is inside it**
+(`focusin`/`focusout` drive `tabsFocused`): `inert` on a focused row would drop that focus to the
+body. The direction is **seeded at the container's `scrollTop` at mount**
+(`initialScrollDirection(top)`), not at 0, so a page restored mid-scroll does not read its whole
+offset as one scroll down and hide the row unasked. **While a search replaces the feed** the row's
+content is hidden and the wrapper is neither `sticky` nor padded, so no empty opaque band sits over
+the results. Read by code and unit test only: no phone has looked at it (the tab swipe, #1223, is a
+horizontal gesture on the same container and is not touched). **Owed ONE iPhone reading** (review,
+2026-10-23): the row when the page header unmounts with the keyboard open.
+
 ## An anonymous poll stores a tally and no voters (2026-09-30)
 
 A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creation like a form's
@@ -1927,3 +1946,7 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 ## The edit picker always lists the attached form (2026-10-21)
 
 `GET /api/forms` returns only the forms its reader owns or manages (`MANAGE_FORMS`), so an editor whose post carries a form they do not manage (a moderator, an officer without that right) saw "Aucun formulaire pour l'instant" under a post that visibly had one (user report, production). `EditPostForm` now passes the list through `withAttachedForm` (`$lib/posts/editableForms.ts`), which reads the attached form by id (`GET /api/forms/:id`, open to any signed-in reader) and puts it first when the list lacks it; a failed read is logged and the list stays as it was. Saving never depended on the picker: `attachedFormId` is written from the selected id, so the form was kept all along - only the display lied. Not changed: the create picker (a new post has no attached form) and who may attach a form they do not manage (the server still decides).
+
+### The thread on a phone is the CanaReels drawer, with nothing quoted above it (user, 2026-10-23, phones only)
+
+`PostCommentsSheet` picks by `phoneViewport()` (below `md`): the shared `shared/CommentsDrawer` - the very component `ReelCommentsSheet` is built on - rising over the interface on `motion-sheet-in` over a dimmed, tappable backdrop, closed by a drag down on its grabber/title, Back (one history entry), Escape, the X or a tap above. Over the page (`scrim`) it is portalled to the body, `aria-modal`, `focusTrap`ped, and the opener (read at initialisation, BEFORE `focusTrap` moves the focus) gets the focus back. It rides the keyboard (`keyboard-aware-bottom`, capped at `--app-viewport-height`) exactly as the reels sheet does. From `md` up the dialog (`Modal`) is unchanged. **The quoted-post reminder (avatar, author, two lines of text) under the title is REMOVED everywhere**, dialog included; the sheet no longer takes a `post` prop. Tests: `PostCard.drawer.svelte.test.ts` (phone) and `PostCard.sheet.svelte.test.ts` (wide). Only a phone confirms the entrance feel and the soft-keyboard behaviour.

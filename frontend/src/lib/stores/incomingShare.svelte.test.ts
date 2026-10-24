@@ -135,3 +135,42 @@ describe('incomingShare.fence', () => {
     expect(incomingShare.pending?.text).toBe('from B');
   });
 });
+
+/**
+ * A share made inside Canari (a post's link, from its share sheet) arrives with its destination:
+ * the "Envoyer a..." picker must never open for it, and no sign-out fence may refuse it.
+ */
+describe('incomingShare.offerTo', () => {
+  beforeEach(() => {
+    incomingShare.cancel();
+    discardSharedFiles.mockClear();
+  });
+
+  it('offers the text with its destination in one step, and the destination takes it once', () => {
+    expect(incomingShare.offerTo('https://canari.emse.fr/posts/p1', 'group-1')).toBe(true);
+    expect(incomingShare.pending?.text).toBe('https://canari.emse.fr/posts/p1');
+    expect(incomingShare.pending?.files).toEqual([]);
+    expect(incomingShare.target).toBe('group-1');
+    expect(incomingShare.takeFor('group-2')).toBeNull();
+    expect(incomingShare.takeFor('group-1')?.text).toBe('https://canari.emse.fr/posts/p1');
+    expect(incomingShare.takeFor('group-1')).toBeNull();
+  });
+
+  it('passes the fence of a sign-out this page already saw - it was made after it', () => {
+    incomingShare.fence(7, 'signed out');
+    expect(incomingShare.offerTo('https://canari.emse.fr/posts/p2', 'group-1')).toBe(true);
+    expect(incomingShare.target).toBe('group-1');
+  });
+
+  it('is dropped by a sign-out like any held share', () => {
+    incomingShare.offerTo('https://canari.emse.fr/posts/p3', 'group-1');
+    incomingShare.drop('signed out');
+    expect(incomingShare.pending).toBeNull();
+    expect(incomingShare.target).toBeNull();
+  });
+
+  it('refuses an empty text and picks no destination', () => {
+    expect(incomingShare.offerTo('  ', 'group-1')).toBe(false);
+    expect(incomingShare.target).toBeNull();
+  });
+});

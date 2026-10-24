@@ -46,6 +46,51 @@ import {
 interface OidcCallbackDto {
   code: string;
   redirect_uri: string;
+  /**
+   * The PKCE verifier of the authorization request that produced `code` (RFC 7636). MiConnect checks
+   * it against the challenge the client sent, so a code captured on its way back cannot be redeemed
+   * here by anybody but the device that asked for it. Absent from a build that predates PKCE, and
+   * from a client that read no `oidcPkce` capability in `GET /api/version` before it signed in
+   * (docs/wiki/legacy-compatibility.md).
+   */
+  code_verifier?: string;
+}
+
+/**
+ * The typed refusals of `POST /auth/oidc/callback` when MiConnect will not redeem the code. The
+ * client renders on `code`, never on `message`.
+ *
+ * - `OIDC_PKCE_REFUSED`: the code was redeemed WITH a verifier and MiConnect answered `400`. The
+ *   verifier did not match the challenge, or the code was spent or expired - authentik answers
+ *   `invalid_grant` to all of them alike (measured by infrastructure/authentik/test-pkce.py), so
+ *   nothing finer can be stated truthfully. What it does state: the sign-in was a PKCE one.
+ * - `OIDC_CODE_REFUSED`: the code was redeemed WITHOUT a verifier and MiConnect answered `400` - a
+ *   spent or expired code from a client that did not challenge, or a challenged code whose verifier
+ *   the caller lost.
+ * - `OIDC_TOKEN_EXCHANGE_FAILED`: any other status. Not a judgement on the code.
+ */
+export type OidcTokenRefusalCode =
+  | 'OIDC_PKCE_REFUSED'
+  | 'OIDC_CODE_REFUSED'
+  | 'OIDC_TOKEN_EXCHANGE_FAILED';
+
+/**
+ * Classifies MiConnect's refusal of a code from the two facts this server KNOWS - the status it got
+ * and whether it sent a verifier - never from the provider's prose, which is logged and not returned.
+ */
+export function oidcTokenRefusal(
+  status: number,
+  verifierSent: boolean
+): { code: OidcTokenRefusalCode; message: string } {
+  if (status !== 400) {
+    return {
+      code: 'OIDC_TOKEN_EXCHANGE_FAILED',
+      message: `Authentik token exchange failed (${status})`,
+    };
+  }
+  return verifierSent
+    ? { code: 'OIDC_PKCE_REFUSED', message: 'MiConnect refused the code and its PKCE verifier' }
+    : { code: 'OIDC_CODE_REFUSED', message: 'MiConnect refused the code' };
 }
 
 /** Claims carried by the refresh JWT. `sid`/`jti` are absent on tokens issued before WP-SESS-2. */
@@ -184,6 +229,19 @@ export class AuthController {
         expiresIn: REFRESH_MAX_AGE,
       }
     );
+  }
+
+  /**
+   * Signs an access JWT. `sid` names the session it was minted for, so what a request does with it
+   * can be bound to that login: `/api/auth/verify` hands it to nginx as `X-Session-Id`, and
+   * chat-delivery-service stores it on the push registration it makes, which is how ending the
+   * session ends exactly that registration (`docs/wiki/sessions.md`). It authorises nothing: the
+   * refresh credential stays the only thing that names the login for the session's own endpoints.
+   */
+  private signAccessToken(userId: string, admin: boolean, sessionId: string): string {
+    return jwt.sign({ sub: userId, admin, type: 'access', sid: sessionId }, this.jwtSecret, {
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+    });
   }
 
   /**
@@ -339,9 +397,22 @@ export class AuthController {
       admin: boolean;
     };
   }> {
-    const { code, redirect_uri } = body ?? {};
+    const { code, redirect_uri, code_verifier } = body ?? {};
     if (!code) throw new BadRequestException('code is required');
     if (!redirect_uri) throw new BadRequestException('redirect_uri is required');
+    if (code_verifier !== undefined && typeof code_verifier !== 'string') {
+      throw new BadRequestException('code_verifier must be a string');
+    }
+    if (!code_verifier) {
+      // A sign-in with no proof that the caller started it: a build older than PKCE, or a caller
+      // that is not the app at all. THIS LINE IS THE REMOVAL METRIC of the legacy branch
+      // (docs/wiki/legacy-compatibility.md, "an OIDC callback with no PKCE verifier"): the branch
+      // goes when it is silent on production for a week, so it stays a warn - demoting it to debug
+      // would make that condition true by hiding it, not by the clients upgrading.
+      this.logger.warn(
+        `OIDC callback without a PKCE verifier (origin=${req.get('origin') ?? 'none'}) - legacy client`
+      );
+    }
 
     if (!this.authentikBaseUrl || !this.authentikClientId || !this.authentikClientSecret) {
       throw new BadRequestException('Authentik OIDC is not configured on the server');
@@ -358,14 +429,19 @@ export class AuthController {
         redirect_uri,
         client_id: this.authentikClientId,
         client_secret: this.authentikClientSecret,
+        ...(code_verifier ? { code_verifier } : {}),
       }),
     });
 
     if (!tokenRes.ok) {
+      // The provider's answer is logged here and NOT handed to the caller: it describes the
+      // provider's checks to whoever POSTed the code, and the client has nothing to do with it.
       const errText = await tokenRes.text().catch(() => '');
-      throw new UnauthorizedException(
-        `Authentik token exchange failed (${tokenRes.status}): ${errText}`
+      const refusal = oidcTokenRefusal(tokenRes.status, Boolean(code_verifier));
+      this.logger.warn(
+        `Authentik token exchange refused (${tokenRes.status}, ${refusal.code}): ${errText}`
       );
+      throw new UnauthorizedException(refusal);
     }
 
     const tokenData = (await tokenRes.json()) as {
@@ -425,15 +501,10 @@ export class AuthController {
     // a user who signed in before their association's list was loaded still gets their tag.
     await this.usersService.claimLegacyCotisations(user);
 
-    // 5. Issue internal JWT pair, backed by a session row so the refresh can be revoked
-    const access_token = jwt.sign(
-      { sub: user.id, admin: !!user.admin, type: 'access' },
-      this.jwtSecret,
-      {
-        expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-      }
-    );
+    // 5. Issue internal JWT pair, backed by a session row so the refresh can be revoked. The session
+    // first: the access token names it (`sid`), so what it registers is bound to this login.
     const session = await this.authSessions.create(user.id, this.clientInfo(req));
+    const access_token = this.signAccessToken(user.id, !!user.admin, session.sessionId);
     const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
 
     // 5b. The race step 3 cannot close: a `DELETE /users/me` that committed after the check. Under
@@ -628,13 +699,7 @@ export class AuthController {
     }
     const nextTokenId = result.tokenId;
 
-    const access_token = jwt.sign(
-      { sub: payload.sub, admin: isAdmin, type: 'access' },
-      this.jwtSecret,
-      {
-        expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-      }
-    );
+    const access_token = this.signAccessToken(payload.sub, isAdmin, sessionId);
     const new_refresh = this.signRefreshToken(payload.sub, sessionId, nextTokenId);
 
     // Rotate on BOTH transports the caller can hold, for the reason above. From this moment the old
@@ -818,6 +883,7 @@ export class AuthController {
     res.set('X-User-Id', '');
     res.set('X-Logged-In', 'false');
     res.set('X-Global-Admin', 'false');
+    res.set('X-Session-Id', '');
 
     if (!rawHeaders) {
       return res.status(200).send();
@@ -836,6 +902,7 @@ export class AuthController {
         sub: string;
         admin?: boolean;
         type?: string;
+        sid?: unknown;
       };
 
       // The refresh token is signed with the same key, so it verifies here too.
@@ -859,6 +926,9 @@ export class AuthController {
       res.set('X-User-Id', payload.sub);
       res.set('X-Logged-In', 'true');
       res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
+      // The session this access token was minted for. Empty for a token minted before the claim
+      // existed (one TTL after the deploy at most): a push registration it makes is then unbound.
+      res.set('X-Session-Id', typeof payload.sid === 'string' ? payload.sid : '');
 
       // Mint a per-minute HMAC token so backend services can verify the request
       // genuinely came through nginx (not from a compromised container).

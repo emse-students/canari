@@ -2274,3 +2274,13 @@ the push; the iOS NSE processes no Welcome at all. So inlining a Welcome could n
 (a message that fits), `by-reference` (every Welcome, whatever its size; debug line, expected),
 `over-budget` (a MESSAGE that did not fit: the fixed fields grew; `warn`), `empty`. No client change
 and no native work was needed. `push-payload.spec.ts` pins the 4608 B case.
+
+**Key material over the budget is carried by reference too (2026-10-22).** A Graine seed bundle is
+routinely kilobytes, and since a history answer is paged at up to 255 KiB
+([channel-encryption §4.4](../protocols/channel-encryption.md#44-joining-and-what-a-share-link-is-worth)),
+every multi-seed answer to an offline device was logged `over-budget` at warn, once per page.
+`isKeyDistribution` (the `dm_groups` distribution columns the push already reads) now makes such a
+frame `by-reference` with `reason: 'key-material'`, at debug. Key material that fits is still inlined,
+because the native mirror reads seeds from it. A frame whose group row could not be read
+(`isKeyDistribution` undefined) still reports `over-budget`. The device behaviour is unchanged: a push
+with an empty `proto` was already fetched by `queuedMessageId`.

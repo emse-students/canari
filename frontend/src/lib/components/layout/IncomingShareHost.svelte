@@ -14,8 +14,6 @@
    * See `docs/wiki/frontend/sharing.md`.
    */
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
-  import { resolve } from '$app/paths';
   import ForwardMessageModal from '$lib/components/chat/ForwardMessageModal.svelte';
   import { incomingShare } from '$lib/stores/incomingShare.svelte';
   import { notifNav } from '$lib/stores/notifNav.svelte';
@@ -25,7 +23,7 @@
     globalChannels,
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
-  import { chatDeepLinkRoute } from '$lib/utils/chat/notificationRouting';
+  import { landShareOn } from '$lib/sharing/shareLanding';
   import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
   import { drainNativeShare } from '$lib/mobile/incomingShareDrain';
   import { syncShareTargets } from '$lib/sharing/shareTargets';
@@ -96,11 +94,8 @@
   });
 
   function pick(_key: string, conversation: Conversation) {
-    // The conversation ID, not the map key: a DM is keyed by its display name, and a landing names
-    // the group id (`resolveConversationKey` crosses that gap on arrival).
     incomingShare.chooseTarget(conversation.id);
-    notifNav.navigate(conversation.id);
-    void goto(resolve(chatDeepLinkRoute(conversation.id)));
+    landShareOn(conversation.id);
   }
 
   onMount(() => {
