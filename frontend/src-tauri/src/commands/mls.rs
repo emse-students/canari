@@ -1280,6 +1280,40 @@ pub(crate) fn graine_verify_signature(
     }
 }
 
+/// Verifies a whole page's signatures in ONE crossing of the bridge (F7, `community-open-budget.md`).
+///
+/// `packed_b64` is `packGraineSignatureChecks`'s buffer as ONE base64 string: not a raw invoke body
+/// (Android delivers every argument as JSON, see `store_avatar_mirror`) and not a number array (one
+/// JSON number per byte, built on the WebView's main thread). The answer is one verdict per check, in
+/// order, each what `graine_verify_signature` answers for it. An `Err` means the packing itself was
+/// broken - a contract fault, never a verdict about a row.
+///
+/// `async` + `spawn_blocking`: a page is a few hundred verifications, which a synchronous command
+/// would run on the main thread.
+#[tauri::command]
+pub(crate) async fn graine_verify_signatures(packed_b64: String) -> Result<Vec<String>, String> {
+    use base64::Engine;
+    let packed = base64::engine::general_purpose::STANDARD
+        .decode(&packed_b64)
+        .map_err(|e| {
+            log::error!(
+                "[GRAINE_SIG] signature batch of {} chars is not base64, nothing verified: {e}",
+                packed_b64.len()
+            );
+            format!("packed batch is not base64: {e}")
+        })?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mls_core::graine_signature::verify_packed_graine_signatures(&packed)
+            .map(|verdicts| verdicts.into_iter().map(str::to_string).collect())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| {
+        log::error!("[GRAINE_SIG] signature batch task failed: {e}");
+        e.to_string()
+    })?
+}
+
 /// Signs a v2 session ENDORSEMENT with this device's MLS credential key.
 #[tauri::command]
 pub(crate) fn graine_sign_with_device_credential(
