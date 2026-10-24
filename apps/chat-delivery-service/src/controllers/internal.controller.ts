@@ -752,10 +752,14 @@ export class InternalController {
     this.logger.log(`[INTERNAL_DELETE] starting user=${who}`);
     const manager = this.groupRepo.manager;
 
-    // THE KEY PACKAGES GO FIRST, AND ALONE. Every writer that ADMITS a device into a group reads its
+    // THE KEY PACKAGES GO FIRST, AND ALONE. Every writer that admits a device into a group reads its
     // key package `FOR SHARE` under the group's seat lock (`heldKeyPackages`), so this delete waits
     // for every such writer holding one, and a writer after it finds none and writes nothing: the
-    // discovery below reads every row they wrote. What this does NOT stop is the account itself
+    // discovery below reads every row they wrote. TWO KNOWN EXCEPTIONS (`heldKeyPackages` names
+    // them): the demotion, and `MembersController.addGroupMember`, which reads the key packages
+    // outside any lock and writes the roster row and `pending` seats with no seat lock - so a peer
+    // holding a valid token can re-enrol an erased account by its id even after the final pass
+    // (backlog, P2 "addGroupMember can enrol an erased account"). What this does NOT stop is the account itself
     // bringing a key package back - every (re)connection republishes it (`register-device`), and
     // nothing refuses a token issued before the deletion for up to an hour. That is why the run
     // ends with a sweep (below), and why termination is the FINAL PASS's, never this ordering's:

@@ -281,7 +281,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     await q(`DELETE FROM dm_group_members`);
     await seat(SENDER);
     await seat(PEER);
-    // Every writer that admits a device reads its key package under the lock; an erasure
+    // The writers under test read the key package under the lock; an erasure
     // case below deletes PEER's, so it is put back here.
     for (const who of [SENDER, PEER]) await keyPackageFor(who);
   });
@@ -1006,8 +1006,8 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
   });
 
   /**
-   * EVERY WRITER THAT ADMITS A DEVICE READS ITS KEY PACKAGE UNDER THE LOCK (the demotion, which
-   * writes a route-less `pending` row, is the one exception - see `heldKeyPackages`). An account
+   * EVERY WRITER THAT ADMITS A DEVICE READS ITS KEY PACKAGE UNDER THE LOCK, with two known
+   * exceptions - the demotion and `addGroupMember`, see `heldKeyPackages`. An account
    * erasure deletes the key packages first, on their own, and again before its sweep. Each case is a
    * device whose key package is already gone.
    */

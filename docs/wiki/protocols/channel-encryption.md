@@ -623,10 +623,15 @@ window with a durable row and a lock:
   (`heldKeyPackages`): `writeClaimedSeat` (the committer's seat, an activation, the group's creator -
   which also checks the revocation denylist), a commit's admits (`ADMIT_REFUSED reason=no_key_package`;
   the admit is dropped and the commit accepted, since the leaf belongs to an account that is going),
-  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. The one exception is deliberate:
-  the demotion (`deactivateDeviceMembership`, the stale-device cron among its callers) upserts a
-  `pending` row without that read - the cron demotes precisely a device with no recent key package -
-  and removes the route itself. An account erasure deletes the account's key packages FIRST, in a
+  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. **Two known exceptions.** The
+  demotion (`deactivateDeviceMembership`, the stale-device cron among its callers), deliberately:
+  it upserts a `pending` row without that read - the cron demotes precisely a device with no recent
+  key package - and removes the route itself. And `addGroupMember` (a group invite, and the opening
+  of a 1:1 DM), a pre-existing writer not yet converted: it reads the key packages outside any lock
+  and writes the roster row and `pending` seats with no seat lock, so **an erased account can be
+  re-enrolled by a peer's invite, roster row included, even after the erasure's final pass**
+  ([backlog](../backlog.md), P2 "addGroupMember can enrol an erased account after the final erasure
+  pass"). An account erasure deletes the account's key packages FIRST, in a
   transaction of its own, so a writer either holds one and the delete waits for it - its row is
   then there for the erasure's discovery - or finds none and writes nothing. The erasure cuts every
   group it found, under each group's seat lock (`eraseSeats`: rows, queue and routes together), so

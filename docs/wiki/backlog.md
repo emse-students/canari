@@ -107,6 +107,32 @@ device is denied the span between the two. Nothing leaks to anyone: the member l
 Production held 4 such late-interval members on 2026-10-22. Fix direction: keep the arrival as a fact
 outside the device rows (on the membership interval, for instance) so a purge cannot move it.
 
+## P2 - addGroupMember can enrol an erased account after the final erasure pass (review of #2258, 2026-10-24)
+
+`MembersController.addGroupMember` (`POST mls/groups/:groupId/members`: a group invite, and the
+opening of a 1:1 DM) is the one admitting writer the seat lock never converted. It reads the
+target's key packages outside any transaction or lock, then writes the roster row, its membership
+interval and `pending` device rows with no seat lock and no `heldKeyPackages`. Nothing refuses an id
+whose account was erased, so any member holding a valid token can POST an erased uuid and recreate a
+roster row naming that person, even after chat-delivery's final erasure pass (no key package is
+left, so no device row; the roster row and interval are enough to name them). Pre-existing, not a
+regression of #2258, which only names it as the second known exception to "every writer that admits
+a device reads its key package under the lock" ([channel-encryption](protocols/channel-encryption.md),
+[account-erasure](account-erasure.md)). Fix direction (from the review): route it through
+`writePendingSeats(enrol=true)`, which already takes the seat lock, re-reads the group and reads
+`heldKeyPackages`; and refuse the target itself, either by a roster-level tombstone that the erasure
+writes and that names no one once its own window ends, or by asking core whether the account exists.
+
+## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
+
+`deleteUserData` tombstones the DMs its discovery found. A DM opened with the account after that
+read (by the account while a token is valid, or by a peer through `addGroupMember`) loses the
+account's roster row to the roster delete and its device rows to the sweep's cut, but its
+`dm_groups` row and the other party's side stay: a 1:1 conversation with one member left. The final
+pass does not find it either, since nothing of the account names it any more. Small and rare (a DM
+opened inside the erasure window); fix with the P2 above, or by having the sweep tombstone any DM
+whose roster the account was on.
+
 ## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
 `withholdReason` places a copy with no `serverTimestamp` against every window widened by
