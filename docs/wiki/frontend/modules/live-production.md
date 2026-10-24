@@ -48,7 +48,7 @@ estate; `owed` = not done. A gate closes only when its last column is true.
 | G13 | **A global stop that is not a release** (see section 1): a runtime switch read by the live guard, as calls got `platform_config.calls_mode` (B12 of [calls](calls.md#the-blockers-each-with-its-evidence)) | **a decision - the owner's** (D-1 below) | decided; if yes, built and its `off` read refusing a start on dev before the first alpha with the flip |
 | G14 | **Two questions to the school IT department, asked before the first public live** (asking is a question, not a change): whether the host's CrowdSec reads a lecture hall behind one campus address (~10-20 requests a second) as a crawl; and the link's real speed and Canari's share (Q3), which sets the cap | **owed** | their written answers, recorded in the private operations notes, the cap figure on this page |
 | G15 | **The production preflight** (section 4), read-only | **written below; owed** | every line read |
-| G16 | P3 met by the server review: a seat taken AFTER an end's release outlives the end by up to its 30 s lease ([backlog](../../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19)) | **owed**, NOT a blocker (it costs a refusal for 30 s, never a byte or a key) | its fix, whenever |
+| G16 | P3 met by the server review: a seat taken AFTER an end's release outlives the end by up to its 30 s lease ([backlog](../../backlog.md#p1---live-moderation-wp-l8-merged-the-clients-standing-refusals-the-viewer-cap-and-the-readings-are-owed-2026-10-19)) | **owed**, NOT a blocker (it costs a refusal for 30 s, never a byte or a key) | its fix, whenever |
 
 ## 3. The order
 

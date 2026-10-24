@@ -910,6 +910,16 @@ answer path can forget it.
   held-back message is served by any member holding it dated - so the margin errs wide. One with no
   usable timestamp at all is held back. When no current member has a window nothing is filtered, and
   every answer is byte-for-byte what it was.
+  **The margin stays SYMMETRIC (decided by the user 2026-10-22, review of #2251; moved from the
+  backlog 2026-10-24).** A joiner's before-arrival span `[0, arrival)` thus also withholds their undated
+  history from the hour AFTER they arrived; a device already holding a message is never filtered, so the
+  loss is that member's NEXT device restoring history, unless a member holding it dated serves it.
+  Widening only the pre-arrival side would leak a message received before the arrival whose sender's
+  clock ran ahead - exactly the case the margin exists for. The cost (a few undated messages just after
+  arrival) is accepted; nothing is owed, and it is not reopened without a new measurement of that cost.
+  That count cannot be read on the server (undated copies live in client stores, bundles are
+  ciphertext): the only reading is the client's `[HISTORY_ENTITLEMENT] ... N undated within 60 min`
+  line on a device that receives a filtered push.
 - **An unreadable window set carries no message**, logged `[HISTORY_ENTITLEMENT]`: the same silence
   an unreadable store produces, so another member or the next connection answers. Never an
   unfiltered answer. **The FULL bundle still sends one frame carrying the conversation state** (floor,

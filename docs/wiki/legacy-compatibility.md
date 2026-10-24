@@ -12,6 +12,14 @@ than an archaeology exercise. Every shim below also carries a comment at its sit
 **Nothing below is WORK.** Each entry is a date, and the code change behind it is minutes. What is
 being waited on is the world, not a decision - do not "do" these early, and do not re-argue them.
 
+## The floor rule: raised when both stores serve the latest update (owner, 2026-10-24)
+
+**`minClientVersion` is raised, on both estates, to the latest stable as soon as BOTH Play AND the App
+Store serve it** - read with `bun tools/play-vitals/vitals.mjs` and the App Store state, never inferred.
+It replaces every per-entry "the user's gesture, when the time comes": a removal condition below names
+the version the floor must pass, and this rule is what moves the floor there. The raise is a production
+setting, so it is done by the owner or with the owner's go, and written into the entry it unblocks.
+
 ---
 
 ## What the 2026-08-17 gate actually retired, and what it did not
@@ -176,7 +184,7 @@ id is not a post keeps a DEAD tap on every client.
 `repost_proposed` (and the agenda's types before their own rows) show the comment sentence on a client
 older than the release carrying their rows.
 **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** - the release
-carrying PR #1911, both stores serving it, then `minClientVersion` raised to it. A new type shipped
+carrying PR #1911 (`v1.2.9`), the floor moving by [the floor rule](#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24). A new type shipped
 earlier reaches the floor clients as a wrong sentence and a dead link, which no server change can undo.
 **Checklist - a NEW notification type** (no other checklist existed; this is it):
 1. The floor above covers PR #1911 first.
@@ -186,11 +194,11 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 **Removal condition:** none; this is a floor requirement, not a shim.
 **Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
 payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
-Steps 2-4 are done; step 1 is not: #1911's first stable is `v1.2.9` and the floor reads `1.2.7`. It
+Steps 2-4 are done; step 1 waits on the floor (#1911's first stable is `v1.2.9`). It
 ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
 **The exact precondition to set it to `true` (user, 2026-10-22):** `minClientVersion` at or above the
-version that CARRIES #2228 (not merely `1.2.9`: that build also declares the `form-responses` host and
-knows the type), on BOTH estates, once BOTH Play AND the App Store serve that version. The switch stays
+version that CARRIES #2228 (`v1.4.0`, not merely `1.2.9`: that build also declares the `form-responses` host and
+knows the type), on BOTH estates, by [the floor rule](#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24). The switch stays
 ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
 pins it, run by someone else.
 
