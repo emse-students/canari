@@ -1,0 +1,205 @@
+[
+  {
+    "name": "a contact adds a device to a DM they were already in",
+    "event": {
+      "groupId": "g",
+      "epoch": 5,
+      "identity": "bob:web-2",
+      "keyFingerprint": "0011223344556677",
+      "trust": "first-sight",
+      "addedBy": "bob:phone-1",
+      "memberAlreadyPresent": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "contact-line",
+    "key": "bob:web-2|0011223344556677"
+  },
+  {
+    "name": "the same in a community key group says nothing to a contact",
+    "event": {
+      "groupId": "g",
+      "epoch": 5,
+      "identity": "bob:web-2",
+      "keyFingerprint": "0011223344556677",
+      "trust": "first-sight",
+      "addedBy": "carol:phone-1",
+      "memberAlreadyPresent": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": true,
+    "audience": "none",
+    "key": "bob:web-2|0011223344556677"
+  },
+  {
+    "name": "a new member joining with their device is not a new device",
+    "event": {
+      "groupId": "g",
+      "epoch": 2,
+      "identity": "bob:phone-1",
+      "keyFingerprint": "aa",
+      "trust": "first-sight",
+      "addedBy": "alice:phone-a",
+      "memberAlreadyPresent": false
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": "bob:phone-1|aa"
+  },
+  {
+    "name": "a device re-added under its pinned key is not new",
+    "event": {
+      "groupId": "g",
+      "epoch": 9,
+      "identity": "bob:phone-1",
+      "keyFingerprint": "aa",
+      "trust": "pinned",
+      "addedBy": "alice:phone-a",
+      "memberAlreadyPresent": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": "bob:phone-1|aa"
+  },
+  {
+    "name": "a changed key is announced even when its user had left",
+    "event": {
+      "groupId": "g",
+      "epoch": 9,
+      "identity": "bob:phone-1",
+      "keyFingerprint": "bb",
+      "trust": "key-changed",
+      "addedBy": "dave:phone-1",
+      "memberAlreadyPresent": false
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "contact-line",
+    "key": "bob:phone-1|bb"
+  },
+  {
+    "name": "a changed key found in a joined tree names no committer",
+    "event": {
+      "groupId": "g",
+      "epoch": 3,
+      "identity": "bob:phone-1",
+      "keyFingerprint": "bb",
+      "trust": "key-changed",
+      "addedBy": null,
+      "memberAlreadyPresent": false
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": "bob:phone-1|bb"
+  },
+  {
+    "name": "the owner is alerted from any group, user half in any case",
+    "event": {
+      "groupId": "g",
+      "epoch": 5,
+      "identity": "ALICE:web-9",
+      "keyFingerprint": "cc",
+      "trust": "first-sight",
+      "addedBy": "carol:phone-1",
+      "memberAlreadyPresent": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": true,
+    "audience": "owner-alert",
+    "key": "alice:web-9|cc"
+  },
+  {
+    "name": "the added device never alerts itself about itself",
+    "event": {
+      "groupId": "g",
+      "epoch": 5,
+      "identity": "alice:web-9",
+      "keyFingerprint": "cc",
+      "trust": "first-sight",
+      "addedBy": "alice:phone-a",
+      "memberAlreadyPresent": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "web-9",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": "alice:web-9|cc"
+  },
+  {
+    "name": "an event recorded before the field existed is never announced",
+    "event": {
+      "groupId": "g",
+      "epoch": 5,
+      "identity": "alice:web-9",
+      "keyFingerprint": "cc",
+      "trust": "first-sight",
+      "addedBy": "alice:phone-a"
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": "alice:web-9|cc"
+  },
+  {
+    "name": "an identity with two colons names no device - no alert, no key",
+    "event": {
+      "groupId": "g",
+      "epoch": 5,
+      "identity": "alice:web:9",
+      "keyFingerprint": "cc",
+      "trust": "first-sight",
+      "addedBy": "carol:phone-1",
+      "memberAlreadyPresent": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": null
+  },
+  {
+    "name": "a contact identity with two colons gets no line either",
+    "event": {
+      "groupId": "g",
+      "epoch": 5,
+      "identity": "bob:web:2",
+      "keyFingerprint": "cc",
+      "trust": "first-sight",
+      "addedBy": "bob:phone-1",
+      "memberAlreadyPresent": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": null
+  },
+  {
+    "name": "a bare legacy identity names no device - no alert, no key",
+    "event": {
+      "groupId": "g",
+      "epoch": 5,
+      "identity": "alice",
+      "keyFingerprint": "cc",
+      "trust": "first-sight",
+      "addedBy": "carol:phone-1",
+      "memberAlreadyPresent": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": null
+  }
+]

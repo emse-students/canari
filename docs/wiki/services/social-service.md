@@ -179,7 +179,6 @@ added later without the pipe fails there.
 | POST | `/api/channels` | Create channel in a workspace |
 | POST | `/api/channels/:channelId/messages` | Send encrypted channel message |
 | GET | `/api/channels/:channelId/messages` | List messages newest-first (`limit`≤200, `before` ISO cursor) |
-| POST | `/api/channels/:channelId/members/join` | Join channel |
 | POST | `/api/channels/:channelId/members/invite` | Invite user to channel |
 | POST | `/api/channels/:channelId/members/leave` | Leave a **private** channel (drops the caller from `allowedUsers` and rotates the key). A public channel answers 400 - see "A channel-scoped action never touches community membership" |
 | GET | `/api/channels/:channelId/members` | Roster of THIS channel (private = `allowedUsers` + admins); `?scope=workspace` for the whole community |
@@ -1296,6 +1295,58 @@ last.
 expires. Bounds that would mint a dead link - an expiry already past, a cap below one - are refused
 (`INVITE_EXPIRY_INVALID`, `INVITE_EXPIRY_IN_THE_PAST`, `INVITE_MAX_USES_INVALID`) rather than stored,
 since `inviteIsValid` would otherwise hand back a token dead on arrival with nothing saying why.
+
+**Invite use counting is atomic (2026-10-22).** `acceptWorkspaceInvite`'s read of the invite is a
+preview; what admits is ONE conditional `UPDATE workspace_invites SET uses = uses + 1 WHERE id = $1
+AND revoked = false AND (not expired) AND ("maxUses" IS NULL OR uses < "maxUses") RETURNING id`, in
+the transaction that writes the membership. The row lock serialises concurrent accepts, each
+re-evaluates the WHERE against the committed count, and a claim that matches no row is refused
+(`404`) with nothing written. Pinned by `workspace-invite.integration.spec.ts`,
+which parks an accept on a held claim through `pg_blocking_pids`, never a sleep.
+
+### An invitation grants only a role the inviter may grant (2026-10-22)
+
+An invite LINK carries no role: whoever minted it, accepting grants the community's base role,
+its lowest-priority one (`baseMemberRole`, the one definition). A direct invitation
+(`inviteToChannel`) takes a `roleName` in its body, and since inviting is `member.invite` or
+`channel.manage` while granting a role is role management, it grants the base role unless
+`actorMayGrantRole` (`permissions.ts`) allows the named one: the actor holds
+`roleGrantsRoleManagement` - the same predicate every role-management endpoint now reads - and the
+role grants nothing the actor does not hold (`workspace.manage` holds everything). Otherwise
+`403 { code: 'INVITE_ROLE_NOT_GRANTABLE' }`, decided before the device lookup, never a silent
+downgrade. A request naming `Membre` (or the base role's own name) means the base role, so an
+ordinary invitation works in a community whose lowest role is called otherwise; the client sends
+no `roleName` at all for one, and names a role only when the inviter picked one.
+
+**Role changes are bounded by the actor's own permissions, by the same function.** Every
+role-management write goes through `assertActorManagesRoles` (the `roleGrantsRoleManagement` gate,
+returning the union of what the actor holds) and then `actorMayGrantRole`:
+
+| Write | Bound | Refusal |
+|---|---|---|
+| `updateWorkspaceMemberRole` | the new role AND the target's current roles grant nothing the actor lacks - the actor's own membership included | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+| `setRoleBasePermission` | the role being edited grants nothing the actor lacks (their own role included), and a granted key is one they hold; checked on the LOCKED row | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+| `createRole` | the new role grants nothing the actor lacks; it ranks just above the base role (`priority` is the server's, the body's is not read) | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+
+**Removals are bounded by the actor's own permissions, by the sibling predicate.**
+`kickFromWorkspace` and `removeMemberFromChannel` share one gate, `assertActorMayRemoveMember`:
+the actor holds `member.kick`, `channel.manage` or `workspace.manage`, and `permissionsCover` -
+the "holds at least as much" that `actorMayGrantRole` is built on - holds between the actor's
+permissions and the target's. Otherwise `403 REMOVAL_EXCEEDS_ACTOR`.
+
+`workspace.manage` holds every permission, so an administrator keeps all of it. Pinned by
+`role-change-bound.spec.ts` and `removal-bound.spec.ts`.
+
+### A membership carries the admission a member signed (2026-10-22)
+
+`channel_members."admissionVoucher"` (migration `107`, nullable text) holds the voucher a member's
+device signed for this membership: sent as `admissionVoucher` with a member's add
+(`POST /api/channels/:channelId/members/invite`) and with a link's accept (body of
+`POST /api/channels/invites/:token/accept`, written onto an existing row too, and onto a new one in
+the transaction that counts the invite's use). The service checks
+only that it is base64url and at most 4096 characters (`ADMISSION_VOUCHER_INVALID` otherwise) - it
+cannot verify it, and the members do. The workspace roster serves it with `isCreator`. Why, and the
+format: [channel-encryption section 25](../protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22).
 
 ### A user id becomes a property name, and four sites spelled the refusal differently (2026-09-23)
 

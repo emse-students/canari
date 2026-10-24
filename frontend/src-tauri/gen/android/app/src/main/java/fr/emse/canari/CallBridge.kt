@@ -22,7 +22,7 @@ import org.json.JSONObject
  *
  * Down: `MainActivity` registers [JsInterface] as `window.canariCall` - `start(json)`, `update(json)`,
  * `stop(callId, reason)`, `pageLoaded()` - ONLY in a build whose manifest declares the service (the
- * `calls` manifest overlay, see `app/build.gradle.kts`). The page reads the absence of `canariCall` as
+ * main manifest, since the calls flip of 2026-10-22; a build that lost the declaration registers no bridge). The page reads the absence of `canariCall` as
  * "this build cannot keep a call alive in the background" and says so at error level when it is
  * placing calls (`frontend/src/lib/mobile/androidCallService.ts`). `start` and `update` carry the
  * description and the CALL ID the page drew for this call.
@@ -86,8 +86,8 @@ object CallBridge {
     }
 
     /**
-     * Whether THIS build declares the service. The `calls` manifest overlay is merged only into a
-     * build that places calls, so a store build answers false and registers no bridge.
+     * Whether THIS build declares the service. The main manifest carries it since the flip; a build
+     * whose manifest lost it answers false and registers no bridge (the page then says so at error level).
      */
     fun serviceDeclared(context: Context): Boolean = try {
         context.packageManager.getServiceInfo(ComponentName(context, CallForegroundService::class.java), 0)

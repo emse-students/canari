@@ -13,7 +13,7 @@ vi.mock('$lib/utils/openExternal', async (importOriginal) => ({
 }));
 
 import { TauriMlsService } from './TauriMlsService';
-import { keystoreCommand } from './keystoreCommands';
+import { DELETE_DEVICE_KEY_COMMAND } from './keystoreCommands';
 
 /**
  * A KEYSTORE THAT REFUSES THE NEW KEY MUST NOT KEEP THE OLD ONE. A refusal raised before the native
@@ -43,8 +43,8 @@ describe('TauriMlsService.pointUnattendedUnlockAt - a refused write', () => {
 
     await expect(service().pointUnattendedUnlockAt('a2V5')).rejects.toThrow('-25293');
 
-    expect(invoke).toHaveBeenCalledWith(keystoreCommand('deleteKeyBytes'), {
-      payload: { alias: 'mls_device_key_user-1_device-1' },
+    expect(invoke).toHaveBeenCalledWith(DELETE_DEVICE_KEY_COMMAND, {
+      alias: 'mls_device_key_user-1_device-1',
     });
   });
 
@@ -53,6 +53,6 @@ describe('TauriMlsService.pointUnattendedUnlockAt - a refused write', () => {
 
     await expect(service().pointUnattendedUnlockAt('a2V5')).resolves.toBe(true);
 
-    expect(invoke).not.toHaveBeenCalledWith(keystoreCommand('deleteKeyBytes'), expect.anything());
+    expect(invoke).not.toHaveBeenCalledWith(DELETE_DEVICE_KEY_COMMAND, expect.anything());
   });
 });

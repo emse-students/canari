@@ -91,3 +91,26 @@ describe('dropRetiredKlipyCustomerId', () => {
     expect(() => dropRetiredKlipyCustomerId()).not.toThrow();
   });
 });
+
+describe('the rendition picked for a use', () => {
+  const r = (width: number) => ({
+    url: `https://static.klipy.com/${width}.gif`,
+    width,
+    height: width,
+  });
+  const gif = { id: 'a', tiny: r(90), preview: r(200), full: r(400) };
+
+  it('the grid takes the lightest rendition that still covers its tile', async () => {
+    const { pickGridRendition } = await import('./gifSearch');
+    expect(pickGridRendition(gif, 80).width).toBe(90);
+    expect(pickGridRendition(gif, 150).width).toBe(200);
+    expect(pickGridRendition(gif, 300).width).toBe(200);
+    expect(pickGridRendition({ ...gif, tiny: undefined }, 80).width).toBe(200);
+  });
+
+  it('a comment takes the small rendition, the medium one only when that is too narrow', async () => {
+    const { commentGifRendition } = await import('./gifSearch');
+    expect(commentGifRendition(gif).width).toBe(200);
+    expect(commentGifRendition({ ...gif, preview: r(120) }).width).toBe(400);
+  });
+});
