@@ -322,14 +322,15 @@ jobs:
           echo "AAB: $AAB"
           echo "APK: $APK"
 
-      # THE ONGOING-CALL SERVICE SHIPS EXACTLY WHERE CALLS ARE PLACED (WP-C-BG-A). Its manifest overlay
-      # is merged by gradle on `VITE_DEPLOY_ENVIRONMENT=development` - a pre-release - and a stable
-      # carrying it would declare a microphone foreground service Play reviews and no user can use.
+      # THE ONGOING-CALL SERVICE IS DECLARED EXACTLY WHEN CALLS ARE COMPILED (WP-C-BG-A). It lives in the
+      # main manifest since the flip of CALLS_COMPILED, so every build carries it; were the constant
+      # ever turned back off, a build still carrying it would declare a microphone foreground service
+      # Play reviews and no user can use.
       # `androidCallServiceManifest.test.ts` asserts the SOURCE; this reads what was BUILT, in both
       # artifacts: the AAB's manifest is protobuf, whose strings are plain UTF-8 (no bundletool), the
       # APK's is binary XML, read by aapt2. RECORD_AUDIO is the anchor: a dump that lost it is unread,
       # never a pass. docs/wiki/frontend/modules/calls.md
-      - name: Check the built manifests carry the call service only where calls are placed
+      - name: Check the built manifests carry the call service exactly when calls are compiled
         env:
           AAB: ${{ steps.outputs.outputs.aab }}
           APK: ${{ steps.outputs.outputs.apk }}
@@ -344,11 +345,9 @@ jobs:
             echo "::error::cannot read CALLS_COMPILED from frontend/src/lib/features.ts (declarations=${DECLS}, value='${COMPILED}')"
             exit 1
           fi
-          # WHEN CALLS_COMPILED FLIPS TO true, A STABLE FAILS THIS STEP BY DESIGN: gradle still merges
-          # the service only on VITE_DEPLOY_ENVIRONMENT=development, so a stable would be built
-          # without it. The revival commit moves the declaration into src/main/AndroidManifest.xml
-          # (androidCallServiceManifest.test.ts holds it to that) - until then this step says so.
-          if [ "$PRERELEASE" = "true" ] || [ "$COMPILED" = true ]; then
+          # The declaration is in src/main/AndroidManifest.xml and follows CALLS_COMPILED alone, for a
+          # stable and a pre-release alike (androidCallServiceManifest.test.ts holds the source to it).
+          if [ "$COMPILED" = true ]; then
             EXPECTED=1
           else
             EXPECTED=0
