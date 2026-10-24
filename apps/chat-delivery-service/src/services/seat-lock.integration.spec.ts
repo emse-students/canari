@@ -666,6 +666,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       const seatsRepo = ds.getRepository(DeviceGroupMembership);
       const read = seatsRepo.find.bind(seatsRepo);
       let reads = 0;
+      let admitted: unknown;
       const find = jest.spyOn(seatsRepo, 'find').mockImplementation(async (options) => {
         const found = await read(options);
         const isErasureRead =
@@ -674,12 +675,10 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         if (isErasureRead && ++reads === 2) {
           await keyPackageFor(PEER);
           const claim = await claimSeat(ds.manager, LATE, PEER.userId);
-          await expect(
-            service.activateDeviceMembership(PEER.userId, PEER.deviceId, LATE, {
-              authority: 'accepted_commit',
-              claim,
-            })
-          ).resolves.toEqual({ ok: true });
+          admitted = await service.activateDeviceMembership(PEER.userId, PEER.deviceId, LATE, {
+            authority: 'accepted_commit',
+            claim,
+          });
         }
         return found;
       });
@@ -689,6 +688,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         find.mockRestore();
       }
       expect(reads).toBe(2);
+      expect(admitted).toEqual({ ok: true });
 
       // The first pass ends with the late seat whole: its row AND its route, never one without the other.
       const standing: unknown[] = await q(
