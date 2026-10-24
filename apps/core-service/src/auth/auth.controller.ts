@@ -233,6 +233,19 @@ export class AuthController {
   }
 
   /**
+   * Signs an access JWT. `sid` names the session it was minted for, so what a request does with it
+   * can be bound to that login: `/api/auth/verify` hands it to nginx as `X-Session-Id`, and
+   * chat-delivery-service stores it on the push registration it makes, which is how ending the
+   * session ends exactly that registration (`docs/wiki/sessions.md`). It authorises nothing: the
+   * refresh credential stays the only thing that names the login for the session's own endpoints.
+   */
+  private signAccessToken(userId: string, admin: boolean, sessionId: string): string {
+    return jwt.sign({ sub: userId, admin, type: 'access', sid: sessionId }, this.jwtSecret, {
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+    });
+  }
+
+  /**
    * Facts recorded on the session so its owner can recognise it later.
    *
    * The IP is taken from the LAST `X-Forwarded-For` entry, not the first: nginx
@@ -491,15 +504,10 @@ export class AuthController {
     // a user who signed in before their association's list was loaded still gets their tag.
     await this.usersService.claimLegacyCotisations(user);
 
-    // 5. Issue internal JWT pair, backed by a session row so the refresh can be revoked
-    const access_token = jwt.sign(
-      { sub: user.id, admin: !!user.admin, type: 'access' },
-      this.jwtSecret,
-      {
-        expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-      }
-    );
+    // 5. Issue internal JWT pair, backed by a session row so the refresh can be revoked. The session
+    // first: the access token names it (`sid`), so what it registers is bound to this login.
     const session = await this.authSessions.create(user.id, this.clientInfo(req));
+    const access_token = this.signAccessToken(user.id, !!user.admin, session.sessionId);
     const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
 
     // 5b. The race step 3 cannot close: a `DELETE /users/me` that committed after the check. Under
@@ -694,13 +702,7 @@ export class AuthController {
     }
     const nextTokenId = result.tokenId;
 
-    const access_token = jwt.sign(
-      { sub: payload.sub, admin: isAdmin, type: 'access' },
-      this.jwtSecret,
-      {
-        expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-      }
-    );
+    const access_token = this.signAccessToken(payload.sub, isAdmin, sessionId);
     const new_refresh = this.signRefreshToken(payload.sub, sessionId, nextTokenId);
 
     // Rotate on BOTH transports the caller can hold, for the reason above. From this moment the old
@@ -884,6 +886,7 @@ export class AuthController {
     res.set('X-User-Id', '');
     res.set('X-Logged-In', 'false');
     res.set('X-Global-Admin', 'false');
+    res.set('X-Session-Id', '');
 
     if (!rawHeaders) {
       return res.status(200).send();
@@ -902,6 +905,7 @@ export class AuthController {
         sub: string;
         admin?: boolean;
         type?: string;
+        sid?: unknown;
       };
 
       // The refresh token is signed with the same key, so it verifies here too.
@@ -925,6 +929,9 @@ export class AuthController {
       res.set('X-User-Id', payload.sub);
       res.set('X-Logged-In', 'true');
       res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
+      // The session this access token was minted for. Empty for a token minted before the claim
+      // existed (one TTL after the deploy at most): a push registration it makes is then unbound.
+      res.set('X-Session-Id', typeof payload.sid === 'string' ? payload.sid : '');
 
       // Mint a per-minute HMAC token so backend services can verify the request
       // genuinely came through nginx (not from a compromised container).

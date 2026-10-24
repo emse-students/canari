@@ -45,13 +45,13 @@ use crate::commands::mls::{
     epoques_departs, exporter_group_info, exporter_ratchet_tree, exporter_secret,
     feuille_portant_cle, generer_key_packages_et_persister, graine_member_signature_key,
     graine_run, graine_session_keypair, graine_sign_with_device_credential,
-    graine_sign_with_session_key, graine_verify_signature, groupe_actif, initialiser_mls,
-    key_package_a_clef_privee, lister_groupes, lister_identites_membres, obtenir_epoch,
-    oublier_groupe, oublier_key_packages, prendre_constats_fork, prendre_evenements_appareils,
-    recenser_key_packages, recevoir_message_bytes, recevoir_messages_batch,
-    recuperer_cle_session_mls, rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
-    retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
-    trailer_welcome, verifier_key_package,
+    graine_sign_with_session_key, graine_verify_signature, graine_verify_signatures, groupe_actif,
+    initialiser_mls, key_package_a_clef_privee, lister_groupes, lister_identites_membres,
+    obtenir_epoch, oublier_groupe, oublier_key_packages, prendre_constats_fork,
+    prendre_evenements_appareils, recenser_key_packages, recevoir_message_bytes,
+    recevoir_messages_batch, recuperer_cle_session_mls, rejoindre_par_commit_externe,
+    remplacer_appareil, retirer_membres, retirer_membres_par_appareil,
+    sauvegarder_mls_et_persister, skip_send_generations, trailer_welcome, verifier_key_package,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::discard_picked_file;
@@ -1317,6 +1317,7 @@ pub fn run() {
             graine_session_keypair,
             graine_sign_with_session_key,
             graine_verify_signature,
+            graine_verify_signatures,
             graine_sign_with_device_credential,
             graine_member_signature_key,
             graine_run,
