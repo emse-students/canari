@@ -3233,7 +3233,9 @@ credential's device. **`live`, `history` and, since the 2026-10-18 draft, `distr
 `openDistributionFrame` passes the frame's `senderDeviceId` beside the user, so a key-group frame
 whose device disagrees is refused like a user mismatch (see
 [section 24](#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)).
-It is a behaviour change with no production reading behind it, so no stable carries it before
+It is a behaviour change whose only production reading is INDIRECT - zero `[SENDER_MISMATCH]` of
+any kind on chat-delivery from 2026-10-10 to 2026-10-24, the `live` path comparing the same
+envelope field throughout - so no stable carries it before
 `[SENDER_MISMATCH] path=distribution` has been read on dev, then production
 ([backlog](../backlog.md#p3---the-distribution-paths-device-check-ship-on-an-alpha-read-sender_mismatch-pathdistribution-first)). Three kinds:
 `user`, `device`, `unverifiable`. The envelope's device is itself what the SENDING client's request
