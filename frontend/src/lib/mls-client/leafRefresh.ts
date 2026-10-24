@@ -56,7 +56,7 @@
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { mixedHash32 } from '$lib/utils/hash32';
 import { CommitRefusedError } from './CommitRefusedError';
-import { CommitOutcomeUnknownError } from './commitSubmission';
+import { CommitOutcomeUnknownError, FollowerTabCommitError } from './commitSubmission';
 import { UnpublishedBranchError } from './publishedBranch';
 
 /**
@@ -326,6 +326,7 @@ export type LeafRefreshOutcome =
   | 'already-tried'
   | 'unverified'
   | 'unresolved'
+  | 'follower-tab'
   | 'refreshed'
   | 'failed';
 
@@ -435,6 +436,11 @@ export async function refreshLeafIfDue(
           'until a resubmission answers'
       );
       return 'unresolved';
+    }
+    if (e instanceof FollowerTabCommitError) {
+      // Not a failure: a follower tab never commits, and refused before fetching anything
+      // (`BaseMlsService.refreshOwnLeaf`, which said so). The leader tab refreshes the leaf.
+      return 'follower-tab';
     }
     deps.log(
       e instanceof CommitRefusedError

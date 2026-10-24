@@ -11,6 +11,7 @@ import { BaseMlsService } from './BaseMlsService';
 import { DELIVERY, addressedKeyMaterial, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import { readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
+import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { recordingStage } from '../../test/recordingStage';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
@@ -161,6 +162,19 @@ describe('the commits no person asks for - staged only on the branch the server 
     expect(ctx.runCommitTransaction.mock.calls[0][2]).toEqual({
       removes: [{ userId: 'user-b', deviceId: 'dev-lost' }],
     });
+  });
+
+  it('refuses a refresh on a follower tab BEFORE fetching the published base', async () => {
+    const leadership = await import('$lib/mls-client/tabLeader');
+    vi.spyOn(leadership, 'getTabLeadership').mockReturnValue('follower');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const ctx = branchCtx({ base: { groupInfo: GI, baseEpoch: 5, activeEpoch: 5 } });
+    await expect(proto.refreshOwnLeaf.call(ctx, 'g-1')).rejects.toBeInstanceOf(
+      FollowerTabCommitError
+    );
+    expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
+    expect(ctx.runCommitTransaction).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 
   describe.each(commits)('%s', (_name, commit, stageName) => {

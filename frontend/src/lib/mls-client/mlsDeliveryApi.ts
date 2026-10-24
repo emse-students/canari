@@ -1168,21 +1168,35 @@ export class MlsDeliveryApi {
     /** True when the gate had ALREADY accepted these exact bytes: a resubmission, answered again. */
     duplicate?: boolean;
   }> {
-    const res = await this.f(`${this.historyUrl}/api/mls/commit`, {
-      method: 'POST',
-      headers: await this.auth({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        groupId,
-        deviceId: this.deviceId,
-        baseEpoch,
-        proto: protoBase64,
-        senderId: this.userId,
-        ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
-        ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
-        ...(admits?.length ? { admits } : {}),
-        ...(removes?.length ? { removes } : {}),
-      }),
-    });
+    // UNDER THE `write` HEAD DEADLINE (`requestDeadline.ts`: 30 s plus the time the body needs to
+    // leave), because every caller awaits this INSIDE THE GLOBAL MLS LOCK, which also guards the
+    // incoming processing of every group: a POST hung on a half-open connection or a captive portal
+    // froze decryption in every conversation for as long as the engine tolerated - and the periodic
+    // leaf refresh makes an unasked commit ordinary. The expiry is a `RequestDeadlineError`, a
+    // transport failure: NO ANSWER, never a refusal, because the gate may have accepted. The callers
+    // already read it that way - `runCommitTransaction` resubmits the same bytes and KEEPS the stage
+    // as unknown while no answer comes (`CommitOutcomeUnknownError`), and the next resubmission
+    // decides, an accepted commit being answered as a duplicate.
+    const res = await trackedFetch(
+      this.f,
+      `${this.historyUrl}/api/mls/commit`,
+      {
+        method: 'POST',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          groupId,
+          deviceId: this.deviceId,
+          baseEpoch,
+          proto: protoBase64,
+          senderId: this.userId,
+          ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
+          ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
+          ...(admits?.length ? { admits } : {}),
+          ...(removes?.length ? { removes } : {}),
+        }),
+      },
+      { requestClass: 'write' }
+    );
     if (!res.ok) {
       throw await refusalFromResponse(res, 'Commit submission HTTP error');
     }

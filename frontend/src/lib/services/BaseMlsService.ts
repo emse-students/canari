@@ -5967,6 +5967,14 @@ export abstract class BaseMlsService implements IMlsService {
    * Admits nobody and removes nobody, so it declares neither. Staged only on the published branch.
    */
   async refreshOwnLeaf(groupId: string): Promise<void> {
+    // THE ROLE BEFORE THE BASE: a follower tab never commits (`runCommitTransaction` refuses it), so
+    // fetching the published base first only cost a request per epoch before the same refusal.
+    if (getTabLeadership() === 'follower') {
+      console.log(
+        `[LEAF_REFRESH] ${groupId.slice(0, 8)}... not refreshed on a follower tab - the leader refreshes`
+      );
+      throw new FollowerTabCommitError(groupId);
+    }
     const assertOnBranch = await this.assertOnPublishedBranch(groupId, 'leaf refresh');
     await this.runCommitTransaction(groupId, async (intent) => {
       await assertOnBranch();

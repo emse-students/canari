@@ -27,6 +27,9 @@ import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { MlsCheckpointNotWrittenError, MlsStateWriteRefusedError } from '$lib/utils/hex';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { TransportFailureError, isTransportFailure } from '$lib/utils/transportFailure';
+import { MlsDeliveryApi } from '$lib/mls-client/mlsDeliveryApi';
+import { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
+import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
 
 /**
  * A SUBMISSION WHOSE ANSWER WAS LOST IS RESUBMITTED, NEVER GUESSED - AND IT IS KEPT IN THE MLS STATE.
@@ -736,5 +739,93 @@ describe('sendMessage - a group whose last commit is unresolved', () => {
       .groupsWithPendingCommit;
     expect(asked).toHaveBeenCalledTimes(1);
     expect(svc.encrypted).toEqual([G, G]);
+  });
+});
+
+/**
+ * A SUBMIT THAT NEVER ANSWERS MAY NOT HOLD THE MLS LOCK.
+ *
+ * Every commit is submitted inside the GLOBAL MLS lock, which also guards the incoming processing of
+ * every group. A POST hung on a half-open connection or a captive portal froze decryption in every
+ * conversation for as long as the engine tolerated - and the periodic leaf refresh made an unasked
+ * commit ordinary. The submission now lives under the `write` head deadline; its expiry is NO
+ * ANSWER, so the stage is resubmitted, KEPT as unknown, and settled by a later resubmission.
+ */
+describe('runCommitTransaction - a commit gate that never answers', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** A `fetch` that never answers: it ends only when its signal aborts it. */
+  const hanging = () =>
+    vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_, reject) => {
+          init.signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError'))
+          );
+        })
+    );
+
+  it('releases the lock within two deadlines, lets another group proceed, and keeps the commit unknown for a resubmission', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = hanging();
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    api.userId = U;
+    api.deviceId = D;
+    const c = ctx(vi.fn());
+    const scheduler = new MlsPerGroupScheduler('web');
+    Object.assign(c, {
+      delivery: api,
+      unresolvedGroups: new Set<string>(),
+      runUnderMlsLock: <T>(fn: () => Promise<T>) => scheduler.runUnderMlsLock(fn),
+    });
+
+    const commit = run(c).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    // Another group's incoming frame waits for the same lock.
+    let otherAt: number | null = null;
+    const startedAt = Date.now();
+    const other = scheduler.runUnderMlsLock(async () => {
+      otherAt = Date.now();
+    });
+
+    // The body is far below the uplink allowance's first second, so each attempt is bounded by
+    // the `write` deadline plus under one second.
+    const bound = DEADLINE_MS.write + 1_000;
+    await vi.advanceTimersByTimeAsync(bound);
+    // The first request expired: no answer, so the SAME commit was resubmitted.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(bound);
+    await other;
+
+    const err = await commit;
+    expect(err).toBeInstanceOf(CommitOutcomeUnknownError);
+    // No answer, typed at the throw: the deadline's own error, which reads as a transport failure.
+    expect((err as CommitOutcomeUnknownError).cause).toBeInstanceOf(RequestDeadlineError);
+    expect(isTransportFailure((err as CommitOutcomeUnknownError).cause)).toBe(true);
+    expect(otherAt).not.toBeNull();
+    expect(otherAt! - startedAt).toBeLessThanOrEqual(2 * bound);
+    // KEPT, never cleared: the gate may have accepted it.
+    expect(c.clearPendingCommit).not.toHaveBeenCalled();
+    expect(c.state.get(G)).toMatchObject({ status: 'recorded' });
+    expect((c as unknown as { unresolvedGroups: Set<string> }).unresolvedGroups.has(G)).toBe(true);
+
+    // The next resubmission decides it: the gate had taken it, and answers a duplicate.
+    fetchImpl.mockImplementation(async () =>
+      Response.json({ accepted: true, duplicate: true, newEpoch: 6 })
+    );
+    await c.settleUnresolvedCommits([G]);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    const bodies = fetchImpl.mock.calls.map(
+      (call) => JSON.parse(String((call[1] as RequestInit).body)) as { proto: string }
+    );
+    expect(new Set(bodies.map((b) => b.proto))).toEqual(new Set([OURS]));
+    expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
   });
 });

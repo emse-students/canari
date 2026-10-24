@@ -992,6 +992,16 @@ at the next gateway connection (before the pending messages are drained), before
 commit in the group, and a commit replay settles it from the log only when the log holds a row AT its
 base epoch, which is decided for good. No clock decides anything.
 
+**No submission holds the MLS lock unbounded.** Every submission - the first and each resubmission - is
+awaited INSIDE the global MLS lock, which also guards the incoming processing of every group, so a
+POST hung on a half-open connection or a captive portal froze decryption in every conversation. Since
+the periodic refresh makes an unasked commit ordinary, `submitCommit` runs under the `write` head
+deadline (`requestDeadline.ts`: 30 s plus the time its body needs to leave). Its expiry is a
+`RequestDeadlineError`, a transport failure - NO ANSWER, never a refusal - so it takes the path above:
+the same bytes are resubmitted once, and a second expiry keeps the stage as unknown. The lock is held
+at most two deadlines. The deadline does not decide the outcome; the next resubmission does
+(`BaseMlsService.unresolvedCommit.test.ts`, "a commit gate that never answers").
+
 **One store, one call.** What a resubmission needs - the commit, its successor base, its Welcome,
 and the client's intent (whom it excludes, admits and removes) - is kept BESIDE the staged commit in
 the MLS state itself (`mls-core/src/pending_submission.rs`), and written by the SAME platform call
