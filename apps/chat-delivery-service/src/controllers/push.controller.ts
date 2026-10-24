@@ -34,6 +34,7 @@ import {
   sanitizeQueryValue,
 } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
+import { parseSessionId } from '../utils/session-id';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
@@ -312,6 +313,13 @@ export class PushController {
   /**
    * Register or refresh a push token for a device.
    * Upserts on (userId, deviceId) - one token per device per user.
+   *
+   * The row is BOUND TO THE SESSION that registered it: `X-Session-Id` is the `sid` claim of the
+   * caller's access token, set by nginx from core-service's verify (never by the client - nginx
+   * overwrites it on every authenticated location). Ending that session deletes this row and no
+   * other, so a re-sign-in on the same device, which rewrites the row with its own session, is never
+   * undone by the old session's end. Written on EVERY registration, null included: a row rewritten
+   * by a token without the claim must not keep naming a session that did not write it.
    */
   @UseGuards(ThrottlerGuard, HeaderAuthGuard)
   @Post('mls/push/register')
@@ -324,10 +332,12 @@ export class PushController {
       voipToken?: string;
       locale?: string;
     },
-    @Headers('x-user-id') userIdRaw: string
+    @Headers('x-user-id') userIdRaw: string,
+    @Headers('x-session-id') sessionIdRaw?: string
   ) {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const sessionId = parseSessionId(sessionIdRaw, 'X-Session-Id');
 
     if (typeof body.token !== 'string' || !body.token.trim()) {
       throw new BadRequestException('token is required');
@@ -367,6 +377,7 @@ export class PushController {
         token,
         platform,
         pushSecret,
+        sessionId,
         ...(voipToken ? { voipToken } : {}),
         ...(locale ? { locale } : {}),
       },
@@ -374,7 +385,7 @@ export class PushController {
     );
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform} ` +
-        `locale=${locale ?? 'unstated'}`
+        `locale=${locale ?? 'unstated'} session=${sessionId ? sessionId.slice(0, 8) : 'none'}`
     );
     // rawSecret returned ONCE - the client must persist it.
     return { status: 'registered', pushSecret: rawSecret };
