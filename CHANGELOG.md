@@ -123,7 +123,7 @@ WebView nobody can inspect tells a swallowed click from a lost touch ([device-ve
 
 ### Fixed - the swipe from the feed to the camera is no longer taken as Back on Android
 
-A swipe started in the feed's left 30 CSS px went Back instead of opening the camera; the feed now excludes that edge band, as conversations exclude the right one ([mobile](docs/wiki/frontend/mobile.md#the-left-edge-back-gesture-is-excluded-over-the-feed-and-only-there-2026-10-21)).
+A swipe started in the feed's left 30 CSS px went Back instead of opening the camera; the feed now excludes that edge band, as conversations exclude the right one ([mobile](docs/wiki/frontend/mobile.md#the-left-edge-back-gesture-is-excluded-over-every-tab-root-with-a-section-to-its-left-2026-10-21-widened-2026-10-24)).
 
 ### Fixed - chat: a link to `archives.canari-emse.fr` (or any sibling subdomain) is no longer rewritten to the Canari app
 
