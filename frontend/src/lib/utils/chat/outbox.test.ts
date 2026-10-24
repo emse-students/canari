@@ -99,6 +99,7 @@ import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { OutboxEntry } from '$lib/db';
 import type { StoredMessage } from '$lib/db/types';
+import { drainPendingGroupExits } from './pendingGroupExits';
 import { toBase64 } from '$lib/utils/hex';
 import type { Conversation } from '$lib/types';
 
@@ -1868,6 +1869,73 @@ describe('outbox - settling a group before its exit', () => {
     await outbox.enqueue(textEntry('m1', 'left', 100));
 
     expect(storage._map.size).toBe(0);
+  });
+
+  it('a kill between the recorded exit and its drain: the relaunch sends nothing of the group into the 403, and the leave still proceeds', async () => {
+    // The leave died after `recordPendingGroupExit` and before `drainForExit`: the rows it would
+    // have settled are still queued, and the owed exit is on disk. A fresh controller is the relaunch.
+    const base = makeStorage([
+      textEntry('m1', 'left', 100),
+      {
+        ...textEntry('c1', 'left', 101),
+        kind: 'control' as const,
+        text: undefined,
+        controlProto: new Uint8Array([1]),
+      },
+      textEntry('m2', 'kept', 102),
+    ]);
+    const exits = base._exits;
+    const storage = Object.assign(base, {
+      deletePendingGroupExit: vi.fn(async (groupId: string) => {
+        exits.splice(
+          exits.findIndex((x: { groupId: string }) => x.groupId === groupId),
+          1
+        );
+      }),
+    });
+    exits.push({ groupId: 'left', kind: 'leave', requestedAt: Date.now() });
+    const mlsService = makeMls();
+    const lines: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const outbox = createOutbox(makeDeps({ mlsService, storage, log: (m) => lines.push(m) }));
+
+    await outbox.flush();
+
+    // Only the other group's text went; the exited group's rows are withdrawn, never posted.
+    expect(mlsService.sendMessage.mock.calls.map((c: unknown[]) => c[2])).toEqual(['m2']);
+    expect(storage._map.size).toBe(0);
+    expect(lines).toContainEqual(
+      expect.stringMatching(
+        /lane left…: this device owes the leave of the group .* 2 queued entries withdrawn, never sent into the refusal \(1 text, 1 control\)/
+      )
+    );
+
+    // The owed exit is untouched by the withdrawal, so the replay still ends the membership.
+    const server = {
+      removeMemberFromServer: vi.fn(async () => {}),
+      deleteGroupOnServer: vi.fn(async () => true),
+      dismissGroup: vi.fn(async () => {}),
+    };
+    const outcomes = await drainPendingGroupExits({
+      storage: storage as any,
+      mlsService: server as any,
+      userId: 'me',
+      log: () => {},
+    });
+    expect(server.removeMemberFromServer).toHaveBeenCalledWith('left', 'me');
+    expect(outcomes).toEqual([{ groupId: 'left', kind: 'leave', result: 'answered' }]);
+    expect(exits).toEqual([]);
+    warn.mockRestore();
+  });
+
+  it('the exit drain itself still SENDS what can go, although its exit is owed by then', async () => {
+    const storage = makeStorage([textEntry('m1', 'left', 100)]);
+    storage._exits.push({ groupId: 'left', kind: 'leave', requestedAt: 1 });
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    expect(await outbox.drainForExit('left', 'leave')).toBe(0);
+    expect(mlsService.sendMessage.mock.calls.map((c: unknown[]) => c[2])).toEqual(['m1']);
   });
 
   it('lets the owed read-mark ledger drop a mark of an exited group, so a sign-in re-queues nothing', async () => {

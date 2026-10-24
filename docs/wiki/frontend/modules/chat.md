@@ -2795,7 +2795,15 @@ So `exitGroupAndCleanup`, for a leave and a delete alike:
   (`[OUTBOX] leave of <id>…: N of M queued entries sent before the server step, K lost (1 text)`);
 - every enqueue reads the DURABLE owed exit (`pendingGroupExits`) and refuses a group whose exit is
   owed, before its write and again after it - whichever of the exit and the write comes second sees
-  the other, so no clock is involved. A refused read mark then leaves the owed-mark ledger too;
+  the other, so no clock is involved. A refused read mark then leaves the owed-mark ledger too; a
+  refused text or file is said at `warn`, since only an exit refused for ever can reach that;
+- every ordinary flush reads the same owed exit, once per lane pass, and WITHDRAWS the group's rows
+  instead of sending them (`[OUTBOX] lane <id>…: this device owes the leave of the group ... N queued
+  entries withdrawn, never sent into the refusal`, at `warn`). Only the exit's own drain (`exiting`)
+  may still send. This covers a KILL between `recordPendingGroupExit` and that drain: on relaunch the
+  replay of the owed exit may end the membership before or after the first flush, and either way no
+  row of the group is posted into the 403 (review of #2259). The replay itself is unchanged and needs
+  no live outbox controller, so its order against the outbox at start-up does not matter;
 - a withdrawn entry whose send fails is dropped, and the line says what that means for who withdrew
   it: an author's delete, a newer read mark superseding it, the exit, or another tab.
 

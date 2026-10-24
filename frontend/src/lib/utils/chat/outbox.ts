@@ -3,7 +3,8 @@ import { bumpOutboxQueueVersion } from './outboxActivity.svelte';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
-import type { OutboxResumableUpload } from '$lib/db/types';
+import type { OutboxResumableUpload, PendingGroupExit } from '$lib/db/types';
+import { owedFor } from '$lib/utils/chat/pendingGroupExits';
 import { OutboxPayloadUnreadableError } from '$lib/db/outboxCodec';
 import {
   OutboxBlobCorruptError,
@@ -2435,8 +2436,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     for (;;) {
       if (disposed) return;
       laneRerun.delete(conversationId);
-      const entries = (await readQueue('flush')).filter((e) => e.conversationId === conversationId);
+      const queue = await readQueue('flush');
+      const entries = queue.filter((e) => e.conversationId === conversationId);
       if (entries.length === 0) return;
+      // A GROUP WHOSE EXIT IS OWED SENDS NOTHING FROM AN ORDINARY FLUSH: its rows are withdrawn, under
+      // this lane's claim, before any of them reaches the wire. The exit's own drain is the one lane
+      // that may still send them (`exiting`), while the membership exists. This is what covers a kill
+      // between `recordPendingGroupExit` and that drain: on relaunch the replay of the owed exit may
+      // end the membership before or after this flush, and either way no row of the group is posted
+      // into the 403 (review of #2259). Read from DURABLE state, once per pass: a lane is claimed
+      // before it runs, and an exit recorded during the pass awaits the lane before it withdraws.
+      if (!exiting.has(conversationId) && (await withdrawForOwedExit(conversationId, queue))) {
+        return;
+      }
       logMlsMetric({ kind: 'outbox_pending_count', count: entries.length });
       log(
         `[OUTBOX] Flushing ${entries.length} queued entr${entries.length === 1 ? 'y' : 'ies'} for ${conversationId.slice(0, 8)}…`
@@ -2498,22 +2510,78 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * An unreadable store answers `false`: it proves nothing, the entry is queued, and that is logged.
    */
   async function owedExitRefuses(entry: OutboxEntry, what: string): Promise<boolean> {
-    if (!storage) return false;
+    const exit = await owedExitOf(entry.conversationId, `${entry.id.slice(0, 8)}…`, 'queued');
+    if (!exit) return false;
+    const line = `[OUTBOX] ${entry.id.slice(0, 8)}… (${entry.kind}) ${what}: this device owes the ${exit.kind} of ${entry.conversationId.slice(0, 8)}… (owed for ${owedFor(exit.requestedAt)}), so nothing of it can be delivered`;
+    // SOMETHING THE MEMBER WROTE, DROPPED, ACCUSES. A control refused here is the late read-mark
+    // writer this gate exists for; a text or a file is not, and the one way to reach this with one is
+    // an exit the server keeps refusing (kept for ever, by design) on a group the member is in again
+    // - and the enqueue resolves, so this line is all that says it (backlog, P3).
+    if (entry.kind !== 'control') console.warn(line);
+    log(line);
+    return true;
+  }
+
+  /**
+   * The exit this device owes for `conversationId`, read from DURABLE state, or `null`. An unreadable
+   * store answers `null`: it proves nothing, and the line says what goes ahead without the check.
+   */
+  async function owedExitOf(
+    conversationId: string,
+    subject: string,
+    without: string
+  ): Promise<PendingGroupExit | null> {
+    if (!storage) return null;
     try {
-      const exit = (await storage.getPendingGroupExits()).find(
-        (x) => x.groupId === entry.conversationId
+      return (
+        (await storage.getPendingGroupExits()).find((x) => x.groupId === conversationId) ?? null
       );
-      if (!exit) return false;
-      log(
-        `[OUTBOX] ${entry.id.slice(0, 8)}… (${entry.kind}) ${what}: this device owes the ${exit.kind} of ${entry.conversationId.slice(0, 8)}…, so nothing of it can be delivered`
-      );
-      return true;
     } catch (e) {
       log(
-        `[OUTBOX] ${entry.id.slice(0, 8)}… owed group exits unreadable (${String(e).slice(0, 80)}) - queued without that check`
+        `[OUTBOX] ${subject} owed group exits unreadable (${String(e).slice(0, 80)}) - ${without} without that check`
       );
-      return false;
+      return null;
     }
+  }
+
+  /**
+   * Withdraws every queued row of `conversationId` when its exit is owed, and says so by kind.
+   * `queue` is the snapshot the lane just read. Returns whether the exit was owed (the lane stops).
+   */
+  async function withdrawForOwedExit(
+    conversationId: string,
+    queue: OutboxEntry[]
+  ): Promise<boolean> {
+    const short = conversationId.slice(0, 8);
+    const exit = await owedExitOf(conversationId, `lane ${short}…`, 'flushed');
+    if (!exit) return false;
+    const { left, kinds } = await withdrawGroupForExit(conversationId, queue);
+    // A WARNING: rows reaching a flush with their group's exit owed means the exit's own drain never
+    // ran - a kill inside the leave - and what the member queued there is lost.
+    const line = `[OUTBOX] lane ${short}…: this device owes the ${exit.kind} of the group (owed for ${owedFor(exit.requestedAt)}) - ${left.length} queued entr${left.length === 1 ? 'y' : 'ies'} withdrawn, never sent into the refusal (${kinds})`;
+    console.warn(line);
+    log(line);
+    return true;
+  }
+
+  /**
+   * Withdraws every row of `conversationId` in `snapshot` for a group exit, rewrites the mirror once,
+   * and returns how many there were and what they were, by kind - the two exit paths word it alike.
+   */
+  async function withdrawGroupForExit(
+    conversationId: string,
+    snapshot: OutboxEntry[]
+  ): Promise<{ left: OutboxEntry[]; kinds: string }> {
+    const left = snapshot.filter((e) => e.conversationId === conversationId);
+    const gone = new Set<string>();
+    const lostByKind = new Map<OutboxEntry['kind'], number>();
+    for (const entry of left) {
+      const { rowDeleted } = await withdraw(entry.id, 'exit', snapshot);
+      if (rowDeleted) gone.add(entry.id);
+      lostByKind.set(entry.kind, (lostByKind.get(entry.kind) ?? 0) + 1);
+    }
+    if (gone.size > 0) await syncOutboxMirror(snapshot.filter((e) => !gone.has(e.id)));
+    return { left, kinds: [...lostByKind].map(([k, n]) => `${n} ${k}`).join(', ') };
   }
 
   /**
@@ -2841,17 +2909,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           }
           // 4. WHAT COULD NOT GO IS WITHDRAWN, under the same claim, and said by kind: a text lost
           // here is something the member wrote, a control is a receipt or a reaction.
-          const snapshot = await readQueue('exit withdraw');
-          const left = snapshot.filter((e) => e.conversationId === conversationId);
-          const gone = new Set<string>();
-          const lostByKind = new Map<OutboxEntry['kind'], number>();
-          for (const entry of left) {
-            const { rowDeleted } = await withdraw(entry.id, 'exit', snapshot);
-            if (rowDeleted) gone.add(entry.id);
-            lostByKind.set(entry.kind, (lostByKind.get(entry.kind) ?? 0) + 1);
-          }
-          if (gone.size > 0) await syncOutboxMirror(snapshot.filter((e) => !gone.has(e.id)));
-          const kinds = [...lostByKind].map(([k, n]) => `${n} ${k}`).join(', ');
+          const { left, kinds } = await withdrawGroupForExit(
+            conversationId,
+            await readQueue('exit withdraw')
+          );
           const line = `${tag}: ${before.length - left.length} of ${before.length} queued entr${before.length === 1 ? 'y' : 'ies'} sent before the server step, ${left.length} lost${left.length > 0 ? ` (${kinds})` : ''}`;
           if (left.length > 0) console.warn(line);
           log(line);

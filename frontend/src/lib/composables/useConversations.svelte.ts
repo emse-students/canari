@@ -1937,7 +1937,8 @@ export function useConversations() {
     // flight, sends what still can go (the membership and the MLS state exist until the server step,
     // so a text written just before leaving arrives), and withdraws only what cannot, logging it by
     // kind. The owed exit recorded just above is what makes every later enqueue for the group refuse
-    // itself. The leave's own `memberLeft` notice is not in the outbox: it is a direct send whose
+    // itself, and every ordinary flush withdraw the group's rows - so a kill before this drain leaves
+    // nothing that the relaunch's replay of the exit could race into a 403. The leave's own `memberLeft` notice is not in the outbox: it is a direct send whose
     // acceptance `leaveGroupAndBroadcast` awaits.
     await drainOutboxForExit(convo.id, exitKind).catch((e: unknown) =>
       ctx.log(
