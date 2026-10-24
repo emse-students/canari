@@ -23,7 +23,12 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
 describe('MembersController - membership intervals and the exclusions read', () => {
   let controller: MembersController;
   let members: Array<{ userId: string; joinedAt: Date }>;
-  let intervals: Array<{ userId: string; joinedAt: Date; leftAt: Date | null }>;
+  let intervals: Array<{
+    userId: string;
+    joinedAt: Date;
+    leftAt: Date | null;
+    admittedAt?: Date | null;
+  }>;
   let healInserts: Array<{ userId: string; joinedAt: Date; leftAt: null }>;
   let txDeletes: Array<{ entity: unknown; where: unknown }>;
   let txUpdates: Array<{ entity: unknown; where: Record<string, unknown> }>;
@@ -344,6 +349,51 @@ describe('MembersController - membership intervals and the exclusions read', () 
     );
     const got = await controller.getGroupExclusions('g-1', 'alice', 'carol');
     expect(got.withheld.carol).toEqual([{ from: 0, until: T('2026-10-02T00:00:00Z').getTime() }]);
+  });
+
+  it("keeps a person's arrival once the device row that proved it was purged - their next device keeps the span", async () => {
+    // carol's first device entered the tree on the 2nd, her enrolment says the 7th, and the
+    // enrolment recorded the admission on her interval. That device was then revoked: its row is
+    // gone, and her new phone's row dates from the 9th (review of #2226).
+    intervals = intervals.map((i) =>
+      i.userId === 'carol' ? { ...i, admittedAt: T('2026-10-02T00:00:00Z') } : i
+    );
+    deviceRows = deviceRows.map((d) =>
+      d.userId === 'carol' ? { ...d, deviceId: 'c2', createdAt: T('2026-10-09T00:00:00Z') } : d
+    );
+    const got = await controller.getGroupExclusions('g-1', 'alice', 'carol');
+    expect(got.withheld.carol).toEqual([{ from: 0, until: T('2026-10-02T00:00:00Z').getTime() }]);
+    expect(intervalFind).toHaveBeenCalledWith(
+      GroupMembershipInterval,
+      expect.objectContaining({ select: expect.objectContaining({ admittedAt: true }) })
+    );
+  });
+
+  it("decides `for` against the caller's CURRENT interval - a returner reads no arrival from while they were away", async () => {
+    // bob was out from the 3rd to the 5th; dave was added on the 4th, while bob was away. bob's
+    // first arrival (the 1st) must not make dave's arrival readable to him.
+    members.push({ userId: 'dave', joinedAt: T('2026-10-04T00:00:00Z') });
+    intervals.push({ userId: 'dave', joinedAt: T('2026-10-04T00:00:00Z'), leftAt: null });
+    deviceRows.push({ userId: 'dave', deviceId: 'd1', createdAt: T('2026-10-04T00:00:00Z') });
+
+    const fromBob = await controller.getGroupExclusions('g-1', 'bob', 'dave');
+    expect(Object.keys(fromBob.withheld)).toEqual(['bob']);
+
+    // A device dave adds after bob came back is one bob witnessed, and is answered.
+    deviceRows.push({ userId: 'dave', deviceId: 'd2', createdAt: T('2026-10-06T00:00:00Z') });
+    const later = await controller.getGroupExclusions('g-1', 'bob', 'dave');
+    expect(later.withheld.dave).toEqual([{ from: 0, until: T('2026-10-04T00:00:00Z').getTime() }]);
+  });
+
+  it("counts the admission recorded on the caller's current interval as the start of it", async () => {
+    // carol's enrolment says the 7th, but her device was admitted on the 6th - the moment she was
+    // added. A device added on the 6th 12:00 was added while she was in.
+    intervals = intervals.map((i) =>
+      i.userId === 'carol' ? { ...i, admittedAt: T('2026-10-06T00:00:00Z') } : i
+    );
+    deviceRows.push({ userId: 'alice', deviceId: 'a2', createdAt: T('2026-10-06T12:00:00Z') });
+    const got = await controller.getGroupExclusions('g-1', 'carol', 'alice');
+    expect(got.withheld.alice).toEqual([{ from: 0, until: T('2026-10-01T00:00:00Z').getTime() }]);
   });
 
   it('withholds the gaps only in a 1:1, and in a key group', async () => {

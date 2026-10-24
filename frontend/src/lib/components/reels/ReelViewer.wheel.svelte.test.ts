@@ -158,12 +158,12 @@ it('with the comments sheet open, the wheel is the list scrolling, not the reel'
     .querySelector('[data-reel-rail-comments]')!
     .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
   await settle();
-  expect(document.querySelector('[data-reel-comments-sheet]')).not.toBeNull();
+  expect(document.querySelector('[data-comments-drawer-sheet]')).not.toBeNull();
 
   expect(await wheel({ deltaY: 100 })).toBe(false);
-  expect(await wheel({ deltaY: 100 }, document.querySelector('[data-reel-comments-sheet]')!)).toBe(
-    false
-  );
+  expect(
+    await wheel({ deltaY: 100 }, document.querySelector('[data-comments-drawer-sheet]')!)
+  ).toBe(false);
   expect(playing()).toEqual(['m-a']);
 });
 

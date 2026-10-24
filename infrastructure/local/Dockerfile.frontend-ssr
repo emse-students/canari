@@ -2,8 +2,8 @@
 # The Svelte build happens upstream, in CI (the `build-frontend` job) with
 # BUILD_WEB=1, which selects adapter-node instead of adapter-static. The
 # compiled artifact is downloaded into frontend/build/ before this image is
-# built. DO NOT rebuild here: the VITE_* secrets are not available in this
-# context.
+# built. DO NOT rebuild here: the build-time VITE_* variables are not available in
+# this context.
 #
 # THE CONSEQUENCE, AND IT IS SILENT: `docker compose up -d --build frontend-ssr`
 # rebuilds NOTHING you changed. All this image contains is a COPY of
