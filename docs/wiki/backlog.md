@@ -580,6 +580,25 @@ IN on iOS**: the App ID and both profiles exist (user, 2026-10-22); the Share Ex
 pull request, and it carries the iOS suggestions next. CanaRun waits. Owed: the Mi 9T and iPhone 12
 readings. [sharing](frontend/sharing.md)
 
+## P3 - The eight service images run as root (Trivy DS-0002, measured 2026-10-23)
+
+Trivy's Dockerfile scan finds no non-root `USER` in any `infrastructure/local/Dockerfile.*`, and
+`--no-install-recommends` missing in the two Rust ones (DS-0029). Not gated: a `USER` on a
+production image needs the ownership of its volumes checked on a running estate first. Done when
+each image runs as a non-root user and `trivy config infrastructure/local` reports nothing HIGH
+([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
+
+## P3 - Bump the four Alpine pins when upstream rebuilds with brotli 1.2.1 (2026-10-24)
+
+Owner: Master. `CVE-2026-111497` (`brotli-libs` 1.2.0-r1) is allowlisted in
+`.github/image-scan-allowlist.yaml` because no patched image existed: Alpine fixed it on 2026-10-22
+and the official `adminer`, `nginx:1.31.8-alpine`, `nginx:stable-alpine` and `postgres:18-alpine`
+builds of that day still carry 1.2.0. Done when the three digest pins (production and dev compose,
+the local compose for postgres) move to a rebuild carrying 1.2.1-r0, postgres within major 18. The
+floating `nginx:stable-alpine` follows on its own, and the allowlist entry is deleted in the same pull
+request - the image scan's retirement check fails until it is
+([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
+
 ## Owed a VERIFICATION, and nothing else
 
 Each of these is fixed in the tree; what is left is the measurement that would prove it. **Nothing
@@ -717,6 +736,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **review the calls privacy wording (#2013's `/legal/privacy` and register texts: each party sees the other's IP, Cloudflare relays some calls) before calls ship** - presented to you later, decided 2026-10-21 | 1 review | [calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21) (B5) |
 | **decide whether to ROTATE the KLIPY key**: it shipped in every web and native bundle as `VITE_KLIPY_KEY` until 2026-10-16, so it is public; rotating it also ends GIF search on native builds installed before the change, which still call KLIPY directly | 1 decision | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
 | **decide the camera swipe's cause B: a swipe starting in Android's left edge (30 CSS px) is a system Back - add a gesture exclusion rect on the feed's left edge, as was done for the conversations' right edge?** (investigation: PR #2177) | 1 decision | [the right-edge entry](#android-back-gesture-zone-on-the-right-edge-own-bubbles---decided-by-the-user-2026-10-14-draft-pr-in-progress) |
+| **decide whether ruleset `22152902` gets a `code_scanning` rule (CodeQL, errors, high or higher)** - analysed, recommended, the exact `gh api` PUT written, not applied | 1 decision, 1 command | [cicd](cicd.md#a-code_scanning-rule-on-the-ruleset-analysed-2026-10-23-not-applied) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
 
@@ -1932,6 +1952,8 @@ Whether anything is lost is unmeasured; the state is expected to converge. **Owe
 Lydia ("Paiement Canari") and cash are the only payments since Stripe was removed (#1589, [stripe-archive](stripe-archive.md), which lists the names kept for rollback and old clients). `payment_provider` is `lydia | disabled`, default `disabled`; mechanism in [payments](frontend/modules/payments.md) and [core-service](services/core-service.md#payments-stripe--lydia).
 
 ### WP-LYDIA-1 - Lydia live in production, with one payment observed end to end
+
+**Release checklist for the first stable carrying the production pair (2026-10-23).** The production core was recreated by hand with `LYDIA_ENV=production`, and a deploy re-renders `.env` from the manifest, so: (1) no stable and no deploy of any kind before the pull request that makes `LYDIA_ENV` a required production secret is merged; (2) cut a PRE-RELEASE AFTER that merge and check that its commit contains the change before tagging the stable (a stable ships the latest pre-release of its version, so an older alpha would carry the old manifest); (3) after the stable, read the running core's `LYDIA_ENV`; (4) a rollback to any release before it re-renders `homologation` in silence - set `LYDIA_ENV=production` in the production `.env` and recreate the core by hand ([payments](frontend/modules/payments.md#which-payment-provider-is-live)).
 
 **Done 2026-10-23:** one real production payment, its `confirm` verified with the Business key ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)); the production Provider tokens are set. **Owed:** `LYDIA_ENV` carried by a GitHub secret (#2323) before the next stable; each association re-onboarding on Lydia (**an association with a Stripe-only payment account is no longer payment-ready until it does**); Lydia's still-open Livrable A answers ([plan](../../plans/stripe-to-lydia-migration.md)). The `business/create` `BUSINESS_VALIDATED` webhook is deliberately NOT built: no documented signature and `vendor_token` is public, so anyone could forge an association's onboarding state - ask Lydia whether it signs before building it.
 
