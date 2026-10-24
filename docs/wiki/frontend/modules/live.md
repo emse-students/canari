@@ -264,7 +264,7 @@ only when 2-6 hold.
 
 User calls, taken after the server half (WP-L2, WP-L3) was built. They supersede L7 and change what blocks a stable.
 
-- **D1 - lives come BEFORE the calls revival** (supersedes L7 of 2026-10-15). WP-L0 no longer precedes the lives; calls stay dev-only (`CALLS_COMPILED = false`, [calls](calls.md)).
+- **D1 - lives come BEFORE the calls revival** (supersedes L7 of 2026-10-15). WP-L0 no longer precedes the lives; in-app calls were compiled in by the flip PR of 2026-10-22 (`CALLS_COMPILED = true`, held shut by the server's `calls_mode`; [calls](calls.md)).
 - **D2 - bitrate is fixed at launch by the server.** v1 picks 720p or 480p from the TOTAL live load at the moment the live starts, and never changes it mid-live. The server transcodes nothing. Mid-live adaptive bitrate is NOT v1: MediaRecorder cannot reliably change resolution or bitrate without a new init segment.
 - **D3 - any member may start a live in v1, so WP-L8 is a RELEASE BLOCKER.** Moderation (hide message, remove viewer, block, report a live, staff remote cut) and the per-account limits already built must exist before any stable. Apple guideline 1.2 and the Play UGC answers (Q2) precede any store submission.
 - **D4 - a "X est en live" notification**, like "X a publié", is wanted. The server half (WP-L7) is built (#2106, spaces respected like a post); a tap lands on the feed, and the client LIVE card and the live's own viewer route are owed.
@@ -335,8 +335,11 @@ draft. `frontend/src/lib/live/liveCrypto.ts` exports `sealLiveSegment(keyHex, li
 - **WebCrypto, not WASM.** WASM holds the MLS group state; media content keys are SubtleCrypto
   (`$lib/mediaCrypto`), and the live key is a media key of that kind, so the media path is the
   precedent. The key is imported non-extractable for each call.
-- **Random IVs under one key** are safe at this volume: a 2 s segment over the longest live the
-  server allows is a few thousand seals per key, far below GCM's 2^32 random-IV bound.
+- **Random IVs under one key** are safe at this volume. The assumption: about 1000 accounts
+  chatting at once, each at the C6 ceiling of 3 messages per 5 s (2160 per account per hour), so a
+  live hour is about 2 million chat seals plus 1800 segments (2 s each), about 2^21 seals under one
+  key. The collision chance for random 96-bit IVs is then about 2^-55, and the count far below
+  GCM's 2^32 random-IV bound; ten times the chatters still leaves it below 2^25.
 
 **A segment that does not open is a `LiveSegmentOpenError`**, typed at the throw, `reason`
 `malformed` (under 28 bytes) or `unauthentic` (GCM refused it: wrong key, live, index, version, or a

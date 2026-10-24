@@ -20,6 +20,7 @@ import {
 import { Type } from 'class-transformer';
 import { AssociationCalendarEventKind } from '../entities/association-calendar-event.entity';
 import { ALL_PERMISSION_FLAGS } from '../entities/association-member.entity';
+import { ASSOCIATION_IMAGE_URL_MAX_LENGTH } from '../association-image-url';
 
 export class ReorderMembersDto {
   /** Ordered list of member user IDs - position in the array becomes the new sortOrder. */
@@ -52,8 +53,14 @@ export class CreateAssociationDto {
   @MaxLength(16000)
   bioMarkdown?: string;
 
+  /**
+   * Normally written by the logo upload. A value sent here must be an https URL or an uploaded
+   * media reference - the allowlist is `assertAssociationImageUrl`, applied by the service so the
+   * refusal carries a typed code.
+   */
   @IsString()
   @IsOptional()
+  @MaxLength(ASSOCIATION_IMAGE_URL_MAX_LENGTH)
   logoUrl?: string;
 
   /** Public contact e-mail shown on the trombinoscope and the association page. */
@@ -111,8 +118,10 @@ export class UpdateAssociationDto {
   @MaxLength(16000)
   bioMarkdown?: string | null;
 
+  /** Same allowlist as on create (`assertAssociationImageUrl`); `""` clears it. */
   @IsString()
   @IsOptional()
+  @MaxLength(ASSOCIATION_IMAGE_URL_MAX_LENGTH)
   logoUrl?: string;
 
   /** Only global admins may change this. Default 500 MiB. */

@@ -60,12 +60,36 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   // The Welcome row is written through a transaction that first takes a read lock on the group, so
   // a group deleted mid-flight queues nothing. A live group keeps that path inert here.
   const queuedSave = jest.fn().mockImplementation(async (rows: unknown) => rows);
+  /** Every read inside the store's transaction, in order, so a test can see what was locked when. */
+  const txReads: string[] = [];
+  // The target's roster seat as the store's transaction re-reads it, under a lock.
+  const txSeat = jest.fn();
   const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
     cb({
-      getRepository: (entity: unknown) =>
-        entity === Group
-          ? { find: jest.fn().mockResolvedValue([{ id: 'g1', deletedAt: null }]) }
-          : { save: queuedSave },
+      getRepository: (entity: unknown) => {
+        if (entity === Group) {
+          return {
+            find: jest.fn(async () => {
+              txReads.push('group');
+              return [{ id: 'g1', deletedAt: null }];
+            }),
+          };
+        }
+        if (entity === GroupMember) {
+          return {
+            findOne: jest.fn(async (q: unknown) => {
+              txReads.push('seat');
+              return txSeat(q);
+            }),
+          };
+        }
+        return {
+          save: jest.fn(async (rows: unknown) => {
+            txReads.push('save');
+            return queuedSave(rows);
+          }),
+        };
+      },
     })
   );
   const queuedMessageRepo = {
@@ -114,6 +138,8 @@ describe('MessagingService - sendWelcome does not touch membership status or the
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    txReads.length = 0;
+    txSeat.mockResolvedValue({ id: 'm-u2' });
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1', userId: 'u2', deviceId: 'd2' });
     deviceGroupRepo.createQueryBuilder.mockReturnValue(insertBuilder);
     deviceGroupRepo.findOne.mockResolvedValue(null);
@@ -166,6 +192,33 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       response: { error: 'welcome_target_not_member' },
     });
     // Nothing is queued and no membership row is written for the outsider's device.
+    expect(queuedSave).not.toHaveBeenCalled();
+    expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
+    expect(redis.publish).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A REMOVAL RACING THE STORE: the seat was there when the target was checked, and the removal
+   * committed before the store's transaction re-read it. The store re-reads it under a share lock
+   * IN its own transaction, after the group, so the two serialise: a removal that committed first
+   * leaves no seat and nothing is stored; one that comes second waits, then deletes the Welcome.
+   */
+  it("re-reads the target's seat under a lock in the transaction that stores the Welcome", async () => {
+    await service.sendWelcome('u1', body);
+
+    expect(txSeat).toHaveBeenCalledWith({
+      where: { groupId: 'g1', userId: 'u2' },
+      lock: { mode: 'pessimistic_read' },
+    });
+    expect(txReads).toEqual(['group', 'seat', 'save']);
+  });
+
+  it('stores nothing when the seat is gone by the time the transaction reads it', async () => {
+    txSeat.mockResolvedValue(null);
+
+    await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+      response: { error: 'welcome_target_not_member' },
+    });
     expect(queuedSave).not.toHaveBeenCalled();
     expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
     expect(redis.publish).not.toHaveBeenCalled();

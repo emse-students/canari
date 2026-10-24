@@ -16,6 +16,9 @@
 pub mod background;
 
 #[cfg(any(target_os = "android", target_os = "ios", test))]
+pub mod device_notice;
+
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 pub mod graine;
 
 // Which URLs the app's own WebView may start loading. Not a JNI / C-FFI entry point like its

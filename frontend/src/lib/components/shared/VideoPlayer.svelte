@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount, type Snippet } from 'svelte';
+  import { onMount } from 'svelte';
   import { CircleAlert, Maximize, Minimize, Pause, Play, Volume2, VolumeX } from '@lucide/svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { followVideoSound, type VideoSoundScope } from '$lib/actions/playWhileVisible';
+  import { videoSound } from '$lib/stores/videoSound.svelte';
   import {
     CONTROLS_FADE_MS,
     bufferedFraction,
@@ -75,11 +76,14 @@
      */
     safeBottom?: boolean;
     /**
-     * Extra controls drawn in the bar right after the sound button - the reel viewer's save. The
-     * caller owns what they do; the bar only gives them the place the user asked for, next to the
-     * volume (user, 2026-10-09).
+     * THE REEL VIEWER'S PLAYER (user, 2026-10-23: *"les Reels d'instagram sont beaucoup plus epures,
+     * la barre de lecture est discrete et collee en bas, sans timecode"*): no control row, no
+     * timecode, no big play button. One thin progress line on the very bottom edge, ABOVE the
+     * caption's vignette (`z-40` over its `z-20`) so the scrim never dims it, thickening with a handle
+     * only while touched; a tap on the picture plays or pauses, with a centred glyph. Sound and save
+     * are the reel rail's (`ReelActionRail`), the sound through the same `videoSound` answer.
      */
-    barActions?: Snippet;
+    minimal?: boolean;
   }
 
   let {
@@ -91,7 +95,7 @@
     videoClass = 'max-h-full max-w-full object-contain',
     soundScope = 'app',
     safeBottom = true,
-    barActions,
+    minimal = false,
   }: Props = $props();
 
   /**
@@ -154,6 +158,13 @@
     return () => clearTimeout(timer);
   });
 
+  // THE APP'S ONE SOUND ANSWER, BOTH WAYS: `followVideoSound` carries the element's change to the
+  // store, and this carries a change made elsewhere (the reel rail's sound button) to the element.
+  $effect(() => {
+    const muted = videoSound.muted;
+    if (soundScope === 'app' && video && video.muted !== muted) video.muted = muted;
+  });
+
   function showControls() {
     controlsVisible = true;
     poke += 1;
@@ -168,9 +179,14 @@
     buffered = bufferedFraction(video.buffered, video.currentTime, video.duration);
   }
 
+  /** The reel player's tap feedback: the icon of the state the reader just chose. */
+  let tapGlyph = $state<{ kind: 'play' | 'pause'; n: number } | null>(null);
+  let glyphCount = 0;
+
   function togglePlay() {
     if (!video) return;
     showControls();
+    if (minimal) tapGlyph = { kind: video.paused ? 'play' : 'pause', n: ++glyphCount };
     if (video.paused) {
       video.play().catch((err: unknown) => {
         console.warn('[VideoPlayer] play() refused', {
@@ -263,6 +279,10 @@
    */
   function onPictureTap(e: MouseEvent) {
     e.stopPropagation();
+    if (minimal) {
+      togglePlay();
+      return;
+    }
     if (controlsVisible && !paused) controlsVisible = false;
     else showControls();
   }
@@ -376,7 +396,7 @@
       <VideoPoster />
     {/if}
 
-    {#if paused && frameReady}
+    {#if paused && frameReady && !minimal}
       <!-- The one big target while nothing plays; the bar below repeats it for the keyboard. -->
       <button
         type="button"
@@ -392,92 +412,184 @@
       </button>
     {/if}
 
-    <div
-      data-video-controls
-      class="from-cn-scrim/80 absolute inset-x-0 bottom-0 flex items-center gap-1 bg-linear-to-t to-transparent px-2 pt-8 text-white transition-opacity duration-300 {safeBottom
-        ? 'pb-[max(0.5rem,env(safe-area-inset-bottom))]'
-        : 'pb-2'} {controlsVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}"
-      onpointerdown={(e) => e.stopPropagation()}
-      onclick={(e) => e.stopPropagation()}
-      role="presentation"
-    >
-      <button
-        type="button"
-        class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500"
-        aria-label={paused ? m.video_play_label() : m.video_pause_label()}
-        onclick={togglePlay}
-      >
-        {#if paused}
-          <Play size={20} strokeWidth={2.25} fill="currentColor" />
-        {:else}
-          <Pause size={20} strokeWidth={2.25} fill="currentColor" />
+    {#if minimal}
+      <!-- THE GLYPH IS THE FEEDBACK OF A TAP, NEVER A STATE (user, 2026-10-23): nothing at load, at
+           autoplay or at the end, only the icon of what the reader's tap (or key) just did, popping
+           and fading in 600 ms. Hidden under `prefers-reduced-motion`. Never a target. -->
+      {#key tapGlyph?.n}
+        {#if tapGlyph}
+          <div
+            class="reel-glyph pointer-events-none absolute top-1/2 left-1/2 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-black/45 text-white motion-reduce:hidden"
+            aria-hidden="true"
+            data-video-glyph={tapGlyph.kind}
+          >
+            {#if tapGlyph.kind === 'pause'}
+              <Pause size={30} strokeWidth={2.25} fill="currentColor" />
+            {:else}
+              <Play size={30} strokeWidth={2.25} fill="currentColor" class="ml-1" />
+            {/if}
+          </div>
         {/if}
-      </button>
+      {/key}
 
-      <span class="text-2xs shrink-0 font-semibold tabular-nums" aria-hidden="true">
-        {formatVideoTime(currentTime)} / {formatVideoTime(duration)}
-      </span>
-
+      <!-- THE LINE: on the bottom edge (above the home indicator when the player reaches it), 32 px
+           tall to touch and 2 px to see. A drag on it is a seek (`data-video-controls` keeps the
+           viewer's swipe off it); the handle and the thicker line show only while touched or
+           focused from the keyboard. Always drawn: it is not part of the controls' fade. -->
       <div
-        bind:this={track}
-        class="group/seek relative mx-2 flex h-11 min-w-0 flex-1 cursor-pointer touch-none items-center outline-none"
-        role="slider"
-        tabindex="0"
-        aria-label={m.video_seek_label()}
-        aria-valuemin={0}
-        aria-valuemax={Number.isFinite(duration) ? Math.floor(duration) : 0}
-        aria-valuenow={Math.floor(currentTime)}
-        aria-valuetext={timeText}
-        onpointerdown={onScrubStart}
-        onpointermove={onScrubMove}
-        onpointerup={onScrubEnd}
-        onpointercancel={onScrubEnd}
+        data-video-controls
+        data-video-progress
+        class="absolute inset-x-0 bottom-0 z-40"
+        style={safeBottom ? 'bottom: var(--safe-area-inset-bottom, 0px)' : undefined}
+        onpointerdown={(e) => e.stopPropagation()}
+        onclick={(e) => e.stopPropagation()}
+        role="presentation"
       >
-        <div class="relative h-1 w-full overflow-hidden rounded-full bg-white/25">
-          <div class="absolute inset-y-0 left-0 bg-white/45" style="width: {buffered * 100}%"></div>
-          <div class="bg-cn-yellow absolute inset-y-0 left-0" style="width: {played * 100}%"></div>
-        </div>
         <div
-          class="bg-cn-yellow absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full shadow transition-transform group-focus-visible/seek:scale-125 group-focus-visible/seek:ring-2 group-focus-visible/seek:ring-white {scrubbing
-            ? 'scale-125'
-            : ''}"
-          style="left: {played * 100}%"
-        ></div>
+          bind:this={track}
+          class="group/seek relative flex h-8 w-full cursor-pointer touch-none items-end outline-none"
+          role="slider"
+          tabindex="0"
+          aria-label={m.video_seek_label()}
+          aria-valuemin={0}
+          aria-valuemax={Number.isFinite(duration) ? Math.floor(duration) : 0}
+          aria-valuenow={Math.floor(currentTime)}
+          aria-valuetext={timeText}
+          onpointerdown={onScrubStart}
+          onpointermove={onScrubMove}
+          onpointerup={onScrubEnd}
+          onpointercancel={onScrubEnd}
+        >
+          <div
+            class="relative w-full overflow-hidden bg-white/30 drop-shadow-sm transition-[height] duration-150 group-focus-visible/seek:h-1 motion-reduce:transition-none {scrubbing
+              ? 'h-1'
+              : 'h-0.5'}"
+            data-video-line
+          >
+            <div class="absolute inset-y-0 left-0 bg-white" style="width: {played * 100}%"></div>
+          </div>
+          <div
+            class="pointer-events-none absolute bottom-0 h-3 w-3 -translate-x-1/2 translate-y-1/2 rounded-full bg-white shadow transition-opacity duration-150 group-focus-visible/seek:opacity-100 motion-reduce:transition-none {scrubbing
+              ? 'opacity-100'
+              : 'opacity-0'}"
+            style="left: {played * 100}%"
+            data-video-handle
+          ></div>
+        </div>
       </div>
-
-      <button
-        type="button"
-        class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500 {muted
-          ? ''
-          : 'text-cn-yellow'}"
-        aria-label={m.video_sound_label()}
-        aria-pressed={!muted}
-        disabled={soundScope === 'silent'}
-        onclick={toggleMute}
+    {:else}
+      <div
+        data-video-controls
+        class="from-cn-scrim/80 absolute inset-x-0 bottom-0 flex items-center gap-1 bg-linear-to-t to-transparent px-2 pt-8 text-white transition-opacity duration-300 {safeBottom
+          ? 'pb-[max(0.5rem,env(safe-area-inset-bottom))]'
+          : 'pb-2'} {controlsVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}"
+        onpointerdown={(e) => e.stopPropagation()}
+        onclick={(e) => e.stopPropagation()}
+        role="presentation"
       >
-        {#if muted}
-          <VolumeX size={20} strokeWidth={2.25} />
-        {:else}
-          <Volume2 size={20} strokeWidth={2.25} />
-        {/if}
-      </button>
-
-      {@render barActions?.()}
-
-      {#if canFullscreen}
         <button
           type="button"
           class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500"
-          aria-label={fullscreen ? m.video_exit_fullscreen_label() : m.video_fullscreen_label()}
-          onclick={() => void toggleFullscreen()}
+          aria-label={paused ? m.video_play_label() : m.video_pause_label()}
+          onclick={togglePlay}
         >
-          {#if fullscreen}
-            <Minimize size={20} strokeWidth={2.25} />
+          {#if paused}
+            <Play size={20} strokeWidth={2.25} fill="currentColor" />
           {:else}
-            <Maximize size={20} strokeWidth={2.25} />
+            <Pause size={20} strokeWidth={2.25} fill="currentColor" />
           {/if}
         </button>
-      {/if}
-    </div>
+
+        <span class="text-2xs shrink-0 font-semibold tabular-nums" aria-hidden="true">
+          {formatVideoTime(currentTime)} / {formatVideoTime(duration)}
+        </span>
+
+        <div
+          bind:this={track}
+          class="group/seek relative mx-2 flex h-11 min-w-0 flex-1 cursor-pointer touch-none items-center outline-none"
+          role="slider"
+          tabindex="0"
+          aria-label={m.video_seek_label()}
+          aria-valuemin={0}
+          aria-valuemax={Number.isFinite(duration) ? Math.floor(duration) : 0}
+          aria-valuenow={Math.floor(currentTime)}
+          aria-valuetext={timeText}
+          onpointerdown={onScrubStart}
+          onpointermove={onScrubMove}
+          onpointerup={onScrubEnd}
+          onpointercancel={onScrubEnd}
+        >
+          <div class="relative h-1 w-full overflow-hidden rounded-full bg-white/25">
+            <div
+              class="absolute inset-y-0 left-0 bg-white/45"
+              style="width: {buffered * 100}%"
+            ></div>
+            <div
+              class="bg-cn-yellow absolute inset-y-0 left-0"
+              style="width: {played * 100}%"
+            ></div>
+          </div>
+          <div
+            class="bg-cn-yellow absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full shadow transition-transform group-focus-visible/seek:scale-125 group-focus-visible/seek:ring-2 group-focus-visible/seek:ring-white {scrubbing
+              ? 'scale-125'
+              : ''}"
+            style="left: {played * 100}%"
+          ></div>
+        </div>
+
+        <button
+          type="button"
+          class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500 {muted
+            ? ''
+            : 'text-cn-yellow'}"
+          aria-label={m.video_sound_label()}
+          aria-pressed={!muted}
+          disabled={soundScope === 'silent'}
+          onclick={toggleMute}
+        >
+          {#if muted}
+            <VolumeX size={20} strokeWidth={2.25} />
+          {:else}
+            <Volume2 size={20} strokeWidth={2.25} />
+          {/if}
+        </button>
+
+        {#if canFullscreen}
+          <button
+            type="button"
+            class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500"
+            aria-label={fullscreen ? m.video_exit_fullscreen_label() : m.video_fullscreen_label()}
+            onclick={() => void toggleFullscreen()}
+          >
+            {#if fullscreen}
+              <Minimize size={20} strokeWidth={2.25} />
+            {:else}
+              <Maximize size={20} strokeWidth={2.25} />
+            {/if}
+          </button>
+        {/if}
+      </div>
+    {/if}
   {/if}
 </div>
+
+<style>
+  /* The tap feedback of the reel player: pops in, fades out, and ends invisible. */
+  .reel-glyph {
+    animation: reel-glyph-pop 600ms ease-out forwards;
+  }
+  @keyframes reel-glyph-pop {
+    0% {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.7);
+    }
+    25% {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(1.15);
+    }
+  }
+</style>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SHARE SUGGESTIONS (sharing lot S5, docs/wiki/frontend/sharing.md): the conversations the page
+  publishes (tauri-plugin-gallery ShareTargets.kt) are offered as direct targets in Android's share
+  sheet ONLY in the category declared here, and only for the types listed - the same types as
+  MainActivity's SEND filter. Picking one sends ACTION_SEND to MainActivity with the shortcut id.
+  Hand-maintained; androidShortcutsManifest.test.ts pins the category against the Kotlin and the
+  types against the filter.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <share-target android:targetClass="fr.emse.canari.MainActivity">
+        <data android:mimeType="text/*" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="video/*" />
+        <data android:mimeType="audio/*" />
+        <data android:mimeType="application/*" />
+        <category android:name="fr.emse.canari.category.SHARE_TARGET" />
+    </share-target>
+</shortcuts>

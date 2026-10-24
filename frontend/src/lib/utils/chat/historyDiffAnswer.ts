@@ -82,9 +82,11 @@ export async function answerHistoryDigest(params: {
   digest: HistoryDigest;
   /** The window the asker drew. Never recomputed here: two devices deriving it disagree. */
   since: number;
+  /** The asker's id for its digest, echoed on the bundle so it can be accepted addressed. */
+  requestId?: string;
   deps: HistoryAnswerDeps;
 }): Promise<void> {
-  const { groupId, requesterIdentity, selfIdentity, digest, since, deps } = params;
+  const { groupId, requesterIdentity, selfIdentity, digest, since, requestId, deps } = params;
   const { log } = deps;
   const short = groupId.slice(0, 8);
 
@@ -108,6 +110,7 @@ export async function answerHistoryDigest(params: {
   await sendHistoryBundleForIds(groupId, idsToSend, deps, {
     to: requesterIdentity,
     since,
+    requestId,
   }).catch((e) => log(`[HISTORY_BUNDLE] Diff send error to ${requesterIdentity}: ${String(e)}`));
 
   // The requester listed messages we do not have, so we ask for them on the same exchange.

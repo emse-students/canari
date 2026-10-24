@@ -337,7 +337,7 @@ async function processBulkAddition(
         continue;
       }
       devices.forEach((d: any) => {
-        allDevices.push(d);
+        allDevices.push({ ...d, userId: targetUser });
         userMap.set(d.deviceId, targetUser);
       });
     }
