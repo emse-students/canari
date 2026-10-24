@@ -12,6 +12,7 @@ import {
 import { DEADLINE_MS } from '$lib/utils/requestDeadline';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import backgroundWelcomeIntent from './test/fixtures/background-welcome-intent.json';
 
 describe('isDefinitiveCommitRefusal - did the gate answer, and refuse?', () => {
   it.each([
@@ -101,6 +102,22 @@ describe('composeSubmission - the one spelling of a request, from the record its
   it('is the same bytes every time it is asked - a resubmission equals the first request', () => {
     const r = record(encodeIntent({ groupId: 'g-1', self: 'u-a:d-a', removes: [{ userId: 'z' }] }));
     expect(JSON.stringify(composeSubmission(r))).toBe(JSON.stringify(composeSubmission(r)));
+  });
+
+  it('settles an Add the BACKGROUND staged: its Welcome is owed to the device it admits', () => {
+    // The intent the Android background Welcome writes beside its staged Add
+    // (`settle_background_welcome`'s tests pin the same file on the Rust side). A settle that merges
+    // it must name carol in `admits`, or nobody is left to send her the Welcome.
+    const intent = new TextEncoder().encode(JSON.stringify(backgroundWelcomeIntent));
+    expect(composeSubmission(record(intent, [0]))).toEqual({
+      groupId: 'g-fixture',
+      baseEpoch: 5,
+      commit: 'AQ==',
+      groupInfo: 'Ag==',
+      excludeDeviceIds: ['carol:dev-c'],
+      admits: [{ userId: 'carol', deviceId: 'dev-c' }],
+      welcome: 'Aw==',
+    });
   });
 
   it('reads an intent that does not decode as null - unreadable, never absent', () => {

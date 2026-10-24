@@ -2,10 +2,10 @@ package fr.emse.canari
 
 import fr.emse.canari.push.BackgroundWelcomeAnswer
 import fr.emse.canari.push.BackgroundWelcomeAnswer.Applied
-import fr.emse.canari.push.BackgroundWelcomeAnswer.InstallReport
 import fr.emse.canari.push.BackgroundWelcomeAnswer.Level
 import fr.emse.canari.push.BackgroundWelcomeAnswer.Outcome
 import fr.emse.canari.push.BackgroundWelcomeAnswer.Refusal
+import fr.emse.canari.push.BackgroundWelcomeAnswer.SettleReport
 import fr.emse.canari.push.BackgroundWelcomeAnswer.Settlement
 import fr.emse.canari.push.BackgroundWelcomeAnswer.StagedWelcome
 import org.junit.Assert.assertEquals
@@ -59,33 +59,55 @@ class BackgroundWelcomeAnswerTest {
         assertEquals(Outcome.Unknown(null), BackgroundWelcomeAnswer.classify(null, null, null, null))
         assertEquals(Outcome.Unknown(502), BackgroundWelcomeAnswer.classify(502, null, null, null))
         assertEquals(Outcome.Failed(400), BackgroundWelcomeAnswer.classify(400, null, null, null))
-        assertEquals(Outcome.Failed(403), BackgroundWelcomeAnswer.classify(403, null, null, null))
+        // The body's size answers every wire copy alike.
+        assertEquals(Outcome.Failed(413), BackgroundWelcomeAnswer.classify(413, null, null, null))
+    }
+
+    /**
+     * Only 400 and 413 refuse the commit's bytes: any other untyped 4xx may answer a silent retry of a
+     * request the server accepted, so the stage is left for the foreground's resubmission.
+     */
+    @Test
+    fun anUntypedRefusalOutsideTheWhitelistLeavesTheStage() {
+        // The request guards, and what an edge or a proxy may answer with no typed body.
+        listOf(401, 403, 404, 405, 408, 409, 418, 429).forEach { code ->
+            val outcome = BackgroundWelcomeAnswer.classify(code, null, null, null)
+            assertEquals("$code", Outcome.Unknown(code), outcome)
+            assertEquals("$code", Settlement.Leave, BackgroundWelcomeAnswer.settle(outcome, 1))
+        }
     }
 
     @Test
-    fun onlyAnAcceptanceInstalls() {
-        assertEquals(Settlement.Install, BackgroundWelcomeAnswer.settle(Outcome.Accepted, 1))
+    fun anAcceptanceMergesARefusalClearsAndNoAnswerLeavesTheStage() {
+        assertEquals(Settlement.Merge, BackgroundWelcomeAnswer.settle(Outcome.Accepted, 1))
         listOf(
-            Outcome.Refused(Refusal.CONCURRENT_COMMIT, "concurrent_commit", 1),
             Outcome.Refused(Refusal.NOT_A_MEMBER, "not_a_member", null),
             Outcome.Refused(Refusal.OTHER, "x", null),
             Outcome.Failed(400),
-            Outcome.Unknown(null),
-            Outcome.Unknown(503),
         ).forEach { outcome ->
-            assertEquals("$outcome", Settlement.Discard(null, null), BackgroundWelcomeAnswer.settle(outcome, 1))
+            assertEquals("$outcome", Settlement.Clear(null, null), BackgroundWelcomeAnswer.settle(outcome, 1))
         }
+        // An answer nobody read may have been an acceptance: neither guess is made here.
+        listOf(Outcome.Unknown(null), Outcome.Unknown(503)).forEach { outcome ->
+            assertEquals("$outcome", Settlement.Leave, BackgroundWelcomeAnswer.settle(outcome, 1))
+        }
+        // The lock a `concurrent_commit` reports may be this commit's own first copy (a silent
+        // retry of the POST): not a refusal of these bytes, so the stage is left too.
+        assertEquals(
+            Settlement.Leave,
+            BackgroundWelcomeAnswer.settle(Outcome.Refused(Refusal.CONCURRENT_COMMIT, "concurrent_commit", 1), 1),
+        )
     }
 
     @Test
     fun aStaleRefusalIsRecordedWithBothEpochs() {
         assertEquals(
-            Settlement.Discard(1, 3),
+            Settlement.Clear(1, 3),
             BackgroundWelcomeAnswer.settle(Outcome.Refused(Refusal.EPOCH_MISMATCH, "epoch_mismatch", 3), 1),
         )
         // Without the server's epoch there is nothing to record.
         assertEquals(
-            Settlement.Discard(null, null),
+            Settlement.Clear(null, null),
             BackgroundWelcomeAnswer.settle(Outcome.Refused(Refusal.EPOCH_MISMATCH, "epoch_mismatch", null), 1),
         )
     }
@@ -99,70 +121,82 @@ class BackgroundWelcomeAnswerTest {
         assertTrue(line, !line.contains("sent"))
     }
 
-    /** The staged state as the service drives it, recording what was asked of it. */
-    private class FakeStaged(private val install: InstallReport?) : StagedWelcome {
+    /** The staged Add as the service drives it, recording what was asked of it. */
+    private class FakeStaged(private val report: SettleReport?) : StagedWelcome {
         val calls = mutableListOf<String>()
-        override fun install(): InstallReport? {
-            calls += "install"
-            return install
+        override fun merge(): SettleReport? {
+            calls += "merge"
+            return report
         }
-        override fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean) {
-            calls += if (targetRefused) "discard(target)" else "discard($staleBase,$serverEpoch)"
+        override fun clear(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean): SettleReport? {
+            calls += if (targetRefused) "clear(target)" else "clear($staleBase,$serverEpoch)"
+            return report
         }
     }
 
     @Test
-    fun anAcceptanceWhoseInstallFindsTheLockBusyDeletesTheStagedFileAndSaysSo() {
-        // The MLS state lock was not acquired, so the install never ran and the staged file - which
-        // holds the group's old epoch secret - is still there: it must not outlive this attempt.
-        val staged = FakeStaged(install = null)
+    fun noAnswerCallsNothingAndLeavesTheStageToTheForeground() {
+        val staged = FakeStaged(report = SettleReport(ok = true, reason = null))
 
-        val applied = BackgroundWelcomeAnswer.apply(Settlement.Install, staged)
+        val applied = BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(Outcome.Unknown(null), 1), staged)
 
-        assertEquals(Applied.LockBusy, applied)
-        assertEquals(listOf("install", "discard(null,null)"), staged.calls)
-        val (level, line) = BackgroundWelcomeAnswer.report(applied, Outcome.Accepted)
+        assertEquals(Applied.Left("no definitive answer"), applied)
+        assertEquals(emptyList<String>(), staged.calls)
+        val (level, line) = BackgroundWelcomeAnswer.report(applied)
+        assertEquals(Level.WARN, level)
+        assertTrue(line, line.contains("foreground"))
+    }
+
+    @Test
+    fun anAcceptanceWhoseMergeFindsTheLockBusyLeavesTheStageAndDeletesNothing() {
+        val staged = FakeStaged(report = null)
+
+        val applied = BackgroundWelcomeAnswer.apply(Settlement.Merge, staged)
+
+        assertEquals(Applied.Left("lock busy"), applied)
+        assertEquals(listOf("merge"), staged.calls)
+        assertEquals(Level.WARN, BackgroundWelcomeAnswer.report(applied).first)
+    }
+
+    @Test
+    fun anAcceptanceMerges() {
+        val staged = FakeStaged(report = SettleReport(ok = true, reason = null))
+
+        val applied = BackgroundWelcomeAnswer.apply(Settlement.Merge, staged)
+
+        assertEquals(Applied.Merged, applied)
+        assertEquals(listOf("merge"), staged.calls)
+        assertEquals(Level.DEBUG, BackgroundWelcomeAnswer.report(applied).first)
+    }
+
+    @Test
+    fun theNativeTokensAreReadAsTheirTypes() {
+        assertEquals(
+            Applied.AlreadySettled,
+            BackgroundWelcomeAnswer.apply(Settlement.Merge, FakeStaged(SettleReport(false, "already-settled"))),
+        )
+        assertEquals(
+            Applied.Left("left-to-foreground"),
+            BackgroundWelcomeAnswer.apply(Settlement.Merge, FakeStaged(SettleReport(false, "left-to-foreground"))),
+        )
+        // The one error: the server holds a commit mls.bin no longer stages.
+        val lost = BackgroundWelcomeAnswer.apply(Settlement.Merge, FakeStaged(SettleReport(false, "accepted-not-held")))
+        assertEquals(Applied.NotHeld, lost)
+        val (level, line) = BackgroundWelcomeAnswer.report(lost)
         assertEquals(Level.ERROR, level)
-        assertTrue(line, line.contains("ACCEPTED AND NOT INSTALLED") && line.contains("lock busy"))
+        assertTrue(line, line.contains("ACCEPTED AND NOT HELD"))
     }
 
     @Test
-    fun anAcceptanceInstallsAndDeletesNothingMore() {
-        val staged = FakeStaged(install = InstallReport(ok = true, reason = null, error = null))
-
-        val applied = BackgroundWelcomeAnswer.apply(Settlement.Install, staged)
-
-        assertEquals(Applied.Installed, applied)
-        assertEquals(listOf("install"), staged.calls)
-        assertEquals(Level.DEBUG, BackgroundWelcomeAnswer.report(applied, Outcome.Accepted).first)
-    }
-
-    @Test
-    fun anInstallTheNativeSideRefusesIsAnErrorNamingItsReason() {
-        // The native install removes its own staged file on every path it runs; nothing more here.
-        val staged = FakeStaged(install = InstallReport(ok = false, reason = "install-refused", error = "moved"))
-
-        val applied = BackgroundWelcomeAnswer.apply(Settlement.Install, staged)
-
-        assertEquals(Applied.NotInstalled("install-refused", "moved"), applied)
-        assertEquals(listOf("install"), staged.calls)
-        val (level, line) = BackgroundWelcomeAnswer.report(applied, Outcome.Accepted)
-        assertEquals(Level.ERROR, level)
-        assertTrue(line, line.contains("install-refused"))
-    }
-
-    @Test
-    fun aDiscardNeverInstallsAndCarriesTheStaleEpochs() {
-        val staged = FakeStaged(install = InstallReport(ok = true, reason = null, error = null))
+    fun aClearNeverMergesAndCarriesTheStaleEpochs() {
+        val staged = FakeStaged(report = SettleReport(ok = true, reason = null))
         val refused = Outcome.Refused(Refusal.EPOCH_MISMATCH, "epoch_mismatch", 3)
 
         val applied = BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(refused, 1), staged)
 
-        assertEquals(Applied.Discarded, applied)
-        assertEquals(listOf("discard(1,3)"), staged.calls)
-        assertEquals(Level.WARN, BackgroundWelcomeAnswer.report(applied, refused).first)
-        // An answer nobody read may have been an acceptance: said at error.
-        assertEquals(Level.ERROR, BackgroundWelcomeAnswer.report(applied, Outcome.Unknown(null)).first)
+        assertEquals(Applied.Cleared, applied)
+        assertEquals(listOf("clear(1,3)"), staged.calls)
+        assertEquals(Level.WARN, BackgroundWelcomeAnswer.report(applied).first)
     }
 
     @Test
@@ -172,11 +206,11 @@ class BackgroundWelcomeAnswerTest {
         listOf("welcome_target_unknown", "welcome_target_not_member").forEach { token ->
             val refused = BackgroundWelcomeAnswer.classify(409, "rejected", token, 7)
             assertTrue("$refused", refused is Outcome.Refused && refused.reason != Refusal.OTHER)
-            assertEquals(Settlement.Discard(null, null, targetRefused = true), BackgroundWelcomeAnswer.settle(refused, 7))
+            assertEquals(Settlement.Clear(null, null, targetRefused = true), BackgroundWelcomeAnswer.settle(refused, 7))
 
-            val staged = FakeStaged(install = null)
-            assertEquals(Applied.Discarded, BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(refused, 7), staged))
-            assertEquals(listOf("discard(target)"), staged.calls)
+            val staged = FakeStaged(report = SettleReport(ok = true, reason = null))
+            assertEquals(Applied.Cleared, BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(refused, 7), staged))
+            assertEquals(listOf("clear(target)"), staged.calls)
         }
     }
 }

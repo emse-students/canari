@@ -177,6 +177,23 @@ export class CommitOutcomeUnknownError extends TransportFailureError {
 }
 
 /**
+ * The platform REFUSED to seal a frame in `groupId`: the state it would seal with holds a staged
+ * commit nobody has settled. Read natively, under the manager lock, from the state itself - the
+ * session's index of unresolved groups can lag a state that a resume reload swapped under it, so the
+ * refusal is the state's answer, typed at the throw. `sendMessage` answers it with the settle a
+ * known unresolved group gets, never as a failed send.
+ */
+export class StagedCommitPendingError extends Error {
+  constructor(readonly groupId: string) {
+    super(
+      `the state refused to seal in ${groupId.slice(0, 8)}...: it holds a staged commit not yet ` +
+        'settled - nothing was sealed'
+    );
+    this.name = 'StagedCommitPendingError';
+  }
+}
+
+/**
  * A commit of `groupId` staged on `baseEpoch` was CLEARED before anything was sent: the checkpoint
  * that must carry its stage to disk first failed in a way that stored nothing (`checkpointWroteNothing`
  * - a refused write, or one that failed before anything was stored). Definitive, unlike
