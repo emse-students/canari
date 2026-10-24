@@ -17,7 +17,7 @@ class SeedFrameLadderTest {
 
     private enum class Outcome { REFUSED, KEY_MATERIAL, CAUGHT_UP }
 
-    private data class Run(val outcome: Outcome, val log: List<String>, val localityAsked: Int)
+    private data class Run(val outcome: Outcome, val log: List<String>, val localityAsked: Int, val absentTold: Int)
 
     private fun open(
         initial: Outcome,
@@ -26,6 +26,7 @@ class SeedFrameLadderTest {
     ): Run {
         val log = mutableListOf<String>()
         var asked = 0
+        var told = 0
         val outcome = SeedFrameLadder.open(
             initial = initial,
             groupTag = "dist1234",
@@ -33,8 +34,9 @@ class SeedFrameLadderTest {
             locality = { asked++; locality },
             catchUp = catchUp,
             log = { log.add(it) },
+            onAbsent = { told++ },
         )
-        return Run(outcome, log, asked)
+        return Run(outcome, log, asked, told)
     }
 
     @Test
@@ -72,6 +74,15 @@ class SeedFrameLadderTest {
 
         assertEquals(Outcome.REFUSED, run.outcome)
         assertTrue(run.log.single().contains("not in the salon's key group"))
+        // Section 25: the caller is told, so it can join the group once its banner is up.
+        assertEquals(1, run.absentTold)
+    }
+
+    @Test
+    fun `only an absent key group is reported for a join`() {
+        assertEquals(0, open(Outcome.REFUSED, GroupLocality.UNKNOWN).absentTold)
+        assertEquals(0, open(Outcome.REFUSED, GroupLocality.LOCAL, catchUp = { null }).absentTold)
+        assertEquals(0, open(Outcome.KEY_MATERIAL, GroupLocality.ABSENT).absentTold)
     }
 
     @Test

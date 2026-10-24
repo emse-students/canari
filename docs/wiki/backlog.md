@@ -1475,8 +1475,13 @@ Shipped in `v0.18.28`; what is left is readings, one decision, three test rows a
   6a: a salon message in Gala with the phone shut, `fetchCommitsFromBackend` answering 200 before the
   banner ([channel-encryption §16](protocols/channel-encryption.md#16-a-shut-phone-one-commit-behind-could-never-catch-up-in-any-community---fixed-2026-09-27)).
   The iPhone: `NOTIF-20`'s NSE half ([channel-encryption §19](protocols/channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)).
-- **P1 - USER DECISION: should a phone join a salon's key group from the PUSH, as it joins a DM from
-  a Welcome?** Two Gala members (`76198d2d`, `7bc0efc7`) held no device in the key group: the seat is
+- **P1 - DECIDED BY THE USER 2026-10-22 (*"Oui, rejoindre au push"*) AND BUILT: a shut Android
+  phone joins a salon's key group from the push; iOS joins at the next foreground**
+  ([channel-encryption section 26](protocols/channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)).
+  Owed: the Mi 9T reading (generic banner, `settled joined`, the next push readable,
+  `[KEY_GROUP_PUSH_JOIN] ... registered` at the next start) and the iPhone reading (the join at the
+  next foreground). The original question: should a phone join a salon's key group from the PUSH, as
+  it joins a DM from a Welcome? Two Gala members (`76198d2d`, `7bc0efc7`) held no device in the key group: the seat is
   committed by the member's own device when it LOADS the community, and theirs never had (read on
   production 2026-09-27 21:00, `0.18.15` and `0.18.22`), so every salon push reached them unreadable.
   Production check, read-only: whether either now holds a key-group row (`dm_group_members` for
