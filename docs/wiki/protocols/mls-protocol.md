@@ -889,7 +889,7 @@ user who holds none is a new person, and is not added (`automaticAdmission` in `
 `MlsManager::user_holds_leaf` in Rust, `treeHoldsUser` in TypeScript). A tree that cannot be read
 proves no membership, so nothing is added (it used to fall through to the Add).
 
-Instead, the ask is put to a member: **"X asks to join"**, with Add and Decline
+Instead, the ask is put to a member: **"X asks to join this group. Only a member can add them."** (`join_request_body`), with Add and Decline
 (`JoinRequestBanner`, `joinRequests.svelte.ts`). Add is the member's own Add (`inviteMembersToGroup`,
 signed by their device); Decline withdraws the ask (`declineJoinRequest`, below), which is what
 stops it coming back. The sweep reads the server's `pending` rows, the durable state, so each
@@ -898,7 +898,13 @@ The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>
 admit the person with no member involved. The Android background answer refuses such a request as
 `newcomer` and leaves it to the foreground's sweep. Only a GROUP conversation takes an ask
 (`askAMemberToAdmit`): a 1:1 conversation's `pending` rows and a key group's requests raise nothing -
-a DM ask's Add always failed and its Decline deleted the peer's own roster row.
+a DM ask's Add always failed and its Decline deleted the peer's own roster row. And only a seat the
+server holds AS an ask is asked about: the pending rows (`GET mls/invitations/pending`) and the roster
+read (`GET .../user-members`) carry `awaitingAdmission`, and a person absent from the tree whose seat
+is not flagged - a member's invite between its roster write and its Add, a seat written before
+migration 038, a member whose leaves were removed - is neither added nor asked about (logged "not an
+invitation-link ask"). A member's own invite brings such a person in. The banner shows an ask only
+while the chat page that answers it is mounted (`canAnswerJoinRequests`).
 
 **An answer leaves the screen only when it happened** (`joinAnswers.ts`). The invite never throws; it
 returns a typed `BulkAdditionOutcome` (`added` with the users the merged commit put in the tree, or
@@ -910,7 +916,9 @@ while `awaitingAdmission` still stands (`withdrawAwaitingSeat`), and answers a t
 `withdrawn` (roster row, queued Welcomes and device rows gone, the open interval deleted - no
 eviction and no exclusion interval are written for someone who was never in), `already-admitted`
 (a member's Add came first; nothing is touched, so a Decline can never strip an admitted person),
-or `gone`. All three leave the screen; a refused or failed call keeps the ask. A Decline that wins
+`not-awaiting` (the flag was never set and the server holds no trace of an Add - no `active` device
+row, no `admittedAtEpoch`, no queued Welcome: the seat was never an ask, nothing is touched), or
+`gone`. All four leave the screen; a refused or failed call keeps the ask. A Decline that wins
 the race against an Add makes that Add an ordinary invitation by the adding member, which registers
 the roster row as any invite does. Anything else keeps the ask, logged with its reason.
 
@@ -942,6 +950,26 @@ and the server holds the person outside until a member answers:
   a Decline withdraws it, per seat under its lock; the device-only purge never touches an awaiting
   seat, so it cannot leave a roster row that answers 409 to a fresh ask forever. The stranded-seat
   reports count these seats apart (`awaiting-member`).
+- **A seat awaiting a member is not a membership ANYWHERE a caller is checked** (review of #2358,
+  B1). Every caller predicate of the controllers reads the seat through ONE helper,
+  `callerSeatStanding` (`utils/group-membership.ts`): enrolling or removing someone
+  (`POST`/`DELETE mls/groups/:groupId/members`), minting an invitation link, vouching for or
+  kicking a device, and reading the roster (`user-members`, `members`; `group-rosters` lists the
+  group in `refused`) are all answered **409 `awaiting_admission`** for such a seat. Counted as a
+  membership, a person still waiting enrolled an accomplice whose seat read as not awaiting, who then
+  read the base and entered by external commit with no member's Add. Leaving is the one thing it may
+  do (the removal of its own seat).
+- **The wait is quiet on the server.** The waiting device asks a member on every recovery cadence
+  for up to the 14 days of its ask, and an older client meets the withheld base each time: the
+  `[WELCOME_REQ]` lines of such an ask and the `[GROUP_INFO] base withheld` line are said at the 1st,
+  10th, 100th... repeat per (group, device) (`awaitingAskRepeats`, a `RepeatCounter`), every relay
+  still made. The joiner reads "Waiting for a member of X to add you" on the link page
+  (`group_join_sent_desc`); the conversation appears once a member adds them.
+- **"Holds a leaf" is not "is a member" (review of #2358, P2-2).** A removal deletes the roster row
+  BEFORE the member's Remove commit lands; if that commit never lands, the removed person keeps a
+  leaf. Following a link later, they are re-added automatically: `automaticAdmission` reads their
+  user in the tree as `member-device`, and the commit's `admits` lifts the flag. Open in
+  [backlog](../backlog.md#p2---a-removed-member-whose-leaf-survived-is-re-added-automatically-by-a-link-review-of-2358).
 - **"Only through a member's decision" holds from a client floor**, not from this build:
   a member client older than the rule still auto-Adds a link joiner, and that Add legitimately lifts
   the flag. It holds once `minClientVersion` floors at this build, with migration 038 deployed with
@@ -960,7 +988,7 @@ device honouring a server-written flag, the very trust in server rows this polic
 (`entersUninvited`, pinned in Rust by
 `an_external_commit_by_a_new_user_is_recorded_as_signed_by_the_device_it_admits`). In a conversation
 - decided on its row, loaded or durable, never on the session-local key-group set - the client writes
-"X joined the conversation without a member adding them" (`chat_system_uninvited_entry`, owed
+"X entered the conversation without being added by a member" (`chat_system_uninvited_entry`, owed
 durably until the row loads), logs it at ERROR and reports it once (`POST mls/uninvited-entry`,
 `[UNINVITED_ENTRY]` in the delivery log). Never in a community or salon key group, where an external
 commit is how every member enters. The shape is `sender-mismatch`'s: a measurement, read on

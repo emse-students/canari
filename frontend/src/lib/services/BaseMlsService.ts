@@ -34,6 +34,8 @@ import {
   type MlsDeliveryFetch,
   type CommitRemoval,
   type JoinDeclineOutcome,
+  type GroupUserMemberRow,
+  type PendingInvitationRow,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import {
@@ -3358,7 +3360,7 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.getGroupMembers(groupId);
   }
 
-  async getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
+  async getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]> {
     return this.delivery.getGroupUserMembers(groupId);
   }
 
@@ -3402,12 +3404,7 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.undismissGroup(groupId);
   }
 
-  async getPendingInvitations(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{ id: string; userId: string; deviceId: string; groupId: string; status: string }>
-  > {
+  async getPendingInvitations(userId: string, deviceId: string): Promise<PendingInvitationRow[]> {
     return this.delivery.getPendingInvitations(userId, deviceId);
   }
 

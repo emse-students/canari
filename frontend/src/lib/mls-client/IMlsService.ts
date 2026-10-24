@@ -13,7 +13,9 @@ import type { IStorage } from '$lib/db/types';
 import type {
   GroupExclusions,
   GroupRosterBatch,
+  GroupUserMemberRow,
   JoinDeclineOutcome,
+  PendingInvitationRow,
   SentFrame,
 } from './mlsDeliveryApi';
 import type { ForkFinding } from './integrityFindings';
@@ -1320,7 +1322,7 @@ export interface IMlsService {
   /** Returns the (userId, deviceId) pairs currently in a group. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
-  getGroupUserMembers(groupId: string): Promise<{ userId: string }[]>;
+  getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]>;
   /**
    * The windows during which each current member of `groupId` was out of it, from
    * `GET /api/mls/groups/:groupId/exclusions`. Throws on any failure: a history answer that cannot
@@ -1368,18 +1370,7 @@ export interface IMlsService {
 
   // DeviceGroupMembership tracking
   /** Get all pending device-group invitations in groups where this device is a full member */
-  getPendingInvitations(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{
-      id: string;
-      userId: string;
-      deviceId: string;
-      groupId: string;
-      status: string;
-    }>
-  >;
+  getPendingInvitations(userId: string, deviceId: string): Promise<PendingInvitationRow[]>;
   /**
    * Get all device-group memberships for the current device, each with its status.
    *

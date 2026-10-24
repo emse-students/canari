@@ -15,8 +15,11 @@
 -- of the person's devices (a member's Add, `validateCommit`). Every other writer leaves the default.
 --
 -- Additive, NOT NULL DEFAULT false: a constant default rewrites no row (PostgreSQL 11+), and every
--- existing seat - all of them written before this rule or by a member - reads `false`, which is what
--- each of them was. Idempotent: ADD COLUMN IF NOT EXISTS.
+-- existing seat - all of them written before this rule or by a member - reads `false`. That is right
+-- for every admitted member, and NOT for a link seat whose person had not entered yet when this ran:
+-- such a seat reads as no ask at all, so nobody is asked in that person's name and a member's own
+-- invite is what brings them in (a one-off population, counted in docs/wiki/legacy-compatibility.md).
+-- Idempotent: ADD COLUMN IF NOT EXISTS.
 --
 -- LOCK TIMEOUT: ADD COLUMN takes ACCESS EXCLUSIVE on `dm_group_members`, which every send reads to
 -- authorise its sender. Waiting behind a long transaction would stall them behind the queued lock

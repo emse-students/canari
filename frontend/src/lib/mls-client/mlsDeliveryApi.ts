@@ -19,10 +19,42 @@ import { refusalFromResponse } from '$lib/utils/apiRefusalError';
  * - `withdrawn`: the seat still awaited a member; it is gone, the ask with it.
  * - `already-admitted`: a member's Add came first - the person is in, and nothing was touched (the
  *   generic removal used to delete that admitted person's seat and leave their leaf with none).
+ * - `not-awaiting`: the seat never awaited a member and the server holds no trace of an Add of
+ *   theirs - not an invitation-link ask at all (a seat older than the rule, a member's invite between
+ *   its roster write and its Add, a member whose leaves were removed). Nothing was touched.
  * - `gone`: no seat - answered or expired before.
  */
-export const JOIN_DECLINE_OUTCOMES = ['withdrawn', 'already-admitted', 'gone'] as const;
+export const JOIN_DECLINE_OUTCOMES = [
+  'withdrawn',
+  'already-admitted',
+  'not-awaiting',
+  'gone',
+] as const;
 export type JoinDeclineOutcome = (typeof JOIN_DECLINE_OUTCOMES)[number];
+
+/**
+ * A device still to be Added into a group this device is a member of
+ * (`GET mls/invitations/pending/:userId/:deviceId`).
+ */
+export type PendingInvitationRow = {
+  id: string;
+  userId: string;
+  deviceId: string;
+  groupId: string;
+  status: string;
+  /**
+   * The person's seat is an invitation link's ask no member has answered: the one row a member is
+   * asked about ("X asks to join"). Absent from a server older than the field.
+   */
+  awaitingAdmission?: boolean;
+};
+
+/** One user of a group's roster (`GET mls/groups/:groupId/user-members`). */
+export type GroupUserMemberRow = {
+  userId: string;
+  /** As {@link PendingInvitationRow.awaitingAdmission}, for the roster read. */
+  awaitingAdmission?: boolean;
+};
 
 export type MlsDeliveryFetch = typeof fetch;
 
@@ -1807,7 +1839,7 @@ export class MlsDeliveryApi {
    * THROWS on transport/HTTP failure: a `[]` must not mask a network failure (audit S2).
    * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
    */
-  getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
+  getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]> {
     // Simultaneous askers share ONE request (membership guards, stray sweeps and peer resolution all
     // ask per conversation). Never held past the answer: callers decide security and repairs on it.
     return this.joinInFlight(`user-members:${groupId}`, async () => {
@@ -2178,12 +2210,7 @@ export class MlsDeliveryApi {
   }
 
   /** Returns outstanding Welcome invitations for a device (used by multi-device sync). */
-  async getPendingInvitations(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{ id: string; userId: string; deviceId: string; groupId: string; status: string }>
-  > {
+  async getPendingInvitations(userId: string, deviceId: string): Promise<PendingInvitationRow[]> {
     try {
       const res = await this.f(
         `${this.historyUrl}/api/mls/invitations/pending/${userId}/${deviceId}`,

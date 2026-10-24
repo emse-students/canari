@@ -1,5 +1,5 @@
-import { Logger } from '@nestjs/common';
-import { IsNull, type EntityManager } from 'typeorm';
+import { ConflictException, Logger } from '@nestjs/common';
+import { IsNull, Not, type EntityManager, type Repository } from 'typeorm';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
@@ -293,8 +293,18 @@ export async function endGroupMembership(
 export type AwaitingSeatWithdrawal =
   /** The seat still awaited a member: its roster row, device rows, Welcomes and interval are gone. */
   | 'withdrawn'
-  /** A member's Add answered first (`awaitingAdmission` is false): nothing was touched. */
+  /**
+   * A member's Add answered first: the flag is lifted AND the server holds the trace of that Add
+   * ({@link holdsAdmissionTrace}). Nothing was touched.
+   */
   | 'already-admitted'
+  /**
+   * The seat never awaited a member and no Add of the person is on record: not an invitation-link
+   * ask at all - a seat written before migration 038 (which defaults every row to `false`), a
+   * member's invite still between its roster write and its Add, or a member whose leaves were
+   * removed. Nothing was touched, and nothing here is a Decline's to withdraw.
+   */
+  | 'not-awaiting'
   /** No roster row: answered or withdrawn before. */
   | 'gone';
 
@@ -321,11 +331,75 @@ export async function withdrawAwaitingSeat(
     lock: { mode: 'pessimistic_write' },
   });
   if (!seat) return 'gone';
-  if (!seat.awaitingAdmission) return 'already-admitted';
+  if (!seat.awaitingAdmission) {
+    return (await holdsAdmissionTrace(m, groupId, userId)) ? 'already-admitted' : 'not-awaiting';
+  }
   await m.getRepository(GroupMember).delete({ groupId, userId });
   await endDeviceMemberships(m, { userId, groupId }, 'welcomes');
   await m.getRepository(GroupMembershipInterval).delete({ groupId, userId, leftAt: IsNull() });
   return 'withdrawn';
+}
+
+/**
+ * Whether the server holds the TRACE OF AN ADD of `userId` into `groupId`: a device row that is
+ * `active` (its Welcome was processed), one carrying `admittedAtEpoch` (a commit's `admits`), or
+ * a Welcome queued for them (an Add whose Welcome was sent apart, as an older member client does).
+ * What tells a lifted flag from a flag that was never set - the one question a Decline cannot
+ * answer from the roster row alone.
+ */
+async function holdsAdmissionTrace(
+  m: EntityManager,
+  groupId: string,
+  userId: string
+): Promise<boolean> {
+  const admittedDevice = await m.getRepository(DeviceGroupMembership).findOne({
+    where: [
+      { groupId, userId, status: 'active' as const },
+      { groupId, userId, admittedAtEpoch: Not(IsNull()) },
+    ],
+    select: { deviceId: true },
+  });
+  if (admittedDevice) return true;
+  const welcome = await m.getRepository(QueuedMessage).findOne({
+    where: { groupId, recipientId: userId, isWelcome: true },
+    select: { id: true },
+  });
+  return welcome !== null;
+}
+
+/**
+ * Where `userId` stands on `groupId`'s roster, as a CALLER: `admitted` (a member), `awaiting` (an
+ * invitation link's seat no member has admitted yet - an ASK, which may answer nothing for the
+ * group: not enrol, remove, invite, read its roster or vouch for a device), or `null` (no seat).
+ *
+ * THE ONE READ every caller-membership predicate of the controllers goes through, so none of them
+ * can count an awaiting seat as a membership again: they did, and a person still waiting could enrol
+ * an accomplice whose seat read as not awaiting and who then joined by external commit with no
+ * member's Add (review of #2358, B1).
+ */
+export async function callerSeatStanding(
+  repo: Pick<Repository<GroupMember>, 'findOne'>,
+  groupId: string,
+  userId: string
+): Promise<'admitted' | 'awaiting' | null> {
+  const seat = await repo.findOne({
+    where: { groupId, userId },
+    select: { id: true, awaitingAdmission: true },
+  });
+  if (!seat) return null;
+  return seat.awaitingAdmission ? 'awaiting' : 'admitted';
+}
+
+/**
+ * The refusal of a seat still awaiting a member's admission: a 409 `awaiting_admission`, NEVER the
+ * 403 of no seat at all - a client reads a 403 on a membership question as "I am not a member" and
+ * retires the conversation (`NotAGroupMemberError`), while this person is a pending member who waits.
+ */
+export function awaitingAdmissionRefusal(): ConflictException {
+  return new ConflictException({
+    error: 'awaiting_admission',
+    message: 'a member has not admitted this person yet',
+  });
 }
 
 /** The key {@link expireUnansweredAsks} names a person's seat in a group by. */

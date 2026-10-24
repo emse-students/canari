@@ -58,7 +58,12 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
       getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
       getGroupUserMembers: vi
         .fn()
-        .mockResolvedValue([{ userId: 'me' }, { userId: 'peer' }, { userId: 'stranger' }]),
+        // `stranger` holds an invitation link's seat: the server names it an ask.
+        .mockResolvedValue([
+          { userId: 'me' },
+          { userId: 'peer' },
+          { userId: 'stranger', awaitingAdmission: true },
+        ]),
       fetchUserDevices: vi
         .fn()
         .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
@@ -119,6 +124,24 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
       requesterDeviceId: 'dev-1',
     });
     expect(mlsService.addMember).not.toHaveBeenCalled();
+  });
+
+  it("asks nobody about a person whose seat is not an invitation link's ask", async () => {
+    // A member's invite between its roster write and its Add, or a seat older than the rule: the
+    // server does not name it an ask, so nobody is asked in that person's name - and a Decline would
+    // have found nothing to withdraw.
+    const onJoinApprovalRequested = vi.fn();
+    const log = vi.fn();
+    const mlsService = serverVouches({
+      getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'me' }, { userId: 'stranger' }]),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self']),
+    });
+
+    await run('g-adm-not-an-ask', mlsService, 'stranger', { onJoinApprovalRequested, log });
+
+    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('not an invitation-link ask'));
   });
 
   it('asks nobody about a 1:1 conversation or a channel - only a group takes a join ask', async () => {
@@ -230,11 +253,16 @@ describe('processPendingInvitations - a new user is never added automatically', 
     } as unknown as IMlsService;
   }
 
-  /** A `pending` row for `userId:deviceId` in g1, with a KeyPackage served for it. */
-  const pendingFor = (userId: string, deviceId: string) => ({
+  /**
+   * A `pending` row for `userId:deviceId` in g1, with a KeyPackage served for it - an invitation
+   * link's ask unless `awaitingAdmission` says otherwise.
+   */
+  const pendingFor = (userId: string, deviceId: string, awaitingAdmission = true) => ({
     getPendingInvitations: vi
       .fn()
-      .mockResolvedValue([{ id: 'i1', userId, deviceId, groupId: 'g1', status: 'pending' }]),
+      .mockResolvedValue([
+        { id: 'i1', userId, deviceId, groupId: 'g1', status: 'pending', awaitingAdmission },
+      ]),
     fetchUserDevices: vi.fn().mockResolvedValue([{ deviceId, keyPackage: new Uint8Array([1]) }]),
   });
 
@@ -289,6 +317,22 @@ describe('processPendingInvitations - a new user is never added automatically', 
     });
     expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
     expect(mlsService.updateInvitationStatus).not.toHaveBeenCalled();
+  });
+
+  it('raises no ask for a pending row the server does not name an ask, and leaves it alone', async () => {
+    const onJoinApprovalRequested = vi.fn();
+    const log = vi.fn();
+    const mlsService = makeMls({
+      ...pendingFor('stranger', 's1', false),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device']),
+    });
+
+    await sweep(mlsService, { onJoinApprovalRequested, log });
+
+    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('not an invitation-link ask'));
   });
 
   it('raises no ask for a 1:1 conversation, and leaves its row alone', async () => {

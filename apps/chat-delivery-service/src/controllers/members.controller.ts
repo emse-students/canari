@@ -46,6 +46,8 @@ import {
   stretchStart,
   partingKey,
   withdrawAwaitingSeat,
+  callerSeatStanding,
+  awaitingAdmissionRefusal,
   withheldWindows,
   type AwaitingSeatWithdrawal,
   type ExclusionWindow,
@@ -106,7 +108,7 @@ export class MembersController {
    * Authorizes an add/remove membership mutation on `safeGroupId`. The caller (nginx-injected,
    * HMAC-bound `x-user-id`) is allowed only when one of the following holds:
    *  - it is a platform global admin (`x-global-admin: true`);
-   *  - it is already a member of the group - covers invites, welcome_request re-adds, and the
+   *  - it is already an ADMITTED member of the group - covers invites, welcome_request re-adds, and the
    *    inviter/joiner backfill paths, which all run as an existing member (the inviter registers
    *    an invitee BEFORE sending the Welcome, so the invitee is a member by the time it self-heals);
    *  - (add only) the group has no members yet AND the caller is adding itself - the group-creation
@@ -117,22 +119,33 @@ export class MembersController {
    * from a group it does not belong to (audit S5). When `x-user-id` is absent (deployments without
    * INTERNAL_SHARED_SECRET), the check is a no-op to preserve legacy behavior, matching
    * `assertCallerOwnsUserId`.
+   *
+   * A SEAT STILL AWAITING A MEMBER'S ADMISSION IS NOT A MEMBERSHIP HERE ({@link callerSeatStanding}):
+   * counted as one, a person waiting on an invitation link enrolled an accomplice whose seat read as
+   * not awaiting, and who then entered by external commit with no member's Add. It may only LEAVE
+   * (`allowSelfLeave`, the removal of its own seat); anything else is the 409 `awaiting_admission`.
    */
   private async assertCallerMayMutateMembership(
     safeGroupId: string,
     targetUserId: string,
     headerUserId: string | undefined,
     headerGlobalAdmin: string | undefined,
-    allowCreationBootstrap: boolean
+    allowCreationBootstrap: boolean,
+    allowSelfLeave = false
   ): Promise<void> {
     if (headerGlobalAdmin === 'true') return;
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!caller) return;
 
-    const callerMemberships = await this.groupMemberRepo.count({
-      where: { groupId: safeGroupId, userId: caller },
-    });
-    if (callerMemberships > 0) return;
+    const standing = await callerSeatStanding(this.groupMemberRepo, safeGroupId, caller);
+    if (standing === 'admitted') return;
+    if (standing === 'awaiting') {
+      if (allowSelfLeave && caller === targetUserId) return;
+      this.logger.warn(
+        `[MEMBERSHIP] REFUSED group=${safeGroupId} caller=${caller.slice(0, 8)} target=${targetUserId.slice(0, 8)} - the caller's seat awaits a member's admission`
+      );
+      throw awaitingAdmissionRefusal();
+    }
 
     // Group-creation bootstrap: the creator adds its own userId while the group is still empty.
     if (allowCreationBootstrap && caller === targetUserId) {
@@ -157,6 +170,9 @@ export class MembersController {
    * social graph / device topology. Freshly-invited joiners are registered as members BEFORE their
    * Welcome, so recovery/re-invite reads still pass. No-op when `x-user-id` is absent (legacy
    * deployments without INTERNAL_SHARED_SECRET), matching `assertCallerOwnsUserId`.
+   *
+   * A seat still awaiting a member's admission reads no roster: it is answered the 409
+   * `awaiting_admission` ({@link callerSeatStanding}), never the 403 its client would retire on.
    */
   private async assertCallerIsGroupMember(
     safeGroupId: string,
@@ -166,10 +182,14 @@ export class MembersController {
     if (headerGlobalAdmin === 'true') return;
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!caller) return;
-    const callerMemberships = await this.groupMemberRepo.count({
-      where: { groupId: safeGroupId, userId: caller },
-    });
-    if (callerMemberships > 0) return;
+    const standing = await callerSeatStanding(this.groupMemberRepo, safeGroupId, caller);
+    if (standing === 'admitted') return;
+    if (standing === 'awaiting') {
+      this.logger.warn(
+        `[MEMBERSHIP] roster read REFUSED group=${safeGroupId} caller=${caller.slice(0, 8)} - the caller's seat awaits a member's admission`
+      );
+      throw awaitingAdmissionRefusal();
+    }
     throw new ForbiddenException(
       refusalBody(RefusalCode.NOT_A_MEMBER, 'Caller is not a member of this group')
     );
@@ -567,7 +587,7 @@ export class MembersController {
     await this.assertCallerIsGroupMember(safeGroupId, headerUserId, headerGlobalAdmin);
     const rows = await this.groupMemberRepo.find({
       where: { groupId: safeGroupId },
-      select: { userId: true },
+      select: { userId: true, awaitingAdmission: true },
     });
     const userIds = [...new Set(rows.map((r) => r.userId))];
     const nameMap = await resolveUserDisplayNamesBatch(this.dataSource.manager, userIds);
@@ -575,6 +595,8 @@ export class MembersController {
     return rows.map((r) => ({
       userId: r.userId,
       displayName: nameMap.get(r.userId) ?? null,
+      // An invitation link's ask no member has answered: the one roster row a member is asked about.
+      awaitingAdmission: r.awaitingAdmission === true,
     }));
   }
 
@@ -635,8 +657,14 @@ export class MembersController {
 
     const rows = await this.groupMemberRepo.find({
       where: { groupId: In(groupIds) },
-      select: { groupId: true, userId: true },
+      select: { groupId: true, userId: true, awaitingAdmission: true },
     });
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    // A caller whose own seat still awaits a member's admission is answered as the single read
+    // answers it - not a member - so it is listed in `refused` ({@link callerSeatStanding}).
+    const callerAwaits = new Set(
+      rows.filter((r) => r.userId === caller && r.awaitingAdmission).map((r) => r.groupId)
+    );
     const byGroup = new Map<string, Set<string>>();
     for (const row of rows) {
       const members = byGroup.get(row.groupId) ?? new Set<string>();
@@ -644,13 +672,12 @@ export class MembersController {
       byGroup.set(row.groupId, members);
     }
 
-    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     const unrestricted = headerGlobalAdmin === 'true';
     const rosters: Record<string, string[]> = {};
     const refused: string[] = [];
     for (const groupId of groupIds) {
       const members = byGroup.get(groupId) ?? new Set<string>();
-      if (!unrestricted && (!caller || !members.has(caller))) {
+      if (!unrestricted && (!caller || !members.has(caller) || callerAwaits.has(groupId))) {
         refused.push(groupId);
         continue;
       }
@@ -743,7 +770,8 @@ export class MembersController {
       safeUserId,
       headerUserId,
       headerGlobalAdmin,
-      false
+      false,
+      true // self-leave: a seat still awaiting a member may withdraw itself
     );
 
     // A REMOVAL BY SOMEBODY ELSE IS RECORDED HERE BEFORE ITS MLS COMMIT, and the commit is fanned out

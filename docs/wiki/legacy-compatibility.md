@@ -137,6 +137,20 @@ outside (the base, the commit gate, the joiner's own membership read), and the s
 every one of those paths, so the build does not run without it.
 **Removal:** nothing - this entry closes when the floor passes; the lift by Welcome stays, since it
 is also how every current Add's Welcome lands.
+**A one-off population, not a shim: link seats written BEFORE migration 038.** The column defaults
+every existing row to `false`, so a person who accepted a link before the deploy and had not entered
+yet reads as no ask at all: nobody is asked in their name, a Decline answers `not-awaiting`, and a
+member's own invite is what brings them in. It cannot grow (only `acceptGroupInvite` writes the
+flag from then on) and is counted read-only on production, once, after the deploy - seats with no
+trace of an admission:
+
+```sql
+SELECT count(*) FROM dm_group_members m
+WHERE NOT m."awaitingAdmission"
+  AND NOT EXISTS (SELECT 1 FROM dm_device_group_memberships d
+                  WHERE d."groupId" = m."groupId" AND d."userId" = m."userId"
+                    AND (d.status = 'active' OR d."admittedAtEpoch" IS NOT NULL));
+```
 
 ### No date yet - a notification TYPE the client does not know, from any new server type
 

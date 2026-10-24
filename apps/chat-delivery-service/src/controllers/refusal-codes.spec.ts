@@ -124,11 +124,12 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
 
   describe('MembersController', () => {
     let controller: MembersController;
-    const groupMemberRepo = { count: jest.fn() };
+    const groupMemberRepo = { count: jest.fn(), findOne: jest.fn() };
 
     beforeEach(async () => {
       jest.clearAllMocks();
       groupMemberRepo.count.mockResolvedValue(0);
+      groupMemberRepo.findOne.mockResolvedValue(null);
       const module: TestingModule = await Test.createTestingModule({
         controllers: [MembersController],
         providers: [

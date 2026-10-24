@@ -57,6 +57,7 @@ import {
 } from '../internal/distribution-entitlement';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
+  awaitingAdmissionRefusal,
   endDeviceMemberships,
   exclusionWindows,
   openMissingIntervals,
@@ -615,10 +616,7 @@ export function activationRefusalException(
 ): ForbiddenException | BadRequestException | ConflictException {
   // A pending member who waits, never "not a member": a 403 retires the conversation on a client.
   if (reason === 'awaiting_admission') {
-    return new ConflictException({
-      error: 'awaiting_admission',
-      message: 'a member has not admitted this person yet',
-    });
+    return awaitingAdmissionRefusal();
   }
   return reason === 'no_seat' ||
     reason === 'kicked' ||
@@ -731,6 +729,12 @@ export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
   /** Per-device count of sends that found no push token - see `sendFcmForQueued`. */
   private readonly noPushTokenRepeats = new RepeatCounter();
+  /**
+   * An invitation link's ask repeats by design: the waiting device asks a member on every recovery
+   * cadence until one answers or the ask expires (14 days), and an older client also meets the
+   * withheld base each time. Said once per (group, device), then at each power of ten.
+   */
+  private readonly awaitingAskRepeats = new RepeatCounter();
   /**
    * Whether a key-group fan-out is written as ONE shared payload. Read once at boot; OFF until a
    * release after the one that ships the readers turns it on - see `readSharedPayloadWrites`.
@@ -3645,13 +3649,14 @@ export class MessagingService {
       throw new ForbiddenException(`User ${userId} is not a member of group ${groupId}`);
     }
     if (await this.seatAwaitsAdmission(groupId, userId, seat)) {
-      this.logger.log(
-        `[GROUP_INFO] group=${groupId} user=${sanitizeLogValue(userId)} awaits a member's admission - base withheld`
-      );
-      throw new ConflictException({
-        error: 'awaiting_admission',
-        message: 'a member has not admitted this person yet',
-      });
+      // An older client asks for the base on every cadence of its wait: said at 1, 10, 100...
+      const nth = this.awaitingAskRepeats.hit(`base|${groupId}|${userId}`);
+      if (nth !== null) {
+        this.logger.log(
+          `[GROUP_INFO] group=${groupId} user=${sanitizeLogValue(userId)} awaits a member's admission - base withheld (repeat=${nth}, said at 1, 10, 100...)`
+        );
+      }
+      throw awaitingAdmissionRefusal();
     }
   }
 
@@ -4852,9 +4857,19 @@ export class MessagingService {
     // invitation.
     const members = await this.routableMembers(groupId, traceId, 'WELCOME_REQ');
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
+    // AN ASK OF A SEAT AWAITING A MEMBER is relayed exactly as before, and said only at its 1st,
+    // 10th, 100th... repeat for this device ({@link awaitingAskRepeats}): every line below is the
+    // same sentence on every cadence of a wait that may last the 14 days of the ask.
+    const awaitingAsk =
+      (await this.rosterSeat(groupId, requesterUserId))?.awaitingAdmission === true;
+    const nth = awaitingAsk ? this.awaitingAskRepeats.hit(`ask|${groupId}|${senderKey}`) : 1;
+    const say = (line: string) => {
+      if (nth !== null) this.logger.log(line);
+    };
 
-    this.logger.log(
-      `[WELCOME_REQ][${traceId}] START group=${groupId} requester=${senderKey} members=${members.length}`
+    say(
+      `[WELCOME_REQ][${traceId}] START group=${groupId} requester=${senderKey} members=${members.length}` +
+        (awaitingAsk ? ` ask=awaiting-member repeat=${nth} (said at 1, 10, 100...)` : '')
     );
 
     const notification = JSON.stringify({
@@ -4875,7 +4890,7 @@ export class MessagingService {
       }
       const onlineKey = this.presenceKey(memberUserId, memberDeviceId);
       const isOnline = await this.redis.exists(onlineKey);
-      this.logger.log(`[WELCOME_REQ][${traceId}] Candidate=${member} online=${!!isOnline}`);
+      say(`[WELCOME_REQ][${traceId}] Candidate=${member} online=${!!isOnline}`);
       if (isOnline) {
         await this.redis.publish(
           'chat:messages',
@@ -4891,7 +4906,7 @@ export class MessagingService {
             senderDeviceId: requesterDeviceId,
           })
         );
-        this.logger.log(
+        say(
           `[WELCOME_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`
         );
 
@@ -4927,7 +4942,7 @@ export class MessagingService {
         }
         if (stored.length > 0) {
           await this.redis.del(pendingSetKey);
-          this.logger.log(
+          say(
             `[WELCOME_REQ][${traceId}] Drained ${drained} stored welcome_request(s) for group=${groupId}`
           );
         }
@@ -4974,7 +4989,7 @@ export class MessagingService {
     // without waiting for an organic reconnection.
     await this.sendFcmWelcomeRequestPending(groupId, members, senderKey, traceId);
 
-    this.logger.log(
+    say(
       `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis, FCM sent to peers`
     );
     return { status: 'no_peer_online' };

@@ -79,6 +79,17 @@ export async function admitJoinRequest(
   return { done: true };
 }
 
+/** What each answer of the server to a Decline means, as the log line says it - one line each. */
+const DECLINE_OUTCOME_LINE: Record<JoinDeclineOutcome, string> = {
+  withdrawn: 'declined - their seat is withdrawn',
+  'already-admitted': "not declined - another member's Add admitted them first",
+  // Never raised as an ask by a current client (`askAMemberToAdmit` asks only for a seat the server
+  // holds as one); reached when the seat changed between the ask and the answer.
+  'not-awaiting':
+    'not declined - their seat is not an invitation-link ask, so there is nothing to withdraw',
+  gone: '- the ask was already answered or expired',
+};
+
 /**
  * DECLINES the ask: the server withdraws the person's seat (`declineJoinRequest`), which is what
  * stops the ask from coming back. There is no leaf to remove - nobody added one - so no commit is
@@ -99,12 +110,6 @@ export async function declineJoinRequest(
   } catch (e) {
     return { done: false, reason: `the server refused the decline: ${String(e).slice(0, 120)}` };
   }
-  deps.log(
-    outcome === 'withdrawn'
-      ? `[JOIN_REQUEST] ${request.userId} declined - their seat is withdrawn`
-      : outcome === 'already-admitted'
-        ? `[JOIN_REQUEST] ${request.userId} not declined - another member's Add admitted them first`
-        : `[JOIN_REQUEST] ${request.userId} - the ask was already answered or expired`
-  );
+  deps.log(`[JOIN_REQUEST] ${request.userId} ${DECLINE_OUTCOME_LINE[outcome]}`);
   return { done: true };
 }

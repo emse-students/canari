@@ -57,6 +57,7 @@ import {
   reportDeviceTrustRefusal,
   verdictAdmits,
 } from '$lib/mls-client/deviceTrust';
+import type { PendingInvitationRow } from '$lib/mls-client/mlsDeliveryApi';
 import {
   isRefusedDevice,
   recordRefusedDevice,
@@ -122,15 +123,29 @@ async function automaticAdmission(deps: {
  * nothing: the next sweep asks again, once the row is there.
  *
  * In none of those is the new person added either: an automatic Add never brings one in.
+ *
+ * AND ONLY FOR AN ASK THE SERVER HOLDS (`isAsk`, the row's `awaitingAdmission`): a person absent
+ * from the tree whose seat is not an invitation link's ask - a member's invite between its roster
+ * write and its Add, a seat written before the rule, a member whose leaves were removed - asked
+ * nobody anything, and a Decline would find nothing to withdraw (`not-awaiting`). Such a person is
+ * brought in by a member's own invite, never by an ask raised in their name.
  */
 function askAMemberToAdmit(
   conversations: ReadonlyMap<string, Conversation>,
   request: JoinApprovalRequest,
+  isAsk: boolean | undefined,
   tag: string,
   log: (message: string) => void,
   onJoinApprovalRequested: ((request: JoinApprovalRequest) => void) | undefined
 ): void {
   const short = request.groupId.slice(0, 8);
+  if (isAsk !== true) {
+    log(
+      `${tag} ${request.requesterUserId} has no leaf in ${short}... - not added, and nobody is asked: ` +
+        `their seat is not an invitation-link ask (a member's invite in flight, or a seat older than the rule)`
+    );
+    return;
+  }
   const convo = conversations.get(request.groupId);
   const kind = convo ? (convo.conversationType ?? 'group') : null;
   if (kind !== 'group') {
@@ -350,13 +365,7 @@ export async function processPendingInvitations(params: {
   const myDeviceId = mlsService.getDeviceId();
 
   // 1. Fetch pending invitations for groups where this device is a full member
-  let pendingInvitations: Array<{
-    id: string;
-    userId: string;
-    deviceId: string;
-    groupId: string;
-    status: string;
-  }>;
+  let pendingInvitations: PendingInvitationRow[];
   try {
     pendingInvitations = await mlsService.getPendingInvitations(userId, myDeviceId);
   } catch (e) {
@@ -438,6 +447,7 @@ export async function processPendingInvitations(params: {
           askAMemberToAdmit(
             conversations,
             { groupId, requesterUserId: inv.userId, requesterDeviceId: inv.deviceId },
+            inv.awaitingAdmission,
             '[PENDING]',
             log,
             onJoinApprovalRequested
@@ -1220,6 +1230,7 @@ export async function handleWelcomeRequest(params: {
     askAMemberToAdmit(
       conversations,
       { groupId, requesterUserId, requesterDeviceId },
+      userMembers.find((m) => m.userId === requesterUserId)?.awaitingAdmission,
       '[WELCOME_REQ]',
       log,
       onJoinApprovalRequested

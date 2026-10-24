@@ -3003,7 +3003,7 @@
   "group_join_error_fallback": "Failed to join the group",
   "group_join_action": "Join this conversation",
   "group_join_sent_title": "Request sent!",
-  "group_join_sent_desc": "You will join \"{name}\" as soon as one of its members is online. The conversation will appear automatically in your messaging.",
+  "group_join_sent_desc": "Waiting for a member of \"{name}\" to add you. The conversation will appear in your messaging once one of them accepts your request.",
   "group_join_group_fallback": "the group",
   "group_join_go_to_chat": "Go to messaging",
   "group_join_back_chat": "Back to messaging",

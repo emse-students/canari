@@ -44,7 +44,11 @@ describe('MembersController - lock order of an add and a removal', () => {
       srem: jest.fn().mockResolvedValue(0),
     };
     const controller = new MembersController(
-      repo() as never,
+      // The caller holds an ADMITTED seat, so the membership guard passes.
+      {
+        ...repo(),
+        findOne: jest.fn().mockResolvedValue({ id: 'seat', awaitingAdmission: false }),
+      } as never,
       repo() as never,
       repo() as never,
       keyPackageRepo as never,

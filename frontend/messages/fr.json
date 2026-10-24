@@ -3035,7 +3035,7 @@
   "group_join_error_fallback": "Impossible de rejoindre le groupe",
   "group_join_action": "Rejoindre cette conversation",
   "group_join_sent_title": "Demande envoyée !",
-  "group_join_sent_desc": "Vous rejoindrez \"{name}\" dès qu'un de ses membres sera en ligne. La conversation apparaîtra automatiquement dans votre messagerie.",
+  "group_join_sent_desc": "En attente qu'un membre de \"{name}\" vous ajoute. La conversation apparaîtra dans votre messagerie dès que l'un d'eux aura accepté votre demande.",
   "group_join_group_fallback": "le groupe",
   "group_join_go_to_chat": "Aller à la messagerie",
   "group_join_back_chat": "Retour à la messagerie",

@@ -79,7 +79,11 @@ function memberSide(
   const leaves = [...(opts.leaves ?? ['me:self', 'peer:p1'])];
   const mlsService = createMlsServiceStub({
     getGroupMeta: vi.fn().mockResolvedValue({ name: 'Club', isGroup: true }),
-    getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'me' }, { userId: JOINER }]),
+    // The roster read names the joiner's seat an ask while it still awaits a member.
+    getGroupUserMembers: vi.fn(async () => [
+      { userId: 'me' },
+      { userId: JOINER, awaitingAdmission: seat.awaitingAdmission },
+    ]),
     fetchUserDevices: vi
       .fn()
       .mockResolvedValue([{ deviceId: JOINER_DEVICE, keyPackage: new Uint8Array([7]) }]),
@@ -264,6 +268,19 @@ describe('declineJoinRequest - the guarded withdrawal, never a removal', () => {
     expect(await declineJoinRequest(request, m.deps)).toEqual({ done: true });
     expect(seat.exists).toBe(true);
     expect(m.deps.log).toHaveBeenCalledWith(expect.stringContaining('admitted them first'));
+  });
+
+  it("says the truth of a seat that was never an ask - not another member's Add", async () => {
+    // A seat older than the rule, or a member's invite between its roster write and its Add: the
+    // server answers `not-awaiting`, and the log must not claim an admission nothing records.
+    const m = memberSide();
+    m.mlsService.declineJoinRequest = vi.fn().mockResolvedValue('not-awaiting');
+
+    expect(await declineJoinRequest(request, m.deps)).toEqual({ done: true });
+    expect(m.deps.log).toHaveBeenCalledWith(
+      expect.stringContaining('not an invitation-link ask, so there is nothing to withdraw')
+    );
+    expect(m.deps.log).not.toHaveBeenCalledWith(expect.stringContaining('admitted them first'));
   });
 
   it('is not done when the server refused the decline', async () => {

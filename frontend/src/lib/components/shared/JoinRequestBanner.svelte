@@ -4,6 +4,7 @@
   import { globalConvs, globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import {
     answerJoinRequest,
+    canAnswerJoinRequests,
     pendingJoinRequests,
     type JoinRequest,
   } from '$lib/utils/chat/joinRequests.svelte';
@@ -15,11 +16,15 @@
    * A new person asking to join a group conversation this account is in (`joinRequests.svelte.ts`).
    *
    * An automatic Add never admits a new person - a server row or a relayed request is not a member's
-   * decision - so the ask is put to the member here: accepting is this device's own Add, declining
-   * removes the ask's roster row. One ask at a time, the oldest first; it stays until answered, or
-   * until a sweep finds another member answered it.
+   * decision - so the ask is put to the member here: accepting is this device's own Add; declining
+   * asks the server to withdraw the person's seat, which it does ONLY while that seat still awaits a
+   * member - a person another member's Add admitted first is left whole (`declineJoinRequest`). One
+   * ask at a time, the oldest first; it stays until answered, or until a sweep finds another member
+   * answered it - and it is shown only while the chat page that answers it is mounted.
    */
-  const request = $derived(session.isLoggedIn ? pendingJoinRequests()[0] : undefined);
+  const request = $derived(
+    session.isLoggedIn && canAnswerJoinRequests() ? pendingJoinRequests()[0] : undefined
+  );
   const groupName = $derived(
     request ? (globalConvs.conversations.get(request.groupId)?.name ?? '') : ''
   );

@@ -103,6 +103,9 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     hdel: async () => 0,
     hgetall: async () => ({}),
     mget: async (...keys: string[]) => keys.flat().map(() => null),
+    // Every member device is online, so a welcome_request is forwarded rather than stored.
+    exists: async () => 1,
+    publish: async () => 1,
   };
 
   const invitations = () =>
@@ -154,8 +157,7 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       },
       JOINER.userId
     );
-  /** A member's Decline through its route, as the member `who`. */
-  const decline = (who: { userId: string }) =>
+  const members = () =>
     new MembersController(
       ds.getRepository(GroupMember),
       // The dismissed-groups table is not on this path.
@@ -168,7 +170,10 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       ds.getRepository(RevokedDevice),
       redis as unknown as Redis,
       ds
-    ).declineJoinRequest(GROUP, JOINER.userId, who.userId);
+    );
+  /** A member's Decline of `target`'s ask through its route, as the member `who`. */
+  const decline = (who: { userId: string }, target: { userId: string } = JOINER) =>
+    members().declineJoinRequest(GROUP, target.userId, who.userId);
   /** How many rows `table` holds for `who` in the group. */
   const rowsOf = async (table: string, who: { userId: string }): Promise<number> => {
     const [row]: { n: string }[] = await q(
@@ -584,5 +589,137 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     expect(await awaiting(JOINER)).toBe(true);
     // ...and its stale device row is not purged alone either, which would strand the joiner.
     expect(await rowsOf('dm_device_group_memberships', JOINER)).toBe(2);
+  });
+
+  /**
+   * (4) A SEAT STILL AWAITING A MEMBER ANSWERS NOTHING FOR THE GROUP (review of #2358, B1). Counted
+   * as a membership by the controllers' caller checks, it enrolled an accomplice whose seat read as
+   * not awaiting - who then read the base and entered by external commit with no member's Add. Every
+   * such refusal is the 409 `awaiting_admission`, never the 403 a client retires a conversation on;
+   * leaving is the one thing it may do.
+   */
+  describe('a seat awaiting a member is not a membership', () => {
+    const ACCOMPLICE = { userId: 'accomplice' };
+    const AWAITING = { status: 409, name: 'awaiting_admission' };
+
+    it('cannot enrol another user, who therefore cannot read the base nor join by external commit', async () => {
+      await acceptLink();
+
+      await expect(
+        refusalOf(members().addGroupMember(GROUP, { userId: ACCOMPLICE.userId }, JOINER.userId))
+      ).resolves.toEqual(AWAITING);
+
+      expect(await rowsOf('dm_group_members', ACCOMPLICE)).toBe(0);
+      await expect(
+        refusalOf(service.getGroupInfo(GROUP, ACCOMPLICE.userId))
+      ).resolves.toMatchObject({ status: 403 });
+    });
+
+    it('cannot remove a member from the roster, but may withdraw its own seat', async () => {
+      await acceptLink();
+
+      await expect(
+        refusalOf(members().removeGroupMember(GROUP, MEMBER.userId, JOINER.userId))
+      ).resolves.toEqual(AWAITING);
+      expect(await rowsOf('dm_group_members', MEMBER)).toBe(1);
+
+      await expect(
+        refusalOf(members().removeGroupMember(GROUP, JOINER.userId, JOINER.userId))
+      ).resolves.toBeNull();
+      expect(await rowsOf('dm_group_members', JOINER)).toBe(0);
+    });
+
+    it('cannot mint an invitation link', async () => {
+      await acceptLink();
+
+      await expect(
+        refusalOf(invitations().createGroupInvite(GROUP, JOINER.userId))
+      ).resolves.toEqual(AWAITING);
+    });
+
+    it('cannot read the roster, one group or many', async () => {
+      await acceptLink();
+
+      await expect(refusalOf(members().getGroupUserMembers(GROUP, JOINER.userId))).resolves.toEqual(
+        AWAITING
+      );
+      await expect(refusalOf(members().getGroupMembers(GROUP, JOINER.userId))).resolves.toEqual(
+        AWAITING
+      );
+      await expect(
+        members().getGroupRosters({ groupIds: [GROUP] }, JOINER.userId)
+      ).resolves.toMatchObject({ rosters: {}, refused: [GROUP] });
+      // An admitted member reads it, the ask named as one.
+      await expect(members().getGroupUserMembers(GROUP, MEMBER.userId)).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ userId: JOINER.userId, awaitingAdmission: true }),
+          expect.objectContaining({ userId: MEMBER.userId, awaitingAdmission: false }),
+        ])
+      );
+    });
+  });
+
+  /**
+   * (5) A DECLINE TELLS AN ASK FROM A SEAT THAT NEVER WAS ONE (review of #2358, P2-1). A roster user
+   * with no leaf and no flag - a seat written before migration 038, a member's invite between its
+   * roster write and its Add - was answered `already-admitted`, which nothing on record supported.
+   */
+  it('a Decline of a seat that never awaited a member, and holds no trace of an Add, answers not-awaiting', async () => {
+    await q(`INSERT INTO dm_group_members ("groupId", "userId", role) VALUES ($1, $2, 'member')`, [
+      GROUP,
+      OTHER.userId,
+    ]);
+    await q(
+      `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status)
+       VALUES ($1, $2, $3, 'pending')`,
+      [OTHER.userId, OTHER.deviceId, GROUP]
+    );
+
+    await expect(decline(MEMBER, OTHER)).resolves.toEqual({ outcome: 'not-awaiting' });
+
+    expect(await rowsOf('dm_group_members', OTHER)).toBe(1);
+    expect(await rowsOf('dm_device_group_memberships', OTHER)).toBe(1);
+  });
+
+  it('a member reads which pending rows are asks', async () => {
+    await acceptLink();
+
+    const rows = await invitations().getPendingInvitations(
+      MEMBER.userId,
+      MEMBER.deviceId,
+      MEMBER.userId
+    );
+
+    // One row per device of the joiner the link seated (an earlier case registered a second one).
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.map((r) => [r.userId, r.groupId, r.awaitingAdmission])).toEqual(
+      rows.map(() => [JOINER.userId, GROUP, true])
+    );
+  });
+
+  /**
+   * (6) A WAITING DEVICE ASKS ON EVERY RECOVERY CADENCE FOR UP TO 14 DAYS (review of #2358, P2-3):
+   * every relay is still made, and its lines are said at the 1st, 10th, 100th... ask of that device.
+   */
+  it('relays every ask of a waiting device, and says it at its 1st and 10th repeat only', async () => {
+    await acceptLink();
+    const logged = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    logged.mockClear();
+
+    const answers: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      const { status } = await service.notifyWelcomeRequest(JOINER.userId, {
+        groupId: GROUP,
+        requesterUserId: JOINER.userId,
+        requesterDeviceId: JOINER.deviceId,
+      });
+      answers.push(status);
+    }
+
+    expect(answers).toEqual(Array.from({ length: 10 }, () => 'forwarded'));
+    const starts = logged.mock.calls
+      .map(([line]) => String(line))
+      .filter((line) => line.includes('[WELCOME_REQ]') && line.includes('START'));
+    expect(starts.map((line) => /repeat=(\d+)/.exec(line)?.[1])).toEqual(['1', '10']);
   });
 });

@@ -39,6 +39,8 @@ import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import {
+  awaitingAdmissionRefusal,
+  callerSeatStanding,
   endDeviceMemberships,
   writePendingSeats,
   type DepartureScope,
@@ -84,17 +86,25 @@ export class InvitationsController {
     );
   }
 
-  /** Caller must belong to the group unless they are a global admin. */
+  /**
+   * Caller must be an ADMITTED member of the group unless they are a global admin. A seat still
+   * awaiting a member's admission mints no invitation link and vouches for no device: it is
+   * answered the 409 `awaiting_admission` ({@link callerSeatStanding}), never the 403 of no seat.
+   */
   private async assertCallerIsGroupMember(
     callerUserId: string,
     groupId: string,
     headerGlobalAdmin?: string
   ): Promise<void> {
     if (headerGlobalAdmin === 'true') return;
-    const membership = await this.groupMemberRepo.findOne({
-      where: { userId: callerUserId, groupId },
-    });
-    if (!membership) {
+    const standing = await callerSeatStanding(this.groupMemberRepo, groupId, callerUserId);
+    if (standing === 'awaiting') {
+      this.logger.warn(
+        `[MEMBERSHIP] REFUSED group=${groupId} caller=${callerUserId.slice(0, 8)} - the caller's seat awaits a member's admission`
+      );
+      throw awaitingAdmissionRefusal();
+    }
+    if (standing === null) {
       throw new ForbiddenException(
         refusalBody(RefusalCode.NOT_A_MEMBER, 'Not a member of this group')
       );
@@ -320,10 +330,30 @@ export class InvitationsController {
         `[PENDING][${traceId}] Skipped ${skipped} invitation(s) without active KeyPackage`
       );
     }
-    this.logger.log(
-      `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=${actionable.length}`
+    // WHETHER EACH ROW IS AN INVITATION LINK'S ASK (`GroupMember.awaitingAdmission`): the one case
+    // a member is asked "X asks to join". A person absent from the tree whose seat is NOT an ask - a
+    // member's invite between its roster write and its Add, a seat older than migration 038 - is
+    // neither added automatically nor put to a member as an ask nobody made (review of #2358, P2-1).
+    const askers = new Set(
+      (actionable.length === 0
+        ? []
+        : await this.groupMemberRepo.find({
+            where: {
+              groupId: In([...new Set(actionable.map((a) => a.groupId))]),
+              userId: In([...new Set(actionable.map((a) => a.userId))]),
+              awaitingAdmission: true,
+            },
+            select: { groupId: true, userId: true },
+          })
+      ).map((m) => `${m.groupId}|${m.userId}`)
     );
-    return actionable;
+    this.logger.log(
+      `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=${actionable.length} asks=${askers.size}`
+    );
+    return actionable.map((a) => ({
+      ...a,
+      awaitingAdmission: askers.has(`${a.groupId}|${a.userId}`),
+    }));
   }
 
   /**

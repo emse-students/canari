@@ -37,7 +37,8 @@ export interface JoinRequestHandlers {
 }
 
 const requests = new SvelteMap<string, JoinRequest>();
-let handlers: JoinRequestHandlers | null = null;
+// Reactive, so the banner shows an ask only while something can answer it (`canAnswerJoinRequests`).
+let handlers = $state.raw<JoinRequestHandlers | null>(null);
 
 function keyOf(groupId: string, userId: string): string {
   return `${groupId}|${canonicalUserId(userId)}`;
@@ -79,6 +80,14 @@ export function settleSweptJoinRequests(raised: readonly JoinApprovalRequest[]):
 /** The asks awaiting an answer, oldest first. Reactive. */
 export function pendingJoinRequests(): JoinRequest[] {
   return [...requests.values()];
+}
+
+/**
+ * Whether an answer can run now: the page holding a conversation context is mounted and registered
+ * its handlers. Reactive. An ask shown without them failed on tap with a toast and nothing done.
+ */
+export function canAnswerJoinRequests(): boolean {
+  return handlers !== null;
 }
 
 /** Registers what an answer runs; `null` unregisters (the page left, the session ended). */

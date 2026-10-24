@@ -25,7 +25,7 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
  */
 describe('MembersController.addGroupMember - a block refuses the add', () => {
   let controller: MembersController;
-  let groupMemberRepo: { count: jest.Mock };
+  let groupMemberRepo: { count: jest.Mock; findOne: jest.Mock };
   let keyPackageRepo: { find: jest.Mock };
   let blockQuery: jest.Mock;
   let transaction: jest.Mock;
@@ -38,7 +38,10 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
   beforeEach(async () => {
     // The caller is already a member, so the authorization guard passes and the block check is the
     // only thing that can refuse - which is what this suite is about.
-    groupMemberRepo = { count: jest.fn().mockResolvedValue(1) };
+    groupMemberRepo = {
+      count: jest.fn().mockResolvedValue(1),
+      findOne: jest.fn().mockResolvedValue({ id: 'seat', awaitingAdmission: false }),
+    };
     keyPackageRepo = { find: jest.fn().mockResolvedValue([]) };
     blockQuery = jest.fn().mockResolvedValue([]);
     transaction = jest.fn().mockResolvedValue(undefined);
@@ -136,6 +139,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     async (_scope, flag) => {
       // The shape of the escalation: a non-member, an empty `dm_group_members`, adding itself.
       groupMemberRepo.count.mockResolvedValue(0);
+      groupMemberRepo.findOne.mockResolvedValue(null);
       groupRepo.findOne.mockResolvedValue({ id: GROUP, ...flag });
 
       const err = await controller

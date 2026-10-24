@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   answerJoinRequest,
+  canAnswerJoinRequests,
   pendingJoinRequests,
   raiseJoinRequest,
   resetJoinRequests,
@@ -114,5 +115,14 @@ describe('joinRequests - a member answers', () => {
     expect(await answerJoinRequest(request, 'approve')).toBe(false);
     expect(pendingJoinRequests()).toHaveLength(1);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('no handler registered'));
+  });
+
+  it('says whether an ask can be answered, so the banner shows one only while it can', () => {
+    // Tapped while the chat page was unmounted, the banner's answer failed with a toast.
+    expect(canAnswerJoinRequests()).toBe(false);
+    setJoinRequestHandlers({ approve: vi.fn(), decline: vi.fn() });
+    expect(canAnswerJoinRequests()).toBe(true);
+    setJoinRequestHandlers(null);
+    expect(canAnswerJoinRequests()).toBe(false);
   });
 });
