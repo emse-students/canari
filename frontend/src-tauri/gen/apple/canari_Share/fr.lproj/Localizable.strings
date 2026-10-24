@@ -1,0 +1,10 @@
+/* Le texte propre a la Share Extension - francais. L'extension est un bundle separe de l'app : elle
+   ne lit pas canari_iOS/*.lproj. A garder synchrone avec en.lproj/Localizable.strings. */
+"share.copying" = "Préparation du partage...";
+"share.ok" = "OK";
+"share.notification.title" = "Canari";
+"share.notification.body" = "Choisissez la conversation";
+"share.done.notified" = "C'est prêt. Touchez la notification de Canari pour choisir la conversation.";
+"share.done.open_app" = "C'est prêt. Ouvrez Canari pour choisir la conversation.";
+"share.empty" = "Canari ne peut rien recevoir de ce partage.";
+"share.failed" = "Le partage n'a pas pu être préparé. Réessayez.";

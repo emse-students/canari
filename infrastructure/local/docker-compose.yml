@@ -308,6 +308,9 @@ services:
       # Empty by design (env-from-prod.sh BLANK): this stack signs in through the PRODUCTION MiConnect,
       # so a token here would let a local run edit a real person.
       MICONNECT_EDITOR_TOKEN: ${MICONNECT_EDITOR_TOKEN:-}
+      # Account restore (WP-RESTORE-1). Empty locally unless a debug APK's fingerprint is set: every
+      # /api/auth/restore route then answers 503 (docs/wiki/account-restore.md).
+      ANDROID_APP_LINK_SHA256: ${ANDROID_APP_LINK_SHA256:-}
       # WITHOUT THESE THREE, NO LOGIN CAN COMPLETE LOCALLY, AND THE FAILURE BLAMES THE SERVER.
       # `infrastructure/.env` carried all three correctly and this file forwarded none of them, so
       # the browser reached `/auth/callback?code=...` - Authentik having authenticated and redirected
