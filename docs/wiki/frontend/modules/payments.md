@@ -30,6 +30,42 @@ Lydia has no live status-poll endpoint, no customer object and no saved methods:
 not map onto it were removed rather than faked. The provider mapping and the credentials are in
 [`plans/stripe-to-lydia-migration.md`](../../../../plans/stripe-to-lydia-migration.md) (archived).
 
+**Which Lydia the credentials address is `LYDIA_ENV`, and each estate sets it differently (2026-10-23).**
+`lydia-payment-provider.ts` trims and lowercases the value and uses `https://lydia-app.com` only when
+it reads `production`; anything else (a typo included) is the homologation sandbox. Production renders
+it from the GitHub secret `LYDIA_ENV` (manifest row `required`); **`render-env.sh` accepts only
+`production` for the production estate (user, 2026-10-23)** and refuses a deploy without it or with
+any other word, so pointing production at the sandbox takes a deliberate edit of `allowed_values()` in
+a pull request, never a secret typed by hand. **When it is checked matters:** on a stable, `serve-prod`
+runs only after BOTH stores took the version (`release.yml`: it `needs` `android` and `ios`), so a
+missing or mistyped secret found by the render would surface AFTER the store submission. The release
+`preflight` job therefore checks the secret is exactly `production` for a stable, before anything is
+published (the value is never printed; the render stays the second guard). Until that row existed, production's `.env` kept
+`infrastructure/.env.example`'s `homologation` - the compose default `${LYDIA_ENV:-production}` never
+applies, because the template always sets the key. Dev skips the row and pins `LYDIA_ENV: homologation`
+as a literal in `docker-compose.dev.yml`, with the sandbox pair in `DEV_LYDIA_*`
+([dev-environment](../../infrastructure/dev-environment.md)). A LOCAL estate built from a production
+dump gets `LYDIA_ENV=homologation` and EMPTY Provider tokens (`env-from-prod.sh`): production's pair
+moves real money and must not sit on a laptop.
+
+**What this does and does not decide.** The platform setting above (`payment_provider`) already read
+`lydia` in production before this change, so it never kept production inert: the sandbox base URL did
+(a request issued there moves no money). With `LYDIA_ENV=production` and the production pair, an
+association whose Business is linked and validated takes real payments, and the setting STAYS `lydia`
+(user, 2026-10-23).
+
+**Rolling back to a release BEFORE this one is a trap.** An older `render-env.sh` and manifest do not
+know `LYDIA_ENV`, and the older `verify-secrets` does not check it, so the rollback deploy re-renders the
+template's `homologation` and the core addresses the sandbox with the production tokens, in silence.
+After such a rollback: set `LYDIA_ENV=production` in the production `.env` and recreate the core-service
+by hand (the container alone, through the compose file the deploy uses). The same recreate with
+`LYDIA_ENV=homologation` is the way back to the sandbox, where the production pair then fails loudly
+with Lydia's "Provider inconnu" (code 104) instead of moving money.
+
+GitHub masks the word `production` in the logs of a run that reads this secret, because it is a
+secret: expect `***` where the value would print; the render's error line names the key and the
+accepted word, not the value.
+
 ## Where a provider's name may appear, and where it may not
 
 **A provider's name is true in exactly one layer.** The message catalogue says "prestataire de
@@ -288,8 +324,9 @@ Lydia's own error page with no link back. `LYDIA_REQUEST_STATES` classifies 0 / 
 settled). A `declined` request is final: a retry settles it and issues a new one, and
 `confirm-payment` releases the answer so the payer can retry
 ([forms](forms.md#a-declined-payment-releases-the-answer-2026-10-21)). Before that it read as an
-unmeasured `other`, and a retry refused with `PREVIOUS_PAYMENT_OPEN` until the hold ended. A boutique attempt closes as `declined` on it, and its buyer can start a new one. Still not measured here: what `request/cancel` answers on a PAID or a
-DECLINED request (the state read after an error 2 is what makes either harmless). Request `12115506` was left open on the sandbox; it
+unmeasured `other`, and a retry refused with `PREVIOUS_PAYMENT_OPEN` until the hold ended. A boutique attempt closes as `declined` on it, and its buyer can start a new one. On a PAID request `request/cancel` answers error 2 and the request stays paid (measured
+2026-10-23); on a DECLINED one it is still not measured (the state read after an error 2 is what makes
+either harmless). Request `12115506` was left open on the sandbox; it
 expires on its own (`expire_time 3600`).
 
 ## Which onboarding flag a screen reads (2026-10-03)
@@ -525,6 +562,30 @@ request is read at Lydia, and the verified Business must be the one it was issue
 **Production rollout (per the user, 2026-10-22, relayed by the lead session):** migrations 100 (the
 per-association Lydia Business key) and 101 (product checkout attempts) MAY ride the next STABLE to
 production; payments stay OFF in production (`platform_config.payment_provider` unchanged).
+**Corrected 2026-10-23:** production's `payment_provider` already read `lydia` when that was written. What
+kept production inert was NOT the flag: it was the sandbox Provider pair (a request issued to Lydia's
+sandbox moves no money) and the absence of any onboarded Business or stored callback key. Read on
+2026-10-23: one association linked, none validated, no key stored - so none was payment-ready.
+
+**What changed with the production pair (2026-10-23, the user's direct order).** The production secrets
+now hold Lydia's PRODUCTION Provider pair, and the production core-service was recreated with
+`LYDIA_ENV=production`, so it talks to `lydia-app.com`: a request it issues now moves REAL money, and an
+association whose Business is linked and validated takes real payments. The flag stays `lydia` (the
+onboarding needs it), and it STAYS `lydia` after the user's test too (user, 2026-10-23): it is not set
+back to `disabled`.
+
+- **The recreate**: the core-service container alone, through the same compose file the deploy uses, with
+  `LYDIA_ENV=production` in the environment of that one command. No file on the host was edited.
+- **The rollback**: the same recreate with `LYDIA_ENV=homologation`, which puts the core back on the sandbox
+  URL; paired with the production tokens it then fails loudly (Lydia answers "Provider inconnu", code 104)
+  rather than moving money.
+- **THE TRAP**: that value lives only in the running container. A deploy re-renders the production `.env`
+  from the manifest, which carried no `LYDIA_ENV` before #2323, and recreates the core from it - so a
+  deploy silently undoes the recreate and leaves the production tokens on the wrong base URL. **No stable
+  and no deploy of any kind until #2323 is merged**: it makes `LYDIA_ENV` a required secret rendered with
+  an allowed-values check.
+- **While live**, anything unexpected is reported at once: a payment request nobody launched, an
+  association other than the test one holding a Business, any callback arriving.
 
 **Where the key comes from: the payout manager types it.** `PUT /api/associations/:id/lydia-business-key`
 (`MANAGE_PAYOUT_ACCOUNT`, the permission of every other Lydia route) stores it ENCRYPTED in
@@ -552,6 +613,32 @@ association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`, `UserResourceThrottlerGuard
 **The secret is REQUIRED on both estates** (`env-manifest.tsv`, like `AGENDA_SIGNING_KEY`): a deploy
 without `LYDIA_KEY_ENCRYPTION_SECRET` / `DEV_LYDIA_KEY_ENCRYPTION_SECRET`, or with one under 32
 characters, fails its render naming the secret rather than starting a service that cannot store a key.
+
+## Enrolment goes through Canari, and only through it (2026-10-23)
+
+**The user's decision, 2026-10-23:** every association's Lydia Business is CREATED by Canari's
+onboarding (`business/create` under Canari's Provider). Linking an account the association already holds
+with Lydia is not offered, because the partnership with Lydia rests on the Businesses Canari's Provider
+creates; a direct database edit could still link one, and is not to be done. Lydia does accept such an
+older account under our Provider ([lydia-api](../../lydia-api.md#1-the-four-credentials-and-what-each-is-for)),
+which is exactly why the rule has to be written rather than enforced by Lydia.
+
+**The first production payment (2026-10-23)**, run by the user and the lead session: one real payment of
+the minimum amount through an association's older Business, linked by hand for the test and unlinked
+afterwards. The `confirm` callback reached Canari's route and verified with the pasted Business key. The
+same day, two Businesses were created through the onboarding in production; neither is validated yet.
+
+**What the enrolment screen does not say yet, and owes** (found by that run; the work package is in
+[backlog](../../backlog.md#enrolment-through-canari---the-screen-owes-the-path-to-validation-2026-10-23)):
+
+- After `business/create` the card says "En attente" and offers "Ouvrir le tableau de bord Lydia", whose
+  link answers 404 to anyone not signed in to Lydia's console. The manager is left with no next step.
+- The path to validation is Lydia's activation e-mail (sign in to the console with the Lydia Pro app,
+  upload documents, wait for Lydia); how a NEW Business's holder signs in is not known yet
+  ([lydia-api](../../lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
+- "Pending" cannot tell "waiting for Lydia" from "validated by Lydia, not yet marked here": the global
+  admin's "Valider l'onboarding" is a declaration. Lydia's error 5 on `request/do` is the one measured
+  signal of a Business not yet validated.
 
 ## A product checkout is a row, one per attempt (2026-10-21)
 

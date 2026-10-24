@@ -36,6 +36,12 @@ export const FORBIDDEN = [
   /\bn[°o]\s?1\b/i,
   /canari-emse\.fr/i,
   /lydia/i,
+  // Payments are `disabled` in production (Lydia is not live, docs/wiki/backlog.md WP-LYDIA-1), so a
+  // listing may not promise one, nor a ticketing/shop flow that rests on it.
+  /\bpaiements?\b/i,
+  /\bpayments?\b/i,
+  /billetterie/i,
+  /ticketing/i,
 ];
 
 const URL_FIELDS = ['play.contactWebsite', 'appStore.supportUrl', 'appStore.marketingUrl'];
