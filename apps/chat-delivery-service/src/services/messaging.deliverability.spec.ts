@@ -5,6 +5,7 @@ import type { FindOperator } from 'typeorm';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
@@ -62,14 +63,18 @@ describe('MessagingService - a tombstone is not a destination', () => {
   const queryBuilder = () => {
     const state = { skip: 0, take: 0 };
     const qb = {
+      leftJoinAndSelect: () => qb,
       where: () => qb,
       andWhere: () => qb,
       orderBy: () => qb,
-      skip: (n: number) => {
+      addOrderBy: () => qb,
+      // `offset`/`limit`, the SQL ones: the payload join is many-to-one, so it cannot multiply rows
+      // and TypeORM's two-query `skip`/`take` pagination would only double the read.
+      offset: (n: number) => {
         state.skip = n;
         return qb;
       },
-      take: (n: number) => {
+      limit: (n: number) => {
         state.take = n;
         return qb;
       },
@@ -225,6 +230,7 @@ describe('MessagingService - a tombstone is not a destination', () => {
     expect(page).toEqual([]);
     expect(purged).toEqual([
       QueuedMessage,
+      QueuedPayload,
       GroupMember,
       DeviceGroupMembership,
       MlsCommitLog,
