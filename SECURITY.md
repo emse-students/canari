@@ -46,6 +46,7 @@ They are listed here so that nobody has to rediscover them by reading the schema
 | Group membership and device membership | Routing: a frame is delivered to a recipient set the server must be able to enumerate |
 | The time, size and sender device of every frame | Inherent to any store-and-forward transport |
 | Community and channel names, and their membership | Server-authoritative by design: the server serves these objects to the UI |
+| **Audio calls**: the conversation, who calls, who answers and from which device, the time and the duration, for 4 hours at most from the start of a call (Redis), and both devices' IP addresses in the signalling relay while a call is being set up (never logged) | The server must route the ring and the connection set-up. The audio itself is end-to-end encrypted between the two devices and never reaches the server; see [register C21](docs/wiki/compliance/register-of-processing.md) |
 
 **Storing a value in clear is not a licence to LOG it.** A log line copies the same text into
 journald, where it outlives the row it came from, escapes every deletion the owner can ask for, and

@@ -22,6 +22,11 @@ import {
   markHistoryHeldNothingFinal,
   recordHistoryHeldNothing,
 } from './historyAnswered';
+import {
+  forgetPagedHistoryAnswer,
+  incompleteHistoryPages,
+  noteHistoryAsked,
+} from './pagedHistoryAnswer';
 
 /**
  * Asking for a seed this device does not hold (WP-33).
@@ -992,7 +997,18 @@ export async function requestCommunityHistory(
   // here at every start, of one member, for seeds this device mostly holds, would buy nothing that
   // path does not already deliver session by session.
   const held = await storage.getGraineSessionsForWorkspace(workspaceId, deviceKey());
-  if (held.length > 0 && !evenIfSeedsHeld) return;
+  // AN ANSWER THAT ARRIVED IN PART IS THE ONE EXCEPTION (section 4.4): its first page is what made
+  // `held` non-empty, so without this a page lost after it is never asked for as a whole - only
+  // session by session, as rows under it fail to open and stay hidden until each repair lands. Asked
+  // ONCE more, at a start after the loss; `pagedHistoryAnswer` spends that once only when it is sent.
+  const missingPages = held.length > 0 ? incompleteHistoryPages(userId, workspaceId) : null;
+  if (held.length > 0 && !evenIfSeedsHeld && !missingPages) return;
+  if (missingPages && !evenIfSeedsHeld) {
+    console.info(
+      `[GRAINE] the history answer of community ${workspaceId.slice(0, 8)} arrived incomplete - ` +
+        `page(s) ${missingPages.map((i) => i + 1).join(', ')} never came; asking once more`
+    );
+  }
 
   const scope = workspaceScope(workspaceId);
   const groupId = mlsService.distributionGroupFor(scope);
@@ -1162,11 +1178,20 @@ export async function requestCommunityHistory(
     groupId,
     epoch,
   });
+  // DURABLE beside it, so a page of the answer absorbed after a restart is still known as ours.
+  const undoHistoryAsked = noteHistoryAsked(
+    userId,
+    workspaceId,
+    requestId,
+    missingPages !== null && !evenIfSeedsHeld
+  );
   try {
     await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
   } catch (e) {
-    // Nothing went out, so nothing can answer it; the caller says why the ask failed.
+    // Nothing went out, so nothing can answer it; the caller says why the ask failed. Nor is the
+    // one re-ask of an incomplete answer spent on it.
     historyRequest.delete(workspaceId);
+    undoHistoryAsked();
     throw e;
   }
   historyAsked.add(workspaceId);
@@ -1433,10 +1458,9 @@ export function forgetWorkspaceRepairState(
   historyUnanswerableAt.delete(workspaceId);
   historyRequest.delete(workspaceId);
   if (isGraineReady()) {
-    forgetHistoryHeldNothing(
-      requireGraineRuntime('cannot forget a history answer').userId,
-      workspaceId
-    );
+    const { userId } = requireGraineRuntime('cannot forget a history answer');
+    forgetHistoryHeldNothing(userId, workspaceId);
+    forgetPagedHistoryAnswer(userId, workspaceId);
   } else {
     // Left in place: it names this community's key group and epoch, which a re-join replaces, so it
     // answers nothing then - but a leave with no runtime is worth naming.

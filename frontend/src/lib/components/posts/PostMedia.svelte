@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack, type Snippet } from 'svelte';
+  import { untrack } from 'svelte';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
   import { FileText, Download, Image as ImageIcon, Mic } from '@lucide/svelte';
   import MediaLoadFailure from '$lib/components/shared/MediaLoadFailure.svelte';
@@ -97,8 +97,10 @@
     deferred?: boolean;
     /** The post's publisher and date, for the viewer's title and information panel. */
     postInfo?: Pick<MediaViewerInfo, 'senderName' | 'sentAt'>;
-    /** Extra controls for a video's bar in `galleryMode`, beside the volume button. */
-    barActions?: Snippet;
+    /** `galleryMode` only: draw the video with the reel viewer's minimal player (`VideoPlayer`). */
+    minimalPlayer?: boolean;
+    /** With `minimalPlayer`: whether its line pads for the home indicator (the frame reaches the bottom). */
+    playerSafeBottom?: boolean;
   }
 
   let {
@@ -110,7 +112,8 @@
     videoFit = 'contain',
     deferred = false,
     postInfo,
-    barActions,
+    minimalPlayer = false,
+    playerSafeBottom = true,
   }: Props = $props();
 
   let blobUrl = $state<string | null>(null);
@@ -375,7 +378,8 @@
         src={playUrl!}
         disableRemotePlayback={streamManaged}
         class="h-full w-full"
-        {barActions}
+        minimal={minimalPlayer}
+        safeBottom={playerSafeBottom}
       />
     {:else}
       <div class="flex flex-col items-center gap-3 text-white/80">

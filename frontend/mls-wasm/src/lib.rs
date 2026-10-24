@@ -149,6 +149,17 @@ pub fn graine_verify_signature(public_key: &[u8], message: &[u8], signature: &[u
     }
 }
 
+/// Verifies a whole page's signatures in one call: `packed` is `packGraineSignatureChecks`'s
+/// buffer, the answer one verdict per check in order, each exactly what `graine_verify_signature`
+/// would have said. Rejects (with the decoder's sentence, a contract break and never a verdict) only
+/// when the buffer does not parse.
+#[wasm_bindgen]
+pub fn graine_verify_signatures(packed: &[u8]) -> Result<Vec<String>, JsValue> {
+    mls_core::graine_signature::verify_packed_graine_signatures(packed)
+        .map(|verdicts| verdicts.into_iter().map(str::to_string).collect())
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 // Wrapper structure exposed to JavaScript.
 #[wasm_bindgen]
 pub struct WasmMlsClient {
