@@ -1380,7 +1380,12 @@ and the check under the lock would then pass. The group id (`ensureChannelDistri
 `retireChannelDistributionGroup`) and a rename write their one column with `update`; a grant (an
 admin joining a private salon, an invitation into one) adds the user to the row re-read `FOR UPDATE`
 in its own transaction (`grantPrivateChannelAccess`), so it cannot restore a member a removal has
-just taken off.
+just taken off. The same transaction share-locks the grantee's membership row (and, for an admin's
+join, the roles granting `workspace.manage`), so a grantee kicked or demoted since the caller's reads
+gets nothing. An invitation into a salon deleted meanwhile answers `404` and announces nothing - a
+`public` event would hand the private salon's name to the community. A departure from the community
+re-reads its private salons row-locked in its roster write, and a salon granted since its first read
+(whose group it never cut) refuses it `409 DEPARTURE_SUPERSEDED`, retryable.
 
 Pinned by `removal-bound.integration.spec.ts` (PostgreSQL: the gate parked on an uncommitted role
 change through `pg_blocking_pids`, the removal lock, a rewrite raced by another, a flip computed

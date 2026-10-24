@@ -21,7 +21,7 @@
 import * as crypto from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { HttpException, Logger } from '@nestjs/common';
+import { ForbiddenException, HttpException, Logger, NotFoundException } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { CHANNEL_ACCESS_CHANGED, ChannelService } from './channel.service';
@@ -62,6 +62,10 @@ maybe('a removal against PostgreSQL', () => {
   const groups = new Map<string, string>();
   /** Run once by the next group create, before it answers - a test's way into that moment. */
   let beforeCreate: (() => Promise<void>) | null = null;
+  /** Run once by the next call to chat-delivery whose URL contains `beforeCall.on`. */
+  let beforeCall: { on: string; run: () => Promise<void> } | null = null;
+  /** The events the service published, by name. */
+  let published: jest.Mock;
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
   /** Adds a member holding `roleId`, so every test names its own targets. */
@@ -84,8 +88,9 @@ maybe('a removal against PostgreSQL', () => {
   };
   const allowedOn = async (channelId: string): Promise<string[]> =>
     (await ds.getRepository(Channel).findOneByOrFail({ id: channelId })).allowedUsers;
+  /** A refusal's typed code; the exception itself when it carries none. */
   const codeOf = (e: unknown): unknown =>
-    e instanceof HttpException ? (e.getResponse() as { code?: unknown }).code : e;
+    (e instanceof HttpException ? (e.getResponse() as { code?: unknown }).code : undefined) ?? e;
 
   beforeAll(async () => {
     previousSecret = process.env.INTERNAL_SECRET;
@@ -109,6 +114,8 @@ maybe('a removal against PostgreSQL', () => {
     await ds.initialize();
     await ds.synchronize();
     await q(DEPARTURES_MIGRATION);
+    // What an invitation asks before anything else: nobody here blocks anybody.
+    await q(`CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255))`);
     service = new ChannelService(
       ds.getRepository(Workspace),
       ds.getRepository(Channel),
@@ -116,14 +123,25 @@ maybe('a removal against PostgreSQL', () => {
       ds.getRepository(ChannelMember),
       ds.getRepository(ChannelMessage),
       ds.getRepository(WorkspaceInvite),
-      { publishChannelEvent: jest.fn().mockResolvedValue(undefined) } as unknown as RedisService
+      {
+        publishChannelEvent: (published = jest.fn().mockResolvedValue(undefined)),
+      } as unknown as RedisService
     );
     // chat-delivery, as a departure sees it: every eviction finds no group (the salons here have
     // none), and each call records how many advisory locks the server held when it was made.
     // chat-delivery, as this file needs it: a group create answers the salon's one group id (the
     // real mint runs, its row write included); an eviction finds no group; and each call records
     // how many holders the community's removal lock had - that key only, read from `pg_locks`.
-    global.fetch = jest.fn(async (_url: unknown, init?: { method?: string; body?: unknown }) => {
+    global.fetch = jest.fn(async (url: unknown, init?: { method?: string; body?: unknown }) => {
+      if (beforeCall && String(url).includes(beforeCall.on)) {
+        const hook = beforeCall;
+        beforeCall = null;
+        await hook.run();
+      }
+      // An invitee's device count: they have one.
+      if (String(url).includes('/count')) {
+        return new Response(JSON.stringify({ count: 1 }), { status: 200 });
+      }
       locksAtCall.push(
         Number(
           (
@@ -360,6 +378,70 @@ maybe('a removal against PostgreSQL', () => {
     expect(row.isPrivate).toBe(true);
     expect(row.allowedUsers).toEqual(['owner', 'bob']);
     expect(row.distributionGroupId).toBe(group);
+  });
+
+  it('sends nothing for an invitation into a private salon deleted before its grant', async () => {
+    // The salon is read private, then deleted while the invitee's devices are counted. Granting
+    // nothing is not enough: announcing the invitation as a PUBLIC salon would hand the private
+    // salon's name to the whole community.
+    const id = await salon(['owner']);
+    beforeCall = {
+      on: '/count',
+      run: async () => {
+        await q(`DELETE FROM channels WHERE id = $1`, [id]);
+      },
+    };
+    published.mockClear();
+    const outcome = await started(
+      service.inviteToChannel(id, { targetUserId: 'invitee-gone', actorUserId: 'owner' })
+    ).outcome;
+    expect(outcome).toBeInstanceOf(NotFoundException);
+    expect(published).not.toHaveBeenCalled();
+  });
+
+  it('refuses an admin join when the admin was demoted while it was in flight', async () => {
+    // The join read the admin's roles; a demotion holds their membership row uncommitted. The grant
+    // share-locks that row, so it waits, reads the committed demotion, and grants nothing.
+    await member('admin-x', ADMIN_ROLE);
+    const id = await salon(['owner']);
+    const demotion = await holder();
+    try {
+      await demotion.client.query('BEGIN');
+      await demotion.client.query(
+        `UPDATE channel_members SET "roleIds" = $1 WHERE "workspaceId" = $2 AND "userId" = 'admin-x'`,
+        [BASE_ROLE, WS]
+      );
+      const join = started(service.joinPrivateChannelAsAdmin(id, 'admin-x'));
+      await blockedBy(demotion.pid, join.settled);
+      await demotion.client.query('COMMIT');
+      expect(await join.outcome).toBeInstanceOf(ForbiddenException);
+      expect(await allowedOn(id)).toEqual(['owner']);
+    } finally {
+      await demotion.client.query('ROLLBACK').catch(() => undefined);
+      await demotion.client.end();
+    }
+  });
+
+  it('refuses a kick when a private salon was granted to its target since its read', async () => {
+    // Between the kick's read of the salons its target holds and its roster write, the target is
+    // granted another private salon. That salon's group was never cut, so the kick is refused whole
+    // and retryable, and the target stays a member rather than being left on a roster.
+    await member('granted-late', BASE_ROLE);
+    const id = await salon(['owner']);
+    beforeCall = {
+      on: 'members/granted-late',
+      run: async () => {
+        await q(`UPDATE channels SET "allowedUsers" = 'owner,granted-late' WHERE id = $1`, [id]);
+      },
+    };
+    expect(await started(service.kickFromWorkspace(WS, 'granted-late', 'kicker')).outcome).toBe(
+      'DEPARTURE_SUPERSEDED'
+    );
+    const rows: unknown[] = await q(
+      `SELECT 1 FROM channel_members WHERE "workspaceId" = $1 AND "userId" = 'granted-late'`,
+      [WS]
+    );
+    expect(rows).toHaveLength(1);
   });
 
   it('refuses a private creation that leaves off someone who holds more than its creator', async () => {

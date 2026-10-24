@@ -915,25 +915,43 @@ export class ChannelService implements OnApplicationBootstrap {
   /**
    * Adds `userId` to a PRIVATE salon's `allowedUsers`, on the row re-read `FOR UPDATE` in its own
    * transaction - never by saving a copy read earlier, which would write back an allowlist a
-   * concurrent removal had already changed (the removed member restored with no seat). Returns the
-   * locked row as written, or null when the salon is gone or is no longer private (nothing to grant).
+   * concurrent removal had already changed (the removed member restored with no seat).
+   *
+   * THE GRANTEE IS RE-CHECKED UNDER THE SAME TRANSACTION: their membership row (and, given
+   * `requiredPermission`, the roles it names) is read with a shared row lock, so a kick or a
+   * demotion that committed since the caller's reads refuses the grant, and one still in flight waits
+   * for it. A kick's roster write re-reads the community's private salons under its lock
+   * ({@link removeFromWorkspace}), so a grant committed before it is seen there.
+   *
+   * @returns `granted` with the row as written, or why nothing was granted: the salon is `gone`,
+   *   is `public` now, or the grantee is `not_member` / `not_allowed` any more
    */
   private async grantPrivateChannelAccess(
     channelId: string,
-    userId: string
-  ): Promise<Channel | null> {
+    userId: string,
+    requiredPermission?: string
+  ): Promise<
+    | { outcome: 'granted'; channel: Channel }
+    | { outcome: 'gone' | 'public' | 'not_member' | 'not_allowed' }
+  > {
     const normalised = userId.trim().toLowerCase();
-    return this.memberRepo.manager.transaction(async (m) => {
+    const result = await this.memberRepo.manager.transaction(async (m) => {
       const locked = await m.getRepository(Channel).findOne({
         where: { id: channelId },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!locked?.isPrivate) {
-        this.logger.warn(
-          `[CHANNEL] grant skipped channel=${channelId} user=${userId.slice(0, 8)} ` +
-            `- ${locked ? 'no longer private' : 'gone'}`
-        );
-        return null;
+      if (!locked) return { outcome: 'gone' as const };
+      if (!locked.isPrivate) return { outcome: 'public' as const };
+      const member = await m.getRepository(ChannelMember).findOne({
+        where: { workspaceId: locked.workspaceId, userId },
+        lock: { mode: 'pessimistic_read' },
+      });
+      if (!member) return { outcome: 'not_member' as const };
+      if (
+        requiredPermission &&
+        !(await this.permissionsOfMember(member, m)).includes(requiredPermission)
+      ) {
+        return { outcome: 'not_allowed' as const };
       }
       const allowed = locked.allowedUsers || [];
       if (!allowed.includes(normalised)) {
@@ -942,8 +960,14 @@ export class ChannelService implements OnApplicationBootstrap {
           .getRepository(Channel)
           .update({ id: channelId }, { allowedUsers: locked.allowedUsers });
       }
-      return locked;
+      return { outcome: 'granted' as const, channel: locked };
     });
+    if (result.outcome !== 'granted') {
+      this.logger.warn(
+        `[CHANNEL] grant refused channel=${channelId} user=${userId.slice(0, 8)} outcome=${result.outcome}`
+      );
+    }
+    return result;
   }
 
   /**
@@ -998,6 +1022,29 @@ export class ChannelService implements OnApplicationBootstrap {
     ];
     await this.departDistributionGroups(cuts, reason, workspaceId, async (m) => {
       if (guard) await guard(m);
+      // THE PRIVATE SALONS ARE READ AGAIN, ROW-LOCKED. `held` and its cuts came from a read before
+      // the lock; a grant committed since (`grantPrivateChannelAccess`) names the user on a salon
+      // whose group this departure never cut, and the strip below would leave them on its roster
+      // with no membership. Refused whole and retryable; a grant still in flight waits for this
+      // transaction and then finds no membership.
+      const normalised = userId.trim().toLowerCase();
+      const heldIds = new Set(held.map((c) => c.id));
+      const late = (
+        await m.getRepository(Channel).find({
+          where: { workspaceId, isPrivate: true },
+          lock: { mode: 'pessimistic_write' },
+        })
+      ).filter((c) => (c.allowedUsers || []).includes(normalised) && !heldIds.has(c.id));
+      if (late.length > 0) {
+        this.logger.warn(
+          `[KEY_DISTRIBUTION] departure SUPERSEDED - granted a private salon since its read ` +
+            `workspace=${workspaceId} user=${userId.slice(0, 8)} reason=${reason} salons=${late.length}`
+        );
+        throw new ConflictException({
+          code: 'DEPARTURE_SUPERSEDED',
+          message: 'The departure could not be completed, retry.',
+        });
+      }
       await this.stripFromChannels(m, held, userId);
       await m.getRepository(ChannelMember).delete({ workspaceId, userId });
     });
@@ -2079,9 +2126,27 @@ export class ChannelService implements OnApplicationBootstrap {
 
     // GRANTED BEFORE ANNOUNCED, like every other grant here: the audience is derived from
     // `allowedUsers`, so the joiner would otherwise be the one person the event misses.
-    const granted = await this.grantPrivateChannelAccess(channelId, actorUserId);
-    if (!granted) throw new ConflictException('The salon is no longer private');
-    channel.allowedUsers = granted.allowedUsers;
+    // The membership and MANAGE_WORKSPACE are asked again under the grant's row locks: an admin
+    // kicked or demoted since the reads above is refused there.
+    const granted = await this.grantPrivateChannelAccess(
+      channelId,
+      actorUserId,
+      CHANNEL_PERMISSIONS.MANAGE_WORKSPACE
+    );
+    if (granted.outcome === 'gone') throw new NotFoundException('Channel not found');
+    if (granted.outcome === 'public') {
+      throw new BadRequestException({
+        code: 'CHANNEL_IS_PUBLIC',
+        message: 'A public salon is already readable by every member.',
+      });
+    }
+    if (granted.outcome === 'not_member') {
+      throw new ForbiddenException('Not a member of this workspace');
+    }
+    if (granted.outcome !== 'granted') {
+      throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
+    }
+    channel.allowedUsers = granted.channel.allowedUsers;
 
     const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
@@ -3279,9 +3344,19 @@ export class ChannelService implements OnApplicationBootstrap {
       // access this is the only row change left, so the save belongs to this branch alone.
       if (channel.isPrivate) {
         const granted = await this.grantPrivateChannelAccess(channelId, input.targetUserId);
+        // GONE: no event at all - announcing it would hand the private salon's name to the whole
+        // community as a public one. The community membership above stands.
+        if (granted.outcome === 'gone') throw new NotFoundException('Channel not found');
+        // Removed since their row was written: nobody to announce to, and nothing granted.
+        if (granted.outcome === 'not_member') {
+          throw new ConflictException({
+            code: CHANNEL_ACCESS_CHANGED,
+            message: 'The salon access changed meanwhile, retry.',
+          });
+        }
         // Made public meanwhile: the community membership above is the whole grant.
-        if (granted) channel.allowedUsers = granted.allowedUsers;
-        else channel.isPrivate = false;
+        if (granted.outcome === 'public') channel.isPrivate = false;
+        else if (granted.outcome === 'granted') channel.allowedUsers = granted.channel.allowedUsers;
       }
 
       // Publish event to notify the invited user and connected clients

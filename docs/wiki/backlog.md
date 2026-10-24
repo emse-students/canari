@@ -133,7 +133,17 @@ a device reads its key package under the lock" ([channel-encryption](protocols/c
 `heldKeyPackages`; and refuse the target itself, either by a roster-level tombstone that the erasure
 writes and that names no one once its own window ends, or by asking core whether the account exists.
 
-## P3 - Two edges of the community removal lock, left by the review of #2284 (2026-10-24)
+## P2 - `setNotificationLevel` saves a whole member copy and can undo a demotion (review of #2284, 2026-10-24)
+
+`setNotificationLevel` reads a membership row, changes `notifLevels` and `save`s the whole copy;
+TypeORM writes back every column the copy differs on, so a role change committed between its read
+and its save is reverted (`roleIds` written back) - a demoted admin restored by changing a salon's
+notification level. The fix is an `update` of `notifLevels` alone, the rule `social-service.md` now
+states for salon rows. `promoteSuccessor` and `setRole` also save whole member copies, but the
+column they mean to write is `roleIds` itself, so they only race each other.
+([social-service](services/social-service.md#removals-are-bounded-by-the-actor-and-so-is-hiding-a-salon-2026-10-24))
+
+## P3 - Edges of the community removal lock, left by the review of #2284 (2026-10-24)
 
 - **A salon reorder and a removal can deadlock.** The reorder transaction writes several salon rows;
   a kick's `stripFromChannels` locks the private salons it strips one by one, and
@@ -143,6 +153,18 @@ writes and that names no one once its own window ends, or by asking core whether
 - **`assertRemovalKeepsAnAdmin` is not asked again under the lock** (pre-existing): two admins
   kicking each other at the same moment both pass it and can leave a community with members and no
   admin. The fix is to re-ask it inside the kick's `guard`, reading the admin set `FOR SHARE`.
+- **A group retirement runs after the commit, outside any lock.** A makes a salon public, B makes it
+  private again (the idempotent mint returns the same group G), then A's retirement deletes G on
+  chat-delivery and nulls `distributionGroupId`: a private salon with no group. The fix is a
+  conditional retirement - `UPDATE ... WHERE "distributionGroupId" = G AND NOT "isPrivate"`, and the
+  delete only when that row changed.
+- **Case.** The removal bound's member map takes the LAST of two membership rows differing only by
+  case; it should merge their roles. Allowlist entries written before the actor id was lowercased may
+  be mixed case, which `stripFromChannels`' exact compare misses: one `GROUP BY` over production's
+  `allowedUsers` for an uppercase letter settles whether any exist. A comma inside a user id would
+  corrupt the comma-separated `allowedUsers` column (theoretical).
+- **An invitation that reads a salon public and loses the race to a private flip** announces it
+  `public` and grants nothing (pre-existing): the flip's allowlist does not name the invitee.
 
 ([social-service](services/social-service.md#removals-are-bounded-by-the-actor-and-so-is-hiding-a-salon-2026-10-24))
 
