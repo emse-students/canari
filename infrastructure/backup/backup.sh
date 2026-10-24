@@ -5,8 +5,13 @@
 #
 # Produit une archive horodatee unique contenant les dumps logiques coherents
 # (PostgreSQL Canari, PostgreSQL Authentik) et les metadonnees media. Conserve
-# les N derniers jours en local et pousse une copie offsite (rsync) avec la meme
-# retention.
+# LOCAL_RETENTION_DAYS jours en local (7) et pousse une copie offsite (rsync)
+# gardee BACKUP_RETENTION_DAYS jours (14).
+#
+# DEUX RETENTIONS DEPUIS LE 2026-10-24. Le disque local est celui d un hote
+# partage, a 92 % ce jour-la, et l archive pesait ~700 Mo par nuit : 15 copies
+# locales en coutaient ~10 Go. La copie offsite (meme contenu, verifie identique)
+# garde les 14 jours ; le disque partage n en garde que 7.
 #
 # PERIMETRE : LES BLOBS MEDIAS N EN FONT PLUS PARTIE (bascule du 2026-08-11).
 # Ils sont chiffres cote client, donc incompressibles et immuables : les
@@ -44,7 +49,10 @@ ENV_FILE="$INFRA_DIR/.env"
 # Commune aux scripts de sauvegarde, et commentee la-bas : backup-config.sh.
 # shellcheck source=backup-config.sh
 . "$SCRIPT_DIR/backup-config.sh"
+# Offsite : 14 jours, la duree que la politique de confidentialite annonce.
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
+# Local : 7 jours, parce que le disque est partage ; jamais plus que l offsite.
+LOCAL_RETENTION_DAYS="${LOCAL_RETENTION_DAYS:-7}"
 
 log() { printf '[backup] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 fail() { printf '[backup] ERROR %s\n' "$*" >&2; exit 1; }
@@ -181,9 +189,9 @@ ARCHIVE_SIZE="$(du -h "$ARCHIVE_PATH" | cut -f1)"
 log "Archive locale ecrite ($ARCHIVE_SIZE)"
 
 # ── 5. Retention locale ───────────────────────────────────────────────────────
-log "Purge des sauvegardes locales > ${BACKUP_RETENTION_DAYS} jours…"
+log "Purge des sauvegardes locales > ${LOCAL_RETENTION_DAYS} jours…"
 find "$BACKUP_DIR" -maxdepth 1 -name 'canari-backup-*.tar.gz' -type f \
-  -mtime "+${BACKUP_RETENTION_DAYS}" -print -delete || true
+  -mtime "+${LOCAL_RETENTION_DAYS}" -print -delete || true
 
 # ── 6. Copie offsite via SSH/rsync (serveur LAN offsite) ─────────────────────────
 if [ -n "$BACKUP_SSH_HOST" ]; then
@@ -193,7 +201,8 @@ if [ -n "$BACKUP_SSH_HOST" ]; then
     "$ARCHIVE_PATH" "${BACKUP_SSH_HOST}:${BACKUP_SSH_PATH}/" \
     && log "Copie offsite reussie"
 
-  # Retention offsite alignee sur la retention locale.
+  # Retention offsite : BACKUP_RETENTION_DAYS, distincte de la locale (en-tete).
+  log "Purge des sauvegardes offsite > ${BACKUP_RETENTION_DAYS} jours…"
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$BACKUP_SSH_HOST" \
     "find '$BACKUP_SSH_PATH' -maxdepth 1 -name 'canari-backup-*.tar.gz' -type f -mtime +${BACKUP_RETENTION_DAYS} -delete" \
     || log "WARN purge offsite incomplete"

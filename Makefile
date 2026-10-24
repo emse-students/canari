@@ -355,6 +355,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/image-scan-allowlist.test.mjs
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@bash .github/scripts/tests/backup-report.test.sh
+	@bash .github/scripts/tests/backup-retention.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
 	@bun .github/scripts/tests/docs-merge-artefacts.test.mjs
 	@bun .github/scripts/tests/line-endings.test.mjs

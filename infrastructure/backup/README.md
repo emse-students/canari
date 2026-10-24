@@ -35,8 +35,10 @@ terminer en annoncant une restauration complete qui aurait saute 87 % des donnee
 
 ## Stockage et retention
 
-- Local : `/home/canari/backups`, retention `BACKUP_RETENTION_DAYS` jours (14 par defaut).
-- Offsite : `<utilisateur-backup>@<hote-offsite>:<dossier-offsite>`, meme retention.
+- Local : `/home/canari/backups`, retention `LOCAL_RETENTION_DAYS` jours (7 par defaut).
+- Offsite : `<utilisateur-backup>@<hote-offsite>:<dossier-offsite>`, retention
+  `BACKUP_RETENTION_DAYS` jours (14 par defaut). Separees le 2026-10-24 : le disque local est
+  partage ([backup](../../docs/wiki/infrastructure/backup.md#retention)).
 
 L acces offsite utilise la cle SSH de `canari` (`~/.ssh/id_ed25519`), autorisee
 pour l utilisateur dedie, non privilegie, du serveur offsite.
@@ -78,7 +80,8 @@ journalctl -u canari-backup.service -f
 | Variable | Defaut | Role |
 | --- | --- | --- |
 | `BACKUP_DIR` | `/home/canari/backups` | dossier local des archives |
-| `BACKUP_RETENTION_DAYS` | `14` | retention locale et offsite |
+| `BACKUP_RETENTION_DAYS` | `14` | retention offsite |
+| `LOCAL_RETENTION_DAYS` | `7` | retention locale |
 | `BACKUP_SSH_HOST` | `<utilisateur-backup>@<hote-offsite>` | cible offsite (vide = desactive) |
 | `BACKUP_SSH_PATH` | `<dossier-offsite>` | dossier offsite |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | conteneur PG Authentik (vide = exclu) |
