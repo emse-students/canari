@@ -1221,7 +1221,8 @@ export class ChannelService implements OnApplicationBootstrap {
 
   /**
    * Joins the caller into the invite's community: adds a workspace member with the base role.
-   * The client fetches channel keys via the existing bootstrap once it loads the workspace.
+   * The client obtains its seeds from the distribution group and the members who answer, once it
+   * loads the workspace (the server holds no channel key).
    *
    * `admissionVoucher` is the proof the joiner built from the link's fragment (channel-encryption
    * section 25): what lets a member hand them the community's past. It is stored on the membership
@@ -3355,9 +3356,8 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /** Removes a user from a specific channel without removing them from the workspace.
-   *  For private channels, removes them from allowedUsers and rotates the key.
-   *  For public channels, only rotates the key so the removed user's cached epoch key
-   *  is invalidated (the user is still a workspace member and can re-join if invited again).
+   *  For a private channel, removes them from allowedUsers and cuts them off from the channel's key
+   *  distribution; a public channel has no per-user roster to edit (the user is still a workspace member and can re-join if invited again).
    *  Requires MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by
    *  `assertActorMayRemoveMembers`. */
   async removeMemberFromChannel(channelId: string, targetUserId: string, actorUserId: string) {
@@ -4158,7 +4158,7 @@ export class ChannelService implements OnApplicationBootstrap {
    *  - `mentions` -> only if the member is in `input.mentionedUserIds`;
    *  - `all` (default) -> always.
    * The sender is always skipped, as are members who cannot access the channel. The server holds
-   * the channel key but never decrypts here: the ciphertext travels inline so the device decrypts
+   * no channel key (migration 041 dropped the server-side derivation) and never decrypts here: the ciphertext travels inline so the device decrypts
    * it locally (Google/FCM never sees the plaintext), mirroring the MLS DM push path.
    *
    * `mentioned` is computed per recipient and is the ONE fact only this side knows: the MLS path

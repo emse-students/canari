@@ -2040,6 +2040,18 @@ are builder stages and the local compose file, which reach no estate.
   and freetype (nginx) depend on it, which decode brotli in fetched HTTP responses and WOFF2 fonts, not
   in request bodies - runtime use was not verified. The rescan retires the entry when the pins move
   ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
+- Later the same day, two more on every pull request. **`CVE-2026-109869`**, `undici` 6.28.0 in
+  `node:24-alpine`, is npm's own copy (`usr/local/lib/node_modules/npm/node_modules/undici`) and the
+  tag was already the newest Node 24 (24.22.1, npm 11.19.1): **allowlisted** by path with the other
+  npm entries - `frontend-ssr` never runs npm, and Node's built-in `fetch` is compiled into the binary,
+  not that file. **`CVE-2026-111497` again**, as Debian's `libbrotli1` 1.1.0-2+b7 in
+  `goauthentik/server:2026.8.5` (fixed in 1.1.0-2+deb13u1): 2026.8.5 is the newest authentik release,
+  so **allowlisted** by purl
+  ([backlog](backlog.md#p3---bump-authentik-when-a-release-ships-debians-libbrotli1-110-2deb13u1-2026-10-24)).
+  One id on two packages exposed a hole in the retirement: the id check stays satisfied while EITHER
+  half is reported, so the half that moved would never retire. **The retirement now also reads each
+  purl-scoped entry as `id package version`** (`image-scan.sh --allowlist-purls`, compared with a YAML
+  parse by `image-scan-allowlist.test.mjs`) and fails on a triple the raw scan no longer reports.
 
 **Not gated: Trivy's Dockerfile misconfiguration scan.** Measured the same day, it finds `DS-0002`
 (no non-root `USER`) in all eight Dockerfiles and `DS-0029` (`--no-install-recommends`) in the two
@@ -2175,6 +2187,25 @@ The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-be
 ### Two frontend advisories wait on the kit 3 chantier (2026-10-24)
 
 `GHSA-pfhg-q3qv-9q6r` and `GHSA-27mw-82g8-phjj` are LOW SvelteKit advisories (an open redirect through enhanced form submission, an XSS through an untrusted `cache-control` header on a prerendered page), fixed only in `@sveltejs/kit` 3.x. The user put the majors (kit 3, adapter-node 6, webrtc 0.21) after the stable as their own chantiers, so the frontend tree ignores both until Dependabot's #2154 lands, and that pull request deletes them. Unlike media-service's, these rest on a decision, not on reachability. **The retirement check is now its own step, `Every ignored advisory is still reported`, run for every tree whose `matrix.audit` carries an `--ignore`**: it re-audits the tree at its own level without them and fails on an id nothing reports any more, so the day kit 3 merges the two ignores go red rather than stay.
+
+### The Rust ignores live in `.cargo/audit.toml` and retire themselves too (2026-10-24)
+
+Each of the four Rust trees carries its ignores in its own `.cargo/audit.toml`, and **each entry's
+reachability statement is written there, the only copy**. Until 2026-10-24 nothing retired them:
+`RUSTSEC-2026-0381` (webpki-roots) kept its entry in `frontend/src-tauri` after the advisory was
+amended to call 0.26.11 unaffected, and nothing said so. The `cargo-audit` job now has the step the
+bun trees have, `Every ignored Rust advisory is still reported`: every lockfile is re-audited from a
+directory holding no `audit.toml`, against the database the audit step just fetched, and
+`ignored-advisories-still-reported.sh` fails on an id nothing reports any more.
+
+`RUSTSEC-2026-0387` (crypto-bigint 0.5.5, constant-time operations that may branch on secrets; fix
+only in 0.7.6) turned `main` red on 2026-10-24 in all four trees. It cannot be taken by a lockfile
+change: crypto-bigint 0.7 means elliptic-curve 0.14, and every p256/p384 0.13 user here is at its
+newest release (jsonwebtoken 11.1.0, openmls_rust_crypto 0.6.0, webrtc 0.17.2's dtls). It is
+unreachable in chat-gateway (HS256 only), mls-wasm and src-tauri (one X25519/Ed25519 suite), and
+**reachable in code in call-service**, whose DTLS runs P-256/P-384 ECDHE on a per-handshake
+ephemeral secret - bounded by that secret living for one operation and by the SFU never having
+placed a production call. The webrtc 0.21 port ([calls](frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15)) removes that edge.
 
 ### A merged branch that is still there was pushed back, not left behind (measured 2026-09-22)
 

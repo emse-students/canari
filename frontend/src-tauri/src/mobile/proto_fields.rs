@@ -1275,6 +1275,41 @@ mod tests {
         assert!(single["seeds"][0].get("relayed").is_none());
     }
 
+    /// `GraineBundleMsg.page_index` / `page_count` (fields 7 and 8, 2026-10-22) are unknown to this
+    /// reader: a page of a paged answer is an ordinary bundle here, every seed it carries handed
+    /// over. In practice a page is far over the inline push budget and is fetched by reference, so
+    /// this guards the shape, not a path a page is expected to take.
+    #[test]
+    fn a_page_of_a_paged_answer_hands_over_its_seeds_like_any_bundle() {
+        let mut bundle = Vec::new();
+        write_string_field(&mut bundle, 1, "ws-1");
+        write_string_field(&mut bundle, 2, "r-p");
+        for (i, session) in ["s-4", "s-5"].iter().enumerate() {
+            write_bytes_field(
+                &mut bundle,
+                3,
+                &build_graine_msg("ch-1", session, &[i as u8; 32], 2_000 + i as i64),
+            );
+        }
+        write_tag(&mut bundle, 7, 0);
+        write_varint(&mut bundle, 1);
+        write_tag(&mut bundle, 8, 0);
+        write_varint(&mut bundle, 3);
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 12, &bundle);
+
+        let info = extract_full_message_info(&msg, PushLanguage::French);
+        assert_eq!(info["ok"], false);
+        assert_eq!(info["kind"], "graine_key_material");
+        let ids: Vec<&str> = info["seeds"]
+            .as_array()
+            .expect("seeds array")
+            .iter()
+            .map(|s| s["sessionId"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["s-4", "s-5"]);
+    }
+
     /// A seed that could not be used is dropped HERE rather than written and failing later: the
     /// three fields checked are exactly the ones `derive_message_key` cannot be called without.
     #[test]
