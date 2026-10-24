@@ -1620,16 +1620,44 @@ export class PostsService {
       throw new NotFoundException('Post not found');
     }
 
-    const shaped = await this.toPublicPostFromEntity(
+    return this.serveToReader(
       post,
-      await this.viewerContext([post], opts?.viewerId, opts?.isGlobalAdmin === true)
+      { viewerId: opts?.viewerId, isGlobalAdmin: opts?.isGlobalAdmin === true },
+      blockedIds
+    );
+  }
+
+  /**
+   * ONE WHOLE POST AS ONE READER MAY SEE IT - the shaping every route that answers with a single
+   * post row goes through, so none of them hands out the stored row.
+   *
+   * The stored row carries what the served one withholds per reader (`toPublicPostFromEntity`,
+   * `CommentIdentityService.serve`), so a route answering with the entity it just wrote would skip
+   * all of it. This is `getById`'s shaping, unchanged, made reachable by the routes that write a
+   * post and answer with it. It does NOT check visibility: the caller has already done that (a
+   * write route through `assertVisible`, `getById` through its own checks).
+   *
+   * @param blockedIds the reader's blocks when the caller already read them; read here otherwise.
+   */
+  async serveToReader(
+    post: Post,
+    reader: { viewerId?: string; isGlobalAdmin?: boolean },
+    blockedIds?: string[]
+  ): Promise<Record<string, any>> {
+    const blocked = blockedIds ?? (await blockedUserIdsFor(this.postRepo.manager, reader.viewerId));
+    this.logger.debug(
+      `serveToReader ${post.id}: reader ${reader.viewerId ? 'known' : 'none'}, ${blocked.length} blocked`
+    );
+    const shaped: Record<string, any> = await this.toPublicPostFromEntity(
+      post,
+      await this.viewerContext([post], reader.viewerId, reader.isGlobalAdmin === true)
     );
     // The entity path carries the WHOLE comment array rather than a window and a count, so unlike
     // the feed queries it is filtered here, exactly and in one place.
-    if (blockedIds.length > 0 && Array.isArray(shaped.comments)) {
+    if (blocked.length > 0 && Array.isArray(shaped.comments)) {
       shaped.comments = shaped.comments.filter(
         (c: { userId?: string; anonymous?: boolean; association?: unknown }) =>
-          !blockedIds.includes(c?.userId ?? '') || c.anonymous === true || !!c.association
+          !blocked.includes(c?.userId ?? '') || c.anonymous === true || !!c.association
       );
     }
     // Attach author name fields (same source as listPosts - local users table).

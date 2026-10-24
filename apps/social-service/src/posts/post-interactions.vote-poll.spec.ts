@@ -202,15 +202,15 @@ describe('PostInteractionsService.votePoll enforces the poll', () => {
         votesByUser: {},
       }) as unknown as PollFixture;
 
-    it('counts the vote and answers with `voted`, never the voter list', async () => {
+    // What the voter is ANSWERED (`voted`, never the voter list) is the route's per-reader shaping,
+    // pinned in `posts.controller.vote-response.spec.ts`; this returns the stored row to that route.
+    it('counts the vote and returns the stored row for the route to serve', async () => {
       const { service, post } = makeService(anonymousPoll());
       const res = await service.votePoll('post-1', 'p1', { userId: 'u1', optionIds: ['a'] });
       const stored = (post.polls as unknown as Record<string, any>[])[0];
       expect(stored.options[0].votes).toBe(1);
-      const served = (res.polls as Record<string, any>[])[0];
-      expect(served.voted).toBe(true);
-      expect('voters' in served).toBe(false);
-      expect(JSON.stringify(res.polls)).not.toContain('u1');
+      expect(stored.voters).toEqual(['u1']);
+      expect(res).toBe(post);
     });
 
     it('refuses a second vote from the same account', async () => {

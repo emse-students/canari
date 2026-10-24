@@ -56,8 +56,12 @@ A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creatio
 - **Stored**: `option.votes` is a NUMBER, and `poll.voters` is the list of accounts that voted, with
   no choice attached and **sorted**, so the list is not the order of arrival. `votesByUser` is `{}`.
 - **Served**: `servePolls` drops `voters` and adds `voted` for THAT reader. It runs at the two
-  points every served post goes through (`shapeListRow`, `toPublicPostFromEntity`) and on the vote
-  response, so a participant list is never sent to anybody - not the author, not a moderator.
+  points every served post goes through (`shapeListRow`, `toPublicPostFromEntity`), so a
+  participant list is never sent to anybody - not the author, not a moderator.
+- **The vote's answer is shaped per reader like every other post response** (2026-10-24):
+  `votePoll` returns the STORED row to its route, which answers through
+  `PostsService.serveToReader` - the shaping `getById` uses - and never with that row
+  (`posts.controller.vote-response.spec.ts`).
 - **Final**: one vote, no change, no retraction. Changing a vote needs the previous choice, which is
   exactly what was not kept. The card therefore does not send an anonymous single-choice vote on the
   tap: it waits for the "Voter" button, as a multiple-choice poll does.

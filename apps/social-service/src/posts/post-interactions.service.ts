@@ -16,7 +16,7 @@ import {
   PostNotificationsService,
 } from './post-notifications.service';
 import { PushService } from '../push/push.service';
-import { isAnonymousPoll, recordAnonymousVote, servePolls } from './anonymous-poll';
+import { isAnonymousPoll, recordAnonymousVote } from './anonymous-poll';
 import { CommentIdentityService, commentIdentityOf, commentRights } from './comment-identity';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredReel } from './reel.constants';
@@ -432,8 +432,14 @@ export class PostInteractionsService {
    *
    * @throws BadRequestException when the poll has closed, or the selection exceeds what the poll
    *   allows - a refusal, never a silent truncation, because a vote is not a thing to guess at.
+   * @returns the STORED post, which is not an answer to anybody: the route serves it through
+   *   `PostsService.serveToReader`, as every single-post response is served.
    */
-  async votePoll(postId: string, pollId: string, data: { userId: string; optionIds: string[] }) {
+  async votePoll(
+    postId: string,
+    pollId: string,
+    data: { userId: string; optionIds: string[] }
+  ): Promise<Post> {
     // Use a pessimistic write lock to prevent two concurrent votes from silently
     // overwriting each other (check-then-act race on the JSON polls column).
     let result: any;
@@ -506,8 +512,6 @@ export class PostInteractionsService {
         result = post;
       }
     });
-    // The saved post carries the anonymous polls' voter lists; the caller is handed only its own
-    // `voted`, exactly as the feed serves it.
-    return { ...result, polls: servePolls(result.polls, data.userId) };
+    return result as Post;
   }
 }
