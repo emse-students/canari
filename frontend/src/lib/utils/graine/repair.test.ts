@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import type { StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';
 import { decodeAppMessage } from '$lib/proto/codec';
@@ -8,6 +9,7 @@ import {
 } from '$lib/utils/chat/epochGapRegistry';
 import {
   forgetWorkspaceRepairState,
+  noteHistoryAnswered,
   noteHistoryHeldNothing,
   noteMissingSeed,
   noteSeedUnavailable,
@@ -18,6 +20,7 @@ import {
   releaseRequestsHeldForKeyGroup,
 } from './repair';
 import { historyHeldNothingFinalAt } from './historyAnswered';
+import { noteHistoryPage } from './pagedHistoryAnswer';
 import {
   registerChannelWorkspace,
   registerCommunityHistoryVisibility,
@@ -94,6 +97,9 @@ let treeLeaves: string[];
 
 beforeEach(() => {
   resetGraineRepairState();
+  // The durable records (`historyAnswered`, `historyClosedSeen`) are per account in localStorage: a
+  // test that recorded a closed past must not leave a widening owed to the next one.
+  localStorage.clear();
   presenceWaiters = [];
   // Every member online on one device that is a leaf of the key group, which is what a social
   // service of 1.2.5 answers (`onlineDevices`) and what the tree says (`treeLeaves`).
@@ -261,6 +267,144 @@ describe('noteMissingSeed', () => {
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
     warn.mockRestore();
+  });
+});
+
+/**
+ * A PAST THAT WIDENS (2026-10-22). A member who arrived under `joined` holds seeds floored at their
+ * arrival; a switch to `shared` asked nothing again, because the history ask returns once any seed
+ * is held - so the setting moved and the members already in never saw the past it opened.
+ */
+describe('requestCommunityHistory when the community past widens (joined -> shared)', () => {
+  const held = [{ sessionId: 's-1' } as never];
+
+  function historyAsks(): canari.GraineRequestMsg.$Properties[] {
+    return sendMessage.mock.calls
+      .map((call) => decodeAppMessage(call[1])?.graineRequest)
+      .filter(
+        (r): r is canari.GraineRequestMsg.$Properties =>
+          r?.kind === canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY
+      );
+  }
+
+  /** A fresh app session: memory gone, localStorage kept, the rule read again from the listing. */
+  function restartWith(rule: 'shared' | 'joined') {
+    resetGraineRepairState();
+    registerCommunityHistoryVisibility('ws-1', rule);
+  }
+
+  it('asks for the past again though seeds are held, once the rule moved to shared', async () => {
+    heldSessions = held;
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    await requestCommunityHistory('ws-1');
+    expect(historyAsks()).toHaveLength(0);
+
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await requestCommunityHistory('ws-1');
+
+    expect(historyAsks()).toHaveLength(1);
+    expect(historyAsks()[0].answererUserId).toBe('bob');
+    expect(info.mock.calls.flat().join(' ')).toContain('reason visibility-widened');
+    info.mockRestore();
+  });
+
+  it('reaches a device that was offline when the admin flipped it - the closed past is durable', async () => {
+    heldSessions = held;
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    await requestCommunityHistory('ws-1');
+
+    // Next launch: the listing says `shared`, and nothing in memory says it used to be `joined`.
+    restartWith('shared');
+    await requestCommunityHistory('ws-1');
+
+    expect(historyAsks()).toHaveLength(1);
+  });
+
+  it('is settled by an answer CARRYING SEEDS, and not asked at the next launch', async () => {
+    heldSessions = held;
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    await requestCommunityHistory('ws-1');
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    await requestCommunityHistory('ws-1');
+    noteHistoryAnswered('ws-1', String(historyAsks()[0].requestId));
+
+    restartWith('shared');
+    await requestCommunityHistory('ws-1');
+
+    expect(historyAsks()).toHaveLength(1);
+  });
+
+  it('is asked again at the next launch while nobody has answered it', async () => {
+    heldSessions = held;
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    await requestCommunityHistory('ws-1');
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    await requestCommunityHistory('ws-1');
+    // An answer to ANOTHER request settles nothing.
+    noteHistoryAnswered('ws-1', 'some-other-request');
+
+    restartWith('shared');
+    await requestCommunityHistory('ws-1');
+
+    expect(historyAsks()).toHaveLength(2);
+  });
+
+  it('walks to the next member when the first says it holds nothing - held seeds do not stop it', async () => {
+    heldSessions = held;
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    await requestCommunityHistory('ws-1');
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    await requestCommunityHistory('ws-1');
+
+    noteHistoryHeldNothing('ws-1', 'bob', String(historyAsks()[0].requestId), 'web-bob');
+    await settle();
+
+    expect(historyAsks().map((r) => r.answererUserId)).toEqual(['bob', 'carol']);
+  });
+
+  it('asks again on a LIVE widening after every member said "nothing for you" at this epoch', async () => {
+    // No restart: the broadcast (`handleWorkspaceUpdated` -> `requestCommunityHistory`) arrives in
+    // the same session, at the same distribution epoch, as the final "nothing" reached under the
+    // floor. The in-memory "nobody could answer at this epoch" must not swallow the widened ask.
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    await requestCommunityHistory('ws-1');
+    noteHistoryHeldNothing('ws-1', 'bob', String(historyAsks()[0].requestId), 'web-bob');
+    await settle();
+    noteHistoryHeldNothing('ws-1', 'carol', String(historyAsks()[1].requestId), 'web-carol');
+    await settle();
+    expect(historyHeldNothingFinalAt('alice', 'ws-1', { groupId: 'dist-group', epoch: 7 })).toBe(
+      true
+    );
+
+    // What the broadcast does: the rule is adopted, then the seed layer is asked.
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await requestCommunityHistory('ws-1');
+
+    expect(historyAsks()).toHaveLength(3);
+    expect(info.mock.calls.flat().join(' ')).toContain('reason visibility-widened');
+    info.mockRestore();
+  });
+
+  it('records no closed past from a rule the server never stated', async () => {
+    heldSessions = held;
+    // `ws-2`'s rule was never learned in this session: the seed layer reads `joined` for safety,
+    // and that reading must not become a "closed past" that the real `shared` would then widen.
+    await requestCommunityHistory('ws-2');
+    registerCommunityHistoryVisibility('ws-2', 'shared');
+    await requestCommunityHistory('ws-2');
+
+    expect(historyAsks()).toHaveLength(0);
+  });
+
+  it('owes nothing to a member whose community always shared its past', async () => {
+    heldSessions = held;
+    await requestCommunityHistory('ws-1');
+    restartWith('shared');
+    await requestCommunityHistory('ws-1');
+
+    expect(historyAsks()).toHaveLength(0);
   });
 });
 
@@ -676,6 +820,41 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
 
     expect(sendMessage).toHaveBeenCalledTimes(3);
     expect(sentAsk(2).answerer).toBe('bob');
+  });
+
+  it('asks ONCE more, at the next start, when the answer arrived with a page missing (section 4.4)', async () => {
+    // The first page made `held` non-empty, which used to end the history ask for good: the lost
+    // page was then recovered only session by session, its rows hidden until each repair landed.
+    await requestCommunityHistory('ws-1');
+    const { requestId } = sentAsk(0);
+    noteHistoryPage('alice', 'ws-1', requestId, 'bob', 0, 3);
+    noteHistoryPage('alice', 'ws-1', requestId, 'bob', 2, 3);
+    heldSessions = [{ sessionId: 's-1' } as never];
+
+    restart();
+    await requestCommunityHistory('ws-1');
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(decodeAppMessage(sendMessage.mock.calls[1][1])?.graineRequest?.kind).toBe(
+      canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY
+    );
+
+    // Its answer arrives in part too: the one re-ask is spent, nothing asks a third time.
+    noteHistoryPage('alice', 'ws-1', sentAsk(1).requestId, 'bob', 1, 3);
+    restart();
+    await requestCommunityHistory('ws-1');
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks nothing more at the next start when every page of the answer arrived', async () => {
+    await requestCommunityHistory('ws-1');
+    const { requestId } = sentAsk(0);
+    for (const page of [1, 0]) noteHistoryPage('alice', 'ws-1', requestId, 'bob', page, 2);
+    heldSessions = [{ sessionId: 's-1' } as never];
+
+    restart();
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it('forgets the answers when the community leaves this device', async () => {

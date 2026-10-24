@@ -155,6 +155,18 @@ export function shutterRingFraction(state: CaptureState, elapsedMs: number, maxM
 }
 
 /**
+ * Whether the lens may be flipped now - by its button or by a double tap on the preview. Only in
+ * `ready` (the session reopens everything) and `recording` (`flipDuringTake` keeps the microphone).
+ * Every other state is a decision or a file in progress that a flip would break: in `pressing` the
+ * hold timer may start a take on a lens that is being reopened, in `photo` the frame is being read,
+ * in `finishing` the recorder's last chunk is still arriving (a reopen would release its microphone
+ * and cut the take's end), and a `review` has no preview at all.
+ */
+export function lensFlipAllowed(state: CaptureState): boolean {
+  return state.kind === 'ready' || state.kind === 'recording';
+}
+
+/**
  * Why the reel limits could not be read, which decides what the capture screen says.
  *
  * - `unreachable`: no status, so nobody answered (the network, or the server is down).
@@ -192,9 +204,9 @@ export function formatTakeTime(ms: number): string {
  *   comes back to the composer as a FILE, as it always did.
  * - `post-edit`: the post EDITOR. An existing post is never turned into a reel, so a photo OR a video
  *   comes back as a FILE for its ordinary attachment path.
- * - `chat`: a conversation composer; PHOTOS ONLY for now. A video filmed in a chat is the reel
- *   message (RC-3..RC-5, not built - docs/wiki/frontend/modules/reels-in-chat.md), so until then the
- *   shutter takes no video there and the photo goes out as an ordinary image message.
+ * - `chat`: a conversation composer; PHOTOS ONLY unless the writer is on (`chatReelWriter.ts`, off
+ *   until RC-5 and RC-7 ship). A video filmed in a chat is the reel message
+ *   (docs/wiki/frontend/modules/reels-in-chat.md), a photo goes out as an ordinary image message.
  */
 export type CaptureDestination = 'feed' | 'post' | 'post-edit' | 'chat';
 
@@ -224,13 +236,16 @@ export interface DestinationRules {
 }
 
 /** {@link DestinationRules} for `destination`. */
-export function destinationRules(destination: CaptureDestination): DestinationRules {
+export function destinationRules(
+  destination: CaptureDestination,
+  chatFilms = false
+): DestinationRules {
   return {
-    photoOnly: destination === 'chat',
+    photoOnly: destination === 'chat' && !chatFilms,
     microphone:
       destination === 'feed'
         ? 'with-lens'
-        : destination === 'post' || destination === 'post-edit'
+        : destination === 'post' || destination === 'post-edit' || chatFilms
           ? 'separate'
           : 'never',
     photoHandsBack: destination !== 'feed',

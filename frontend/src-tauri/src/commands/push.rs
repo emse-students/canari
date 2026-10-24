@@ -1,9 +1,9 @@
 //! Tauri commands for the push context (FCM, VoIP, cache, outbox mirror).
 
-use mls_core::DeviceKeyStore;
 use tauri::Manager;
 
-use crate::keystore_bridge::PluginDeviceKeyStore;
+use crate::commands::at_rest_key::GuardRefusal;
+use crate::keystore_bridge::{KeyEntryError, PluginDeviceKeyStore};
 use crate::native_cache::{open_file, open_line, seal_file, CacheKey, Opened, Purpose};
 
 /// Checks that the Android Keystore can read the push secret (flag written by CanariApplication).
@@ -475,6 +475,61 @@ pub(crate) fn ack_fcm_cache(app: tauri::AppHandle, files: Vec<FcmTakenFile>) -> 
 #[tauri::command]
 pub(crate) fn read_and_clear_read_watermarks(app: tauri::AppHandle) -> Vec<serde_json::Value> {
     take_ndjson_handoff(&app, "read_watermarks.ndjson", "READ_WATERMARK")
+}
+
+/// Takes the ledger of key-group joins the push service attempted while the app was shut, and
+/// deletes it (channel-encryption section 26, `mobile::key_group_join`).
+///
+/// Called once at start-up, BEFORE the key-group registry is restored and before the drain: a group
+/// joined from a push is in `mls.bin` and in no registry row, and a key group the registry does not
+/// name has its backlog refused as `absent-conversation` (section 22). The `joined` entries carry the
+/// scope the server named, which is what the frontend writes into the registry. From this call on,
+/// every group in the ledger is the app's own join's to own - which is why the whole file goes.
+///
+/// Empty on desktop, where no push service exists to join anything, and on iOS, whose notification
+/// extension never joins (it writes no `mls.bin` of the app's).
+#[tauri::command]
+pub(crate) fn take_key_group_push_joins(app: tauri::AppHandle) -> Vec<serde_json::Value> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("[KG_PUSH_JOIN] app_data_dir() failed: {e}");
+                return vec![];
+            }
+        };
+        // The ledger is sealed under the install's cache key: without it, it stays where it is for
+        // a start that can read it (`app_cache_key` has logged the absence).
+        let Ok(key) = crate::native_cache::app_cache_key(&app) else {
+            // Only an accusation when there IS a ledger to take (never on iOS, which writes none).
+            if data_dir
+                .join(crate::mobile::key_group_join::LEDGER_FILE)
+                .exists()
+            {
+                log::error!("[KG_PUSH_JOIN] ledger not taken: the native cache key is unreadable");
+            }
+            return vec![];
+        };
+        match crate::mobile::key_group_join::take_all(&data_dir, &key) {
+            Ok(taken) => {
+                log::info!("[KG_PUSH_JOIN] ledger taken: {} entry/entries", taken.len());
+                taken
+                    .into_iter()
+                    .filter_map(|t| serde_json::to_value(t).ok())
+                    .collect()
+            }
+            Err(e) => {
+                log::error!("[KG_PUSH_JOIN] ledger not taken: {e}");
+                vec![]
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = app;
+        vec![]
+    }
 }
 
 /// Rewrites {app_data_dir}/outbox_pending.ndjson from the current outbox snapshot.
@@ -1293,10 +1348,9 @@ pub(crate) fn read_and_clear_pending_call_accept(app: tauri::AppHandle) -> Optio
 /// (see `$lib/crypto/deviceKey`), which is the ONLY value that can decrypt `mls.bin`
 /// (`[nonce (12) || ciphertext]`, ChaCha20-Poly1305 direct).
 ///
-/// The key is also mirrored into the platform keystore under
-/// `mls_device_key_{user_id}_{device_id}` so the biometric login path
-/// (`load_encrypted_with_keystore` path A) can retrieve it without the PIN. That write is
-/// best-effort: if the keystore rejects it, push still works from the JSON file.
+/// The key goes into the platform keystore under `mls_device_key_{user_id}_{device_id}`, never
+/// into the JSON (WP-SEC-1): the background push and the biometric login path
+/// (`load_encrypted_with_keystore` path A) read it there, so a failed write is returned.
 #[tauri::command]
 pub(crate) fn store_push_context(
     device_key_b64: String,
@@ -1318,13 +1372,31 @@ pub(crate) fn store_push_context(
     let key_bytes = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64.trim())
         .map_err(|e| format!("invalid device_key_b64: {e}"))?;
 
-    let alias = format!("mls_device_key_{user_id}_{device_id}");
-    let keystore = PluginDeviceKeyStore::new(app.clone());
-    // WP-SEC-1: the keystore is now the ONLY copy of the device key (no JSON fallback).
-    // A failed write means background decrypt is dead — return Err, do not log::warn!.
-    keystore
-        .store_device_key(&key_bytes, &alias)
-        .map_err(|e| format!("keystore write failed (background decrypt will not work): {e}"))?;
+    let alias = crate::commands::at_rest_key::device_key_alias(&user_id, &device_id);
+    // Through the at-rest guard (`store_guarded`): on a migrated phone the entry already holds this
+    // key and is not rewritten; during a re-key the session's OLD key is refused, because rows already
+    // sit under the new one whose only copy is this entry. A refusal is not an error here: the push
+    // context is still written, and the entry holds the key the background push needs once the
+    // re-key ends.
+    match PluginDeviceKeyStore::new(app.clone()).store_guarded(&key_bytes, &alias) {
+        Ok(_) => {}
+        // The expected answer during and after a re-key: the entry holds the key of record.
+        Err(KeyEntryError::Refused(why @ GuardRefusal::HeldKey(_))) => {
+            log::info!("[AT_REST_KEY] store_push_context: keystore left as it is - {why}")
+        }
+        // NOT expected: a marker nobody can read blocks every keystore write until a reset, and the
+        // background push of a new session may be left on an older key.
+        Err(KeyEntryError::Refused(why @ GuardRefusal::Unreadable(_))) => {
+            log::error!("[AT_REST_KEY] store_push_context: keystore write refused - {why}")
+        }
+        // WP-SEC-1: the keystore is the ONLY copy of the device key (no JSON fallback). A failed
+        // write means background decrypt is dead - returned, not logged and swallowed.
+        Err(e @ KeyEntryError::Failed(_)) => {
+            return Err(format!(
+                "keystore write failed (background decrypt will not work): {e}"
+            ))
+        }
+    }
 
     write_session_push_context(
         &data_dir,
@@ -1349,7 +1421,7 @@ static PUSH_CONTEXT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Takes [`PUSH_CONTEXT_LOCK`]. The lock guards an ORDER, not a value: a holder that panicked
 /// leaves no half-built data behind it, so a poisoned lock is taken as it is.
-fn push_context_guard() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn push_context_guard() -> std::sync::MutexGuard<'static, ()> {
     PUSH_CONTEXT_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1518,17 +1590,58 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
 /// The per-install files that hold ONE account's data in the clear and die with that account when it
 /// is DELETED: unsent `AppMessage` protos (`store_outbox_mirror`), messages decrypted by a push
 /// (`take_fcm_cache`; what a take moved aside, `FCM_CACHE_TAKEN_PREFIX*`, goes with them), the read
-/// marks and sent ids the background side handed over. Not `mls.bin`, `graine_seeds.json` or the push secret -
-/// kept by this command on purpose.
-const ACCOUNT_PUSH_FILES: [&str; 4] = [
+/// marks and sent ids the background side handed over, and the device-notice ledger (one marker per
+/// announced device, named by `userId:deviceId`). Not `mls.bin`, `graine_seeds.json` or the push
+/// secret - kept by this command on purpose.
+const ACCOUNT_PUSH_FILES: [&str; 5] = [
     "outbox_pending.ndjson",
     FCM_CACHE_FILE,
     "read_watermarks.ndjson",
     "outbox_sent.ndjson",
+    DEVICE_NOTICES_DIR,
 ];
 
+/// The directory of the device-notice ledger (`mobile::device_notice`), in the app data directory on
+/// Android and in the App Group container on iOS - where the app and its background engine both
+/// reach it.
+pub(crate) const DEVICE_NOTICES_DIR: &str = "device_notices";
+
+/// Claims, in the device-notice ledger the background engines share, the keys of the "a new device
+/// was added to your account" alerts the app has just shown - so a push that later replays the same
+/// commit raises no local notification for them - and returns the keys nobody had announced yet.
+///
+/// Phones only: the ledger exists because a background engine may see the commit first, and only
+/// a phone has one. The app calls it from `nativeDeviceNotices.ts` on Android and iOS alone.
+#[tauri::command]
+pub(crate) fn claim_device_notices(
+    app: tauri::AppHandle,
+    keys: Vec<String>,
+) -> Result<Vec<String>, String> {
+    log::debug!("[DEVICE_NOTICE] app claims {} key(s)", keys.len());
+    #[cfg(target_os = "ios")]
+    {
+        let _ = &app;
+        let dir = crate::app_group::app_group_dir()?;
+        Ok(crate::mobile::device_notice::claim_device_notices(
+            &dir, &keys,
+        ))
+    }
+    #[cfg(target_os = "android")]
+    {
+        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        Ok(crate::mobile::device_notice::claim_device_notices(
+            &dir, &keys,
+        ))
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = (app, keys);
+        Err("the device-notice ledger exists on a phone only".to_string())
+    }
+}
+
 /// The file that NAMES whose the files above are - removed last, since it is the proof.
-const PUSH_CONTEXT_FILE: &str = "push_context.json";
+pub(crate) const PUSH_CONTEXT_FILE: &str = "push_context.json";
 
 /// Deletes the push-side files of a DELETED account (WP-DEL-LOCAL) - see [`remove_user_push_files`].
 ///
@@ -1706,11 +1819,11 @@ fn remove_user_push_files_proved(
 
 /// The app's own handoff file: read FIRST by every in-app reader, then moved into the Keystore /
 /// Keychain (`retrievePushSecret`, `CanariRetrievePushSecret`).
-const PENDING_PUSH_SECRET_FILE: &str = "pending_push_secret.txt";
+pub(crate) const PENDING_PUSH_SECRET_FILE: &str = "pending_push_secret.txt";
 
 /// The iOS Notification Service Extension's copy, in the App Group container
 /// (`NotificationService.loadPushSecret`). The extension has no other way to the secret.
-const EXTENSION_PUSH_SECRET_FILE: &str = "push_secret.txt";
+pub(crate) const EXTENSION_PUSH_SECRET_FILE: &str = "push_secret.txt";
 
 /// Writes a freshly minted push secret to EVERY place a reader looks for it, in one call.
 ///
@@ -1724,7 +1837,7 @@ const EXTENSION_PUSH_SECRET_FILE: &str = "push_secret.txt";
 /// in-app `refresh-token` calls passed. `extension_dir` is `None` where there is no extension
 /// (Android).
 #[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
-fn write_push_secret(
+pub(crate) fn write_push_secret(
     data_dir: &std::path::Path,
     extension_dir: Option<&std::path::Path>,
     secret: &str,
@@ -1750,7 +1863,11 @@ fn write_push_secret(
                 format!("write {}: {e}", target.display())
             })?;
     }
-    Ok(())
+    // A SECRET IS THE SERVER'S ANSWER TO A REGISTRATION, so this device is a push destination again
+    // - for the session that registered it. LAST, once every copy of the secret is written: a
+    // device whose copies are incomplete stays signed out, and its next registration retries all.
+    // See `push_registration.rs`.
+    crate::commands::push_registration::clear_signed_out_mark(data_dir)
 }
 
 /// Stores the pushSecret received from the backend: `pending_push_secret.txt` for the app's own
@@ -2234,7 +2351,7 @@ mod delete_user_push_files_tests {
 ",
         )
         .unwrap();
-        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 6);
+        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 7);
         assert!(!dir.join("fcm_message_cache.taken.3.ndjson").exists());
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
@@ -2284,6 +2401,9 @@ mod delete_user_push_files_tests {
         std::fs::create_dir_all(&group).unwrap();
         std::fs::write(group.join(PUSH_CONTEXT_FILE), context).unwrap();
         std::fs::write(group.join(super::FCM_CACHE_FILE), b"{}\n").unwrap();
+        // The device-notice ledger the extension claims in: markers name `userId:deviceId`.
+        std::fs::create_dir_all(group.join(super::DEVICE_NOTICES_DIR)).unwrap();
+        std::fs::write(group.join(super::DEVICE_NOTICES_DIR).join("6123"), b"").unwrap();
         for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
             std::fs::write(group.join(kept), b"x").unwrap();
         }
@@ -2298,9 +2418,10 @@ mod delete_user_push_files_tests {
         let ctx = r#"{"userId":"a","deviceId":"d","pushToken":"t"}"#;
         let dir = dir_with("group_own", Some(ctx));
         let group = extension_container(&dir, ctx);
-        assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 7);
+        assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 9);
         assert!(!group.join(PUSH_CONTEXT_FILE).exists());
         assert!(!group.join(super::FCM_CACHE_FILE).exists());
+        assert!(!group.join(super::DEVICE_NOTICES_DIR).exists());
         for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
             assert!(group.join(kept).exists(), "{kept}");
         }
@@ -2354,7 +2475,7 @@ mod delete_user_push_files_tests {
         std::fs::create_dir_all(dir.join(crate::commands::display_names::DISPLAY_NAMES_FILE))
             .unwrap();
         let err = super::remove_account_push_and_name_files(&dir, None, "a").unwrap_err();
-        assert!(err.contains("5 push file(s) removed"), "{err}");
+        assert!(err.contains("6 push file(s) removed"), "{err}");
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
         }
@@ -2373,7 +2494,7 @@ mod delete_user_push_files_tests {
         merge_display_names(&group, "a", &names, &[]).unwrap();
         assert_eq!(
             super::remove_account_push_and_name_files(&dir, Some(&group), "a").unwrap(),
-            5
+            6
         );
         assert!(!dir.join(DISPLAY_NAMES_FILE).exists());
         assert!(!group.join(DISPLAY_NAMES_FILE).exists());

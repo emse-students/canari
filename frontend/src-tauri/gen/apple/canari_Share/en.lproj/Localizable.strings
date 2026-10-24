@@ -1,0 +1,10 @@
+/* The Share Extension's own text - English. The extension is a separate bundle from the app, so it
+   cannot read canari_iOS/*.lproj. Keep in sync with fr.lproj/Localizable.strings. */
+"share.copying" = "Preparing the share...";
+"share.ok" = "OK";
+"share.notification.title" = "Canari";
+"share.notification.body" = "Choose the conversation";
+"share.done.notified" = "Ready. Tap Canari's notification to choose the conversation.";
+"share.done.open_app" = "Ready. Open Canari to choose the conversation.";
+"share.empty" = "Canari cannot receive anything from this share.";
+"share.failed" = "The share could not be prepared. Try again.";

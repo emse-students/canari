@@ -12,10 +12,12 @@ import { Group } from '../entities/group.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { SeatEviction } from '../entities/seat-eviction.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
@@ -50,8 +52,6 @@ describe('InternalController - the community distribution group', () => {
   };
   /** Every entity the delete route asked to purge, in the order it asked, `Group` excluded. */
   let purged: unknown[];
-  /** Every delete run inside a transaction, with what it was keyed on. */
-  let txDeletes: Array<{ entity: unknown; where: unknown }>;
   let groupMemberRepo: { save: jest.Mock };
   let deviceGroupRepo: { save: jest.Mock; upsert: jest.Mock; delete: jest.Mock };
   let queuedMessageRepo: { delete: jest.Mock };
@@ -60,29 +60,38 @@ describe('InternalController - the community distribution group', () => {
     readGroupInfo: jest.Mock;
     putGroupInfo: jest.Mock;
     activateDeviceMembership: jest.Mock;
+    claimSeat: jest.Mock;
+    evictSeats: jest.Mock;
   };
   let previousSecret: string | undefined;
+  let seatLockQueries: string[];
 
   beforeEach(async () => {
     previousSecret = process.env.INTERNAL_SECRET;
     process.env.INTERNAL_SECRET = SECRET;
 
     purged = [];
-    txDeletes = [];
     // The tombstone and the sweep of what the group owns share ONE transaction, so the fake runs the
     // callback with a manager that hands `Group` back to this very repo - which is what keeps the
     // assertions on `groupRepo.update` measuring the real write - and every other entity to a
     // counting fake, so a table dropped from the sweep shows up as a missing name.
+    // The eviction runs in the same kind of transaction (under the seat lock), and its two deletes
+    // land on the very repos the assertions below read.
+    seatLockQueries = [];
     const transactionalManager = {
+      query: jest.fn((sql: string, params: unknown[]) => {
+        seatLockQueries.push(`${sql} ${JSON.stringify(params)}`);
+        // The eviction's record answers generation 4, and a settlement finds its departure owed.
+        if (sql.includes('INSERT INTO dm_seat_evictions') || sql.includes('"owedDeparture" = NULL'))
+          return Promise.resolve([{ generation: 4 }]);
+        return Promise.resolve([]);
+      }),
       getRepository: jest.fn((entity: unknown) => {
         if (entity === Group) return groupRepo;
         purged.push(entity);
-        return {
-          delete: jest.fn((where: unknown) => {
-            txDeletes.push({ entity, where });
-            return Promise.resolve({ affected: 1 });
-          }),
-        };
+        if (entity === DeviceGroupMembership) return deviceGroupRepo;
+        if (entity === QueuedMessage) return queuedMessageRepo;
+        return { delete: jest.fn().mockResolvedValue({ affected: 1 }) };
       }),
     };
     groupRepo = {
@@ -110,7 +119,43 @@ describe('InternalController - the community distribution group', () => {
       readGroupInfo: jest.fn().mockResolvedValue(null),
       putGroupInfo: jest.fn().mockResolvedValue({ stored: true }),
       activateDeviceMembership: jest.fn().mockResolvedValue({ ok: true }),
+      claimSeat: jest.fn(async (groupId: string, userId: string) => ({
+        groupId,
+        userId,
+        generation: 0,
+        owed: false,
+      })),
+      // The REAL eviction, run against this file's fakes: what the route deletes is the subject.
+      evictSeats: jest.fn((groupId: string, userId: string, departure: unknown) =>
+        (
+          MessagingService.prototype.evictSeats as (
+            this: unknown,
+            g: string,
+            u: string,
+            d: unknown
+          ) => Promise<unknown>
+        ).call(
+          {
+            groupRepo,
+            redis,
+            deleteSeats: (MessagingService.prototype as unknown as { deleteSeats: unknown })
+              .deleteSeats,
+            removeRoutesOf: (MessagingService.prototype as unknown as { removeRoutesOf: unknown })
+              .removeRoutesOf,
+          },
+          groupId,
+          userId,
+          departure
+        )
+      ),
     };
+    // The publisher's entitlement is asked of social-service after its claim; entitled unless a
+    // case says otherwise.
+    jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(
+        async () => new Response(JSON.stringify({ entitled: true }), { status: 200 })
+      );
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [InternalController],
@@ -322,8 +367,79 @@ describe('InternalController - the community distribution group', () => {
         PUBLISHER.userId,
         PUBLISHER.deviceId,
         'g-1',
-        { tag: 'DISTRIBUTION_PUBLISHER', authority: 'distribution_publisher' }
+        {
+          tag: 'DISTRIBUTION_PUBLISHER',
+          authority: 'distribution_publisher',
+          claim: { groupId: 'g-1', userId: PUBLISHER.userId, generation: 0, owed: false },
+        }
       );
+    });
+
+    // THE CLAIM IS TAKEN BEFORE THE ENTITLEMENT IS ASKED, and both before anything is stored: the
+    // seat is then written under the seat lock only if no eviction overtook the claim.
+    it('claims the seat, then asks the entitlement, before it stores or activates anything', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+      const order: string[] = [];
+      messagingService.claimSeat.mockImplementation(async (groupId: string, userId: string) => {
+        order.push('claim');
+        return { groupId, userId, generation: 0, owed: false };
+      });
+      jest.mocked(globalThis.fetch).mockImplementation(async () => {
+        order.push('entitlement');
+        return new Response(JSON.stringify({ entitled: true }), { status: 200 });
+      });
+      messagingService.putGroupInfo.mockImplementation(async () => {
+        order.push('store');
+        return { stored: true };
+      });
+      messagingService.activateDeviceMembership.mockImplementation(async () => {
+        order.push('activate');
+        return { ok: true };
+      });
+
+      await controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
+        groupInfo: 'Z2k=',
+        baseEpoch: 7,
+        userId: PUBLISHER.userId,
+        deviceId: PUBLISHER.deviceId,
+      });
+
+      expect(order).toEqual(['claim', 'entitlement', 'store', 'activate']);
+    });
+
+    it('activates no publisher social-service no longer entitles - a departure raced the publish', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+      jest
+        .mocked(globalThis.fetch)
+        .mockImplementation(
+          async () => new Response(JSON.stringify({ entitled: false }), { status: 200 })
+        );
+
+      const got = await controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
+        groupInfo: 'Z2k=',
+        baseEpoch: 7,
+        userId: PUBLISHER.userId,
+        deviceId: PUBLISHER.deviceId,
+      });
+
+      expect(got).toEqual({ stored: true, publisherActive: false });
+      expect(messagingService.activateDeviceMembership).not.toHaveBeenCalled();
+    });
+
+    it('stores nothing when the entitlement goes unanswered - a 503, never an acceptance', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+      jest.mocked(globalThis.fetch).mockRejectedValue(new Error('ECONNREFUSED'));
+
+      await expect(
+        controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
+          groupInfo: 'Z2k=',
+          baseEpoch: 7,
+          userId: PUBLISHER.userId,
+          deviceId: PUBLISHER.deviceId,
+        })
+      ).rejects.toMatchObject({ status: 503 });
+      expect(messagingService.putGroupInfo).not.toHaveBeenCalled();
+      expect(messagingService.activateDeviceMembership).not.toHaveBeenCalled();
     });
 
     // THE REFUSAL USED TO GO NOWHERE. The writer can refuse this device - revoked, or holding no
@@ -456,13 +572,15 @@ describe('InternalController - the community distribution group', () => {
       // remains, discovery still runs against it, and the marker still answers a live question.
       // Dropping it would show a deleted banner to the one person who had asked for silence.
       expect(purged).toEqual([
-        QueuedMessage,
         GroupMember,
+        QueuedMessage,
+        QueuedPayload,
         DeviceGroupMembership,
         MlsCommitLog,
         MlsGroupInfo,
         GroupInvite,
         GroupMembershipInterval,
+        SeatEviction,
       ]);
       expect(purged).not.toContain(UserDismissedGroup);
       // In one unit of work with the tombstone: two statements outside a transaction leave a window
@@ -518,6 +636,15 @@ describe('InternalController - the community distribution group', () => {
       // already sealed for a device that was offline.
       groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
       redis.smembers.mockResolvedValue([`${USER}:web-1`, `${USER}:tauri-1`, 'u-stays:web-1']);
+      // The deletes join the lock's statements, so their order against it is one list.
+      queuedMessageRepo.delete.mockImplementationOnce(async () => {
+        seatLockQueries.push('queued-deleted');
+        return { affected: 5 };
+      });
+      deviceGroupRepo.delete.mockImplementationOnce(async () => {
+        seatLockQueries.push('devices-deleted');
+        return { affected: 2 };
+      });
 
       const result = await controller.evictFromDistributionGroup(
         'workspace',
@@ -526,21 +653,83 @@ describe('InternalController - the community distribution group', () => {
         SECRET
       );
 
-      expect(result).toEqual({ evicted: true, memberships: 1, queued: 1, routes: 2 });
-      // The rows and the WHOLE queue of this group for them - Welcomes included - in ONE
-      // transaction (`endDeviceMemberships`): a Welcome left behind would let them back into the
-      // epoch it was built for.
-      expect(groupRepo.manager.transaction).toHaveBeenCalledTimes(1);
-      expect(txDeletes).toEqual([
-        { entity: DeviceGroupMembership, where: { userId: USER, groupId: 'g-1' } },
-        { entity: QueuedMessage, where: { recipientId: USER, groupId: 'g-1' } },
-      ]);
-      expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
+      // The departure it begins is answered by its name, for social-service to record with its
+      // roster write.
+      expect(result).toEqual({
+        evicted: true,
+        memberships: 2,
+        queued: 5,
+        routes: 2,
+        groupId: 'g-1',
+        departure: 4,
+      });
+      // Under the group's seat lock, the one every claimed activation also takes, and RECORDED
+      // there as a departure in progress (the call before social-service's roster write).
+      // THE ONE ORDER (`utils/seat-eviction.ts`): the lock, the group's seat generation, the queue,
+      // the device rows, then the record - the order a group's end and a removal take too, so none
+      // waits on another's.
+      expect(seatLockQueries[0]).toBe(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0)) ["seat:g-1"]'
+      );
+      expect(seatLockQueries[1]).toContain('UPDATE dm_groups SET "seatGeneration"');
+      expect(seatLockQueries[1]).toContain('["g-1"]');
+      expect(seatLockQueries[2]).toBe('queued-deleted');
+      expect(seatLockQueries[3]).toBe('devices-deleted');
+      expect(seatLockQueries[4]).toContain('INSERT INTO dm_seat_evictions');
+      expect(seatLockQueries[4]).toContain(`["g-1","${USER}",true]`);
+      expect(deviceGroupRepo.delete).toHaveBeenCalledWith({ groupId: 'g-1', userId: USER });
+      expect(queuedMessageRepo.delete).toHaveBeenCalledWith({
+        groupId: 'g-1',
+        recipientId: USER,
+      });
       expect(redis.srem).toHaveBeenCalledWith(
         'group:members:g-1',
         `${USER}:web-1`,
         `${USER}:tauri-1`
       );
+    });
+
+    it('settles the departure it names on the call made after the roster write', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+
+      const result = await controller.evictFromDistributionGroup(
+        'workspace',
+        WORKSPACE,
+        USER,
+        SECRET,
+        'after_roster_write',
+        '3'
+      );
+
+      expect(seatLockQueries[1]).toContain('UPDATE dm_groups SET "seatGeneration"');
+      expect(seatLockQueries[2]).toContain(`["g-1","${USER}",false]`);
+      expect(seatLockQueries[3]).toContain('"owedDeparture" = NULL');
+      expect(seatLockQueries[3]).toContain(`["g-1","${USER}",3]`);
+      // And it cuts again: whatever a racing activation wrote before it is deleted.
+      expect(deviceGroupRepo.delete).toHaveBeenCalledWith({ groupId: 'g-1', userId: USER });
+      // It begins nothing, so it names nothing.
+      expect(result).not.toHaveProperty('departure');
+    });
+
+    it.each([
+      ['a phase it does not know', 'later', undefined],
+      ['a settlement naming no departure', 'after_roster_write', undefined],
+      ['a settlement naming no integer', 'after_roster_write', 'two'],
+      ['a departure named without the phase', undefined, '3'],
+    ])('refuses %s rather than guessing which call this is', async (_n, phase, departure) => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+
+      await expect(
+        controller.evictFromDistributionGroup(
+          'workspace',
+          WORKSPACE,
+          USER,
+          SECRET,
+          phase,
+          departure
+        )
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
     });
 
     it('touches nobody else in the fanout set', async () => {
@@ -566,7 +755,8 @@ describe('InternalController - the community distribution group', () => {
       await expect(
         controller.evictFromDistributionGroup('workspace', WORKSPACE, USER, SECRET)
       ).resolves.toEqual({ evicted: false, memberships: 0, queued: 0, routes: 0 });
-      expect(txDeletes).toEqual([]);
+      expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
+      expect(queuedMessageRepo.delete).not.toHaveBeenCalled();
     });
 
     it('refuses a call carrying the wrong internal secret', async () => {
@@ -575,9 +765,67 @@ describe('InternalController - the community distribution group', () => {
       await expect(
         controller.evictFromDistributionGroup('workspace', WORKSPACE, USER, 'not-the-secret')
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(txDeletes).toEqual([]);
+      expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
+      expect(queuedMessageRepo.delete).not.toHaveBeenCalled();
     });
   });
+
+  describe('cancelling a departure social-service abandoned', () => {
+    const USER = 'u-stays';
+    /** The REAL settlement, against this file's fakes, with its log line silenced. */
+    const realSettlement = () => {
+      (
+        messagingService as unknown as { settleCancelledDeparture: unknown }
+      ).settleCancelledDeparture = (g: string, u: string, d: number) =>
+        (
+          MessagingService.prototype.settleCancelledDeparture as (
+            this: unknown,
+            g: string,
+            u: string,
+            d: number
+          ) => Promise<boolean>
+        ).call({ groupRepo, logger: { log: () => undefined } }, g, u, d);
+    };
+
+    it('settles that departure under the seat lock, and evicts nothing', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+      realSettlement();
+
+      await expect(
+        controller.cancelDistributionDeparture('workspace', WORKSPACE, USER, '3', SECRET)
+      ).resolves.toEqual({ settled: true });
+      expect(seatLockQueries[0]).toBe(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0)) ["seat:g-1"]'
+      );
+      expect(seatLockQueries[1]).toContain('"owedDeparture" = NULL');
+      expect(seatLockQueries[1]).toContain(`["g-1","${USER}",3]`);
+      expect(seatLockQueries).toHaveLength(2);
+      expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
+      expect(redis.srem).not.toHaveBeenCalled();
+    });
+
+    it.each([['0'], ['two'], ['1.5']])('refuses a departure named %s', async (departure) => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+      realSettlement();
+
+      await expect(
+        controller.cancelDistributionDeparture('workspace', WORKSPACE, USER, departure, SECRET)
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(seatLockQueries).toHaveLength(0);
+    });
+
+    it('answers plainly for a scope with no group, and refuses the wrong secret', async () => {
+      realSettlement();
+      await expect(
+        controller.cancelDistributionDeparture('workspace', WORKSPACE, USER, '3', SECRET)
+      ).resolves.toEqual({ settled: false });
+      await expect(
+        controller.cancelDistributionDeparture('workspace', WORKSPACE, USER, '3', 'nope')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(seatLockQueries).toHaveLength(0);
+    });
+  });
+
   describe('the scope, which decides which roster is served', () => {
     const CHANNEL = 'c-private';
 

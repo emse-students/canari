@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A salon's in-memory history is current exactly as long as the live stream that keeps it current
  * has had no gap - never "for five minutes after its load", which is what it used to be. Measured
@@ -19,6 +20,16 @@ vi.mock('$lib/services/ChannelService', () => ({
 vi.mock('$lib/utils/chat/channelCrypto', () => {
   return {
     isChannelConversationId: (id: string) => id.startsWith('channel_'),
+    decodeChannelMessagePage: vi.fn(
+      async (raw: string, rows: readonly unknown[], me: string, tally: unknown) => {
+        // The page entry decodes row by row through the stub below, as the real one does.
+        const { decodeChannelMessageRow } = await import('$lib/utils/chat/channelCrypto');
+        const out = [];
+        for (const r of rows)
+          out.push(await decodeChannelMessageRow(raw, r as never, me, tally as never));
+        return out;
+      }
+    ),
     decodeChannelMessageRow: vi.fn(async (_raw: string, row: { id: string }) => ({
       kind: 'message',
       message: {

@@ -130,6 +130,11 @@ export type CreateChannelResultDto = ChannelDto;
 export interface ChannelInviteDto {
   targetUserId: string;
   roleName?: string;
+  /**
+   * The admission this device signed for the target (channel-encryption section 25), stored on
+   * their membership row so a member can hand them the community's past.
+   */
+  admissionVoucher?: string;
 }
 
 export interface ChannelUpdateRoleDto {
@@ -230,6 +235,16 @@ export interface ChannelMemberDto {
    * (channel-encryption section 23). Absent is "not answered", never "none".
    */
   onlineDevices?: string[];
+  /**
+   * Whether this member created the community - the one member nobody else admitted. Absent from a
+   * social service older than the admission proof (channel-encryption section 25).
+   */
+  isCreator?: boolean;
+  /**
+   * The signed admission stored with this membership (channel-encryption section 25), or null when
+   * the member was admitted without one. Absent from an older social service.
+   */
+  admissionVoucher?: string | null;
 }
 
 /**
@@ -551,11 +566,17 @@ export class ChannelService {
     return res.json();
   }
 
-  /** Joins the calling user into the community behind an invite link. */
-  async acceptInvite(token: string): Promise<{ workspaceSlug: string; alreadyMember: boolean }> {
+  /**
+   * Joins the calling user into the community behind an invite link. `admissionVoucher` is the
+   * proof built from the link's fragment (channel-encryption section 25), when it carried one.
+   */
+  async acceptInvite(
+    token: string,
+    admissionVoucher?: string
+  ): Promise<{ workspaceSlug: string; alreadyMember: boolean }> {
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/api/channels/invites/${encodeURIComponent(token)}/accept`,
-      { method: 'POST' }
+      { method: 'POST', body: JSON.stringify(admissionVoucher ? { admissionVoucher } : {}) }
     );
     await this.handleError(res);
     return res.json() as Promise<{ workspaceSlug: string; alreadyMember: boolean }>;
@@ -1116,9 +1137,10 @@ export class ChannelService {
   /**
    * Of the Graine sessions this device holds, which ones the server still has messages for.
    *
-   * The retention sweep's one question. `retentionDays` comes back with the answer so the client
-   * never compiles in a copy of the window - the server owns that number, and the device needs it
-   * only to refuse dropping a session too young to have lost anything.
+   * The retention sweep's one question. `retentionDays` comes back with the answer because the
+   * server owns that number, and the device needs it only to refuse dropping a session too young to
+   * have lost anything. The sweep bounds it from below (`GRAINE_RETENTION_FLOOR_DAYS`): a remote
+   * number may lengthen a local deletion's delay, never shorten it under the product window.
    *
    * @param sessionIds At most 500; the server REFUSES a longer list rather than truncating it,
    *   because a truncated answer would read as "the rest are dead" and cost live seeds.

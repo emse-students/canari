@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { sendFullHistoryBundle, sendHistoryBundleForIds } from './groupActions';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';
@@ -122,6 +123,26 @@ describe('sendFullHistoryBundle', () => {
         { emoji: '🎉', userId: 'user-c', at: 20 },
       ],
     });
+  });
+
+  it('says so on every row it holds only as unverified, and on no other', async () => {
+    // This device marked the row: another member relayed it here with no proof. Relayed on without
+    // the flag, the next reader would take it on THIS device's word - its owner's, if it names them.
+    const mlsService = createMlsServiceStub();
+    const unverified = { ...storedMessage('m1'), restoredUnverified: true } as StoredMessage;
+
+    await sendFullHistoryBundle(GROUP, {
+      storage: storageWith([unverified, storedMessage('m2')]),
+      deviceKeyB64: 'k',
+      mlsService,
+      log: vi.fn(),
+      to: REQUESTER,
+    });
+
+    const { data } = sentBundle(mlsService);
+    const rows = data.messages as Array<Record<string, unknown>>;
+    expect(rows.find((r) => r.id === 'm1')?.authorUnproven).toBe(true);
+    expect(rows.find((r) => r.id === 'm2')).not.toHaveProperty('authorUnproven');
   });
 });
 

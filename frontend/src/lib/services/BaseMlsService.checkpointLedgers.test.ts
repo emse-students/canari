@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Same import-cycle break as the other BaseMlsService specs (auth store -> composables ->
 // mlsService -> subclasses -> BaseMlsService).
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
@@ -37,6 +38,10 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     userId: 'u',
     currentDeviceKeyB64: 'k',
     writeCheckpoint: vi.fn().mockResolvedValue(undefined),
+    // The real exclusion of the ratchets whose repair is still owed (none here).
+    owedSendBurns: new Map(),
+    unprovenSendRatchets: new Set(),
+    sendRatchetsNotDurable: BaseMlsService.prototype['sendRatchetsNotDurable'],
     ...overrides,
   };
 }

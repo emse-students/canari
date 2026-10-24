@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /** A voter id stored twice on an option must not throw each_key_duplicate in the voter list. */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';

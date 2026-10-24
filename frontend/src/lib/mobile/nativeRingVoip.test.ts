@@ -23,10 +23,10 @@ function voipHandler(): string {
 }
 
 describe('the VoIP push handler (Apple: every VoIP push reports a CallKit call)', () => {
-  it('reports on both branches, and only then completes', () => {
+  it('reports on every branch (signed out, ring, unexpected payload), and only then completes', () => {
     const body = voipHandler();
     const reports = [...body.matchAll(/CanariReportVoipCall\(/g)].length;
-    expect(reports, 'a report on the ring branch AND the unexpected-payload branch').toBe(2);
+    expect(reports, 'a report on the signed-out, ring AND unexpected-payload branches').toBe(3);
     expect(body.lastIndexOf('CanariReportVoipCall(')).toBeLessThan(body.indexOf('completion();'));
     // Synchronous: a completion dispatched later could run before a report queued behind it.
     expect(body).not.toMatch(/dispatch_async[\s\S]*completion\(\)/);

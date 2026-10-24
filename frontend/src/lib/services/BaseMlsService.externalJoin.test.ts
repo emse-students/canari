@@ -18,8 +18,11 @@ import {
 } from './BaseMlsService.keyPackageFixture';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
+import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { resetCommitRateLimit } from '$lib/mls-client/commitRateLimit';
 
 /**
  * Unit-tests the external-join ORCHESTRATION (Phase 4a) in isolation: fetch GroupInfo -> build the
@@ -92,6 +95,23 @@ describe('BaseMlsService.externalJoin', () => {
 
     expect(await externalJoin(ctx, 'g')).toEqual({ joined: false, reason: 'no_base_published' });
     expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+  });
+
+  /**
+   * AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as `runCommitTransaction` does: the
+   * tree it would join into is a copy no disk and no other tab follows.
+   */
+  it('refuses on a follower tab, before fetching or building anything', async () => {
+    const leadership = await import('$lib/mls-client/tabLeader');
+    vi.spyOn(leadership, 'getTabLeadership').mockReturnValue('follower');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = makeCtx();
+
+    await expect(externalJoin(ctx, 'g')).rejects.toBeInstanceOf(FollowerTabCommitError);
+    expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 
   // ── The refusal that must not become a `false` ──────────────────────────────
@@ -446,5 +466,80 @@ describe('BaseMlsService.externalJoin', () => {
     // breaks every later operation on the group.
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
     expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
+  });
+
+  // A 429 IS AN ANSWER, and the wait it names holds for every group of this account: the join
+  // reports it typed, and the next join does not even build a commit until it has passed.
+  it('reports a rate-limited join with its wait, and builds nothing more while the wait holds', async () => {
+    resetCommitRateLimit();
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockRejectedValue(
+      new ApiRefusalError(429, 'RATE_LIMITED', 'Commit submission HTTP error (429)', {
+        retryAfterMs: 20_000,
+      })
+    );
+
+    const first = await externalJoin(ctx, 'g');
+    expect(first).toMatchObject({ joined: false, reason: 'rate_limited' });
+    expect((first as { retryAfterMs: number }).retryAfterMs).toBeGreaterThan(19_000);
+    // Refused before the gate: the commit was built in memory and is dropped, never retried.
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
+    expect(ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
+
+    const other = makeCtx();
+    expect(await externalJoin(other, 'g2')).toMatchObject({
+      joined: false,
+      reason: 'rate_limited',
+    });
+    expect(other.joinByExternalCommit).not.toHaveBeenCalled();
+    expect(other.delivery.submitCommit).not.toHaveBeenCalled();
+    resetCommitRateLimit();
+  });
+
+  // A 409 SEAT_CLAIM_OVERTAKEN IS AN ANSWER TOO: someone else's eviction moved the group's seat
+  // generation while the server asked whether this device may join, so nothing advanced and the
+  // retry meets a fresh claim. Each refusal proves an eviction happened, which is what bounds it.
+  it('retries at once when an unrelated eviction overtook its seat claim, and joins', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit
+      .mockRejectedValueOnce(
+        new ApiRefusalError(409, 'SEAT_CLAIM_OVERTAKEN', 'Commit submission HTTP error (409)')
+      )
+      .mockResolvedValueOnce({ accepted: true, newEpoch: 6 });
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(2);
+    // The refused external commit cannot be cleared, so its group goes before the retry builds anew.
+    expect(ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
+    expect(ctx.mergePendingCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a seat claim overtaken on every attempt as a typed refusal', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockRejectedValue(
+      new ApiRefusalError(409, 'SEAT_CLAIM_OVERTAKEN', 'Commit submission HTTP error (409)')
+    );
+
+    expect(await externalJoin(ctx, 'g')).toEqual({
+      joined: false,
+      reason: 'refused',
+      serverReason: 'seat_claim_overtaken',
+    });
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(3);
   });
 });

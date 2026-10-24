@@ -3,6 +3,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { PushSecretGuard } from '../guards/push-secret.guard';
+import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import { LocksController } from './locks.controller';
 import { PushController } from './push.controller';
 import { PushToken } from '../entities/push-token.entity';
@@ -99,6 +101,10 @@ describe('the MLS add-lock - one policy, both doors', () => {
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })

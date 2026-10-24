@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The save button: a save says so, a refused gallery turns the button into the way to the settings,
  * and a failure says it failed. `saveReel` and the settings call are stand-ins.

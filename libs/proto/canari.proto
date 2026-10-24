@@ -65,7 +65,7 @@ message InboundMsg {
 // The server never sees the plaintext; it only routes opaque ciphertext blobs.
 //
 // Encoding: proto3 binary serialised with this schema, passed as raw bytes to
-// `WasmMlsClient::send_message_bytes()`.
+// `WasmMlsClient::send_authored_message_bytes()`, which appends `author_proof`.
 
 message AppMessage {
   // Unique identifier assigned by the sender (UUID string).
@@ -89,6 +89,19 @@ message AppMessage {
     // groups keep their `edit_message` system event.
     EditMsg          edit           = 13;
   }
+  // The author's signature over this message, appended by mls-core as the LAST field of the bytes
+  // (`mls-core/src/authorship.rs`). Present on a decrypted frame only when mls-core verified it
+  // against the MLS sender's leaf, so a member can relay it in a history bundle and the receiver
+  // can still check who wrote the message. Never set by TypeScript on a send.
+  AuthorProof author_proof = 14;
+}
+
+// The signature `author_proof` carries: `signature` is the author's MLS credential key over
+// lp("canari-mls-author-v1") lp(groupId) lp(author) lp(SHA-256(the AppMessage bytes before it)).
+message AuthorProof {
+  uint32 version   = 1; // 1
+  string author    = 2; // userId:deviceId
+  bytes  signature = 3;
 }
 
 // ── WebRTC Signaling ─────────────────────────────────────────────────────
@@ -269,6 +282,17 @@ message GraineBundleMsg {
   // record no answer and asked again at every launch. ADDITIVE: a reader that predates it decodes
   // an empty bundle and absorbs nothing - no seed stored, no decline walked, no line above debug.
   bool               holds_nothing = 6;
+  // ONE ANSWER, SEVERAL MESSAGES (channel-encryption section 4.4, 2026-10-22): an answer whose
+  // encoding would exceed GRAINE_BUNDLE_PAGE_MAX_BYTES is sent as `page_count` bundles, each a
+  // complete GraineBundleMsg under the same `request_id`, numbered from 0. Every seed is stored on
+  // its own and idempotently, so pages need no reassembly: any order, a duplicate is "already held",
+  // and a lost page is a set of sessions the per-session repair asks for when a row needs one (a
+  // HISTORY answer missing a page is also asked for once more at the requester's next start).
+  // `truncated` rides the LAST page only, `missing_session_ids` whichever page has room. Both 0 on
+  // an answer that fits one message - every answer before this field. ADDITIVE: a reader that
+  // predates them absorbs each page as the ordinary bundle it is, one debug line per page.
+  uint32             page_index = 7;
+  uint32             page_count = 8;
 }
 
 // ── Encrypted media attachment ───────────────────────────────────────────

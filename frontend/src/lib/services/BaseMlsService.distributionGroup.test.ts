@@ -50,6 +50,7 @@ type Ctx = ReturnType<typeof makeCtx>;
 
 /** Prototype methods invoked through `.call`, so the real implementations are the ones under test. */
 const proto = BaseMlsService.prototype as unknown as {
+  settleUnresolvedCommitFromLog(groupId: string, commitAtBase: string | null): Promise<string>;
   registerDistributionGroup(scope: DistributionScope, groupId: string): void;
   isDistributionGroup(groupId: string): boolean;
   isDistributionBaseSettled(groupId: string): boolean;
@@ -148,7 +149,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     getEpoch: vi.fn().mockReturnValue(0),
     forgetGroup: vi.fn(),
     externalJoin: vi.fn().mockResolvedValue({ joined: true }),
-    processIncomingMessage: vi.fn().mockResolvedValue(new Uint8Array([9, 9])),
+    processIncomingMessage: vi
+      .fn()
+      .mockResolvedValue({ plaintext: new Uint8Array([9, 9]), author: 'unsigned' }),
     // The durable half of the registry, and the net that collects what the drain refused - REAL,
     // because registering a group is what drives both.
     distributionGroupStore: null as ReturnType<typeof makeStore> | null,
@@ -173,6 +176,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     fetchCommitsSince: vi
       .fn()
       .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),
+    // REAL: with no unresolved commit recorded it settles nothing, which is the case here.
+    settleUnresolvedCommitFromLog: proto.settleUnresolvedCommitFromLog,
+    groupsWithPendingCommit: vi.fn(async () => []),
     registerDistributionGroup: proto.registerDistributionGroup,
     isDistributionBaseSettled: proto.isDistributionBaseSettled,
     groupInfoChannel: proto.groupInfoChannel,
@@ -738,7 +744,7 @@ describe('the durable registry', () => {
     const plaintext = new TextEncoder().encode('{"kind":"seed-request"}');
     const { ctx } = wired([{ groupId: 'g-salon', workspaceId: 'ws-1', channelId: 'chan-1' }], {
       getLocalGroups: vi.fn().mockReturnValue(['g-salon']),
-      processIncomingMessage: vi.fn().mockResolvedValue(plaintext),
+      processIncomingMessage: vi.fn().mockResolvedValue({ plaintext, author: 'unsigned' }),
     });
     await proto.hydrateDistributionGroups.call(ctx);
 
@@ -987,7 +993,7 @@ describe('a frame from an epoch this device has not reached', () => {
         if (tree.epoch < 5) {
           throw new Error(`Process error: epoch gap [msg_epoch=5, group_epoch=${tree.epoch}]`);
         }
-        return seed;
+        return { plaintext: seed, author: 'unsigned' };
       }),
       fetchCommitsSince: vi.fn(async () => ({
         commits: [4, 5, 6].map((baseEpoch) => ({ baseEpoch, proto: 'zA==' })), // 0xcc

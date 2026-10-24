@@ -38,6 +38,8 @@ const CORE_TABLES = [
   'platform_announcement_seen',
   'platform_announcements',
   'auth_sessions',
+  'restore_credentials',
+  'session_push_endings',
 ];
 
 maybe('account erasure queue against PostgreSQL', () => {
@@ -90,6 +92,12 @@ maybe('account erasure queue against PostgreSQL', () => {
         `INSERT INTO profile_changes ("userId", "actorId", "after") VALUES ($1, $1, '{}'::jsonb)`,
         [id]
       );
+      // A restore key (WP-RESTORE-1): erased by its own account column, not left to a cascade.
+      await ds.query(
+        `INSERT INTO restore_credentials (id, "userId", "sessionId", "publicKey", "cloudBackup")
+         VALUES ($1, $2, gen_random_uuid(), decode('00', 'hex'), true)`,
+        [`key-${id}`, id]
+      );
     }
     await ds.query(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [
       OTHER,
@@ -116,6 +124,8 @@ maybe('account erasure queue against PostgreSQL', () => {
     // Deactivated at once: no user row, no session, no profile trail, no block.
     expect(await count(`users WHERE id = $1`, [SUBJECT])).toBe(0);
     expect(await count(`auth_sessions WHERE "userId" = $1`, [SUBJECT])).toBe(0);
+    expect(await count(`restore_credentials WHERE "userId" = $1`, [SUBJECT])).toBe(0);
+    expect(await count(`restore_credentials WHERE "userId" = $1`, [OTHER])).toBe(1);
     expect(await count(`profile_changes WHERE "userId" = $1 OR "actorId" = $1`, [SUBJECT])).toBe(0);
     expect(await count(`user_blocks`)).toBe(0);
     // ...and the other account untouched, its history kept without the erased admin's id.
@@ -142,6 +152,10 @@ maybe('account erasure queue against PostgreSQL', () => {
     );
     // Media waits for social: it would delete the media of the posts social keeps for an association.
     expect(axios.delete.mock.calls.some(([url]: [string]) => url.includes('media'))).toBe(false);
+    // Chat-delivery waits for social too: social's removals record seat evictions there.
+    expect(axios.delete.mock.calls.some(([url]: [string]) => url.includes('chat-delivery'))).toBe(
+      false
+    );
     // Nobody completes before every token of the account has expired.
     expect(jobs.every((j: { completedAt: Date | null }) => j.completedAt === null)).toBe(true);
 

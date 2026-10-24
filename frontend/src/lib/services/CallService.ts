@@ -2,6 +2,7 @@ import { writable, get } from 'svelte/store';
 import { resolveServiceUrl } from '$lib/utils/apiUrl';
 import type { IMlsService } from '$lib/mls-client';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { holdLeafRefresh } from '$lib/mls-client/leafRefresh';
 import { canari } from '../proto/canari.js';
 import { encodeAppMessage, mkCallAnswered, mkCallHangup, mkCallInvite } from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
@@ -34,6 +35,8 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
 import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
+import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
+import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import {
@@ -505,7 +508,28 @@ export class CallService {
 
   private chatNotifier: CallChatNotifier | null = null;
 
-  constructor(private mlsService: IMlsService) {}
+  /** Releases the leaf-refresh hold this service took on its call's group, when it holds one. */
+  private releaseLeafRefreshHold: (() => void) | null = null;
+  /** The group {@link releaseLeafRefreshHold} is for. */
+  private leafRefreshHeldGroup: string | null = null;
+
+  constructor(private mlsService: IMlsService) {
+    // NO LEAF REFRESH IN A GROUP WHILE ONE OF ITS CALLS RINGS, IS SET UP OR RUNS. Each end derives
+    // the media keys from the group's CURRENT epoch (`setupEncryption`), the caller before the
+    // ring and the callee after the answer: a refresh in between - a read receipt sent while it
+    // rings is enough - gives the two ends different keys. Held from leaving `idle` until the
+    // call is over (`idle` or `ended`); a commit a person asked for is not delayed by it.
+    this.callState.subscribe((state) => this.syncLeafRefreshHold(state));
+  }
+
+  /** Takes, moves or releases the leaf-refresh hold to follow the call's state and group. */
+  private syncLeafRefreshHold(state: CallState): void {
+    const groupId = state === 'idle' || state === 'ended' ? null : this.currentGroupId;
+    if (groupId === this.leafRefreshHeldGroup) return;
+    this.releaseLeafRefreshHold?.();
+    this.releaseLeafRefreshHold = groupId ? holdLeafRefresh(groupId, 'call') : null;
+    this.leafRefreshHeldGroup = groupId;
+  }
 
   /** Registers callbacks that insert call system messages into the chat timeline. */
   public setChatNotifier(notifier: CallChatNotifier | null): void {
@@ -570,6 +594,15 @@ export class CallService {
     if (callMsg.offerSdp === 'START' || (callMsg.callId && !this.currentCallId)) {
       if (senderNorm === userNorm) {
         appendLog('[Call] ignoring invite from own account on another device');
+        return;
+      }
+      // The server's kill switch (`calls_mode`, B12): with calls closed the server refuses every
+      // call request, so an invite that reaches us anyway (a caller on an older client, or one
+      // that skipped the server) must not ring a call this estate does not allow.
+      if (!(await callsAvailableAnswered())) {
+        appendLog(
+          `[Call] invite ${callMsg.callId} in ${groupId} not rung - calls are off on the server (mode=${serverCallsMode()})`
+        );
         return;
       }
       // The conversation's call permission: the server already withheld the ring push, and the

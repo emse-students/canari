@@ -85,12 +85,15 @@ REST: those rows need a count, then a migration.
 | `LEGACY_PERMISSION_MAPPING` (`channel-role.entity.ts`; no entry here) | no `channel_roles` row holds an old key | not a version question | `channel_roles.permissions` | 1 map + 1 hook | owed: count |
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
 | State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
-| `MLS_STATE_SEAL_V2_WRITER_ENABLED` | a stable with the reader served the web AND floor >= it | YES (`v1.2.7`) | it CHANGES device data at rest | 1 line, then the encrypt worker | NOT done here, same reason |
+| `MLS_STATE_SEAL_V2_WRITER_ENABLED` | `minClientVersion` AND the web rollback floor >= the tag carrying the HARDENED v2 reader (#2074) - a v2 reader alone (`v1.2.7`) is not enough: `v1.2.7` and `v1.4.0` misread a refused v2 blob, the second as `STATE_ALTERED` | NO (floor `1.2.7`; the hardened reader is in no tag yet) | it CHANGES device data at rest | 1 line in its own PR, then the encrypt worker | NOT done: #2074 ships the reader with the writer OFF ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)) |
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
 | Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
 | `canari_post_feed_kind` drop (`posts/retiredFeedKind.ts`, run by the feed's `load`) | every device that ran a `1.2.9-alpha.2`/`.3` has opened the feed once on a later build | not a version question (alphas only) | one device-global `localStorage` key | 1 module + 1 call | remove with the first stable after `1.2.9` ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)) |
 | Plaintext native cache reader (`native_cache::open_file`/`open_line`, the `Plaintext` arm, and the one-pass migration) | floor >= the release carrying the at-rest seal | NO (unreleased) | `graine_seeds.json`, `fcm_message_cache*.ndjson` on devices not yet updated | 2 match arms + 3 migration functions | waits for the floor ([diary](#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal)) |
+| OIDC callback with no PKCE `code_verifier` (`auth.controller.ts`, `oidcCallback`) | floor >= the first stable carrying the client half, AND the `without a PKCE verifier` warning silent for a week on production | NO (unreleased) | none | 1 branch: refuse instead of warn | waits for the floor ([diary](#no-date-yet---an-oidc-callback-with-no-pkce-verifier)) |
 | `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
+| Send-ledger entry with no epoch (`sendRatchetLedger.ts`, `parseKey`) | floor past the first stable carrying #2269 | NO (unreleased) | `mls_send_ledger_<user>` in `localStorage` on devices not yet updated | 1 parse branch + 1 debt arm | waits for the floor ([diary](#no-date-yet---a-send-ledger-entry-with-no-epoch-written-by-a-client-older-than-2026-10-23)) |
+| Plaintext live key: the `"liveKey"` column, `openLiveKey`'s plaintext arm, `LivesService.sealPlaintextKeys` (migration 110) | 0 rows with `"liveKey" IS NOT NULL` on both estates, read AFTER the first deploy carrying 110 has fully replaced the previous replica | not a version question (server only) | `lives."liveKey"` | 1 arm + 1 sweep step + a migration dropping the column, the index and `lives_key_one_form` | owed: the count below, then that migration ([lives](services/lives.md#the-live-key-at-rest)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -102,6 +105,7 @@ SELECT count(*) FROM queued_message WHERE content IS NOT NULL;
 SELECT count(*) FROM channel_roles WHERE permissions ~ '(MANAGE_WORKSPACE|MANAGE_CHANNELS|MANAGE_ROLES|MODERATE_MESSAGES|INVITE_USERS|SEND_MESSAGES)';
 SELECT count(*) FROM forms WHERE items::text LIKE '%"dependsOn": "%';
 SELECT count(*) FROM channel_messages WHERE "signature" IS NULL AND "senderSessionId" IS NOT NULL;
+SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 ```
 
 ---
@@ -142,6 +146,34 @@ knows the type), on BOTH estates, once BOTH Play AND the App Store serve that ve
 ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
 pins it, run by someone else.
 
+### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
+
+**Site:** `parseKey` and `sendRatchetDebt` in `frontend/src/lib/mls-client/sendRatchetLedger.ts`.
+**Shim (2026-10-23):** the send ledger is keyed `<groupId>@<epoch>` since #2269
+([mls-desync-prevention](protocols/mls-desync-prevention.md#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)).
+A device updated with frames counted but not checkpointed still holds entries keyed by the group
+alone, in `localStorage`. They are read as their writer counted them, against the epoch the state is
+restored at, and forgotten once settled at a load (the burn's checkpoint commits them).
+**Removal condition:** a CLIENT FLOOR - `minClientVersion` past the first stable carrying #2269. An
+install below it keeps writing epoch-less entries; above it, each one is settled at its first load
+and gone. Then `parseKey`'s `null` epoch and its arm in `sendRatchetDebt` go.
+
+### No date yet - a bare `userId` MLS credential, written by builds before 2026-07-24
+
+**Site:** `canonical_user_of` / `is_legacy_bare_identity` in `frontend/mls-core/src/device_trust.rs`,
+and its twin `canonicalUserOf` in `frontend/src/lib/mls-client/leafIdentity.ts`.
+**Shim (2026-10-22):** builds before device identities (61ac71d7c9, 2026-07-24) minted a credential
+naming the user alone, with no `:` and no device, and a tree a device still holds may carry such a leaf.
+The one canonical reader treats it as naming its user (ASCII-lowercased) and NO device. So
+`remove_members_for_users` removes it with its user, and the native push sender check accepts it as
+that user. `canonical_identity` still refuses it, so it is never pinned and never matches
+`user:device`. Tests: `tests/legacy_bare_leaf.rs`, `a_push_from_a_bare_legacy_leaf_is_its_users`
+(`background.rs`) and the bare cases of `leafIdentity.test.ts`.
+**Removal condition:** no held tree carries a bare leaf. This is measured on the device: every load's
+state-composition line ends `N legacy bare leaves` (`MlsManager::legacy_bare_leaves`). Remove the shim
+when that reads 0 on the bench phones and on the rig's clients, and no build older than 61ac71d7c9 can
+still commit into a group. Then the bare arm goes from both readers, and a bare identity names nobody.
+
 ### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 
 **Site:** `flushProfileBatch` in `frontend/src/lib/stores/user.ts` (`legacyAnswer`).
@@ -155,6 +187,29 @@ and `displayName.ts` warned, backed off 120 s and asked again.
 **Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
+
+### No date yet - an OIDC callback with no PKCE verifier
+
+**Site:** `oidcCallback` in `apps/core-service/src/auth/auth.controller.ts`, the branch that logs
+`OIDC callback without a PKCE verifier` and redeems the code anyway.
+**Shim (2026-10-23):** core-service forwards a `code_verifier` to MiConnect when the client sends one,
+and says so in `GET /api/version` (`oidcPkce: true`). A client sends a `code_challenge` only after
+reading that capability ([auth](frontend/modules/auth.md#login-flow)), so a callback with no verifier
+is one of: a build older than the client half, a new build that read no capability, or a caller that
+is not the app.
+**The order the two halves ship in, and the constraint it adds:** core-service first, the client
+later. A core-service older than the capability DROPS the verifier, and MiConnect refuses a
+challenged code redeemed without one, so a client that challenged it could not sign in. The
+capability makes a new client facing an old server send no challenge at all. That is a CAPABILITY,
+not a fallback: it states what the server CAN do, read before the request, and there is no failed
+path behind it. **core-service is never rolled back below the first release whose `/api/version`
+publishes `oidcPkce: true`**: a client that read the capability before the rollback still
+challenges, and its sign-in fails against the older server until it reads `/api/version` again.
+**Removal condition:** `minClientVersion` at or above the first stable carrying the client half, on
+both estates with both stores serving it, AND the warning silent on production for a week. Then the
+branch becomes a 400, which is what makes PKCE REQUIRED rather than offered. It also needs the
+redirect hardening in [backlog](backlog.md#p2---the-mobile-sign-in-returns-through-a-custom-scheme-pkce-binds-the-code-not-the-app-2026-10-23)
+to close what PKCE alone does not.
 
 ### No date yet - the exclusions route answered without `withheld`, by a server older than 2026-10-22
 
@@ -267,6 +322,23 @@ The v1 WRITER is already gone (G2-5): `sealWithGraine` lives only in the test fi
   count above 0 after the date: then name the salon, as the section below says.
   On the same day, `channel_messages."signature"` becomes `NOT NULL` (a migration), and the DTO's
   `signature?` and the `?? null` in `ChannelService.sendMessage` go with it.
+
+### No date yet - a restored private message with no author signature, from a client before signed authorship
+
+**Site:** `vetRestoredMessage` in `frontend/src/lib/utils/chat/restoredAuthorship.ts`, the
+`unverified` verdict, and the `restoredUnverified` marker it writes (`MessageMetadata.svelte`).
+**Shim:** a `history_bundle` message with no author proof is KEPT and drawn normally, under a small
+"non verifie" marker that explains itself on tap ([history-reconciliation](protocols/history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22)).
+It exists because every message a client sent before signed authorship carries no proof, and
+hiding them would empty restored history.
+**What is NOT shimmed (lead decision, 2026-10-22):** an edit, deletion or reaction in a bundle
+still needs its author's signature, and an unsigned one is dropped. The cost is accepted: a
+mutation made by an author on an older client is missing from restored history until that author
+updates (their later, signed mutations travel normally).
+**Removal condition:** `minClientVersion` is a signing build on BOTH stores, AND the oldest unsigned
+message has left every retention window that can still restore it. Then an unsigned message is
+refused like any other proof-less entry, and the marker, its strings and the `restoredUnverified`
+field go with it.
 
 ### No date yet - the salon push HELD for its seed, for a sender that attaches no seed frame
 

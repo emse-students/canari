@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE IN-APP DATE FIELD - a draft until "Valider", in the native input's own value format.
  *

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * CANARI'S PLAYER REPLACES THE ENGINE'S `controls` IN EVERY VIEWER (user, 2026-10-01).
  *
@@ -342,4 +343,78 @@ it('starts at 0 for a file that was not played inline', () => {
   withDuration(video, 30);
   video.dispatchEvent(new Event('loadedmetadata'));
   expect(video.currentTime).toBe(0);
+});
+
+/**
+ * THE REEL VIEWER'S MINIMAL PLAYER (user, 2026-10-23): a thin line on the bottom edge and nothing
+ * else - no timecode, no control row, no play or sound button - a tap on the picture plays or
+ * pauses with a brief glyph that is the tap's feedback and never a state.
+ */
+function mountMinimal(safeBottom = true) {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const component = mount(VideoPlayer, {
+    target,
+    props: { src: 'blob:reel', minimal: true, safeBottom },
+  });
+  mounted.push(() => unmount(component));
+  flushSync();
+  const video = target.querySelector('video')!;
+  return { target, root: target.querySelector('[role="group"]') as HTMLElement, video };
+}
+
+it('minimal: draws a bare line, with no timecode, button or control row', () => {
+  const { target, video } = mountMinimal();
+  video.dispatchEvent(new Event('loadeddata'));
+  flushSync();
+  expect(target.querySelectorAll('button').length).toBe(0);
+  expect(target.textContent).not.toMatch(/\d:\d\d/);
+  const slider = target.querySelector('[role="slider"]')!;
+  expect(slider.getAttribute('aria-label')).toBe(m.video_seek_label());
+  expect(slider.closest('[data-video-controls]')!.className).toContain('z-40');
+  expect(target.querySelector('[data-video-line]')!.className).toContain('h-0.5');
+  expect(target.querySelector('[data-video-handle]')!.className).toContain('opacity-0');
+});
+
+it('minimal: the line pads for the home indicator only when the player reaches the bottom', () => {
+  const { target } = mountMinimal(true);
+  const bar = target.querySelector<HTMLElement>('[data-video-progress]')!;
+  expect(bar.getAttribute('style')).toContain('--safe-area-inset-bottom');
+  const other = mountMinimal(false);
+  expect(other.target.querySelector('[data-video-progress]')!.getAttribute('style')).toBeNull();
+});
+
+it('minimal: shows no glyph at load, at an engine pause, or at the end', () => {
+  const { target, video } = mountMinimal();
+  video.dispatchEvent(new Event('loadeddata'));
+  video.dispatchEvent(new Event('pause'));
+  video.dispatchEvent(new Event('ended'));
+  flushSync();
+  expect(target.querySelector('[data-video-glyph]')).toBeNull();
+});
+
+it('minimal: a tap plays or pauses and shows the glyph of what it did', () => {
+  const { target, root, video } = mountMinimal();
+  video.dispatchEvent(new Event('loadeddata'));
+  root.click();
+  flushSync();
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+  expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe('play');
+  startPlaying(video);
+  root.click();
+  flushSync();
+  expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
+  expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
+    'pause'
+  );
+});
+
+it('minimal: the sound follows the app-wide answer changed elsewhere (the rail)', () => {
+  const { video } = mountMinimal();
+  expect(video.muted).toBe(true);
+  videoSound.setMuted(false);
+  flushSync();
+  expect(video.muted).toBe(false);
 });

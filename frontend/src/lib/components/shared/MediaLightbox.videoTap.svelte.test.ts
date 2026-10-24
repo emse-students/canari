@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A TAP ON A VIDEO IS THE PLAYER'S, ANYWHERE ON IT (user, 2026-10-02: *"sur mobile un appui n'importe
  * ou sur l'ecran de la video ouverte en grand est un toggle des controles"*).

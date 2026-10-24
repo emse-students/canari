@@ -7,8 +7,11 @@ import {
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isGraineReady, rawChannelId, requireGraineRuntime, workspaceForChannel } from './runtime';
-import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
-import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { treeHoldsDevice } from '$lib/mls-client/leafIdentity';
+import {
+  CommitRefusedError,
+  SEAT_CLAIM_OVERTAKEN_REASON,
+} from '$lib/mls-client/CommitRefusedError';
 import { groupSkippedByReason } from '$lib/mls-client/skippedKeyPackage';
 
 /**
@@ -62,21 +65,17 @@ export type NewcomerAdmission =
  *
  * PURE, so the admit decision is asserted without an MLS group. A device whose `userId:deviceId`
  * leaf already stands was admitted already - by its own external commit, or by another admitter -
- * and adding it again is the duplicate leaf. Compared case-insensitively, like the roster diff:
- * one side is stored, the other minted.
+ * and adding it again is the duplicate leaf. Compared under the one canonical identity Rust binds
+ * and pins by (`treeHoldsDevice`): the user half without case, the device half exact.
  */
 export function devicesToAdmit(input: {
   leafIdentities: string[];
   newcomerUserId: string;
   devices: NewcomerDevice[];
 }): NewcomerDevice[] {
-  const newcomer = input.newcomerUserId.toLowerCase();
-  const leaves = new Set(
-    input.leafIdentities
-      .filter((identity) => userIdOfLeaf(identity) === newcomer)
-      .map((identity) => identity.toLowerCase())
+  return input.devices.filter(
+    (d) => !treeHoldsDevice(input.leafIdentities, input.newcomerUserId, d.deviceId)
   );
-  return input.devices.filter((d) => !leaves.has(`${newcomer}:${d.deviceId.toLowerCase()}`));
 }
 
 /**
@@ -208,7 +207,11 @@ export async function admitNewcomerToDistributionGroup(
         // get, and a commit for an epoch they are not in yet is a frame they can never open.
         result = await mlsService.addMembersBulk(
           groupId,
-          missing.map((d) => ({ deviceId: d.deviceId, keyPackage: d.keyPackage })),
+          missing.map((d) => ({
+            deviceId: d.deviceId,
+            keyPackage: d.keyPackage,
+            userId: newcomer,
+          })),
           missing.map((d) => `${newcomer}:${d.deviceId}`)
         );
         break;
@@ -217,6 +220,16 @@ export async function admitNewcomerToDistributionGroup(
         if (e instanceof CommitRefusedError && caughtUpTo > builtOn) {
           log(
             `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: the Add built on epoch ${builtOn} lost to a commit (${e.reason}); caught up to ${caughtUpTo} - re-reading the tree`
+          );
+          continue;
+        }
+        // A WHOLE-COMMIT REFUSAL THAT MOVED NOTHING: an unrelated eviction overtook this Add's seat
+        // claim on every submission `runCommitTransaction` made, so the epoch is where it was and
+        // the tree is re-read - an evicted device may have left it - and the Add rebuilt at once.
+        // Termination is still a proof - each such refusal is an eviction that landed in between.
+        if (e instanceof CommitRefusedError && e.reason === SEAT_CLAIM_OVERTAKEN_REASON) {
+          log(
+            `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: the Add built on epoch ${builtOn} was refused because an unrelated eviction overtook its seat claim - rebuilding`
           );
           continue;
         }

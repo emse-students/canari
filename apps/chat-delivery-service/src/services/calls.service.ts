@@ -25,6 +25,7 @@ import { isBlockedBetween } from '../utils/user-blocks';
 import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
 import { voipRingPayload } from './call-ring-payload';
+import { incomingCallAlertBody } from './push-payload';
 import {
   METER_TIMEOUT_MS,
   TurnMeterUnavailableError,
@@ -145,6 +146,9 @@ export interface SiblingCallStatusResponse {
   callId?: string;
   groupId?: string;
 }
+
+/** The ring payload keys that name the caller or the conversation: never sent to an iPhone. */
+const CALL_NAME_FIELDS: ReadonlySet<string> = new Set(['callerName', 'senderName', 'groupName']);
 
 const USER_CALL_PRESENCE_TTL_SEC = 2 * 60 * 60;
 /** The longest call a room binding outlives: past it the room id names nothing. */
@@ -845,7 +849,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       const delivered =
         pt.platform === 'ios' && pt.voipToken
           ? voipReady && (await this.ringIosVoip(pt, { groupId, callId, callerId }))
-          : fcmReady && (await this.ringViaFcm(pt, dataFields, callerName, groupName));
+          : fcmReady && (await this.ringViaFcm(pt, dataFields));
       if (delivered) rang++;
     }
     this.logger.log(`[ring] call=${callId} group=${groupId} rang=${rang}/${tokens.length} devices`);
@@ -1091,34 +1095,51 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * FCM ring delivery: Android gets the data payload (native CallStyle notification);
-   * legacy iOS (no voipToken) gets a visible alert banner built by FCM's APNs relay.
+   * an iPhone with no voipToken gets a visible alert banner built by FCM's APNs relay.
+   *
+   * **That alert is GENERIC** (owner, 2026-10-22, calls.md B2'): until a native ring exists it is
+   * titled "Canari" and reads "Appel entrant" / "Incoming call" in the device's language, with no
+   * caller and no conversation name - neither in the alert nor in the payload keys, since FCM
+   * merges `data` into the APNs payload too. The names stay in the Android data payload, which the
+   * native layer there gates on the callee's own permission.
    */
-  private async ringViaFcm(
-    pt: PushToken,
-    dataFields: Record<string, string>,
-    callerName: string,
-    groupName: string
-  ): Promise<boolean> {
+  private async ringViaFcm(pt: PushToken, dataFields: Record<string, string>): Promise<boolean> {
+    // Names removed for iOS: `...anonymous` below and FCM's own `data` both reach the APNs payload.
+    const toIos = pt.platform === 'ios';
+    const anonymous = Object.fromEntries(
+      Object.entries(dataFields).filter(([key]) => !CALL_NAME_FIELDS.has(key))
+    );
     try {
       await getMessaging().send({
         token: pt.token,
-        data: dataFields,
+        data: toIos ? anonymous : dataFields,
         android: { priority: 'high', ttl: 60_000 },
         apns: {
           payload: {
             aps: {
               alert: {
-                title: callerName || 'Canari',
-                body: groupName
-                  ? `\u{1f4de} Appel entrant - ${groupName}`
-                  : '\u{1f4de} Appel entrant',
+                title: 'Canari',
+                body: incomingCallAlertBody(pt.locale),
               },
               sound: 'default',
               'mutable-content': 1,
             },
-            ...dataFields,
+            ...anonymous,
           },
-          headers: { 'apns-push-type': 'alert', 'apns-priority': '10' },
+          headers: toIos
+            ? {
+                'apns-push-type': 'alert',
+                'apns-priority': '10',
+                // Bounds APNs store-and-forward like Android's 60 s ttl: a phone that was off must not
+                // be handed a ring for a call long over. A DELIVERED banner is not touched by this -
+                // call_ring_end and app activation remove it. The collapse id replaces a re-sent ring.
+                'apns-expiration': String(Math.floor(Date.now() / 1000) + CALL_RING_TIMEOUT_SEC),
+                // APNs refuses a collapse id over 64 bytes (a callId may be up to 128): none then.
+                ...(Buffer.byteLength(dataFields.callId) <= 64
+                  ? { 'apns-collapse-id': dataFields.callId }
+                  : {}),
+              }
+            : { 'apns-push-type': 'alert', 'apns-priority': '10' },
         },
       });
       return true;

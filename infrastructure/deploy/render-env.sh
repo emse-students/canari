@@ -201,6 +201,9 @@ min_length() {
   # report with 503 LIVE_REPORT_SIGNING_UNAVAILABLE.
   LIVE_REPORT_SIGNING_KEY) printf '32' ;;
   LYDIA_KEY_ENCRYPTION_SECRET) printf '32' ;;
+  # Seals each live's key at rest (migration 110); shorter, social-service refuses every live start
+  # with 503 LIVE_KEY_SEALING_UNAVAILABLE.
+  LIVE_KEY_ENCRYPTION_SECRET) printf '32' ;;
   esac
 }
 
@@ -213,6 +216,20 @@ whole_number() {
   CLOUDFLARE_TURN_MONTHLY_BUDGET_GB) return 0 ;;
   esac
   return 1
+}
+
+# ── Enumerated values ─────────────────────────────────────────────────────────
+# A value the service reads as ONE OF A FEW WORDS. core-service maps any LYDIA_ENV other than
+# `production` to the sandbox base URL, so a typo such as `prod` would silently send production's
+# Provider pair to the sandbox. Prints the accepted words, space-separated, or nothing when the key
+# is free-form. The list belongs to an ENVIRONMENT: production accepts `production` and nothing
+# else (user, 2026-10-23), so pointing it at the sandbox needs a deliberate edit of this function,
+# in a pull request, rather than a secret typed by hand. (Dev skips the row; its compose pins the
+# sandbox as a literal.)
+allowed_values() {
+  case "$1:$2" in
+  LYDIA_ENV:prod) printf 'production' ;;
+  esac
 }
 
 # ── Pass 1: resolve everything, and fail before writing anything ─────────────
@@ -289,6 +306,18 @@ while IFS=$'\t' read -r key prod dev source note; do
   if whole_number "$key" && ! [[ "$value" =~ ^[0-9]{1,15}$ ]]; then
     printf '::error::%s is set for the %s environment but is not a whole number - %s
 '       "$key" "$ENVIRONMENT" "$note" >&2
+    MISSING=1
+    continue
+  fi
+
+  allowed="$(allowed_values "$key" "$ENVIRONMENT")"
+  accepted=0
+  for word in $allowed; do
+    if [ "$value" = "$word" ]; then accepted=1; fi
+  done
+  if [ -n "$allowed" ] && [ "$accepted" -eq 0 ]; then
+    printf '::error::%s is set for the %s environment to "%s", which is not one of: %s - %s\n' \
+      "$key" "$ENVIRONMENT" "$value" "$allowed" "$note" >&2
     MISSING=1
     continue
   fi

@@ -37,11 +37,17 @@ export interface SharedFileEntry {
 export interface IncomingSharePayload {
   text: string;
   files: SharedFileEntry[];
+  /**
+   * The conversation id the member picked among Android's share-sheet suggestions (lot S5), or
+   * null. A HINT for the picker, which preselects it only when the signed-in account holds that
+   * conversation - never a destination by itself: the member still confirms.
+   */
+  suggested?: string | null;
 }
 
 let pending = $state<IncomingSharePayload | null>(null);
 let target = $state<string | null>(null);
-/** The share epoch of the held share (0 outside the Android app, which has none). */
+/** The share epoch of the held share (0 outside the mobile apps, which have none). */
 let pendingEpoch = 0;
 /**
  * The epoch of the last sign-out this page saw (`fence`): an offer from an older epoch is refused.
@@ -84,10 +90,29 @@ export const incomingShare = {
         'replaced by a newer share'
       );
     }
-    appendLog(`[SHARE] offered: ${text.length} chars, ${payload.files.length} file(s)`);
-    pending = { text, files: payload.files };
+    const suggested = payload.suggested ?? null;
+    appendLog(
+      `[SHARE] offered: ${text.length} chars, ${payload.files.length} file(s), suggestion=${suggested !== null}`
+    );
+    pending = { text, files: payload.files, suggested };
     pendingEpoch = epoch;
     target = null;
+    return true;
+  },
+  /**
+   * A share made INSIDE Canari - a post's or a reel's link sent from its share sheet
+   * (`posts/sharePost.ts`) - offered with its destination already picked, in one step, so the
+   * "Envoyer a..." picker of `IncomingShareHost` never opens for it. It is a text and no file, and
+   * it travels the same road as a share from another app: the landing, then the composer, then the
+   * member's own Send.
+   *
+   * Its epoch is the FLOOR: it was made by the page now signed in, after every sign-out this page
+   * has seen, so the fence cannot refuse it - and a sign-out still drops it (`drop`, called by
+   * `eraseIncomingShare` before anything else).
+   */
+  offerTo(text: string, conversationId: string): boolean {
+    if (!this.offer({ text, files: [] }, floor)) return false;
+    this.chooseTarget(conversationId);
     return true;
   },
   /** Records the destination the member picked (a conversation id, as `notifNav` lands on). */

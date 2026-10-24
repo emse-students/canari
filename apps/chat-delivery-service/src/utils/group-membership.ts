@@ -1,8 +1,15 @@
+import { Logger } from '@nestjs/common';
 import { IsNull, type EntityManager } from 'typeorm';
+import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
-import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { Group } from '../entities/group.entity';
+import { heldKeyPackages, takeSharedSeatLock } from './seat-eviction';
+
+const seatsLogger = new Logger('GroupMembership');
+
+const logger = new Logger('GroupMembership');
 
 /**
  * Enrols a user into a group at the user level, and leaves an enrolment that already exists
@@ -37,6 +44,26 @@ import { QueuedMessage } from '../entities/queued-message.entity';
  * Every column is `timestamp WITHOUT time zone`, so the stated invariant is that this container
  * runs in UTC (measured on production 2026-10-14, as is Postgres) - see history-reconciliation.
  *
+ * **AND IT RECORDS AN ADMISSION THAT PRECEDED IT** (review of #2226). When a device row of this
+ * person in this group is older than the enrolment - a commit admitted an invitee who came online
+ * later - its instant goes on the interval as `admittedAt`, so the arrival no longer lives only in
+ * a row that revoking the device deletes. It is read BEFORE the insert and written with it, so an
+ * interval that already exists is left alone with whatever it recorded. A device revoked between
+ * its admission and the enrolment is not recorded: the arrival is then the enrolment, later, which
+ * costs that person history and hands nobody anything.
+ *
+ * **ONLY A ROW YOUNGER THAN THE PERSON'S LAST DEPARTURE COUNTS** (review of #2254). A removal deletes
+ * the device rows, then closes the interval in a separate transaction, and a `registerDevice`
+ * running in between can leave a pending row from the PREVIOUS membership. Taken as the re-add's
+ * admission, it would date the new stretch from before the removal, and `for` would again answer
+ * for people added while the person was out. So the read is bounded by the latest `leftAt`.
+ *
+ * **TWO CLOCKS AGAIN.** The device row's instant is the database's, `joinedAt` and `leftAt` are this
+ * process's. A database clock running AHEAD makes a genuine earlier admission look no earlier than
+ * the enrolment, and nothing is recorded - the arrival is then the enrolment, later: history lost,
+ * nothing handed out. The same skew can make a row written just after a departure read as before
+ * it, with the same outcome.
+ *
  * @param manager Entity manager to run on - pass the transaction's manager where one is open, so
  *                the enrolment commits with the device memberships beside it.
  * @param groupId Group being joined.
@@ -54,13 +81,113 @@ export async function ensureGroupMember(
     .values({ groupId, userId, role: 'member' as const })
     .orIgnore()
     .execute();
-  await manager
+  const joinedAt = new Date();
+  // Only a row of THIS stretch may stand for its admission: one older than the person's last
+  // departure belongs to a previous membership (see the docstring).
+  const previous = await manager
+    .getRepository(GroupMembershipInterval)
+    .createQueryBuilder('i')
+    .select('MAX(i.leftAt)', 'lastLeftAt')
+    .where('i.groupId = :groupId', { groupId })
+    .andWhere('i.userId = :userId', { userId })
+    .getRawOne<{ lastLeftAt: Date | string | null }>();
+  const lastLeftAt = previous?.lastLeftAt ? new Date(previous.lastLeftAt) : null;
+  const deviceQuery = manager
+    .getRepository(DeviceGroupMembership)
+    .createQueryBuilder('d')
+    .select('MIN(d.createdAt)', 'firstDeviceAt')
+    .where('d.groupId = :groupId', { groupId })
+    .andWhere('d.userId = :userId', { userId });
+  if (lastLeftAt) deviceQuery.andWhere('d.createdAt > :lastLeftAt', { lastLeftAt });
+  const earliest = await deviceQuery.getRawOne<{ firstDeviceAt: Date | string | null }>();
+  const firstDeviceAt = earliest?.firstDeviceAt ? new Date(earliest.firstDeviceAt) : null;
+  const admittedAt =
+    firstDeviceAt && firstDeviceAt.getTime() < joinedAt.getTime() ? firstDeviceAt : null;
+  const opened = await manager
     .createQueryBuilder()
     .insert()
     .into(GroupMembershipInterval)
-    .values({ groupId, userId, joinedAt: new Date(), leftAt: null })
+    .values({ groupId, userId, joinedAt, leftAt: null, admittedAt })
     .orIgnore()
+    .returning(['id'])
     .execute();
+  if (admittedAt && ((opened.raw as unknown[] | undefined) ?? []).length > 0) {
+    logger.debug(
+      `[GROUP_ENROL] group=${groupId.slice(0, 8)} user=${userId.slice(0, 8)} admitted ${joinedAt.getTime() - admittedAt.getTime()} ms before enrolment - arrival recorded on the interval`
+    );
+  }
+}
+
+/** What {@link writePendingSeats} did: the seats written, or why none was. */
+export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster';
+
+/**
+ * Writes `pending` device memberships for `deviceIds` of `userId` in `groupId` - the seats a member
+ * then fulfils with an Add and a Welcome - UNDER THE GROUP'S SEAT LOCK, against a re-read made
+ * under it.
+ *
+ * A pending seat read off an unlocked roster could be written after a removal or a group's end
+ * had already run, for a person no longer in it. Under the lock (shared: writers of seats never
+ * wait for each other, an eviction takes it exclusive) the group row and the roster row are read
+ * in the one order (`utils/seat-eviction.ts`), so a removal either ran before - and the roster
+ * read finds no row - or waits, then deletes what this wrote.
+ *
+ * @param enrol true for an invite acceptance, which writes the roster row itself in the same
+ *   transaction ({@link ensureGroupMember}); false for a device registration, which writes seats
+ *   only where its owner is ALREADY on the roster.
+ * @param manager a NON-transactional manager - this opens the transaction itself.
+ */
+export async function writePendingSeats(
+  manager: EntityManager,
+  groupId: string,
+  userId: string,
+  deviceIds: readonly string[],
+  enrol: boolean
+): Promise<PendingSeatsOutcome> {
+  return manager.transaction(async (m) => {
+    await takeSharedSeatLock(m, groupId);
+    const [group] = await m.getRepository(Group).find({
+      where: { id: groupId },
+      select: { id: true, deletedAt: true },
+      lock: { mode: 'pessimistic_read' },
+    });
+    if (!group || group.deletedAt) return 'group_gone';
+    if (enrol) {
+      await ensureGroupMember(m, groupId, userId);
+    } else {
+      const seat = await m.getRepository(GroupMember).findOne({
+        where: { groupId, userId },
+        lock: { mode: 'pessimistic_read' },
+      });
+      if (!seat) return 'not_on_roster';
+    }
+    // Each row only beside its device's key package, read `FOR SHARE` under the lock
+    // ({@link heldKeyPackages}): a device of an account being erased gets none.
+    const keyed = await heldKeyPackages(
+      m,
+      deviceIds.map((deviceId) => ({ userId, deviceId }))
+    );
+    const writable = deviceIds.filter((deviceId) => keyed.has(`${userId}:${deviceId}`));
+    if (writable.length < deviceIds.length) {
+      seatsLogger.warn(
+        `[PENDING_SEATS] group=${groupId} user=${userId.slice(0, 8)} ` +
+          `${deviceIds.length - writable.length} device(s) NOT seated - no key package under the ` +
+          `seat lock (the account or device is being erased)`
+      );
+    }
+    if (writable.length > 0) {
+      await m
+        .createQueryBuilder()
+        .insert()
+        .into(DeviceGroupMembership)
+        .values(
+          writable.map((deviceId) => ({ userId, deviceId, groupId, status: 'pending' as const }))
+        )
+        .orIgnore()
+        .execute();
+    }
+    return 'written';
+  });
 }
 
 /**
@@ -116,14 +243,15 @@ export async function endDeviceMemberships(
     ...(deviceId !== undefined ? { deviceId } : {}),
     ...(groupId !== undefined ? { groupId } : {}),
   };
-  const memberships = await manager
-    .getRepository(DeviceGroupMembership)
-    .delete({ userId, ...narrowing });
+  // The queue, then the device rows: the one delete order (`utils/seat-eviction.ts`).
   const queued = await manager.getRepository(QueuedMessage).delete({
     recipientId: userId,
     ...narrowing,
     ...(queue === 'welcomes' ? { isWelcome: true } : {}),
   });
+  const memberships = await manager
+    .getRepository(DeviceGroupMembership)
+    .delete({ userId, ...narrowing });
   return { memberships: memberships.affected ?? 0, queued: queued.affected ?? 0 };
 }
 
@@ -260,8 +388,14 @@ export function exclusionWindows(
  * production 2026-10-21, 4 of the 24 members who joined a group conversation late held a device row up
  * to 268 hours before their recorded first interval, and their next device would have lost that span.
  *
+ * **A device row is not durable, so the enrolment copies it onto the interval** (`admittedAt`,
+ * migration 033, review of #2226): revoking a device deletes its rows, and a late-enrolled member's
+ * first row was the only record of their arrival, so their next device lost the span. The first
+ * arrival is therefore the earliest of every interval's `joinedAt` and `admittedAt` and of the
+ * device rows still present - the rows still count for an invitee admitted and not yet enrolled.
+ *
  * **Two clocks, bounded.** An interval is stamped by this process (`new Date()`), a device row by the
- * database (`CreateDateColumn`, the transaction's start). The admitting transaction commits BEFORE
+ * database (`CreateDateColumn`, the transaction's start; `admittedAt` is that instant, copied). The admitting transaction commits BEFORE
  * the commit that lets the device read anything is fanned out, so the database instant can only be
  * early, by at most that one transaction - which can hand the newcomer frames sealed at the epoch
  * before theirs, received in those milliseconds. Unifying the clocks needs a column and a migration
@@ -278,13 +412,13 @@ export function exclusionWindows(
  *
  * Pure, so the arithmetic is tested without a database.
  *
- * @param intervals one person's intervals in one group, in any order.
+ * @param intervals one person's intervals in one group, in any order; `admittedAt` as recorded.
  * @param beforeFirstArrival true for a group conversation, false for a 1:1.
  * @param firstDeviceAt when the person's earliest device row in the group was written, or `null`.
  * @param groupCreatedAt when the group row was written, or `null` when it is not known.
  */
 export function withheldWindows(
-  intervals: ReadonlyArray<{ joinedAt: Date; leftAt: Date | null }>,
+  intervals: ReadonlyArray<{ joinedAt: Date; leftAt: Date | null; admittedAt?: Date | null }>,
   beforeFirstArrival: boolean,
   firstDeviceAt: Date | null,
   groupCreatedAt: Date | null = null
@@ -292,7 +426,7 @@ export function withheldWindows(
   const gaps = exclusionWindows(intervals);
   if (!beforeFirstArrival) return gaps;
   const arrivals = [
-    ...intervals.map((i) => i.joinedAt.getTime()),
+    ...intervals.map((i) => stretchStart(i)),
     ...(firstDeviceAt ? [firstDeviceAt.getTime()] : []),
   ];
   if (arrivals.length === 0) return [{ from: 0, until: null }];
@@ -304,6 +438,16 @@ export function withheldWindows(
     return gaps;
   }
   return [{ from: 0, until: firstArrival }, ...gaps];
+}
+
+/**
+ * When a stretch of membership began, in server milliseconds: its recorded admission when one
+ * preceded the enrolment, else the enrolment. The start of the person's presence, never the end of
+ * a gap - {@link exclusionWindows} reads `joinedAt` alone.
+ */
+export function stretchStart(interval: { joinedAt: Date; admittedAt?: Date | null }): number {
+  const joined = interval.joinedAt.getTime();
+  return interval.admittedAt ? Math.min(joined, interval.admittedAt.getTime()) : joined;
 }
 
 /**

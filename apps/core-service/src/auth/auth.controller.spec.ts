@@ -132,7 +132,8 @@ describe('AuthController sessions', () => {
       {
         erasureState: jest.fn().mockResolvedValue('none'),
         confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
-      } as never
+      } as never,
+      {} as never // RestoreCredentialsService: no restore route here
     );
   });
 
@@ -159,7 +160,8 @@ describe('AuthController sessions', () => {
         {
           erasureState: jest.fn().mockResolvedValue('none'),
           confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
-        } as never
+        } as never,
+        {} as never // RestoreCredentialsService: no restore route here
       );
 
     const cookieOptionsFor = async (origin: string): Promise<Record<string, unknown>> => {
@@ -242,9 +244,40 @@ describe('AuthController sessions', () => {
       const cookie = jwt.verify(out.cookies['canari_refresh'], JWT_SECRET) as {
         sid: string;
         jti: string;
+        type?: string;
       };
       expect(cookie.sid).toBe('sid-1');
       expect(cookie.jti).toBe('jti-2');
+      // The refresh credential is typed as such and never carries the admin claim: only the
+      // short-lived access token may assert a role.
+      expect(cookie.type).toBe('refresh');
+      expect(cookie).not.toHaveProperty('admin');
+    });
+
+    it('mints an access token naming the session it was refreshed from', async () => {
+      sessions.rotate.mockResolvedValue({
+        status: 'rotated',
+        tokenId: 'jti-2',
+        expiresAt: new Date(Date.now() + 1000),
+      });
+      const req = makeReq({
+        cookies: {
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-1',
+            jti: 'jti-1',
+          }),
+        },
+      });
+
+      const body = await controller.refreshToken(req, makeRes().res);
+
+      const access = jwt.verify(body.access_token, JWT_SECRET) as { sub: string; sid?: string };
+      // `type: 'access'` is what every websocket handshake checks: losing it breaks them silently.
+      expect(access).toEqual(
+        expect.objectContaining({ sub: 'user-1', sid: 'sid-1', type: 'access' })
+      );
     });
 
     it('refuses a replayed token and clears the cookie', async () => {
@@ -518,12 +551,13 @@ describe('AuthController sessions', () => {
         {
           erasureState: jest.fn().mockResolvedValue(erasure.before),
           confirmAfterSignIn: jest.fn().mockResolvedValue(erasure.after),
-        } as never
+        } as never,
+        {} as never // RestoreCredentialsService: no restore route here
       );
     }
 
     /** Authentik's token endpoint (with or without an id_token), then its userinfo. */
-    function authentikAnswers(idToken?: string) {
+    function authentikAnswers(idToken?: string, sub = 'user-1') {
       fetchSpy = jest
         .spyOn(global, 'fetch')
         .mockResolvedValueOnce(
@@ -535,9 +569,7 @@ describe('AuthController sessions', () => {
             { status: 200 }
           )
         )
-        .mockResolvedValueOnce(
-          new globalThis.Response(JSON.stringify({ sub: 'user-1' }), { status: 200 })
-        );
+        .mockResolvedValueOnce(new globalThis.Response(JSON.stringify({ sub }), { status: 200 }));
     }
 
     afterEach(() => {
@@ -550,11 +582,31 @@ describe('AuthController sessions', () => {
     it("hands MiConnect's id_token to the client, for the sign-out's id_token_hint", async () => {
       authentikAnswers('h.idtoken.s');
       const body = await callbackController().oidcCallback(
-        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        {
+          code: 'c',
+          redirect_uri: 'https://canari.example/auth/callback',
+          code_verifier: 'v'.repeat(43),
+        } as never,
         makeReq({ origin: 'https://canari.example' }),
         makeRes().res
       );
       expect(body.id_token).toBe('h.idtoken.s');
+    });
+
+    it('mints an access token naming the session the sign-in opened', async () => {
+      authentikAnswers();
+      const out = makeRes();
+      const body = await callbackController().oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        out.res
+      );
+      const access = jwt.verify(body.access_token, JWT_SECRET) as { sid?: string };
+      // `type: 'access'` is what every websocket handshake checks: losing it breaks them silently.
+      expect(access).toEqual(expect.objectContaining({ sid: 'sid-new', type: 'access' }));
+      const cookie = jwt.verify(out.cookies['canari_refresh'], JWT_SECRET) as { type?: string };
+      expect(cookie.type).toBe('refresh');
+      expect(cookie).not.toHaveProperty('admin');
     });
 
     /**
@@ -610,6 +662,141 @@ describe('AuthController sessions', () => {
       });
       expect(cookies).toEqual({});
       warn.mockRestore();
+    });
+
+    /**
+     * `users.id` IS the subject, and every comparison downstream lowercases ASCII letters only: a
+     * subject outside visible ASCII (whitespace included), or holding a ':', is refused before any account is made.
+     */
+    it.each(['Élise', 'alice:dev'])(
+      'refuses a subject that is not a mintable user id (%s), before any account is made',
+      async (sub) => {
+        authentikAnswers('h.idtoken.s', sub);
+        const users = { findOrCreateFromOidc: jest.fn(), claimLegacyCotisations: jest.fn() };
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        const err = await callbackController(undefined, users)
+          .oidcCallback(
+            { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+            makeReq({ origin: 'https://canari.example' }),
+            makeRes().res
+          )
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: 'USER_ID_INVALID',
+        });
+        expect(users.findOrCreateFromOidc).not.toHaveBeenCalled();
+        expect(sessions.create).not.toHaveBeenCalled();
+        expect(error.mock.calls.flat().join(' ')).not.toContain(sub);
+        error.mockRestore();
+      }
+    );
+
+    /** The form body of the token request this controller sent to Authentik. */
+    function tokenRequestBody(): URLSearchParams {
+      const init = fetchSpy.mock.calls[0]![1] as RequestInit;
+      return new URLSearchParams(String(init.body));
+    }
+
+    it('redeems the code with the PKCE verifier the client sent', async () => {
+      authentikAnswers('h.idtoken.s');
+      await callbackController().oidcCallback(
+        {
+          code: 'c',
+          redirect_uri: 'https://canari.example/auth/callback',
+          code_verifier: 'v'.repeat(43),
+        } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      expect(tokenRequestBody().get('code_verifier')).toBe('v'.repeat(43));
+    });
+
+    it('names a sign-in with no verifier, and sends none rather than an empty one', async () => {
+      authentikAnswers('h.idtoken.s');
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      await callbackController().oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      expect(tokenRequestBody().has('code_verifier')).toBe(false);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('without a PKCE verifier'));
+      warn.mockRestore();
+    });
+
+    it('refuses a verifier that is not a string', async () => {
+      authentikAnswers('h.idtoken.s');
+      const err = await callbackController()
+        .oidcCallback(
+          {
+            code: 'c',
+            redirect_uri: 'https://canari.example/auth/callback',
+            code_verifier: { $ne: 1 },
+          } as never,
+          makeReq({ origin: 'https://canari.example' }),
+          makeRes().res
+        )
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+    });
+
+    it("keeps Authentik's refusal in the log and out of the response", async () => {
+      fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+        new globalThis.Response('{"error":"invalid_grant","detail":"provider internals"}', {
+          status: 400,
+        })
+      );
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const err = await callbackController()
+        .oidcCallback(
+          {
+            code: 'c',
+            redirect_uri: 'https://canari.example/auth/callback',
+            code_verifier: 'v'.repeat(43),
+          } as never,
+          makeReq({ origin: 'https://canari.example' }),
+          makeRes().res
+        )
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(UnauthorizedException);
+      expect((err as UnauthorizedException).message).not.toContain('provider internals');
+      expect(JSON.stringify((err as UnauthorizedException).getResponse())).not.toContain(
+        'provider internals'
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('provider internals'));
+      warn.mockRestore();
+    });
+
+    /** Runs a callback that Authentik refuses with `status`, and returns the typed refusal code. */
+    async function refusalCode(status: number, verifier: string | undefined): Promise<unknown> {
+      fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValueOnce(new globalThis.Response('{"error":"invalid_grant"}', { status }));
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const err = await callbackController()
+        .oidcCallback(
+          {
+            code: 'c',
+            redirect_uri: 'https://canari.example/auth/callback',
+            ...(verifier === undefined ? {} : { code_verifier: verifier }),
+          } as never,
+          makeReq({ origin: 'https://canari.example' }),
+          makeRes().res
+        )
+        .catch((e: unknown) => e);
+      warn.mockRestore();
+      expect(err).toBeInstanceOf(UnauthorizedException);
+      return ((err as UnauthorizedException).getResponse() as { code?: unknown }).code;
+    }
+
+    it('types a refused PKCE redemption apart from a refused unchallenged code', async () => {
+      expect(await refusalCode(400, 'v'.repeat(43))).toBe('OIDC_PKCE_REFUSED');
+      expect(await refusalCode(400, undefined)).toBe('OIDC_CODE_REFUSED');
+    });
+
+    it('does not call a provider failure a refusal of the code', async () => {
+      expect(await refusalCode(502, 'v'.repeat(43))).toBe('OIDC_TOKEN_EXCHANGE_FAILED');
     });
 
     it('says so when Authentik sent none, since that sign-out cannot end MiConnect', async () => {
@@ -848,6 +1035,31 @@ describe('AuthController sessions', () => {
       expect(out.headers['X-Logged-In']).toBe('true');
       expect(out.headers['X-User-Id']).toBe('user-1');
       expect(out.headers['X-Global-Admin']).toBe('true');
+    });
+
+    it('hands nginx the session the access token names, and nothing for a token minted before the claim', async () => {
+      const withSid = makeRes();
+      await controller.verify(
+        makeReq({ bearer: jwt.sign({ sub: 'user-1', sid: 'sid-1' }, JWT_SECRET) }),
+        withSid.res
+      );
+      expect(withSid.headers['X-Session-Id']).toBe('sid-1');
+
+      const withoutSid = makeRes();
+      await controller.verify(makeReq({ bearer: signAccess('user-1') }), withoutSid.res);
+      expect(withoutSid.headers['X-Logged-In']).toBe('true');
+      expect(withoutSid.headers['X-Session-Id']).toBe('');
+    });
+
+    it('names no session for a refresh token used as a bearer token', async () => {
+      const out = makeRes();
+      await controller.verify(
+        makeReq({
+          bearer: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-1', jti: 'j' }),
+        }),
+        out.res
+      );
+      expect(out.headers['X-Session-Id']).toBe('');
     });
   });
 });

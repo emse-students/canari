@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * ON A PHONE, ENTER IS THE SAME KEY AS SHIFT+ENTER ON A KEYBOARD - A NEWLINE, NEVER A SEND.
  *

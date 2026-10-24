@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 let phone = true;

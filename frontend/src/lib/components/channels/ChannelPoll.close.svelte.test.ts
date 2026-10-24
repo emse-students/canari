@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Closing a poll early asks through the APP's dialog (`showConfirm`), never `window.confirm`: on
  * Android the WebView draws the system's, with the phone's English "CANCEL" / "OK" under a French

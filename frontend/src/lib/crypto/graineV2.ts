@@ -52,6 +52,81 @@ export interface GraineSignatureEngine {
     message: Uint8Array,
     signature: Uint8Array
   ): Promise<GraineSignatureVerdict>;
+  /**
+   * Verifies a whole page's signatures in ONE call to the engine (F7): one verdict per check, in
+   * order, each exactly what {@link verifySignature} answers for it - one refused check changes
+   * nothing about its neighbours. What it saves is the bridge, one crossing instead of one per row.
+   * Rejects only when the call itself fails, never for a signature that does not verify.
+   */
+  verifySignatures(checks: readonly GraineSignatureCheck[]): Promise<GraineSignatureVerdict[]>;
+}
+
+/** Every verdict an engine may answer, the runtime copy of {@link GraineSignatureVerdict}. */
+const GRAINE_SIGNATURE_VERDICTS: ReadonlySet<string> = new Set<GraineSignatureVerdict>([
+  'valid',
+  'invalid',
+  'malformed-public-key',
+  'malformed-signature',
+]);
+
+/**
+ * An engine's batch answer that is not one known verdict per check - a broken bridge contract,
+ * never a verdict about any signature. Typed so a page refuses the whole batch on a CLASS: a
+ * verdict handed to the wrong row would be a forged row shown.
+ */
+export class GraineSignatureBatchError extends Error {
+  constructor(readonly detail: string) {
+    super(`Graine v2 signature batch answer refused: ${detail}`);
+    this.name = 'GraineSignatureBatchError';
+  }
+}
+
+/**
+ * Checks the SHAPE of a `verifySignatures` answer: an array of exactly `expected` entries, each a
+ * known verdict string. What crosses the Tauri bridge or leaves WASM is untyped at runtime, so the
+ * cast is not a proof. @throws {GraineSignatureBatchError} on anything else.
+ */
+export function requireGraineVerdicts(answer: unknown, expected: number): GraineSignatureVerdict[] {
+  if (!Array.isArray(answer)) {
+    throw new GraineSignatureBatchError(`not an array (${typeof answer})`);
+  }
+  if (answer.length !== expected) {
+    throw new GraineSignatureBatchError(`${answer.length} verdict(s) for ${expected} check(s)`);
+  }
+  const unknown = answer.findIndex(
+    (v) => typeof v !== 'string' || !GRAINE_SIGNATURE_VERDICTS.has(v)
+  );
+  if (unknown !== -1) {
+    throw new GraineSignatureBatchError(
+      `entry ${unknown} is not a known verdict (${JSON.stringify(answer[unknown])})`
+    );
+  }
+  return answer as GraineSignatureVerdict[];
+}
+
+/** One signature to check inside a batch - the three arguments of `verifySignature`. */
+export interface GraineSignatureCheck {
+  publicKey: Uint8Array;
+  message: Uint8Array;
+  signature: Uint8Array;
+}
+
+/**
+ * The bytes a batch crosses the bridge as: `be32(count)`, then per check `lp(publicKey) ||
+ * lp(message) || lp(signature)`, every `lp` a 4-byte big-endian length. ONE buffer, so the Tauri
+ * call carries one base64 string and the WASM call one slice, instead of three JSON number arrays
+ * per row. Decoded by `unpack_graine_signature_checks` (`mls-core/src/graine_signature.rs`); the
+ * shared vector in `graineV2.test.ts` and in that file pins the two together.
+ */
+export function packGraineSignatureChecks(checks: readonly GraineSignatureCheck[]): Uint8Array {
+  const out = new GraineFieldWriter();
+  out.u32(checks.length);
+  for (const check of checks) {
+    out.field(check.publicKey);
+    out.field(check.message);
+    out.field(check.signature);
+  }
+  return out.bytes();
 }
 
 /**
@@ -107,7 +182,7 @@ export function encodeGraineHeaderV2(header: GraineMessageHeaderV2): Uint8Array 
   requireText('sessionId', header.sessionId);
   requireText('minterUserId', header.minterUserId);
   requireIndex(header.index);
-  const out = new Writer();
+  const out = new GraineFieldWriter();
   out.field(utf8(GRAINE_V2_HEADER_LABEL));
   out.field(utf8(header.channelId));
   out.field(utf8(header.sessionId));
@@ -137,7 +212,7 @@ export function encodeGraineEndorsementV2(endorsement: GraineEndorsementV2): Uin
       `createdAt must be a non-negative integer, got ${endorsement.createdAt}`
     );
   }
-  const out = new Writer();
+  const out = new GraineFieldWriter();
   out.field(utf8(GRAINE_V2_ENDORSEMENT_LABEL));
   out.field(utf8(endorsement.channelId));
   out.field(utf8(endorsement.sessionId));
@@ -217,25 +292,78 @@ export async function openWithGraineV2(
   signingPublicKey: Uint8Array,
   engine: GraineSignatureEngine
 ): Promise<Uint8Array> {
-  const h = encodeGraineHeaderV2(header);
+  const prepared = prepareGraineV2Open(header, sealed, signingPublicKey);
+  const verdict = await engine.verifySignature(
+    prepared.check.publicKey,
+    prepared.check.message,
+    prepared.check.signature
+  );
+  return finishGraineV2Open(seed, prepared, verdict);
+}
+
+/**
+ * The first half of {@link openWithGraineV2}, everything before the signature check: the header
+ * encoded, the three fields decoded, the signature's length checked, the signed bytes built. Split
+ * out so a PAGE can gather every row's check and ask the engine once (`openChannelMessagePage`),
+ * while the single open and the page run the same code, in the same order, with the same throws.
+ */
+export interface PreparedGraineV2Open {
+  readonly header: GraineMessageHeaderV2;
+  /** `H`, the additional data the decrypt binds. */
+  readonly encodedHeader: Uint8Array;
+  readonly nonce: Uint8Array;
+  readonly ciphertext: Uint8Array;
+  /** What the engine is asked: the session key, `H || nonce || ciphertext`, the signature. */
+  readonly check: GraineSignatureCheck;
+}
+
+/** See {@link PreparedGraineV2Open}. Throws exactly what {@link openWithGraineV2} throws before its check. */
+export function prepareGraineV2Open(
+  header: GraineMessageHeaderV2,
+  sealed: GraineSealedV2,
+  signingPublicKey: Uint8Array
+): PreparedGraineV2Open {
+  const encodedHeader = encodeGraineHeaderV2(header);
   const nonce = fromBase64(sealed.nonce);
   const ciphertext = fromBase64(sealed.ciphertext);
   const signature = fromBase64(sealed.signature);
   if (signature.length !== GRAINE_SIGNATURE_BYTES) {
     throw new GraineSignatureError('malformed-signature', 'message');
   }
-  const verdict = await engine.verifySignature(
-    signingPublicKey,
-    graineSignedBytesV2(h, nonce, ciphertext),
-    signature
-  );
+  return {
+    header,
+    encodedHeader,
+    nonce,
+    ciphertext,
+    check: {
+      publicKey: signingPublicKey,
+      message: graineSignedBytesV2(encodedHeader, nonce, ciphertext),
+      signature,
+    },
+  };
+}
+
+/**
+ * The second half of {@link openWithGraineV2}: refuses anything but a `valid` verdict with a typed
+ * {@link GraineSignatureError}, then derives the key and decrypts. The verdict must be the engine's
+ * answer for `prepared.check` and no other - a page hands each row its own, by position.
+ */
+export async function finishGraineV2Open(
+  seed: Uint8Array,
+  prepared: PreparedGraineV2Open,
+  verdict: GraineSignatureVerdict
+): Promise<Uint8Array> {
   // Not logged here: the caller reports the row as a FAULT, once per page (`reportUnreadableChannelMessage`).
   if (verdict !== 'valid') throw new GraineSignatureError(verdict, 'message');
-  const key = await deriveMessageKey(seed, header.sessionId, header.index);
+  const key = await deriveMessageKey(seed, prepared.header.sessionId, prepared.header.index);
   const plaintext = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: nonce as BufferSource, additionalData: h as BufferSource },
+    {
+      name: 'AES-GCM',
+      iv: prepared.nonce as BufferSource,
+      additionalData: prepared.encodedHeader as BufferSource,
+    },
     key,
-    ciphertext as BufferSource
+    prepared.ciphertext as BufferSource
   );
   return new Uint8Array(plaintext);
 }
@@ -272,8 +400,14 @@ export async function verifyGraineEndorsementV2(
   }
 }
 
-/** Appends length-prefixed fields and fixed-width integers, big-endian. */
-class Writer {
+/**
+ * Appends length-prefixed fields and fixed-width integers, big-endian. Exported for the other Graine
+ * structures a device credential signs (`graineAdmission.ts`), which must begin the same way: a
+ * 4-byte length whose first byte is `0x00`, the property that keeps them from ever being an MLS
+ * `SignContent` (`mls-core/src/graine_signature.rs`) - and for the author proofs of
+ * `messageAuthorship.ts`, whose descriptor shares this encoding.
+ */
+export class GraineFieldWriter {
   private readonly parts: Uint8Array[] = [];
 
   field(bytes: Uint8Array): void {

@@ -1,6 +1,7 @@
 import { EntityManager, In, type EntityTarget, type ObjectLiteral } from 'typeorm';
 import type Redis from 'ioredis';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
@@ -9,6 +10,7 @@ import { Group } from '../entities/group.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { SeatEviction } from '../entities/seat-eviction.entity';
 
 /** How many Redis keys one `DEL` carries, so a large reap never spreads one huge argument list. */
 const REDIS_DEL_CHUNK = 500;
@@ -27,12 +29,14 @@ const GROUP_ID_COLUMN = 'groupId';
 /** Per-table row counts removed by {@link deleteGroupOwnedRows}, for the caller's log line. */
 export type GroupOwnedRowCounts = {
   queuedMessages: number;
+  queuedPayloads: number;
   members: number;
   deviceMemberships: number;
   commitLog: number;
   groupInfo: number;
   invites: number;
   membershipIntervals: number;
+  seatEvictions: number;
   dismissals: number;
 };
 
@@ -51,7 +55,10 @@ export function totalGroupOwnedRows(counts: GroupOwnedRowCounts): number {
  * base was invisible to the sweep built to collect exactly that. As one array they cannot drift: a
  * table added here is swept AND discovered, or it is in neither.
  *
- * The count key travels with the entity, so the per-table report is the same list as well.
+ * The count key travels with the entity, so the per-table report is the same list as well. THE
+ * ORDER IS THE ONE DELETE ORDER (`utils/seat-eviction.ts`) - the roster row, the queue, the device
+ * rows, the eviction records last - so a group's end and a removal or an eviction racing it lock
+ * rows in the same sequence and never wait on each other in a cycle.
  * `dm_user_dismissed_groups` is deliberately absent - it is swept only by a HARD delete, and is
  * never a way to FIND a group; see {@link deleteGroupOwnedRows}.
  */
@@ -59,25 +66,31 @@ const GROUP_OWNED_TABLES: readonly {
   readonly count: keyof GroupOwnedRowCounts;
   readonly entity: EntityTarget<ObjectLiteral>;
 }[] = [
-  { count: 'queuedMessages', entity: QueuedMessage },
   { count: 'members', entity: GroupMember },
+  { count: 'queuedMessages', entity: QueuedMessage },
+  // AFTER the records, which are the only thing referencing a payload: a group's payloads go with
+  // its records in the one transaction, so no record of a live group ever loses its ciphertext.
+  { count: 'queuedPayloads', entity: QueuedPayload },
   { count: 'deviceMemberships', entity: DeviceGroupMembership },
   { count: 'commitLog', entity: MlsCommitLog },
   { count: 'groupInfo', entity: MlsGroupInfo },
   { count: 'invites', entity: GroupInvite },
   { count: 'membershipIntervals', entity: GroupMembershipInterval },
+  { count: 'seatEvictions', entity: SeatEviction },
 ];
 
 /** A {@link GroupOwnedRowCounts} where nothing was removed - the answer to an empty id list. */
 function noRowsRemoved(): GroupOwnedRowCounts {
   return {
     queuedMessages: 0,
+    queuedPayloads: 0,
     members: 0,
     deviceMemberships: 0,
     commitLog: 0,
     groupInfo: 0,
     invites: 0,
     membershipIntervals: 0,
+    seatEvictions: 0,
     dismissals: 0,
   };
 }
@@ -85,7 +98,7 @@ function noRowsRemoved(): GroupOwnedRowCounts {
 /**
  * Deletes every database row the given groups own, from {@link GROUP_OWNED_TABLES}.
  *
- * {@link GROUP_OWNED_TABLES} plus `dm_user_dismissed_groups` is an ALLOWLIST: eight tables named
+ * {@link GROUP_OWNED_TABLES} plus `dm_user_dismissed_groups` is an ALLOWLIST: ten tables named
  * one by one, checkable against `src/entities/` (every entity carrying a `groupId` is here). It
  * exists because the two places that end a group each carried their own shorter list, and both
  * were wrong in the same direction - measured on prod 2026-08-18, 21 of 69 `mls_group_info` rows,

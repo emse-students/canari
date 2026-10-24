@@ -241,6 +241,49 @@ NSString *CanariTauriDataDir(void) {
   return dir;
 }
 
+NSString *CanariTauriCacheDir(void) {
+  NSArray<NSString *> *paths =
+      NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
+  NSString *base = paths.firstObject;
+  if (base == nil) {
+    return nil;
+  }
+  return [base stringByAppendingPathComponent:kCanariBundleId];
+}
+
+// The two sign-out marks - names shared with `push_registration.rs` and `PushRegistrationEnd.kt`;
+// change all three together. Why two, and who removes each: the head of `push_registration.rs`.
+static NSString *const kPushSignedOutFileName = @"push_signed_out";
+static NSString *const kPushTokenDeletionOwedFileName = @"push_token_deletion_owed";
+
+static BOOL CanariPushMarkExists(NSString *name) {
+  NSString *dir = CanariTauriDataDir();
+  return dir != nil &&
+         [[NSFileManager defaultManager] fileExistsAtPath:[dir stringByAppendingPathComponent:name]];
+}
+
+/// True while no account owns this device's pushes: a push that still arrives is not shown.
+static BOOL CanariPushSignedOut(void) { return CanariPushMarkExists(kPushSignedOutFileName); }
+
+/// True while the FCM token of the account that signed out has not been deleted.
+static BOOL CanariPushTokenDeletionOwed(void) {
+  return CanariPushMarkExists(kPushTokenDeletionOwedFileName);
+}
+
+/// Erases the Keychain copy of the push secret: a sign-out ends the registration it authenticated.
+static void CanariPushSecretErase(void) {
+  NSDictionary *query = @{
+    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService : kPushSecretKeychainService,
+    (__bridge id)kSecAttrAccount : kPushSecretKeychainAccount,
+  };
+  OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
+  if (status != errSecSuccess && status != errSecItemNotFound) {
+    NSLog(@"[CanariPush] ERROR: the push secret was NOT erased from the Keychain (status %d)",
+          (int)status);
+  }
+}
+
 static bool CanariPushSecretStore(NSString *secret) {
   if (secret.length == 0) {
     return false;
@@ -439,7 +482,7 @@ void CanariMirrorPushStateToAppGroup(void) {
     }
     NSError *err = nil;
     if (![data writeToURL:[container URLByAppendingPathComponent:name] options:opts error:&err]) {
-      NSLog(@"[CanariPush] mirror %@ failed: %@", name, err.localizedDescription);
+      NSLog(@"[CanariPush] mirror %@ failed: %@", name, CanariErrorReason(err));
     }
   }
   // The push secret lives in the Keychain (app-only). Copy it into the container so the NSE
@@ -447,7 +490,9 @@ void CanariMirrorPushStateToAppGroup(void) {
   // common inline-ciphertext decrypt needs no secret. This is NOT the copy's main writer:
   // `store_push_secret` (push.rs) writes it the moment /register rotates the secret, which is
   // after didBecomeActive's mirror - this rewrite only carries the same newest value again.
-  NSString *secret = CanariRetrievePushSecret();
+  // A signed-out device has no secret by design (the sign-out erased it), so it is not looked for:
+  // that lookup's "no secret" line is a fault report, and here it would report the sign-out.
+  NSString *secret = CanariPushSignedOut() ? nil : CanariRetrievePushSecret();
   if (secret.length > 0) {
     [[secret dataUsingEncoding:NSUTF8StringEncoding]
         writeToURL:[container URLByAppendingPathComponent:kAppGroupPushSecretFileName]
@@ -468,7 +513,7 @@ void CanariExcludeNativeCacheFilesFromBackup(NSString *_Nullable dir) {
                                                                                    error:&listErr];
   if (names == nil) {
     NSLog(@"[CanariPush] backupExclusion: ERROR %@ not listed: %@", dir.lastPathComponent,
-          listErr.localizedDescription);
+          CanariErrorReason(listErr));
     return;
   }
   NSUInteger excluded = 0;
@@ -484,7 +529,7 @@ void CanariExcludeNativeCacheFilesFromBackup(NSString *_Nullable dir) {
       excluded++;
     } else {
       NSLog(@"[CanariPush] backupExclusion: ERROR %@ not excluded: %@", name,
-            err.localizedDescription);
+            CanariErrorReason(err));
     }
   }
   NSLog(@"[CanariPush] backupExclusion: %lu cache file(s) excluded in %@", (unsigned long)excluded,
@@ -1295,7 +1340,7 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
     if (attachment != nil) {
       content.attachments = @[ attachment ];
     } else if (attachErr != nil) {
-      NSLog(@"[CanariPush] attachment error: %@", attachErr.localizedDescription);
+      NSLog(@"[CanariPush] attachment error: %@", CanariErrorReason(attachErr));
     }
   }
 
@@ -1307,7 +1352,7 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
       addNotificationRequest:request
        withCompletionHandler:^(NSError *_Nullable error) {
          if (error != nil) {
-           NSLog(@"[CanariPush] showNotification error: %@", error.localizedDescription);
+           NSLog(@"[CanariPush] showNotification error: %@", CanariErrorReason(error));
          } else {
 #if CANARI_BENCH
            // HOW IT WAS FILED, for the cross-client rig on a BENCH build only (O13): the in-app
@@ -1540,7 +1585,7 @@ static void CanariSubmitBackgroundCleanupRequest(void) {
   request.requiresExternalPower = NO;
   NSError *error = nil;
   if (![[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error]) {
-    NSLog(@"[CanariPush] BGTask submit failed: %@", error.localizedDescription);
+    NSLog(@"[CanariPush] BGTask submit failed: %@", CanariErrorReason(error));
   } else {
     NSLog(@"[CanariPush] BGTask cleanup scheduled");
   }
@@ -1586,7 +1631,7 @@ static void CanariSubmitOutboxRetryRequest(void) {
   request.requiresExternalPower = NO;
   NSError *error = nil;
   if (![[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error]) {
-    NSLog(@"[CanariPush] BGTask outboxRetry submit failed: %@", error.localizedDescription);
+    NSLog(@"[CanariPush] BGTask outboxRetry submit failed: %@", CanariErrorReason(error));
   } else {
     NSLog(@"[CanariPush] BGTask outboxRetry scheduled");
   }
@@ -2254,7 +2299,7 @@ static NSString *_Nullable CanariInitialsImagePath(NSString *_Nullable name) {
                                                                 [[NSUUID UUID] UUIDString]]];
   NSError *writeErr = nil;
   if (![png writeToFile:path options:NSDataWritingAtomic error:&writeErr]) {
-    NSLog(@"[CanariPush] initialsImage: write failed: %@", writeErr.localizedDescription);
+    NSLog(@"[CanariPush] initialsImage: write failed: %@", CanariErrorReason(writeErr));
     return nil;
   }
   return path;
@@ -2778,7 +2823,7 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
                                        completion:^(NSError *_Nullable error) {
                                          if (error != nil) {
                                            NSLog(@"[CanariCallKit] report failed: %@",
-                                                 error.localizedDescription);
+                                                 CanariErrorReason(error));
                                            [g_ringingCalls removeObjectForKey:callId];
                                            [g_ringingCallInfo
                                                removeObjectForKey:uuid.UUIDString];
@@ -2863,7 +2908,7 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
                                        }
                                        NSLog(@"[CanariCallKit] voip report refused call=%@ "
                                              @"duplicate=%d: %@",
-                                             callId, existing != nil, error.localizedDescription);
+                                             callId, existing != nil, CanariErrorReason(error));
                                        if (existing == nil) {
                                          [g_ringingCalls removeObjectForKey:callId];
                                          [g_ringingCallInfo removeObjectForKey:uuid.UUIDString];
@@ -2981,7 +3026,13 @@ static void CanariPersistVoipToken(NSString *hexToken) {
                               : 0;
   NSLog(@"[CanariCallKit] voip push type=%@ call=%@", msgType, callId);
 
-  if ([msgType isEqualToString:@"call_ring"] && callId.length > 0) {
+  if (CanariPushSignedOut()) {
+    // A SIGNED-OUT DEVICE RINGS FOR NOBODY. PushKit still requires every VoIP push to be reported
+    // to CallKit, so a placeholder with no caller and no conversation is reported and ended at once
+    // (deadline 0) - nothing of the account that signed out is shown.
+    NSLog(@"[CanariCallKit] voip push type=%@ while signed out - reported and ended", msgType);
+    CanariReportVoipCall(@"", [[NSUUID UUID] UUIDString], @"", 0);
+  } else if ([msgType isEqualToString:@"call_ring"] && callId.length > 0) {
     CanariReportVoipCall(groupId, callId, callerId, ringUntilMs);
   } else {
     // Contract keeper: an unexpected payload still reports a call, ended at once (deadline 0).
@@ -3263,6 +3314,15 @@ static void CanariHandleFcmData(NSDictionary *data) {
 
   NSLog(@"[CanariPush] onMessage type=%@ action=%@ groupId=%@", msgType, data[@"action"],
         data[@"groupId"]);
+
+  // A SIGNED-OUT DEVICE ACTS ON NOTHING. No account owns this install's pushes until the next
+  // registration is answered (`push_registration.rs`); a push still reaching it was sent before the
+  // server ended the session's registration, and acting on it would act as the account that left.
+  if (CanariPushSignedOut()) {
+    NSLog(@"[CanariPush] dropped type=%@ - this device is signed out, no account owns its pushes",
+          msgType);
+    return;
+  }
 
   // `call_ring_end` is a background frame (calls.service), so `CanariHandleBackgroundFrame` owns it.
   // `call_ring` normally arrives as an APNs VoIP push (PushKit path); a legacy-registered device
@@ -3550,6 +3610,30 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
     CanariEndCallKitCall(callId, [reason isEqualToString:@"answered"]
                                      ? CXCallEndedReasonAnsweredElsewhere
                                      : CXCallEndedReasonRemoteEnded);
+    // The generic ring ALERT an iPhone with no VoIP token gets (the NSE tags it with
+    // `canariCallId`) is taken off the lock screen too, so a call already over is not left ringing
+    // there. Best effort: a background push can be dropped. The alert's `apns-expiration` only bounds APNs
+    // store-and-forward; a DELIVERED banner stays until removed - here, or on app activation, where
+    // `CanariPushCancelMessageNotifications` clears it (its `deepLink` is a chat link).
+    if (callId.length > 0) {
+      UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+      [center getDeliveredNotificationsWithCompletionHandler:^(
+                  NSArray<UNNotification *> *_Nonnull notifications) {
+        NSMutableArray<NSString *> *ids = [NSMutableArray array];
+        for (UNNotification *n in notifications) {
+          if ([n.request.content.userInfo[@"canariCallId"] isEqual:callId]) {
+            [ids addObject:n.request.identifier];
+          }
+        }
+        if (ids.count > 0) {
+          NSLog(@"[CanariPush] call_ring_end - removing %lu delivered ring alert(s)",
+                (unsigned long)ids.count);
+          [center removeDeliveredNotificationsWithIdentifiers:ids];
+        }
+        done(UIBackgroundFetchResultNoData);
+      }];
+      return;
+    }
     done(UIBackgroundFetchResultNoData);
     return;
   }
@@ -3762,8 +3846,10 @@ static void CanariPersistFcmToken(NSString *fcmToken) {
   NSString *path = [dir stringByAppendingPathComponent:@"fcm_token.txt"];
   [fcmToken writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
   CanariWritePushDiagnostic(nil);
+  // The context first: a signed-out device has none, and its secret's absence is then the
+  // sign-out, not the fault the secret lookup logs.
   CanariPushContext *ctx = CanariLoadPushContext();
-  NSString *secret = CanariRetrievePushSecret();
+  NSString *secret = ctx != nil ? CanariRetrievePushSecret() : nil;
   if (ctx != nil && secret != nil) {
     CanariRefreshTokenOnBackend(ctx, secret, fcmToken);
   }
@@ -3826,7 +3912,7 @@ static void CanariSwizzledDidFailApns(id self, SEL _cmd, UIApplication *applicat
   // The branch that was silent. APNs refusing registration - a missing aps-environment
   // entitlement, a provisioning profile without push, no network on a first launch - looked
   // exactly like a device nobody had ever opened.
-  NSLog(@"[CanariPush] APNs registration REFUSED: %@", error.localizedDescription);
+  NSLog(@"[CanariPush] APNs registration REFUSED: %@", CanariErrorReason(error));
   CanariWritePushDiagnostic(@"apns-registration-refused");
   if (CanariOrigDidFailApns != NULL) {
     CanariOrigDidFailApns(self, _cmd, application, error);
@@ -3861,12 +3947,29 @@ static void CanariInstallApnsTokenHook(void) {
 @interface CanariNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
 @end
 
+/**
+ * Whether a notification is the Share Extension's "choose the conversation" banner
+ * (`canari_Share/ShareViewController.swift`). It is LOCAL and carries no push data and no deep link
+ * by design: its tap only has to bring Canari forward, where the share is imported on activation.
+ * Recognised first, so neither the push handling nor the "payload names no target" accusation sees it.
+ */
+static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
+  return [userInfo[@"canariLocal"] isKindOfClass:[NSString class]] &&
+         [userInfo[@"canariLocal"] isEqualToString:@"incoming_share"];
+}
+
 @implementation CanariNotificationDelegate
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
        willPresentNotification:(UNNotification *)notification
          withCompletionHandler:
              (void (^)(UNNotificationPresentationOptions options))completionHandler {
   (void)center;
+  if (CanariIsShareNotification(notification.request.content.userInfo)) {
+    // The app is on screen: the share-ready signal has already imported the share and told the page.
+    NSLog(@"[CanariShare] share banner while in the foreground - not shown, the page already has it");
+    completionHandler(UNNotificationPresentationOptionNone);
+    return;
+  }
   CanariPushProcessRemoteNotificationUserInfo(notification.request.content.userInfo);
   if (canari_ios_is_in_foreground()) {
     completionHandler(UNNotificationPresentationOptionNone);
@@ -3880,6 +3983,11 @@ static void CanariInstallApnsTokenHook(void) {
              withCompletionHandler:(void (^)(void))completionHandler {
   (void)center;
   NSDictionary *userInfo = response.notification.request.content.userInfo;
+  if (CanariIsShareNotification(userInfo)) {
+    NSLog(@"[CanariShare] share banner tapped - the share is imported on activation");
+    completionHandler();
+    return;
+  }
   CanariPushProcessRemoteNotificationUserInfo(userInfo);
 
   // Notification quick actions (WP-XP-1): reply / mark as read fire even from a killed app - the
@@ -4000,6 +4108,134 @@ void CanariPushSetup(void) {
 #endif
 }
 
+// --- A sign-out ends this device's push registration ------------------------------------------
+//
+// The iOS half of `push_registration.rs`, which writes both marks, strips the account's push files
+// (the App Group copies included) and then sends `+endForSignOut`. What only this side can do: erase
+// the Keychain push secret, and delete the FCM token so FCM stops delivering to this install for the
+// account that left. The deletion needs the network, so it is OWED until it succeeds - the
+// `push_token_deletion_owed` mark is the durable record, completed by `startPushService` (through
+// `+completeOwedDeletion`) before it registers, and by every activation below before the old token
+// could be mirrored again.
+//
+// Both methods BLOCK on the FCM completion, which FIRMessaging delivers on the main queue - so they
+// refuse the main thread rather than deadlock it. Rust calls them from a blocking worker thread.
+
+/// How long one attempt waits on FCM. The owed mark, not this bound, is what makes it complete.
+static const int64_t kCanariPushDeleteTimeoutSec = 30;
+
+/// The body of `+completeOwedDeletion`, run under its lock with the mark known to be on disk.
+static BOOL CanariCompleteOwedDeletionLocked(void) {
+#if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil) {
+    NSLog(@"[CanariPush] ERROR: no data directory - the token deletion stays owed");
+    return NO;
+  }
+  // FIRMessaging holds no token at all (APNs never answered, or it was already deleted): there is
+  // no registration to end, and deleteToken would only fail on the absence.
+  if ([FIRMessaging messaging].FCMToken != nil) {
+    dispatch_semaphore_t answered = dispatch_semaphore_create(0);
+    __block NSError *failure = nil;
+    [[FIRMessaging messaging] deleteTokenWithCompletion:^(NSError *_Nullable error) {
+      failure = error;
+      dispatch_semaphore_signal(answered);
+    }];
+    long timedOut = dispatch_semaphore_wait(
+        answered, dispatch_time(DISPATCH_TIME_NOW, kCanariPushDeleteTimeoutSec * NSEC_PER_SEC));
+    if (timedOut != 0) {
+      NSLog(@"[CanariPush] ERROR: FCM deleteToken did not answer - the token deletion stays owed");
+      return NO;
+    }
+    if (failure != nil) {
+      NSLog(@"[CanariPush] ERROR: FCM deleteToken failed - still owed: %@",
+            CanariErrorReason(failure));
+      return NO;
+    }
+  } else {
+    NSLog(@"[CanariPush] no FCM token held - nothing to delete");
+  }
+  // An activation may have mirrored the old token while the deletion was owed; it is dead now.
+  NSFileManager *fm = [NSFileManager defaultManager];
+  [fm removeItemAtPath:[dir stringByAppendingPathComponent:@"fcm_token.txt"] error:nil];
+  NSError *removeError = nil;
+  NSString *owed = [dir stringByAppendingPathComponent:kPushTokenDeletionOwedFileName];
+  if (![fm removeItemAtPath:owed error:&removeError] && [fm fileExistsAtPath:owed]) {
+    NSLog(@"[CanariPush] ERROR: token deleted but the owed mark was not removed: %@",
+          CanariErrorReason(removeError));
+    return NO;
+  }
+  NSLog(@"[CanariPush] FCM token deleted - this install is no longer the previous account's push "
+        @"destination");
+  // The token the next sign-in registers, fetched under the lock so no other deletion runs between
+  // the fetch and the mirror. Only once APNs has answered: before that FIRMessaging cannot mint
+  // one, and the APNs callback (`CanariSyncFcmTokenIfApnsReady`) fetches it as soon as it can - so
+  // a deletion on a cold start never waits on APNs. No server learns the token here: the stripped
+  // push context is what keeps CanariPersistFcmToken from refreshing it on the backend.
+  if ([FIRMessaging messaging].APNSToken == nil) {
+    NSLog(@"[CanariPush] APNs not answered yet - the fresh FCM token is fetched when it does");
+    return YES;
+  }
+  dispatch_semaphore_t fetched = dispatch_semaphore_create(0);
+  __block NSString *fresh = nil;
+  [[FIRMessaging messaging] tokenWithCompletion:^(NSString *_Nullable token,
+                                                  NSError *_Nullable error) {
+    if (error == nil) {
+      fresh = token;
+    }
+    dispatch_semaphore_signal(fetched);
+  }];
+  if (dispatch_semaphore_wait(fetched, dispatch_time(DISPATCH_TIME_NOW,
+                                                     kCanariPushDeleteTimeoutSec * NSEC_PER_SEC)) !=
+          0 ||
+      fresh.length == 0) {
+    NSLog(@"[CanariPush] no fresh FCM token yet - the next activation fetches it");
+    return YES;
+  }
+  CanariPersistFcmToken(fresh);
+  return YES;
+#else
+  NSLog(@"[CanariPush] Firebase Messaging absent - no FCM token to delete");
+  return YES;
+#endif
+}
+
+@interface CanariPushRegistrationEnd : NSObject
++ (BOOL)endForSignOut;
++ (BOOL)completeOwedDeletion;
+@end
+
+@implementation CanariPushRegistrationEnd
+
++ (BOOL)endForSignOut {
+  NSLog(@"[CanariPush] sign-out: erasing the push secret and deleting the FCM token");
+  CanariPushSecretErase();
+  return [self completeOwedDeletion];
+}
+
++ (BOOL)completeOwedDeletion {
+  if (!CanariPushTokenDeletionOwed()) {
+    return YES;
+  }
+  if ([NSThread isMainThread]) {
+    NSLog(@"[CanariPush] ERROR: token deletion asked on the main thread - refused, still owed");
+    return NO;
+  }
+  // ONE DELETION AT A TIME, PROCESS-WIDE: the sign-out, `startPushService` and an activation can
+  // all owe it at once, and two interleaved runs could each delete a token and fetch a fresh one,
+  // leaving the mirror naming a token a later deletion killed. The mark is read again INSIDE the
+  // lock, so a caller that waited finds the work done; the fresh token is fetched inside it too.
+  @synchronized(self) {
+    if (!CanariPushTokenDeletionOwed()) {
+      NSLog(@"[CanariPush] token deletion completed by another caller");
+      return YES;
+    }
+    return CanariCompleteOwedDeletionLocked();
+  }
+}
+
+@end
+
 void CanariSyncFcmTokenIfApnsReady(void) {
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
   // The guard, and the reason this needs no timer and no retry count: the APNs token either has
@@ -4013,12 +4249,23 @@ void CanariSyncFcmTokenIfApnsReady(void) {
     CanariWritePushDiagnostic(@"no-apns-token");
     return;
   }
+  // A SIGN-OUT THAT COULD NOT DELETE ITS TOKEN IS COMPLETED HERE, and the old token is not mirrored:
+  // it belongs to the account that left. AFTER the APNs guard, so on a cold start it runs from the
+  // APNs callback rather than the first activation; `startPushService` completes it on its own
+  // before any registration either way. The deletion fetches the fresh token.
+  if (CanariPushTokenDeletionOwed()) {
+    NSLog(@"[CanariPush] FCM token deletion owed by a sign-out - completing it");
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+      [CanariPushRegistrationEnd completeOwedDeletion];
+    });
+    return;
+  }
   [[FIRMessaging messaging] tokenWithCompletion:^(NSString *_Nullable token,
                                                   NSError *_Nullable error) {
     if (error != nil) {
       // APNs answered and FCM still refused - a different fault entirely from the guard above,
       // and the reason the report has to carry which of the two it was.
-      NSLog(@"[CanariPush] fetching the FCM token failed: %@", error.localizedDescription);
+      NSLog(@"[CanariPush] fetching the FCM token failed: %@", CanariErrorReason(error));
       CanariWritePushDiagnostic(@"fcm-token-fetch-failed");
       return;
     }

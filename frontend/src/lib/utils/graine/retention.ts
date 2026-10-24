@@ -30,13 +30,59 @@ const LIVE_QUERY_CHUNK = 500;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 /**
+ * The shortest window this device will sweep with, whatever the server answers: the product's own
+ * message retention, `CHANNEL_MESSAGE_RETENTION_DAYS` = 365 (`docs/wiki/protocols/channel-encryption.md`,
+ * section 8).
+ *
+ * The server still OWNS the window - this is a client-side bound on a server-provided value, not a
+ * second copy of it. An honest server answers exactly this, so the bound changes nothing; a server
+ * answering less would make every device drop every seed older than its answer, and seeds are the
+ * only thing that opens a salon's history. A deletion driven by a remote number gets a local floor.
+ *
+ * There is deliberately NO ceiling: a ceiling would only ever delete SOONER than the server says,
+ * and the server already decides which sessions are live, so a ceiling bounds nothing it could not
+ * route around while costing history if the product window is ever lengthened.
+ *
+ * Shortening the product window therefore means lowering this floor in the same change;
+ * `retentionFloorPin.test.ts` fails the moment the two numbers differ.
+ */
+export const GRAINE_RETENTION_FLOOR_DAYS = 365;
+
+/**
+ * Bounds the server's `retentionDays` from below by {@link GRAINE_RETENTION_FLOOR_DAYS}.
+ *
+ * @returns The window to sweep with, or `null` when the answer is not a finite number - there is no
+ *   value to bound, so the sweep refuses rather than inventing one.
+ */
+export function boundGraineRetentionDays(serverDays: number): number | null {
+  if (typeof serverDays !== 'number' || !Number.isFinite(serverDays)) {
+    console.error(
+      `[GRAINE] retention sweep refused - the server answered retentionDays=${String(serverDays)}, not a number of days`
+    );
+    return null;
+  }
+  if (serverDays < GRAINE_RETENTION_FLOOR_DAYS) {
+    // Accuses: an honest server answers the product window, so this is a server that is wrong or
+    // hostile, and the clamp is what keeps it from wiping the history of every salon on this device.
+    // A server stuck in that state gets this line on EVERY sweep, deliberately: it is not a one-off
+    // to be remembered and silenced, it is a standing fault, and a line that stopped repeating would
+    // read as a server that had been fixed.
+    console.error(
+      `[GRAINE] retention sweep clamped - the server answered retentionDays=${serverDays}, below the client floor of ${GRAINE_RETENTION_FLOOR_DAYS}; sweeping with the floor`
+    );
+    return GRAINE_RETENTION_FLOOR_DAYS;
+  }
+  return serverDays;
+}
+
+/**
  * Asks the server which held sessions are still alive and forgets the rest.
  *
  * **A session younger than the retention window is never dropped, whatever the server answers.**
  * "No message names this session" has two causes the answer cannot separate: its messages expired,
  * or it has none yet - a session minted seconds ago, or one whose first send has not landed. Only
  * the first is a reason to delete, and age is what tells them apart. The window comes back with the
- * answer for this, so the client still holds no copy of it.
+ * answer for this, bounded from below by {@link GRAINE_RETENTION_FLOOR_DAYS}.
  *
  * **Degrades rather than throws.** It runs as post-boot maintenance; a sweep that could not run
  * costs one more day of seeds that were already outliving their messages, and every branch that
@@ -82,16 +128,12 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
     retentionDays = answer.retentionDays;
   }
 
-  if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
-    // Fail closed. Without a window every session looks old enough, and the sweep would delete the
-    // seed of every salon this device has not yet posted in.
-    console.warn(
-      `[GRAINE] retention sweep refused - the server answered retentionDays=${retentionDays}`
-    );
-    return 0;
-  }
+  // A window below the floor (zero and negative included) would make every session look old
+  // enough, and the sweep would delete the seed of every salon this device has not yet posted in.
+  const windowDays = boundGraineRetentionDays(retentionDays);
+  if (windowDays === null) return 0;
 
-  const cutoff = Date.now() - retentionDays * DAY_MS;
+  const cutoff = Date.now() - windowDays * DAY_MS;
   const doomed = held.filter((s) => !live.has(s.sessionId) && s.createdAt < cutoff);
   if (doomed.length === 0) return 0;
 
@@ -115,7 +157,7 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
   await forgetGraineMirroredSessions(sessionIds);
 
   console.info(
-    `[GRAINE] retention sweep dropped ${dropped} seed(s) older than ${retentionDays} days whose messages are gone (held=${held.length}, live=${live.size})`
+    `[GRAINE] retention sweep dropped ${dropped} seed(s) older than ${windowDays} days whose messages are gone (held=${held.length}, live=${live.size})`
   );
   return dropped;
 }

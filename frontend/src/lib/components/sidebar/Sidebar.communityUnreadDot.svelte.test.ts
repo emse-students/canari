@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE COMMUNITY RAIL SHOWS A DOT WHEN ANY SALON OF A COMMUNITY HAS UNREAD MESSAGES.
  *

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DIRECT MESSAGE HAS NO GROUP TO LEAVE.
  *

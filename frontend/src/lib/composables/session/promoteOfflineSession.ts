@@ -16,6 +16,7 @@
 import { getToken, SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
+import { ensureRestoreKey } from '$lib/services/restoreCredential';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { startPushService } from '$lib/services/PushNotificationService';
 import { initializeConnection, getIsTabLeader } from '$lib/utils/chat/connection';
@@ -125,6 +126,10 @@ async function runPromotion(
   //     Skipping it here would make an ordinary reconnect look like a stolen cookie.
   void bindCurrentSessionDevice(ctx.getMyDeviceId()).catch((e) =>
     cb.log(`[PROMOTE] Session/device binding failed (non-blocking): ${String(e)}`)
+  );
+  // 2c. The restore key of this session (WP-RESTORE-1), skipped at login for the same reason.
+  void ensureRestoreKey(ctx.getUserId()).catch((e) =>
+    cb.log(`[PROMOTE] Restore key registration failed (non-blocking): ${String(e)}`)
   );
 
   // 3. The WebSocket and the post-connect reconciliation: the same sequence login runs, so the

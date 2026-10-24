@@ -16,7 +16,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual, DataSource, In, IsNull, Not } from 'typeorm';
+import { Repository, MoreThanOrEqual, DataSource, In, Not } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import {
@@ -28,6 +28,7 @@ import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { writePendingSeats } from '../utils/group-membership';
 import { PushToken } from '../entities/push-token.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
@@ -407,36 +408,33 @@ export class DevicesController {
     // Create pending DeviceGroupMembership entries for all groups this user
     // already belongs to.  Without this, getPendingInvitations on other
     // devices won't see the new device and will never send it a Welcome.
-    // Uses INSERT … ON CONFLICT DO NOTHING to tolerate concurrent registerDevice calls.
+    // INSERT … ON CONFLICT DO NOTHING tolerates concurrent registerDevice calls. The roster read
+    // below only NAMES the candidates: each seat is written under its group's seat lock, against a
+    // roster re-read there (`writePendingSeats`), so a removal racing this registration never
+    // leaves a pending seat behind for a person it removed.
     const userGroups = await this.groupMemberRepo.find({ where: { userId } });
-    let activeGroupIds: string[] = [];
-    if (userGroups.length > 0) {
-      const groupIds = [...new Set(userGroups.map((gm) => gm.groupId))];
-      const activeGroups = await this.groupRepo.find({
-        where: { id: In(groupIds), deletedAt: IsNull() },
-        select: { id: true },
-      });
-      activeGroupIds = activeGroups.map((g) => g.id);
-      if (activeGroupIds.length > 0) {
-        await this.deviceGroupRepo
-          .createQueryBuilder()
-          .insert()
-          .into(DeviceGroupMembership)
-          .values(
-            activeGroupIds.map((groupId) => ({
-              userId,
-              deviceId,
-              groupId,
-              status: 'pending' as const,
-            }))
-          )
-          .orIgnore()
-          .execute();
+    const groupIds = [...new Set(userGroups.map((gm) => gm.groupId))];
+    let pendingGroups = 0;
+    for (const groupId of groupIds) {
+      const outcome = await writePendingSeats(
+        this.deviceGroupRepo.manager,
+        groupId,
+        userId,
+        [deviceId],
+        false
+      );
+      if (outcome === 'written') {
+        pendingGroups += 1;
+      } else {
+        this.logger.log(
+          `[REGISTER_DEVICE][${traceId}] NO_PENDING_SEAT group=${groupId} user=${userId} ` +
+            `device=${deviceId} reason=${outcome}`
+        );
       }
     }
 
     this.logger.log(
-      `[REGISTER_DEVICE][${traceId}] DONE user=${userId} device=${deviceId} isNew=${isNew} pendingGroups=${activeGroupIds.length}`
+      `[REGISTER_DEVICE][${traceId}] DONE user=${userId} device=${deviceId} isNew=${isNew} pendingGroups=${pendingGroups}`
     );
     return { status: 'registered' };
   }
@@ -635,7 +633,13 @@ export class DevicesController {
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    return { keys: await this.deviceSignatureKeys.keysFor(safeUserId, safeDeviceId) };
+    // `firstSeen` dates the keys the history recorded (`firstSeenFor`); additive, so an older
+    // client reading `keys` alone is unaffected.
+    const [keys, firstSeen] = await Promise.all([
+      this.deviceSignatureKeys.keysFor(safeUserId, safeDeviceId),
+      this.deviceSignatureKeys.firstSeenFor(safeUserId, safeDeviceId),
+    ]);
+    return { keys, firstSeen };
   }
 
   @UseGuards(HeaderAuthGuard)

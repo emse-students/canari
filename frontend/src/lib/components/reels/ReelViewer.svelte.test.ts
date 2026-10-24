@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The reel viewer as a reader meets it: the touched reel first and playing, the next one preloaded
  * but silent, the next page asked for near the end, a step down and back, and the X closing it. The
@@ -151,11 +152,13 @@ describe('ReelViewer', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('offers the save on the reel being played, whoever published it', async () => {
+  it('offers the save and the sound in the rail, whoever published the reel', async () => {
     await render();
-    // Only the current reel mounts a player, so only its bar carries the button.
-    expect(document.querySelectorAll('[data-reel-save]').length).toBe(1);
-    expect(document.querySelector('[data-reel-slide="b"] [data-reel-save]')).not.toBeNull();
+    expect(
+      document.querySelector('[data-reel-slide="b"] [data-reel-rail] [data-reel-save]')
+    ).not.toBeNull();
+    // (The rail's full order is `ReelViewer.rail.svelte.test.ts`'s.) Only the current reel mounts a player, drawn minimal.
+    expect(document.querySelectorAll('[data-minimal-player]').length).toBe(1);
   });
 
   it('claims a drag only while the move is cancelable, and stands it down otherwise', async () => {

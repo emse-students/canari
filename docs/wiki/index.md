@@ -78,6 +78,7 @@
 - [Chat module](frontend/modules/chat.md) — Conversations, groups, channels, communities
 - [Calls module](frontend/modules/calls.md) — WebRTC audio/video calls, CallKit, SFU relay
 - [Lives in production](frontend/modules/live-production.md) - the gates, the order of the switch, the read-only preflight, the viewer-cap steps from 24 to none, and the HELD privacy wording
+- [Live scaling](frontend/modules/live-scaling.md) - no visible audience ceiling: what bounds a live's audience (the host uplink, ~24), the five options, R2 for the segments, the staged path and the owner's decisions
 - [Live](frontend/modules/live.md) — Livestream plan (R4/C9): the user's 2026-10-15 decisions, open questions, work packages; not started
 - [Associations module](frontend/modules/associations.md) — Club management, members, calendar, shop, documents
 - [Forms module](frontend/modules/forms.md) — Form builder, submissions, cash/Stripe payments
@@ -120,6 +121,7 @@
 ### Features
 
 - [Sessions, in every application](sessions.md) — The session model shared by Canari, Sky, MiGallery and Le Cercle: opaque token, rotation, replay, impersonation
+- [Account restore on a new Android phone](account-restore.md) - WP-RESTORE-1: a WebAuthn restore key bound to the session that made it, what it restores (a session, never a key), the threat model, the four routes, the native plugin
 - [Association permissions](association-permissions.md) — The eleven flags measured from their call sites, the one predicate answering "may this user act here", and the two tiers above a member
 - [Cotisations](cotisations.md) — Membership dues: cotisant tags, boutique products, form member pricing
 - [Carte de la Vie Asso](carte-vie-asso.md) — Editable poster generator (drag & drop canvas, PDF export)

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The feed's stored first pages (`$lib/posts/feedStore`): sealed under the device key on both
  * backends, replaced by a save, unreadable under another key, and gone after a delete or a reset.

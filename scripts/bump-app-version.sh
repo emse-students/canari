@@ -138,7 +138,7 @@ bump_cargo_package_version() {
   echo "  Cargo.toml    $file → $version"
 }
 
-bump_ios_nse_pbxproj() {
+bump_ios_extensions_pbxproj() {
   # The iOS Notification Service Extension (CanariNotifications) is its own Xcode
   # target that Tauri does not know about, so `tauri ios build` never syncs its
   # version from tauri.conf.json. Its MARKETING_VERSION / CURRENT_PROJECT_VERSION
@@ -164,7 +164,7 @@ bump_ios_nse_pbxproj() {
     -e "s/(CURRENT_PROJECT_VERSION = )[^;]*;/\1${version_code};/" \
     "$file" > "$tmp"
   mv "$tmp" "$file"
-  echo "  pbxproj (NSE) $file → $core (build $version_code)"
+  echo "  pbxproj (NSE + Share) $file → $core (build $version_code)"
 }
 
 bump_ios_app_infoplist() {
@@ -417,7 +417,7 @@ TAURI_CONF="$ROOT/frontend/src-tauri/tauri.conf.json"
 [ -f "$TAURI_CONF" ] || { echo "Missing: $TAURI_CONF" >&2; exit 1; }
 bump_tauri_conf "$TAURI_CONF" "$CORE" "$VERSION_CODE"
 
-bump_ios_nse_pbxproj "$ROOT/frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj" "$CORE" "$VERSION_CODE"
+bump_ios_extensions_pbxproj "$ROOT/frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj" "$CORE" "$VERSION_CODE"
 
 bump_ios_app_infoplist "$ROOT/frontend/src-tauri/gen/apple/canari_iOS/Info.plist" "$CORE" "$VERSION_CODE"
 

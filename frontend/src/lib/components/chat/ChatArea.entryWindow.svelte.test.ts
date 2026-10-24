@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * F6 - THE FIRST FRAME OF AN ENTRY MOUNTS THE VIEWPORT TAIL, AND THE WIDEN DOES NOT MOVE THE READER.
  *
@@ -25,13 +26,13 @@ const PANE_PX = 700;
 const ROW_SELECTOR = '[id^="msg-"]';
 
 /**
- * Rows in the thread, deliberately just above the 60-row entry window and not a long thread: what
- * is asserted is the window's arithmetic, which a thread of 80 shows as well as one of 300 (a window
- * of anything but 60 reads differently), and ChatArea's mount cost grows with the WHOLE thread -
- * measured 2026-10-19, 2.0 s per test at 300 rows against 0.5 s at 70, which under suite load
- * crossed the 5 s timeout. docs/wiki/test-suite-reform.md (WP-T9).
+ * Rows in the thread: the smallest count above the 60-row entry window, which is all the window's
+ * arithmetic needs (a window of anything but 60 reads differently). This test used to cross the 5 s
+ * timeout under suite load because ChatArea's mount cost grew with the WHOLE thread. The cause was
+ * the component, not the size: the first render mounted every row before the entry frame cut it
+ * to 20, which the first case below now pins. docs/wiki/test-suite-reform.md (WP-T9).
  */
-const THREAD = 80;
+const THREAD = 61;
 
 let rowPx = 36;
 const mounted: (() => void)[] = [];
@@ -120,6 +121,27 @@ afterEach(() => {
 });
 
 describe('ChatArea entry window (F6)', () => {
+  it('never mounts more than the 20-row entry frame on mount, whatever the thread holds', () => {
+    // The DOM after the flush shows 20 rows either way. What this pins is every row that EXISTED,
+    // because the first render used to mount the whole thread and drop all but 20 of them in the
+    // same flush - so the rows dropped are read from the removals.
+    const rows = new Set<string>();
+    const observer = new MutationObserver(() => {});
+    observer.observe(document.body, { childList: true, subtree: true });
+    const target = mountArea(THREAD);
+    for (const r of observer.takeRecords()) {
+      for (const n of [...r.addedNodes, ...r.removedNodes]) {
+        if (!(n instanceof Element)) continue;
+        for (const row of [n, ...n.querySelectorAll(ROW_SELECTOR)]) {
+          if (row.matches(ROW_SELECTOR)) rows.add(row.id);
+        }
+      }
+    }
+    observer.disconnect();
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(20);
+    expect(rows.size).toBe(20);
+  });
+
   it('a thread of one-line rows settles on the 60-row entry window, never on more', async () => {
     // 20 one-line rows (720 px) do not exceed a 700 px pane by the 40 px fillViewportThenPin wants,
     // so it steps to the full entry size in the hidden frame; the widen then has nothing to add.

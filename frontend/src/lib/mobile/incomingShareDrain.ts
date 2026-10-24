@@ -2,8 +2,9 @@
  * Reads the share the native layer left for the page (`pending_share.json`) into `incomingShare`,
  * and later reads its files when it is staged.
  *
- * Android's `IncomingShare.kt` copies whatever another app shared into the app cache and writes a
- * manifest; `read_and_clear_pending_share` hands that manifest over exactly once. THE COPIES STAY ON
+ * Android's `IncomingShare.kt` - and on iOS the Share Extension, whose share the app carries out of
+ * the App Group (`commands/app_group_share.rs`) - copies whatever another app shared into the app
+ * cache and writes a manifest; `read_and_clear_pending_share` hands that manifest over exactly once. THE COPIES STAY ON
  * DISK until the member has picked a destination and that conversation is displayed: the drain runs
  * at mount, before the PIN, and reading a share's files there would hold them in the WebView for as
  * long as the member takes to unlock and choose. Only `stageSharedFiles` reads them, ONE AT A TIME,
@@ -40,7 +41,7 @@ export async function drainNativeShare(): Promise<{ lost: number } | null> {
   }
   Log.d(
     'IncomingShare',
-    `drained: ${manifest.text.length} chars, ${manifest.files.length} file(s), ${manifest.refused} refused natively`
+    `drained: ${manifest.text.length} chars, ${manifest.files.length} file(s), ${manifest.refused} refused natively, suggestion=${manifest.target !== null}`
   );
   // A CAPTURE THAT STARTED BEFORE A SIGN-OUT belongs to the session that ended: deleted unread,
   // never offered - and not reported, the member who made it is no longer signed in here.
@@ -66,7 +67,10 @@ export async function drainNativeShare(): Promise<{ lost: number } | null> {
     );
     return null;
   }
-  incomingShare.offer({ text: manifest.text, files: manifest.files }, manifest.epoch);
+  incomingShare.offer(
+    { text: manifest.text, files: manifest.files, suggested: manifest.target },
+    manifest.epoch
+  );
   return { lost: manifest.refused };
 }
 

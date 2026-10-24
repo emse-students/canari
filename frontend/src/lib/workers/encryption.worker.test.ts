@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The E2E worker's Opus witness (2026-10-19): a plaintext audio payload that is not an Opus packet
  * is NAMED, with its side, and a receiver payload that decrypts a second time is named as a double

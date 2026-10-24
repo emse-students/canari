@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Leaving or deleting a group must state the departure locally BEFORE it performs it remotely.
  *
@@ -17,6 +18,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import type { Conversation } from '$lib/types';
 import { GroupExitRefusedError } from '$lib/mls-client/mlsDeliveryApi';
+import { owedDmReadMarks, recordDmReadMark } from '$lib/utils/chat/salonReadMarkQueue';
 
 const isGroupActiveOnServer = vi.hoisted(() => vi.fn());
 const leaveGroupAndBroadcast = vi.hoisted(() => vi.fn());
@@ -34,6 +36,12 @@ vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
     purgeOrphanGroup,
     fetchUniqueGroupMembers,
   };
+});
+
+const drainOutboxForExit = vi.hoisted(() => vi.fn());
+vi.mock('$lib/utils/chat/outbox', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/utils/chat/outbox')>();
+  return { ...actual, drainOutboxForExit };
 });
 
 // Same isolation reasoning as the other composable tests: `useConversations` is reachable from the
@@ -111,6 +119,54 @@ beforeEach(() => {
   isGroupActiveOnServer.mockResolvedValue(true);
   purgeOrphanGroup.mockResolvedValue(undefined);
   fetchUniqueGroupMembers.mockResolvedValue(['u1', 'u2']);
+  drainOutboxForExit.mockResolvedValue(0);
+});
+
+/**
+ * GRP-6, 2026-10-22: the leaver's read watermark, queued as the conversation closed, was posted 54 ms
+ * after the leave ended the membership and refused 403. Asserted from INSIDE the server action,
+ * because the defect is an ordering: a withdrawal after it would lose the same race.
+ */
+describe('exitGroupAndCleanup - nothing of the group is left queued for the server to refuse', () => {
+  for (const [what, broadcast, run] of [
+    ['leave', leaveGroupAndBroadcast, 'handleLeaveGroup'],
+    ['delete', deleteGroupAndBroadcast, 'handleDeleteGroup'],
+  ] as const) {
+    it(`settles the group's outbox and forgets its owed read mark BEFORE the ${what}'s server step`, async () => {
+      const convs = useConversations();
+      convs.conversations.set(CONTACT, conversation());
+      convs.selectConversation(CONTACT);
+      recordDmReadMark('u1', GROUP_ID, 1234);
+      recordDmReadMark('u1', 'another-group', 5678);
+      const { ctx } = makeCtx();
+      let withdrawnBefore: unknown[][] = [];
+      let owedDuring: Record<string, unknown> = {};
+      broadcast.mockImplementation(async () => {
+        withdrawnBefore = [...drainOutboxForExit.mock.calls];
+        owedDuring = { ...owedDmReadMarks('u1') };
+      });
+
+      await convs[run](ctx);
+
+      expect(withdrawnBefore).toEqual([[GROUP_ID, what]]);
+      // An allowlist: this group's mark is gone, another conversation's is untouched.
+      expect(owedDuring[GROUP_ID]).toBeUndefined();
+      expect(owedDuring['another-group']).toEqual(expect.objectContaining({ at: 5678 }));
+    });
+  }
+
+  it('still leaves when the outbox cannot be settled, and says what that leaves behind', async () => {
+    drainOutboxForExit.mockRejectedValue(new Error('no active outbox controller'));
+    const convs = useConversations();
+    convs.conversations.set(CONTACT, conversation());
+    convs.selectConversation(CONTACT);
+    const { ctx, log } = makeCtx();
+
+    await convs.handleLeaveGroup(ctx);
+
+    expect(leaveGroupAndBroadcast).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('NOT settled before the server step'));
+  });
 });
 
 describe('exitGroupAndCleanup - the departure is recorded before it is performed', () => {

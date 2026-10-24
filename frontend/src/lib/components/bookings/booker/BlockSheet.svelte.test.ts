@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * AN UNKNOWN OUTCOME CLOSES THE BLOCK SHEET (review of #2035). The first block may have landed
  * after a lost answer, so the sheet re-reads the grid, says so, and closes (a second tap would be
@@ -9,10 +10,12 @@ import { flushSync, mount, unmount } from 'svelte';
 
 const addBlock = vi.hoisted(() => vi.fn());
 const showToast = vi.hoisted(() => vi.fn());
+const namedSpaceBookings = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/bookings/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/bookings/api')>()),
   addBlock: (...a: unknown[]) => addBlock(...a),
+  namedSpaceBookings: (...a: unknown[]) => namedSpaceBookings(...a),
 }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: (...a: unknown[]) => showToast(...a) }));
 
@@ -28,11 +31,14 @@ const run = [{ date: '2026-11-02', startMs, endMs: startMs + 30 * 60_000, state:
 
 const mounted: ReturnType<typeof mount>[] = [];
 
-function render() {
+function render(canManage = false) {
   const onReread = vi.fn(() => Promise.resolve());
   const onClose = vi.fn();
   mounted.push(
-    mount(BlockSheet, { target: document.body, props: { space, resource, run, onReread, onClose } })
+    mount(BlockSheet, {
+      target: document.body,
+      props: { space: { ...space, canManage }, resource, run, onReread, onClose },
+    })
   );
   flushSync();
   return { onReread, onClose };
@@ -49,6 +55,7 @@ function submit() {
 beforeEach(() => {
   setLocale('en', { reload: false });
   addBlock.mockReset();
+  namedSpaceBookings.mockReset();
   showToast.mockReset();
 });
 
@@ -95,5 +102,41 @@ describe('BlockSheet over a block that already exists', () => {
     submit();
     await vi.waitFor(() => expect(onClose).toHaveBeenCalledWith(true));
     expect(showToast).toHaveBeenCalledWith(m.bookings_refusal_block_overlap(), 'error');
+  });
+});
+
+describe('BlockSheet over bookings the server named (D29)', () => {
+  const named = new BookingsApiError('inside', 'bookings-inside-block', 409, ['b1']);
+  const booking = {
+    id: 'b1',
+    resourceId: 'resource-1',
+    startsAt: new Date(startMs).toISOString(),
+    endsAt: new Date(startMs + 30 * 60_000).toISOString(),
+    cancelled: false,
+    holderName: 'Camille',
+  };
+
+  it('lists them for a manager, keeps the sheet open and re-reads the grid', async () => {
+    addBlock.mockRejectedValue(named);
+    namedSpaceBookings.mockResolvedValue([booking]);
+    const { onReread, onClose } = render(true);
+    submit();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Camille'));
+    expect(namedSpaceBookings).toHaveBeenCalledWith('space-1', ['b1']);
+    expect(document.querySelector('section[aria-label]')?.getAttribute('aria-label')).toBe(
+      m.bookings_stranded_title()
+    );
+    expect(onReread).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('keeps the count and closes for an account that may not read the space bookings', async () => {
+    addBlock.mockRejectedValue(named);
+    const { onClose } = render(false);
+    submit();
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledWith(true));
+    expect(namedSpaceBookings).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith(m.bookings_refusal_inside_block({ count: 1 }), 'error');
   });
 });

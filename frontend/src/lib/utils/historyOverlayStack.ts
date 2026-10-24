@@ -354,6 +354,21 @@ export function drainHistoryOverlayStack(): void {
   hereHref = '';
 }
 
+/**
+ * Removes the fragment from the address of the entry under the pointer, keeping that entry's state
+ * (the router's and this module's). Used for a fragment that is a secret - an invite link's
+ * admission grant (channel-encryption section 25) - so a copied or bookmarked address does not
+ * carry it along. Here because this module is the one writer of the History API: the router's own
+ * `replaceState` refuses to run before it has started, which a page's first mount can precede.
+ */
+export function dropAddressFragment(): void {
+  if (!isBrowser || !location.hash) return;
+  const before = currentHref();
+  history.replaceState(history.state, '', location.pathname + location.search);
+  if (hereHref === before) hereHref = currentHref();
+  Log.d('historyOverlay', 'fragment dropped from the address');
+}
+
 /** Drop stack entries without invoking close handlers (app teardown). */
 export function clearHistoryOverlayStack(): void {
   stack.length = 0;

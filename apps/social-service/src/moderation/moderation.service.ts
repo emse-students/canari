@@ -15,6 +15,11 @@ import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import type { LiveChatReportedLine } from '../lives/entities/live-chat-reported-line.entity';
 import { openLiveChatLine } from '../lives/live-chat-seal';
 import {
+  openLiveKeyOr503,
+  storedLiveKeyColumns,
+  type StoredLiveKey,
+} from '../lives/live-key-at-rest';
+import {
   type ReportedLineIntegrity,
   signReportedLine,
   signingKey,
@@ -98,10 +103,21 @@ export interface LiveChatLineState {
   integrity: ReportedLineIntegrity;
 }
 
+/** Bound of the once-per-(reporter, message) mismatch log set. */
+const MISMATCH_LOG_CAP = 1000;
+
 /** Handles content reports and user mute/unmute moderation actions. */
 @Injectable()
 export class ModerationService {
   private readonly logger = new Logger(ModerationService.name);
+
+  /**
+   * (reporter, message) pairs whose chat-line mismatch was already logged at warn. The refusal rolls
+   * its transaction back, so no durable row can say "already told"; this process-local set is
+   * bounded by clearing at MISMATCH_LOG_CAP, never by a timer. After a restart or a clear the next
+   * attempt warns once more, which costs one line.
+   */
+  private readonly loggedMismatches = new Set<string>();
 
   constructor(
     @InjectRepository(ContentReport)
@@ -228,36 +244,61 @@ export class ModerationService {
    * and not yet purged) and be visible to the reporter by the rule of a post
    * (`liveVisibleToViewerSql`), with no block between them - otherwise 404 `LIVE_NOT_FOUND`, the
    * live API's own answer, so the report route is no oracle for a live the reporter could not watch.
+   * A viewer the broadcaster removed from that live (`live_removed_viewers`) may still report THE
+   * LIVE itself - what they watched before the removal is theirs to report - so this does not refuse
+   * them; the chat-line path refuses only a line written AFTER their `removedAt`.
    * A live ended and purged has nothing left to review (no replay, L3): report the person instead.
-   * Returns the broadcaster (stored as the report's `reportedUserId`) and the live key, which a chat
-   * line's report checks the reporter's plaintext with. `FOR SHARE` when `lock`: the live's row then
-   * cannot be purged, nor a chat line of it hidden, before the caller's transaction commits.
+   * Returns the broadcaster (stored as the report's `reportedUserId`) and the live key AS STORED
+   * (sealed, migration 110), which a chat line's report opens through `openLiveKey` alone to check the
+   * reporter's plaintext. `FOR SHARE` when `lock`: the live's row then cannot be purged, nor a chat
+   * line of it hidden, before the caller's transaction commits.
    */
   private async reportableLive(
     manager: EntityManager,
     reporterId: string,
     liveId: string,
     lock = false
-  ): Promise<{ broadcasterId: string; liveKey: string }> {
-    if (!UUID_RE.test(liveId)) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
-    const rows: { broadcasterId: string; liveKey: string; visible: boolean }[] =
+  ): Promise<{ broadcasterId: string; storedKey: StoredLiveKey }> {
+    const refuse = (why: string): NotFoundException => {
+      this.logger.debug(
+        `[REPORT] live ${sanitizeLog(liveId)} not reportable by ${sanitizeLog(reporterId)}: ${why}`
+      );
+      return new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    };
+    if (!UUID_RE.test(liveId)) throw refuse('not a live id');
+    const rows: (StoredLiveKey & { broadcasterId: string; visible: boolean })[] =
       await manager.query(
-        `SELECT "broadcasterId", "liveKey", ${liveVisibleToViewerSql('lives', '$2')} AS visible
+        `SELECT "broadcasterId", ${storedLiveKeyColumns()},
+                ${liveVisibleToViewerSql('lives', '$2')} AS visible
            FROM lives WHERE id = $1${lock ? ' FOR SHARE' : ''}`,
         [liveId.toLowerCase(), reporterId]
       );
     const live = rows[0];
-    if (
-      !live ||
-      live.visible !== true ||
-      (await isBlockedBetween(manager, reporterId, live.broadcasterId))
-    ) {
-      this.logger.debug(
-        `[REPORT] live ${sanitizeLog(liveId)} not reportable by ${sanitizeLog(reporterId)}`
-      );
-      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    if (!live) throw refuse('no such live');
+    if (live.visible !== true) throw refuse('not visible to the reporter');
+    if (await isBlockedBetween(manager, reporterId, live.broadcasterId)) {
+      throw refuse('a block with the broadcaster');
     }
-    return { broadcasterId: live.broadcasterId, liveKey: live.liveKey };
+    return {
+      broadcasterId: live.broadcasterId,
+      storedKey: {
+        liveKeyCiphertext: live.liveKeyCiphertext,
+        liveKeyVersion: live.liveKeyVersion,
+        liveKey: live.liveKey,
+      },
+    };
+  }
+
+  /** Warns the FIRST time a reporter's text mismatches a line, then drops repeats to debug. */
+  private logMismatchOnce(reporterId: string, messageId: string, line: string): void {
+    const key = `${reporterId}|${messageId}`;
+    if (this.loggedMismatches.has(key)) {
+      this.logger.debug(`${line} (repeat)`);
+      return;
+    }
+    if (this.loggedMismatches.size >= MISMATCH_LOG_CAP) this.loggedMismatches.clear();
+    this.loggedMismatches.add(key);
+    this.logger.warn(line);
   }
 
   /**
@@ -269,8 +310,9 @@ export class ModerationService {
    * meanwhile - both take it `FOR UPDATE`), then the message `FOR SHARE` (an erasure deleting it waits
    * for this commit, then anonymises the kept line it then sees), then:
    *
-   * 1. who may report it: who may report the live (visible, no block with the broadcaster), and no
-   *    block with the AUTHOR either way (a line they were never shown) - else 404 `LIVE_NOT_FOUND`,
+   * 1. who may report it: who may report the live (visible, no block with the broadcaster), no
+   *    block with the AUTHOR either way (a line they were never shown), and, for a viewer the
+   *    broadcaster removed, a line written no later than that removal - else 404 `LIVE_NOT_FOUND`,
    *    as for a hidden line, a purged live or a message that never existed: no oracle;
    * 2. THE PLAINTEXT IS CHECKED, not trusted: the sealed line is opened with the live key the row
    *    still holds, and must equal `message` exactly - else 400 `LIVE_CHAT_REPORT_MISMATCH`, so a
@@ -324,25 +366,40 @@ export class ModerationService {
         clientId: string;
         sealed: Buffer | null;
         createdAt: Date;
+        afterRemoval: boolean;
       }[] = await tx.query(
-        `SELECT seq, "authorId", "clientId"::text, sealed, "createdAt" FROM live_chat_messages
-          WHERE id = $1 FOR SHARE`,
-        [messageId]
+        `SELECT m.seq, m."authorId", m."clientId"::text, m.sealed, m."createdAt",
+                EXISTS (SELECT 1 FROM live_removed_viewers r
+                         WHERE r."liveId" = m."liveId" AND r."viewerId" = $2
+                           AND m."createdAt" > r."removedAt") AS "afterRemoval"
+           FROM live_chat_messages m
+          WHERE m.id = $1 FOR SHARE OF m`,
+        [messageId, data.reporterId]
       );
       const line = rows[0];
       if (!line || line.sealed === null) throw notFound('gone or hidden');
+      // A removed viewer saw every line written before their removal legitimately; one written
+      // after it was never shown to them (the server refuses them the key from then on). Compared
+      // in SQL, at the database's microsecond precision.
+      if (line.afterRemoval === true) {
+        throw notFound('written after the reporter was removed from the live');
+      }
       if (await isBlockedBetween(tx, data.reporterId, line.authorId)) {
         throw notFound('a block with the author');
       }
+      // An unreadable stored key is a 503 (logged at ERROR by `openLiveKey`), never a mismatch: the
+      // reporter's text was not found false, it could not be checked.
       const opened = openLiveChatLine(
-        live.liveKey,
+        openLiveKeyOr503(liveId, live.storedKey),
         liveId,
         line.clientId,
         line.authorId,
         line.sealed
       );
       if (opened !== text) {
-        this.logger.warn(
+        this.logMismatchOnce(
+          data.reporterId,
+          messageId,
           `[REPORT] chat line ${messageId} on ${liveId}: the reporter's text does not match the ` +
             `sealed line (${opened === null ? 'the line does not open' : 'another text'}) - refused`
         );
@@ -490,7 +547,9 @@ export class ModerationService {
               : r.contentType === 'live'
                 ? (lives.get(r.contentId)?.broadcasterName ?? null)
                 : r.contentType === 'live_chat'
-                  ? (chatLines.get(r.id)?.text ?? null)
+                  ? chatLines.get(r.id)?.integrity.content === 'verified'
+                    ? chatLines.get(r.id)!.text
+                    : null
                   : null,
       postId:
         r.contentType === 'comment' ? (commentPreviews.get(r.contentId)?.postId ?? null) : null,

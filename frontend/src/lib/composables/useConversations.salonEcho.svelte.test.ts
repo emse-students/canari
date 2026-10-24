@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A HISTORY PAGE IS THE PROOF THAT SETTLES A SALON ECHO WHOSE POST REPLY WAS LOST (WP-OFF-2).
  *
@@ -18,6 +19,16 @@ vi.mock('$lib/services/ChannelService', () => ({
 vi.mock('$lib/utils/chat/channelCrypto', () => {
   return {
     isChannelConversationId: (id: string) => id.startsWith('channel_'),
+    decodeChannelMessagePage: vi.fn(
+      async (raw: string, rows: readonly unknown[], me: string, tally: unknown) => {
+        // The page entry decodes row by row through the stub below, as the real one does.
+        const { decodeChannelMessageRow } = await import('$lib/utils/chat/channelCrypto');
+        const out = [];
+        for (const r of rows)
+          out.push(await decodeChannelMessageRow(raw, r as never, me, tally as never));
+        return out;
+      }
+    ),
     decodeChannelMessageRow: vi.fn(async (_raw: string, row: { id: string }) => ({
       kind: 'message',
       message: {

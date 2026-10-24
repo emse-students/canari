@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE FULL-SCREEN CALL, AS A SCREEN-READER, A KEYBOARD AND THE SYSTEM BACK MEET IT.
  *
@@ -134,6 +135,38 @@ describe('the ring', () => {
   it('is a plain dialog once answered', async () => {
     await render(fakeService('incall'));
     expect(screen()?.getAttribute('role')).toBe('dialog');
+  });
+});
+
+describe('the screen every platform shows (call-screen parity)', () => {
+  const text = (id: string) => document.querySelector(`[data-testid="${id}"]`)?.textContent?.trim();
+
+  it('shows the peer name, a photo backdrop and a status on a ring, with decline BEFORE accept', async () => {
+    await render(fakeService('incoming'));
+    expect(screen()?.textContent).toContain('Bob');
+    expect(text('call-status')).toBe(m.call_incoming_label());
+    const backdrop = document.querySelector('[data-testid="call-backdrop"]');
+    expect(backdrop?.getAttribute('aria-hidden')).toBe('true');
+    // Decline left, accept right: the order of Android's CallStyle ring and CallKit.
+    const decline = document.querySelector('[data-testid="call-decline"]')!;
+    const accept = document.querySelector('[data-testid="call-accept"]')!;
+    expect(decline.compareDocumentPosition(accept) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(accept.className).toContain('bg-call-accept');
+    expect(decline.className).toContain('bg-call-decline');
+  });
+
+  it('says "Calling..." on an outgoing call, with mute and hang-up and no accept', async () => {
+    await render(fakeService('calling'));
+    expect(text('call-status')).toBe(m.call_ringing_label());
+    expect(document.querySelector('[data-testid="call-mute"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="call-hang-up"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="call-accept"]')).toBeNull();
+  });
+
+  it('shows the running time in a call, with the same backdrop', async () => {
+    await render(fakeService('incall'));
+    expect(text('call-status')).toMatch(/^\d+:\d{2}(:\d{2})?$/);
+    expect(document.querySelector('[data-testid="call-backdrop"]')).not.toBeNull();
   });
 });
 

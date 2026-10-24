@@ -25,6 +25,7 @@ import {
   PAGE_BOOT_NARRATION,
   stripStamp,
   ignoringExpectedRefusal,
+  ignoringOfflineCut,
   report,
 } from '../watch.mjs';
 
@@ -46,6 +47,23 @@ const CASES = [
   // rule swallows both: they share a prefix, an id and the word "withdrawn", and they mean opposite
   // things about what the peers hold. Landed in `unexplained` on MUT-19's first green run.
   ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before it was ever sent', 'benign'],
+  ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before this tab sent it', 'benign'],
+  // A group exit settling its queue (GRP-6): clean only when nothing was lost.
+  [
+    'log',
+    '[06:49:10] [OUTBOX] leave of 4271a303…: 1 of 1 queued entry sent before the server step, 0 lost',
+    'benign',
+  ],
+  [
+    'log',
+    '[06:49:10] [OUTBOX] leave of 4271a303…: 0 of 1 queued entry sent before the server step, 1 lost (1 text)',
+    'unexplained',
+  ],
+  [
+    'log',
+    '[06:49:10] [OUTBOX] 9e1c40aa… (control) not queued: this device owes the leave of 4271a303…, so nothing of it can be delivered',
+    'benign',
+  ],
   [
     'log',
     '[11:11:10] [OUTBOX] a721e695… withdrawn while it was already being sent - the peers will have it, so the delete has to travel as an event',
@@ -416,7 +434,13 @@ const CASES = [
     '[14:26:09] [WELCOME_REQ] web-b78568a3\u2026 already a member of 1bf6fefe... - skip',
     'notable',
   ],
-  // A kick followed by a re-add, claimed by the generic `re-?add` rule rather than a rule of its own.
+  // A leaf replaced (Remove + Add in ONE commit), claimed by the generic `re-?add` rule rather than
+  // a rule of its own. The older two-commit spelling is kept: an embedded APK emits it until updated.
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] web-b78568a3... leaf in MLS tree - remove + re-add in one commit (no Welcome sent from here this session)',
+    'notable',
+  ],
   [
     'log',
     '[14:26:09] [WELCOME_REQ] web-b78568a3... leaf in MLS tree - kick + re-add',
@@ -525,7 +549,20 @@ const CASES = [
   ['log', '[14:08:40] [OK] Added: b78568a3… (1 device(s)). (1 user(s) delivered)', 'benign'],
   ['log', '[14:08:40] [SYNC] Members added: b78568a3… (1/1 delivered)', 'benign'],
   ['log', '[14:10:28] b78568a3… retire du groupe.', 'benign'],
-  ['log', '[14:12:38] Groupe renomme en "GRP5-mt5rospko89-R"', 'benign'],
+  // THE CURRENT SPELLINGS of creation, rename and departure: the id, never the name (GRP, 2026-10-22).
+  ['log', '[06:44:38] [OK] Group d80f646d… created.', 'benign'],
+  ['log', '[06:44:38] [GROUP] Group created successfully (id=d80f646d…)', 'benign'],
+  ['log', '[14:12:38] Group cab9b983… renamed', 'benign'],
+  ['log', '[14:12:38] 📝 Group renamed by f7a9bb80…', 'benign'],
+  ['log', '[06:49:10] [INFO] c71e1a5b… left group "4271a303…"', 'benign'],
+  ['debug', '[2026-10-22T04:44:36.752Z] [historyOverlay] stack ready - entries written', 'benign'],
+  ['debug', '[2026-10-22T04:40:12.551Z] [AUDIO] opening the tone output for send', 'benign'],
+  ['debug', '[2026-10-22T04:40:12.543Z] [AUDIO] last tone ended, suspending the tone output', 'benign'],
+  // A tone that FAILED is not routine, and the rule names its one reason.
+  ['debug', '[2026-10-22T04:40:12.543Z] [AUDIO] the send tone failed, suspending the tone output', 'unexplained'],
+  ['log', '[06:40:14] [OUTBOX] 3d9f6c2f… durable write took 1 ms (0 file bytes)', 'benign'],
+  ['debug', '[2026-10-22T04:40:12.275Z] [CHAT_VIEW] 358105f1 messages 1 (hasNewMessage=true, response=follow-bottom)', 'benign'],
+  ['debug', '[2026-10-22T04:40:12.275Z] [CHAT_VIEW] 358105f1 messages 2 (hasNewMessage=false, response=n/a)', 'benign'],
   ['log', '[14:08:40] [WELCOME] Group ee6ba569… ready', 'benign'],
   [
     'log',
@@ -1369,6 +1406,22 @@ for (const [what, url, status, rule, shouldBeClean] of REFUSAL_CASES) {
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'refusal'.padEnd(12)} ${what}`);
   if (!ok) console.log(`       clean=${rep.clean} badHttp=${JSON.stringify(rep.badHttp)}`);
+}
+
+/**
+ * THE APP'S OWN REACTION TO A DELIBERATE CUT, forgiven only under `ignoringOfflineCut`. The gateway
+ * line is `String(err)`, so it carries `Error: ` before the sentence, and the rule written without it
+ * forgave nothing: GRP-7 was `PASS-DIRTY` on its own cut (2026-10-22). Pinned as the app spells it,
+ * and pinned to stay dirt outside a cut.
+ */
+const CUT_LINE =
+  '[06:50:17] Gateway inaccessible: Error: WebSocket connection failed to ws://localhost:8081/api/ws (chat-gateway). Check that the gateway is running and reachable.';
+{
+  const plain = await report({ cx: cxOf([['log', CUT_LINE]]), label: 'selftest' });
+  const underCut = ignoringOfflineCut(plain);
+  const ok = plain.unexplained.length === 1 && underCut.unexplained.length === 0;
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${'cut'.padEnd(12)} the gateway line is forgiven under a cut and only there`);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');

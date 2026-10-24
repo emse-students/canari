@@ -10,6 +10,8 @@
  * `ChatSessionCallbacks.onLoginFailed` receives both.
  */
 
+import type { HardwareKeyRefusal } from '$lib/crypto/hardwareHeldKey';
+import { m } from '$lib/paraglide/messages';
 import { isServerUnreachable } from '$lib/utils/fetchOrUnreachable';
 import { LocalizedError } from '$lib/utils/localizedError';
 
@@ -44,6 +46,14 @@ export type LoginErrorCode =
    * and offers the old-PIN recovery without the "otherwise damaged" branch the fingerprint ruled out.
    */
   | 'local_state_sealed_under_old_pin'
+  /**
+   * PIN accepted, and the browser's WebCrypto refused this device's v2 state on every read of this
+   * start, while nothing PROVED the bytes altered (`MlsStateUnreadableNowError`: WebKit names an
+   * engine fault and a failed tag alike). Nothing was rotated or written; the next start reads it
+   * again. Deliberately in NONE of the predicates below: no old PIN helps, a reset would destroy a
+   * state nothing showed to be broken, and it is not an ordinary outcome - it accuses the engine.
+   */
+  | 'local_state_unreadable_now'
   /** Biometric mode with nothing in the platform keystore yet. */
   | 'keystore_empty'
   /** This device was revoked; local state has been wiped and it must re-register. */
@@ -83,6 +93,21 @@ export type LoginErrorCode =
    * remedy is closing the other tab, never a PIN or a reset.
    */
   | 'state_written_by_another_tab'
+  /**
+   * PIN accepted, on a phone whose data is sealed under a HARDWARE-HELD key (2026-10-22), and the
+   * keystore PROVABLY no longer holds that key: the entry is empty, or holds another key than the one
+   * the marker names. No PIN can open data sealed under a random key, so the old-PIN recovery is NOT
+   * offered; the local state exists, so the reset is. Accused, never an ordinary outcome: a keystore
+   * that loses its entry is the event the device readings are watching for.
+   */
+  | 'hardware_key_unavailable'
+  /**
+   * The hardware-held key, or the marker naming it, could not be READ - a keychain error, a read
+   * before the phone's first unlock. Nothing says the key is gone, so NEITHER the reset NOR the
+   * old-PIN recovery is offered: a reset here would erase data whose key still exists. The remedy is
+   * trying again. Accused: the platform status is in the native log.
+   */
+  | 'hardware_key_unreadable'
   /** Anything else (network, server, unexpected). */
   | 'other';
 
@@ -135,6 +160,8 @@ export function loginErrorCode(error: unknown): LoginErrorCode {
 
 /** True when the "PIN changed on another device" recovery flow can resolve this failure. */
 export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
+  // Not a lost hardware-held key: no PIN derives it, so the recovery could only fail.
+  if (code === 'hardware_key_unavailable') return false;
   return code === 'pin_mismatch' || provesLocalStateExists(code);
 }
 
@@ -155,7 +182,11 @@ export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
  * keeps the reset off the screen. Measured on W2, 2026-09-21.
  */
 export function provesLocalStateExists(code: LoginErrorCode): boolean {
-  return code === 'local_state_unopenable' || code === 'local_state_sealed_under_old_pin';
+  return (
+    code === 'local_state_unopenable' ||
+    code === 'local_state_sealed_under_old_pin' ||
+    code === 'hardware_key_unavailable'
+  );
 }
 
 /**
@@ -192,7 +223,7 @@ export function provesLocalStateExists(code: LoginErrorCode): boolean {
 export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
   return (
     code === 'pin_mismatch' ||
-    provesLocalStateExists(code) ||
+    (provesLocalStateExists(code) && code !== 'hardware_key_unavailable') ||
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
     code === 'account_deleted' ||
@@ -213,4 +244,33 @@ export function isVaultRefusal(code: LoginErrorCode | undefined): boolean {
  */
 export function provesOtherAccountState(code: LoginErrorCode | undefined): boolean {
   return code === 'device_holds_other_account';
+}
+
+/**
+ * True when the gate must withhold the reset because the key of this device's data could not be
+ * READ and may still exist (`hardware_key_unreadable`) - a reset would destroy what a retry opens.
+ */
+export function withholdsResetForUnreadKey(code: LoginErrorCode | undefined): boolean {
+  return code === 'hardware_key_unreadable';
+}
+
+/**
+ * The login failure for a hardware-held key the unlock could not use, decided by WHY: only a refusal
+ * that proves the key gone (`absent`: the entry is empty; `mismatch`: it holds another key) is
+ * `hardware_key_unavailable`, which says the messages are lost and offers the reset. Every other one
+ * - an unreadable entry or marker, a marker that is not `hardware` - is `hardware_key_unreadable`:
+ * try again, no reset.
+ */
+export function hardwareKeyLoginFailure(
+  refusal: HardwareKeyRefusal,
+  log: (msg: string) => void
+): LoginFailure {
+  if (refusal === 'absent' || refusal === 'mismatch') {
+    log(`[AT_REST_KEY] ERROR: the hardware-held key is gone (${refusal}) - the reset is offered`);
+    return new LoginFailure('hardware_key_unavailable', m.auth_hardware_key_unavailable());
+  }
+  log(
+    `[AT_REST_KEY] ERROR: the hardware-held key could not be read (${refusal}) - retry, no reset offered`
+  );
+  return new LoginFailure('hardware_key_unreadable', m.auth_hardware_key_unreadable());
 }

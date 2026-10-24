@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PATH AND THE HUB: what a reader sees and where each link goes.
  *

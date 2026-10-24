@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE IN-APP PICKER - a sheet on a phone, a popover on a wide window, and a listbox either way.
  *

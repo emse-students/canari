@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE CARD'S COMMENTS ARE A PREVIEW AND A SHEET (the comment refonte, 2026-10-21). Pinned: the card
  * draws the newest comment, not the thread; a tap on the count opens the thread in a sheet; the
@@ -117,7 +118,7 @@ describe('the card', () => {
     expect(buttonWith(m.post_show_comments_label({ count: 3 }))).toBeDefined();
   });
 
-  it('opens the thread in a sheet from the count, with the post reminded under the title', async () => {
+  it('opens the thread in a dialog from the count, WITHOUT the post quoted above it', async () => {
     mountCard(row([comment(1), comment(2)]));
     buttonWith(m.post_show_comments_label({ count: 2 }))!.click();
     await settle();
@@ -125,7 +126,7 @@ describe('the card', () => {
     expect(sheetOpen()).toBe(true);
     const dialog = document.body.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain(m.post_comments_sheet_title());
-    expect(dialog.textContent).toContain('The post text');
+    expect(dialog.textContent).not.toContain('The post text');
     expect(threadRows()).toBe(2);
   });
 

@@ -2,6 +2,14 @@ import Security
 import UIKit
 import UserNotifications
 
+/// What an `NSLog` line says of an error: its domain and code, never its text - a
+/// `localizedDescription` often quotes the file it failed on, and NSLog redacts nothing. The
+/// Objective-C twin is `CanariErrorReason` (`canari_push.h`); `nativeLogContent.test.ts` holds both.
+private func errorReason(_ error: Error) -> String {
+  let failure = error as NSError
+  return "\(failure.domain) \(failure.code)"
+}
+
 /// Canari Notification Service Extension.
 ///
 /// Runs in its own process for every incoming `mutable-content: 1` push and
@@ -33,6 +41,8 @@ class NotificationService: UNNotificationServiceExtension {
   private static let mlsBinFile = "mls.bin"
   private static let pushContextFile = "push_context.json"
   private static let pushSecretFile = "push_secret.txt"
+  /// Present while the app is in the foreground (`CanariSetAppGroupForegroundFlag`, canari_ios.mm).
+  static let appInForegroundFile = "app_in_foreground"
 
   /// The alias of the install's native cache key (Rust `native_cache`, the only copy of the
   /// design), which seals `graine_seeds.json` and the push cache. Spelled in `native_cache.rs`,
@@ -109,6 +119,13 @@ class NotificationService: UNNotificationServiceExtension {
       // clients; here it is replaced by one in the phone's own language.
       applyReactionContent(userInfo: userInfo, content: content)
       finish()
+    case "call_ring":
+      // The GENERIC ring alert of an iPhone with no VoIP token (calls.service `ringViaFcm`, no native
+      // ring until CALLS_NATIVE_RING_COMPILED). It is NOT an MLS message: falling to the default
+      // branch would overwrite the server's "Appel entrant" with the encrypted-message fallback and
+      // add message buttons. The server's title and body are KEPT; only the filing is set here.
+      applyGenericCallRing(userInfo: userInfo, content: content)
+      finish()
     case "social", "form_reminder":
       // Not encrypted, and since 2026-08-19 not composed by the server either: the payload carries
       // a `contentKey` and the two untranslatable pieces, and the sentence is written here in the
@@ -125,6 +142,31 @@ class NotificationService: UNNotificationServiceExtension {
       finish()
     default:
       handleMlsMessage(userInfo: userInfo, content: content)
+    }
+  }
+
+  /// Files the generic incoming-call alert: stacked under its conversation, opening it on a tap, and
+  /// time-sensitive so it breaks through Focus. The wording is the server's own (localized from the
+  /// device's `push_token.locale`, no caller and no conversation name) and is left untouched. The
+  /// deep link carries NO `acceptCall`: nothing native answers a call yet, the app only opens the
+  /// conversation. `canariCallId` lets a later `call_ring_end` remove this banner.
+  private func applyGenericCallRing(
+    userInfo: [AnyHashable: Any],
+    content: UNMutableNotificationContent
+  ) {
+    let groupId = Self.string(userInfo["groupId"]) ?? ""
+    let callId = Self.string(userInfo["callId"]) ?? ""
+    if #available(iOS 15.0, *) {
+      content.interruptionLevel = .timeSensitive
+    }
+    if groupId.isEmpty {
+      NSLog("[CanariNSE] call_ring with no groupId - banner kept without a deep link")
+    } else {
+      content.threadIdentifier = groupId
+      content.userInfo["deepLink"] = "fr.emse.canari://chat/\(groupId)"
+    }
+    if !callId.isEmpty {
+      content.userInfo["canariCallId"] = callId
     }
   }
 
@@ -670,7 +712,64 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
+    Self.announceOwnDevicesAdded(json, ctx: ctx, source: "decrypt")
     return json
+  }
+
+  /// "A new device was added to your account" (user decision 2026-10-22), from a commit this
+  /// extension merged in memory - never from a server message.
+  ///
+  /// `json` is a native decrypt answer; its `ownDeviceAdded` array holds the keys Rust found to be
+  /// this account's owner alerts (`mobile/device_notice.rs`). They are claimed in the ledger the app
+  /// shares in the App Group (`canari_native_claim_device_notices`), so a push replaying the same
+  /// commit, or the app having shown it already, raises nothing. One local notification for the
+  /// keys this call claimed; the app's in-app alert names the device. Android twin:
+  /// `CanariFirebaseMessagingService.announceOwnDevicesAdded`.
+  private static func announceOwnDevicesAdded(_ json: String?, ctx: PushContext, source: String) {
+    guard let json = json, let data = json.data(using: .utf8),
+      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let keys = dict["ownDeviceAdded"] as? [String], !keys.isEmpty
+    else { return }
+    guard let dir = appGroupDir(),
+      let keysData = try? JSONSerialization.data(withJSONObject: keys),
+      let keysJson = String(data: keysData, encoding: .utf8)
+    else {
+      NSLog("[CanariNSE] \(source): device(s) added to this account - App Group unavailable, not announced")
+      return
+    }
+    // IN THE FOREGROUND THE APP TELLS IT (its in-app alert), as on Android: nothing is posted and
+    // nothing claimed, so the app's own claim stays the first. The app keeps the flag file in the
+    // App Group (`CanariSetAppGroupForegroundFlag`); a flag a crash left behind costs this one
+    // notification, never the in-app alert.
+    if FileManager.default.fileExists(atPath: dir.appendingPathComponent(appInForegroundFile).path) {
+      NSLog("[CanariNSE] \(source): device(s) added to this account - the app is in the foreground, it tells")
+      return
+    }
+    guard let raw = canari_native_claim_device_notices(dir.path, keysJson) else {
+      NSLog("[CanariNSE] \(source): device-notice claim returned nothing - not announced")
+      return
+    }
+    let claimedJson = String(cString: raw)
+    canari_free_string(raw)
+    let claimed = (try? JSONSerialization.jsonObject(with: Data(claimedJson.utf8))) as? [String] ?? []
+    guard !claimed.isEmpty else {
+      NSLog("[CanariNSE] \(source): device(s) added to this account were already announced")
+      return
+    }
+    let content = UNMutableNotificationContent()
+    content.title = localized("notif.device.added.title", locale: ctx.locale)
+    content.body = localized("notif.device.added.body", locale: ctx.locale)
+    content.sound = .default
+    // One identifier: a second announcement replaces the first rather than stacking.
+    let request = UNNotificationRequest(
+      identifier: "canari-new-device", content: content, trigger: nil)
+    UNUserNotificationCenter.current().add(request) { error in
+      if let error = error {
+        NSLog("[CanariNSE] \(source): new-device notification NOT raised: \(error)")
+      } else {
+        NSLog("[CanariNSE] \(source): \(claimed.count) new device(s) on this account - notified")
+      }
+    }
   }
 
   /// Reads the current epoch, fetches the missing ordered commits, and applies them in
@@ -721,6 +820,7 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
+    Self.announceOwnDevicesAdded(json, ctx: ctx, source: "catchup")
     return json
   }
 
@@ -764,7 +864,7 @@ class NotificationService: UNNotificationServiceExtension {
     do {
       try target.setResourceValues(values)
     } catch {
-      NSLog("[CanariNSE] backupExclusion: ERROR \(url.lastPathComponent) not excluded: \(error.localizedDescription)")
+      NSLog("[CanariNSE] backupExclusion: ERROR \(url.lastPathComponent) not excluded: \(errorReason(error))")
     }
   }
 
@@ -848,7 +948,7 @@ class NotificationService: UNNotificationServiceExtension {
       Self.excludeFromBackup(fileUrl)
       NSLog("[CanariNSE] writeFcmCache: messageId=\(result.messageId.prefix(8)) groupId=\(groupId.prefix(8))")
     } catch {
-      NSLog("[CanariNSE] writeFcmCache: failed: \(error.localizedDescription)")
+      NSLog("[CanariNSE] writeFcmCache: failed: \(errorReason(error))")
     }
   }
 
@@ -1142,7 +1242,10 @@ class NotificationService: UNNotificationServiceExtension {
         NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=local -> commit catch-up")
         json = catchupJson(ctx: ctx, groupId: groupId, senderId: frameSender, protoB64: frame) ?? json
       case .absent:
-        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=absent -> this device is not in the salon's key group; no join to wait for")
+        // Channel-encryption section 26: Android joins the key group from this push; the extension
+        // reads a MIRROR of the app's MLS state and never writes it, so it cannot. The banner stays
+        // generic and the app joins the group at its next foreground (its community load).
+        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=absent -> this device is not in the salon's key group; the extension does not join, the app joins at its next foreground")
       case .unknown:
         NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=unknown -> nothing established")
       }
@@ -1591,7 +1694,7 @@ class NotificationService: UNNotificationServiceExtension {
       content.attachments = [attachment]
       return true
     } catch {
-      NSLog("[CanariNSE] attachImage error: \(error.localizedDescription)")
+      NSLog("[CanariNSE] attachImage error: \(errorReason(error))")
       return false
     }
   }
@@ -1646,7 +1749,7 @@ class NotificationService: UNNotificationServiceExtension {
     do {
       try png.write(to: url, options: .atomic)
     } catch {
-      NSLog("[CanariNSE] initialsImage: write failed: \(error.localizedDescription)")
+      NSLog("[CanariNSE] initialsImage: write failed: \(errorReason(error))")
       return nil
     }
     return url
