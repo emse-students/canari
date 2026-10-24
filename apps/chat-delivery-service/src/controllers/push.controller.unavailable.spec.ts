@@ -4,6 +4,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { PushSecretGuard } from '../guards/push-secret.guard';
+import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import { PushController } from './push.controller';
 import { PushToken } from '../entities/push-token.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -56,6 +58,10 @@ describe('PushController - POST mls/push/unavailable', () => {
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })

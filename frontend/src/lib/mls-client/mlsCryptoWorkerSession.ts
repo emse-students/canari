@@ -144,6 +144,7 @@ export async function createMlsCryptoWorkerSession(
           ok: true,
           plaintext: new Uint8Array(r.data),
           ...(r.sender !== undefined ? { sender: r.sender } : {}),
+          ...(r.author !== undefined ? { author: r.author } : {}),
         };
       });
     },
