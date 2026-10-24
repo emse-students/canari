@@ -551,13 +551,29 @@ below; **owed on both phones**
   2026-10-19), named "Votre réaction : ..., retirer" - so a tap, which takes the reader's reaction
   back, never removes a 😂 the rail did not show. With none, a tap gives "J'aime". The number is
   every reaction; a kind this client does not know (a newer server's) is named "Votre réaction",
-  never "J'aime". Changing to another kind stays the card's picker. Same path as the double tap
+  never "J'aime". Changing to another kind is the heart's drawer (next bullet). Same path as the double tap
   (`toggledReactions`, `sendPostReaction`, `publishPostReactions`, rollback + toast), and **one
   reaction in flight per reel**: a second tap (heart or double tap) before the server answered is
   ignored and logged, so two answers never land out of order and a rollback returns to a state no
   later tap moved. A request the server never answers does not hold the heart forever: every
   `apiFetch` carries its response deadline (`RequestDeadlineError`), which rolls the heart back
   with the card's sentence and frees it.
+- **A LONG PRESS ON THE HEART OPENS A REACTION DRAWER** (user, 2026-10-23, on 1.4.0: *"je ne peux
+  reagir qu'avec un coeur ... j'aimerais avoir le choix avec un appui long"*). `ReelActionRail`: a
+  vertical menu (`role="menu"`, `menuitemradio`) of the card's own set (`REACTIONS`, Noto SVG through
+  `EmojiText`) opening UPWARD from the heart with `reelReactionDrawerIn` (180 ms; the global
+  reduced-motion rule flattens it). The hold is the shared `actions/longPress` (450 ms, 10 px slop):
+  it swallows the click that ends the hold, so opening never also toggles, and it refuses the native
+  menu (`contextmenu` prevented; the heart is `select-none` with `-webkit-touch-callout:none`). A
+  short tap is unchanged. A pick is the card's picker through `ReelViewer.pickReaction`
+  (`pickedReactionToggle`): another kind replaces the reader's, the kind they hold is taken back;
+  same in-flight and mute guards and the same `sendReaction` path. Tap outside (a full-screen
+  button, so the viewer's swipe ignores it) and Escape close it - Escape is `preventDefault`ed so
+  the viewer stays open. No conflict with the double tap or the swipe/zoom: the rail is
+  `data-no-double-tap` and `data-reel-rail`, and the hold cancels past 10 px of travel. Keyboard:
+  ArrowUp on the heart, the context-menu key or Shift+F10 opens it, arrows walk it, focus returns
+  to the heart. **Owed: one hold on each phone** (iOS callout, Android selection, and that a drawer
+  opened under a thumb is not dismissed by the finger lifting - a jsdom test cannot say).
 - **The comment number is the server's total** (`commentCount`, `posts/commentChange.ts`): a list
   row carries only the newest twenty comments, so `comments.length` read "20" for a post of 57 -
   on the rail and on the card's button alike. Every write keeps the total in step, and "load all"
@@ -568,7 +584,7 @@ below; **owed on both phones**
   the first send and drawn inside the viewer, so above it). Sending INTO a conversation lands the
   link in that conversation's composer, and a tap on that link's card there opens the reel in this
   viewer ([sharing S6](../sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)).
-- **The comments sheet** (`ReelCommentsSheet`): the POST's own thread - `PostComments` in its
+- **The comments sheet** (`ReelCommentsSheet`, whose drawer is the shared `shared/CommentsDrawer` - a post's thread opens in the SAME one on a phone, 2026-10-23, see [posts](posts.md)): the POST's own thread - `PostComments` in its
   `docked` mode (the list scrolls, the composer stays at the bottom), written through
   `posts/postCommentThread.svelte.ts`, the class the card now uses too, and reported through
   `posts/reportComment.ts`, also the card's. No new request. 60 % of the screen, `rounded-t-3xl`,

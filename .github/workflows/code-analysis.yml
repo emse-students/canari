@@ -553,3 +553,35 @@ jobs:
             echo "::error::cargo audit failed for:$failed"
             exit 1
           fi
+
+      # THE RETIREMENT of each `.cargo/audit.toml` ignore, the same check the bun trees have
+      # (`ignored-advisories-still-reported.sh`). Each lockfile is audited again from a directory
+      # that holds no audit.toml, so nothing is ignored, against the database the step above just
+      # fetched (`--no-fetch`); an id it no longer reports has retired itself and the entry is dead
+      # weight. RUSTSEC-2026-0381 outlived its reason by days (the advisory was amended to call
+      # webpki-roots 0.26.11 unaffected) with nothing saying so - that is what this step is for.
+      - name: Every ignored Rust advisory is still reported
+        if: ${{ !cancelled() }}
+        run: |
+          set -uo pipefail
+          failed=""
+          bare=$(mktemp -d)
+          for crate in apps/call-service apps/chat-gateway frontend/mls-wasm frontend/src-tauri; do
+            ids=$(grep -oE '^[[:space:]]*"RUSTSEC-[0-9]{4}-[0-9]{4}"' "$crate/.cargo/audit.toml" | tr -d ' "' || true)
+            [ -n "$ids" ] || continue
+            echo "--- $crate"
+            out=$(mktemp)
+            ( cd "$bare" && cargo audit --no-fetch --file "$GITHUB_WORKSPACE/$crate/Cargo.lock" ) >"$out" 2>&1 || true
+            if ! grep -q 'Scanning .* for vulnerabilities' "$out"; then
+              cat "$out"
+              echo "::error::$crate: the un-ignored audit did not scan, so nothing is concluded about its ignores"
+              failed="$failed $crate"
+              continue
+            fi
+            # shellcheck disable=SC2086
+            bash .github/scripts/ignored-advisories-still-reported.sh "$out" $ids || failed="$failed $crate"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::a Rust ignore outlived its advisory, or could not be checked, in:$failed"
+            exit 1
+          fi
