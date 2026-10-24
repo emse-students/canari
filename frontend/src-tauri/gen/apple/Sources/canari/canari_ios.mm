@@ -110,7 +110,7 @@ static void CanariRequestNotificationPermission(void) {
                         completionHandler:^(BOOL granted, NSError *_Nullable error) {
                           if (error != nil) {
                             NSLog(@"[CanariIOS] notification permission error: %@",
-                                  error.localizedDescription);
+                                  CanariErrorReason(error));
                             return;
                           }
                           NSLog(@"[CanariIOS] notification permission granted=%d", granted);
@@ -623,7 +623,7 @@ static void CanariImportAppGroupShare(NSString *why) {
             completionHandler:^(__unused id result, NSError *error) {
               if (error != nil) {
                 NSLog(@"[CanariShare] the page was not told of the share (%@): it drains at its next mount",
-                      error.localizedDescription);
+                      CanariErrorReason(error));
               }
             }];
   NSLog(@"[CanariShare] share imported (%@), the page was told", why);

@@ -17,6 +17,12 @@ enum ShareRules {
     /// Ceiling for the whole share, for the same reason.
     static let maxTotalBytes: Int64 = 300 * 1024 * 1024
 
+    /// Ceiling for the TEXT of one share (typed comment, text and links together, UTF-8 bytes). The
+    /// text travels inside the manifest, which the app and the page read whole; Android has the same
+    /// bound without naming it, because an intent extra past about 1 MB fails its binder transaction.
+    /// A part that would pass it is refused and counted like a file refused over its ceiling.
+    static let maxTextBytes = 1024 * 1024
+
     /// How many bytes the next file may take, given what the share has already kept: the smaller of
     /// the per-file ceiling and what is left of the total. Zero or less means it is refused unread.
     static func nextFileCeiling(keptSoFar: Int64) -> Int64 {

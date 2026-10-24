@@ -166,10 +166,18 @@ fn offers_nothing(manifest: &Map<String, Value>) -> bool {
 
 /// Writes the manifest whole or not at all (a temporary file renamed into place): the page may drain
 /// at any moment, and a reader catching half a file would drop the share as corrupt.
+///
+/// KEPT OUT OF BACKUPS, per file and after every write, by the native caches' own helper
+/// (`native_cache::exclude_from_backup`, and for its reason: the rename is a new inode, which does
+/// not carry the flag). The manifest carries the shared TEXT, and the app data directory is backed
+/// up on iOS. It is NOT sealed yet: the shared-text P2 in `docs/wiki/backlog.md`.
 fn write_pending(dir: &Path, manifest: &Map<String, Value>) -> std::io::Result<()> {
     let staging = dir.join(format!("{PENDING_SHARE_FILE}.tmp"));
+    let target = dir.join(PENDING_SHARE_FILE);
     std::fs::write(&staging, Value::Object(manifest.clone()).to_string())?;
-    std::fs::rename(&staging, dir.join(PENDING_SHARE_FILE))
+    std::fs::rename(&staging, &target)?;
+    crate::native_cache::exclude_from_backup(&target);
+    Ok(())
 }
 
 /// Deletes `{inbox}/{id}`, said either way.

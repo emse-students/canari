@@ -168,16 +168,25 @@ final class ShareCapture {
             log.error("the share directory could not be made: \(error.localizedDescription)")
             return .failed
         }
+        // The inbox holds only share copies (never the App Group's push or MLS files), so the
+        // DIRECTORY is excluded; set on every capture, as a sweep may have removed and remade it.
+        excludeFromBackup(inbox)
 
         var texts: [String] = []
+        var textBytes = 0
+        var refused = 0
         for item in items {
             let typed = item.attributedContentText?.string.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !typed.isEmpty {
+            if typed.isEmpty {
+                continue
+            }
+            if fitsTextCeiling(typed, what: "the item's text", held: &textBytes) {
                 texts.append(typed)
+            } else {
+                refused += 1
             }
         }
         var files: [[String: Any]] = []
-        var refused = 0
         var kept: Int64 = 0
         var fileIndex = 0
         for (index, provider) in providers.enumerated() {
@@ -186,13 +195,15 @@ final class ShareCapture {
             }
             switch classify(provider) {
             case .webURL:
-                if let url = loadWebURL(provider, index: index) {
+                if let url = loadWebURL(provider, index: index),
+                   fitsTextCeiling(url, what: "attachment \(index)", held: &textBytes) {
                     texts.append(url)
                 } else {
                     refused += 1
                 }
             case .text:
-                if let text = loadText(provider, index: index) {
+                if let text = loadText(provider, index: index),
+                   fitsTextCeiling(text, what: "attachment \(index)", held: &textBytes) {
                     texts.append(text)
                 } else {
                     refused += 1
@@ -351,6 +362,20 @@ final class ShareCapture {
         done.wait()
         let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Whether `part` still fits the share's text ceiling (`ShareRules.maxTextBytes`), counted into
+    /// `held` when it does. A part that does not is refused - said here, counted by the caller - so
+    /// the manifest the app and the page read whole stays bounded. The provider hands a text over
+    /// whole, so this bounds what is KEPT, not what was loaded.
+    private func fitsTextCeiling(_ part: String, what: String, held: inout Int) -> Bool {
+        let size = part.utf8.count
+        if held + size > ShareRules.maxTextBytes {
+            log.warning("\(what, privacy: .public) refused: its text (\(size) bytes) passes the share's \(ShareRules.maxTextBytes / 1024) KiB of text")
+            return false
+        }
+        held += size
+        return true
     }
 
     /// Copies one file representation into `dir`. Returns its manifest entry and size, or nil when it
@@ -526,6 +551,9 @@ final class ShareCapture {
             return false
         }
         if rename(staging.path, target) == 0 {
+            // Per file and after every write: the rename is a new inode, which does not carry the
+            // flag. The manifest holds the shared text, and the App Group is backed up.
+            excludeFromBackup(URL(fileURLWithPath: target))
             return true
         }
         log.error("the share manifest could not be renamed into place: errno \(errno)")
@@ -539,6 +567,22 @@ final class ShareCapture {
             log.debug("\(why, privacy: .public): share directory deleted")
         } catch {
             log.warning("\(why, privacy: .public): share directory not deleted: \(error.localizedDescription)")
+        }
+    }
+
+    /// Keeps a share file or the inbox out of iCloud and computer backups - the NSE's
+    /// `excludeFromBackup`, the same three calls. Never the App Group container itself, which holds
+    /// what a restore must bring back. A failure is said with its error's domain and code, never its
+    /// text, and changes nothing else.
+    private func excludeFromBackup(_ url: URL) {
+        var target = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        do {
+            try target.setResourceValues(values)
+        } catch {
+            let failure = error as NSError
+            log.error("\(url.lastPathComponent, privacy: .public) not excluded from backups: \(failure.domain, privacy: .public) \(failure.code)")
         }
     }
 

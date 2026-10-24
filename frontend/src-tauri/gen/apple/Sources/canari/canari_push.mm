@@ -482,7 +482,7 @@ void CanariMirrorPushStateToAppGroup(void) {
     }
     NSError *err = nil;
     if (![data writeToURL:[container URLByAppendingPathComponent:name] options:opts error:&err]) {
-      NSLog(@"[CanariPush] mirror %@ failed: %@", name, err.localizedDescription);
+      NSLog(@"[CanariPush] mirror %@ failed: %@", name, CanariErrorReason(err));
     }
   }
   // The push secret lives in the Keychain (app-only). Copy it into the container so the NSE
@@ -513,7 +513,7 @@ void CanariExcludeNativeCacheFilesFromBackup(NSString *_Nullable dir) {
                                                                                    error:&listErr];
   if (names == nil) {
     NSLog(@"[CanariPush] backupExclusion: ERROR %@ not listed: %@", dir.lastPathComponent,
-          listErr.localizedDescription);
+          CanariErrorReason(listErr));
     return;
   }
   NSUInteger excluded = 0;
@@ -529,7 +529,7 @@ void CanariExcludeNativeCacheFilesFromBackup(NSString *_Nullable dir) {
       excluded++;
     } else {
       NSLog(@"[CanariPush] backupExclusion: ERROR %@ not excluded: %@", name,
-            err.localizedDescription);
+            CanariErrorReason(err));
     }
   }
   NSLog(@"[CanariPush] backupExclusion: %lu cache file(s) excluded in %@", (unsigned long)excluded,
@@ -1340,7 +1340,7 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
     if (attachment != nil) {
       content.attachments = @[ attachment ];
     } else if (attachErr != nil) {
-      NSLog(@"[CanariPush] attachment error: %@", attachErr.localizedDescription);
+      NSLog(@"[CanariPush] attachment error: %@", CanariErrorReason(attachErr));
     }
   }
 
@@ -1352,7 +1352,7 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
       addNotificationRequest:request
        withCompletionHandler:^(NSError *_Nullable error) {
          if (error != nil) {
-           NSLog(@"[CanariPush] showNotification error: %@", error.localizedDescription);
+           NSLog(@"[CanariPush] showNotification error: %@", CanariErrorReason(error));
          } else {
 #if CANARI_BENCH
            // HOW IT WAS FILED, for the cross-client rig on a BENCH build only (O13): the in-app
@@ -1585,7 +1585,7 @@ static void CanariSubmitBackgroundCleanupRequest(void) {
   request.requiresExternalPower = NO;
   NSError *error = nil;
   if (![[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error]) {
-    NSLog(@"[CanariPush] BGTask submit failed: %@", error.localizedDescription);
+    NSLog(@"[CanariPush] BGTask submit failed: %@", CanariErrorReason(error));
   } else {
     NSLog(@"[CanariPush] BGTask cleanup scheduled");
   }
@@ -1631,7 +1631,7 @@ static void CanariSubmitOutboxRetryRequest(void) {
   request.requiresExternalPower = NO;
   NSError *error = nil;
   if (![[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error]) {
-    NSLog(@"[CanariPush] BGTask outboxRetry submit failed: %@", error.localizedDescription);
+    NSLog(@"[CanariPush] BGTask outboxRetry submit failed: %@", CanariErrorReason(error));
   } else {
     NSLog(@"[CanariPush] BGTask outboxRetry scheduled");
   }
@@ -2299,7 +2299,7 @@ static NSString *_Nullable CanariInitialsImagePath(NSString *_Nullable name) {
                                                                 [[NSUUID UUID] UUIDString]]];
   NSError *writeErr = nil;
   if (![png writeToFile:path options:NSDataWritingAtomic error:&writeErr]) {
-    NSLog(@"[CanariPush] initialsImage: write failed: %@", writeErr.localizedDescription);
+    NSLog(@"[CanariPush] initialsImage: write failed: %@", CanariErrorReason(writeErr));
     return nil;
   }
   return path;
@@ -2820,7 +2820,7 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
                                        completion:^(NSError *_Nullable error) {
                                          if (error != nil) {
                                            NSLog(@"[CanariCallKit] report failed: %@",
-                                                 error.localizedDescription);
+                                                 CanariErrorReason(error));
                                            [g_ringingCalls removeObjectForKey:callId];
                                            [g_ringingCallInfo
                                                removeObjectForKey:uuid.UUIDString];
@@ -3821,7 +3821,7 @@ static void CanariSwizzledDidFailApns(id self, SEL _cmd, UIApplication *applicat
   // The branch that was silent. APNs refusing registration - a missing aps-environment
   // entitlement, a provisioning profile without push, no network on a first launch - looked
   // exactly like a device nobody had ever opened.
-  NSLog(@"[CanariPush] APNs registration REFUSED: %@", error.localizedDescription);
+  NSLog(@"[CanariPush] APNs registration REFUSED: %@", CanariErrorReason(error));
   CanariWritePushDiagnostic(@"apns-registration-refused");
   if (CanariOrigDidFailApns != NULL) {
     CanariOrigDidFailApns(self, _cmd, application, error);
@@ -4058,7 +4058,7 @@ static BOOL CanariCompleteOwedDeletionLocked(void) {
     }
     if (failure != nil) {
       NSLog(@"[CanariPush] ERROR: FCM deleteToken failed - still owed: %@",
-            failure.localizedDescription);
+            CanariErrorReason(failure));
       return NO;
     }
   } else {
@@ -4071,7 +4071,7 @@ static BOOL CanariCompleteOwedDeletionLocked(void) {
   NSString *owed = [dir stringByAppendingPathComponent:kPushTokenDeletionOwedFileName];
   if (![fm removeItemAtPath:owed error:&removeError] && [fm fileExistsAtPath:owed]) {
     NSLog(@"[CanariPush] ERROR: token deleted but the owed mark was not removed: %@",
-          removeError.localizedDescription);
+          CanariErrorReason(removeError));
     return NO;
   }
   NSLog(@"[CanariPush] FCM token deleted - this install is no longer the previous account's push "
@@ -4174,7 +4174,7 @@ void CanariSyncFcmTokenIfApnsReady(void) {
     if (error != nil) {
       // APNs answered and FCM still refused - a different fault entirely from the guard above,
       // and the reason the report has to carry which of the two it was.
-      NSLog(@"[CanariPush] fetching the FCM token failed: %@", error.localizedDescription);
+      NSLog(@"[CanariPush] fetching the FCM token failed: %@", CanariErrorReason(error));
       CanariWritePushDiagnostic(@"fcm-token-fetch-failed");
       return;
     }

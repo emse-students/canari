@@ -409,13 +409,25 @@ function valueNamesIn(expr: string): string[] {
   return names;
 }
 
-/** Whether an interpolated expression puts content into the line. */
-export function leaksContent(expr: string): boolean {
+/** An Apple error's TEXT: it often quotes the file it failed on - a shared file's name, a path. */
+const ERROR_TEXT = /\blocalized(Description|FailureReason|RecoverySuggestion)\b/;
+
+/**
+ * Whether an interpolated expression puts content into the line. `redacting` is true for a Swift
+ * `Logger` call ONLY: there an interpolation is private unless marked public, so an error text is
+ * redacted in release. `NSLog`, Swift `print`, `os_log` with a `%@` and every Rust and Kotlin logger
+ * write it out whole - so there an error text is content, and the line says the error's domain and
+ * code instead.
+ */
+export function leaksContent(expr: string, redacting = false): boolean {
   if (MEASURES.test(expr)) return false;
-  // An iOS error text often quotes the file it failed on (the shared file's name), so it is
-  // content the moment it is marked public; unmarked, os.Logger redacts it in release.
-  if (/\blocalizedDescription\b/.test(expr) && /privacy:\s*\.public\b/.test(expr)) return true;
+  if (ERROR_TEXT.test(expr)) return !redacting || /privacy:\s*\.public\b/.test(expr);
   return valueNamesIn(expr).some((n) => CONTENT_NAMES.includes(n));
+}
+
+/** Whether the call `CALL_START` matched is a Swift `Logger` method (`logger.info(`, `log.error(`). */
+function isRedactingCall(lang: Lang, call: string): boolean {
+  return lang === 'swift' && /^(?:logger|log)\./.test(call);
 }
 
 function lineOf(src: string, index: number): number {
@@ -431,9 +443,10 @@ function scan(): Finding[] {
         // The first argument of a Rust or ObjC call is the format string; Kotlin's first is the
         // tag. Every argument is checked: a variable handed in whole is as much the line as a
         // template is.
+        const redacting = isRedactingCall(tree.lang, m[0]);
         for (const expr of callExpressions(src, m.index! + m[0].length, tree.lang)) {
           const name = file.split(/[\\/]/).pop();
-          if (leaksContent(expr) && !NOT_CONTENT[`${name}|${expr}`]) {
+          if (leaksContent(expr, redacting) && !NOT_CONTENT[`${name}|${expr}`]) {
             findings.push({ file: relative(FRONTEND, file), line: lineOf(src, m.index!), expr });
           }
         }
@@ -466,10 +479,26 @@ describe('the scanner', () => {
     expect(leaksContent('seed["sessionId"].as_str().unwrap_or_default()')).toBe(false);
     expect(leaksContent('renderMentions(text, myUserId).take(200)')).toBe(true);
     expect(leaksContent('msg.text')).toBe(true);
-    // An error text marked public is content; unmarked, os.Logger redacts it.
-    expect(leaksContent('error.localizedDescription, privacy: .public')).toBe(true);
-    expect(leaksContent('error.localizedDescription')).toBe(false);
-    expect(leaksContent('error.localizedDescriptionX, privacy: .publicX')).toBe(false);
+    // An error text is content wherever nothing redacts it: NSLog, print, Rust, Kotlin.
+    expect(leaksContent('error.localizedDescription')).toBe(true);
+    expect(leaksContent('[error localizedDescription]')).toBe(true);
+    expect(leaksContent('err.localizedFailureReason')).toBe(true);
+    // In a Swift Logger call it is private unless marked public.
+    expect(leaksContent('error.localizedDescription', true)).toBe(false);
+    expect(leaksContent('error.localizedDescription, privacy: .public', true)).toBe(true);
+    expect(leaksContent('error.localizedDescriptionX, privacy: .publicX', true)).toBe(false);
+    // The error's domain and code are what an unredacted line says instead.
+    expect(leaksContent('failure.domain')).toBe(false);
+    expect(leaksContent('(long)failure.code')).toBe(false);
+  });
+
+  it('exempts a Swift Logger call alone from naming an error text', () => {
+    expect(isRedactingCall('swift', 'log.warning(')).toBe(true);
+    expect(isRedactingCall('swift', 'logger.error(')).toBe(true);
+    expect(isRedactingCall('swift', 'NSLog(')).toBe(false);
+    expect(isRedactingCall('swift', 'print(')).toBe(false);
+    expect(isRedactingCall('objc', 'NSLog(')).toBe(false);
+    expect(isRedactingCall('rust', 'log::error!(')).toBe(false);
   });
 
   it('finds the native sources it is meant to read', () => {

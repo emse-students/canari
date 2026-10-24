@@ -592,6 +592,20 @@ is its first compile and the iPhone readings listed under Owed on
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
 suggestions (`INSendMessageIntent`). CanaRun waits.
 
+## P2 - A waiting share is plaintext at rest: the manifest carries the shared text (found 2026-10-24)
+
+`pending_share.json` holds the shared TEXT in the clear, in three places: the App Group (written by
+the iOS Share Extension), the app data directory on iOS (written by `app_group_share.rs`) and on
+Android (written by `IncomingShare.kt`). The copies in `shared_inbox/` are plaintext too. Since
+the review of the Share Extension (PR #2295) both iOS manifests and the App Group inbox are
+EXCLUDED FROM BACKUPS, and Android excludes its whole data domain, so what is left is the file on
+the device while it waits - the same exposure as the copy a system picker leaves in the cache. Not
+a small reuse of the native-cache seal (`native_cache.rs`): the Kotlin and Swift writers would need
+a twin of its envelope, and the extension holds no key (its entitlement is the App Group alone).
+The shape, if it is built: the extension and `IncomingShare.kt` seal the TEXT with the install's
+cache key (`CNSEAL1`, a purpose of its own), the extension gaining the keychain group to read it,
+and `read_and_clear_pending_share` opens it - the one reader. [sharing](frontend/sharing.md)
+
 ## P3 - The eight service images run as root (Trivy DS-0002, measured 2026-10-23)
 
 Trivy's Dockerfile scan finds no non-root `USER` in any `infrastructure/local/Dockerfile.*`, and

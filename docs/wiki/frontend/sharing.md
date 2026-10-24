@@ -256,7 +256,10 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    whole capture, reads `<AppGroup>/share_epoch` ONCE it holds it, streams each item
    (`loadFileRepresentation`, 64 KiB chunks, never whole in memory) into
    `<AppGroup>/shared_inbox/<uuid>/` under Android's caps and names (`ShareRules.swift` - 10 files,
-   200 MB each, 300 MB in all; a `file://` URL as TEXT and a file inside the App Group are refused),
+   200 MB each, 300 MB in all; a `file://` URL as TEXT and a file inside the App Group are refused;
+   and 1 MiB of TEXT for the whole share, `maxTextBytes` - the bound Android has unnamed, an intent
+   extra past about 1 MB failing its binder transaction - a part that would pass it refused and
+   counted like a file over its ceiling),
    then writes `<AppGroup>/pending_share.json` in Android's schema (tmp + rename), with Android's
    claim/replace/refusal-merge rules by epoch. Every branch logs (`os_log`, subsystem
    `fr.emse.canari`, category `share`). Drift against the Kotlin is a vitest:
@@ -305,6 +308,18 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    behind the app's (or unreadable), rewrites it, and says so at ERROR level; it never lowers it.
    The factory wipe (`clear_app_data`) also removes the group's `pending_share.json` and
    `shared_inbox/`, under the lock - an allowlist of those two paths.
+5. **At rest: out of backups, NOT sealed.** The App Group and the app data directory are backed up
+   on iOS (the app cache is not), and a waiting share holds what the member shared - the manifest
+   carries the shared TEXT in the clear. So each manifest is excluded from backups per file, after
+   every write (a rename is a new inode, and the flag does not travel): the extension's
+   `writePending` and the app's `write_pending` (`native_cache::exclude_from_backup`, the native
+   caches' helper, [mobile](mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
+   The extension also excludes the WHOLE `<AppGroup>/shared_inbox/` directory on every capture - it
+   holds share copies and nothing else, unlike the App Group root. Sealing the manifests is NOT done:
+   three writers (Kotlin, Swift, Rust) and the extension holds no key; the gap is a P2 in
+   [backlog](../backlog.md#p2---a-waiting-share-is-plaintext-at-rest-the-manifest-carries-the-shared-text-found-2026-10-24).
+   **No log line names a shared file**: a copy is `<index>_<sender's name>`, so `take_picked_file`
+   and `discard_picked_file` say the share id and the byte count, never the path.
 
 ## Decisions
 

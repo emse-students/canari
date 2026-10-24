@@ -2676,6 +2676,14 @@ one; a measure (`.length`, `isEmpty`) is allowed, and a name that is not content
 by `file|expression` with its reason. The harness rules reading those lines (`watch.mjs`) match
 these shapes.
 
+**An Apple error's TEXT is content (2026-10-24)**: a `localizedDescription` (or
+`localizedFailureReason`, `localizedRecoverySuggestion`) often quotes the file it failed on - a
+shared file's name, a path. Only a Swift `Logger` call redacts it (an interpolation is private
+unless marked `.public`), so the scan exempts it THERE alone, unmarked; `NSLog`, Swift `print` and
+`os_log` write it whole, and there a line says the error's domain and code instead -
+`CanariErrorReason(error)` (`canari_push.h`) in Objective-C, `errorReason(error)` in the NSE. A file
+NAME is content for the same reason: `take_picked_file` says a copy's share id, never its path.
+
 ### FCM message cache
 
 Both platforms write decrypted message previews to `fcm_message_cache.ndjson` after a successful decrypt, each line SEALED (previous section):

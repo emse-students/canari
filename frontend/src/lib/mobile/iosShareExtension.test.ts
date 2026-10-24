@@ -212,6 +212,50 @@ describe('the names the extension, the app and Android share', () => {
   });
 });
 
+describe('a waiting share at rest and in the logs', () => {
+  const rustGroup = read(resolve(TAURI, 'src/commands/app_group_share.rs'));
+  const rustPicked = read(resolve(TAURI, 'src/commands/picked_files.rs'));
+
+  /** The body of the Swift or Rust function `name`, up to the next one. */
+  function body(source: string, start: string, end: string): string {
+    const from = source.indexOf(start);
+    expect(from, start).toBeGreaterThanOrEqual(0);
+    return source.slice(from, source.indexOf(end, from + start.length));
+  }
+
+  it('keeps both iOS manifests and the App Group inbox out of backups, after every write', () => {
+    const swiftWrite = body(swiftCapture, 'private func writePending(', 'private func deleteDir(');
+    // After the rename: the rename is a new inode, and the flag does not travel with the name.
+    expect(swiftWrite.indexOf('excludeFromBackup(URL(fileURLWithPath: target))')).toBeGreaterThan(
+      swiftWrite.indexOf('rename(staging.path, target) == 0')
+    );
+    expect(swiftCapture).toContain('values.isExcludedFromBackup = true');
+    const captureBody = body(swiftCapture, 'private func captureLocked(', 'static func isSafeId(');
+    expect(captureBody).toContain('excludeFromBackup(inbox)');
+    // Never the App Group root: it also holds what a restore must bring back.
+    expect(swiftCapture).not.toContain('excludeFromBackup(container)');
+
+    const rustWrite = body(rustGroup, 'fn write_pending(', 'fn delete_share_dir(');
+    expect(rustWrite.indexOf('native_cache::exclude_from_backup(&target)')).toBeGreaterThan(
+      rustWrite.indexOf('std::fs::rename(&staging, &target)')
+    );
+  });
+
+  it('bounds the text a share keeps, and counts what passes the bound as refused', () => {
+    expect(product(capture(swiftRules, /static let maxTextBytes = ([\d *]+)/))).toBe(1024 * 1024);
+    const loop = body(swiftCapture, 'private func captureLocked(', 'static func isSafeId(');
+    // The typed text, every text attachment and every link go through the one ceiling.
+    expect(loop.match(/fitsTextCeiling\(/g)?.length).toBe(3);
+    expect(swiftCapture).toContain('if held + size > ShareRules.maxTextBytes');
+  });
+
+  it('never logs the path of a picked or shared copy', () => {
+    // A copy is `<index>_<sender's file name>`; a picker's keeps the photo's own name.
+    expect(rustPicked).not.toMatch(/canonical\.display\(\)/);
+    expect(rustPicked).not.toMatch(/dir\.display\(\)/);
+  });
+});
+
 describe('the extension bundle', () => {
   it('holds the App Group and nothing else', () => {
     const ent = withoutXmlComments(read(resolve(SHARE, 'canari_Share.entitlements')));

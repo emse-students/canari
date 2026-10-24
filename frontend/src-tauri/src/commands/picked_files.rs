@@ -86,20 +86,31 @@ pub(crate) fn remove_emptied_share_dir(file: &Path, inbox: &Path) {
     if dir.parent() != Some(inbox) {
         return;
     }
+    // The directory's name is the share id the extension or `IncomingShare.kt` made: an id, never a
+    // name the sender chose.
+    let id = dir.file_name().unwrap_or_default().to_string_lossy();
     match std::fs::remove_dir(dir) {
-        Ok(()) => log::debug!(
-            "[PickedFiles] emptied share directory removed: {}",
-            dir.display()
-        ),
+        Ok(()) => log::debug!("[PickedFiles] emptied share directory removed: share {id}"),
         Err(e)
             if matches!(
                 e.kind(),
                 std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound
             ) => {}
-        Err(e) => log::warn!(
-            "[PickedFiles] emptied share directory kept ({e}): {}",
-            dir.display()
+        Err(e) => log::warn!("[PickedFiles] emptied share directory kept ({e}): share {id}"),
+    }
+}
+
+/// What a log line may say of a picked or shared copy: the id of the share it belongs to, or that
+/// it is a picker's copy - NEVER its path. A shared copy is named `<index>_<sender's file name>` and
+/// a picker's copy keeps the photo's or document's own name, and a file name is content a log line
+/// does not carry (`docs/wiki/frontend/mobile.md`, "What a native log line may carry").
+pub(crate) fn copy_label(file: &Path, inbox: Option<&Path>) -> String {
+    match (file.parent(), inbox) {
+        (Some(dir), Some(inbox)) if dir.parent() == Some(inbox) => format!(
+            "a copy of share {}",
+            dir.file_name().unwrap_or_default().to_string_lossy()
         ),
+        _ => "a picker copy".to_string(),
     }
 }
 
@@ -115,10 +126,8 @@ fn allowed_path<R: Runtime>(app: &AppHandle<R>, path: &str) -> Result<PathBuf, S
         .canonicalize()
         .map_err(|e| format!("picked file unreadable: {e}"))?;
     if !is_inside_any(&canonical, &picker_roots(app)) {
-        log::error!(
-            "[PickedFiles] refused a path outside the picker directories: {}",
-            canonical.display()
-        );
+        // The path is the page's, and may name anything: said without it.
+        log::error!("[PickedFiles] refused a path outside the picker directories");
         return Err("path outside the picker directories".to_string());
     }
     Ok(canonical)
@@ -136,21 +145,16 @@ pub(crate) async fn take_picked_file<R: Runtime>(
 ) -> Result<tauri::ipc::Response, String> {
     let canonical = allowed_path(&app, &path)?;
     let bytes = std::fs::read(&canonical).map_err(|e| format!("picked file unreadable: {e}"))?;
-    log::debug!(
-        "[PickedFiles] read {} bytes from {}",
-        bytes.len(),
-        canonical.display()
-    );
+    let inbox = shared_inbox_root(&app);
+    let label = copy_label(&canonical, inbox.as_deref());
+    log::debug!("[PickedFiles] read {} bytes from {label}", bytes.len());
     match std::fs::remove_file(&canonical) {
         Ok(()) => {
-            if let Some(inbox) = shared_inbox_root(&app) {
-                remove_emptied_share_dir(&canonical, &inbox);
+            if let Some(inbox) = &inbox {
+                remove_emptied_share_dir(&canonical, inbox);
             }
         }
-        Err(e) => log::warn!(
-            "[PickedFiles] copy kept after read ({e}): {}",
-            canonical.display()
-        ),
+        Err(e) => log::warn!("[PickedFiles] {label} kept after read ({e})"),
     }
     Ok(tauri::ipc::Response::new(bytes))
 }
@@ -165,9 +169,13 @@ pub(crate) async fn discard_picked_file<R: Runtime>(
 ) -> Result<(), String> {
     let canonical = allowed_path(&app, &path)?;
     std::fs::remove_file(&canonical).map_err(|e| format!("picked file not deleted: {e}"))?;
-    log::debug!("[PickedFiles] discarded {}", canonical.display());
-    if let Some(inbox) = shared_inbox_root(&app) {
-        remove_emptied_share_dir(&canonical, &inbox);
+    let inbox = shared_inbox_root(&app);
+    log::debug!(
+        "[PickedFiles] discarded {}",
+        copy_label(&canonical, inbox.as_deref())
+    );
+    if let Some(inbox) = &inbox {
+        remove_emptied_share_dir(&canonical, inbox);
     }
     Ok(())
 }
@@ -202,6 +210,16 @@ mod tests {
         );
         assert!(inbox.exists(), "the inbox itself is never removed");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_copy_is_named_by_its_share_id_never_by_its_file_name() {
+        let inbox = Path::new("/var/app/Library/Caches/fr.emse.canari/shared_inbox");
+        let shared = inbox.join("4F1C-AB").join("0_Holiday plans.pdf");
+        assert_eq!(copy_label(&shared, Some(inbox)), "a copy of share 4F1C-AB");
+        let picked = Path::new("/var/app/Library/Caches/IMG_0001.heic");
+        assert_eq!(copy_label(picked, Some(inbox)), "a picker copy");
+        assert_eq!(copy_label(&shared, None), "a picker copy");
     }
 
     #[test]
