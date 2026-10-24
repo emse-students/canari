@@ -16,7 +16,8 @@ import { declineBiometricOffer } from './chat.mjs';
 import { networkInterfaces } from 'node:os';
 import { estateVerdict, localAliases } from './estate-origins.mjs';
 import { GATE_EXPR, KEYPAD_EXPR } from './gate-probe.mjs';
-import { PORTS, SITE } from './names.mjs';
+import { PORTS } from './names.mjs';
+import { SITE } from './site.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
 
 const argv = process.argv.slice(2);
@@ -184,8 +185,8 @@ async function assertLocalEstate(cx) {
     estates.length === 0
       ? `[pin] THIS CLIENT CONTACTED NO ESTATE IN TEN SECONDS, so which one it is built against is ` +
           `unknown - and a row that ran now would record a verdict nothing corroborates`
-      : `[pin] THIS CLIENT IS NOT ON THE LOCAL ESTATE: it called ${strangers.join(' ')} and the rig ` +
-          `reports on ${SITE}. Rebuild and reinstall the APK (bun a1apk.mjs) - a --no-build install ` +
+      : `[pin] THIS CLIENT IS NOT ON THE ESTATE THE RIG REPORTS ON (${SITE}): it called ${strangers.join(' ')}. ` +
+          `Rebuild and reinstall the APK (bun a1apk.mjs) - a --no-build install ` +
           `keeps whatever origins the artefact on disk was baked with`,
   );
   cx.close();

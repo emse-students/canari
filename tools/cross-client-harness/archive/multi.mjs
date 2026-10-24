@@ -66,7 +66,8 @@ import {
 // `PASS-DIRTY` for months while `fwd.mjs`, `fwd345.mjs` and the MENTION rows already called this.
 import { ignoringStrandedMentions } from '../stranded.mjs';
 import { errorDetail, mark, record, recordObserved } from '../results.mjs';
-import { ACCOUNT_OF, OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
+import { ACCOUNT_OF, OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
+import { SITE } from '../site.mjs';
 import { unlockClient } from './pingate.mjs';
 import { whoIs } from './presence.mjs';
 import * as phone from '../phone.mjs';

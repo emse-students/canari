@@ -68,9 +68,17 @@ const ok = (what, cond) => {
 // literally cannot import `SITE`, and forbidding the literal would forbid the one thing several of
 // them exist to pin: that a classifier answers the same for the production spelling of a line as
 // for the local one. `classify-selftest.mjs` carries three such fixtures on purpose.
+//
+// `estate-target.mjs` IS EXCLUDED FOR THE REASON `names.mjs` IS: it is where the estates are
+// DECLARED. It is the allowlist that accepts dev and refuses production (R1, 2026-10-24), and an
+// allowlist cannot avoid spelling what it allows and refuses; no rule in it matches a URL a client
+// produced. Everything else still reads the estate through `SITE`.
 const files = walk(HARNESS_ROOT).filter(
   (f) =>
-    f !== SELF && !/[\\/]names\.(example\.)?mjs$/.test(f) && !f.endsWith('-selftest.mjs')
+    f !== SELF &&
+    !/[\\/]names\.(example\.)?mjs$/.test(f) &&
+    !/[\\/]estate-target\.mjs$/.test(f) &&
+    !f.endsWith('-selftest.mjs')
 );
 
 /** The app's own host, in any spelling, but never one of the identity providers. */

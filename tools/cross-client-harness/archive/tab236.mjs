@@ -19,7 +19,8 @@ import { listTargets, connect } from '../cdp.mjs';
 import { ignoringExpectedLog, ignoringExpectedRefusal, watch, report } from '../watch.mjs';
 import { mark, recordObserved, exitOnRecorded } from '../results.mjs';
 import { killBrowser, startBrowser } from '../launch.mjs';
-import { ACCOUNT_OF, PORTS, SITE, peerNameFor } from '../names.mjs';
+import { ACCOUNT_OF, PORTS, peerNameFor } from '../names.mjs';
+import { SITE } from '../site.mjs';
 import { requireScript } from '../scriptpath.mjs';
 import { spawnPin } from '../pinspawn.mjs';
 

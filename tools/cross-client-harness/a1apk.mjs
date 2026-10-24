@@ -49,7 +49,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { recordApkBuild } from './apkbuild.mjs';
-import { SITE, STATE_DIR } from './names.mjs';
+import { STATE_DIR } from './names.mjs';
+import { SITE } from './site.mjs';
 import { PKG, adb, serial, useDevice } from './phone.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));

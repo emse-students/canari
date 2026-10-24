@@ -8,7 +8,8 @@
  */
 import { spawn } from 'node:child_process';
 import { clearOverlays, client, evaluate } from '../chat.mjs';
-import { ORIGIN, PORTS } from '../names.mjs';
+import { PORTS } from '../names.mjs';
+import { ORIGIN } from '../site.mjs';
 import { HARNESS_ROOT, requireScript } from '../scriptpath.mjs';
 import { MAX_REPAIR_PASSES, READY_EXPR, isReady, stateOf } from './ready-probe.mjs';
 

@@ -14,11 +14,33 @@
 
 ## Feed tabs
 
-| Tab | Content |
+| Tab (`feed=`) | Content |
 |---|---|
-| All | All posts from all associations |
-| Followed | Posts from associations the user follows |
-| Association filter | Posts from a specific association or category |
+| Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication |
+| Suivis (`followed`) | Posts from the associations and members the reader follows (never an anonymous post), and what a followed association republished, placed at that republication |
+| Tout (`all`) | Every post the reader may see |
+
+**A republication is an association publishing, so the feeds of what associations publish carry it
+(user, 2026-10-24).** The Associations and Suivis arms of `listPosts` read `posts."associationId"`
+alone, so a member's post the BDE republished (D38b) entered neither, only "Tout" under its own
+date. The client filters nothing per tab, so the server's clauses were the whole cause. The clauses
+now live in `apps/social-service/src/posts/republished-feed-sql.ts`:
+
+- a row is in Associations when an association published it OR a republication of it COUNTS for
+  the reader; in Suivis, when a followed association republished it (never an anonymous post). It
+  is an `EXISTS`, never a join, so a post carried twice is still one row;
+- it is placed at `GREATEST(publishedAt, latest counted republishedAt)` - pinned posts still first,
+  the CanaReels list with no pin;
+- a republication COUNTS only when it is by an association the reader sees
+  (`associationVisibleToUserSql`, read grants included) - and, in Suivis, one they follow - so a
+  republisher the reader cannot see neither admits a post nor moves it.
+
+Visibility of the post itself is untouched (`postVisibleToUserSql` already lets a republisher's
+audience read it), and since a member's post can now be in the Associations arm, `blockedAuthorSql`
+applies there as in the others. Proven against PostgreSQL by
+`republished-feed-sql.integration.spec.ts`. The card still shows the post's own `publishedAt`; only
+its place is the repost's. What a republication still does not move is in
+[backlog](../../backlog.md#p3---what-a-republication-still-does-not-move-in-the-feeds-review-of-2384-2026-10-24).
 
 Posts are loaded via `GET /api/posts` (social-service), paginated with infinite scroll (`IntersectionObserver`).
 
@@ -27,6 +49,32 @@ reel viewer at the newest reel, and the feed itself is never filtered to reels -
 filter bar is gone ([reels](reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)).
 The publisher's picture, name and link (`PostAuthorAvatar`, `postAuthorName`, `postAuthorHref`)
 and the text renderer (`PostMarkdown`) are shared by the card and the reel viewer's overlay.
+
+### Who wrote it: "Anonyme" big, the real author small (2026-10-24)
+
+The user's two decisions, for posts, reels and comments alike:
+
+- **"Republie par X" sits on the time's line** - "2 h . [repost] Republie par BDE" - not on a line
+  of its own (`PostHeader`'s `data-post-time-line`, `ReelSlide`'s `data-reel-time-line`; the words
+  are `republishedByText`, one implementation). It names ONE republisher and counts the rest
+  ("Republie par BDE +2"), and it gives way first: on the card it truncates before the time; in the
+  reel overlay, where it shares the author's row, the time line is `contents` so the time is an
+  unshrinkable item and the republishers an item of basis 0 - the author name shrinks only once
+  they are gone. The repost glyph is `aria-hidden`; the words carry it.
+- **An anonymous post or comment is NAMED "Anonyme" for every reader, with the mask avatar.** A
+  reader the server sent the author's id to - `authorId` on a post (`mustHideAnonymousAuthor`:
+  the author, a content moderator, a platform admin), `userId` on a comment (`serveComment`: the
+  writer, a content moderator, a platform admin) - also gets ONE small line under the name: a mask
+  glyph and the real name linking the profile (`RevealedAuthorLine`, mounted from
+  `revealedPostAuthor` / `commentRevealedAuthorId`). "Anonyme" itself links nowhere. In the reel
+  overlay that link is a 44 px row (`tall`) - not `tap-target`, whose enlarged box the truncating
+  overflow would clip. Everyone else
+  sees "Anonyme" alone. An anonymous comment stores no name, so the name is resolved from the id
+  (`UserName`, the app's one id-to-name reader); a post's line paints its own name columns first.
+  The media viewer's sender (`postAuthorName`) says "Anonyme" too, so it never disagrees with the
+  header. This replaced the 2026-09-17 shape (real name and photo, an "Anonyme" badge by the time).
+  Component tests per state: `PostHeader.anonymous`, `CommentItem.anonymous`, `CommentsPreview`,
+  `ReelSlide`. **Read by tests only; no phone has looked at it.**
 
 **The tab row collapses like Instagram's header (member report, 2026-10-22: the tabs were reachable
 only at the very top).** The wrapper in `routes/posts/+page.svelte` is `sticky top-0` in

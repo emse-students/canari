@@ -37,7 +37,16 @@
   import type { PostEntity } from '$lib/posts/api';
   import PostAuthorAvatar from '$lib/components/posts/PostAuthorAvatar.svelte';
   import PostMarkdown from '$lib/components/posts/PostMarkdown.svelte';
-  import { postAuthorHref, postAuthorLinkLabel, postAuthorName } from '$lib/posts/postAuthorName';
+  import {
+    postAuthorHref,
+    postAuthorLinkLabel,
+    postAuthorName,
+    revealedPostAuthor,
+  } from '$lib/posts/postAuthorName';
+  import { republishedByText } from '$lib/posts/republication';
+  import RevealedAuthorLine from '$lib/components/posts/RevealedAuthorLine.svelte';
+  import { Repeat2 } from '@lucide/svelte';
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
   import { ReelPreload } from '$lib/reels/reelPreload';
   import { watchClampOverflow } from '$lib/utils/posts/clampOverflow';
@@ -96,6 +105,10 @@
   );
   const authorName = $derived(postAuthorName(post));
   const authorHref = $derived(postAuthorHref(post));
+  /** As on the post card: "Anonyme" is the name, the author the reader was served is a small line. */
+  const revealed = $derived(revealedPostAuthor(post));
+  /** As on the post card: "Republie par X" beside the time (user, 2026-10-24). */
+  const republished = $derived(republishedByText(post.republishedBy));
 
   /** The caption unfolded in place ("Voir plus"); folded again when the reel leaves the screen. */
   let expanded = $state(false);
@@ -249,11 +262,33 @@
             <span class="truncate text-sm font-bold">{authorName}</span>
           </span>
         {/if}
-        <!-- The same age, from the same helper, as the post header's: the viewer has no header. -->
-        <span class="shrink-0 text-xs font-medium opacity-70" title={exactDate(post.createdAt)}
-          >{timeAgo(post.createdAt)}</span
-        >
+        <!-- The same age, from the same helper, as the post header's: the viewer has no header. And
+             the same "Republie par X" beside it, which gives way BEFORE the name: the wrapper is
+             `contents`, so the time, the dot and the icon are items of this row that never shrink,
+             and the republishers are an item of basis 0 - they take only the room the name and the
+             time leave, and truncate to nothing first. The name shrinks only when it alone and the
+             time overflow the row. -->
+        <span class="contents text-xs font-medium" data-reel-time-line>
+          <span class="shrink-0 opacity-70" title={exactDate(post.createdAt)}
+            >{timeAgo(post.createdAt)}</span
+          >
+          {#if republished}
+            <span class="shrink-0 opacity-70" aria-hidden="true">&middot;</span>
+            <Repeat2 size={12} strokeWidth={2.5} class="shrink-0 opacity-70" aria-hidden="true" />
+            <span class="min-w-0 flex-1 basis-0 truncate opacity-70" data-reel-republished-by
+              ><EmojiText text={republished} /></span
+            >
+          {/if}
+        </span>
       </div>
+      {#if revealed}
+        <RevealedAuthorLine
+          userId={revealed.userId}
+          fallback={revealed.name}
+          class="pointer-events-auto ml-8 shrink-0 text-white/80"
+          tall
+        />
+      {/if}
       {#if post.markdown}
         <!-- EXPANDED, THE TEXT SCROLLS ITSELF, up to half the screen: `data-reel-caption-open` keeps
              the viewer's swipe off it, and `touch-pan-y` lets the engine scroll it. -->

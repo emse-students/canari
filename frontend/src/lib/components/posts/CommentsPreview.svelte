@@ -3,9 +3,10 @@
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import CommentAuthorAvatar from './CommentAuthorAvatar.svelte';
+  import RevealedAuthorLine from './RevealedAuthorLine.svelte';
   import { POST_MARKDOWN_RENDERERS } from './postMarkdownRenderers';
   import type { PostComment } from '$lib/posts/api';
-  import { commentAuthorName } from '$lib/posts/commentAuthor';
+  import { commentAuthorName, commentRevealedAuthorId } from '$lib/posts/commentAuthor';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import { m } from '$lib/paraglide/messages';
 
@@ -40,6 +41,9 @@
         null
       )
   );
+
+  /** Who wrote the newest comment, when it is anonymous and the server told this reader. */
+  const revealedAuthorId = $derived(latest ? commentRevealedAuthorId(latest) : null);
 
   /** A tap on the comment opens the sheet, except on a link inside it (a mention goes to its profile). */
   function openFromComment(e: MouseEvent) {
@@ -76,6 +80,9 @@
           <span class="text-text-main block text-xs font-bold">
             <EmojiText text={commentAuthorName(latest)} />
           </span>
+          {#if revealedAuthorId}
+            <RevealedAuthorLine userId={revealedAuthorId} class="text-text-muted mb-0.5" />
+          {/if}
           {#if latest.text}
             <div
               class="post-markdown text-text-main line-clamp-2 text-sm leading-snug wrap-break-word [&_p]:m-0 [&_p]:inline"

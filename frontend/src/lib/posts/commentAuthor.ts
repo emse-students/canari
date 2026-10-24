@@ -45,6 +45,20 @@ export function commentAuthorName(comment: PostComment): string {
   return personalName(comment);
 }
 
+/**
+ * WHO WROTE AN ANONYMOUS COMMENT, for the reader the server told: it serves `userId` on an
+ * anonymous comment to its writer, a content moderator and a platform admin only
+ * (`comment-identity.ts`, `serveComment`), and stores no name on it - so the name is resolved from
+ * that id by the caller. `null` for any other comment, and for an anonymous one whose `userId` was
+ * withheld: the client draws what it was served and never decides who may see a writer.
+ */
+export function commentRevealedAuthorId(
+  comment: Pick<PostComment, 'anonymous' | 'association' | 'userId'>
+): string | null {
+  if (commentAuthorKind(comment) !== 'anonymous') return null;
+  return comment.userId || null;
+}
+
 /** Where the author line links: the association page, the profile, or nowhere for an anonymous comment. */
 export function commentAuthorHref(comment: PostComment): string | null {
   const kind = commentAuthorKind(comment);

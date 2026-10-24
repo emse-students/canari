@@ -2,7 +2,6 @@
   import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import '../app.css';
-  import { DEFAULT_PUBLIC_APP_ORIGIN } from '$lib/utils/publicAppUrl';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
@@ -226,7 +225,11 @@
       // Small delay lets the Android Activity bind to the UI before the native permission prompt.
       const timer = setTimeout(() => {
         startPushService(
-          globalSession.historyBaseUrl || DEFAULT_PUBLIC_APP_ORIGIN,
+          // The delivery service's own base URL, the one every other caller passes. It is never empty
+          // (`deliveryUrl()`: the page's origin in a browser, the baked `VITE_DELIVERY_URL` in Tauri),
+          // so the production origin that used to stand behind it here was a fallback that could
+          // only ever have sent a dev or local build's push registration to production.
+          globalSession.historyBaseUrl,
           globalSession.authToken,
           globalSession.myDeviceId
         ).catch((err) => console.error('[Push] Init error:', err));

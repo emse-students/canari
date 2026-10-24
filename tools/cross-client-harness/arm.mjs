@@ -1,5 +1,5 @@
 /**
- * The one module in this harness that WRITES to production, and the distinction it turns on.
+ * The one module in this harness that WRITES to the estate's database (local or dev; production is refused by R1), and the distinction it turns on.
  *
  * `grainedb.mjs` says READ-ONLY, ALWAYS, and gives the reason: *a check that repairs the state it is
  * measuring measures the repair*. That rule is about REPAIR, and it is not weakened here - what

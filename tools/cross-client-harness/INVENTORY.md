@@ -18,14 +18,14 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-83 scripts.
+85 scripts.
 
 | script | what it is |
 |---|---|
 | `a1apk.mjs` | BUILD THE A1 APK AGAINST THE LOCAL ESTATE, INSTALL IT, AND PROVE THE PHONE IS RUNNING IT. |
 | `accounts.mjs` | The ONE reader of `test-accounts.json`. |
 | `apkbuild.mjs` | WHETHER THE APK ON THE PHONE IS ANY COMMIT AT ALL - the provenance a build stamp cannot carry. |
-| `arm.mjs` | The one module in this harness that WRITES to production, and the distinction it turns on. |
+| `arm.mjs` | The one module in this harness that WRITES to the estate's database (local or dev; production is refused by R1), and the distinction it turns on. |
 | `atoms.mjs` | THE ATOMS - every gesture this rig can make, in one place, each with its contract. |
 | `buildstamp.mjs` | The identity a frontend build gives itself, read back. |
 | `bundle.mjs` | WHICH BUNDLE A WEB CLIENT IS RUNNING, and the repair when it is not the deployed one. |
@@ -44,11 +44,12 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `devices.mjs` | THE DEVICE CENSUS - every device the platform knows, with its runtime, OS, app version, owner, |
 | `epochfork.mjs` | IS THIS DEVICE AT THE GROUP'S EPOCH - the predicate no row asked, as a pure comparison. |
 | `estate-origins.mjs` | WHICH ESTATE A RUNNING CLIENT IS ACTUALLY TALKING TO, as a pure function of what it fetched. |
+| `estate-target.mjs` | WHICH ESTATES THIS RIG MAY ADDRESS - THE LOCAL ONE AND DEV - AND THE REFUSAL OF EVERY OTHER, PRODUCTION FIRST. |
 | `estate.mjs` | WHICH ESTATE A QUERY IS ABOUT, DERIVED FROM THE ONE CONSTANT THAT DECIDES WHERE THE CAMPAIGN RUNS. |
 | `expectations.mjs` | THE PURE HALF OF A ROW'S VERDICT BOOKKEEPING: naming the expectations and preconditions it did not |
 | `fixtures.mjs` | WHERE A STAGED INPUT FILE LIVES - resolved from the HARNESS ROOT, never from the caller. |
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
-| `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of production's database instead. |
+| `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of the estate's database instead (local or dev). |
 | `groupnav.mjs` | Opening a GROUP conversation by name, and proving the right one opened. |
 | `identity.mjs` | WHICH ACCOUNT A CLIENT IS ACTUALLY ACTING AS, ASKED OF THE TOKEN AND OF NOTHING ELSE. |
 | `idpform.mjs` | The identity provider's sign-in stages as the rig sees them: which one is on screen, and what answers it. |
@@ -90,9 +91,10 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `serial.mjs` | WHICH PHONE adb SHOULD TALK TO - one resolver, and it REFUSES TO GUESS between two of them. |
 | `serverwindow.mjs` | THE SERVER HALF OF A ROW'S WINDOW, CONDENSED FOR THE LEDGER AND FOLDED INTO ITS VERDICT. |
 | `shot.mjs` | Saves a PNG of a client, so a layout claim is LOOKED AT rather than inferred. |
+| `site.mjs` | THE ONLY DOOR TO `SITE` AND `ORIGIN`, AND IT REFUSES PRODUCTION BEFORE ANYTHING READS THEM. |
 | `srcscan.mjs` | READING A SCRIPT AS CODE RATHER THAN AS TEXT. |
-| `srvlog.mjs` | THE THIRD OBSERVER: production's own logs, classified the way the browser's are. |
-| `ssh.mjs` | THE ONE WAY THIS HARNESS REACHES PRODUCTION. |
+| `srvlog.mjs` | THE THIRD OBSERVER: the estate's own server logs (local or dev), classified the way the browser's are. |
+| `ssh.mjs` | THE ONE WAY THIS HARNESS REACHES A REMOTE HOST - and its one caller is `estate.mjs`, for DEV. |
 | `state.mjs` | One-line health read of every web client - the thing to run when a check behaves oddly. |
 | `stranded.mjs` | WHAT THE VENUE CHANNEL'S HISTORY PERMANENTLY CONTAINS, AND THE ONLY 404s IT MAY PRODUCE. |
 | `subject.mjs` | THE PURE HALF OF "WHO IS THIS CLIENT" - a token's subject, and what a disagreement means. |
@@ -310,4 +312,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-249 scripts in total.
+251 scripts in total.
