@@ -100,7 +100,7 @@
       <span class="shrink-0" title={exactDate(post.publishedAt)}>{timeAgo(post.publishedAt)}</span>
       {#if republished}
         <span class="shrink-0" aria-hidden="true">&middot;</span>
-        <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" />
+        <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
         <span class="truncate" data-post-republished-by><EmojiText text={republished} /></span>
       {/if}
     </div>

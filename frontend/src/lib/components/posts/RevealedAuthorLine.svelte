@@ -20,9 +20,15 @@
     fallback?: string;
     /** Extra classes - the reel overlay draws it white over its scrim. */
     class?: string;
+    /**
+     * The link is a 44 px row (the reel overlay, where it is a target of its own on a touch screen,
+     * like the author link above it). Not `tap-target`: the name truncates, and the overflow that
+     * truncates it would clip that utility's enlarged hit box.
+     */
+    tall?: boolean;
   }
 
-  let { userId, fallback, class: className = 'text-text-muted' }: Props = $props();
+  let { userId, fallback, class: className = 'text-text-muted', tall = false }: Props = $props();
 </script>
 
 <span
@@ -32,5 +38,5 @@
 >
   <VenetianMask size={11} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
   <span class="sr-only">{m.post_anonymous_revealed_label()}</span>
-  <UserName {userId} {fallback} class="truncate" />
+  <UserName {userId} {fallback} class={tall ? 'block min-h-11 truncate leading-11' : 'truncate'} />
 </span>

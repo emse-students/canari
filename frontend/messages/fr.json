@@ -759,7 +759,7 @@
   "post_view_profile_label": "Voir le profil de {name}",
   "post_view_anonymous_label": "Auteur anonyme",
   "post_anonymous_label": "Anonyme",
-  "post_anonymous_revealed_hint": "Publié en anonyme - vous voyez qui l'a écrit parce que vous en êtes l'auteur ou que vous modérez",
+  "post_anonymous_revealed_hint": "Publié en anonyme - vous voyez qui l'a écrit parce que vous en êtes l'auteur, ou parce que vous êtes modérateur ou administrateur",
   "post_anonymous_revealed_label": "Auteur :",
   "post_share_post_label": "Partager le post",
   "post_share_label": "Partager",

@@ -46,6 +46,7 @@
   import { republishedByText } from '$lib/posts/republication';
   import RevealedAuthorLine from '$lib/components/posts/RevealedAuthorLine.svelte';
   import { Repeat2 } from '@lucide/svelte';
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
   import { ReelPreload } from '$lib/reels/reelPreload';
   import { watchClampOverflow } from '$lib/utils/posts/clampOverflow';
@@ -262,16 +263,21 @@
           </span>
         {/if}
         <!-- The same age, from the same helper, as the post header's: the viewer has no header. And
-             the same "Republie par X" beside it, which shrinks before the name does. -->
-        <span
-          class="flex min-w-0 items-center gap-1 text-xs font-medium opacity-70"
-          data-reel-time-line
-        >
-          <span class="shrink-0" title={exactDate(post.createdAt)}>{timeAgo(post.createdAt)}</span>
+             the same "Republie par X" beside it, which gives way BEFORE the name: the wrapper is
+             `contents`, so the time, the dot and the icon are items of this row that never shrink,
+             and the republishers are an item of basis 0 - they take only the room the name and the
+             time leave, and truncate to nothing first. The name shrinks only when it alone and the
+             time overflow the row. -->
+        <span class="contents text-xs font-medium" data-reel-time-line>
+          <span class="shrink-0 opacity-70" title={exactDate(post.createdAt)}
+            >{timeAgo(post.createdAt)}</span
+          >
           {#if republished}
-            <span class="shrink-0" aria-hidden="true">&middot;</span>
-            <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" />
-            <span class="truncate" data-reel-republished-by>{republished}</span>
+            <span class="shrink-0 opacity-70" aria-hidden="true">&middot;</span>
+            <Repeat2 size={12} strokeWidth={2.5} class="shrink-0 opacity-70" aria-hidden="true" />
+            <span class="min-w-0 flex-1 basis-0 truncate opacity-70" data-reel-republished-by
+              ><EmojiText text={republished} /></span
+            >
           {/if}
         </span>
       </div>
@@ -280,6 +286,7 @@
           userId={revealed.userId}
           fallback={revealed.name}
           class="pointer-events-auto ml-8 shrink-0 text-white/80"
+          tall
         />
       {/if}
       {#if post.markdown}

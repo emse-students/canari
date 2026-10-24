@@ -136,7 +136,9 @@ it('an anonymous reel whose author the server sent says "Anonyme", links nowhere
   expect(q('[data-reel-author]')!.textContent).not.toContain('Ada L');
   const line = q('[data-revealed-author="u1"]')!;
   expect(line.textContent).toContain('Ada L');
-  expect(line.querySelector('a[href="/profile/u1"]')).not.toBeNull();
+  const link = line.querySelector('a[href="/profile/u1"]')!;
+  // A target of its own on a touch screen: a 44 px row, like the author link above it.
+  expect(link.classList.contains('min-h-11')).toBe(true);
 });
 
 it('a hidden author draws no author line', () => {
@@ -150,6 +152,23 @@ it('a republished reel says "Republie par X" beside its time', () => {
   expect(q('[data-reel-time-line] [data-reel-republished-by]')!.textContent).toBe(
     m.post_republished_by({ names: 'BDE' })
   );
+});
+
+it('the republishers give way before the author name, name one and count the rest', () => {
+  const republishedBy = ['BDE', 'BDS', 'BDA'].map((name, i) => ({
+    id: `a${i}`,
+    name,
+    slug: name.toLowerCase(),
+    logoUrl: null,
+  }));
+  const { q } = render(reel({ republishedBy } as Partial<PostEntity>));
+  const names = q<HTMLElement>('[data-reel-republished-by]')!;
+  expect(names.textContent).toBe(m.post_republished_by_more({ names: 'BDE', count: 2 }));
+  // Basis 0 beside a name of basis auto: they take what the name and the time leave.
+  expect(names.classList).toContain('basis-0');
+  expect(names.classList).toContain('min-w-0');
+  // The repost glyph is decoration; the words say it.
+  expect(q('[data-reel-time-line] svg')!.getAttribute('aria-hidden')).toBe('true');
 });
 
 it('a reel nobody republished draws nothing beside its time', () => {

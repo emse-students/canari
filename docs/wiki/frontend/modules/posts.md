@@ -34,13 +34,19 @@ The user's two decisions, for posts, reels and comments alike:
 
 - **"Republie par X" sits on the time's line** - "2 h . [repost] Republie par BDE" - not on a line
   of its own (`PostHeader`'s `data-post-time-line`, `ReelSlide`'s `data-reel-time-line`; the words
-  are `republishedByText`, one implementation). The republisher list truncates before the time does.
+  are `republishedByText`, one implementation). It names ONE republisher and counts the rest
+  ("Republie par BDE +2"), and it gives way first: on the card it truncates before the time; in the
+  reel overlay, where it shares the author's row, the time line is `contents` so the time is an
+  unshrinkable item and the republishers an item of basis 0 - the author name shrinks only once
+  they are gone. The repost glyph is `aria-hidden`; the words carry it.
 - **An anonymous post or comment is NAMED "Anonyme" for every reader, with the mask avatar.** A
   reader the server sent the author's id to - `authorId` on a post (`mustHideAnonymousAuthor`:
   the author, a content moderator, a platform admin), `userId` on a comment (`serveComment`: the
   writer, a content moderator, a platform admin) - also gets ONE small line under the name: a mask
   glyph and the real name linking the profile (`RevealedAuthorLine`, mounted from
-  `revealedPostAuthor` / `commentRevealedAuthorId`). "Anonyme" itself links nowhere. Everyone else
+  `revealedPostAuthor` / `commentRevealedAuthorId`). "Anonyme" itself links nowhere. In the reel
+  overlay that link is a 44 px row (`tall`) - not `tap-target`, whose enlarged box the truncating
+  overflow would clip. Everyone else
   sees "Anonyme" alone. An anonymous comment stores no name, so the name is resolved from the id
   (`UserName`, the app's one id-to-name reader); a post's line paints its own name columns first.
   The media viewer's sender (`postAuthorName`) says "Anonyme" too, so it never disagrees with the

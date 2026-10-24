@@ -117,6 +117,9 @@ describe('PostHeader republication', () => {
     expect(time.querySelector('[data-post-republished-by]')!.textContent).toContain(
       m.post_republished_by({ names: 'BDE' })
     );
+    // Two glyphs on the line, the clock and the repost: both decoration.
+    const repost = time.querySelectorAll('svg')[1];
+    expect(repost.getAttribute('aria-hidden')).toBe('true');
   });
 
   it('draws nothing beside the time when nobody republished the post', () => {
