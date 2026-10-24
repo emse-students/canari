@@ -161,7 +161,7 @@ gather() {
   # moves the `bin` and `externals` symlinks, and leaves the old pair where it was. Every runner on
   # the host is a sibling of the one running this job, so the root is read from RUNNER_WORKSPACE
   # (`<root>/<runner>/_work/<repo>`) rather than written here.
-  local runner_stale_kb=0 runner_stale="" runners_root=""
+  local runner_stale_kb=0 runner_stale="" runners_root="" kb=""
   if [ -n "${RUNNER_WORKSPACE:-}" ] && runners_root="$(cd "$RUNNER_WORKSPACE/../../.." 2>/dev/null && pwd)"; then
     local d v cur
     for d in "$runners_root"/*/; do
@@ -174,11 +174,13 @@ gather() {
           externals.*) cur="$(readlink "$d/externals")" ;;
         esac
         [ "${cur##*/}" = "${v##*/}" ] && continue
-        runner_stale_kb=$((runner_stale_kb + $(du -sk "$v" 2>/dev/null | cut -f1)))
+        kb="$(du -sk "$v" 2>/dev/null | cut -f1)"
+        runner_stale_kb=$((runner_stale_kb + ${kb:-0}))
         runner_stale="$runner_stale ${d##*/}/${v##*/}"
       done
       if [ -n "$(ls -A "$d/_work/_update" 2>/dev/null)" ]; then
-        runner_stale_kb=$((runner_stale_kb + $(du -sk "$d/_work/_update" 2>/dev/null | cut -f1)))
+        kb="$(du -sk "$d/_work/_update" 2>/dev/null | cut -f1)"
+        runner_stale_kb=$((runner_stale_kb + ${kb:-0}))
         runner_stale="$runner_stale ${d##*/}/_work/_update"
       fi
     done
@@ -369,7 +371,7 @@ EOF
   # A FULL ROOT DISK STOPS EVERY TENANT OF A SHARED HOST, and its administrators found this one at
   # 90 % before anything here did. The percentage is the finding; the lines above say which of OUR
   # consumers to look at first.
-  if [ -z "${disk_pct:-}" ]; then
+  if ! [[ "${disk_pct:-}" =~ ^[0-9]+$ ]]; then
     printf '::error::cannot read the root filesystem usage on %s - a full disk would pass\n' "${host}"
     findings=$((findings + 1))
   elif [ "${disk_pct}" -ge "${DISK_FAIL_PERCENT}" ]; then
