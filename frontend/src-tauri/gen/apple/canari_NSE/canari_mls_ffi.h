@@ -75,6 +75,12 @@ int32_t canari_native_graine_seed_held(const char *data_dir, const char *cache_k
 /// writes nothing. Free with canari_free_string.
 char *canari_native_seal_cache_line(const char *cache_key_b64, const char *line);
 
+/// Claims the `ownDeviceAdded` keys of a decrypt answer (a JSON array of strings) in the shared
+/// device-notice ledger under data_dir (the App Group directory) and returns, as a JSON array, the
+/// keys nobody announced before - the ones a "new device on your account" notification is raised
+/// for. Caller frees with canari_free_string.
+char *canari_native_claim_device_notices(const char *data_dir, const char *keys_json);
+
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) into raw plaintext bytes for a
 /// notification thumbnail (WP-XP-3). key_b64/iv_b64 are the base64 CEK (32 bytes) + IV (12 bytes)
 /// from the MLS-decrypted MediaMsg; cipher_ptr/cipher_len point at the downloaded ciphertext||tag.

@@ -68,3 +68,8 @@
 "notif.event.deleted.body" = "« %1$@ » a été supprimé par le BDE";
 "notif.event.pending.title" = "Événement à revalider";
 "notif.event.pending.body" = "« %1$@ » doit être revalidé : ses dates ont changé";
+
+/* A device was added to the user's own account, read from a signed MLS commit the extension
+   merged in memory (2026-10-22). */
+"notif.device.added.title" = "Nouvel appareil";
+"notif.device.added.body" = "Un nouvel appareil a été ajouté à votre compte. Si ce n'est pas vous, ouvrez Canari.";

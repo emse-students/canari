@@ -191,8 +191,11 @@ the intermittent Messenger preview failure, whose cause the access log could not
   reads the map and refuses any other arm. The access log gained five fields to say which case a hit
   was: [logging](../infrastructure/logging.md#the-access-log-diagnostic-fields-2026-10-18).
 
-**Not decided here, and the user's to decide:** whether a campus-restricted post should still preview
-([open-questions](../open-questions.md#decision-owed---should-a-shared-association-post-preview-whatever-its-audience-2026-10-18)).
+**DECIDED BY THE USER (2026-10-23, with the share sheet of [sharing S6](sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)):
+the preview stays as it is.** Every published association post unfurls its text and picture to
+whoever holds its link, a post the feed shows to one campus only included - an association post is a
+communication its authors want carried. A personal post keeps the generic card. Not to be reopened
+as a defect: it was asked (it was an open question from 2026-10-18) and answered.
 
 ### The image an unfurler can actually fetch
 

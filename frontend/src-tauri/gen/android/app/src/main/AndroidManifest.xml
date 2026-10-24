@@ -23,8 +23,10 @@
   is IN, and the merge conflict it used to cause is what tools:replace answers.
     - FCM meta-data default_notification_icon / _channel_id (= CHANNEL_MESSAGES in Kotlin)
     - the SEND / SEND_MULTIPLE intent-filter on MainActivity (share into Canari)
+    - the android.app.shortcuts meta-data on MainActivity (share suggestions, @xml/shortcuts)
   CI guardrail: src/lib/mobile/androidFcmManifest.test.ts fails if any of these is dropped,
-  src/lib/mobile/androidShareManifest.test.ts if the share filter is.
+  src/lib/mobile/androidShareManifest.test.ts if the share filter is,
+  src/lib/mobile/androidShortcutsManifest.test.ts if the shortcuts meta-data is.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -63,6 +65,14 @@
          green. Restore it in the same commit that flips CALLS_NATIVE_RING_COMPILED
          (callsCompiled.test.ts asserts the two agree), not with CALLS_COMPILED: in-app calls ship
          first, without the native ring. -->
+    <!-- THE ONGOING-CALL SERVICE (WP-C-BG-A, B8), declared since the flip of CALLS_COMPILED: an
+         in-app call keeps its socket and its microphone while the app is hidden or the screen is
+         locked. Play reviews the foreground-service type (declaration filled 2026-10-21).
+         `microphone`, not `phoneCall`: see CallForegroundService.kt. Not the native ring's: that is
+         CALLS_NATIVE_RING_COMPILED. androidCallServiceManifest.test.ts asserts the declaration
+         agrees with CALLS_COMPILED. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
@@ -108,6 +118,12 @@
                 <data android:mimeType="audio/*" />
                 <data android:mimeType="application/*" />
             </intent-filter>
+            <!-- SHARE SUGGESTIONS (sharing lot S5): the share-target the recent conversations are
+                 suggested under in the share sheet (res/xml/shortcuts.xml). Hand-maintained, outside
+                 the deep-link plugin's generated block below; androidShortcutsManifest.test.ts. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
             <intent-filter >
                 <action android:name="android.intent.action.VIEW" />
@@ -338,6 +354,11 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+
+        <service
+            android:name="fr.emse.canari.CallForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Default icon and channel for FCM notifications -->
         <meta-data

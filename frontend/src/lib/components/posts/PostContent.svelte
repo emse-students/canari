@@ -10,7 +10,13 @@
   import { onMount } from 'svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import { postAuthorName } from '$lib/posts/postAuthorName';
-  import { mediaAspectStyle, resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
+  import {
+    DEFAULT_MEDIA_ASPECT,
+    REEL_FALLBACK_ASPECT,
+    mediaAspectStyle,
+    resolveMediaType,
+    reservesAspectRatio,
+  } from '$lib/utils/mediaLayout';
   import { m } from '$lib/paraglide/messages';
   import { nearViewport } from '$lib/actions/nearViewport';
   import { SvelteSet } from 'svelte/reactivity';
@@ -125,11 +131,19 @@
   }
 
   /**
-   * A CanaReel (C7) is drawn VERTICAL in the feed - a 9:16 box, the video covering it - rather than
-   * as an ordinary attachment, whose box follows the file's own ratio under a ceiling that crops a
-   * phone's portrait clip. Touching it opens the full-screen reel viewer instead of the media viewer.
+   * A CanaReel (C7) is drawn in the SAME box as any video (`singleMedia`): the clip's own ratio under
+   * the `--media-max-height` ceiling, the whole frame contained with a blurred backdrop, 9:16 only when it
+   * carries no dimensions. Touching it opens the full-screen reel viewer instead of the media viewer.
    */
   const reel = $derived(isReel(post));
+
+  /**
+   * The shape a video is drawn at when it carries no dimensions: a reel is vertical by definition,
+   * an old post video keeps the ordinary 4:3. Known dimensions always win (`mediaAspectStyle`).
+   */
+  function videoFallback(asReel: boolean): number {
+    return asReel ? REEL_FALLBACK_ASPECT : DEFAULT_MEDIA_ASPECT;
+  }
   let reelViewerOpen = $state(false);
 </script>
 
@@ -160,22 +174,7 @@
 {#if postMedia.length > 0 && authToken}
   <div class="mt-1 mb-1 w-full px-3">
     {#if reel}
-      {@const media = postMedia[0]}
-      <div use:nearViewport={watchNear(media)}>
-        <div
-          class="relative mx-auto aspect-9/16 h-[70svh] max-w-full overflow-hidden rounded-lg bg-black"
-          data-reel-card
-        >
-          <PostMedia
-            {media}
-            {authToken}
-            letterbox
-            deferred={!nearMedia.has(media.mediaId)}
-            onOpen={() => (reelViewerOpen = true)}
-            {postInfo}
-          />
-        </div>
-      </div>
+      {@render singleMedia(postMedia[0], true)}
       {#if reelViewerOpen}
         <ReelViewer
           startPost={post}
@@ -223,6 +222,7 @@
                 {media}
                 {authToken}
                 letterbox={resolveMediaType(media) === 'video'}
+                videoFit="cover"
                 deferred={!nearMedia.has(media.mediaId)}
                 onOpen={() => openLightbox(i)}
               />
@@ -261,8 +261,9 @@
 
 <!-- One attachment drawn at its own shape: a single-attachment post, a lone picture beside files,
      and each file row under a gallery. -->
-{#snippet singleMedia(media: PostMediaRef)}
+{#snippet singleMedia(media: PostMediaRef, asReel = false)}
   {@const reserved = reservesAspectRatio(resolveMediaType(media))}
+  {@const isVideo = resolveMediaType(media) === 'video'}
   <div use:nearViewport={watchNear(media)}>
     <!-- A PICTURE IS INSET AND ROUNDED, NO LONGER FULL-BLEED (user, 2026-10-01, Mi 9T): run
          edge to edge, its square corners cut across the card's 18 px ones. The block's `px-3` +
@@ -273,9 +274,11 @@
          card adds `px-2`, which lands it on the post text's 20 px. -->
     <div
       class="relative overflow-hidden {reserved
-        ? 'w-full rounded-lg bg-black/5 dark:bg-white/5'
+        ? `w-full rounded-lg ${isVideo ? 'bg-cn-surface' : 'bg-black/5 dark:bg-white/5'}`
         : 'w-full px-2 pb-1'}"
-      style={reserved ? mediaAspectStyle(media.width, media.height) : ''}
+      style={reserved ? mediaAspectStyle(media.width, media.height, videoFallback(asReel)) : ''}
+      data-reel-card={asReel ? '' : undefined}
+      data-video-box={isVideo ? '' : undefined}
     >
       <!-- Single attachment: PostMedia handles its own lightbox/download -->
       <PostMedia
@@ -283,10 +286,11 @@
         {authToken}
         letterbox={reserved}
         deferred={!nearMedia.has(media.mediaId)}
+        onOpen={asReel ? () => (reelViewerOpen = true) : undefined}
         {postInfo}
       />
     </div>
-    {#if media.caption}
+    {#if media.caption && !asReel}
       <p class="text-text-muted px-2 pt-2 pb-1 text-xs italic">{media.caption}</p>
     {/if}
   </div>

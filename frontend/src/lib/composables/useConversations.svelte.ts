@@ -175,9 +175,10 @@ export function useConversations() {
   // keyed by group so a mid-invite conversation switch never leaks pending rows.
   let pendingInvites = $state<{ groupId: string; ids: string[] } | null>(null);
   let isLoadingHistory = $state(false);
-  // True once the initial IndexedDB restore has populated the map, so consumers (e.g. the
+  // True once THIS session's IndexedDB restore has populated the map, so consumers (e.g. the
   // /posts mini-panel) can treat the live map as authoritative and reflect deletions
-  // instead of resurrecting stale rows from their own snapshot.
+  // instead of resurrecting stale rows from their own snapshot. Reset at sign-out
+  // (`invalidateRestores`), when the map is cleared.
   let conversationsRestored = $state(false);
   /**
    * How many startup/resume passes that can still ADD a conversation are running.
@@ -1126,6 +1127,10 @@ export function useConversations() {
     const retired = restoreGeneration;
     retired.retired = true;
     restoreGeneration = newRestoreGeneration(retired.id + 1);
+    // The map is cleared beside this call, so it is no longer "restored": the flag is the NEXT
+    // session's to set, and a reader asking before then (the share-sheet suggestions, a deep-link
+    // landing) must wait for that session's restore rather than trust the one that left.
+    conversationsRestored = false;
     Log.i(
       'RESTORE',
       `generation ${retired.id} retired (running=${retired.running !== null}, queued asks=${retired.queuedAsks})`

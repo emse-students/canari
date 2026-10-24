@@ -114,4 +114,28 @@ export class DeviceSignatureKeysService {
     this.logger.debug(`[DEVICE_KEY] served user=${userId} device=${deviceId} keys=${keys.length}`);
     return keys;
   }
+
+  /**
+   * Each key the history RECORDED, with the instant this server first saw it, oldest first - the
+   * evidence a client weighs before saying "a new device was added": a key first seen long ago is a
+   * device coming back into a tree, not a new one (mls-protocol, "New-device notices").
+   *
+   * ONLY RECORDED KEYS ARE DATED. The current package key {@link keysFor} appends for a device that
+   * uploaded nothing since the history began has no date, and is left out rather than given one: a
+   * key with no recorded date predates the history, which is itself the answer.
+   */
+  async firstSeenFor(
+    userId: string,
+    deviceId: string
+  ): Promise<Array<{ signatureKey: string; firstSeenAt: string }>> {
+    const rows = await this.keyRepo.find({
+      where: { userId, deviceId },
+      order: { firstSeenAt: 'ASC' },
+    });
+    this.logger.debug(`[DEVICE_KEY] dated user=${userId} device=${deviceId} keys=${rows.length}`);
+    return rows.map((row) => ({
+      signatureKey: row.signatureKey,
+      firstSeenAt: row.firstSeenAt.toISOString(),
+    }));
+  }
 }
