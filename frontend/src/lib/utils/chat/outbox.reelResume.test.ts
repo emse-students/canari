@@ -51,6 +51,7 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { OutboxBlobStore } from '$lib/db/outboxBlob';
 import type { OutboxEntry } from '$lib/db';
 import type { MediaRef } from '$lib/media';
+import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
 import type { Conversation } from '$lib/types';
 import { SqliteStorage } from '$lib/db/sqlite';
 import { attachFakeOutboxSql } from '../../../test/outboxSqlFake';
@@ -146,10 +147,16 @@ function life(w: World, opts: LifeOptions = {}) {
     isGroupActive: vi.fn(async () => true),
     getGroupExclusions: vi.fn(async () => new Map()),
     waitForMessageQueueIdle: vi.fn(async () => undefined),
-    sendMessage: vi.fn(async () => {
+    // Typed as the real answer: the service is cast `as never` below, so only this annotation
+    // keeps the fake in step with `SentFrame` (it lacked `authorProof` after #2276).
+    sendMessage: vi.fn(async (): Promise<SentFrame> => {
       if (!alive) return NEVER();
       await (opts.send ?? ACCEPT)();
-      return { sealed: new Uint8Array(), receivedAt: 1_700_000_000_000 };
+      return {
+        sealed: new Uint8Array(),
+        authorProof: new Uint8Array(),
+        receivedAt: 1_700_000_000_000,
+      };
     }),
   };
   const uploadMedia: OutboxDeps['uploadMedia'] = async (media, transport, resume) => {
