@@ -108,15 +108,6 @@ on a phone or desktop. No decision that 90 days is intended was found. Whether n
 (gate the GC on `deviceWindowMs()`) or the claim is lowered is a product decision; nothing was
 changed. Until it is taken, a native device claims coverage it deleted.
 
-## P2 - A revoked device erases its owner's arrival, so their next device loses history (review of #2226, 2026-10-22)
-
-`purgeDeviceFootprint` deletes a revoked device's rows in every group. For a member whose interval
-opened late, their first device row is the only record of when they really arrived. After the purge,
-`MIN(createdAt)` moves later and `withheldWindows` falls back to the late interval, so their next
-device is denied the span between the two. Nothing leaks to anyone: the member loses history.
-Production held 4 such late-interval members on 2026-10-22. Fix direction: keep the arrival as a fact
-outside the device rows (on the membership interval, for instance) so a purge cannot move it.
-
 ## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
 `withholdReason` places a copy with no `serverTimestamp` against every window widened by
@@ -144,15 +135,6 @@ the leave dropped local state at +26 ms, refused at +54 ms. So the entry is the 
 and withdrawing the group's queued entries on a leave would only silence the line. The fix is
 ordering: step 2 must wait for the notice's DELIVERY, not its durable write. A parked entry for a
 group the device has left should also be withdrawn rather than wait for a sign-in.
-
-## P3 - `for` is decided against the caller's EARLIEST arrival (review of #2226, 2026-10-22)
-
-The exclusions read honours `for` when the named person's latest device is no older than the
-caller's first arrival. A caller who left and came back can therefore read the arrival of a person
-added while they were away. A founder who adds a device also makes their own arrival readable to
-members who came later. Each answer is a time, never a message. The rule
-[history-reconciliation](protocols/history-reconciliation.md) states is the right one, and the
-predicate should follow it to the caller's current interval.
 
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 
