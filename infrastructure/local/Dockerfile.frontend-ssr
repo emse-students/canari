@@ -31,7 +31,7 @@
 # NODE 24, AN LTS LINE, NEVER AN ODD MAJOR. Node 25 left support on 2026-06-01
 # and node:25-alpine has not been rebuilt since, so its OpenSSL and bundled npm
 # carry fixed advisories the image scan reports (#2308 moved off it, Dependabot's
-# #2338 moved back; `.github/dependabot.yml` now ignores node 25).
+# #2338 moved back; `.github/dependabot.yml` now leaves node majors to a hand move).
 FROM node:24-alpine
 
 WORKDIR /app

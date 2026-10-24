@@ -2025,7 +2025,8 @@ are builder stages and the local compose file, which reach no estate.
 - `frontend-ssr` was back on `node:25-alpine` (Dependabot's #2338 undid #2308): Node 25 left support on
   2026-06-01 and its image has not been rebuilt since, so its OpenSSL (`CVE-2026-45447`) and bundled npm
   (`tar`, `brace-expansion`, ...) were reported. **Back to `node:24-alpine`**, and `dependabot.yml` now
-  ignores node 25 for that directory: an odd major never becomes LTS.
+  ignores node MAJORS for that directory (a `versions` range is refused for a docker ignore): an odd
+  major never becomes LTS, so a node major moves by hand, onto the next LTS line.
 - `CVE-2026-111497` (`brotli-libs` 1.2.0, fixed in Alpine's 1.2.1-r0 of 2026-10-22) is in `adminer`,
   `nginx:1.31.8-alpine`, `nginx:stable-alpine` and `postgres:18-alpine`, and **every one of those pins
   was already the newest upstream build**: no digest carrying the fix existed that day, so there was
