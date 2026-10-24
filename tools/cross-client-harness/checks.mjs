@@ -451,6 +451,13 @@ export const PHASES = {
     scripts: ['floor.mjs --row 1', 'floor.mjs --row 2'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
+  // CONCURRENT COMMITS, browsers only. CC-5 is not here: it needs a fifth campaign account
+  // (`ccrows.mjs` `CC5_PREMISE`).
+  CC: {
+    title: '1.4.1 - concurrent commits',
+    scripts: ['cc.mjs --row 1', 'cc.mjs --row 2', 'cc.mjs --row 3', 'cc.mjs --row 4'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
 };
 
 /**

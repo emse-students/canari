@@ -122,7 +122,8 @@ const GUARDED = {
   'arm.mjs': ['expireInvite'],
   'purge-devices.mjs': [null],
   'archive/del1.mjs': [null],
-  'archive/grp.mjs': ['removeMember', 'leaveGroup'],
+  // Moved out of `archive/grp.mjs` (2026-10-24) so the 1.4.1 race rows remove through the same guard.
+  'archive/addmember.mjs': ['removeMember', 'leaveGroup'],
 };
 for (const [file, fns] of Object.entries(GUARDED)) {
   const src = readFileSync(join(HERE, file), 'utf8');

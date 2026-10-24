@@ -20,6 +20,7 @@ import { assertCampaignOwned, ledger, recordCreated } from './campaign.mjs';
 import { client, evaluate, until } from './chat.mjs';
 import { armIfPhone, resolveDevices, tabMatchFor } from './device.mjs';
 import { psql, srvLines } from './estate.mjs';
+import { armFault } from './fault.mjs';
 import { createGroup } from './groupnav.mjs';
 import { serverView } from './invariant.mjs';
 import { rowGroupName } from './rowkit.mjs';
@@ -197,6 +198,101 @@ export async function awaitServer(group, predicate, timeoutMs = 30_000) {
 export function commitLines(group, since) {
   if (!UUID.test(group)) throw new Error(`commitLines: '${group}' is not a group id`);
   return srvLines('chat-delivery-service', since).filter((l) => /\[COMMIT\]/.test(l) && l.includes(`group=${group}`));
+}
+
+/** The commit POST, and only it: `GET /api/mls/commits/:groupId` shares the prefix, so the method is named. */
+export const COMMIT_POST = { match: '/api/mls/commit', method: 'POST' };
+
+/**
+ * RELEASES SEVERAL COMMITS TOGETHER - the action of every "same epoch" race (CC-*, RM-1, RM-7).
+ *
+ * Each `actions[device]` is a gesture that ends in ONE commit on that seat (an Add, a Remove, a send
+ * that triggers a due refresh). Every seat's commit POST is held BEFORE the server (`fault.mjs`
+ * `hold once`), the gestures are started together and NOT awaited, and once EVERY seat holds its
+ * request they are released in one `Promise.all` - so the server sees them within one round trip,
+ * both built on the same epoch. A rebuilt retry after a refusal is not held (`once`).
+ *
+ * A seat whose request never arrived is not a race: the gestures are still awaited and the faults
+ * disarmed, and `vacuous` names it, which `composeVerdict` turns into `VACUOUS`.
+ *
+ * @param {object} seats from {@link openSeats}
+ * @param {Record<string, () => Promise<unknown>>} actions device -> the gesture, started here
+ * @param {{heldWithinMs?: number}} [opt] how long every seat is given to reach its POST
+ * @returns {Promise<{releasedAt: string|null, outcomes: Record<string, {ok: boolean, value?: unknown, error?: string}>,
+ *   vacuous: {device: string, rule: number, fault: string}[], records: Record<string, object[]>}>}
+ */
+export async function raceCommits(seats, actions, { heldWithinMs = 45_000 } = {}) {
+  const devices = Object.keys(actions);
+  const faults = {};
+  for (const d of devices) faults[d] = await armFault(seats.seat[d].cx, [{ ...COMMIT_POST, fault: 'hold once' }]);
+  const running = Object.fromEntries(
+    devices.map((d) => [
+      d,
+      actions[d]().then(
+        (value) => ({ ok: true, value }),
+        (e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 300) })
+      ),
+    ])
+  );
+  let releasedAt = null;
+  let failure = null;
+  try {
+    const held = await Promise.allSettled(devices.map((d) => faults[d].awaitHeld(1, heldWithinMs)));
+    const missing = devices.filter((_, i) => held[i].status === 'rejected');
+    if (missing.length) console.log(`[race] no commit held on ${missing.join(' ')} within ${heldWithinMs} ms - not a race`);
+    releasedAt = new Date().toISOString();
+    await Promise.all(devices.map((d) => faults[d].release()));
+    console.log(`[race] released ${devices.join(' + ')} together at ${releasedAt}`);
+  } catch (e) {
+    failure = e;
+  }
+  // DISARMED WHATEVER HAPPENED: a fault left armed would hold the page's next commit. The gestures
+  // first, which end on their own post-conditions once their request is let go.
+  const outcomes = {};
+  for (const d of devices) outcomes[d] = await running[d];
+  const vacuous = [];
+  const records = {};
+  for (const d of devices) {
+    const rep = await faults[d].disarm();
+    records[d] = rep.records;
+    for (const i of rep.vacuous) vacuous.push({ device: d, rule: i, fault: `${d} hold once` });
+  }
+  if (failure) throw failure;
+  return { releasedAt, outcomes, vacuous, records };
+}
+
+/**
+ * This seat's leaf-refresh ledger entry for `groupId` (`leafRefresh.ts`, the device's own
+ * `localStorage`, key `mls_leaf_refresh:<user>:<device>`), or null.
+ */
+export async function leafLedgerEntry(cx, userId, deviceId, groupId) {
+  const raw = await evaluate(cx, `localStorage.getItem(${JSON.stringify(`mls_leaf_refresh:${userId}:${deviceId}`)})`);
+  if (!raw) return null;
+  return JSON.parse(raw)[groupId] ?? null;
+}
+
+/**
+ * ARMS A DUE LEAF REFRESH ON A CAMPAIGN DEVICE (CC-4), with no server write.
+ *
+ * The refresh ledger is the device's own `localStorage`, NOT a Redis key (plan Q3's premise was
+ * wrong). A leaf this device's OWN commit produced is due at `at + 7 days` (`decideLeafRefresh`,
+ * basis `ledger`), so moving `at` back eight days makes it due at the device's next durable send. A
+ * KeyPackage-dated leaf (a device that only received a Welcome) is dated by the TREE and cannot be
+ * armed this way: refused, never faked.
+ *
+ * @returns {Promise<{before: object, after: object}>} the entry before and after the rewrite
+ */
+export async function armLeafRefresh(cx, userId, deviceId, groupId, { ageDays = 8 } = {}) {
+  const before = await leafLedgerEntry(cx, userId, deviceId, groupId);
+  if (!before) throw new Error(`armLeafRefresh: no ledger entry for ${groupId.slice(0, 8)} on this device - it has made no commit there`);
+  if (before.observed) throw new Error(`armLeafRefresh: the entry for ${groupId.slice(0, 8)} is an OBSERVATION - this device's leaf is not one its own commit produced`);
+  const key = `mls_leaf_refresh:${userId}:${deviceId}`;
+  const at = Date.now() - ageDays * 24 * 60 * 60 * 1000;
+  await evaluate(
+    cx,
+    `(function () { var l = JSON.parse(localStorage.getItem(${JSON.stringify(key)})); l[${JSON.stringify(groupId)}].at = ${at}; localStorage.setItem(${JSON.stringify(key)}, JSON.stringify(l)); return true; })()`
+  );
+  return { before, after: await leafLedgerEntry(cx, userId, deviceId, groupId) };
 }
 
 export { serverView };
