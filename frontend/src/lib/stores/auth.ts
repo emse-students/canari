@@ -36,6 +36,7 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import { discardSharedOut } from '$lib/sharing/shareOutCleanup';
 import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
 import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
+import { endPushRegistration } from '$lib/services/PushNotificationService';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { customTabsCommand } from '$lib/services/customTabsCommands';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
@@ -326,7 +327,8 @@ let _signOutHandler: (() => void) | null = null;
  * this is the one function every sign-out already calls, so no exit can forget it.
  *
  * Called FIRST in {@link clearAuth}, synchronously, while the access token still exists: the
- * teardown deregisters the push token with it.
+ * teardown deregisters a live session's push token with it. The DEVICE's half of ending the push
+ * registration is not the handler's - `clearAuth` runs it itself, so it holds with no handler.
  */
 export function setSignOutHandler(fn: (() => void) | null): void {
   _signOutHandler = fn;
@@ -1227,6 +1229,12 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   } else {
     alog('clear with no sign-out handler registered - no live session to end');
   }
+  // THE DEVICE STOPS BEING A PUSH DESTINATION FOR THE ACCOUNT THAT LEFT, at EVERY sign-out: with a
+  // live session or none, a dead credential, no network, or no registration marker in this tab. Not
+  // awaited - it never rejects and logs its own failures, and a deletion it cannot finish stays owed
+  // on disk until it does. AFTER the handler, which reads the registration marker synchronously for
+  // the server-side deregistration of a live session.
+  void endPushRegistration();
   // THE LOCAL IDENTITY GOES NOW, BEFORE THE FIRST AWAIT - never after the revocation below. The
   // handler has just set `isLoggedIn` false, and every unlock trigger in the app shell (the user-id
   // effect, `afterNavigate`) starts the unlock on "a saved user, nobody logged in". Left until the
