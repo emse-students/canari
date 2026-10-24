@@ -78,7 +78,7 @@ first gesture of the campaign is a new pre-release from `main` (R7).
 | The background Welcome's Add staged in `mls.bin`, settled by whoever loads it next; the route says what happened | #2287, #2329 | a killed phone answering from a stale epoch; `ACCEPTED AND NOT HELD`; the foreground overwriting a staged Add | DEV-7 |
 | Seat claims and departures serialised under one lock (`dm_seat_evictions`, `distribution_departures`) | #2258 | a claim and an eviction crossing; a deadlock | RM-1, RM-5 |
 | The removal bound: `REMOVAL_EXCEEDS_ACTOR`, a rewrite refused whole with `409 CHANNEL_ACCESS_CHANGED`, `409 DEPARTURE_SUPERSEDED` after three inline retries, salon rows locked before membership rows | #2284 | two admins editing one salon's access; a kick racing a grant; a lock-order inversion | RM-4..RM-7 |
-| A key-group frame stored once, not once per seat | #2260 | a seat that misses a frame stored for "everyone" | GAP-4, BIG-3 |
+| A key-group frame stored once, not once per seat | #2260 | a seat that misses a frame stored for "everyone" | **none on this build**: the writer is OFF on dev for 1.4.1 (see "Decided by the lead" below), so GAP-4 is not played. BIG-3 still runs, on the per-seat path |
 | Graine: rotate a seed on a removal or a new user only; the past only to a proven admission; answers scoped to readable salons; a shut phone joins a key group from the push; history addressed to the asking device | #2263, #2273, #2262, #2266, #2270 | a removed member keeping the next seed; a link joiner reading the past it may not; a phone missing a salon after a kill | GR-* |
 | KeyPackage bound to its device, device keys pinned on first sight; new-device notices | #2268, #2278 | a legitimate re-enrolment refused as an impostor; a notice missing or doubled | DEV-1, DEV-5 |
 | A revoked device no longer erases its owner's arrival; a group exit sends what it can first | #2254, #2259 | a history floor reset by a revocation; an exit half-done offline | DEV-6, RM-8 |
@@ -211,7 +211,7 @@ impossible FAILS on it), the devices, the fault, the class and the cost of FIVE 
 | GAP-1 | Application frames of epoch N+2 arrive before the commits N+1, N+2 | queued, applied in order once the commits arrive; nothing dropped | W1 W2 W4 | `hold` W2's history fetch while the socket delivers | U | 30 min |
 | GAP-2 | A frame from a PAST epoch (own and others') | classified by `content_type`, never re-queued as a retryable gap | W1 W2 | replay a captured frame | U | 20 min |
 | GAP-3 | 2000+ frames in one epoch while one member is frozen (old HEAL-W3) | `TooDistantInTheFuture` reached before `GAP_QUEUED` loops; the frozen member recovers through the ladder, not a silent gap | W1 W2 | freeze W2 (`Debugger.pause`) | U | 45 min |
-| GAP-4 | A key-group frame stored ONCE, read by every seat (#2260): a community with five seats, two of them offline | every seat, on return, reads the frame once | W1 W2 W4 W5 +A1 | `cutHard()` on two seats | U+B | 30 min |
+| GAP-4 | A key-group frame stored ONCE, read by every seat (#2260): a community with five seats, two of them offline | every seat, on return, reads the frame once. **NOT PLAYED ON THIS BUILD**: it needs the shared-payload writer, which stays OFF for 1.4.1 (see "Decided by the lead" below) | W1 W2 W4 W5 +A1 | `cutHard()` on two seats | U+B | 30 min |
 
 #### RM - removal while a commit is in flight, and the removal bound
 
@@ -305,7 +305,7 @@ assumes what the one before proved.
 | 2 | R5 fixtures on dev; `bun rows.mjs`, `bun cleanup.mjs`, `bun identity.mjs` (now safe: R1) | lead | ~1 h |
 | 3 | FLOOR | lead | 40 min |
 | 4 | CC, DUP, OFF, GAP-1..3, RM-1..8, TOK-1..2, NET - the `U` rows, unattended | rig | ~10 h, one night |
-| 5 | KILL-3/4, OFF-5, GAP-4, ADM-5..7 (old APK installed, then R2's new one back), DEV-7, BIG | lead + bench | ~6 h |
+| 5 | KILL-3/4, OFF-5, ADM-5..7 (old APK installed, then R2's new one back), DEV-7, BIG | lead + bench | ~6 h |
 | 6 | ADM-1..4, ADM-8, DEV-1..6, KILL-1/2/5 - the rows that mint devices or touch PINs, last | lead | ~4 h |
 | 7 | the stable may be cut when every row of 4.2 is `PASS` on ONE build - the build of step 1 | lead | - |
 | 8 | section 4.3 | lead | after the stable |
@@ -350,6 +350,11 @@ group again: a verdict about one build does not carry to the next.
 
 ### Decided by the lead (2026-10-24)
 
-- **`QUEUED_PAYLOAD_SHARED_WRITES` is ENABLED on dev** for this campaign, so the shared-payload writer
-  ([chat-delivery](services/chat-delivery.md)), OFF as shipped, runs under the campaign rows on dev.
-  Production keeps it OFF. Enabling it there is a separate decision.
+- **`QUEUED_PAYLOAD_SHARED_WRITES` STAYS `false` on dev for the 1.4.1 campaign**, as it does on
+  production. The repo rule in [chat-delivery](services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)
+  says turning the writer on is a code change in a LATER release, never an operator flip. So this
+  campaign runs with the writer OFF.
+  - The shared-writes path keeps its unit coverage.
+  - It gets its own campaign, with its own release.
+  - The one row that depends on it, **GAP-4**, is not played on this build.
+  - BIG-3 runs on the per-seat path that 1.4.1 actually uses.
