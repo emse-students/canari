@@ -164,8 +164,8 @@ if (!chatIt) {
   )?.[1];
   if (image && prod && image === prod) ok(`same image as production: ${image}`);
   else bad(`chat-delivery integration job runs ${image}, production runs ${prod} - bump them together`);
-  if (/CHAT_IT_DATABASE_URL: postgres:\/\//.test(chatIt)) ok('it sets CHAT_IT_DATABASE_URL');
-  else bad('it does not set CHAT_IT_DATABASE_URL - every spec would skip, and pass');
+  if (/CHAT_DELIVERY_IT_DATABASE_URL: postgres:\/\//.test(chatIt)) ok('it sets CHAT_DELIVERY_IT_DATABASE_URL');
+  else bad('it does not set CHAT_DELIVERY_IT_DATABASE_URL - every spec would skip, and pass');
 }
 
 console.log('every Redis CI runs is the one production runs:');

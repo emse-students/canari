@@ -2,13 +2,13 @@
  * A KEY-GROUP FRAME STORED ONCE, AGAINST A REAL POSTGRESQL - the send, the pull, the ACK, the device
  * purge, the retention and the collector, through the service's own methods and SQL.
  *
- * GATED ON `CHAT_IT_DATABASE_URL`, which CI's `test-chat-delivery-integration` job sets (and which
+ * GATED ON `CHAT_DELIVERY_IT_DATABASE_URL`, which CI's `test-chat-delivery-integration` job sets (and which
  * refuses a skip); without it the file reports as skipped rather than passing. It builds its own throwaway schema (the
  * entities through `synchronize`, and migration 034 against a pre-034 table), so it needs nothing
  * else and touches nothing else. Redis is a stub: every device is OFFLINE, so every record is kept
  * for the pull, and Firebase is not initialised, so nothing is pushed.
  *
- *   CHAT_IT_DATABASE_URL=postgres://user:pass@localhost:5432/db bun run test -- queued-payload.integration
+ *   CHAT_DELIVERY_IT_DATABASE_URL=postgres://user:pass@localhost:5432/db bun run test -- queued-payload.integration
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -38,7 +38,7 @@ import { PAYLOAD_RELATION, materializeDeliveries } from './queued-payload';
 import { mlsFrame } from '../testing/mlsFrameFixture';
 import { PENDING_FETCH_CHUNK_ROWS, RETENTION_WINDOW_MS } from '../retention.constants';
 
-const URL = process.env.CHAT_IT_DATABASE_URL;
+const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
 const MIGRATION = readFileSync(

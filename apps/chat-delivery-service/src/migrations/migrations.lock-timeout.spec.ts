@@ -2,12 +2,13 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * A migration that locks `queued_message` - the table every send writes and every pull reads - must
+ * A migration that locks a hot table (`queued_message`, which every send writes and every pull reads,
+ * or `dm_group_membership_intervals`, which every history answer reads) must
  * give up rather than queue behind a long transaction: ALTER TABLE takes ACCESS EXCLUSIVE, and every
  * send and pull waits behind a lock request that is itself waiting. `SET lock_timeout` makes the
  * deploy fail loudly instead, and the migration is idempotent, so a re-run is safe.
  *
- * Asserted from 034 on; older migrations ran before the rule and are not re-run.
+ * Asserted from 034 on, plus 033 (reviewed into the rule before it shipped); older migrations ran before the rule and are not re-run.
  */
 const MIGRATIONS = join(process.cwd(), 'src', 'migrations');
 
@@ -49,5 +50,24 @@ describe('a migration that locks queued_message', () => {
     expect(sql).not.toMatch(
       /CREATE\s+INDEX\s+(IF\s+NOT\s+EXISTS\s+)?"IDX_queued_message_payloadId"/i
     );
+  });
+});
+
+describe.each([
+  [
+    '033_group_membership_interval_admitted_at.sql',
+    /^\s*ALTER\s+TABLE\s+dm_group_membership_intervals/im,
+  ],
+  // `push_token` is read by every send to find its destinations: the same reason, another table.
+  ['037_push_token_session.sql', /^\s*ALTER\s+TABLE\s+"?push_token"?/im],
+])('a migration that locks another hot table: %s', (file, alters) => {
+  it('sets a lock_timeout before it alters the table', () => {
+    const sql = read(file);
+    const timeout = sql.search(/^\s*SET\s+lock_timeout\s*=\s*'\d+s'\s*;/im);
+    const alter = sql.search(alters);
+
+    expect(alter).toBeGreaterThanOrEqual(0);
+    expect(timeout).toBeGreaterThanOrEqual(0);
+    expect(timeout).toBeLessThan(alter);
   });
 });
