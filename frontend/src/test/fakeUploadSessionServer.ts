@@ -14,6 +14,7 @@ import {
   UploadNetworkError,
   type XhrUploadOptions,
 } from '$lib/utils/uploadXhr';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 export type Fault =
   /** No answer, and the server never saw the request (the link died before it left). */
@@ -68,7 +69,9 @@ export class FakeSessionServer {
         this.sent.push({ method, path, bytes });
         const n = this.sent.filter((r) => r.method === method && r.path === path).length;
         const fault = this.fault(method, path, n);
-        if (fault === 'drop') throw new TypeError('Failed to fetch');
+        // The shape the app's conformed `fetch` raises for no answer (`conformNativeFetch`): a bare
+        // `TypeError` is no longer read as a transport failure.
+        if (fault === 'drop') throw new TransportFailureError(new TypeError('Failed to fetch'));
         if (fault === 'reset') throw new UploadNetworkError(path);
         if (fault === 'hang') return this.hung(transport);
         if (typeof fault === 'object') {
@@ -85,7 +88,8 @@ export class FakeSessionServer {
         }
         this.seen.push({ method, path, bytes });
         const res = await this.handle(owner, method, path, body, transport);
-        if (fault === 'lose-answer') throw new TypeError('Failed to fetch');
+        if (fault === 'lose-answer')
+          throw new TransportFailureError(new TypeError('Failed to fetch'));
         if (fault === 'hang-after') return this.hung(transport);
         return res;
       },
