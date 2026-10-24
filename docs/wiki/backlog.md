@@ -108,15 +108,6 @@ on a phone or desktop. No decision that 90 days is intended was found. Whether n
 (gate the GC on `deviceWindowMs()`) or the claim is lowered is a product decision; nothing was
 changed. Until it is taken, a native device claims coverage it deleted.
 
-## P2 - A revoked device erases its owner's arrival, so their next device loses history (review of #2226, 2026-10-22)
-
-`purgeDeviceFootprint` deletes a revoked device's rows in every group. For a member whose interval
-opened late, their first device row is the only record of when they really arrived. After the purge,
-`MIN(createdAt)` moves later and `withheldWindows` falls back to the late interval, so their next
-device is denied the span between the two. Nothing leaks to anyone: the member loses history.
-Production held 4 such late-interval members on 2026-10-22. Fix direction: keep the arrival as a fact
-outside the device rows (on the membership interval, for instance) so a purge cannot move it.
-
 ## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
 `withholdReason` places a copy with no `serverTimestamp` against every window widened by
@@ -144,15 +135,6 @@ the leave dropped local state at +26 ms, refused at +54 ms. So the entry is the 
 and withdrawing the group's queued entries on a leave would only silence the line. The fix is
 ordering: step 2 must wait for the notice's DELIVERY, not its durable write. A parked entry for a
 group the device has left should also be withdrawn rather than wait for a sign-in.
-
-## P3 - `for` is decided against the caller's EARLIEST arrival (review of #2226, 2026-10-22)
-
-The exclusions read honours `for` when the named person's latest device is no older than the
-caller's first arrival. A caller who left and came back can therefore read the arrival of a person
-added while they were away. A founder who adds a device also makes their own arrival readable to
-members who came later. Each answer is a time, never a message. The rule
-[history-reconciliation](protocols/history-reconciliation.md) states is the right one, and the
-predicate should follow it to the caller's current interval.
 
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 
@@ -204,7 +186,7 @@ warning, then suspension, then withdrawal by staff; a cut is kept **90 days**; *
 reports**; live reports answered within **24 hours on working days**; **a reported chat message is kept (encrypted,
 for staff) until handled** - this REVERSES C2's "no grace period"; floating reactions = heart, laugh,
 bravo, fire, the canary chick; the first-live rules reuse the posts' publication rules; **no viewer cap
-wanted** (the plan: [live](frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)).
+wanted** (the plan: [live](frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20); **2026-10-21, no VISIBLE ceiling: the design and the owner's decisions O-1..O-7 are on [live-scaling](frontend/modules/live-scaling.md)**).
 **WP-L8b, server half BUILT 2026-10-21 (draft PR):** the strike ladder, the 90-day retention, the
 reported chat line (checked, signed, kept until handled and 90 days at most, the author's erasure
 included), the five reaction kinds and `LIVE_RULES_VERSION` 2 ([lives](services/lives.md#the-strike-ladder-wp-l8b)).
@@ -989,21 +971,21 @@ From [offline-and-weak-network section 15](frontend/offline-and-weak-network.md#
 - **DECIDED by the user, 2026-10-14: TWO MECHANISMS.** Private groups carry the nickname in an MLS application frame the server never sees; communities use a server column with the moderator check. **Build is queued AFTER mute / mentions-only** (next section).
 - **DECIDED by the user, 2026-10-18**: in a community the target sees "set by X"; a nickname STAYS when its setter leaves (the target can reset it) ([WP-NICK-COMMUNITY-RULES](#decided-by-the-user-on-2026-10-18---every-design-question-answered)).
 
-## Group notification levels (all / mentions only / none) - requested by the USER 2026-10-14, release 1.2.8 WAITS for it
+## Group notification levels (all / mentions only / none) - SHIPPED in `1.2.8` (#1874), nothing owed here
 
-**RELEASE SCOPE (user, 2026-10-14).** The stable `1.2.8` waits for these levels (mute and mentions-only, PR #1874) and carries #1863 (device-key vault per account), #1870, #1871 (notification sender name), #1875 (salon first frame), #1877, #1880 (reply swipe thumb arc) and the salon-level-over-socket fix. It does NOT wait for "a remove holds against a re-add" (draft PR #1878, under review or rework): that and the in-app camera everywhere (#1859, needs conflict resolution and Mi 9T + iPhone readings) go to `1.2.9`.
+**SHIPPED (stable `1.2.8`, 2026-10-15).** It waited for these levels (mute and mentions-only, PR #1874) and carries #1863 (device-key vault per account), #1870, #1871 (notification sender name), #1875 (salon first frame), #1877, #1880 (reply swipe thumb arc) and the salon-level-over-socket fix. It does NOT wait for "a remove holds against a re-add" (draft PR #1878, under review or rework): that and the in-app camera everywhere (#1859, needs conflict resolution and Mi 9T + iPhone readings) go to `1.2.9`.
 
-*"Pour la prochaine mise a jour"*: the user decided 1.2.8 is held until both mute and mentions-only ship. A PR is in progress by an agent. **Mentions-only must be decided ON THE DEVICE**: in an E2EE group the server cannot see a mention, so it cannot filter the push itself.
+*"Pour la prochaine mise a jour"*: the user held 1.2.8 until both shipped, and they did. **Mentions-only must be decided ON THE DEVICE**: in an E2EE group the server cannot see a mention, so it cannot filter the push itself.
 
-## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fixed by PR #1911)
+## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fix #1911 MERGED, the floor is owed)
 
 The client half is built (neutral inert row, no link, one warn per type, unknown deep-link host lands on `/notifications` - but a push of a new type still maps its `postId` to `post/<id>` on the server and Android, so a new type MUST send an explicit `deepLink`). **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** (the first one waiting: the organiser alert for a paid form that is full): wait for the release carrying PR #1911 to be served by both stores, then raise `minClientVersion` to it. Earlier types (`profile_correction_*`, `coorganise_proposed`, `repost_proposed`) show the comment fallback on older clients. Detail: [legacy-compatibility](legacy-compatibility.md#no-date-yet---a-notification-type-the-client-does-not-know-from-any-new-server-type).
 
-## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, in progress)
+## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, MERGED as #1878, shipped in `1.2.9`; the floor is owed)
 
-**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (today `1.2.7`) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
+**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (`1.2.7` when this was written; check the live value first) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
 
-Draft PR with server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
+Built (#1878): server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
 
 ## P2 - The tab swipe is lost on a slow start: the 12 px lock sits past Chrome's 8 dp slop (Mi 9T, 2026-10-21)
 
@@ -1023,11 +1005,11 @@ is a system Back (8 of 8), the page sees only `touchcancel` - a user decision, o
 above. Owed after the fix: one real-finger reading of slow swipes on the Mi 9T, and class A read on
 the iPhone, where it is unproven.
 
-## Android back-gesture zone on the right edge (own bubbles) - DECIDED by the user 2026-10-14, draft PR in progress
+## Android back-gesture zone on the right edge (own bubbles) - DECIDED by the user 2026-10-14, MERGED as #1883, owed a reading
 
 Decided: declare system gesture exclusion rects for the right edge band while a conversation is open (a reply swipe started in an own bubble's last 17.5 px is a system Back: 11 of 11 on the Mi 9T). **Owed: a Mi 9T reading on the next pre-release.**
 
-## iPhone follows the system text size (Dynamic Type) - DECIDED by the user 2026-10-14, draft PR in progress
+## iPhone follows the system text size (Dynamic Type) - DECIDED by the user 2026-10-14, MERGED as #1884, owed a reading
 
 Decided: the iPhone app FOLLOWS the system text size, like Android. Read on `1.2.9-alpha.1` (2026-10-15): cold start PASS; a size changed while backgrounded applied only after a cold start, now carried from native ([mobile](frontend/mobile.md#the-iphone-follows-dynamic-type-decided-by-the-user-2026-10-14)). **Owed: an iPhone 12 reading of the background change, the rail salon name and a long heading at 2x.**
 
@@ -1570,6 +1552,11 @@ latest (2026-10-10). **Nothing is polled by hand any more (2026-10-10):** the pr
 and FAILS the day an ignored id is no longer reported, naming the ignore, its premise assertion
 (`.github/scripts/stream-json-premise.sh`) and this entry as what to delete. The reasoning is in
 [cicd](cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
+
+`RUSTSEC-2026-0387` (crypto-bigint 0.5.5) is ignored in all four Rust trees since 2026-10-24, each
+with its statement in `.cargo/audit.toml`; REACHABLE IN CODE in call-service's DTLS only. Lifted by the
+webrtc 0.21 port and p256 0.14 reaching jsonwebtoken and openmls_rust_crypto; the cargo retirement
+step fails when it is gone ([cicd](cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24)).
 
 ### P2 - TWO of the hosts that take security updates are not reported on, and a library nothing restarts (the rest closed 2026-09-03)
 
