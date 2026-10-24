@@ -3519,6 +3519,30 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
     CanariEndCallKitCall(callId, [reason isEqualToString:@"answered"]
                                      ? CXCallEndedReasonAnsweredElsewhere
                                      : CXCallEndedReasonRemoteEnded);
+    // The generic ring ALERT an iPhone with no VoIP token gets (the NSE tags it with
+    // `canariCallId`) is taken off the lock screen too, so a call already over is not left ringing
+    // there. Best effort: a background push can be dropped. The alert's `apns-expiration` only bounds APNs
+    // store-and-forward; a DELIVERED banner stays until removed - here, or on app activation, where
+    // `CanariPushCancelMessageNotifications` clears it (its `deepLink` is a chat link).
+    if (callId.length > 0) {
+      UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+      [center getDeliveredNotificationsWithCompletionHandler:^(
+                  NSArray<UNNotification *> *_Nonnull notifications) {
+        NSMutableArray<NSString *> *ids = [NSMutableArray array];
+        for (UNNotification *n in notifications) {
+          if ([n.request.content.userInfo[@"canariCallId"] isEqual:callId]) {
+            [ids addObject:n.request.identifier];
+          }
+        }
+        if (ids.count > 0) {
+          NSLog(@"[CanariPush] call_ring_end - removing %lu delivered ring alert(s)",
+                (unsigned long)ids.count);
+          [center removeDeliveredNotificationsWithIdentifiers:ids];
+        }
+        done(UIBackgroundFetchResultNoData);
+      }];
+      return;
+    }
     done(UIBackgroundFetchResultNoData);
     return;
   }

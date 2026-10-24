@@ -475,21 +475,6 @@ jobs:
           echo "VITE_AUTHENTIK_CLIENT_ID=${IDP_CLIENT}" >> .env
           if [ "$IS_PRERELEASE" = "true" ]; then
             echo "VITE_DEPLOY_ENVIRONMENT=development" >> .env
-            # THE `audio` BACKGROUND MODE GOES WITH THE LINE ABOVE, AND ONLY WITH IT (WP-C-BG-I):
-            # that line turns in-app calls on (`CALLS_ENABLED` in features.ts), and WKWebView MUTES
-            # a page's microphone the moment the app is hidden or the screen locks unless
-            # UIBackgroundModes holds `audio` - measured on the iPhone 2026-10-20 (calls.md, "the
-            # call in the background"). Patched into THIS build's Info.plist, never the committed
-            # one: a stable cannot place a call (`CALLS_COMPILED = false`), and a mode declared but
-            # unused is what App Review refused once (2.5.4, 2026-08-31). The committed plist
-            # carries it the day `CALLS_COMPILED` flips (`callsCompiled.test.ts`), which is why the
-            # add is idempotent.
-            PLIST="src-tauri/gen/apple/canari_iOS/Info.plist"
-            if ! /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST" | grep -qxE '[[:space:]]*audio'; then
-              /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes: string audio" "$PLIST"
-            fi
-            echo "UIBackgroundModes of this pre-release build:"
-            /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST"
           fi
 
       - name: Verify frontend env for iOS build
@@ -709,6 +694,19 @@ jobs:
             echo "::error::Assets.car carries no AppIcon - the Icon Composer document did not compile"
             exit 1
           fi
+
+          # WHAT THE STORE BINARY DECLARES, PRINTED AND NEVER WRITTEN: the background modes and the
+          # microphone purpose string of the BUILT app, the iOS twin of the Android built-manifest step.
+          # `callsCompiled.test.ts` asserts the SOURCE plist; this is what App Review will read.
+          BUILT_PLIST="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 2 -name Info.plist -path '*.app/Info.plist' | head -1)"
+          if [ -z "$BUILT_PLIST" ]; then
+            echo "::error::the archive's app carries no Info.plist"
+            exit 1
+          fi
+          echo "UIBackgroundModes of the built app:"
+          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$BUILT_PLIST"
+          echo "NSMicrophoneUsageDescription of the built app:"
+          /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$BUILT_PLIST"
 
       - name: Export signed IPA
         if: env.LOCAL_URL == ''
