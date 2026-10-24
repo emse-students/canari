@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-90 scripts.
+92 scripts.
 
 | script | what it is |
 |---|---|
@@ -59,6 +59,8 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `identity.mjs` | WHICH ACCOUNT A CLIENT IS ACTUALLY ACTING AS, ASKED OF THE TOKEN AND OF NOTHING ELSE. |
 | `idpform.mjs` | The identity provider's sign-in stages as the rig sees them: which one is on screen, and what answers it. |
 | `instrument.mjs` | THE HASH OF WHAT A CHECK MEASURES WITH, as opposed to the hash of the check itself. |
+| `invariant.mjs` | THE INVARIANT PROBE EVERY MLS ROW RUNS AFTER ITS ACTION, ON EVERY CLIENT IN PLAY (R8). |
+| `invariantverdict.mjs` | THE FIVE INVARIANTS OF EVERY MLS ROW, JUDGED BY ONE PURE FUNCTION (R8). |
 | `inventory.mjs` | THE INDEX OF EVERY SCRIPT IN THIS RIG, GENERATED FROM THE SCRIPTS THEMSELVES. |
 | `invite.mjs` | Invites a user into the open group conversation - i.e. produces an MLS Add commit. |
 | `iosbench.mjs` | Asks a BENCH iPhone build about its own native stores - the `bench_native_store` command, invoked in |
@@ -217,7 +219,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-47 scripts.
+48 scripts.
 
 | script | what it is |
 |---|---|
@@ -243,6 +245,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/idpform-selftest.mjs` | The rig's sign-in reads the MiConnect terms page as a stage it answers, not as a stall. |
 | `archive/imports-selftest.mjs` | EVERY IMPORT IN EVERY RUNNER RESOLVES, AND NAMES SOMETHING THE TARGET ACTUALLY EXPORTS. |
 | `archive/instrument-selftest.mjs` | THE HASH THAT SAYS WHAT A CHECK MEASURES WITH IS ONLY WORTH ANYTHING IF IT SEES EVERY FILE. |
+| `archive/invariant-selftest.mjs` | THE FIVE INVARIANTS EVERY MLS ROW ASSERTS, PINNED (R8, `invariantverdict.mjs`). |
 | `archive/ios-observables-selftest.mjs` | THE iPHONE'S WDA-ONLY OBSERVABLES (O3, O6-O11 of docs/wiki/cross-client-ios.md) - every decision |
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
 | `archive/lucide-selftest.mjs` | EVERY `.lucide-*` CLASS THIS RIG AIMS AT MUST BE ONE THE APPLICATION ACTUALLY RENDERS. |
@@ -322,4 +325,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-261 scripts in total.
+264 scripts in total.
