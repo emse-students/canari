@@ -37,7 +37,6 @@ import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { MessagingService, type ActivationOutcome } from '../services/messaging.service';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
-import { endDeviceMemberships } from '../utils/group-membership';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
 
@@ -823,6 +822,15 @@ export class InternalController {
       );
     }
 
+    // ── The roster goes before the sweep ──
+    // A device registration writes `pending` seats only where its owner is ON the roster
+    // (`writePendingSeats`), so once these rows are gone a republished key package re-seats nothing
+    // by itself. Every group they named was cut above (a DM's went with its tombstone), so a run
+    // stopped after this leaves no group that only a roster row still named uncut: its generation
+    // already moved. An invite accepted meanwhile writes its own roster row, which the final pass's
+    // discovery reads.
+    await this.groupMemberRepo.delete({ userId });
+
     // ── The sweep: what a key package republished during this run let in ──
     // A device that reconnected since the first delete (a token still valid, so never in the final
     // pass) brought its key package back, and a writer may have admitted it into a group, routes
@@ -850,19 +858,21 @@ export class InternalController {
     }
 
     // ── User's own records ────────────────────────────────────────────────
-    // Everything still queued FOR the account (a frame with no group included) and any device row
-    // left, in one transaction ({@link endDeviceMemberships}). Every group a row named was cut above,
-    // so a row met here was written after the sweep's read, and only ONE writer inserts a device
-    // row without reading its key package: the demotion (`deactivateDeviceMembership`, the hourly
-    // stale-device cron among its callers, which demotes exactly a device with no recent key
-    // package). Its row is `pending` and it removes the route itself, unconditionally, after the
-    // write - so deleting the row here is the whole of its cleanup. One the cron writes after THIS
-    // transaction names a device with no key package, which `cleanupStaleDevices` collects.
-    const departed = await manager.transaction((tx) => endDeviceMemberships(tx, { userId }, 'all'));
-    if (departed.memberships > 0) {
+    // Everything still queued FOR the account, a frame with no group included. NO DEVICE ROW IS
+    // DELETED HERE: a row is what names its group's route, and only `eraseSeats` removes both under
+    // the seat lock - deleting a row here would leave the route of a seat admitted after the sweep's
+    // read with nothing left to name it, and the gateway would keep routing to it. Such a row is
+    // left standing for the final pass's discovery, which cuts it with its route. The one row that
+    // can follow THAT pass is the demotion's (`deactivateDeviceMembership`, the stale-device cron
+    // among its callers, the one writer that inserts without reading the key package): `pending`,
+    // its route removed by the demotion itself, and naming a device with no key package, which
+    // `cleanupStaleDevices` collects.
+    const queuedFor = await this.queuedMessageRepo.delete({ recipientId: userId });
+    const leftRows = await this.deviceGroupRepo.count({ where: { userId } });
+    if (leftRows > 0) {
       this.logger.warn(
-        `[INTERNAL_DELETE] ${departed.memberships} device row(s) of user=${who} written after the ` +
-          `sweep, deleted now - a demotion, the one writer that inserts without the key package`
+        `[INTERNAL_DELETE] ${leftRows} device row(s) of user=${who} written after the sweep's read, ` +
+          `left for the final pass to cut with their routes - a device re-admitted or demoted meanwhile`
       );
     }
     const [, sentQueued] = (await manager.query(
@@ -872,8 +882,6 @@ export class InternalController {
     )) as [unknown[], number];
     await Promise.all([
       this.otpRepo.delete({ userId }),
-      // DM groupMember rows already deleted above; this cleans multi-group rows
-      this.groupMemberRepo.delete({ userId }),
       // The account's membership history goes with it: nothing will ever answer for this person.
       this.membershipIntervalRepo.delete({ userId }),
       this.pushTokenRepo.delete({ userId }),
@@ -891,7 +899,7 @@ export class InternalController {
 
     this.logger.log(
       `[INTERNAL_DELETE] done user=${who} sentQueued=${sentQueued} ` +
-        `deviceMemberships=${departed.memberships} queuedFor=${departed.queued} ` +
+        `deviceRowsLeft=${leftRows} queuedFor=${queuedFor.affected ?? 0} ` +
         `keyPackages=${keyPackages.affected ?? 0} lateKeyPackages=${lateKeyPackages.affected ?? 0}`
     );
     return { ok: true };

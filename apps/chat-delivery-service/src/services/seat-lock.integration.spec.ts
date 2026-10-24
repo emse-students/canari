@@ -606,7 +606,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       // The account reconnects mid-erasure with a token still valid: `register-device` brings its
       // key package back, and a peer's commit then seats it in a group the discovery never saw -
       // with its route. Injected right after the discovered group's cut, the one point between the
-      // first delete and the final transaction where the test can stand.
+      // first delete and the sweep where the test can stand.
       const LATE = '00000000-0000-4000-8000-0000000000e9';
       const lateRoutes = setOf(`group:members:${LATE}`);
       const route = `${PEER.userId}:${PEER.deviceId}`;
@@ -648,6 +648,69 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       expect(rows).toHaveLength(0);
       expect(lateRoutes.has(route)).toBe(false);
       expect(routes.has(route)).toBe(false);
+    });
+
+    it("a seat admitted after the sweep's read keeps its row beside its route, and the final pass cuts both", async () => {
+      // The republish and the admit land AFTER the sweep read which groups to cut: no step of this
+      // pass sees the seat. Deleting its row without its route would leave the gateway routing to
+      // an erased account with nothing naming it, so the row stays for the final pass - run once
+      // every token expired, when no republish can follow - which cuts it under the seat lock.
+      const LATE = '00000000-0000-4000-8000-0000000000ea';
+      const lateRoutes = setOf(`group:members:${LATE}`);
+      const route = `${PEER.userId}:${PEER.deviceId}`;
+      await q(
+        `INSERT INTO dm_groups (id, "isGroup", "activeEpoch") VALUES ($1, true, 1)
+         ON CONFLICT DO NOTHING`,
+        [LATE]
+      );
+      const seatsRepo = ds.getRepository(DeviceGroupMembership);
+      const read = seatsRepo.find.bind(seatsRepo);
+      let reads = 0;
+      const find = jest.spyOn(seatsRepo, 'find').mockImplementation(async (options) => {
+        const found = await read(options);
+        const isErasureRead =
+          (options?.where as { userId?: string } | undefined)?.userId === PEER.userId &&
+          (options?.select as { groupId?: boolean } | undefined)?.groupId === true;
+        if (isErasureRead && ++reads === 2) {
+          await keyPackageFor(PEER);
+          const claim = await claimSeat(ds.manager, LATE, PEER.userId);
+          await expect(
+            service.activateDeviceMembership(PEER.userId, PEER.deviceId, LATE, {
+              authority: 'accepted_commit',
+              claim,
+            })
+          ).resolves.toEqual({ ok: true });
+        }
+        return found;
+      });
+      try {
+        await internal().deleteUserData(PEER.userId, SECRET);
+      } finally {
+        find.mockRestore();
+      }
+      expect(reads).toBe(2);
+
+      // The first pass ends with the late seat whole: its row AND its route, never one without the other.
+      const standing: unknown[] = await q(
+        `SELECT 1 FROM dm_device_group_memberships WHERE "userId" = $1 AND "groupId" = $2`,
+        [PEER.userId, LATE]
+      );
+      expect(standing).toHaveLength(1);
+      expect(lateRoutes.has(route)).toBe(true);
+
+      // The final pass.
+      await internal().deleteUserData(PEER.userId, SECRET);
+
+      const keyPackages: unknown[] = await q(`SELECT 1 FROM key_package WHERE "userId" = $1`, [
+        PEER.userId,
+      ]);
+      expect(keyPackages).toHaveLength(0);
+      const rows: unknown[] = await q(
+        `SELECT 1 FROM dm_device_group_memberships WHERE "userId" = $1`,
+        [PEER.userId]
+      );
+      expect(rows).toHaveLength(0);
+      expect(lateRoutes.has(route)).toBe(false);
     });
 
     it('is refused after it when the account held no seat, only a departure in progress', async () => {

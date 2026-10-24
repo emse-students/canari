@@ -98,15 +98,18 @@ export async function withSeatLock<T>(
  * write a row for. ONE writer inserts without it, deliberately: the demotion
  * (`MessagingService.deactivateDeviceMembership`), which upserts a `pending` row and removes its
  * route itself - the stale-device cron demotes precisely a device with no recent key package, so
- * requiring one would make it a no-op. The erasure's last transaction deletes such a row.
+ * requiring one would make it a no-op. An erasure's pass cuts such a row with the rest of its group
+ * (`eraseSeats`); one written after the final pass names a device with no key package, which
+ * `cleanupStaleDevices` collects.
  *
  * THE KEY PACKAGE IS WHAT AN ACCOUNT ERASURE TAKES FIRST, in a transaction of its own
  * (`InternalController.deleteUserData`), and AGAIN before its last sweep. A writer either holds the
  * key package before a delete - which then waits for it, and the per-group cut run after takes the
  * row with its routes - or finds it gone and writes nothing. The account itself can republish one
  * while a token it holds is still valid, which is what the sweep and the erasure's final pass (run
- * once no token is) are for. A writer that only UPDATES a row needs no read: a deleted row matches
- * nothing.
+ * once no token is) are for; no device row is deleted outside a cut, so a seat that outran the sweep
+ * keeps its row beside its route until the final pass cuts both. A writer that only UPDATES a row
+ * needs no read: a deleted row matches nothing.
  */
 export async function heldKeyPackages(
   m: EntityManager,

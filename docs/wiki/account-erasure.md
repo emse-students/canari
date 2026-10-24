@@ -263,12 +263,16 @@ its own seat lock, its rows and its routes together, so a run that stops anywher
 group still named for the retry; an eviction after the erasure writes no row naming the account.
 **The ordering alone does not hold during the first pass**: a device of the account that reconnects
 with a token still valid republishes its key package (`register-device`), and a writer may seat it
-again. The run therefore ends with a sweep - the key packages deleted again, every group a device row
-names then cut through the same `eraseSeats`, a WARN line when it found anything - and its last
-transaction deletes the one row that can still appear, a demotion's route-less `pending` row. A
-republish after the sweep is left to the final pass, which starts once no token can act as the
-account and so meets no republish at all: that pass is what terminates it, not the ordering (proven
-on PostgreSQL, `seat-lock.integration.spec.ts`, "a key package republished after the first delete"). The cost of the ordering is that an
+again. So the roster rows go once every group was cut (a registration seats a device only where its
+owner is on the roster), and the run ends with a sweep - the key packages deleted again, every group
+a device row names then cut through the same `eraseSeats`, a WARN line when it found anything. **No
+device row is deleted outside `eraseSeats`**: a row is what names its route, so a seat admitted after
+the sweep's read keeps its row beside its route, with a WARN line, for the final pass to cut. That
+pass starts once no token can act as the account, so it meets no republish at all: it is what
+terminates the erasure, not the ordering. The one row that can follow it is a demotion's `pending`
+row, route-less and naming a device with no key package, which `cleanupStaleDevices` collects.
+Proven on PostgreSQL in `seat-lock.integration.spec.ts` ("a key package republished after the first
+delete", "a seat admitted after the sweep's read"). The cost of the ordering is that an
 account's MLS data waits for social's final pass, the account itself being deactivated at once. The claim is
 `FOR UPDATE SKIP LOCKED` with a lease, so several workers never run one job twice at once; a
 completion write is guarded by `"completedAt" IS NULL`, so a pass that outlived its lease cannot

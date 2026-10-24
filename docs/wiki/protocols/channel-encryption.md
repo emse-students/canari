@@ -633,13 +633,16 @@ window with a durable row and a lock:
   a run interrupted anywhere leaves what it had not cut still named by a row for the retry.
   **The ordering does not stop the account itself**: every (re)connection republishes its key
   package (`register-device`), and a token issued before the deletion is honoured for up to an
-  hour. So the run ends with a SWEEP - the key packages deleted again, then every group a device row
-  names NOW cut through the same `eraseSeats` - and its last transaction deletes what is left: only
-  a demotion's route-less `pending` row can be (one written after it names a device with no key
-  package, which `cleanupStaleDevices` collects). A republish after the sweep is the FINAL PASS's,
-  which core starts once every token expired, so nothing can follow it - termination is that pass's,
-  never the ordering's ([account-erasure](../account-erasure.md)). Proven on PostgreSQL in
-  `seat-lock.integration.spec.ts` ("a key package republished after the first delete"). `recordSeatEviction` creates no row for an account it is not beginning a
+  hour. So the roster rows go once every group was cut (`writePendingSeats` seats a registering
+  device only where its owner is on the roster), and the run ends with a SWEEP - the key packages
+  deleted again, then every group a device row names NOW cut through the same `eraseSeats`. **No
+  device row is deleted outside `eraseSeats`**, because the row is what names the route: a seat
+  admitted after the sweep's read stays whole, row and route, for the FINAL PASS, which core starts
+  once every token expired, so no republish can follow it - termination is that pass's, never the
+  ordering's ([account-erasure](../account-erasure.md)). After it, only a demotion's route-less
+  `pending` row can appear, naming a device with no key package, which `cleanupStaleDevices`
+  collects. Proven on PostgreSQL in `seat-lock.integration.spec.ts` ("a key package republished
+  after the first delete", "a seat admitted after the sweep's read"). `recordSeatEviction` creates no row for an account it is not beginning a
   departure for, so an eviction after the erasure leaves nothing naming it.
 - **A key group's admits are asked like a join.** An admit writes a `pending` seat its device later
   promotes by reporting itself, so in a key group each admitted person is asked of social-service
