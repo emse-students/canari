@@ -508,6 +508,7 @@ describe('routing a frame that arrived on the group', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       const frame = new Uint8Array([4, 2]);
       const ctx = await verifyingCtx();
+      resetKeyGroupFrameLosses();
 
       // Same USER, another DEVICE: before this check, the frame was filed as `peer-tablet`'s.
       expect(
@@ -519,6 +520,8 @@ describe('routing a frame that arrived on the group', () => {
       expect(error).toHaveBeenCalledWith(
         expect.stringMatching(/SENDER MISMATCH \(device\).*path=distribution/)
       );
+      // A refusal for its sender is not a LOST seed: the next seed request must not print it as one.
+      expect(describeKeyGroupFrameLosses('g-1')).toBe('none');
       error.mockRestore();
       warn.mockRestore();
     });

@@ -192,10 +192,11 @@ const historyParked = new Map<string, () => void>();
  *   answered. `null` when the tree could not be read: then nothing proves a member answered, so
  *   nothing moves the walk and the ask stays open - one ask at the next start, the cost before.
  *
- * The device an answer names is SELF-ASSERTED on the distribution path (`senderDeviceId`: the user is
- * checked against the MLS credential, the device is not - backlog, "the distribution path's device
- * check"). What bounds a wrong one: only a device the request named, or on the tree when it named
- * none, is counted, and each once.
+ * The device an answer names is VERIFIED against the MLS credential whenever the envelope carries one
+ * (`senderDeviceId`, compared on the distribution path since #2090), so a frame naming another device
+ * never reaches here. The bound below is for the legacy device-less row, where only the user is
+ * compared: only a device the request named, or on the tree when it named none, is counted, and each
+ * once.
  */
 const historyRequest = new Map<
   string,
@@ -1337,9 +1338,10 @@ function parkHistoryUntilOnline(workspaceId: string, offline: string[]): void {
  *
  * @param answerer Who answered, any case - checked against the MLS credential that sealed the frame.
  * @param requestId The request the bundle echoes.
- * @param answererDevice The device the delivery envelope names. SELF-ASSERTED on this path: only the
- *   user is checked against the credential, so it counts only as one device the request named or the
- *   tree holds, and once (see `historyRequest`).
+ * @param answererDevice The device the delivery envelope names, verified against the credential that
+ *   sealed the frame whenever the envelope carries one (#2090). It still counts only as one device the
+ *   request named or the tree holds, and once - the bound for a legacy device-less row (see
+ *   `historyRequest`).
  */
 export function noteHistoryHeldNothing(
   workspaceId: string,

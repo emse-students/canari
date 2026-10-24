@@ -3229,15 +3229,16 @@ a path that was never given a sender and compares nothing.
 comparison, on four paths - `live` (the WebSocket and pull queue), `distribution` (a key-group
 frame), `welcome-replay` and `history`. The envelope's user is compared with the credential's user,
 and its `senderDeviceId`, where the envelope carries one AND the path hands it over, with the
-credential's device. **`live`, `history` and, since the 2026-10-18 draft, `distribution` hand it over**:
+credential's device. **`live`, `history` and, since #2090, `distribution` hand it over**:
 `openDistributionFrame` passes the frame's `senderDeviceId` beside the user, so a key-group frame
 whose device disagrees is refused like a user mismatch (see
 [section 24](#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)).
-It is a behaviour change whose only production reading is INDIRECT - zero `[SENDER_MISMATCH]` of
-any kind on chat-delivery from 2026-10-10 to 2026-10-24, the `live` path comparing the same
-envelope field throughout - so no stable carries it before
-`[SENDER_MISMATCH] path=distribution` has been read on dev, then production
-([backlog](../backlog.md#p3---the-distribution-paths-device-check-ship-on-an-alpha-read-sender_mismatch-pathdistribution-first)). Three kinds:
+An alpha deploys dev alone, so production cannot run it before a stable: the pre-stable production
+evidence is the INDIRECT reading - zero `[SENDER_MISMATCH]` of any kind on chat-delivery from
+2026-10-10 to 2026-10-24, the `live` path comparing the same envelope field throughout. The order is
+alpha, `path=distribution` read on dev (weak: a fictional seed plus testers), the stable, then the
+same line read on production AFTER it, a nonzero count triaged as the
+[backlog](../backlog.md#p3---the-distribution-paths-device-check-read-dev-on-the-alpha-production-after-the-stable) says. Three kinds:
 `user`, `device`, `unverifiable`. The envelope's device is itself what the SENDING client's request
 body claimed, so a `device` mismatch is either the server relabelling a frame or a client lying
 about which device sent it - both worth knowing, and the measurement does not need to tell them
@@ -4115,15 +4116,14 @@ account, `canari_graine_history_held_nothing:v1:<userId>`) as `{groupId, epoch, 
   A re-join (`evenIfSeedsHeld`) and the community leaving the device forget the record. A request
   sealed with no ridable epoch is not recorded (said at info). Holding a seed already ends the ask.
 
-**The device an answer names is SELF-ASSERTED.** `senderDeviceId` is what the sending client wrote in
-its request body, and on the distribution path only the USER is compared with the MLS credential
-([section 21.1](#211-the-verified-sender-measured-then-refused-wp-g2-1-g2-1b)); the decrypted
-credential's device is not handed to the seed handler, so a claim naming another device than the
-sealing one cannot be detected here. What bounds it: the user IS verified, so a wrong device can
-only be a sibling of the same account; and a claim counts only for a device the request named (or
-on the tree when it named none), once. Comparing the device on this path is a behaviour change -
-refusing frames - with no production reading behind it, so it is its own item, shipped on an alpha
-first ([backlog](../backlog.md#p3---the-distribution-paths-device-check-ship-on-an-alpha-read-sender_mismatch-pathdistribution-first)).
+**The device an answer names is VERIFIED whenever the envelope carries one** (since #2090).
+`senderDeviceId` is what the sending client wrote in its request body, and on the distribution path
+it is compared with the sealing credential's device like the user
+([section 21.1](#211-the-verified-sender-measured-then-refused-wp-g2-1-g2-1b)): a frame naming another
+device is refused before the seed handler sees it. The remaining bound is for the LEGACY row with
+no device, where only the user is compared: a claim then counts only for a device the request named
+(or on the tree when it named none), once - and the user IS verified, so it can only be a sibling of
+the same account.
 
 What it does NOT cover, said rather than guessed: a device that answered "nothing" and LATER gains
 the past without the epoch moving. Two routes: another member of the roster, who is either still
