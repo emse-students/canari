@@ -971,6 +971,12 @@ export class MessagingService {
         `[PUSH_SEND][${traceId}] over-budget proto not inlined: ${carriage.bytes}B over a ${carriage.budget}B budget ` +
           `(senderName=${Buffer.byteLength(senderName, 'utf8')}B groupName=${Buffer.byteLength(groupName, 'utf8')}B)`
       );
+    } else if (carriage.kind === 'long-frame') {
+      // A long text: its own size, not the names, is what overflows. Expected - fetched by
+      // `queuedMessageId` like a Welcome.
+      this.logger.debug(
+        `[PUSH_SEND][${traceId}] long frame carried by reference: ${carriage.bytes}B, budget ${carriage.budget}B`
+      );
     } else if (carriage.kind === 'by-reference') {
       // A Welcome (ciphertext + ratchet tree) or a key-distribution frame over the budget (a seed
       // bundle, up to a 255 KiB page) is fetched by `queuedMessageId` through fetch-proto: expected,
@@ -2827,6 +2833,19 @@ export class MessagingService {
       select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
     });
     return distributionScopeOf(group);
+  }
+
+  /**
+   * Whether `userId` is a member of `groupId`, asked of the table that records membership for that
+   * kind of group (see `memberOfGroupKind`). An unknown group has no members.
+   */
+  async isGroupMember(groupId: string, userId: string): Promise<boolean> {
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+    });
+    if (!group) return false;
+    return (await this.memberOfGroupKind(group, groupId, userId)).isMember;
   }
 
   /** Whether `userId` is on the user roster of `groupId` - who may read its external-join base. */
