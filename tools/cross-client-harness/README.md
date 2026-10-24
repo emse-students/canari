@@ -379,18 +379,31 @@ default `https://**` scope and the default CSP, the phone reaches it over its ra
 is skipped and `estateReverse` is a logged no-op, and cutting the radios really takes the phone
 offline), and the identity provider is dev's: `DEV_AUTHENTIK` in the machine-local `names.mjs`, the
 pair the pre-release pipeline takes from its `DEV_` secrets, refused when absent. It is still a
-`--debug` build, so CDP reaches the WebView. The packaged bundle must name the estate AND no
-production origin, with ONE narrow allowance measured on the first dev build (chunk `Dypz5d_W.js`):
-`publicAppUrl.ts`'s two link constants (`DEFAULT_PUBLIC_APP_ORIGIN`, `LEGACY_PUBLIC_APP_ORIGIN`), read
-from that source file, as whole string literals - names the app RECOGNISES in a pasted link and
-compares against, never a request target (a dev build mints its links from dev's baked
-`VITE_FRONTEND_URL`). A socket, a path or a concatenation of either is still refused, and the
-build ENVIRONMENT is checked before the build: no `VITE_*` value in the process or an unoverridden
-`frontend/.env*` line may name production, because the bundle cannot tell a baked target from a
-constant and the environment can. `--build-only` touches no phone, not even `adb`; `--build-only --ref v1.4.0`
-builds an OLD client from that tag in its own detached worktree (system temp, `a1-ref-<tag>`) and
-keeps the APK in `STATE_DIR/apks/` for the mixed-version rows. Installing either is a separate,
-deliberate gesture: an `install -r` keeps the enrolment, an uninstall costs the device.
+`--debug` build, so CDP reaches the WebView. The packaged bundle - EVERY file under
+`build/_app/immutable` (chunks, nodes, entry) - must name the estate AND no production origin in
+any spelling (`https://`, `http://`, `wss://`, `ws://`, a bare `//`, upper case, a trailing dot).
+ONE allowance, and it is scoped to a CHUNK: `publicAppUrl.ts`'s two link constants
+(`DEFAULT_PUBLIC_APP_ORIGIN`, `LEGACY_PUBLIC_APP_ORIGIN`, read from that source file) as whole
+string literals, inside the one chunk that also carries `PUBLIC_APP_HOSTS` - that module's own
+chunk. **They were NOT always "never a request target"**: until #2385 the root layout started the
+push service with `historyBaseUrl || DEFAULT_PUBLIC_APP_ORIGIN`, and `seo/site.ts` read the legacy
+constant; the bundler inlined both into the layout's node, which is where the first dev build put
+them. #2385 removed the fallback and made every consumer call a function of that module, so a
+production literal anywhere else is a real target again and is refused. A dev APK therefore builds
+only from a tree carrying #2385, and a `--ref` older than it (v1.4.0 included) is REFUSED for that
+fallback - which is the right answer: that client really can call production. A tag predating the
+constants themselves cannot be checked at all, and `linkModuleOf` says so rather than guessing.
+The build ENVIRONMENT is checked before the build: no `VITE_*` value in the process or an
+unoverridden `frontend/.env*` line (`export VITE_X=` included) may name production, because the
+bundle cannot tell a baked target from a constant and the environment can. A `--ref` build takes
+its identity-provider pair from the MAIN checkout's machine configuration, never from the tag.
+`--build-only` touches no phone, not even `adb`; `--build-only --ref <tag>` builds an OLD client in
+its own detached worktree (system temp, `a1-ref-<tag>`) and keeps the APK in `STATE_DIR/apks/`.
+**`--no-build` installs only an APK this rig recorded**: a Tauri APK embeds the frontend
+brotli-compressed inside `lib/<abi>/libmines_app_lib.so`, so there is nothing to unzip and rescan;
+instead every build appends its APK's sha256, origin and bundle verdict to `a1-builds.ndjson`, and
+`installVerdict` refuses an artefact whose hash was never recorded as passing for this estate.
+Installing is a deliberate gesture: an `install -r` keeps the enrolment, an uninstall costs the device.
 
 **An atom takes no verdict**, writes nothing to `results.ndjson` and asserts nothing about the
 application. That is what makes it reusable: a row decides what an outcome MEANS, and two rows may

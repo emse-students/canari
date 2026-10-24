@@ -75,7 +75,7 @@ const gitIn = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { en
  * @param {string} [repo] the tree the APK was built from - this checkout, or a `--ref` worktree
  * @returns the record, so the caller can print it rather than re-deriving it
  */
-export function recordApkBuild(repo = REPO) {
+export function recordApkBuild(repo = REPO, artefact = {}) {
   const git = (...args) => gitIn(repo, ...args);
   const builtAt = packagedStamp(repo);
   // The commit is recorded as the tree's HEAD rather than resolved from the timestamp: at build
@@ -90,9 +90,26 @@ export function recordApkBuild(repo = REPO) {
   const diffSha = dirty
     ? createHash('sha256').update(git('diff', 'HEAD')).update(porcelain).digest('hex').slice(0, 12)
     : null;
-  const record = { builtAt, head, dirty, diffSha, recordedAt: new Date().toISOString() };
+  // `artefact`: the APK's sha256, the origin it was planned for and its bundle verdict, which
+  // `installVerdict` in `a1plan.mjs` requires before a `--no-build` install (R2 review).
+  const record = { builtAt, head, dirty, diffSha, recordedAt: new Date().toISOString(), ...artefact };
   appendFileSync(FILE, `${JSON.stringify(record)}\n`);
   return record;
+}
+
+/** Every recorded build, oldest first; a truncated line is skipped, never fatal. */
+export function apkBuilds() {
+  if (!existsSync(FILE)) return [];
+  const out = [];
+  for (const line of readFileSync(FILE, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      console.log(`[apkbuild] skipped an unparseable record: ${line.slice(0, 80)}`);
+    }
+  }
+  return out;
 }
 
 /**

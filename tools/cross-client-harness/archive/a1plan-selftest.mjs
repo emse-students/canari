@@ -18,8 +18,10 @@ import {
   a1BuildPlan,
   buildEnvVerdict,
   bundleTargetVerdict,
+  installVerdict,
   isBuildableRef,
-  linkOriginsOf,
+  linkChunkOf,
+  linkModuleOf,
   reversePortFor,
 } from '../a1plan.mjs';
 
@@ -83,18 +85,36 @@ ok('a production origin in a LOCAL build is refused as well', !bundleTargetVerdi
 
 // ── the ONE allowance: publicAppUrl.ts's link constants, as whole literals (2026-10-24, Dypz5d_W.js) ──
 const SOURCE = readFileSync(join(REPO, 'frontend', LINK_MODULE), 'utf8');
-const LINKS = linkOriginsOf(SOURCE);
-ok('the link origins are read from the real source: the canonical and the legacy name', LINKS.includes('https://canari.emse.fr') && LINKS.includes('https://canari-emse.fr'));
-ok('a source that stops declaring them throws rather than allowing anything', throws(() => linkOriginsOf('export const X = 1;')) !== null);
-// The shape the first dev APK build produced, minified: the constants, and `${DEFAULT}/` as a URL base.
-const MEASURED = `ot=\`https://canari.emse.fr\`,st=\`https://canari-emse.fr\`;function ut(){let e=\`${DEV}\`;return e.replace(/\\/$/,\`\`)===\`https://canari-emse.fr\`?ot:e}let e=t??(typeof window<\`u\`?window.location.href:\`https://canari.emse.fr/\`)`;
-const measured = bundleTargetVerdict([chunk('Dypz5d_W.js', MEASURED)], DEV, LINKS);
+const MODULE = linkModuleOf(SOURCE);
+ok('the link origins are read from the real source: the canonical and the legacy name', MODULE.origins.includes('https://canari.emse.fr') && MODULE.origins.includes('https://canari-emse.fr'));
+ok('and its PUBLIC_APP_HOSTS, which is how its chunk is found', MODULE.hosts.join() === 'canari-emse.fr,www.canari-emse.fr,canari.emse.fr');
+ok('a source that stops declaring them throws rather than allowing anything (a tag older than the constants too)', throws(() => linkModuleOf('export const X = 1;')) !== null);
+// The shape the first dev APK build produced, minified: the hosts array, the constants, and `${DEFAULT}/` as a URL base.
+const MEASURED = `ct=[\`canari-emse.fr\`,\`www.canari-emse.fr\`,\`canari.emse.fr\`],ot=\`https://canari.emse.fr\`,st=\`https://canari-emse.fr\`;function ut(){let e=\`${DEV}\`;return e.replace(/\\/$/,\`\`)===\`https://canari-emse.fr\`?ot:e}let e=t??(typeof window<\`u\`?window.location.href:\`https://canari.emse.fr/\`)`;
+const OTHER = chunk('other.js', `"${DEV}"`);
+const linkChunk = linkChunkOf([chunk('Dypz5d_W.js', MEASURED), OTHER], MODULE.hosts);
+ok('the link module chunk is found by its hosts array', linkChunk === 'Dypz5d_W.js');
+ok('two or no chunks carrying the array is a throw, not a guess', throws(() => linkChunkOf([OTHER], MODULE.hosts)) !== null && throws(() => linkChunkOf([chunk('a', MEASURED), chunk('b', MEASURED)], MODULE.hosts)) !== null);
+const LINK = { origins: MODULE.origins, chunk: linkChunk };
+const measured = bundleTargetVerdict([chunk('Dypz5d_W.js', MEASURED), OTHER], DEV, LINK);
 ok('the measured link module passes, its four literals listed as tolerated', measured.ok && measured.links.length === 4);
 ok('without the allowance the same chunk is refused (the check is not weakened elsewhere)', !bundleTargetVerdict([chunk('Dypz5d_W.js', MEASURED)], DEV).ok);
-ok('a link origin used as a SOCKET is still refused', !bundleTargetVerdict([chunk('a.js', `"${DEV}" "wss://canari.emse.fr"`)], DEV, LINKS).ok);
-ok('a link origin with a PATH is still refused (a request target, not a name)', !bundleTargetVerdict([chunk('a.js', `"${DEV}" "https://canari-emse.fr/api/x"`)], DEV, LINKS).ok);
-ok('a link origin concatenated into a longer literal is still refused', !bundleTargetVerdict([chunk('a.js', `"${DEV}" \`https://canari.emse.fr\${p}\``)], DEV, LINKS).ok);
-ok('www. is not a link constant and is refused', !bundleTargetVerdict([chunk('a.js', `"${DEV}" "https://www.canari-emse.fr"`)], DEV, LINKS).ok);
+ok('the SAME whole literal in ANOTHER chunk is refused (R2 review: a layout used it as a request base)', !bundleTargetVerdict([chunk('Dypz5d_W.js', MEASURED), chunk('layout.js', `"${DEV}";f(\`https://canari.emse.fr\`)`)], DEV, LINK).ok);
+const refusedIn = (text) => !bundleTargetVerdict([chunk('Dypz5d_W.js', `${MEASURED};${text}`)], DEV, LINK).ok;
+ok('a link origin used as a SOCKET is still refused', refusedIn('"wss://canari.emse.fr"'));
+ok('a link origin with a PATH is still refused (a request target, not a name)', refusedIn('"https://canari-emse.fr/api/x"'));
+ok('a link origin concatenated into a longer literal is still refused', refusedIn('`https://canari.emse.fr${p}`'));
+ok('www. is not a link constant and is refused', refusedIn('"https://www.canari-emse.fr"'));
+ok('plain http, ws and protocol-relative spellings are refused', refusedIn('"http://canari-emse.fr"') && refusedIn('"ws://canari.emse.fr"') && refusedIn('"//canari-emse.fr"'));
+ok('upper case and a trailing dot are refused', refusedIn('"HTTPS://CANARI-EMSE.FR"') && refusedIn('"https://canari.emse.fr."'));
+ok("dev's own host and bare hostnames are not production origins", bundleTargetVerdict([chunk('Dypz5d_W.js', MEASURED), chunk('x.js', `"${DEV}" "//dev.canari-emse.fr" "canari-emse.fr"`)], DEV, LINK).ok);
+
+// ── an APK installed without a build carries a recorded verdict: same sha256, same origin, passed ──
+const REC = [{ apkSha256: 'aa', origin: DEV, bundleOk: true, recordedAt: 't1' }, { apkSha256: 'bb', origin: LOCAL, bundleOk: true, recordedAt: 't2' }];
+ok('--no-build: an APK whose build recorded a passing verdict for this origin may be installed', installVerdict(REC, 'aa', DEV).ok);
+ok('--no-build: an unknown APK (CI, by hand, an older rig) is refused', /never checked/.test(installVerdict(REC, 'cc', DEV).why ?? ''));
+ok('--no-build: an APK built for ANOTHER estate is refused', /built for http:\/\/localhost:8081/.test(installVerdict(REC, 'bb', DEV).why ?? ''));
+ok('--no-build: a failed or absent verdict is refused', !installVerdict([{ apkSha256: 'dd', origin: DEV }], 'dd', DEV).ok);
 
 // ── the build ENVIRONMENT names no production origin, from the process or a .env file ──────────────
 const planned = { ...dev.env };
@@ -105,6 +125,8 @@ const staleVerdict = buildEnvVerdict(planned, stale);
 ok('a stale .env key the plan does not override is refused, named', !staleVerdict.ok && staleVerdict.offenders.join() === '.env VITE_AUTHENTIK_REDIRECT_URI');
 ok('a stale .env origin the plan DOES override is not (the environment wins in Vite)', buildEnvVerdict(planned, [{ name: '.env', text: 'VITE_GATEWAY_URL=https://canari-emse.fr' }]).ok);
 ok("a non-VITE key is not Vite's business", buildEnvVerdict({ ...planned, HOMEPAGE: 'https://canari.emse.fr' }).ok);
+ok('an `export VITE_X=` line is read as Vite reads it, and refused', !buildEnvVerdict(planned, [{ name: '.env', text: 'export VITE_AUTHENTIK_REDIRECT_URI="https://canari.emse.fr/auth"' }]).ok);
+ok('an upper-case or http production value in the environment is refused', !buildEnvVerdict({ ...planned, VITE_X: 'HTTP://CANARI-EMSE.FR' }).ok);
 
 // ── --ref names a tag, never an option or a path ────────────────────────────────────────────────
 ok('v1.4.0 is a buildable ref', isBuildableRef('v1.4.0'));

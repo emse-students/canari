@@ -61,10 +61,21 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { LINK_MODULE, a1BuildPlan, buildEnvVerdict, bundleTargetVerdict, isBuildableRef, linkOriginsOf, reversePortFor } from './a1plan.mjs';
-import { recordApkBuild } from './apkbuild.mjs';
+import { createHash } from 'node:crypto';
+import {
+  LINK_MODULE,
+  a1BuildPlan,
+  buildEnvVerdict,
+  bundleTargetVerdict,
+  installVerdict,
+  isBuildableRef,
+  linkChunkOf,
+  linkModuleOf,
+  reversePortFor,
+} from './a1plan.mjs';
+import { apkBuilds, recordApkBuild } from './apkbuild.mjs';
 import * as NAMES from './names.mjs';
 import { STATE_DIR } from './names.mjs';
 import { SITE } from './site.mjs';
@@ -85,6 +96,9 @@ const planFor = (release = false) => a1BuildPlan({ site: SITE, release, devAuthe
  * default port as "no port"). The port is what `adb reverse` maps; the URL is unchanged. NULL ON
  * DEV, which the phone reaches over its radios and which maps nothing.
  */
+/** The sha256 of a file, hex - what binds an APK to the bundle verdict its build recorded. */
+const sha256Of = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
+
 function sitePort() {
   return reversePortFor(SITE);
 }
@@ -330,7 +344,9 @@ export async function armA1({
     // The origins (and on dev the identity provider and the banner) come from the plan; the local
     // estate keeps reading its Authentik pair from the generated `frontend/.env`.
     Object.assign(env, plan.env);
-    if (plan.authentikFromFrontendEnv) Object.assign(env, authentikEnv(tree.frontend));
+    // FROM THIS CHECKOUT'S `frontend/.env`, the machine's configuration, even for a `--ref` build:
+    // a ref worktree is a fresh checkout and has no `.env` of its own (R2 review).
+    if (plan.authentikFromFrontendEnv) Object.assign(env, authentikEnv(FRONTEND));
 
     // NO PRODUCTION ORIGIN MAY REACH VITE, checked at the source before a minute is spent building:
     // the bundle cannot tell a baked request target from a link constant, the environment can.
@@ -379,14 +395,17 @@ export async function armA1({
     // AND NOTHING ELSE THAT IS PRODUCTION (R2): a bundle naming the estate can still carry a
     // production origin beside it, taken from a stale `frontend/.env`, and an APK calling both is an
     // APK on production.
-    const chunks = join(tree.frontend, 'build/_app/immutable/chunks');
-    const texts = existsSync(chunks)
-      ? readdirSync(chunks)
+    // EVERY packaged script, not the chunks alone: `nodes/` and `entry/` are code too (R2 review).
+    const immutable = join(tree.frontend, 'build/_app/immutable');
+    const texts = existsSync(immutable)
+      ? readdirSync(immutable, { recursive: true })
+          .map(String)
           .filter((f) => f.endsWith('.js'))
-          .map((name) => ({ name, text: readFileSync(join(chunks, name), 'utf8') }))
+          .map((name) => ({ name: name.split(sep).join('/'), text: readFileSync(join(immutable, name), 'utf8') }))
       : [];
-    const linkOrigins = linkOriginsOf(readFileSync(join(tree.frontend, LINK_MODULE), 'utf8'));
-    const verdict = bundleTargetVerdict(texts, plan.origin, linkOrigins);
+    const linkModule = linkModuleOf(readFileSync(join(tree.frontend, LINK_MODULE), 'utf8'));
+    const link = { origins: linkModule.origins, chunk: linkChunkOf(texts, linkModule.hosts) };
+    const verdict = bundleTargetVerdict(texts, plan.origin, link);
     console.log(
       `[${TAG}] ${plan.origin} appears in ${verdict.hits.length} packaged chunk(s), a production origin in ` +
         `${verdict.production.length}; ${verdict.links.length} production LINK constant(s) of ${LINK_MODULE} tolerated`
@@ -408,7 +427,9 @@ export async function armA1({
     // fix, build, measure, commit. On 2026-09-08 that put NOTIF-16's PASS against `1fd7cecd7`, the
     // commit BEFORE the fix that makes it pass. Recorded rather than refused: a gate against a
     // dirty build would make the fix-and-measure loop impossible. See `apkbuild.mjs`.
-    const provenance = recordApkBuild(tree.repo);
+    // AND WHICH ARTEFACT, FOR WHICH ESTATE, PASSED: an install without a build (`--no-build`) is
+    // allowed only for an APK whose sha256 is recorded here for this origin (`installVerdict`).
+    const provenance = recordApkBuild(tree.repo, { apkSha256: sha256Of(APK), origin: plan.origin, estate: plan.estate, ref, bundleOk: true });
     console.log(
       `[${TAG}] built from ${provenance.head}` +
         (provenance.dirty
@@ -436,6 +457,15 @@ export async function armA1({
   }
 
   // ── install, and NEVER uninstall ────────────────────────────────────────────────────────────────
+  // AN APK THIS RUN DID NOT BUILD IS INSTALLED ONLY IF ITS BUNDLE VERDICT IS ON RECORD (R2 review):
+  // the bundle cannot be re-read from the APK (Tauri embeds it compressed in the native library),
+  // so the verdict a build recorded is bound to the file's sha256 and to the estate it was for.
+  if (!build) {
+    const sha = sha256Of(APK);
+    const v = installVerdict(apkBuilds(), sha, plan.origin);
+    if (!v.ok) throw new Error(`--no-build refuses ${APK} (sha256 ${sha.slice(0, 12)}): ${v.why}. Build it with bun a1apk.mjs.`);
+    console.log(`[${TAG}] --no-build: this APK's bundle passed for ${plan.origin} when it was built (${v.record.recordedAt})`);
+  }
   console.log(`[${TAG}] installing ${APK}`);
   const before = adb(['shell', 'dumpsys', 'package', PKG]);
   const verOf = (dump) => /versionName=(\S+)/.exec(dump)?.[1] ?? '(none)';

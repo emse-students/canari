@@ -102,35 +102,68 @@ export function a1BuildPlan({ site, release = false, devAuthentik } = {}) {
 
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** A production APPLICATION origin as it would appear baked in: a scheme, then the bare host. */
-const PRODUCTION_ORIGIN_SOURCE = `(?:https|wss)://(?:${PRODUCTION_APP_HOSTS.map(escape).join('|')})(?![\\w.-])`;
-const PRODUCTION_ORIGIN = new RegExp(PRODUCTION_ORIGIN_SOURCE);
+/**
+ * A production APPLICATION origin as it could appear baked in, in ANY spelling a request could use:
+ * `http`, `https`, `ws`, `wss` or protocol-relative `//`, any case, an optional trailing dot on the
+ * host (R2 review, 2026-10-24 - the first version knew `https`/`wss` in lower case only).
+ */
+const PRODUCTION_ORIGIN_SOURCE = `(?:(?:https?|wss?):)?//(?:${PRODUCTION_APP_HOSTS.map(escape).join('|')})\\.?(?![\\w.-])`;
+const PRODUCTION_ORIGIN = new RegExp(PRODUCTION_ORIGIN_SOURCE, 'i');
 
-/** The source module whose two constants are production NAMES the app RECOGNISES, never calls. Relative to `frontend/`. */
+/** The source module that declares the production LINK constants. Relative to `frontend/`. */
 export const LINK_MODULE = 'src/lib/utils/publicAppUrl.ts';
 
 /**
- * The production origins `publicAppUrl.ts` declares as LINK constants - read from the source of the
- * tree being built, so the allowance follows the code instead of a copy of it.
+ * What identifies `LINK_MODULE` in the source of the tree being built: its two production origin
+ * constants, and its `PUBLIC_APP_HOSTS` array (whose literal survives minification as a sequence of
+ * strings, which is how its CHUNK is found in a bundle).
  *
- * WHY THEY ARE IN EVERY BUNDLE, dev included (measured 2026-10-24 on the first dev APK build, chunk
- * `Dypz5d_W.js`): `DEFAULT_PUBLIC_APP_ORIGIN` is what `publicAppOrigin()` mints share links with when
- * the build baked NO `VITE_FRONTEND_URL` (a dev build bakes dev's, so it never reaches it), and the
- * base `isPublicAppUrl`/`inAppPathFromHref` resolve a relative href against when there is no
- * `window`; `LEGACY_PUBLIC_APP_ORIGIN` is only COMPARED against. Neither opens a connection: every
- * request the app makes goes to a `VITE_*_URL`, and `buildEnvVerdict` proves those are the estate's.
+ * WHAT THE CONSTANTS ARE, AND WHAT THEY ARE NOT. `DEFAULT_PUBLIC_APP_ORIGIN` mints share links when
+ * the build baked no `VITE_FRONTEND_URL`, and is the base a relative href resolves against with no
+ * `window`; `LEGACY_PUBLIC_APP_ORIGIN` is compared against. **They are NOT guaranteed never to be a
+ * request target** (R2 review): until #2385 the root layout started the push service with
+ * `historyBaseUrl || DEFAULT_PUBLIC_APP_ORIGIN`, a dead but real production fallback - so a tag
+ * built with `--ref` from before #2385 carries it. That use goes through an imported BINDING, which
+ * no bundle scan can see; it is removed in the product, not tolerated here.
  *
- * NO FALLBACK: a source that no longer declares them throws, rather than allowing nothing or anything.
+ * NO FALLBACK: a source that does not declare both constants and the array throws. A tag older than
+ * the constants (`canari.emse.fr` became canonical on 2026-09-25) therefore cannot be built with
+ * this check, and that is said rather than allowed.
  *
  * @param {string} source the text of `LINK_MODULE`
- * @returns {string[]}
+ * @returns {{origins: string[], hosts: string[]}}
  */
-export function linkOriginsOf(source) {
-  const found = [...source.matchAll(/export const (?:DEFAULT|LEGACY)_PUBLIC_APP_ORIGIN = '([^']+)'/g)].map((m) => m[1]);
-  if (found.length !== 2 || !found.every((o) => PRODUCTION_ORIGIN.test(o))) {
-    throw new Error(`${LINK_MODULE} no longer declares its two production link origins as expected (found ${JSON.stringify(found)}) - re-read it before allowing anything`);
+export function linkModuleOf(source) {
+  const origins = [...source.matchAll(/export const (?:DEFAULT|LEGACY)_PUBLIC_APP_ORIGIN = '([^']+)'/g)].map((m) => m[1]);
+  const hostsMatch = source.match(/export const PUBLIC_APP_HOSTS = \[([^\]]+)\]/);
+  const hosts = hostsMatch ? [...hostsMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]) : [];
+  if (origins.length !== 2 || !origins.every((o) => PRODUCTION_ORIGIN.test(o)) || hosts.length === 0) {
+    throw new Error(
+      `${LINK_MODULE} does not declare its two production link origins and PUBLIC_APP_HOSTS as expected ` +
+        `(origins ${JSON.stringify(origins)}, hosts ${JSON.stringify(hosts)}) - a tag older than them cannot be ` +
+        'checked this way; re-read the module before allowing anything'
+    );
   }
-  return found;
+  return { origins, hosts };
+}
+
+/**
+ * The ONE packaged chunk that is `LINK_MODULE`, found by its `PUBLIC_APP_HOSTS` array literal
+ * (the hosts in order, as minified string literals with any quote). Exactly one, or a throw: two
+ * would mean the allowance could not say which file it is about, none that the module moved.
+ *
+ * @param {{name: string, text: string}[]} chunks
+ * @param {string[]} hosts from `linkModuleOf`
+ * @returns {string} the chunk's name
+ */
+export function linkChunkOf(chunks, hosts) {
+  const q = `["'\`]`;
+  const array = new RegExp(`\\[${hosts.map((h) => `${q}${escape(h)}${q}`).join('\\s*,\\s*')}\\]`);
+  const found = chunks.filter((c) => array.test(c.text)).map((c) => c.name);
+  if (found.length !== 1) {
+    throw new Error(`the bundle holds ${found.length} chunk(s) carrying ${LINK_MODULE}'s PUBLIC_APP_HOSTS (${found.join(', ') || 'none'}) - expected exactly one`);
+  }
+  return found[0];
 }
 
 /**
@@ -140,19 +173,20 @@ export function linkOriginsOf(source) {
  * still carry a production origin beside it (an env var Vite took from a stale `frontend/.env`), and
  * an APK talking to both is an APK on production.
  *
- * ONE NARROW ALLOWANCE (`linkOriginsOf`): a production origin that is EXACTLY one of the link
- * constants, as a whole string literal (optionally with the one trailing `/` the module appends), is
- * a name the app recognises. A socket (`wss://`), a path, a port, or any origin that is not a
- * whole literal is still refused - and the build ENVIRONMENT, the only way a production origin could
- * become a request target, is checked at its source by `buildEnvVerdict`.
+ * ONE NARROW ALLOWANCE: inside `LINK_MODULE`'s own chunk ONLY, an occurrence that is EXACTLY one of
+ * its two declared constants, as a whole string literal (optionally `/`-terminated, the base the
+ * module builds). The same literal in ANY other chunk, a socket, a path, another scheme or case, a
+ * trailing dot, or a concatenation is refused. The bundle cannot see a constant used through an
+ * imported binding - that is why the build ENVIRONMENT is checked at its source too
+ * (`buildEnvVerdict`) and why the one such use was removed from the product (#2385).
  *
- * @param {{name: string, text: string}[]} chunks the packaged JS chunks
+ * @param {{name: string, text: string}[]} chunks every packaged JS file (chunks, nodes, entry)
  * @param {string} origin the estate's origin
- * @param {string[]} [linkOrigins] from `linkOriginsOf`; none allowed when absent
+ * @param {{origins: string[], chunk: string} | null} [link] the link constants and their chunk; none allowed when null
  */
-export function bundleTargetVerdict(chunks, origin, linkOrigins = []) {
+export function bundleTargetVerdict(chunks, origin, link = null) {
   const hits = chunks.filter((c) => c.text.includes(origin)).map((c) => c.name);
-  const all = new RegExp(PRODUCTION_ORIGIN_SOURCE, 'g');
+  const all = new RegExp(PRODUCTION_ORIGIN_SOURCE, 'gi');
   const production = [];
   const links = [];
   for (const c of chunks) {
@@ -161,12 +195,14 @@ export function bundleTargetVerdict(chunks, origin, linkOrigins = []) {
       let end = m.index + m[0].length;
       if (c.text[end] === '/') end++;
       const isWholeLiteral = ['"', "'", '`'].includes(before) && c.text[end] === before;
-      if (isWholeLiteral && linkOrigins.includes(m[0])) links.push(`${c.name}: ${c.text.slice(m.index, end)}`);
+      const isLink = link !== null && c.name === link.chunk && isWholeLiteral && link.origins.includes(m[0]);
+      if (isLink) links.push(`${c.name}: ${c.text.slice(m.index, end)}`);
       else production.push(`${c.name}: ${c.text.slice(m.index, Math.min(c.text.length, end + 20))}`);
     }
   }
   return { ok: hits.length > 0 && production.length === 0, hits, production, links };
 }
+
 
 /**
  * Whether anything Vite will read as a `VITE_*` value names a production application host.
@@ -188,12 +224,38 @@ export function buildEnvVerdict(env, envFiles = []) {
   }
   for (const f of envFiles) {
     for (const line of f.text.split(/\r?\n/)) {
-      const m = line.match(/^\s*(VITE_[A-Z0-9_]+)\s*=\s*(.*)$/);
+      // `export VITE_X=` is dotenv syntax Vite reads too (R2 review).
+      const m = line.match(/^\s*(?:export\s+)?(VITE_[A-Z0-9_]+)\s*=\s*(.*)$/);
       // A key the environment sets wins over the file in Vite, so only an UNOVERRIDDEN line bakes.
       if (m && !(m[1] in env) && PRODUCTION_ORIGIN.test(m[2])) offenders.push(`${f.name} ${m[1]}`);
     }
   }
   return { ok: offenders.length === 0, offenders };
+}
+
+/**
+ * Whether the APK at hand may be INSTALLED on this estate without a build in this run (`--no-build`).
+ *
+ * The bundle cannot be re-read from the APK: Tauri embeds the frontend brotli-compressed inside the
+ * native library (`lib/<abi>/lib*_app_lib.so`); there is no `assets/` directory to unzip (measured
+ * 2026-10-24). So the verdict is BOUND TO THE ARTEFACT instead: every build records the APK's
+ * sha256, the origin it was planned for and its bundle verdict (`apkbuild.mjs`), and an install
+ * without a build requires a record of THAT sha256, for THIS origin, whose bundle passed. Any other
+ * APK - built by hand, by CI, by an older rig, for another estate - is refused, naming why.
+ *
+ * @param {object[]} records the `a1-builds.ndjson` rows
+ * @param {string} apkSha256 the sha256 of the file about to be installed
+ * @param {string} origin the estate's origin
+ * @returns {{ok: true, record: object} | {ok: false, why: string}}
+ */
+export function installVerdict(records, apkSha256, origin) {
+  const same = records.filter((r) => r.apkSha256 === apkSha256);
+  if (!same.length) return { ok: false, why: 'no build of this rig recorded this APK (sha256 unknown) - its bundle was never checked' };
+  const here = same.filter((r) => r.origin === origin);
+  if (!here.length) return { ok: false, why: `this APK was built for ${[...new Set(same.map((r) => r.origin))].join(', ')}, not ${origin}` };
+  const last = here[here.length - 1];
+  if (last.bundleOk !== true) return { ok: false, why: 'the recorded bundle verdict of this APK did not pass' };
+  return { ok: true, record: last };
 }
 
 /** A git ref `--ref` may name: a tag or a branch-like name, never an option or a path. */
