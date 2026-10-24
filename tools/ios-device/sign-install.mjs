@@ -10,13 +10,16 @@
  *   dev.key, dev.pem          the development certificate's key and certificate
  *   app.mobileprovision       development profile for fr.emse.canari, this phone's UDID inside
  *   nse.mobileprovision       the same for fr.emse.canari.notifications
+ *   share.mobileprovision     the same for fr.emse.canari.share (App Groups only)
  *   bin/rcodesign.exe         Apple Codesign, https://github.com/indygreg/apple-platform-rs
  * How those were made, and how the phone is prepared, is
  * docs/wiki/frontend/mobile.md#a-build-for-the-phone-on-the-bench.
  *
  * WHY THE ORDER, THE ENTITLEMENTS AND THE ZIP ARE WHAT THEY ARE (each cost a failed install):
- * - The appex is signed BEFORE the app. Re-signing a signed bundle drops the `Info` slot, which
- *   installd reports as "a signed resource has been added, modified, or deleted".
+ * - Each appex is signed BEFORE the app, with the profile and entitlements of ITS bundle id
+ *   (`EXTENSIONS`), and exactly the two the store app embeds must be there. Re-signing a signed
+ *   bundle drops the `Info` slot, which installd reports as "a signed resource has been added,
+ *   modified, or deleted".
  * - The entitlements are the REPOSITORY's own files, so the bench app declares what the store app
  *   declares - notably the keychain group shared with the extension, `<team>.group.fr.emse.canari`,
  *   not the profile's `<team>.*`. Three keys are injected because a development profile demands
@@ -39,6 +42,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const APPLE = resolve(HERE, '../../frontend/src-tauri/gen/apple');
 const RCODESIGN = process.env.RCODESIGN || join(STATE, 'bin', 'rcodesign.exe');
 const TAR = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+
+/**
+ * The app extensions the bench app must embed, by bundle id: the profile and the repository
+ * entitlements each is signed with. The same two `ios-extensions.sh` asserts on every CI build.
+ */
+export const EXTENSIONS = {
+  'fr.emse.canari.notifications': { profile: 'nse.mobileprovision', label: 'notification extension', ent: 'canari_NSE/canari_NSE.entitlements' },
+  'fr.emse.canari.share': { profile: 'share.mobileprovision', label: 'share extension', ent: 'canari_Share/canari_Share.entitlements' },
+};
 
 /** Runs a command and returns its stdout, throwing with both streams when it fails. */
 function run(cmd, args, cwd) {
@@ -89,7 +101,7 @@ async function main() {
   const args = process.argv.slice(2);
   const ipa = args.find((a) => !a.startsWith('--'));
   if (!ipa) throw new Error('usage: sign-install.mjs <unsigned.ipa> [--no-install]');
-  for (const f of ['dev.key', 'dev.pem', 'app.mobileprovision', 'nse.mobileprovision']) {
+  for (const f of ['dev.key', 'dev.pem', 'app.mobileprovision', ...Object.values(EXTENSIONS).map((e) => e.profile)]) {
     if (!existsSync(join(STATE, f))) throw new Error(`missing ${join(STATE, f)}`);
   }
   if (!existsSync(RCODESIGN)) throw new Error(`missing ${RCODESIGN}`);
@@ -101,16 +113,25 @@ async function main() {
   const app = join(payload, readdirSync(payload).find((n) => n.endsWith('.app')));
   const plugins = join(app, 'PlugIns');
   const appexes = existsSync(plugins) ? readdirSync(plugins).filter((n) => n.endsWith('.appex')) : [];
-  if (appexes.length !== 1) throw new Error(`expected exactly one appex in ${plugins}, found ${appexes.length}`);
-  const appex = join(plugins, appexes[0]);
-  if (existsSync(join(appex, 'Frameworks'))) {
-    throw new Error(`${appex}/Frameworks exists - a framework nested in an appex fails verification`);
+  const expected = Object.keys(EXTENSIONS).length;
+  if (appexes.length !== expected) {
+    throw new Error(`expected exactly ${expected} appex in ${plugins}, found ${appexes.length}: ${appexes.join(', ')}`);
   }
-
-  const targets = [
-    { dir: appex, profile: 'nse.mobileprovision', label: 'notification extension', ent: 'canari_NSE/canari_NSE.entitlements' },
-    { dir: app, profile: 'app.mobileprovision', label: 'app', ent: 'canari_iOS/canari_iOS.entitlements' },
-  ];
+  const targets = [];
+  for (const name of appexes) {
+    const dir = join(plugins, name);
+    if (existsSync(join(dir, 'Frameworks'))) {
+      throw new Error(`${dir}/Frameworks exists - a framework nested in an appex fails verification`);
+    }
+    const ext = EXTENSIONS[bundleId(dir)];
+    if (!ext) throw new Error(`${name} is ${bundleId(dir)}, which names no known extension`);
+    targets.push({ dir, ...ext });
+  }
+  if (new Set(targets.map((t) => t.profile)).size !== expected) {
+    throw new Error(`two appex carry the same bundle id: ${appexes.join(', ')}`);
+  }
+  // The app LAST: re-signing a signed bundle would drop its extensions' seals.
+  targets.push({ dir: app, profile: 'app.mobileprovision', label: 'app', ent: 'canari_iOS/canari_iOS.entitlements' });
   for (const t of targets) {
     const facts = profileFacts(join(STATE, t.profile));
     const id = bundleId(t.dir);

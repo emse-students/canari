@@ -155,6 +155,18 @@ export function shutterRingFraction(state: CaptureState, elapsedMs: number, maxM
 }
 
 /**
+ * Whether the lens may be flipped now - by its button or by a double tap on the preview. Only in
+ * `ready` (the session reopens everything) and `recording` (`flipDuringTake` keeps the microphone).
+ * Every other state is a decision or a file in progress that a flip would break: in `pressing` the
+ * hold timer may start a take on a lens that is being reopened, in `photo` the frame is being read,
+ * in `finishing` the recorder's last chunk is still arriving (a reopen would release its microphone
+ * and cut the take's end), and a `review` has no preview at all.
+ */
+export function lensFlipAllowed(state: CaptureState): boolean {
+  return state.kind === 'ready' || state.kind === 'recording';
+}
+
+/**
  * Why the reel limits could not be read, which decides what the capture screen says.
  *
  * - `unreachable`: no status, so nobody answered (the network, or the server is down).

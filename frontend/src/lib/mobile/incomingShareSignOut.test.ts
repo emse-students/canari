@@ -1,9 +1,11 @@
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
-let android = true;
+let runtime: 'android' | 'ios' | 'web' = 'android';
 vi.mock('$lib/utils/appVersion', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/appVersion')>()),
-  isAndroidTauriRuntime: () => android,
+  isAndroidTauriRuntime: () => runtime === 'android',
+  isIosTauriRuntime: () => runtime === 'ios',
+  isMobileTauriRuntime: () => runtime !== 'web',
 }));
 
 import { eraseIncomingShare } from './incomingShareSignOut';
@@ -27,7 +29,7 @@ describe('eraseIncomingShare', () => {
   let epoch = 0;
 
   beforeEach(() => {
-    android = true;
+    runtime = 'android';
     waiting = null;
     incomingShare.drop('test reset');
     invoke.mockReset();
@@ -158,8 +160,29 @@ describe('eraseIncomingShare', () => {
     expect(incomingShare.pending?.text).toBe('fresh');
   });
 
-  it('claims no native manifest outside the Android app, which has none', async () => {
-    android = false;
+  /**
+   * iOS: the Share Extension's manifest waits in the App Group until `read_and_clear_pending_share`
+   * carries it over BEFORE its claim (`commands/app_group_share.rs`), and `advance_share_epoch` also
+   * writes the App Group's epoch - so the erase is the same two commands, and leaves nothing there.
+   */
+  it('erases on iOS through the same two commands, the App Group share included', async () => {
+    runtime = 'ios';
+    // A share the extension left in the App Group: the command's own import hands it over.
+    waiting = JSON.stringify({ text: 'from photos', files: [entry('/caches/s/0_s.png')], epoch });
+
+    await eraseIncomingShare('signed out');
+
+    const commands = invoke.mock.calls.map(([cmd]) => cmd);
+    expect(commands.indexOf('advance_share_epoch')).toBeLessThan(
+      commands.indexOf('read_and_clear_pending_share')
+    );
+    expect(waiting).toBeNull();
+    expect(discarded()).toEqual(['/caches/s/0_s.png']);
+    expect(incomingShare.pending).toBeNull();
+  });
+
+  it('claims no native manifest outside the mobile apps, which have none', async () => {
+    runtime = 'web';
     incomingShare.offer({ text: 'held', files: [] }, epoch);
     await eraseIncomingShare('signed out');
     expect(incomingShare.pending).toBeNull();

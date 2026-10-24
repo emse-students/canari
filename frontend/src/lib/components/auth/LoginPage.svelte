@@ -21,9 +21,12 @@
     refreshAppVersionCheck,
   } from '$lib/stores/appVersionCheck.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { attemptRestore } from '$lib/services/restoreCredential';
 
   // ─── Auth state ─────────────────────────────────────────────────────────────
   let isLoggingIn = $state(false);
+  /** Set while a restore key is being tried (WP-RESTORE-1): the busy button says so. */
+  let busyLabel = $state<string | null>(null);
   let loginError = $state('');
   let biometricAvailable = $state(false);
   let requestedReturnTo = '';
@@ -142,7 +145,13 @@
           // Token expired or invalid: stay on login so the user can re-authenticate.
           console.debug('Session expired or invalid, re-login required.');
         }
+        return;
       }
+
+      // No session here. On the first start of a fresh Android install, a restore key carried by
+      // the phone's Google backup may move the old phone's session here (docs/wiki/account-restore.md).
+      // `attemptRestore` decides whether it applies and never throws.
+      await tryRestore();
     };
 
     void initAuth();
@@ -153,6 +162,27 @@
       unsubscribeForeground();
     };
   });
+
+  /**
+   * Tries a restore key while the sign-in button is held busy, then either goes where a sign-in goes
+   * or hands the form back - with the sentence of a refusal that has one (erasure, maintenance).
+   */
+  async function tryRestore() {
+    isLoggingIn = true;
+    busyLabel = m.auth_restore_in_progress();
+    try {
+      const attempt = await attemptRestore();
+      if (attempt.outcome === 'restored') {
+        console.debug('[LOGIN] session restored, leaving /login');
+        await goto(resolve(internalPath(getSafeReturnTarget())), { replaceState: true });
+        return;
+      }
+      if (attempt.outcome === 'refused' && attempt.shown) loginError = attempt.shown;
+      isLoggingIn = false;
+    } finally {
+      busyLabel = null;
+    }
+  }
 
   // ─── Event handlers ────────────────────────────────────────────────────────
   /**
@@ -235,6 +265,7 @@
 
 <LoginForm
   {isLoggingIn}
+  {busyLabel}
   {loginError}
   {biometricAvailable}
   {maintenanceNotice}

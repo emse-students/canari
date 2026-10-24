@@ -85,9 +85,11 @@ import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
 import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
 import {
   flushSalonReadMarks,
+  forgetDmReadMark,
   owedSalonReadMarks,
   salonMarksAfterLoad,
 } from '$lib/utils/chat/salonReadMarkQueue';
+import { drainOutboxForExit } from '$lib/utils/chat/outbox';
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -1903,6 +1905,14 @@ export function useConversations() {
     ctx: ConversationContext
   ) {
     const mlsService = ctx.ensureMls();
+    // THE OWED READ MARK GOES FIRST, AND SYNCHRONOUSLY. Dropping the selection below ends the open
+    // conversation's read debounce, whose cleanup hands every OWED mark to the outbox - and a mark of
+    // this group, queued there, is a frame the server refuses with 403 once the membership ends
+    // (GRP-6, 2026-10-22). Revoked here, before any await, the ledger no longer names the group when
+    // that cleanup runs, and nothing re-enqueues it at the next sign-in; the outbox's exit drain below
+    // settles what was already queued, and the owed exit makes the outbox refuse any later mark.
+    forgetDmReadMark(ctx.userId, convo.id);
+    if (contactKey !== convo.id) forgetDmReadMark(ctx.userId, contactKey);
     await retireConversation({
       conversations,
       key: contactKey,
@@ -1922,6 +1932,20 @@ export function useConversations() {
     // standing, the MLS state destroyed, and `discoverMissingGroups` handing the group back.
     // See `pendingGroupExits` for the whole reasoning; the drain replays this on reconnect.
     await recordPendingGroupExit(ctx.storage, convo.id, exitKind, ctx.log);
+    // NOTHING OF THIS GROUP MAY STILL BE QUEUED OR ON THE WIRE WHEN THE SERVER ENDS THE MEMBERSHIP:
+    // every such frame is refused 403 by then and parked until the next sign-in, for a group this
+    // device no longer holds. The outbox therefore SETTLES the group first - it awaits a send in
+    // flight, sends what still can go (the membership and the MLS state exist until the server step,
+    // so a text written just before leaving arrives), and withdraws only what cannot, logging it by
+    // kind. The owed exit recorded just above is what makes every later enqueue for the group refuse
+    // itself, and every ordinary flush withdraw the group's rows - so a kill before this drain leaves
+    // nothing that the relaunch's replay of the exit could race into a 403. The leave's own `memberLeft` notice is not in the outbox: it is a direct send whose
+    // acceptance `leaveGroupAndBroadcast` awaits.
+    await drainOutboxForExit(convo.id, exitKind).catch((e: unknown) =>
+      ctx.log(
+        `[${label}] outbox of ${convo.id.slice(0, 8)}… NOT settled before the server step - any entry left will be refused once the membership ends: ${String(e)}`
+      )
+    );
     try {
       const onServer = await isGroupActiveOnServer(mlsService, ctx.userId, convo.id);
       if (onServer !== false) {
@@ -2120,6 +2144,7 @@ export function useConversations() {
           groupId: convo.id,
           userId: ctx.userId,
           deviceKeyB64: ctx.deviceKeyB64,
+          log: ctx.log,
         }),
       'DELETE',
       'delete',
@@ -2164,6 +2189,7 @@ export function useConversations() {
           groupId: convo.id,
           userId: ctx.userId,
           deviceKeyB64: ctx.deviceKeyB64,
+          log: ctx.log,
         }),
       'LEAVE',
       'leave',

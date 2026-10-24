@@ -102,6 +102,40 @@ pub fn encrypt_mls_state_blob_with_key(
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+/// What `mls-core`'s deterministic reader says about a SEALED state blob, as a CODE - never a client.
+///
+/// Answers `"OPENED"` when the blob opens under the key and belongs to `user_id:device_id`, or the
+/// verdict code `MlsError::state_verdict_code` assigns (`STATE_ALTERED`, `STATE_KEY_MISMATCH`,
+/// `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH`). REJECTS with the error's text for anything that is
+/// not a verdict about the bytes (a malformed key, a codec failure): the caller must not read a
+/// recovery into it.
+///
+/// It exists for ONE caller: the web, after WebCrypto refused a v2 blob (`loadAndInitWasm`), needs
+/// to know whether the BYTES are at fault, and WebCrypto's `OperationError` names a failed tag and
+/// an engine fault alike. The verdict used to be read by building a `WasmMlsClient` and matching the
+/// thrown message against a regex; the classification now happens here, on the variant. The loaded
+/// manager is dropped on return - a witness of the verdict, never a second load path.
+#[wasm_bindgen]
+pub fn state_blob_verdict(
+    user_id: &str,
+    device_id: &str,
+    state_bytes: Vec<u8>,
+    device_key_b64: &str,
+) -> Result<String, JsValue> {
+    let key = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64)
+        .map_err(|e| JsValue::from_str(&e))?;
+    match MlsManager::load_with_key(user_id, device_id, Some(state_bytes), &key) {
+        Ok(_) => Ok("OPENED".to_string()),
+        Err(e) => match e.state_verdict_code() {
+            Some(code) => {
+                log::warn!("state_blob_verdict: the deterministic reader answers {code}");
+                Ok(code.to_string())
+            }
+            None => Err(JsValue::from_str(&e.to_string())),
+        },
+    }
+}
+
 // ----------------------------------------------------
 
 /// `{ data: Uint8Array, sender: string | null, author: 'unsigned' | 'verified' | 'refused' }` for

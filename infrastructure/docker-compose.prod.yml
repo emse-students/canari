@@ -440,6 +440,10 @@ services:
       # PRODUCTION ONLY (WP4): the authentik service account that writes a person's profile. Dev holds
       # none and refuses the edit with a typed error, because both estates share ONE MiConnect.
       MICONNECT_EDITOR_TOKEN: ${MICONNECT_EDITOR_TOKEN:-}
+      # Account restore on a new Android phone (WP-RESTORE-1): the signing-certificate SHA-256 the
+      # restore key's origin is computed from. Empty, every /api/auth/restore route answers 503
+      # (docs/wiki/account-restore.md).
+      ANDROID_APP_LINK_SHA256: ${ANDROID_APP_LINK_SHA256:-}
       # THE ONE FIELD THAT TELLS THE TWO ESTATES APART AT RUNTIME, and until 2026-09-02 nothing
       # delivered it. `render-env.sh` computes it for dev, the manifest declares it,
       # `deploy-build.ts` parses it and `version.service.spec.ts` tests it - and no compose file
@@ -508,6 +512,7 @@ services:
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
       LYDIA_KEY_ENCRYPTION_SECRET: ${LYDIA_KEY_ENCRYPTION_SECRET:-}
+      LIVE_KEY_ENCRYPTION_SECRET: ${LIVE_KEY_ENCRYPTION_SECRET:-}
     healthcheck:
       # `/api/health` since 2026-09-24, like the other three services. It probed
       # `/api/channels/health` - a route that belongs to ChannelsController and answers about the

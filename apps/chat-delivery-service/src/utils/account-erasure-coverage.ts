@@ -53,5 +53,6 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
       'Welcome is the recipients protocol state and leaves the queue when it is delivered',
   },
   'RevokedDevice.userId': { action: 'delete' },
+  'SeatEviction.userId': { action: 'delete' },
   'UserDismissedGroup.userId': { action: 'delete' },
 };

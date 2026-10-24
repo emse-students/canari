@@ -36,6 +36,7 @@ import {
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
+import { bumpSeatGeneration, recordSeatEviction, withSeatLock } from '../utils/seat-eviction';
 import {
   ensureGroupMember,
   endDeviceMemberships,
@@ -767,25 +768,36 @@ export class MembersController {
       }
     }
 
-    // The device rows, the Welcomes still queued for them, the live row and the open interval go in
-    // ONE transaction. Without the device rows no application frame is queued for them and no frame
-    // they send is accepted; the interval is what makes this removal hold against a later re-add
-    // (user, 2026-10-14); and a Welcome left behind would let the removed person enter the epoch it
-    // was built for ({@link endDeviceMemberships}) - a self-leave makes no commit that would undo it.
+    // ONE TRANSACTION UNDER THE GROUP'S SEAT LOCK: the device rows, the Welcomes still queued for
+    // them, the live row and the open interval go, and the eviction is RECORDED. Without the device
+    // rows no application frame is queued for them and no frame they send is accepted; the interval
+    // is what makes this removal hold against a later re-add (user, 2026-10-14); a Welcome left
+    // behind would let the removed person enter the epoch it was built for
+    // ({@link endDeviceMemberships}) - a self-leave makes no commit that would undo it; and the
+    // eviction record keeps an external commit whose roster check ran before this removal from
+    // writing its committer's seat after it (`utils/seat-eviction.ts`).
     //
-    // THE ROSTER ROW FIRST, THEN THE DEVICE ROWS - the order `addGroupMember` takes them in, so an
-    // add and a removal of the same person wait for each other instead of deadlocking; and the
-    // order a Welcome store re-checks the seat in (`validateCommit`, `sendWelcome`), so a store
-    // racing this removal either commits first and is deleted here, or finds no seat.
-    const { devices, ended } = await this.dataSource.transaction(async (manager) => {
-      const ended = await endGroupMembership(manager, safeGroupId, safeUserId);
-      const devices = await endDeviceMemberships(
-        manager,
-        { userId: safeUserId, groupId: safeGroupId },
-        'welcomes'
-      );
-      return { devices, ended };
-    });
+    // THE ONE ORDER OF `utils/seat-eviction.ts`: the seat lock, the roster row, the queued
+    // Welcomes, the device rows, the eviction record. `addGroupMember` takes no seat lock - it writes
+    // the roster row first, then the device rows, so an add and a removal of the same person wait
+    // for each other on the roster row instead of deadlocking. A Welcome store re-checks the seat
+    // under the seat lock (`validateCommit`, `sendWelcome`), so a store racing this removal either
+    // commits first and is deleted here, or finds no seat.
+    const { devices, ended, generation } = await withSeatLock(
+      this.dataSource.manager,
+      safeGroupId,
+      async (manager) => {
+        await bumpSeatGeneration(manager, safeGroupId);
+        const closed = await endGroupMembership(manager, safeGroupId, safeUserId);
+        const gone = await endDeviceMemberships(
+          manager,
+          { userId: safeUserId, groupId: safeGroupId },
+          'welcomes'
+        );
+        const gen = await recordSeatEviction(manager, safeGroupId, safeUserId, false);
+        return { devices: gone, ended: closed, generation: gen };
+      }
+    );
     if (ended.deleted > 0 && ended.closed === 0) {
       // A member with no open interval: enrolled by a writer running pre-030 code during the deploy
       // that applied the migration. Their exclusion window starts nowhere, so a re-add will NOT
@@ -803,7 +815,7 @@ export class MembersController {
     }
 
     this.logger.log(
-      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${devices.memberships} intervalClosed=${ended.closed} queuedWelcomesDropped=${devices.queued}`
+      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${devices.memberships} intervalClosed=${ended.closed} queuedWelcomesDropped=${devices.queued} evictionGeneration=${generation}`
     );
     return { status: 'removed' };
   }
