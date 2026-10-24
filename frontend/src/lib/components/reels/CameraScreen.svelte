@@ -46,6 +46,12 @@
      * and recorder (`CameraSession.flipDuringTake`) instead of reopening everything.
      */
     recording?: boolean;
+    /**
+     * Whether the capture lets the lens flip now (`lensFlipAllowed`): the button and the preview's
+     * double tap both stand down while a press is being decided or a take is finishing, where a
+     * reopen would release the microphone under the recorder. Default true (no capture around it).
+     */
+    flipAllowed?: boolean;
     /** What sits over the live preview at the bottom: the shutter and its neighbours. */
     controls?: Snippet;
     /**
@@ -81,6 +87,7 @@
   let {
     session = new CameraSession(),
     recording = false,
+    flipAllowed = true,
     controls,
     faultActions,
     paused = false,
@@ -134,6 +141,10 @@
    * replaced and the microphone and the recorder run on (`flipDuringTake`). The flip resets the zoom.
    */
   function flip() {
+    if (!flipAllowed) {
+      console.debug('[camera] flip asked while the capture forbids it - ignored');
+      return;
+    }
     console.debug(`[camera] flip ${recording ? 'during a take' : 'outside a take'}`);
     void (recording ? session.flipDuringTake() : session.switchFacing());
   }
@@ -278,10 +289,11 @@
   }
 </script>
 
-<!-- A DOUBLE TAP ON THE PREVIEW FLIPS THE LENS, during a take too (previewDoubleTap.ts). -->
+<!-- A DOUBLE TAP ON THE PREVIEW FLIPS THE LENS, during a take too (previewDoubleTap.ts), never
+     while the capture forbids it (`flipAllowed`). -->
 <section
   class="relative h-full w-full overflow-hidden bg-black text-white"
-  use:previewDoubleTap={{ onDoubleTap: flip, enabled: session.phase === 'live' }}
+  use:previewDoubleTap={{ onDoubleTap: flip, enabled: session.phase === 'live' && flipAllowed }}
   aria-label={m.reels_camera_title()}
   data-camera-phase={session.phase}
   data-camera-fault={session.fault ?? undefined}
@@ -392,7 +404,7 @@
           class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
           aria-label={m.reels_camera_switch()}
           title={m.reels_camera_switch()}
-          disabled={session.flipping}
+          disabled={session.flipping || !flipAllowed}
           onclick={flip}
         >
           <SwitchCamera size={22} strokeWidth={2.25} />

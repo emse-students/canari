@@ -399,6 +399,39 @@ describe('CameraSession - zoom (user, 2026-10-22)', () => {
     expect(error).toHaveBeenCalledTimes(1);
   });
 
+  it('a zoom request the FLIP cut short is no refusal: nothing is accused, and the new lens still zooms', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const front = lensTrack({ zoom: { min: 1, max: 8 } }, { zoom: 6 });
+    let refuse: (err: Error) => void = () => {};
+    front.applyConstraints.mockImplementation(
+      () => new Promise<void>((_resolve, reject) => (refuse = reject))
+    );
+    const lens = deferredOpener();
+    const session = new CameraSession(
+      () => Promise.resolve(streamOf(front, micTrack())),
+      lens.open
+    );
+    await session.start();
+    session.setZoom(3);
+    expect(front.applyConstraints).toHaveBeenCalledTimes(1);
+
+    const flipped = session.flipDuringTake();
+    const back = lensTrack({ zoom: { min: 1, max: 10 } }, { zoom: 1 });
+    lens.calls[0].resolve(streamOf(back));
+    await flipped;
+    // The stopped lens rejects the request it was still running.
+    refuse(new Error('the track ended'));
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+
+    expect(error).not.toHaveBeenCalled();
+    // The level is the new lens's resting one, never the dead track's 6x.
+    expect(session.zoom).toBe(1);
+    session.setZoom(4);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(back.applyConstraints).toHaveBeenLastCalledWith({ advanced: [{ zoom: 4 }] });
+    expect(session.zoom).toBe(4);
+  });
+
   it('the mode is logged ONCE per session at info, never per gesture or per reopen', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     const session = new CameraSession(() => Promise.resolve(streamOf(lensTrack())));

@@ -330,7 +330,11 @@ zooms only while `recording` (a press still deciding between photo and video zoo
 the level and travel of the first slide on the current lens, so a flip re-bases it. Every take
 starts at 1x, and a flip rests the new lens at 1x (`restingZoom`). A hardware lens gets at most ONE
 `applyConstraints` in flight, the latest level winning, so a drag never queues a backlog; a lens that
-refuses its own capability is logged once and keeps its real level.
+refuses its own capability is logged once and keeps its real level. A request still running when a
+flip, a reopen or a stop takes its lens away is rejected by a track that is gone: that rejection
+belongs to an earlier generation and is NOT a refusal - nothing is accused, nothing changes, and a
+level the new lens asked for meanwhile is still applied. **The zoom is slide-only: no VoiceOver or
+keyboard equivalent exists** - accepted for an optional feature (the take films at 1x without it).
 
 **The recorded framing follows the zoom.** A take is recorded from the canvas `FramedStream` draws
 (above), never from the camera track. HARDWARE: the frame arrives zoomed, so the preview and the
@@ -355,7 +359,10 @@ draws again: N frame(s) held over X ms` per flip, and the take's total at its en
 readings are owed (Mi 9T, iPhone 12). A lens that cannot be opened during a take ends the session in
 its fault, and `ReelCapture` ENDS AND KEEPS the take (as the cap would); the old lens is not reopened
 behind the member's back. Outside a take, the button and the double tap keep the ordinary
-`switchFacing` (everything reopened). The exact `facingMode`, the front lens's mirror
+`switchFacing` (everything reopened). **Both stand down unless the capture is `ready` or
+`recording`** (`lensFlipAllowed`, the one predicate, handed to `CameraScreen` as `flipAllowed`):
+during `pressing` the hold timer could start a take on a lens being reopened, and during `finishing`
+a reopen would release the microphone before the recorder's last chunk arrived (review of #2291). The exact `facingMode`, the front lens's mirror
 (`shouldMirrorCapture`, read per frame, so a flipped take draws each lens as its preview showed it)
 and the permission handling are unchanged.
 
@@ -376,7 +383,15 @@ on the iPhone 12, that the mode is digital and the recorded file's framing match
 preview; on both, a double tap DURING a take - that the second-finger tap registers while the
 shutter is held, that reopening a lens while the microphone track stays live is accepted
 (WKWebView in particular), the frames held per flip from the log line, that the file plays through
-the flip with continuous sound, and that a double tap outside a take never takes a photo.
+the flip with continuous sound, and that a double tap outside a take never takes a photo. Three are
+named apart (review of #2291):
+
+- **iOS WKWebView, the second video-only `getUserMedia` while the take's audio track is live**: it
+  may mute or re-route the audio session - LISTEN to a flipped take's sound on the iPhone, past the
+  flip.
+- **The Mi 9T hardware zoom range** each lens lists (`zoom is hardware ... (Ax-Bx)` at info).
+- **How long the picture holds still after a flip**, on both phones (the `frame(s) held over X ms`
+  line).
 
 **The camera also takes still photos.** A photo is captured from the live frame, reviewed, and can
 be edited before publishing. The editor draws freehand strokes and app-font text, then bakes those

@@ -439,7 +439,30 @@ describe('CameraScreen - zoom and the double tap (user, 2026-10-22)', () => {
     const video = target.querySelector('video')!;
     video.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 3, bubbles: true }));
     video.dispatchEvent(new PointerEvent('pointerup', { pointerId: 3, bubbles: true }));
-    await new Promise((r) => setTimeout(r, 300));
+    // A double tap flips on its second lift, synchronously; nothing waits for a window to close
+    // (previewDoubleTap.ts), so the microtasks a flip would run are all there is to wait for.
+    for (let i = 0; i < 4; i++) await Promise.resolve();
     expect(open).toHaveBeenCalledTimes(1);
+    expect(session.facing).toBe('user');
+  });
+
+  it('while the capture forbids a flip, the double tap and the lens button both stand down', async () => {
+    const { stream } = lensWithMic();
+    const open = vi.fn((_facing: CameraFacing) => Promise.resolve(stream));
+    const openLens = vi.fn((_facing: CameraFacing) => Promise.resolve(stream));
+    const session = new CameraSession(open, openLens);
+    const target = await mountLive({ recording: true, flipAllowed: false }, session);
+    const button = target.querySelector<HTMLButtonElement>(
+      `[aria-label="${m.reels_camera_switch()}"]`
+    )!;
+    expect(button.disabled).toBe(true);
+
+    doubleTap(target);
+    button.click();
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(openLens).not.toHaveBeenCalled();
+    expect(session.facing).toBe('user');
   });
 });

@@ -244,9 +244,19 @@ export class CameraSession {
         this.#zoomWanted = null;
         const track = this.stream?.getVideoTracks()[0];
         if (!track || this.flipping) return;
+        const generation = this.#generation;
         try {
           await track.applyConstraints({ advanced: [{ zoom: level } as MediaTrackConstraintSet] });
         } catch (err) {
+          // A request still running when a flip, a reopen or a stop took its lens away is rejected
+          // by a track that is GONE: that is no refusal of the lens now in hand, so nothing is
+          // accused or changed, and a level the new lens asked for meanwhile is still applied.
+          if (generation !== this.#generation || this.flipping) {
+            console.debug(
+              `[camera-session] a zoom request of #${generation} ended with its lens (now #${this.#generation})`
+            );
+            continue;
+          }
           // The track listed a zoom it then refused: said once for this lens, and its zoom stays put.
           console.error('[camera-session] the lens refused its own zoom capability', err);
           this.#zoomRefused = true;

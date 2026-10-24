@@ -285,6 +285,99 @@ describe('ReelCapture', () => {
     expect(target.querySelector('[data-reel-review]')).not.toBeNull();
   });
 
+  describe('no flip while a press is decided or a take finishes (review of #2291)', () => {
+    /** A session whose every open is counted, the microphone kept apart to see it released. */
+    function countedSession() {
+      const mic = { kind: 'audio', readyState: 'live', stop: vi.fn(), addEventListener: vi.fn() };
+      const lens = () => ({
+        kind: 'video',
+        readyState: 'live',
+        stop: vi.fn(),
+        getCapabilities: () => ({}),
+        addEventListener: vi.fn(),
+      });
+      const open = vi.fn(() =>
+        Promise.resolve(new MediaStream([lens(), mic] as unknown as MediaStreamTrack[]))
+      );
+      const openLens = vi.fn(() =>
+        Promise.resolve(new MediaStream([lens()] as unknown as MediaStreamTrack[]))
+      );
+      return { mic, open, openLens, session: new CameraSession(open, openLens) };
+    }
+
+    /** A second finger's double tap on the preview. */
+    function doubleTapPreview(target: HTMLElement) {
+      const preview = target.querySelector('video')!;
+      for (const [type, t] of [
+        ['pointerdown', 2000],
+        ['pointerup', 2040],
+        ['pointerdown', 2120],
+        ['pointerup', 2160],
+      ] as const) {
+        const event = new PointerEvent(type, {
+          pointerId: 2,
+          bubbles: true,
+          clientX: 9,
+          clientY: 9,
+        });
+        Object.defineProperty(event, 'timeStamp', { value: t });
+        preview.dispatchEvent(event);
+      }
+    }
+
+    const flipButton = (target: HTMLElement) =>
+      target.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_camera_switch()}"]`)!;
+
+    it('PRESSING: the double tap and the button stand down, and the hold films on the lens it pressed on', async () => {
+      const { mic, open, openLens, session } = countedSession();
+      const { target, pointer } = await render({ session });
+      expect(flipButton(target).disabled).toBe(false);
+      pointer('pointerdown', 1000);
+      await settle();
+
+      expect(flipButton(target).disabled).toBe(true);
+      doubleTapPreview(target);
+      flipButton(target).click();
+      await settle();
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(openLens).not.toHaveBeenCalled();
+      expect(mic.stop).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+      await settle();
+      expect(Recorder.instances).toHaveLength(1);
+      expect(session.facing).toBe('user');
+      // Recording again: the flip is offered back.
+      expect(flipButton(target).disabled).toBe(false);
+    });
+
+    it('FINISHING: neither the double tap nor the button releases the microphone under the last chunk', async () => {
+      const { mic, open, openLens, session } = countedSession();
+      const { target, pointer } = await render({ session });
+      pointer('pointerdown', 1000);
+      vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+      await settle();
+      // The recorder's last chunk does not arrive: the take stays in `finishing`.
+      const recorder = Recorder.instances[0];
+      recorder.stop = vi.fn(() => {
+        recorder.state = 'inactive';
+      });
+      pointer('pointerup', 4000);
+      await settle();
+      expect(recorder.stop).toHaveBeenCalled();
+      expect(target.querySelector('[data-reel-review]')).toBeNull();
+
+      expect(flipButton(target).disabled).toBe(true);
+      doubleTapPreview(target);
+      flipButton(target).click();
+      await settle();
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(openLens).not.toHaveBeenCalled();
+      expect(mic.stop).not.toHaveBeenCalled();
+      expect(session.facing).toBe('user');
+    });
+  });
+
   it('a lens lost DURING a take ends the take and keeps it', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});

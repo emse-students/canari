@@ -36,6 +36,7 @@
     destinationRules,
     handsBackTake,
     formatTakeTime,
+    lensFlipAllowed,
     shutterRingFraction,
     SHUTTER_HOLD_THRESHOLD_MS,
     type CaptureDestination,
@@ -580,6 +581,7 @@
     {session}
     bind:capture={camera}
     {recording}
+    flipAllowed={lensFlipAllowed(capture)}
     paused={capture.kind === 'review'}
     {onBeforeRelease}
     {onclose}
