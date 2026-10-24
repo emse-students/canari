@@ -26,6 +26,7 @@ import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { PushService } from '../push/push.service';
 import { DAY_MS, REEL_RETENTION_DAYS } from './reel.constants';
 import { SINGLE_PHOTO_POST_SQL } from './single-photo-sql';
+import { republishedFeedAtSql } from './republished-feed-sql';
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
 const BLOB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -189,7 +190,9 @@ describe('reads exclude a reel past its month', () => {
         viewerUserId: 'alice',
       });
       const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
-      expect(sql).toContain(`ORDER BY posts."publishedAt" DESC, posts.id DESC`);
+      // The Associations feed places a carried post at its latest republication (viewer at $3).
+      const at = feed === 'associations' ? republishedFeedAtSql('$3') : 'posts."publishedAt"';
+      expect(sql).toContain(`ORDER BY ${at} DESC, posts.id DESC`);
       expect(sql).not.toContain('posts.pinned DESC');
     }
   });

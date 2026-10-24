@@ -45,6 +45,11 @@ import { CommentIdentityService } from './comment-identity';
 import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
 import {
+  inAssociationsFeedSql,
+  republishedFeedAtSql,
+  republishedForViewerSql,
+} from './republished-feed-sql';
+import {
   postVisibleToViewerSql,
   readInFeedAudience,
   type PostAccessIntent,
@@ -248,11 +253,15 @@ export class PostsService {
    * full-screen list would greet every reader with the same page. Every other list keeps its pinned
    * posts first. THE ORDER IS TOTAL: `id` breaks a tie of `publishedAt` (scheduled posts published
    * at the same instant), so an `OFFSET` page can neither repeat nor skip a row.
+   *
+   * `at` is the instant a row is placed at: its `publishedAt`, except in the Associations feed,
+   * and "Suivis", where a carried post sits at its latest counted republication
+   * (`republishedFeedAtSql`).
    */
-  private listOrderSql(kind: PostKind | undefined): string {
+  private listOrderSql(kind: PostKind | undefined, at = 'posts."publishedAt"'): string {
     return kind === 'reel'
-      ? `ORDER BY posts."publishedAt" DESC, posts.id DESC`
-      : `ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC`;
+      ? `ORDER BY ${at} DESC, posts.id DESC`
+      : `ORDER BY posts.pinned DESC, ${at} DESC, posts.id DESC`;
   }
 
   /**
@@ -1186,9 +1195,12 @@ export class PostsService {
   }
 
   /**
-   * Returns paginated posts for one of three feeds:
+   * Returns paginated posts for one of four feeds:
+   * - "associations": what associations publish or republish, a carried post at its latest
+   *   republication (`republished-feed-sql.ts`)
    * - "all": every post, pinned first
-   * - "followed": posts from associations and users the viewer follows
+   * - "followed": posts from associations and users the viewer follows, and what a followed
+   *   association republished, placed at that republication
    * - "custom": personal posts filtered by promo year and/or formation
    *
    * Non-admin viewers with a promo year set cannot see posts published before
@@ -1283,22 +1295,23 @@ export class PostsService {
 
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
-      // NO `blockedAuthorSql` HERE, and deliberately: every row in this feed is an association
-      // post, which that clause exempts by design, so emitting it would be a clause that can
-      // never be true. The comments underneath ARE filtered - they carry their author's name.
+      // What associations publish AND republish (`republished-feed-sql.ts`): a member's post an
+      // association carries is in it, so `blockedAuthorSql` applies as in every other arm - it
+      // exempts association and anonymous posts by itself.
       const bp = blockedAt(promoCutoff ? 4 : 3);
       rawPosts = await this.postRepo.manager.query(
         `SELECT ${this.postSelectBody(bp)}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
-       WHERE posts."associationId" IS NOT NULL
+       WHERE ${inAssociationsFeedSql(`$${3 + tail.length}`)}
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
          ${reelFilters}
          ${serviceAccountFilter}
+         ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
          ${visibleAt(3 + tail.length)}
-       ${this.listOrderSql(kind)}
+       ${this.listOrderSql(kind, republishedFeedAtSql(`$${3 + tail.length}`))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
@@ -1335,6 +1348,9 @@ export class PostsService {
          -- author's name removes, because the leak is membership, not the name.
          OR (posts."associationId" IS NULL AND posts."authorId" = ANY($4::text[])
              AND NOT posts.anonymous)
+         -- What a followed association REPUBLISHED (republished-feed-sql.ts), never anonymous.
+         OR (NOT COALESCE(posts.anonymous, false)
+             AND ${republishedForViewerSql(`$${5 + tail.length}`, '$3')})
        )
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
@@ -1343,7 +1359,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ${this.listOrderSql(kind)}
+       ${this.listOrderSql(kind, republishedFeedAtSql(`$${5 + tail.length}`, '$3'))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );

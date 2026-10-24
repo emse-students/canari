@@ -133,6 +133,12 @@ describe('the feed query', () => {
     }
     const feedSql = queries.filter((q) => q.includes('ORDER BY'));
     expect(feedSql.length).toBeGreaterThanOrEqual(3);
-    for (const q of feedSql) expect(q).toContain(`posts."publishedAt" DESC`);
+    for (const q of feedSql) {
+      // The page's own order is the LAST one (a comment window may order inside the select). The
+      // Associations feed reads `publishedAt` through its latest republication (`GREATEST`).
+      const order = q.slice(q.lastIndexOf('ORDER BY'));
+      expect(order).toContain(`posts."publishedAt"`);
+      expect(order).not.toContain('createdAt');
+    }
   });
 });
