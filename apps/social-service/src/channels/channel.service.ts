@@ -97,7 +97,8 @@ type DepartureReason =
   | 'account_deleted'
   | 'access_updated'
   | 'left_channel'
-  | 'removed_from_channel';
+  | 'removed_from_channel'
+  | 'invite_withdrawn';
 
 /** A cut whose first eviction began a departure on chat-delivery, with the name it answered. */
 interface BegunDeparture extends DepartureCut {
@@ -166,6 +167,24 @@ export const CHANNEL_SIGNATURE_REQUIRED = 'CHANNEL_SIGNATURE_REQUIRED';
  * nobody was cut off; the same edit may be retried against the new row.
  */
 export const CHANNEL_ACCESS_CHANGED = 'CHANNEL_ACCESS_CHANGED';
+
+/**
+ * 409 code: a departure that could not complete this time - its name was settled `cancelled` by the
+ * drain, or a private salon was granted since its first read. The person is still a member and a
+ * new departure may simply be tried again.
+ */
+export const DEPARTURE_SUPERSEDED = 'DEPARTURE_SUPERSEDED';
+
+/** How many departures {@link ChannelService.removeFromWorkspace} tries before surfacing the race. */
+const DEPARTURE_ATTEMPTS = 3;
+
+/** Whether `err` is a {@link DEPARTURE_SUPERSEDED} refusal - read from its code, never its prose. */
+function isDepartureSuperseded(err: unknown): boolean {
+  return (
+    err instanceof ConflictException &&
+    (err.getResponse() as { code?: unknown }).code === DEPARTURE_SUPERSEDED
+  );
+}
 
 /**
  * THE one rule for who may READ a channel, with no database in it.
@@ -624,7 +643,7 @@ export class ChannelService implements OnApplicationBootstrap {
                 `user=${b.userId.slice(0, 8)} departure=${b.departure} reason=${reason} - rolled back, retryable`
             );
             throw new ConflictException({
-              code: 'DEPARTURE_SUPERSEDED',
+              code: DEPARTURE_SUPERSEDED,
               message: 'The departure could not be completed, retry.',
             });
           }
@@ -1006,10 +1025,34 @@ export class ChannelService implements OnApplicationBootstrap {
    * group), and their membership row - one departure ({@link departDistributionGroups}). Shared by
    * leaving, being kicked and an account erasure, which are the same removal seen from three ends.
    *
+   * A {@link DEPARTURE_SUPERSEDED} race is retried here, up to {@link DEPARTURE_ATTEMPTS} departures,
+   * each reading the salons again; only a race that outlasts them reaches the caller.
+   *
    * @param guard a check re-run under the community removal lock before the roster write (a kick's
    *   removal bound); a refusal there abandons the departure
    */
   private async removeFromWorkspace(
+    workspaceId: string,
+    userId: string,
+    reason: DepartureReason,
+    guard?: (m: EntityManager) => Promise<void>
+  ): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.departFromWorkspace(workspaceId, userId, reason, guard);
+        return;
+      } catch (e) {
+        if (!isDepartureSuperseded(e) || attempt >= DEPARTURE_ATTEMPTS) throw e;
+        this.logger.warn(
+          `[KEY_DISTRIBUTION] departure superseded, retrying workspace=${workspaceId} ` +
+            `user=${userId.slice(0, 8)} reason=${reason} attempt=${attempt}/${DEPARTURE_ATTEMPTS}`
+        );
+      }
+    }
+  }
+
+  /** One attempt of {@link removeFromWorkspace}: the salons read now, then one departure. */
+  private async departFromWorkspace(
     workspaceId: string,
     userId: string,
     reason: DepartureReason,
@@ -1032,6 +1075,8 @@ export class ChannelService implements OnApplicationBootstrap {
       const late = (
         await m.getRepository(Channel).find({
           where: { workspaceId, isPrivate: true },
+          // ONE LOCK ORDER for salon rows, by id: a departure locking several must not cross another.
+          order: { id: 'ASC' },
           lock: { mode: 'pessimistic_write' },
         })
       ).filter((c) => (c.allowedUsers || []).includes(normalised) && !heldIds.has(c.id));
@@ -1041,7 +1086,7 @@ export class ChannelService implements OnApplicationBootstrap {
             `workspace=${workspaceId} user=${userId.slice(0, 8)} reason=${reason} salons=${late.length}`
         );
         throw new ConflictException({
-          code: 'DEPARTURE_SUPERSEDED',
+          code: DEPARTURE_SUPERSEDED,
           message: 'The departure could not be completed, retry.',
         });
       }
@@ -1097,10 +1142,13 @@ export class ChannelService implements OnApplicationBootstrap {
     await this.workspaceRepo.manager.transaction(async (mgr) => {
       if (groupIds.length > 0) await mgr.query(DELETE_GROUP_DEPARTURES_SQL, [groupIds]);
       await mgr.delete(ChannelMessage, { workspaceId });
+      // SALON ROWS BEFORE MEMBERSHIP ROWS, the order a private-salon grant locks them in
+      // (`grantPrivateChannelAccess`): the reverse is a deadlock cycle, and losing it here would
+      // abort a deletion whose distribution groups are already gone.
+      await mgr.delete(Channel, { workspaceId });
       await mgr.delete(ChannelMember, { workspaceId });
       await mgr.delete(ChannelRole, { workspaceId });
       await mgr.delete(WorkspaceInvite, { workspaceId });
-      await mgr.delete(Channel, { workspaceId });
       await mgr.delete(Workspace, { id: workspaceId });
     });
 
@@ -3345,8 +3393,16 @@ export class ChannelService implements OnApplicationBootstrap {
       if (channel.isPrivate) {
         const granted = await this.grantPrivateChannelAccess(channelId, input.targetUserId);
         // GONE: no event at all - announcing it would hand the private salon's name to the whole
-        // community as a public one. The community membership above stands.
-        if (granted.outcome === 'gone') throw new NotFoundException('Channel not found');
+        // community as a public one. The membership this call created is taken back through the one
+        // departure path (its admission voucher goes with the row), so nothing is left half-made.
+        if (granted.outcome === 'gone') {
+          await this.removeFromWorkspace(
+            channel.workspaceId,
+            input.targetUserId,
+            'invite_withdrawn'
+          );
+          throw new NotFoundException('Channel not found');
+        }
         // Removed since their row was written: nobody to announce to, and nothing granted.
         if (granted.outcome === 'not_member') {
           throw new ConflictException({
@@ -5791,6 +5847,8 @@ export class ChannelService implements OnApplicationBootstrap {
  * logical (the caller logs every failure at error level), everything else may pass by itself.
  */
 export function isTransientFailure(err: unknown): boolean {
+  // A departure race that outlasted its inline retries is still a race: the next attempt may pass.
+  if (isDepartureSuperseded(err)) return true;
   if (err instanceof HttpException) return err.getStatus() >= 500;
   // A programming error is deterministic: no retry fixes it, so it must not hide as a quiet 503.
   if (err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError) {

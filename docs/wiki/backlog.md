@@ -145,11 +145,14 @@ column they mean to write is `roleIds` itself, so they only race each other.
 
 ## P3 - Edges of the community removal lock, left by the review of #2284 (2026-10-24)
 
-- **A salon reorder and a removal can deadlock.** The reorder transaction writes several salon rows;
-  a kick's `stripFromChannels` locks the private salons it strips one by one, and
-  `hardDeleteWorkspace` deletes them, each in its own order. Two of them crossing two salons can
-  deadlock; PostgreSQL aborts one side, and an aborted departure settles `cancelled` cleanly, so the
-  cost is a refused request to retry. The fix is one lock order (salon rows by id) on all three.
+- **A salon reorder can deadlock with a departure or a community deletion.** A departure now locks
+  the community's private salons in one order (`ORDER BY id`) before the membership rows, and a grant
+  and `hardDeleteWorkspace` take salon rows before membership rows (the grant-vs-deletion cycle
+  #2284's review found is closed). Left: the reorder transaction writes several salon rows in the
+  order the client sent, and `hardDeleteWorkspace`'s bulk `DELETE` takes them in whatever order the
+  plan visits them, so either can cross a departure on two salons. PostgreSQL aborts one side
+  (`40P01`); an aborted departure settles `cancelled` and is retried inline, a reorder is answered
+  5xx. The fix is the same `ORDER BY id` lock (a `SELECT ... FOR UPDATE`) before each bulk write.
 - **`assertRemovalKeepsAnAdmin` is not asked again under the lock** (pre-existing): two admins
   kicking each other at the same moment both pass it and can leave a community with members and no
   admin. The fix is to re-ask it inside the kick's `guard`, reading the admin set `FOR SHARE`.

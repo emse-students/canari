@@ -1385,7 +1385,15 @@ join, the roles granting `workspace.manage`), so a grantee kicked or demoted sin
 gets nothing. An invitation into a salon deleted meanwhile answers `404` and announces nothing - a
 `public` event would hand the private salon's name to the community. A departure from the community
 re-reads its private salons row-locked in its roster write, and a salon granted since its first read
-(whose group it never cut) refuses it `409 DEPARTURE_SUPERSEDED`, retryable.
+(whose group it never cut) supersedes it. `removeFromWorkspace` retries such a departure inline, up to
+three, each from a fresh read; only a race that outlasts them answers `409 DEPARTURE_SUPERSEDED`,
+and an account erasure counts that answer as transient, so its queue retries instead of giving up.
+An invitation into a salon deleted meanwhile also takes back the membership it created (a departure
+with reason `invite_withdrawn`), so the `404` leaves nothing half-made.
+
+**Lock order.** Salon rows are locked before membership rows everywhere: the grant (salon, then the
+grantee's membership), a departure (all the community's private salons, `ORDER BY id`, then the
+membership delete), and `hardDeleteWorkspace` (salons deleted before memberships).
 
 Pinned by `removal-bound.integration.spec.ts` (PostgreSQL: the gate parked on an uncommitted role
 change through `pg_blocking_pids`, the removal lock, a rewrite raced by another, a flip computed

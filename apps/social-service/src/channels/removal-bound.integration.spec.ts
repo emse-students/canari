@@ -397,6 +397,12 @@ maybe('a removal against PostgreSQL', () => {
     ).outcome;
     expect(outcome).toBeInstanceOf(NotFoundException);
     expect(published).not.toHaveBeenCalled();
+    // And no half-made invitation: the membership the call created is taken back.
+    const rows: unknown[] = await q(
+      `SELECT 1 FROM channel_members WHERE "workspaceId" = $1 AND "userId" = 'invitee-gone'`,
+      [WS]
+    );
+    expect(rows).toHaveLength(0);
   });
 
   it('refuses an admin join when the admin was demoted while it was in flight', async () => {
@@ -422,10 +428,10 @@ maybe('a removal against PostgreSQL', () => {
     }
   });
 
-  it('refuses a kick when a private salon was granted to its target since its read', async () => {
+  it('retries a kick whose target was granted a private salon since its read, and completes', async () => {
     // Between the kick's read of the salons its target holds and its roster write, the target is
-    // granted another private salon. That salon's group was never cut, so the kick is refused whole
-    // and retryable, and the target stays a member rather than being left on a roster.
+    // granted another private salon, whose group that departure never cut. The departure is
+    // superseded, and the kick tries again from a fresh read - which takes the salon too.
     await member('granted-late', BASE_ROLE);
     const id = await salon(['owner']);
     beforeCall = {
@@ -435,13 +441,15 @@ maybe('a removal against PostgreSQL', () => {
       },
     };
     expect(await started(service.kickFromWorkspace(WS, 'granted-late', 'kicker')).outcome).toBe(
-      'DEPARTURE_SUPERSEDED'
+      'allowed'
     );
+    expect(beforeCall).toBeNull();
     const rows: unknown[] = await q(
       `SELECT 1 FROM channel_members WHERE "workspaceId" = $1 AND "userId" = 'granted-late'`,
       [WS]
     );
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(0);
+    expect(await allowedOn(id)).toEqual(['owner']);
   });
 
   it('refuses a private creation that leaves off someone who holds more than its creator', async () => {

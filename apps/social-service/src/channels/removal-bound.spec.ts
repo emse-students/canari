@@ -1,6 +1,11 @@
 import { ConflictException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { FindOperator, Repository } from 'typeorm';
-import { CHANNEL_ACCESS_CHANGED, ChannelService } from './channel.service';
+import {
+  CHANNEL_ACCESS_CHANGED,
+  ChannelService,
+  DEPARTURE_SUPERSEDED,
+  isTransientFailure,
+} from './channel.service';
 import { fakeDepartureManager } from './departure-transaction.fake-spec';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
@@ -333,6 +338,15 @@ describe('removals bounded by the actor', () => {
         NotFoundException
       );
       expect(memberRepo.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('an account erasure meeting a departure race', () => {
+    it('reads DEPARTURE_SUPERSEDED as transient, so the queue retries rather than gives up', () => {
+      const race = new ConflictException({ code: DEPARTURE_SUPERSEDED, message: 'retry' });
+      expect(isTransientFailure(race)).toBe(true);
+      // Any other refusal stays a refusal.
+      expect(isTransientFailure(new ConflictException({ code: 'SOMETHING_ELSE' }))).toBe(false);
     });
   });
 });
