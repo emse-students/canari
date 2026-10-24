@@ -148,7 +148,9 @@ pinned by `archive/campaign-selftest.mjs`):
 `campaign-private` salon, groups `campaign-g2`, `campaign-g4`, `campaign-big` - are built through
 the product by `bun campaign-fixtures.mjs --build` (plan step 2, after the pre-release); without
 `--build` it reads and reports what is owed. Each account needs a web seat in `names.mjs`
-(`ACCOUNT_OF`, `PORTS`; the plan puts third and fourth on W4/W5).
+(`ACCOUNT_OF`, `PORTS`; the plan puts third and fourth on W4/W5). Every group's missing members are
+added in ONE bulk Add (`addMembers`), the product's ordinary path, so a fixture's history is one
+commit per group and not one per member.
 
 ## Setting it up
 
@@ -1023,6 +1025,26 @@ hook on the current build: the epoch FINGERPRINT (epoch equality plus no fork li
 client's `pending_submission` (the commit log stands in), and the tree's LEAVES (the server's active
 device seats stand in). A collector that can read one passes it and the approximation goes away. It
 WRITES two messages into `--to`, so on dev it is pointed at a campaign-owned conversation only.
+`--to` may also be one name per device (a DM shows each side the other person).
+
+### The 1.4.1 row runners - `mlsrow.mjs`, `rowkit.mjs`, one table per group
+
+```sh
+bun archive/floor.mjs --row 1    # FLOOR-1, W1 W2
+bun archive/floor.mjs --row 2    # FLOOR-2, W1 W2 W4 W5 - a fresh FLOOR2-<mark> group, ONE bulk Add
+bun archive/floor.mjs --row 3    # FLOOR-3, + A1 I1, on FLOOR-2's last group (or --group <uuid>)
+bun archive/run.mjs FLOOR --repeat 5   # FLOOR-1 and FLOOR-2, five draws, through the preflight
+```
+
+A runner per row GROUP of section 4.2 (`archive/floor.mjs` first), each one table and one action per
+row. Everything else is shared: `mlsrow.mjs` opens and watches the seats a row names, mints the row's
+own group (`<GROUP><n>-<mark>`, recorded in the ledger with its id and swept by `debris.mjs`),
+asserts R5 ownership of every conversation the row writes in, and reads the server's view;
+`rowkit.mjs` (pure) composes the verdict - `INVALID` when the premise could not be built, `VACUOUS`
+when an armed fault never fired, `FAIL` on any own assertion or invariant, else `PASS` - and
+`recordObserved` then gates it on every seat's window, the deploy exclusion (R4) and the server window
+judged by the row id (R6). The invariant (R8) runs after every row, with its reload. A row's own
+judgements live in `<group>rows.mjs` (`floorrows.mjs`), pinned by `archive/floor-selftest.mjs`.
 
 ## Rules that make a result trustworthy
 

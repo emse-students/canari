@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-92 scripts.
+95 scripts.
 
 | script | what it is |
 |---|---|
@@ -53,6 +53,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `expectations.mjs` | THE PURE HALF OF A ROW'S VERDICT BOOKKEEPING: naming the expectations and preconditions it did not |
 | `fault.mjs` | MAKES A REQUEST LAND AND ITS ANSWER VANISH - the response-stage fault atom, over CDP `Fetch`. |
 | `fixtures.mjs` | WHERE A STAGED INPUT FILE LIVES - resolved from the HARNESS ROOT, never from the caller. |
+| `floorrows.mjs` | THE FLOOR ROWS OF THE 1.4.1 CAMPAIGN - their table and their own judgements, pure. |
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
 | `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of the estate's database instead (local or dev). |
 | `groupnav.mjs` | Opening a GROUP conversation by name, and proving the right one opened. |
@@ -69,6 +70,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `logs.mjs` | READS THE LOGS OF ONE SUBJECT - a web client, the phone, or the estate - and classifies them. |
 | `marker.mjs` | THE MARKER VOCABULARY: minting one, recognising one in rendered text, and decoding when it was |
 | `messages.mjs` | THE APP'S OWN FRENCH, READ FROM ITS MESSAGE FILE - and nothing else. |
+| `mlsrow.mjs` | THE KERNEL EVERY 1.4.1 ROW RUNNER STANDS ON - seats, ownership, the group a row mints, the reads. |
 | `names.example.mjs` | TEMPLATE for the ONE machine-local file this rig needs. Setting it up is two steps, because the |
 | `namesderive.mjs` | THE DERIVATIONS OVER THE MACHINE-LOCAL VALUES - committed, so they are reviewable and testable. |
 | `native-residue.mjs` | WHAT of a phone's account state is still on disk, as a classification of paths. |
@@ -88,6 +90,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `recv.mjs` | Waits for one message to ARRIVE on one client, and ends on the bubble rather than on a clock. |
 | `reload.mjs` | Reloads the web clients onto the CURRENTLY DEPLOYED bundle, and proves it took. |
 | `results.mjs` | Append-only result log for the campaign. |
+| `rowkit.mjs` | THE PURE HALF OF EVERY 1.4.1 ROW RUNNER - the names a row mints, and how its verdict is composed. |
 | `rows.mjs` | THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers |
 | `scriptpath.mjs` | WHERE ONE OF THIS RIG'S SCRIPTS ACTUALLY LIVES, resolved once instead of guessed four times. |
 | `seed-bench.mjs` | Tops the LOCAL estate up with what the verification rows need to look at: a feed long enough to |
@@ -130,7 +133,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-80 scripts.
+81 scripts.
 
 | script | what it is |
 |---|---|
@@ -164,6 +167,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/corrupt6.mjs` | CORRUPT-6 - a DAMAGED device-key vault: recover or fail loudly, never a decrypt loop. |
 | `archive/del.mjs` | DEL-2..10 - deleting a conversation while something else is still happening to it. |
 | `archive/del1.mjs` | DEL-1 - the peer deletes a group while the other side is awaiting its history. |
+| `archive/floor.mjs` | FLOOR-1..3 OF THE 1.4.1 CAMPAIGN - the floor re-proved on dev, before any other MLS row. |
 | `archive/fwd.mjs` | FWD-1 / FWD-2 - the WP-FWD-1 reproduction attempt, channel -> DM. |
 | `archive/fwd345.mjs` | FWD-3, FWD-4, FWD-5 - the three forward shapes WP-FWD-1 has not been tried against. |
 | `archive/fwd5.mjs` | FWD-5, isolated and repeated - the shape that just lost a forward. |
@@ -219,7 +223,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-48 scripts.
+49 scripts.
 
 | script | what it is |
 |---|---|
@@ -239,6 +243,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/expectations-selftest.mjs` | Pins `expectations.mjs`: an unarmed row (COMM-9/10's `VACUOUS` with `failures: []`) names every |
 | `archive/fault-live-selftest.mjs` | WHAT CHROME DOES WITH EACH FAULT, MEASURED AGAINST A SERVER THAT COUNTS - AND NO ESTATE AT ALL. |
 | `archive/fault-selftest.mjs` | THE RESPONSE-STAGE FAULT ATOM DECIDES WHAT IT SHOULD, AGAINST A FAKE CDP CONNECTION. |
+| `archive/floor-selftest.mjs` | THE FLOOR ROWS' OWN JUDGEMENTS AND THE VERDICT COMPOSITION EVERY 1.4.1 ROW SHARES, PINNED. |
 | `archive/gate-probe-selftest.mjs` | `pin.mjs`'s gate probe, exercised on the pages it has to tell apart. |
 | `archive/gate-selftest.mjs` | EVERY SELF-TEST IN THE CI GATE MUST BE IMPORTABLE ON A MACHINE THAT HAS NO RIG. |
 | `archive/identity-selftest.mjs` | Pins the two ways a client's identity can be misread, and the one way it must not pass quietly. |
@@ -325,4 +330,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-264 scripts in total.
+269 scripts in total.

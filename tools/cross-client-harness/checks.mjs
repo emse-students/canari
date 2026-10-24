@@ -442,6 +442,15 @@ export const PHASES = {
     ],
     needs: ['W1', 'W2'],
   },
+  // THE 1.4.1 FLOOR (`docs/wiki/cross-client-campaign-1-4-1.md` section 4.2), browsers only. FLOOR-3 is
+  // NOT here: it is class B (A1 and I1), its phone door is `openSeats` in `mlsrow.mjs`, which
+  // `checks-selftest.mjs` cannot see, and the plan runs it by hand on the bench -
+  // `bun archive/floor.mjs --row 3` with `A1_BUILD` set.
+  FLOOR: {
+    title: '1.4.1 - the floor re-proved on dev',
+    scripts: ['floor.mjs --row 1', 'floor.mjs --row 2'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
 };
 
 /**

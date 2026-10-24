@@ -159,8 +159,14 @@ impossible FAILS on it), the devices, the fault, the class and the cost of FIVE 
 | Id | Question | `PASS` entails | Devices | Class | Cost |
 | --- | --- | --- | --- | --- | --- |
 | FLOOR-1 | DM send both ways, then a reload, on the new build | one copy, < 2 s, right author; section 4.0 holds | W1 W2 | U | 10 min |
-| FLOOR-2 | Create `campaign-g4`, add three users' devices in one bulk Add | one commit, every device `active`, 4.0 holds | W1 W2 W4 W5 | U | 15 min |
-| FLOOR-3 | The same group seen from A1 and I1 | both decrypt, both at the same fingerprint | +A1 +I1 | B | 15 min |
+| FLOOR-2 | Create a fresh group the row mints (`FLOOR2-<mark>`), add three users' devices in one bulk Add | one commit, every device `active`, 4.0 holds | W1 W2 W4 W5 | U | 15 min |
+| FLOOR-3 | FLOOR-2's group seen from A1 and I1 | both decrypt, both at the same fingerprint | +A1 +I1 | B | 15 min |
+
+**FLOOR-2 does not create `campaign-g4`** (decided 2026-10-24): that fixture is built at step 2,
+before FLOOR, by an idempotent script, so a row pointed at it would observe a creation that already
+happened - and every FLOOR re-run after a product fix would observe none. The row mints its own group
+each draw and asks the bulk-Add question there; `campaign-g4` stays the fixture the later rows stand
+on, built by the same single bulk Add. Runner: `tools/cross-client-harness/archive/floor.mjs`.
 
 #### CC - concurrent commits
 

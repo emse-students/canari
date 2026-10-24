@@ -26,6 +26,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { isGroupDebris } from '../debris.mjs';
 import { mark } from '../marker.mjs';
+import { ROW_GROUPS, rowGroupName, rowMessageMark } from '../rowkit.mjs';
 
 const problems = [];
 const swept = (name, why) => {
@@ -62,6 +63,13 @@ swept(`N17B-${mark('G').split('-')[1]}`, 'notif17b.mjs:137');
 // throwaway has that a sweep may delete.
 swept(`SBXORD-${mark('G').split('-')[1]}`, 'newgroup.mjs --sandbox ORD');
 swept(`SBX7-${mark('G').split('-')[1]}`, 'newgroup.mjs --sandbox 7');
+// mlsrow.mjs `mintRowGroup` -> `rowGroupName(rowId)` (rowkit.mjs), one per 1.4.1 row group, built by
+// the minting expression itself. The row's MESSAGE markers must stay out (a preview is not a group).
+for (const g of ROW_GROUPS) swept(rowGroupName(`${g}-1`), `mlsrow.mjs mintRowGroup for ${g}-1`);
+swept(rowGroupName('FLOOR-12'), 'a two-digit row number');
+spared(rowMessageMark('FLOOR-1', 'A'), 'a 1.4.1 row MESSAGE marker, never a group name');
+spared(rowMessageMark('CC-3', 'B'), 'idem');
+spared(`FLOOR-${Date.now().toString(36)}`, 'the row id with its dash is not a minted group');
 
 // ------------------------------------------------- and the blind spot that let N17B in, closed
 //
@@ -85,6 +93,7 @@ const MINTERS = new Set([
   'archive/read.mjs', // READ10-<base36>          -> /^READ10-.../
   'newgroup.mjs', // HEALW2-<base36>, or --name (a person's, deliberately unswept)
   'campaign-fixtures.mjs', // campaign-g2/-g4/-big: EQUIPMENT, deliberately unswept (spared below)
+  'mlsrow.mjs', // rowGroupName(rowId) = FLOOR2-<tail> -> /^(FLOOR|CC|...)\d+-.../
 ]);
 // `groupnav.mjs` DEFINES it and `atoms.mjs` re-exports it; neither names a group. This file quotes
 // the call in its own message.
