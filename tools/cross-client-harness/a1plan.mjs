@@ -144,7 +144,33 @@ export function linkModuleOf(source) {
         'checked this way; re-read the module before allowing anything'
     );
   }
-  return { origins, hosts };
+  const defaultOrigin = source.match(/export const DEFAULT_PUBLIC_APP_ORIGIN = '([^']+)'/)[1];
+  return { origins, hosts, defaultOrigin };
+}
+
+/** The root layout, relative to `frontend/` - where the dead push fallback lived until #2385. */
+export const LAYOUT_MODULE = 'src/routes/+layout.svelte';
+
+/**
+ * Whether a tree's root layout still starts the push service with the production fallback
+ * `historyBaseUrl || DEFAULT_PUBLIC_APP_ORIGIN` - true of every tag before #2385, false after.
+ * `--accept-dead-production-literal` is refused for a tree where this is false: there is nothing to
+ * accept, so the flag could only ever widen the check.
+ *
+ * @param {string} layoutSource the text of `LAYOUT_MODULE`
+ */
+export const carriesDeadPushFallback = (layoutSource) => /historyBaseUrl\s*\|\|\s*DEFAULT_PUBLIC_APP_ORIGIN\b/.test(layoutSource);
+
+/** The name an accepted dead literal is recorded under, in the build record and the console. */
+export const DEAD_PUSH_FALLBACK = 'push-service-fallback';
+
+/**
+ * Whether the occurrence at `[start, end)` of `text` is the compiled push fallback: the canonical
+ * origin as a whole template or string literal, right after `.historyBaseUrl||` and right before the
+ * `,` that ends `startPushService`'s first argument. Exactly that shape and nothing near it.
+ */
+function isPushFallbackAt(text, start, end, literal, defaultOrigin) {
+  return literal === defaultOrigin && text.slice(0, start - 1).endsWith('.historyBaseUrl||') && text[end + 1] === ',';
 }
 
 /**
@@ -180,15 +206,23 @@ export function linkChunkOf(chunks, hosts) {
  * imported binding - that is why the build ENVIRONMENT is checked at its source too
  * (`buildEnvVerdict`) and why the one such use was removed from the product (#2385).
  *
+ * ONE EXPLICIT ACCEPTANCE, for old refs only (`--accept-dead-production-literal`, decided
+ * 2026-10-24 for the floor/old-client rows ADM-5..7): `acceptPushFallback` lets through ONE
+ * occurrence of the compiled push fallback (`.historyBaseUrl||"<canonical origin>",`) and nothing
+ * else - every other production spelling, in every chunk, stays refused. It is never implied.
+ *
  * @param {{name: string, text: string}[]} chunks every packaged JS file (chunks, nodes, entry)
  * @param {string} origin the estate's origin
- * @param {{origins: string[], chunk: string} | null} [link] the link constants and their chunk; none allowed when null
+ * @param {{origins: string[], chunk: string, defaultOrigin?: string} | null} [link] the link constants and their chunk; none allowed when null
+ * @param {{acceptPushFallback?: boolean}} [options]
  */
-export function bundleTargetVerdict(chunks, origin, link = null) {
+export function bundleTargetVerdict(chunks, origin, link = null, { acceptPushFallback = false } = {}) {
+  if (acceptPushFallback && !link?.defaultOrigin) throw new Error('bundleTargetVerdict: accepting the push fallback needs the link module\'s DEFAULT origin');
   const hits = chunks.filter((c) => c.text.includes(origin)).map((c) => c.name);
   const all = new RegExp(PRODUCTION_ORIGIN_SOURCE, 'gi');
   const production = [];
   const links = [];
+  const accepted = [];
   for (const c of chunks) {
     for (const m of c.text.matchAll(all)) {
       const before = c.text[m.index - 1];
@@ -196,11 +230,14 @@ export function bundleTargetVerdict(chunks, origin, link = null) {
       if (c.text[end] === '/') end++;
       const isWholeLiteral = ['"', "'", '`'].includes(before) && c.text[end] === before;
       const isLink = link !== null && c.name === link.chunk && isWholeLiteral && link.origins.includes(m[0]);
+      const isAccepted =
+        acceptPushFallback && accepted.length === 0 && isWholeLiteral && isPushFallbackAt(c.text, m.index, end, c.text.slice(m.index, end), link.defaultOrigin);
       if (isLink) links.push(`${c.name}: ${c.text.slice(m.index, end)}`);
+      else if (isAccepted) accepted.push(`${c.name}: ${c.text.slice(Math.max(0, m.index - 19), end + 2)}`);
       else production.push(`${c.name}: ${c.text.slice(m.index, Math.min(c.text.length, end + 20))}`);
     }
   }
-  return { ok: hits.length > 0 && production.length === 0, hits, production, links };
+  return { ok: hits.length > 0 && production.length === 0, hits, production, links, accepted };
 }
 
 

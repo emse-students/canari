@@ -391,7 +391,18 @@ constant; the bundler inlined both into the layout's node, which is where the fi
 them. #2385 removed the fallback and made every consumer call a function of that module, so a
 production literal anywhere else is a real target again and is refused. A dev APK therefore builds
 only from a tree carrying #2385, and a `--ref` older than it (v1.4.0 included) is REFUSED for that
-fallback - which is the right answer: that client really can call production. A tag predating the
+fallback - which is the right answer: that client really can call production.
+**`--accept-dead-production-literal` IS THE ONE EXCEPTION, FOR THE FLOOR/OLD-CLIENT ROWS ADM-5..7
+ONLY (decided 2026-10-24)**. It is never a default and nothing implies it. It is accepted only with
+`--build-only --ref <tag>`, and only for a ref whose layout still carries the fallback; on any tree
+carrying #2385 it is refused, since there is nothing to accept. It lets through exactly ONE
+occurrence of the compiled push fallback (`.historyBaseUrl||"<canonical origin>",`). Every other
+production spelling, in every chunk, stays refused. Why the fallback may be accepted:
+- A signed-in dev build always has `historyBaseUrl` set (it is the baked delivery URL), so the
+  fallback is unreachable.
+- The worst case is an old client sending a DEV token to production, which refuses it.
+The acceptance is written into the build's `a1-builds.ndjson` record (`acceptedDeadProductionLiteral`,
+the occurrence and the ref), and a `--no-build` install of that APK prints it. A tag predating the
 constants themselves cannot be checked at all, and `linkModuleOf` says so rather than guessing.
 The build ENVIRONMENT is checked before the build: no `VITE_*` value in the process or an
 unoverridden `frontend/.env*` line (`export VITE_X=` included) may name production, because the

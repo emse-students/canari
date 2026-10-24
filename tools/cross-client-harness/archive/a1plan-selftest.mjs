@@ -18,6 +18,7 @@ import {
   a1BuildPlan,
   buildEnvVerdict,
   bundleTargetVerdict,
+  carriesDeadPushFallback,
   installVerdict,
   isBuildableRef,
   linkChunkOf,
@@ -108,6 +109,28 @@ ok('www. is not a link constant and is refused', refusedIn('"https://www.canari-
 ok('plain http, ws and protocol-relative spellings are refused', refusedIn('"http://canari-emse.fr"') && refusedIn('"ws://canari.emse.fr"') && refusedIn('"//canari-emse.fr"'));
 ok('upper case and a trailing dot are refused', refusedIn('"HTTPS://CANARI-EMSE.FR"') && refusedIn('"https://canari.emse.fr."'));
 ok("dev's own host and bare hostnames are not production origins", bundleTargetVerdict([chunk('Dypz5d_W.js', MEASURED), chunk('x.js', `"${DEV}" "//dev.canari-emse.fr" "canari-emse.fr"`)], DEV, LINK).ok);
+
+// ── --accept-dead-production-literal: the push fallback of an OLD ref, and nothing else (ADM-5..7) ──
+// The shape v1.4.0's layout node compiled to (nodes/0.C1Q5cC68.js, measured 2026-10-24).
+const PUSH = 'Dt(Y.historyBaseUrl||`https://canari.emse.fr`,Y.authToken,Y.myDeviceId)';
+const ACCEPT = { acceptPushFallback: true };
+const LINKD = { ...LINK, defaultOrigin: MODULE.defaultOrigin };
+const withPush = [chunk('Dypz5d_W.js', MEASURED), chunk('nodes/0.js', `"${DEV}";${PUSH}`)];
+ok('the link module names its DEFAULT origin, which is the only literal the acceptance can match', MODULE.defaultOrigin === 'https://canari.emse.fr');
+ok('the push fallback is REFUSED without the flag', !bundleTargetVerdict(withPush, DEV, LINKD).ok);
+{
+  const v = bundleTargetVerdict(withPush, DEV, LINKD, ACCEPT);
+  ok('with the flag the push fallback passes, and is listed as accepted', v.ok && v.accepted.length === 1 && /historyBaseUrl\|\|`https:\/\/canari\.emse\.fr`,/.test(v.accepted[0]));
+}
+const stillRefused = (text) => !bundleTargetVerdict([...withPush, chunk('x.js', text)], DEV, LINKD, ACCEPT).ok;
+ok('with the flag, the legacy-apex comparison v1.4.0 ALSO carries is still refused', stillRefused('return e&&e!==`https://canari-emse.fr`?e:G'));
+ok('with the flag, a second push-shaped literal is refused (one acceptance, not a pattern)', stillRefused('Q(Y.historyBaseUrl||`https://canari.emse.fr`,a)'));
+ok('with the flag, the canonical origin after another `||` is refused', stillRefused('f(Y.baseUrl||`https://canari.emse.fr`,a)'));
+ok('with the flag, the legacy name in the push shape is refused', !bundleTargetVerdict([chunk('Dypz5d_W.js', MEASURED), chunk('n.js', `"${DEV}";Dt(Y.historyBaseUrl||\`https://canari-emse.fr\`,a)`)], DEV, LINKD, ACCEPT).ok);
+ok('with the flag, a socket or a path in the push shape is refused', stillRefused('Dt(Y.historyBaseUrl||`wss://canari.emse.fr`,a)') && stillRefused('Dt(Y.historyBaseUrl||`https://canari.emse.fr/api`,a)'));
+ok('the flag needs the DEFAULT origin, and says so', throws(() => bundleTargetVerdict(withPush, DEV, LINK, ACCEPT)) !== null);
+ok('an OLD layout carries the fallback', carriesDeadPushFallback('startPushService(\n  globalSession.historyBaseUrl || DEFAULT_PUBLIC_APP_ORIGIN,'));
+ok("this tree's layout does not (#2385), so the flag has nothing to accept here", !carriesDeadPushFallback('startPushService(globalSession.historyBaseUrl, x)'));
 
 // ── an APK installed without a build carries a recorded verdict: same sha256, same origin, passed ──
 const REC = [{ apkSha256: 'aa', origin: DEV, bundleOk: true, recordedAt: 't1' }, { apkSha256: 'bb', origin: LOCAL, bundleOk: true, recordedAt: 't2' }];

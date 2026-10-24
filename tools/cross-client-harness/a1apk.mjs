@@ -7,6 +7,7 @@
  *   bun a1apk.mjs --release     # the MINIFIED, resource-shrunk build for check R - COSTS THE DEVICE
  *   bun a1apk.mjs --build-only  # build and assert the artifact; touch no phone, not even adb
  *   bun a1apk.mjs --build-only --ref v1.4.0   # an OLD client, built from that tag in its own worktree
+ *   bun a1apk.mjs --build-only --ref v1.4.0 --accept-dead-production-literal   # ADM-5..7 only, see the README
  *
  * **THE ESTATE DECIDES THE BUILD (R2, 2026-10-24)**, through `a1plan.mjs`: the local estate gets the
  * `adb reverse` and the `local-estate` overlay described below; DEV (`https://dev.canari-emse.fr`)
@@ -65,10 +66,13 @@ import { join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import {
+  DEAD_PUSH_FALLBACK,
+  LAYOUT_MODULE,
   LINK_MODULE,
   a1BuildPlan,
   buildEnvVerdict,
   bundleTargetVerdict,
+  carriesDeadPushFallback,
   installVerdict,
   isBuildableRef,
   linkChunkOf,
@@ -255,6 +259,7 @@ export async function armA1({
   release = false,
   buildOnly = false,
   ref = null,
+  acceptDeadProductionLiteral = false,
 } = {}) {
   const plan = planFor(release);
   if (ref && !buildOnly) {
@@ -262,6 +267,10 @@ export async function armA1({
       '--ref builds an OLD client for a mixed-version row and installs nothing - pass --build-only, ' +
         'then install that APK when the row says so'
     );
+  }
+  // FOR OLD REFS ONLY, AND NEVER IMPLIED (decided 2026-10-24 for ADM-5..7): see the README.
+  if (acceptDeadProductionLiteral && !(buildOnly && ref)) {
+    throw new Error('--accept-dead-production-literal is for an OLD client only: pass it with --build-only --ref <tag>');
   }
   // BINDS THE NAMED PHONE ITSELF, defaulting to the one this atom is named for.
   //
@@ -303,6 +312,11 @@ export async function armA1({
       (PORT ? ' - the same string on both sides of the reverse' : " - reached over the phone's radios, no reverse")
   );
   const tree = ref ? refTree(ref, TAG) : { frontend: FRONTEND, repo: REPO };
+  // A REF THAT NO LONGER CARRIES THE FALLBACK (#2385 and later) HAS NOTHING TO ACCEPT, so the flag
+  // is refused there rather than left to widen a check it cannot narrow to anything.
+  if (acceptDeadProductionLiteral && !carriesDeadPushFallback(readFileSync(join(tree.frontend, LAYOUT_MODULE), 'utf8'))) {
+    throw new Error(`--accept-dead-production-literal refused: ${ref}'s ${LAYOUT_MODULE} carries no push-service production fallback to accept`);
+  }
 
   // THE RELEASE VARIANT IS FOR CHECK R AND COSTS THE DEVICE, which is why it is a flag and not a
   // default. `isMinifyEnabled` and `isShrinkResources` are on for this build type ALONE, so it is
@@ -404,12 +418,15 @@ export async function armA1({
           .map((name) => ({ name: name.split(sep).join('/'), text: readFileSync(join(immutable, name), 'utf8') }))
       : [];
     const linkModule = linkModuleOf(readFileSync(join(tree.frontend, LINK_MODULE), 'utf8'));
-    const link = { origins: linkModule.origins, chunk: linkChunkOf(texts, linkModule.hosts) };
-    const verdict = bundleTargetVerdict(texts, plan.origin, link);
+    const link = { origins: linkModule.origins, chunk: linkChunkOf(texts, linkModule.hosts), defaultOrigin: linkModule.defaultOrigin };
+    const verdict = bundleTargetVerdict(texts, plan.origin, link, { acceptPushFallback: acceptDeadProductionLiteral });
     console.log(
       `[${TAG}] ${plan.origin} appears in ${verdict.hits.length} packaged chunk(s), a production origin in ` +
         `${verdict.production.length}; ${verdict.links.length} production LINK constant(s) of ${LINK_MODULE} tolerated`
     );
+    for (const a of verdict.accepted) {
+      console.log(`[${TAG}] ACCEPTED by --accept-dead-production-literal (${DEAD_PUSH_FALLBACK}, old ref ${ref}): ${a}`);
+    }
     if (!verdict.hits.length) {
       throw new Error(
         `the built bundle does not mention ${plan.origin} - Vite did not take the VITE_*_URL from the ` +
@@ -429,7 +446,10 @@ export async function armA1({
     // dirty build would make the fix-and-measure loop impossible. See `apkbuild.mjs`.
     // AND WHICH ARTEFACT, FOR WHICH ESTATE, PASSED: an install without a build (`--no-build`) is
     // allowed only for an APK whose sha256 is recorded here for this origin (`installVerdict`).
-    const provenance = recordApkBuild(tree.repo, { apkSha256: sha256Of(APK), origin: plan.origin, estate: plan.estate, ref, bundleOk: true });
+    // AN ACCEPTANCE IS PART OF THE VERDICT, so it is written beside it: a reader of this record must
+    // see that the bundle passed only because a dead production literal was accepted, and where.
+    const acceptance = verdict.accepted.length ? { acceptedDeadProductionLiteral: DEAD_PUSH_FALLBACK, accepted: verdict.accepted } : {};
+    const provenance = recordApkBuild(tree.repo, { apkSha256: sha256Of(APK), origin: plan.origin, estate: plan.estate, ref, bundleOk: true, ...acceptance });
     console.log(
       `[${TAG}] built from ${provenance.head}` +
         (provenance.dirty
@@ -465,6 +485,9 @@ export async function armA1({
     const v = installVerdict(apkBuilds(), sha, plan.origin);
     if (!v.ok) throw new Error(`--no-build refuses ${APK} (sha256 ${sha.slice(0, 12)}): ${v.why}. Build it with bun a1apk.mjs.`);
     console.log(`[${TAG}] --no-build: this APK's bundle passed for ${plan.origin} when it was built (${v.record.recordedAt})`);
+    if (v.record.acceptedDeadProductionLiteral) {
+      console.log(`[${TAG}] --no-build: it passed WITH an accepted dead production literal (${v.record.acceptedDeadProductionLiteral}, ref ${v.record.ref}) - an old-client row only`);
+    }
   }
   console.log(`[${TAG}] installing ${APK}`);
   const before = adb(['shell', 'dumpsys', 'package', PKG]);
@@ -577,6 +600,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     reverseOnly: argv.includes('--reverse'),
     release: argv.includes('--release'),
     buildOnly: argv.includes('--build-only'),
+    acceptDeadProductionLiteral: argv.includes('--accept-dead-production-literal'),
     device,
   }).catch(
     (e) => {
