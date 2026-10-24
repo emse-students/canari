@@ -16,7 +16,8 @@ import type { DeviceMembershipRow, UserGroupRow } from '$lib/mls-client/IMlsServ
  *   the base and every commit - and a new person enters only by a member's Add (decided 2026-10-23,
  *   docs/wiki/protocols/mls-protocol.md, "Who admits a new person"). So the device waits and asks a
  *   member, exactly as for `owed`; it is told so here instead of learning it from a refusal. It
- *   wins over every other fact, whatever the row's status says.
+ *   wins over every other fact of a row that is not `active`; an `active` row is in the tree - a
+ *   Welcome admitted it - so the flag says nothing there and the row reads `not-pending`.
  *
  * ONE READING FOR EVERY DOOR THAT ASKS IT, and there are two: the conversation recovery seam
  * (`requestReAdd`) and the Graine key-group join (`ensureDistributionGroupFor`), which since
@@ -31,7 +32,7 @@ export type WelcomeOwedReading = 'owed' | 'awaiting-admission' | 'unhonoured-sea
 
 /** Classifies one membership row; see {@link WelcomeOwedReading}. PURE. */
 export function readWelcomeOwedFromRow(row: DeviceMembershipRow | undefined): WelcomeOwedReading {
-  if (row?.awaitingAdmission === true) return 'awaiting-admission';
+  if (row?.awaitingAdmission === true && row.status !== 'active') return 'awaiting-admission';
   if (row?.status !== 'pending') return 'not-pending';
   if (row.welcomeQueued === undefined && row.addInFlight === undefined) return 'owed';
   return row.welcomeQueued === true || row.addInFlight === true ? 'owed' : 'unhonoured-seat';

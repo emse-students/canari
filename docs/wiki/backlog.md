@@ -56,8 +56,11 @@ group link's automatic admission (the server holds a link joiner outside, `await
 member's Add); and an entry no member made is written in the conversation and reported
 (`[UNINVITED_ENTRY]`, with its `kind`) - see
 [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Owed: migration 038
-deployed with the build; the `[UNINVITED_ENTRY] kind=new-person` count on production once the build
-serves both stores; and a second step on the receiving side (private operations notes).
+deployed with the build; the `minClientVersion` floor at this build, since a member client older
+than the rule still auto-Adds a link joiner and "only by a member" holds only from that floor
+([legacy-compatibility](legacy-compatibility.md)); the `[UNINVITED_ENTRY] kind=new-person` count on
+production once the build serves both stores; and a second step on the receiving side (private
+operations notes).
 
 ## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
 

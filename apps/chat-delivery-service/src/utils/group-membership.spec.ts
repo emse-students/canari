@@ -118,6 +118,18 @@ describe('ensureGroupMember', () => {
       groupId: 'g-1',
       userId: 'alice',
       role: 'member',
+      // Only an invitation link's acceptance writes a seat that awaits a member's admission.
+      awaitingAdmission: false,
+    });
+  });
+
+  it("writes an invitation link's seat as awaiting a member's admission", async () => {
+    const { manager, inserts } = managerWithRecorder();
+
+    await ensureGroupMember(manager, 'g-1', 'alice', { awaitingAdmission: true });
+
+    expect(inserts.find((i) => i.target === GroupMember)?.values).toMatchObject({
+      awaitingAdmission: true,
     });
   });
 

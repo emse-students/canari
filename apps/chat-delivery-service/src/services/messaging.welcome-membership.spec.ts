@@ -64,6 +64,8 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   const txReads: string[] = [];
   // The target's roster seat as the store's transaction re-reads it, under a lock.
   const txSeat = jest.fn();
+  // The lift of `awaitingAdmission` the store makes for the Welcome's target.
+  const txLift = jest.fn();
   type EvictionRow = { generation: number; owedDeparture: number | null };
   /** A key-group target's `dm_seat_evictions` row when its claim is taken, before the store. */
   let claimRow: EvictionRow | null;
@@ -99,6 +101,11 @@ describe('MessagingService - sendWelcome does not touch membership status or the
             findOne: jest.fn(async (q: unknown) => {
               txReads.push('seat');
               return txSeat(q);
+            }),
+            // The store lifts the invitation-link ask its Welcome answers.
+            update: jest.fn(async (where: unknown, set: unknown) => {
+              txReads.push('lift');
+              return txLift(where, set);
             }),
           };
         }
@@ -180,6 +187,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     jest.clearAllMocks();
     txReads.length = 0;
     txSeat.mockResolvedValue({ id: 'm-u2' });
+    txLift.mockResolvedValue({ affected: 0 });
     claimRow = null;
     txEvictionRow = null;
     txKeyPackage = true;
@@ -251,7 +259,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
 
     expect(txSeat).toHaveBeenCalledWith({
       where: { groupId: 'g1', userId: 'u2' },
-      lock: { mode: 'pessimistic_read' },
+      lock: { mode: 'pessimistic_write' },
     });
     expect(txReads).toEqual([
       'seat-lock-shared',
@@ -260,7 +268,30 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       'key-package',
       'save',
       'pending-row',
+      // The invitation-link ask its Welcome answers, lifted in the same transaction.
+      'lift',
     ]);
+  });
+
+  /**
+   * A WELCOME STORED BY AN ADMITTED MEMBER ADMITS ITS TARGET: the ask an invitation link wrote is
+   * lifted with it, whatever client sent it - one older than `admits` declares nobody in its commit,
+   * and this is the one door that still sees its Add.
+   */
+  it("lifts the target's invitation-link ask, guarded on the flag, in the store's transaction", async () => {
+    txLift.mockResolvedValueOnce({ affected: 1 });
+
+    await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+
+    expect(txLift).toHaveBeenCalledTimes(1);
+    const [where, set] = txLift.mock.calls[0] as [
+      { groupId: string; userId: { value: string[] }; awaitingAdmission: boolean },
+      unknown,
+    ];
+    expect(where.groupId).toBe('g1');
+    expect(where.awaitingAdmission).toBe(true);
+    expect(where.userId.value).toEqual(['u2']);
+    expect(set).toEqual({ awaitingAdmission: false });
   });
 
   /**
@@ -491,10 +522,12 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       expect(queuedSave).not.toHaveBeenCalled();
     });
 
-    it('still asks dm_group_members for an ordinary conversation', async () => {
+    it('still asks dm_group_members for an ordinary conversation - an ADMITTED seat only', async () => {
       await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+      // A seat still awaiting a member decides nothing: its holder Welcoming a device of their own
+      // would lift their own ask.
       expect(groupMemberRepo.findOne).toHaveBeenCalledWith({
-        where: { groupId: 'g1', userId: 'u1' },
+        where: { groupId: 'g1', userId: 'u1', awaitingAdmission: false },
       });
     });
 

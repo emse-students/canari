@@ -6,6 +6,7 @@ import {
   BadRequestException,
   ForbiddenException,
   GoneException,
+  Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { FindOperator, IsNull } from 'typeorm';
@@ -144,6 +145,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     delete: jest.fn(),
     create: jest.fn(),
     upsert: jest.fn().mockResolvedValue(undefined),
+    // Active devices of a person whose seat awaits a member: none unless a case says so.
+    count: jest.fn().mockResolvedValue(0),
   };
   // The addressability guard (WP-GHOST-1): a device may only be promoted to `active` if it is not
   // on the revocation denylist AND still has a static KeyPackage. Both default to "device exists",
@@ -981,6 +984,25 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
       });
       expect(transaction).not.toHaveBeenCalled();
+    });
+
+    /**
+     * AN ACTIVE DEVICE IS IN THE TREE WHATEVER THE FLAG SAYS. A member whose flag outlived their
+     * admission (a Welcome that reached them past the lift) must not be refused every commit for good.
+     */
+    it('accepts a commit from an ACTIVE device under a seat still flagged awaiting, and accuses the state', async () => {
+      tables({
+        keyPackages: [ownKey],
+        devices: [ownDevice],
+        roster: [{ groupId: 'group-1', userId: 'user-1', awaitingAdmission: true }],
+      });
+      deviceGroupRepo.count.mockResolvedValueOnce(1);
+      fanOut();
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      await expect(commit({}, 'user-1')).resolves.toMatchObject({ accepted: true });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('[ADMISSION]'));
+      error.mockRestore();
     });
 
     /**
@@ -1896,7 +1918,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         await expect(withWelcome()).resolves.toEqual({ accepted: true, newEpoch: 6 });
         expect(txSeatRepo.findOne).toHaveBeenCalledWith({
           where: { groupId: 'group-1', userId: 'user-2' },
-          lock: { mode: 'pessimistic_read' },
+          lock: { mode: 'pessimistic_write' },
         });
         expect(txGroupFind.mock.invocationCallOrder[0]).toBeLessThan(
           txSeatRepo.findOne.mock.invocationCallOrder[0]
@@ -1904,6 +1926,34 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         expect(txSeatRepo.findOne.mock.invocationCallOrder[0]).toBeLessThan(
           groupUpdate.mock.invocationCallOrder[0]
         );
+      });
+
+      /**
+       * A CLIENT OLDER THAN `admits` STILL ADMITS BY ITS WELCOME. Its commit declares nobody, so the
+       * ask is lifted for the Welcome's target - without it the joiner turned active under a flag
+       * nothing would ever clear, and every commit of theirs was refused.
+       */
+      it("lifts the invitation-link ask of the Welcome's target, with no `admits` declared", async () => {
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        fanOut();
+        txSeatRepo.update.mockResolvedValueOnce({ affected: 1 });
+
+        await expect(commit({ welcome }, 'user-1')).resolves.toEqual({
+          accepted: true,
+          newEpoch: 6,
+        });
+        expect(txSeatRepo.update).toHaveBeenCalledTimes(1);
+        const [where, set] = txSeatRepo.update.mock.calls[0] as [
+          { groupId: string; userId: FindOperator<string[]>; awaitingAdmission: boolean },
+          unknown,
+        ];
+        expect(where.awaitingAdmission).toBe(true);
+        expect(where.userId.value).toEqual(['user-2']);
+        expect(set).toEqual({ awaitingAdmission: false });
       });
 
       it('refuses the whole commit when the seat is gone by the time the transaction reads it', async () => {

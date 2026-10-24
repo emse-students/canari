@@ -17,6 +17,7 @@ vi.mock('$lib/utils/hex', () => ({
 import type { Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
+import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { handleWelcomeRequest } from './actions';
 import type { BulkAdditionOutcome } from './groupCreation';
 import { admitJoinRequest, declineJoinRequest, type JoinAnswerDeps } from './joinAnswers';
@@ -53,8 +54,28 @@ function conversations(conversationType?: Conversation['conversationType']) {
   ]);
 }
 
+/**
+ * What the delivery service holds for the joiner's seat, shared by both ends as the real server is:
+ * the link writes it awaiting, a member's Add stores a Welcome (which lifts the flag), the joiner's
+ * device reports itself active once it processed that Welcome, and a Decline withdraws the seat only
+ * while it still awaits.
+ */
+interface FakeSeat {
+  exists: boolean;
+  awaitingAdmission: boolean;
+  status: 'pending' | 'active';
+  welcomeQueued: boolean;
+}
+
+function linkSeat(): FakeSeat {
+  return { exists: true, awaitingAdmission: true, status: 'pending', welcomeQueued: false };
+}
+
 /** The member's side: a tree that holds `leaves`, and an Add that puts the joiner in it. */
-function memberSide(opts: { addOutcome?: BulkAdditionOutcome; leaves?: string[] } = {}) {
+function memberSide(
+  opts: { addOutcome?: BulkAdditionOutcome; leaves?: string[]; seat?: FakeSeat } = {}
+) {
+  const seat = opts.seat ?? linkSeat();
   const leaves = [...(opts.leaves ?? ['me:self', 'peer:p1'])];
   const mlsService = createMlsServiceStub({
     getGroupMeta: vi.fn().mockResolvedValue({ name: 'Club', isGroup: true }),
@@ -63,14 +84,25 @@ function memberSide(opts: { addOutcome?: BulkAdditionOutcome; leaves?: string[] 
       .fn()
       .mockResolvedValue([{ deviceId: JOINER_DEVICE, keyPackage: new Uint8Array([7]) }]),
     getGroupMemberIdentities: vi.fn(async () => [...leaves]),
-    removeMemberFromServer: vi.fn().mockResolvedValue(undefined),
+    // The server's guarded withdrawal: only a seat that still awaits a member.
+    declineJoinRequest: vi.fn(async () => {
+      if (!seat.exists) return 'gone' as const;
+      if (!seat.awaitingAdmission) return 'already-admitted' as const;
+      seat.exists = false;
+      return 'withdrawn' as const;
+    }),
   });
   const outcome: BulkAdditionOutcome = opts.addOutcome ?? {
     kind: 'added',
     addedUsers: [JOINER],
   };
   const invite = vi.fn(async (): Promise<BulkAdditionOutcome> => {
-    if (outcome.kind === 'added') leaves.push(`${JOINER}:${JOINER_DEVICE}`);
+    if (outcome.kind === 'added') {
+      leaves.push(`${JOINER}:${JOINER_DEVICE}`);
+      // The Add's Welcome is stored by a member: the server lifts the ask with it.
+      seat.awaitingAdmission = false;
+      seat.welcomeQueued = true;
+    }
     return outcome;
   });
   const deps: JoinAnswerDeps = {
@@ -79,7 +111,7 @@ function memberSide(opts: { addOutcome?: BulkAdditionOutcome; leaves?: string[] 
     invite,
     log: vi.fn(),
   };
-  return { mlsService, invite, deps, leaves };
+  return { mlsService, invite, deps, leaves, seat };
 }
 
 /**
@@ -116,18 +148,23 @@ function joinerSide(member: ReturnType<typeof memberSide>) {
     externalJoin: vi.fn().mockResolvedValue({ joined: true }),
     forgetGroup: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue(JOINER_DEVICE),
-    getDeviceMemberships: vi.fn().mockResolvedValue([
-      {
-        id: 'm-1',
-        userId: JOINER,
-        deviceId: JOINER_DEVICE,
-        groupId: GROUP,
-        status: 'pending',
-        welcomeQueued: false,
-        addInFlight: false,
-        awaitingAdmission: true,
-      },
-    ]),
+    // Read off the shared seat, as `GET mls/device-memberships` answers it.
+    getDeviceMemberships: vi.fn(async () =>
+      member.seat.exists
+        ? [
+            {
+              id: 'm-1',
+              userId: JOINER,
+              deviceId: JOINER_DEVICE,
+              groupId: GROUP,
+              status: member.seat.status,
+              welcomeQueued: member.seat.welcomeQueued,
+              addInFlight: false,
+              awaitingAdmission: member.seat.awaitingAdmission,
+            },
+          ]
+        : []
+    ),
     updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
   };
   const deps = {
@@ -207,37 +244,33 @@ describe('admitJoinRequest - done only when the person is in the tree', () => {
   });
 });
 
-describe('declineJoinRequest - removes a roster row, never a leaf', () => {
-  it('removes the roster row of a person who holds no leaf', async () => {
+describe('declineJoinRequest - the guarded withdrawal, never a removal', () => {
+  it('withdraws the seat of a person still awaiting a member', async () => {
     const m = memberSide();
 
     expect(await declineJoinRequest(request, m.deps)).toEqual({ done: true });
-    expect(m.mlsService.removeMemberFromServer).toHaveBeenCalledWith(GROUP, JOINER);
-  });
-
-  it('leaves alone a person another member admitted meanwhile', async () => {
-    const m = memberSide({ leaves: ['me:self', `${JOINER}:${JOINER_DEVICE}`] });
-
-    expect((await declineJoinRequest(request, m.deps)).done).toBe(false);
+    expect(m.mlsService.declineJoinRequest).toHaveBeenCalledWith(GROUP, JOINER);
+    expect(m.seat.exists).toBe(false);
+    // Never the generic removal: it does not re-check the ask, and records an eviction.
     expect(m.mlsService.removeMemberFromServer).not.toHaveBeenCalled();
   });
 
-  it('is not done when the server refused the removal', async () => {
-    const m = memberSide();
-    m.mlsService.removeMemberFromServer = vi.fn().mockRejectedValue(new Error('403'));
+  it('leaves whole a person another member admitted first, even before this tree shows it', async () => {
+    // Member A's Add lifted the ask; this device has not processed that epoch yet, so its own tree
+    // still says "no leaf". The server, not the tree, answers.
+    const seat: FakeSeat = { ...linkSeat(), awaitingAdmission: false, welcomeQueued: true };
+    const m = memberSide({ seat });
 
-    expect((await declineJoinRequest(request, m.deps)).done).toBe(false);
+    expect(await declineJoinRequest(request, m.deps)).toEqual({ done: true });
+    expect(seat.exists).toBe(true);
+    expect(m.deps.log).toHaveBeenCalledWith(expect.stringContaining('admitted them first'));
   });
 
-  it('answers nothing when the tree cannot be read', async () => {
+  it('is not done when the server refused the decline', async () => {
     const m = memberSide();
-    m.mlsService.getGroupMemberIdentities = vi.fn().mockRejectedValue(new Error('no group'));
+    m.mlsService.declineJoinRequest = vi.fn().mockRejectedValue(new Error('403'));
 
-    expect(await declineJoinRequest(request, m.deps)).toEqual({
-      done: false,
-      reason: 'the tree could not be read',
-    });
-    expect(m.mlsService.removeMemberFromServer).not.toHaveBeenCalled();
+    expect((await declineJoinRequest(request, m.deps)).done).toBe(false);
   });
 });
 
@@ -276,16 +309,45 @@ describe('a join by invitation link, end to end', () => {
     expect(pendingJoinRequests()).toEqual([]);
   });
 
-  it('decline: their roster row leaves the server, no Add is made, and the ask leaves', async () => {
+  it('accept -> ask -> Add -> Welcome: the joiner never serves itself an external join', async () => {
     const m = memberSide();
     register(m);
-    await joinByLink(m);
+    const joiner = await joinByLink(m);
+    const [ask] = pendingJoinRequests();
+    expect(await answerJoinRequest(ask, 'approve')).toBe(true);
+
+    // The Add stored a Welcome: the seat is owed, no longer awaiting - the joiner waits for it.
+    resetReAddCooldowns();
+    await requestReAdd(GROUP, joiner.deps);
+    expect(joiner.mlsService.externalJoin).not.toHaveBeenCalled();
+
+    // The Welcome processed, the device reports itself active: in the tree, nothing left to join.
+    m.seat.status = 'active';
+    m.seat.welcomeQueued = false;
+    expect(m.seat.awaitingAdmission).toBe(false);
+    expect(pendingJoinRequests()).toEqual([]);
+  });
+
+  it('decline: the seat is withdrawn, no Add is made, the ask leaves, and the joiner stays out', async () => {
+    const m = memberSide();
+    register(m);
+    const joiner = await joinByLink(m);
 
     const [ask] = pendingJoinRequests();
     expect(await answerJoinRequest(ask, 'decline')).toBe(true);
 
-    expect(m.mlsService.removeMemberFromServer).toHaveBeenCalledWith(GROUP, JOINER);
+    expect(m.mlsService.declineJoinRequest).toHaveBeenCalledWith(GROUP, JOINER);
     expect(m.invite).not.toHaveBeenCalled();
+    expect(pendingJoinRequests()).toEqual([]);
+    // No seat any more: the server refuses the base as to a non-member (403), the joiner retires
+    // the conversation and asks nobody - no ask raised again on every cadence.
+    resetReAddCooldowns();
+    joiner.mlsService.sendWelcomeRequest.mockClear();
+    joiner.mlsService.externalJoin = vi.fn().mockRejectedValue(new NotAGroupMemberError(GROUP));
+    joiner.deps.conversations.set(GROUP, { id: GROUP, name: 'Club', lifecycle: 'active' });
+    await requestReAdd(GROUP, joiner.deps);
+    expect(joiner.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(joiner.deps.conversations.get(GROUP)?.lifecycle).toBe('removed');
     expect(pendingJoinRequests()).toEqual([]);
   });
 

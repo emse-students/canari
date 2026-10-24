@@ -42,6 +42,7 @@ import {
   totalGroupOwnedRows,
 } from './utils/group-purge';
 import { MessagingService } from './services/messaging.service';
+import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -1221,8 +1222,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * either through its Welcome still queued (separate table, 90d retention - without a new
    * commit), or through `welcome_request`, which triggers a re-add at the current epoch. The
    * threshold is therefore deliberately much shorter than the Welcome retention: it only bounds
-   * how long the durable trigger/fallback is kept on the inviter side. `active` rows and
-   * `dm_group_members` are never touched.
+   * how long the durable trigger/fallback is kept on the inviter side. `active` rows are never
+   * touched, and `dm_group_members` only in the case below.
+   *
+   * **AN INVITATION LINK'S ASK THAT NOBODY ANSWERED EXPIRES WHOLE** (`GroupMember.awaitingAdmission`).
+   * Its device rows alone cannot go: the joiner would then read no `awaiting-admission` row, try the
+   * external join, meet the 409 its seat still earns, and raise a fresh ask on every cadence. So when
+   * none of the person's device rows in the group is `active` or younger than the expiry, the seat is
+   * withdrawn the way a member's Decline withdraws it ({@link expireUnansweredAsks}, under the seat
+   * lock and guarded on the flag): roster row, device rows, Welcomes, the interval the link opened.
+   * The joiner's next look then finds no seat - a 403, the conversation retired - and following the
+   * link again is a new ask.
    *
    * **FILTERS ON `pendingSince`, AND FOR TWELVE DAYS IT FILTERED ON `updatedAt` INSTEAD.** The
    * intent was right and is unchanged - a device once `active` and then put back to `pending` by
@@ -1243,7 +1253,19 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     if (stale.length === 0) return;
 
+    const { awaiting, outcomes } = await expireUnansweredAsks(
+      this.groupMemberRepo.manager,
+      stale,
+      expiry
+    );
+    if (awaiting.size > 0) {
+      this.logger.log(
+        `[CRON] cleanupStalePendingInvitations: ${awaiting.size} invitation-link ask(s) awaiting a member - ${JSON.stringify(outcomes)}`
+      );
+    }
+
     for (const m of stale) {
+      if (awaiting.has(seatKey(m.groupId, m.userId))) continue;
       await this.deviceGroupRepo.delete({
         userId: m.userId,
         deviceId: m.deviceId,

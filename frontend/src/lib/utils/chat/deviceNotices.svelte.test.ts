@@ -558,6 +558,8 @@ describe('deliverDeviceEvents - an entry no member made', () => {
 
   it('keeps the entry owed when the departures cannot be read, rather than guessing', async () => {
     const error = quiet();
+    // Kept for the next delivery, nothing lost: a warning, not an accusation.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const first = makeCtx({
       removalEpochs: vi.fn(async () => {
         throw new Error('state locked');
@@ -566,11 +568,17 @@ describe('deliverDeviceEvents - an entry no member made', () => {
     await deliverDeviceEvents([intruder()], first.ctx);
     expect(first.addMessageToChat).not.toHaveBeenCalled();
     expect(reporter).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('owed to the next delivery'),
+      expect.any(Error)
+    );
+    expect(error).not.toHaveBeenCalled();
 
     const second = makeCtx({ removalEpochs: vi.fn(async () => [2]) });
     await deliverDeviceEvents([], second.ctx);
     expect(second.addMessageToChat).not.toHaveBeenCalled();
     expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'returning' }));
     error.mockRestore();
+    warn.mockRestore();
   });
 });

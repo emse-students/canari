@@ -43,8 +43,10 @@ describe('readWelcomeOwedFromRow', () => {
         })
       )
     ).toBe('awaiting-admission');
+    // An ACTIVE row is in the tree - a Welcome admitted it - so the flag says nothing there: read
+    // as awaiting, a member whose flag outlived its admission could never rejoin by itself.
     expect(readWelcomeOwedFromRow(row({ status: 'active', awaitingAdmission: true }))).toBe(
-      'awaiting-admission'
+      'not-pending'
     );
     expect(
       readWelcomeOwedFromRow(

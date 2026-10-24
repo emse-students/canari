@@ -1,4 +1,5 @@
 import type { IMlsService } from '$lib/mlsService';
+import type { JoinDeclineOutcome } from '$lib/mls-client/mlsDeliveryApi';
 import type { Conversation } from '$lib/types';
 import { treeHoldsUser } from '$lib/mls-client/leafIdentity';
 import type { BulkAdditionOutcome } from './groupCreation';
@@ -9,15 +10,15 @@ import type { JoinAnswerResult, JoinRequest } from './joinRequests.svelte';
  * really happened ({@link JoinAnswerResult}) so the ask leaves the screen only when it did.
  *
  * Both are a GROUP conversation's answers and refuse anything else: Add is the group invite, and
- * Decline removes a roster row - run on a 1:1 conversation it deleted the peer's own row of the DM.
- * Both read THIS device's tree first, because the ask may have been answered meanwhile by another
- * member: a person who already holds a leaf is admitted (nothing to Add), and is never "declined" by
- * deleting the roster row of somebody who is in the tree - that is a Remove, a different gesture.
+ * Decline withdraws a seat - run on a 1:1 conversation it deleted the peer's own row of the DM. The
+ * ask may have been answered meanwhile by another member: Add reads THIS device's tree first (a
+ * person who already holds a leaf is admitted, nothing to Add), and Decline is guarded by the server
+ * itself, which never withdraws the seat of somebody a member's Add admitted - that is a Remove.
  *
  * docs/wiki/protocols/mls-protocol.md, "Who admits a new person".
  */
 export interface JoinAnswerDeps {
-  mlsService: Pick<IMlsService, 'getGroupMemberIdentities' | 'removeMemberFromServer'>;
+  mlsService: Pick<IMlsService, 'getGroupMemberIdentities' | 'declineJoinRequest'>;
   conversations: ReadonlyMap<string, Conversation>;
   /** The member's own Add (`inviteMembersToGroup`), which returns what it did and never throws. */
   invite: (userIds: string[], conversation: Conversation) => Promise<BulkAdditionOutcome>;
@@ -79,11 +80,12 @@ export async function admitJoinRequest(
 }
 
 /**
- * DECLINES the ask: the person's roster row and pending devices leave the server, which is what
+ * DECLINES the ask: the server withdraws the person's seat (`declineJoinRequest`), which is what
  * stops the ask from coming back. There is no leaf to remove - nobody added one - so no commit is
- * made; a person who DOES hold a leaf by now was admitted by another member, and is left alone
- * rather than half-removed (roster row gone, leaf still in the tree). A refusal of the server throws
- * inside, and is reported as not done.
+ * made. The server decides it under the group's seat lock and ONLY while the seat still awaits a
+ * member: a person another member's Add admitted first - an epoch this device may not have processed
+ * yet, so its own tree cannot say - is answered `already-admitted` and left whole, never half-removed
+ * (seat gone, leaf in the tree). Every outcome answers the ask; a refusal of the server is not done.
  */
 export async function declineJoinRequest(
   request: JoinRequest,
@@ -91,19 +93,18 @@ export async function declineJoinRequest(
 ): Promise<JoinAnswerResult> {
   const convo = groupOf(request, deps.conversations);
   if (typeof convo === 'string') return { done: false, reason: convo };
-  const holds = await holdsALeaf(request, deps);
-  if (holds === null) return { done: false, reason: 'the tree could not be read' };
-  if (holds) {
-    return {
-      done: false,
-      reason: 'they hold a leaf already - another member admitted them; removing them is a Remove',
-    };
-  }
+  let outcome: JoinDeclineOutcome;
   try {
-    await deps.mlsService.removeMemberFromServer(request.groupId, request.userId);
+    outcome = await deps.mlsService.declineJoinRequest(request.groupId, request.userId);
   } catch (e) {
-    return { done: false, reason: `the server refused the removal: ${String(e).slice(0, 120)}` };
+    return { done: false, reason: `the server refused the decline: ${String(e).slice(0, 120)}` };
   }
-  deps.log(`[JOIN_REQUEST] ${request.userId} declined - roster row removed`);
+  deps.log(
+    outcome === 'withdrawn'
+      ? `[JOIN_REQUEST] ${request.userId} declined - their seat is withdrawn`
+      : outcome === 'already-admitted'
+        ? `[JOIN_REQUEST] ${request.userId} not declined - another member's Add admitted them first`
+        : `[JOIN_REQUEST] ${request.userId} - the ask was already answered or expired`
+  );
   return { done: true };
 }

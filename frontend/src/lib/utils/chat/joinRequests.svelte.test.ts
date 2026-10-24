@@ -71,6 +71,8 @@ describe('joinRequests - a member answers', () => {
   });
 
   it('keeps the ask when the Add did not happen - no exception is not an Add', async () => {
+    // A known outcome, named by its reason: a warning, never an error.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     setJoinRequestHandlers({
       approve: vi.fn(async () => ({
@@ -84,7 +86,8 @@ describe('joinRequests - a member answers', () => {
 
     expect(await answerJoinRequest(request, 'approve')).toBe(false);
     expect(pendingJoinRequests()).toHaveLength(1);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('add-lock-busy'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('add-lock-busy'));
+    expect(error).not.toHaveBeenCalled();
   });
 
   it('keeps the ask when the answer fails, and says so', async () => {

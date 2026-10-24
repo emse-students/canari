@@ -413,7 +413,8 @@ export class InvitationsController {
       ...m,
       welcomeQueued: welcomed.has(m.groupId),
       addInFlight: locked.has(m.groupId),
-      awaitingAdmission: awaiting.has(m.groupId),
+      // An ACTIVE row is in the tree whatever the roster flag says, so it never reads as awaiting.
+      awaitingAdmission: m.status !== 'active' && awaiting.has(m.groupId),
     }));
 
     // THE STRANDED COUNT IS ON THE LINE, because this endpoint is now the only place that sees the

@@ -93,6 +93,7 @@ REST: those rows need a count, then a migration.
 | OIDC callback with no PKCE `code_verifier` (`auth.controller.ts`, `oidcCallback`) | floor >= the first stable carrying the client half, AND the `without a PKCE verifier` warning silent for a week on production | NO (unreleased) | none | 1 branch: refuse instead of warn | waits for the floor ([diary](#no-date-yet---an-oidc-callback-with-no-pkce-verifier)) |
 | `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 | Plaintext live key: the `"liveKey"` column, `openLiveKey`'s plaintext arm, `LivesService.sealPlaintextKeys` (migration 110) | 0 rows with `"liveKey" IS NOT NULL` on both estates, read AFTER the first deploy carrying 110 has fully replaced the previous replica | not a version question (server only) | `lives."liveKey"` | 1 arm + 1 sweep step + a migration dropping the column, the index and `lives_key_one_form` | owed: the count below, then that migration ([lives](services/lives.md#the-live-key-at-rest)) |
+| A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -110,6 +111,25 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 ---
 
 ## The diary
+
+### No date yet - a member client older than the admission rule still adds a new person automatically
+
+**Site:** `automaticAdmission` in `frontend/src/lib/utils/chat/actions.ts` (the rule), and the server's
+`GroupMember.awaitingAdmission` with its lift (`liftAwaitingAdmission` in `messaging.service.ts`).
+**What holds before the floor:** "a new person joins only through a member's decision" is a CLIENT
+rule - a member's device refuses to Add a user absent from its tree - so it holds only for members
+running a build that carries it. A member on an older build still Adds from the `pending` row the
+link wrote, with no human asked: that is the behaviour this rule replaces, and nothing on the server
+can tell it from a member's Add. The server honours it as one: the Welcome that older client stores
+lifts the joiner's `awaitingAdmission` (a commit older than `admits` declares nobody, so the Welcome
+is the one door that sees its Add), and without that lift the joiner would sit `active` under a flag
+refusing every commit of theirs.
+**The rule becomes TRUE when** `minClientVersion` reaches the first stable carrying #2358, both stores
+serving it - AND migration 038 is deployed with that build: the column is what holds a link joiner
+outside (the base, the commit gate, the joiner's own membership read), and the server reads it on
+every one of those paths, so the build does not run without it.
+**Removal:** nothing - this entry closes when the floor passes; the lift by Welcome stays, since it
+is also how every current Add's Welcome lands.
 
 ### No date yet - a notification TYPE the client does not know, from any new server type
 

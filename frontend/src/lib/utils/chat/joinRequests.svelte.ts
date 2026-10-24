@@ -106,10 +106,16 @@ export async function answerJoinRequest(
   try {
     result = await handlers[answer](request);
   } catch (e) {
-    result = { done: false, reason: String(e) };
+    // A handler that THROWS broke its contract (each returns its outcome): that accuses.
+    console.error(
+      `[JOIN_REQUEST] ${answer} of ${request.userId} in ${request.groupId.slice(0, 8)}... threw, the ask stays: ${String(e)}`
+    );
+    return false;
   }
   if (!result.done) {
-    console.error(
+    // An answer that did not happen is a known outcome (another device holds the add lock, the
+    // network is down), named by its reason and retried by the member - a warning, not an error.
+    console.warn(
       `[JOIN_REQUEST] ${answer} of ${request.userId} in ${request.groupId.slice(0, 8)}... did not happen, the ask stays: ${result.reason}`
     );
     return false;

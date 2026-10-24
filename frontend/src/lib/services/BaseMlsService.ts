@@ -33,6 +33,7 @@ import {
   type GroupRosterBatch,
   type MlsDeliveryFetch,
   type CommitRemoval,
+  type JoinDeclineOutcome,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import {
@@ -3281,6 +3282,10 @@ export abstract class BaseMlsService implements IMlsService {
 
   async removeMemberFromServer(groupId: string, userId: string): Promise<void> {
     return this.delivery.removeMemberFromServer(groupId, userId);
+  }
+
+  async declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome> {
+    return this.delivery.declineJoinRequest(groupId, userId);
   }
 
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {

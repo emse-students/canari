@@ -5,7 +5,7 @@ import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { Group } from '../entities/group.entity';
-import { heldKeyPackages, takeSharedSeatLock } from './seat-eviction';
+import { heldKeyPackages, takeSharedSeatLock, withSeatLock } from './seat-eviction';
 
 const seatsLogger = new Logger('GroupMembership');
 
@@ -287,6 +287,101 @@ export async function endGroupMembership(
     .getRepository(GroupMembershipInterval)
     .update({ groupId, userId, leftAt: IsNull() }, { leftAt: new Date() });
   return { deleted: del.affected ?? 0, closed: upd.affected ?? 0 };
+}
+
+/** What {@link withdrawAwaitingSeat} found, and did. */
+export type AwaitingSeatWithdrawal =
+  /** The seat still awaited a member: its roster row, device rows, Welcomes and interval are gone. */
+  | 'withdrawn'
+  /** A member's Add answered first (`awaitingAdmission` is false): nothing was touched. */
+  | 'already-admitted'
+  /** No roster row: answered or withdrawn before. */
+  | 'gone';
+
+/**
+ * WITHDRAWS A SEAT THAT IS STILL AWAITING A MEMBER'S ADMISSION (`GroupMember.awaitingAdmission`):
+ * a member's Decline, or the expiry of an ask nobody answered. Guarded on the flag, read `FOR UPDATE`
+ * in `m`, which MUST hold the group's seat lock - so a member's Add (which lifts the flag in the
+ * commit's transaction, under the same lock) is wholly before, and this answers `already-admitted`
+ * and touches nothing, or wholly after, and finds no seat to Welcome into.
+ *
+ * NOT A REMOVAL. The person was never in: no eviction is recorded, no exclusion interval is closed -
+ * the interval the link opened is DELETED, so a later admission does not read a past stretch that
+ * never was - and no commit is owed. The one order of `utils/seat-eviction.ts`: the roster row, the
+ * queued Welcomes, the device rows.
+ */
+export async function withdrawAwaitingSeat(
+  m: EntityManager,
+  groupId: string,
+  userId: string
+): Promise<AwaitingSeatWithdrawal> {
+  const seat = await m.getRepository(GroupMember).findOne({
+    where: { groupId, userId },
+    select: { id: true, awaitingAdmission: true },
+    lock: { mode: 'pessimistic_write' },
+  });
+  if (!seat) return 'gone';
+  if (!seat.awaitingAdmission) return 'already-admitted';
+  await m.getRepository(GroupMember).delete({ groupId, userId });
+  await endDeviceMemberships(m, { userId, groupId }, 'welcomes');
+  await m.getRepository(GroupMembershipInterval).delete({ groupId, userId, leftAt: IsNull() });
+  return 'withdrawn';
+}
+
+/** The key {@link expireUnansweredAsks} names a person's seat in a group by. */
+export function seatKey(groupId: string, userId: string): string {
+  return `${groupId}\0${userId}`;
+}
+
+/**
+ * EXPIRES THE INVITATION-LINK ASKS NOBODY ANSWERED among the people whose `pending` device rows the
+ * stale-pending purge found (`AppController.cleanupStalePendingInvitations`).
+ *
+ * Such a seat is never purged by its device rows alone: the joiner would then read no
+ * `awaiting-admission`, meet the 409 its roster flag still earns at the base, and raise a fresh ask
+ * on every cadence. It goes WHOLE, as a member's Decline takes it ({@link withdrawAwaitingSeat},
+ * under the seat lock and guarded on the flag) - but only when none of the person's device rows in
+ * the group is `active` or `pending` since `expiry`: an ask a device renewed is still live.
+ *
+ * Per seat, in a transaction of its own, so one failure costs that seat alone, logged.
+ *
+ * @returns the seats that await a member ({@link seatKey}) - every one of them, withdrawn or not,
+ *   whose device rows the purge must therefore leave alone - and what was done with each.
+ */
+export async function expireUnansweredAsks(
+  manager: EntityManager,
+  stale: readonly { groupId: string; userId: string }[],
+  expiry: Date
+): Promise<{ awaiting: Set<string>; outcomes: Record<string, number> }> {
+  const people = [...new Map(stale.map((s) => [seatKey(s.groupId, s.userId), s])).values()];
+  if (people.length === 0) return { awaiting: new Set(), outcomes: {} };
+  const seats = await manager.getRepository(GroupMember).find({
+    where: people.map((p) => ({ groupId: p.groupId, userId: p.userId, awaitingAdmission: true })),
+    select: { groupId: true, userId: true },
+  });
+  const outcomes: Record<string, number> = {};
+  for (const seat of seats) {
+    try {
+      const outcome = await withSeatLock(manager, seat.groupId, async (m) => {
+        const live = await m
+          .getRepository(DeviceGroupMembership)
+          .createQueryBuilder('d')
+          .where('d."groupId" = :groupId AND d."userId" = :userId', {
+            groupId: seat.groupId,
+            userId: seat.userId,
+          })
+          .andWhere(`(d.status = 'active' OR d."pendingSince" >= :expiry)`, { expiry })
+          .getCount();
+        return live > 0 ? 'still-live' : withdrawAwaitingSeat(m, seat.groupId, seat.userId);
+      });
+      outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+    } catch (e) {
+      logger.error(
+        `[ASK_EXPIRY] group=${seat.groupId} user=${seat.userId.slice(0, 8)} not withdrawn: ${String(e)}`
+      );
+    }
+  }
+  return { awaiting: new Set(seats.map((s) => seatKey(s.groupId, s.userId))), outcomes };
 }
 
 /**

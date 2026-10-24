@@ -10,7 +10,12 @@ import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
-import type { GroupExclusions, GroupRosterBatch, SentFrame } from './mlsDeliveryApi';
+import type {
+  GroupExclusions,
+  GroupRosterBatch,
+  JoinDeclineOutcome,
+  SentFrame,
+} from './mlsDeliveryApi';
 import type { ForkFinding } from './integrityFindings';
 
 export type { FrameDelivery };
@@ -1235,6 +1240,11 @@ export interface IMlsService {
   deleteGroupOnServer(groupId: string): Promise<boolean>;
   /** Removes a user from the server-side membership list of a group (no MLS commit). */
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
+  /**
+   * A member's Decline of an invitation-link ask: withdraws the person's seat only while it still
+   * awaits a member, never the seat of someone another member's Add admitted (`JoinDeclineOutcome`).
+   */
+  declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome>;
   /** Performs a real MLS remove commit for all devices of the given user(s) and broadcasts it. */
   removeMember(groupId: string, userIds: string[]): Promise<void>;
   /** Performs a real MLS remove commit for specific devices by identity ("userId:deviceId") and broadcasts it. */

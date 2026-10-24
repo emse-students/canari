@@ -97,4 +97,44 @@ describe('MembersController - lock order of an add and a removal', () => {
     expect(welcomes).toBeLessThan(commit);
     expect(remove.statements[welcomes].params).toEqual(['bob', 'g-1', true]);
   });
+
+  /**
+   * A DECLINE IS NOT A REMOVAL: it is answered only by an ADMITTED member, never by the asker, and
+   * its outcomes against a real database are in `services/admission.integration.spec.ts`.
+   */
+  describe('the Decline of an invitation-link ask', () => {
+    async function declineAs(callerSeat: { awaitingAdmission: boolean } | null) {
+      const recorded = await recordingDataSource();
+      const groupMemberRepo = { findOne: jest.fn().mockResolvedValue(callerSeat) };
+      const controller = new MembersController(
+        groupMemberRepo as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        recorded.dataSource
+      );
+      return { controller, statements: recorded.statements };
+    }
+
+    it('refuses a caller who holds no seat, or a seat still awaiting a member, and writes nothing', async () => {
+      for (const seat of [null, { awaitingAdmission: true }]) {
+        const { controller, statements } = await declineAs(seat);
+        await expect(controller.declineJoinRequest('g-1', 'bob', 'alice')).rejects.toMatchObject({
+          response: { code: 'NOT_A_MEMBER' },
+        });
+        expect(statements).toEqual([]);
+      }
+    });
+
+    it('refuses the asker declining their own ask', async () => {
+      const { controller } = await declineAs({ awaitingAdmission: false });
+      await expect(controller.declineJoinRequest('g-1', 'bob', 'bob')).rejects.toMatchObject({
+        response: { code: 'NOT_A_MEMBER' },
+      });
+    });
+  });
 });

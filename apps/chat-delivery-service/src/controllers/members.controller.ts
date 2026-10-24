@@ -43,7 +43,9 @@ import {
   openMissingIntervals,
   stretchStart,
   partingKey,
+  withdrawAwaitingSeat,
   withheldWindows,
+  type AwaitingSeatWithdrawal,
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
@@ -337,7 +339,8 @@ export class MembersController {
         // cleared by every transition): the window between the commit and the Welcome, which the
         // add lock does not cover on every path.
         admitted: r.admittedAtEpoch !== null && r.admittedAtEpoch !== undefined,
-        awaitingAdmission: awaitingGroups.has(r.groupId),
+        // An ACTIVE row is in the tree whatever the roster flag says, so it never reads as awaiting.
+        awaitingAdmission: r.status !== 'active' && awaitingGroups.has(r.groupId),
       });
     }
     const stranded = [...out.entries()].filter(
@@ -782,6 +785,52 @@ export class MembersController {
       `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${devices.memberships} intervalClosed=${ended.closed} queuedWelcomesDropped=${devices.queued} evictionGeneration=${generation}`
     );
     return { status: 'removed' };
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/groups/:groupId/join-requests/:userId/decline')
+  /**
+   * A MEMBER DECLINES A PERSON WHO ASKED TO JOIN BY INVITATION LINK - never the removal above.
+   *
+   * The ask is the seat `awaitingAdmission`; the Decline withdraws it ({@link withdrawAwaitingSeat})
+   * under the group's seat lock, ONLY while it still awaits a member. A member's Add lifts the flag
+   * in its commit's transaction under the same lock, so an Add that came first (another member,
+   * whose epoch this device has not processed yet) is answered `already-admitted` and nothing is
+   * touched - the generic removal deleted that admitted person's seat and left their leaf with none.
+   * No eviction and no exclusion interval are recorded: the person was never in.
+   *
+   * Every outcome is an ANSWER (200, `outcome`), so the client reads a type, never a status
+   * sentence. The caller must be an ADMITTED member - a seat still awaiting a member decides nothing.
+   */
+  async declineJoinRequest(
+    @Param('groupId') groupId: string,
+    @Param('userId') userId: string,
+    @Headers('x-user-id') headerUserId?: string
+  ): Promise<{ outcome: AwaitingSeatWithdrawal }> {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    const callerSeat = caller
+      ? await this.groupMemberRepo.findOne({
+          where: { groupId: safeGroupId, userId: caller },
+          select: { id: true, awaitingAdmission: true },
+        })
+      : null;
+    if (!caller || !callerSeat || callerSeat.awaitingAdmission || caller === safeUserId) {
+      this.logger.warn(
+        `[JOIN_DECLINE] REJECT group=${safeGroupId} caller=${caller ?? 'none'} target=${safeUserId} - not an admitted member, or their own ask`
+      );
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.NOT_A_MEMBER, 'Caller may not answer this ask')
+      );
+    }
+    const outcome = await withSeatLock(this.dataSource.manager, safeGroupId, (m) =>
+      withdrawAwaitingSeat(m, safeGroupId, safeUserId)
+    );
+    this.logger.log(
+      `[JOIN_DECLINE] group=${safeGroupId} caller=${caller} target=${safeUserId} outcome=${outcome}`
+    );
+    return { outcome };
   }
 
   /**

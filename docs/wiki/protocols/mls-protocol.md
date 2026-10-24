@@ -891,8 +891,8 @@ proves no membership, so nothing is added (it used to fall through to the Add).
 
 Instead, the ask is put to a member: **"X asks to join"**, with Add and Decline
 (`JoinRequestBanner`, `joinRequests.svelte.ts`). Add is the member's own Add (`inviteMembersToGroup`,
-signed by their device); Decline removes the roster row (`removeMemberFromServer`), which is what
-stops the ask coming back. The sweep reads the server's `pending` rows, the durable state, so each
+signed by their device); Decline withdraws the ask (`declineJoinRequest`, below), which is what
+stops it coming back. The sweep reads the server's `pending` rows, the durable state, so each
 completed sweep replaces the asks on screen: one another member answered leaves with the next sweep.
 The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>`), which used to
 admit the person with no member involved. The Android background answer refuses such a request as
@@ -904,8 +904,15 @@ a DM ask's Add always failed and its Decline deleted the peer's own roster row.
 returns a typed `BulkAdditionOutcome` (`added` with the users the merged commit put in the tree, or
 `not-added` with `add-lock-busy`, `no-device-added`, `failed`...), and Add is done only when the
 person is among `addedUsers` - or already holds a leaf, another member's Add having come first. Decline
-is done only when the roster row is gone, and is refused for a person who holds a leaf by now (that
-is a Remove). Anything else keeps the ask, logged with its reason.
+is `POST mls/groups/:groupId/join-requests/:userId/decline`, answered only to an ADMITTED member
+other than the asker (`403 NOT_A_MEMBER` otherwise). Under the seat lock it deletes the seat ONLY
+while `awaitingAdmission` still stands (`withdrawAwaitingSeat`), and answers a typed outcome:
+`withdrawn` (roster row, queued Welcomes and device rows gone, the open interval deleted - no
+eviction and no exclusion interval are written for someone who was never in), `already-admitted`
+(a member's Add came first; nothing is touched, so a Decline can never strip an admitted person),
+or `gone`. All three leave the screen; a refused or failed call keeps the ask. A Decline that wins
+the race against an Add makes that Add an ordinary invitation by the adding member, which registers
+the roster row as any invite does. Anything else keeps the ask, logged with its reason.
 
 **The link is an ASK, carried from the server that knows it.** Accepting a link writes the roster row
 with `awaitingAdmission = true` (`dm_group_members`, migration 038; only `acceptGroupInvite` sets it),
@@ -917,10 +924,28 @@ and the server holds the person outside until a member answers:
 - The external-join base (`GET`/`PUT .../group-info`) answers **409 `awaiting_admission`** to such a
   person - deliberately not a 403, which older clients read as `NotAGroupMemberError` and retire the
   conversation on - and the commit gate refuses every commit from them, external or member.
-- The flag is cleared inside the transaction of the first accepted commit whose `admits` name one of
-  their devices: a member's Add. A Decline deletes the row with it; an unanswered seat is purged with
-  the other stranded seats after 14 days. The stranded-seat reports count these seats apart
-  (`awaiting-member`).
+- The flag has ONE writer that clears it, `liftAwaitingAdmission`, at the two doors through which a
+  member's Add reaches the server: inside the transaction of an accepted commit, for the devices its
+  `admits` name and the target of its inline Welcome; and inside the transaction that stores a
+  Welcome sent apart (`sendWelcome` -> `enqueueForLiveGroup`). Every Add ships a Welcome, so a
+  member client that declares no `admits` (older than #1151) still lifts it - otherwise its Add
+  would leave the person refused on every commit. Only an admitted member can store that Welcome:
+  `memberOfGroupKind` does not count an awaiting seat, so the asker cannot Welcome themselves.
+- An ACTIVE device row is never read as awaiting: the membership reads report the flag only on a
+  row that is not `active`, the client's `readWelcomeOwedFromRow` ignores it on one, and the commit
+  gate reads such a seat as admitted and logs `[ADMISSION]` at ERROR - the invariant broke upstream.
+  The report of `active` is refused with **409 `awaiting_admission`** while the flag stands, so a
+  row cannot become active ahead of the lift. The Welcome path reads the roster row `FOR UPDATE`
+  (`seatStandsFor`), the lock the lift upgrades to, so two Welcomes stored at once cannot deadlock.
+- An unanswered ask EXPIRES WHOLE (`expireUnansweredAsks`, in the hourly stale-pending sweep): once
+  no device of the person is `active` or pending since the 14-day cutoff, the seat is withdrawn as
+  a Decline withdraws it, per seat under its lock; the device-only purge never touches an awaiting
+  seat, so it cannot leave a roster row that answers 409 to a fresh ask forever. The stranded-seat
+  reports count these seats apart (`awaiting-member`).
+- **"Only through a member's decision" holds from a client floor**, not from this build:
+  a member client older than the rule still auto-Adds a link joiner, and that Add legitimately lifts
+  the flag. It holds once `minClientVersion` floors at this build, with migration 038 deployed with
+  it ([legacy-compatibility](../legacy-compatibility.md)).
 
 The other reading was refused: treating the link as the member's decision would mean a member's
 device honouring a server-written flag, the very trust in server rows this policy removes.

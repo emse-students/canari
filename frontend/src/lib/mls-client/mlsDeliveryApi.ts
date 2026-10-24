@@ -12,6 +12,18 @@ import { isTransportFailure, TransportFailureError } from '$lib/utils/transportF
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 
+/**
+ * What the server did with a member's Decline of an invitation-link ask
+ * (`POST mls/groups/:groupId/join-requests/:userId/decline`):
+ *
+ * - `withdrawn`: the seat still awaited a member; it is gone, the ask with it.
+ * - `already-admitted`: a member's Add came first - the person is in, and nothing was touched (the
+ *   generic removal used to delete that admitted person's seat and leave their leaf with none).
+ * - `gone`: no seat - answered or expired before.
+ */
+export const JOIN_DECLINE_OUTCOMES = ['withdrawn', 'already-admitted', 'gone'] as const;
+export type JoinDeclineOutcome = (typeof JOIN_DECLINE_OUTCOMES)[number];
+
 export type MlsDeliveryFetch = typeof fetch;
 
 /**
@@ -1724,6 +1736,25 @@ export class MlsDeliveryApi {
     // user is already out - which is what a leave asks for - and they reach the caller as a status it
     // can act on rather than as a sentence it would have to read.
     if (!res.ok) throw new GroupExitRefusedError(groupId, res.status, 'leave');
+  }
+
+  /**
+   * A member's Decline of a person who asked to join by invitation link: the server withdraws their
+   * seat ONLY while it still awaits a member's admission, under the group's seat lock. Every outcome
+   * is an answer (200) - see {@link JoinDeclineOutcome}; a non-2xx (not an admitted member) throws.
+   */
+  async declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/groups/${groupId}/join-requests/${userId}/decline`,
+      { method: 'POST', headers: await this.auth() }
+    );
+    if (!res.ok) throw await refusalFromResponse(res, 'declineJoinRequest failed');
+    const body = (await res.json()) as { outcome?: unknown };
+    const outcome = JOIN_DECLINE_OUTCOMES.find((o) => o === body.outcome);
+    if (!outcome) {
+      throw new Error(`declineJoinRequest: unknown outcome ${JSON.stringify(body.outcome)}`);
+    }
+    return outcome;
   }
 
   /**

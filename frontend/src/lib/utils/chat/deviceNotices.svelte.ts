@@ -474,7 +474,9 @@ async function noteUninvitedEntries(
       reportUninvitedEntry(event, decided.kind);
       if (decided.kind === 'new-person') await writeUninvitedLine(event, decided.convo, ctx);
     } catch (e) {
-      console.error('[DEVICE_NOTICE] uninvited entry not decided, owed to the next delivery:', e);
+      // Nothing is lost - the entry is kept, durably, and decided at the next delivery - so this is
+      // a warning: what accuses is the entry itself, once decided (`reportUninvitedEntry`).
+      console.warn('[DEVICE_NOTICE] uninvited entry not decided, owed to the next delivery:', e);
       owedUninvited = [...owedUninvited, event].slice(-MAX_OWED_UNINVITED_LINES);
     }
   }
