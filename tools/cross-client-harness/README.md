@@ -1044,7 +1044,7 @@ asserts R5 ownership of every conversation the row writes in, and reads the serv
 when an armed fault never fired, `FAIL` on any own assertion or invariant, else `PASS` - and
 `recordObserved` then gates it on every seat's window, the deploy exclusion (R4) and the server window
 judged by the row id (R6). The invariant (R8) runs after every row, with its reload. A row's own
-judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`), pinned by
+judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`), pinned by
 `archive/<group>-selftest.mjs`.
 
 ```sh
@@ -1084,6 +1084,22 @@ rebuilt. **What a fault provokes is forgiven exactly, one line each**: `rowkit.m
 `ignoringExpectedRefusal` cannot match), and `checkInvariant({provoked})` forgives each provoked
 5xx once in invariant 4 and names it as an approximation. DUP-7 needs a new device and is played by
 the device runner.
+
+```sh
+bun archive/gap.mjs --row GAP-1|GAP-2   # frames ahead of their commits; past-epoch frames again
+bun archive/gap.mjs --row GAP-3         # 2100 sends, then a pull that starts past 2050 - run alone
+bun archive/gap.mjs --row GAP-4         # records SKIPPED (the shared-payload writer stays off)
+```
+
+**A GAP row acts on the PENDING PULL**, the one place a client-side rig can touch the order of a
+member's stream: no CDP tool reaches a socket frame, but what a seat drains on its return is an
+HTTP answer. So the row cuts W2 (`net.mjs` `cutHard`), lets the server queue what it misses, and
+rewrites the pull of its return with `fault.mjs` `rewrite` (the body, through the rule's
+`transform`) or `rewrite-url` (the url, through `url`): GAP-1 takes the group's commit rows out
+and holds rung 1's `GET /api/mls/commits/` while W1 sends live; GAP-2 captures a frame from one
+pull and puts it in front of a later one, three epochs on; GAP-3 starts the first page `after` the
+2050th queued frame. Rows left out are not ACKed, so nothing is deleted on the server. The
+transforms are `gaprows.mjs`, pinned by `archive/gap-selftest.mjs`.
 
 ## Rules that make a result trustworthy
 

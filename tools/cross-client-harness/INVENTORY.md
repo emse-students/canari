@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-97 scripts.
+98 scripts.
 
 | script | what it is |
 |---|---|
@@ -55,6 +55,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `fault.mjs` | MAKES A REQUEST LAND AND ITS ANSWER VANISH - the response-stage fault atom, over CDP `Fetch`. |
 | `fixtures.mjs` | WHERE A STAGED INPUT FILE LIVES - resolved from the HARNESS ROOT, never from the caller. |
 | `floorrows.mjs` | THE FLOOR ROWS OF THE 1.4.1 CAMPAIGN - their table and their own judgements, pure. |
+| `gaprows.mjs` | THE GAP ROWS OF THE 1.4.1 CAMPAIGN - frames that arrive ahead of their commits, frames delivered |
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
 | `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of the estate's database instead (local or dev). |
 | `groupnav.mjs` | Opening a GROUP conversation by name, and proving the right one opened. |
@@ -135,7 +136,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-83 scripts.
+84 scripts.
 
 | script | what it is |
 |---|---|
@@ -174,6 +175,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/fwd.mjs` | FWD-1 / FWD-2 - the WP-FWD-1 reproduction attempt, channel -> DM. |
 | `archive/fwd345.mjs` | FWD-3, FWD-4, FWD-5 - the three forward shapes WP-FWD-1 has not been tried against. |
 | `archive/fwd5.mjs` | FWD-5, isolated and repeated - the shape that just lost a forward. |
+| `archive/gap.mjs` | THE GAP ROWS OF THE 1.4.1 CAMPAIGN - a member whose frames do not arrive in the order they were made. |
 | `archive/graineauth.mjs` | GRAINE-AUTH-1..3 - a salon row the SERVER tampers with is REFUSED by the reader, with its line. |
 | `archive/grp.mjs` | GRP-1..10 - group membership: the roster, the TWO different departures, the invitation link, and |
 | `archive/heal-a1.mjs` | HEAL on the PHONE - the ANDROID half of WP-LOSS-1, which is what is still owed. |
@@ -227,7 +229,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-51 scripts.
+52 scripts.
 
 | script | what it is |
 |---|---|
@@ -249,6 +251,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/fault-live-selftest.mjs` | WHAT CHROME DOES WITH EACH FAULT, MEASURED AGAINST A SERVER THAT COUNTS - AND NO ESTATE AT ALL. |
 | `archive/fault-selftest.mjs` | THE RESPONSE-STAGE FAULT ATOM DECIDES WHAT IT SHOULD, AGAINST A FAKE CDP CONNECTION. |
 | `archive/floor-selftest.mjs` | THE FLOOR ROWS' OWN JUDGEMENTS AND THE VERDICT COMPOSITION EVERY 1.4.1 ROW SHARES, PINNED. |
+| `archive/gap-selftest.mjs` | THE GAP ROWS' PULL REWRITES AND JUDGEMENTS, PINNED (`gaprows.mjs`). |
 | `archive/gate-probe-selftest.mjs` | `pin.mjs`'s gate probe, exercised on the pages it has to tell apart. |
 | `archive/gate-selftest.mjs` | EVERY SELF-TEST IN THE CI GATE MUST BE IMPORTABLE ON A MACHINE THAT HAS NO RIG. |
 | `archive/identity-selftest.mjs` | Pins the two ways a client's identity can be misread, and the one way it must not pass quietly. |
@@ -336,4 +339,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-275 scripts in total.
+278 scripts in total.

@@ -223,9 +223,9 @@ arrivals were, so it is recorded in the row's detail and never decides it.
 
 | Id | Question | `PASS` entails | Devices | Fault | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| GAP-1 | Application frames of epoch N+2 arrive before the commits N+1, N+2 | queued, applied in order once the commits arrive; nothing dropped | W1 W2 W4 | `hold` W2's history fetch while the socket delivers | U | 30 min |
-| GAP-2 | A frame from a PAST epoch (own and others') | classified by `content_type`, never re-queued as a retryable gap | W1 W2 | replay a captured frame | U | 20 min |
-| GAP-3 | 2000+ frames in one epoch while one member is frozen (old HEAL-W3) | `TooDistantInTheFuture` reached before `GAP_QUEUED` loops; the frozen member recovers through the ladder, not a silent gap | W1 W2 | freeze W2 (`Debugger.pause`) | U | 45 min |
+| GAP-1 | Application frames of epoch N+2 arrive before the commits N+1, N+2 | queued, applied in order once the commits arrive; nothing dropped | W1 W2 W4 W5 | W2 cut while W1 Adds W4 then W5 and sends; the commit rows taken out of W2's pull on its return (`rewrite`), rung 1's commit-log fetch held while W1 sends live (`archive/gap.mjs`) | U | 30 min |
+| GAP-2 | A frame from a PAST epoch (own and others') | classified by `content_type`, never re-queued as a retryable gap | W1 W2 | one frame of each captured from a pull, the group moved three epochs, both put in front of a later pull of W2 | U | 20 min |
+| GAP-3 | 2000+ frames in one epoch while one member is frozen (old HEAL-W3) | `TooDistantInTheFuture` reached before `GAP_QUEUED` loops; the frozen member recovers through the ladder, not a silent gap | W1 W2 | W2 cut while W1 sends 2100; W2's first pull starts after the 2050th (`rewrite-url`). Not a `Debugger.pause`: a frozen page that later receives every frame IN ORDER never exceeds the forward distance (2000) | U | 45 min |
 | GAP-4 | A key-group frame stored ONCE, read by every seat (#2260): a community with five seats, two of them offline | every seat, on return, reads the frame once. **NOT PLAYED ON THIS BUILD**: it needs the shared-payload writer, which stays OFF for 1.4.1 (see "Decided by the lead" below) | W1 W2 W4 W5 +A1 | `cutHard()` on two seats | U+B | 30 min |
 
 #### RM - removal while a commit is in flight, and the removal bound

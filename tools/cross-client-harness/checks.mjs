@@ -478,6 +478,14 @@ export const PHASES = {
     ],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
+  // FRAMES OUT OF ORDER (GAP-1, GAP-2), browsers only. GAP-4 records SKIPPED (the shared-payload
+  // writer stays off). GAP-3 is NOT here: it sends 2100 messages first, about forty minutes, so it
+  // is run alone - `bun archive/gap.mjs --row GAP-3`.
+  GAP: {
+    title: '1.4.1 - frames ahead of their commits, and past-epoch frames again',
+    scripts: ['gap.mjs --row GAP-1', 'gap.mjs --row GAP-2', 'gap.mjs --row GAP-4'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
 };
 
 /**
