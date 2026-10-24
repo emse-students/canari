@@ -81,16 +81,15 @@ if [[ "$PROD" == "false" ]]; then
     else
         echo "VITE_MEDIA_URL=http://localhost:3011" >> "$FRONTEND_ENV"
     fi
-    ok "VITE_JWT_SECRET synchronisé dans frontend/.env (dev local)"
+    ok "frontend/.env prêt (dev local)"
 else
-    warn "Mode --prod : frontend/.env ignoré (VITE_JWT_SECRET est injecté par le CI via GitHub Secrets)"
+    warn "Mode --prod : frontend/.env ignoré (le build CI n'embarque aucun secret)"
 fi
 
 # ── Résumé ────────────────────────────────────────────────────────────────────
 echo ""
 echo "infrastructure/.env → JWT_SECRET: ${JWT_SECRET:0:16}…"
 if [[ "$PROD" == "false" ]]; then
-    echo "frontend/.env      → VITE_JWT_SECRET: ${JWT_SECRET:0:16}…"
     echo ""
     echo "Prochaines étapes :"
     echo "  make install"
