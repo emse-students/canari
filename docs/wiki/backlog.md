@@ -884,10 +884,6 @@ The consent flow is built (migration 096). Left out on purpose, each a decision 
 
 `AssociationsService.remove(A)` locks A, then deletes A's events. Migration 074's trigger takes their co-owner rows and `coorganise` proposals, and these can name B. The row delete of A then cascades into the co-owner rows and proposals where A co-organises B's events. `remove(B)` does the same in mirror, so each delete can hold a row the other's cascade needs: `40P01`, one delete aborted and retried by hand. This is older than #2116. It needs two staff deleting two linked associations at the same moment. The likely fix is for `remove` to lock, in id order, every association its events' co-organisation reaches before deleting anything. [profiles-and-access](profiles-and-access.md)
 
-## P3 - Bookings: a refused block names only a count (review of #2035, 2026-10-18, not built)
-
-A `bookings-inside-block` refusal is worded with its count and the ids are only logged; the organiser could get the bookings listed as a D29 refusal lists them (`StrandedBookings.svelte`). (The P2 half - a block over a block - is built: `block-overlap`.) [bookings](bookings-chantier.md#wp-b5-as-built---the-bookers-screens-2026-10-18)
-
 ## P3 - A reel's loop holds its first frame ~210 ms longer than the file says, on the Mi 9T (measured 2026-10-16, not built)
 
 The WebView's own `loop` seeks to 0 and the audio renderer pre-rolls before the clock restarts: the first frame after the wrap is held 317-433 ms where the file spans 107-128 ms. Without an audio track the hold is the file's (83 ms for 107 ms), so it is the audio pre-roll, not the decoder. The audio outside the picture is trimmed since 2026-10-16 (`trimToVideo`, ~100 ms per loop). A seamless loop needs NO seek: re-append the same segments to the MSE buffer the streaming reader already uses, `timestampOffset` advanced by the duration. Owed: the design, then the iPhone's reading of the same seam. [reels](frontend/modules/reels.md#the-end-of-a-reel-looked-frozen-2026-10-16)
