@@ -1002,6 +1002,28 @@ estate for the three exit codes.
 `bun run wasm:build`. Both are needed - a build can be fixed while an estate still serves the old
 image, which is exactly the state production was in for the twenty minutes after the fix was merged.
 
+### `invariant.mjs` - the five things every MLS row asserts besides its own question (R8)
+
+```sh
+bun invariant.mjs --group <uuid> --device W1,W2 --to "<conversation>" --from-epoch 7 --since <ISO> --reload
+```
+
+Section 4.0 of the 1.4.1 campaign plan (`docs/wiki/cross-client-campaign-1-4-1.md`): one tree
+(every member at the server's epoch, no `[FORK]`/`[INTEGRITY]` line), no stage left and the commit
+log holding exactly one row per epoch the row moved, two messages sent AFTER the event reaching every
+member once, in order, from the right author, no forbidden line (`ACCEPTED AND NOT HELD`, `ERASES`,
+`UNREADABLE`, `[ADMISSION]` at ERROR, `is ABSENT from the state this foreground keeps`, a 5xx) and no
+logout, and the roster agreeing with the tree. `--reload` judges it all again after a reload of every
+web client, which is what proves the state was SAVED. Written once: a runner calls `checkInvariant()`
+with its own `watch()` results, so the console of the whole row is judged, not only the probe's.
+
+The verdict is `invariantverdict.mjs`, pure, pinned by `archive/invariant-selftest.mjs` in `make
+test-harness`. **It reports APPROXIMATIONS beside failures**, because three readings have no window
+hook on the current build: the epoch FINGERPRINT (epoch equality plus no fork line stand in), a
+client's `pending_submission` (the commit log stands in), and the tree's LEAVES (the server's active
+device seats stand in). A collector that can read one passes it and the approximation goes away. It
+WRITES two messages into `--to`, so on dev it is pointed at a campaign-owned conversation only.
+
 ## Rules that make a result trustworthy
 
 **Thirty-one** harness faults produced a false verdict before these were learnt. They are distilled,

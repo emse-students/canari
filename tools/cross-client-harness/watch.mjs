@@ -1320,14 +1320,27 @@ export async function watch(cx, label) {
  * be computed over a projection of its own evidence.
  */
 export function consoleLines(cx) {
+  return consoleEntries(cx).map((e) => e.text);
+}
+
+/**
+ * {@link consoleLines} WITH THE LEVEL each line was printed at: `error`, `warning`, `info`, ... A
+ * rule like "`[ADMISSION]` at ERROR" (`invariantverdict.mjs`) is about the level, and a client's
+ * `console.error` carries no `ERROR` word in its text, so the text alone cannot answer it.
+ *
+ * @returns {{text: string, level: string}[]}
+ */
+export function consoleEntries(cx) {
   return (cx.consumed ?? []).concat(cx.events)
     .map(fromWebKit)
     .filter((e) => e.method === 'Runtime.consoleAPICalled' || e.method === 'Log.entryAdded')
     .map((e) =>
-      (e.method === 'Log.entryAdded'
-        ? e.params.entry.text
-        : e.params.args.map((a) => a.value ?? a.description ?? '').join(' ')
-      ).slice(0, 260)
+      e.method === 'Log.entryAdded'
+        ? { text: String(e.params.entry.text ?? '').slice(0, 260), level: e.params.entry.level }
+        : {
+            text: e.params.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 260),
+            level: e.params.type === 'warning' ? 'warning' : e.params.type === 'error' ? 'error' : 'info',
+          }
     );
 }
 
