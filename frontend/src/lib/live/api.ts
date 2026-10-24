@@ -111,6 +111,10 @@ export function classifyLiveRefusal(
   if (code === 'LIVE_BROADCAST_SUSPENDED') return 'suspended';
   if (code === 'LIVE_BROADCAST_WITHDRAWN') return 'withdrawn';
   if (code === 'LIVE_SEGMENT_OUT_OF_ORDER') return 'out-of-order';
+  // The stored key does not open (a viewer's read) or cannot be sealed (a start): the server's
+  // failure, not a verdict on this request, so retryable like any 5xx - never a terminal refusal.
+  if (code === 'LIVE_KEY_UNAVAILABLE' || code === 'LIVE_KEY_SEALING_UNAVAILABLE')
+    return 'unavailable';
   if (code !== null && RETRY_SEGMENT_CODES.has(code)) return 'retry-segment';
   if (status === 404 && code === null) {
     if (segmentFetch) return 'not-found';
@@ -224,7 +228,8 @@ export async function fetchLiveRules(): Promise<LiveRulesStatus> {
  * @param acceptedRulesVersion The rules version the member accepted on THIS screen, sent only then:
  *   the server records it with the start. Omitted when the account accepted it before.
  * Refusals: `LIVE_KEY_INVALID`, `LIVE_ASSOCIATION_INVALID`, `LIVE_MUTED`, `LIVE_RULES_NOT_ACCEPTED`,
- * `LIVE_ASSOCIATION_FORBIDDEN`, `LIVE_ALREADY_OPEN` (all `refused`), `LIVE_START_RATE` (`rate-limited`).
+ * `LIVE_ASSOCIATION_FORBIDDEN`, `LIVE_ALREADY_OPEN` (all `refused`), `LIVE_START_RATE` (`rate-limited`),
+ * `LIVE_KEY_SEALING_UNAVAILABLE` (`unavailable`: the server cannot seal the key, nothing was written).
  */
 export async function startLive(
   keyHex: string,

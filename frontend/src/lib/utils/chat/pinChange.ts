@@ -104,9 +104,25 @@ export class DeviceKeyMismatchError extends Error {
  * same keypad for ever. Thrown before anything is written.
  */
 export class LocalStateUnopenableError extends Error {
-  constructor(readonly failure: Exclude<StateLoadFailure, 'undecryptable' | 'rotated'>) {
+  constructor(
+    readonly failure: Exclude<StateLoadFailure, 'undecryptable' | 'rotated' | 'unreadable_now'>
+  ) {
     super(`the local MLS state cannot be opened by any PIN (${failure})`);
     this.name = 'LocalStateUnopenableError';
+  }
+}
+
+/**
+ * The stored MLS state could not be read RIGHT NOW (`unreadable_now`: the browser's WebCrypto refused
+ * it and nothing proved the bytes wrong - `MlsStateUnreadableNowError`). Neither "old PIN incorrect"
+ * nor {@link LocalStateUnopenableError}, whose message sends the user to a reset: a reset would
+ * destroy a state nothing showed to be broken. Thrown before anything is written; retrying later is
+ * the whole remedy.
+ */
+export class LocalStateUnreadableNowError extends Error {
+  constructor() {
+    super('the local MLS state could not be read right now - nothing moved');
+    this.name = 'LocalStateUnreadableNowError';
   }
 }
 
@@ -427,6 +443,7 @@ export interface PinChangeOptions {
  *
  * @throws {DeviceKeyMismatchError} in a recovery whose old key does not open the MLS state.
  * @throws {LocalStateUnopenableError} in a recovery whose MLS state no PIN can open.
+ * @throws {LocalStateUnreadableNowError} in a recovery whose MLS state WebCrypto could not read right now.
  * @throws {KeyChangeInterruptedError} on any failure from the vault retirement on.
  * @throws {KeyChangeSupersededError} when another tab changed the key first; nothing here moved
  *         past the keystore.
@@ -449,6 +466,7 @@ export async function performPinChange(
       if (result.cause === 'undecryptable' || result.cause === 'rotated') {
         throw new DeviceKeyMismatchError();
       }
+      if (result.cause === 'unreadable_now') throw new LocalStateUnreadableNowError();
       throw new LocalStateUnopenableError(result.cause);
     }
     log('[DEVICEKEY_CHANGE] The old key opens the local MLS state.');

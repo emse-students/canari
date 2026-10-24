@@ -243,7 +243,7 @@ export interface CalendarViewer {
 }
 
 /** HKDF purpose of the Business key's encryption key; bump the suffix to rotate the format. */
-const LYDIA_BUSINESS_KEY_PURPOSE = 'lydia-business-key/v1';
+export const LYDIA_BUSINESS_KEY_PURPOSE = 'lydia-business-key/v1';
 
 /**
  * What a Lydia Business private token may look like: printable ASCII, no whitespace, 8 to 256
