@@ -2487,7 +2487,6 @@
   "form_view_payment_declined_note": "Le paiement a été refusé : vous pouvez réessayer.",
   "form_view_payment_ended_note": "La demande de paiement a expiré ou a été annulée : vous pouvez réessayer.",
   "form_view_form_full_note": "Ce formulaire n'accepte plus de nouvelles réponses.",
-  "form_view_from_price": "À partir de {price}",
   "form_view_error_not_open": "Ce formulaire ouvre le {date}.",
   "form_view_error_login_required": "Veuillez vous connecter pour soumettre.",
   "form_view_error_complete_matrix": "Veuillez compléter toutes les lignes pour \"{label}\"",
@@ -3664,6 +3663,7 @@
   "reels_viewer_next": "CanaReel suivant",
   "reels_viewer_load_error": "Les CanaReels suivants n'ont pas pu être chargés.",
   "reels_rail_label": "Actions du CanaReel",
+  "reels_rail_drawer_label": "Choisir une réaction",
   "reels_rail_like": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
