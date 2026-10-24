@@ -1,0 +1,4 @@
+{
+  "description": "The shape of a device id chat-delivery-service accepts on every route that names one (SAFE_QUERY_VALUE_REGEX in apps/chat-delivery-service/src/utils/sanitize.ts). core-service refuses any other device id at bindDevice (DEVICE_ID_PATTERN in apps/core-service/src/auth/auth-sessions.service.ts), so a session can never name a device chat-delivery would refuse to address. Each side's spec asserts its pattern equals this one.",
+  "pattern": "^[a-zA-Z0-9_.:@-]{1,128}$"
+}

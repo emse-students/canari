@@ -17,6 +17,8 @@ import { DOUBLE_TAP_REACTION } from '$lib/posts/postReaction';
 export interface ReelRailActions {
   readerId: string;
   onHeart: () => void;
+  /** The reader picked a reaction in the heart's drawer (long press): the card's toggle of that kind. */
+  onReact: (type: string) => void;
   onComments: () => void;
   onSend: () => void;
 }
@@ -28,6 +30,15 @@ export function railHeartToggle(
 ): { type: string; wasReacted: boolean } {
   const mine = reactions[userId];
   return mine ? { type: mine, wasReacted: true } : { type: DOUBLE_TAP_REACTION, wasReacted: false };
+}
+
+/** The input of `toggledReactions` for a pick in the drawer: the same kind again takes it back. */
+export function pickedReactionToggle(
+  reactions: Record<string, string>,
+  userId: string,
+  type: string
+): { type: string; wasReacted: boolean } {
+  return { type, wasReacted: reactions[userId] === type };
 }
 
 /** Every reaction on the post: the heart's number. */
