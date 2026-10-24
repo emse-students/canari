@@ -12,17 +12,27 @@
  * `names.mjs`, so the door cannot be walked around by a new runner.
  */
 import { ORIGIN as CONFIGURED_ORIGIN, SITE as CONFIGURED_SITE } from './names.mjs';
-import { estateOf, refuseForeignOrigins } from './estate-target.mjs';
+import { estateOf, refuseForeignOrigins, registerAttachOrigin, requireExactOrigin } from './estate-target.mjs';
 
 /** `'local'` or `'dev'`; any other `SITE` has already thrown. */
 export const ESTATE = estateOf(CONFIGURED_SITE);
 
-/** The campaign's estate, as an absolute URL. See `names.example.mjs`. */
-export const SITE = CONFIGURED_SITE;
+/**
+ * The campaign's estate, as an absolute URL that is EXACTLY its own origin - `https://dev.canari-emse.fr`,
+ * never with a trailing slash, a path or upper case, all of which the rig's string comparisons would
+ * silently treat as a different estate. See `names.example.mjs`.
+ */
+export const SITE = requireExactOrigin(CONFIGURED_SITE);
 
 /**
  * Each device's page origin. Web devices are on `SITE`; a Tauri app is on its own scheme. A web
  * origin naming ANOTHER estate than `SITE` is refused too, through the same allowlist: a device
- * pointed at production while `SITE` says dev is production driven under dev's name.
+ * pointed at production while `SITE` says dev is production driven under dev's name. A web origin
+ * must be an exact origin too.
  */
 export const ORIGIN = refuseForeignOrigins(CONFIGURED_ORIGIN, ESTATE);
+
+// THE PAGE GUARD JUDGES AGAINST THIS ESTATE from now on (`refuseForeignPage` in `estate-target.mjs`):
+// every page the rig attaches to or navigates to must be on `SITE`, a Tauri scheme, an inert page or
+// an identity provider.
+registerAttachOrigin(SITE);

@@ -16,7 +16,7 @@ import { srvLines } from './estate.mjs';
 import { foldServerWindow, takeServerWindow } from './serverwindow.mjs';
 import { instrumentShaOf } from './instrument.mjs';
 import { STATE_DIR } from './names.mjs';
-import { SITE } from './site.mjs';
+import { ESTATE, SITE } from './site.mjs';
 import { readSourceStamp } from '../../frontend/scripts/source-stamp.mjs';
 import { observedBundles } from './bundle.mjs';
 import { RECORDER_ONLY, VERDICTS, isVerdict } from './verdicts.mjs';
@@ -298,7 +298,7 @@ const observed = (detail) =>
  * them. It goes back in once those runners rename their field; until then the loss is written down
  * here rather than demoted, and `rows.mjs` must not be taught to trust `check` on those phases.
  */
-const RESERVED = ['id', 'verdict', 'at', 'build', 'builtAt', 'checkSha', 'instrumentSha'];
+const RESERVED = ['id', 'verdict', 'at', 'build', 'builtAt', 'checkSha', 'instrumentSha', 'estate', 'site'];
 
 /**
  * An `ERROR` verdict's detail: what was thrown, AND WHERE.
@@ -476,6 +476,10 @@ export function record(id, verdict, detail) {
     check: CHECK.file,
     checkSha: CHECK.sha,
     instrumentSha: CHECK.instrumentSha,
+    // WHICH ESTATE THE VERDICT IS ABOUT (R1): one `STATE_DIR` serves local and dev, and `rows.mjs`
+    // reads only the rows of the estate `SITE` names (`ledgerEstateOf`).
+    estate: ESTATE,
+    site: SITE,
   };
   appendFileSync(FILE, `${JSON.stringify(row)}\n`);
   console.log(`[${stated}] ${id} ${JSON.stringify(detail)}`);

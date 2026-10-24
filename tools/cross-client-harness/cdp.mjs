@@ -36,7 +36,7 @@
  * - A per-page WebSocket survives same-target navigations, which is all this campaign needs.
  */
 
-import { refuseProductionPage } from './estate-target.mjs';
+import { EstateRefusedError, refuseForeignPage, registeredAttachOrigin } from './estate-target.mjs';
 import { WebKitInputUnsupported, isWebKitInputTarget, webkitInput } from './webkit-input.mjs';
 
 /** True only when this file is the process entry point, so it can also be imported as a module. */
@@ -159,8 +159,37 @@ export async function listTargets(p = port, timeoutMs = 2000) {
     signal: AbortSignal.timeout(timeoutMs),
   });
   const all = await res.json();
-  return all.filter((t) => t.type === 'page' && !String(t.url).startsWith('devtools://'));
+  const pages = all.filter((t) => t.type === 'page' && !String(t.url).startsWith('devtools://'));
+  // THE ONE ATTACH PATH REFUSES A FOREIGN PAGE (R1 review, 2026-10-24). Every runner finds the tab it
+  // drives here, so a profile still sitting on production - or on any page that is not the estate,
+  // a Tauri scheme, an inert page or an identity provider - stops the run before a CDP socket exists.
+  // An ALLOWLIST: the denylist it replaced let `https://canari-emse.fr./chat` through.
+  await ensureEstate();
+  for (const t of pages) refuseForeignPage(String(t.url));
+  return pages;
 }
+
+/**
+ * Loads `site.mjs` - the only door to `SITE`, which registers the estate pages are judged against -
+ * when nothing in this process has yet. Dynamic, so this module stays importable on a checkout with
+ * no `names.mjs` (the CI self-tests import it and never attach to a page).
+ */
+async function ensureEstate() {
+  if (!registeredAttachOrigin()) await import('./site.mjs');
+}
+
+/**
+ * For a poll that reads "nothing answered" as "no tab yet": a transport failure becomes `[]`, a
+ * REFUSAL of a foreign page is rethrown - it is an answer, and swallowing it would make the guard a
+ * silent "no tab" instead of a stop.
+ */
+export function noTargetsOnTransportFailure(e) {
+  if (e instanceof EstateRefusedError) throw e;
+  return [];
+}
+
+/** CDP methods that send a page somewhere, and the parameter that says where. */
+const NAVIGATIONS = { 'Page.navigate': 'url', 'Target.createTarget': 'url' };
 
 /**
  * Opens a CDP connection. `ready` is BOUNDED, which is the half that was missing.
@@ -266,7 +295,11 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   // connection, from `CANARI_PHONE=ios` and the bridge port; every other connection keeps `cdpSend`
   // itself, unwrapped.
   const webkit = isWebKitInputTarget(wsUrl);
-  const send = webkit ? webkitInput(cdpSend) : cdpSend;
+  // A NAVIGATION IS JUDGED BEFORE IT IS SENT, by the same allowlist as an attach: a runner's
+  // `--url` or a stale literal must not take an attached page to production.
+  const guarded = (method, params = {}) =>
+    NAVIGATIONS[method] ? ensureEstate().then(() => (refuseForeignPage(String(params[NAVIGATIONS[method]])), cdpSend(method, params))) : cdpSend(method, params);
+  const send = webkit ? webkitInput(guarded) : guarded;
   return { ready, send, events, close: () => ws.close(), isOpen: () => ws.readyState === 1, webkitInput: webkit };
 }
 
@@ -1086,10 +1119,7 @@ async function main() {
     ? targets.find((t) => t.url.includes(targetMatch) || t.title.includes(targetMatch))
     : targets[targetIndex];
   if (!target) throw new Error(`no target matching ${targetMatch ?? targetIndex}`);
-  // THIS CLI DRIVES WHATEVER PAGE IT IS POINTED AT, so it refuses one on production - and a
-  // navigation TO production - by itself: it reads no `SITE` to be refused through.
-  refuseProductionPage(target.url);
-  if (cmd === 'nav') refuseProductionPage(argv[0]);
+  // `listTargets` above refused a foreign page, and `send` refuses a foreign navigation.
 
   const cx = connect(target.webSocketDebuggerUrl);
   await cx.ready;

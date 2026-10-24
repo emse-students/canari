@@ -1,6 +1,6 @@
 /**
  * Deletes the communities, the salons AND the throwaway GROUPS a CRASHED check left on THE ESTATE
- * `SITE` NAMES - which since 2026-09-03 is the local one, not production.
+ * `SITE` NAMES - the local estate or dev, never production (R1 refuses it).
  *
  *   bun cleanup.mjs [--dry]
  *

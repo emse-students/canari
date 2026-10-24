@@ -48,7 +48,7 @@ export const LOCAL_HOSTS = ['localhost', '127.0.0.1'];
 
 /**
  * The hosts that serve PRODUCTION's application. Used for one thing only: to name a refusal
- * precisely and to refuse a browser tab already sitting on production (`refuseProductionPage`). The
+ * precisely (`pageVerdict`, which is an ALLOWLIST and does not depend on this list to refuse). The
  * decision about `SITE` never consults it - that one is the allowlist above - so a production name
  * missing from this list could cost a sentence, never a read.
  */
@@ -128,6 +128,7 @@ export function estateOf(site) {
 export function refuseForeignOrigins(origins, estate) {
   for (const [device, origin] of Object.entries(origins)) {
     if (TAURI_ORIGINS.includes(origin)) continue;
+    requireExactOrigin(origin, `ORIGIN.${device}`);
     let other;
     try {
       other = estateOf(origin);
@@ -142,34 +143,114 @@ export function refuseForeignOrigins(origins, estate) {
 }
 
 /**
- * Throws when a browser page is open on PRODUCTION's application, whatever `SITE` says.
+ * `site` itself when it is EXACTLY its own origin (scheme, host, port; no path, no trailing slash,
+ * no trailing dot, lower case), else a throw. `SITE` and every web `ORIGIN` are compared as strings
+ * all over the rig, so a value that is merely equivalent (`https://dev.canari-emse.fr/`,
+ * `https://DEV.canari-emse.fr`) would match nothing and every comparison would quietly answer "no".
  *
- * `SITE` decides where the rig NAVIGATES, but a Chrome profile keeps the tab it last had - and a
- * profile that once ran a campaign on production may still be sitting there. Attaching to it and
- * typing would act on production with the campaign's accounts. So the page a runner attaches to is
- * checked too, by the host its URL carries. A page that is not http(s) (`about:blank`, the Tauri
- * schemes) is not an estate and passes.
+ * @param {string} site
+ * @param {string} [what] what is being checked, for the message
+ */
+export function requireExactOrigin(site, what = 'SITE') {
+  let origin;
+  try {
+    origin = new URL(site).origin;
+  } catch {
+    throw new EstateRefusedError(site, 'not-a-url', `REFUSED: ${what} is not a URL: '${site}'`);
+  }
+  if (origin !== site || new URL(site).hostname.endsWith('.')) {
+    throw new EstateRefusedError(site, 'not-an-origin', `REFUSED: ${what} must be exactly an origin, e.g. '${origin}' - got '${site}'`);
+  }
+  return site;
+}
+
+/**
+ * The identity-provider hosts a rig page may stand on during a sign-in, and nothing else of theirs:
+ * MiConnect (Authentik), its legacy name, and the school's CAS behind it (`login.mjs` drives all three).
+ */
+export const IDP_HOSTS = ['miconnect.emse.fr', 'auth.canari-emse.fr', 'cas.emse.fr'];
+
+/**
+ * Browser pages that are no estate and run no application: a blank tab, Chrome's new-tab page, and
+ * the error page Chrome shows when a navigation failed (a NET row that cut the link lands there).
+ * Exact URLs - a prefix would let `about:blank#...` style tricks and any `chrome://` page through.
+ */
+export const INERT_PAGES = ['about:blank', 'chrome://newtab/', 'chrome://new-tab-page/', 'chrome-error://chromewebdata/'];
+
+/**
+ * Whether a page may be attached to or navigated to by a rig whose estate is `estateOrigin` - an
+ * ALLOWLIST (R1 review, 2026-10-24). The earlier guard was a denylist of production's hosts, and
+ * `https://canari-emse.fr./chat` (trailing dot) or any host it did not name passed it. A page passes
+ * only if it is ON the estate's origin, on a Tauri engine scheme, an inert browser page, or on a
+ * known identity-provider host over https; everything else is refused, whatever it is.
+ *
+ * @param {string} pageUrl
+ * @param {string} estateOrigin `SITE`, already an exact origin
+ * @returns {{ok: true} | {ok: false, why: string}}
+ */
+export function pageVerdict(pageUrl, estateOrigin) {
+  if (INERT_PAGES.includes(pageUrl)) return { ok: true };
+  let url;
+  try {
+    url = new URL(pageUrl);
+  } catch {
+    return { ok: false, why: 'not a URL' };
+  }
+  // `new URL('tauri://localhost/x').origin` is "null" (not a special scheme), so the engine origin
+  // is rebuilt from its parts.
+  const engine = `${url.protocol}//${url.host}`;
+  if (TAURI_ORIGINS.includes(engine)) return { ok: true };
+  if (url.origin === estateOrigin) return { ok: true };
+  if (url.protocol === 'https:' && url.port === '' && IDP_HOSTS.includes(url.hostname)) return { ok: true };
+  const prod = PRODUCTION_APP_HOSTS.includes(url.hostname.replace(/\.$/, ''));
+  return { ok: false, why: prod ? 'it is PRODUCTION' : `it is neither the estate (${estateOrigin}), a Tauri page, an inert page nor an identity provider` };
+}
+
+/** The estate origin pages are checked against - registered by `site.mjs` when it evaluates. */
+let attachOrigin = null;
+
+/**
+ * Called by `site.mjs`, the only door to `SITE`, once it has validated it. Not by anything else:
+ * the origin a page is judged against must be the one every other decision of the run uses.
+ */
+export function registerAttachOrigin(origin) {
+  attachOrigin = requireExactOrigin(origin);
+}
+
+/** The registered estate origin, or null when `site.mjs` has not been evaluated in this process. */
+export const registeredAttachOrigin = () => attachOrigin;
+
+/**
+ * Throws unless `pageUrl` passes {@link pageVerdict} against the registered estate. Called by the
+ * ONE attach path (`listTargets` in `cdp.mjs`), by every `Page.navigate` / `Target.createTarget`
+ * a connection sends, and by `launch.mjs` before and after it starts a browser.
+ *
+ * NO ESTATE REGISTERED IS A REFUSAL, not a pass: the callers load `site.mjs` first.
  *
  * @param {string} pageUrl
  */
-export function refuseProductionPage(pageUrl) {
-  let host;
-  try {
-    const url = new URL(pageUrl);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
-    host = url.hostname;
-  } catch {
-    return;
+export function refuseForeignPage(pageUrl) {
+  if (!attachOrigin) {
+    throw new EstateRefusedError(pageUrl, 'no-estate', 'REFUSED: no estate is registered in this process - site.mjs was never evaluated, so no page can be judged');
   }
-  if (PRODUCTION_APP_HOSTS.includes(host)) {
+  const v = pageVerdict(pageUrl, attachOrigin);
+  if (!v.ok) {
     throw new EstateRefusedError(
       pageUrl,
-      'production',
-      `REFUSED: the page to attach to is on PRODUCTION (${pageUrl}). This rig never drives production - ` +
-        'navigate that tab to the campaign estate or close it, then run again.',
+      v.why === 'it is PRODUCTION' ? 'production' : 'foreign-page',
+      `REFUSED: a rig page at ${pageUrl} - ${v.why}. This rig drives only its own estate: navigate that tab ` +
+        'to the campaign estate or close it, then run again.',
     );
   }
 }
+
+/**
+ * The estate a ledger row was measured on. Rows written since R1 (2026-10-24) carry `estate`; an
+ * older row carries none and was written while the rig ran on the LOCAL estate (since 2026-09-03),
+ * so it is read as local. One `STATE_DIR` serves both estates, and a reader that mixed them would
+ * report a dev verdict about a local run.
+ */
+export const ledgerEstateOf = (row) => row?.estate ?? 'local';
 
 /** Single-quotes a string for a POSIX shell: the one quoting in which nothing expands. */
 export const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;

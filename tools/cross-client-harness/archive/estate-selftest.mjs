@@ -35,8 +35,11 @@ import {
   devResolveContainer,
   estateOf,
   makeEstate,
+  pageVerdict,
   refuseForeignOrigins,
-  refuseProductionPage,
+  refuseForeignPage,
+  registerAttachOrigin,
+  requireExactOrigin,
 } from '../estate-target.mjs';
 
 const SITE = 'http://localhost:8081';
@@ -261,19 +264,71 @@ ok('a non-local site has no aliases', localAliases(PROD, IFACES).length === 0);
   }
 }
 
-// ── A PAGE ALREADY ON PRODUCTION IS REFUSED, WHATEVER SITE SAYS ─────────────────────────────────
+// ── A PAGE IS ATTACHED TO OR NAVIGATED TO ONLY BY ALLOWLIST (R1 review, 2026-10-24) ─────────────
 {
-  const throws = (url) => {
+  const allowed = (url, estate = DEV) => pageVerdict(url, estate).ok;
+  ok('a page on the estate passes, any path', allowed(`${DEV}/chat`) && allowed(`${SITE}/g/join/x`, SITE));
+  ok('a page on ANOTHER estate is refused (local page while SITE is dev, and back)', !allowed(`${SITE}/chat`) && !allowed(`${DEV}/chat`, SITE));
+  ok('production is refused under both names and www', !allowed(`${PROD}/chat`) && !allowed('https://canari.emse.fr/chat') && !allowed('https://www.canari-emse.fr/'));
+  ok('the trailing-dot spelling the denylist let through is refused', !allowed('https://canari-emse.fr./chat') && !allowed('https://dev.canari-emse.fr./chat'));
+  ok('upper case is the same host to a browser and is judged as such', !allowed('https://CANARI-EMSE.FR/chat') && allowed('https://DEV.canari-emse.fr/chat'));
+  ok('an unknown host, another port, plain http of dev are refused', !allowed('https://example.org/') && !allowed('https://dev.canari-emse.fr:8443/') && !allowed('http://dev.canari-emse.fr/'));
+  ok('the Tauri engine pages pass', allowed('http://tauri.localhost/chat') && allowed('tauri://localhost/chat'));
+  ok('inert browser pages pass, exactly', allowed('about:blank') && allowed('chrome://newtab/') && allowed('chrome-error://chromewebdata/') && !allowed('chrome://settings/') && !allowed('about:blank#x'));
+  ok('the identity providers pass over https only', allowed('https://miconnect.emse.fr/if/flow/x') && allowed('https://auth.canari-emse.fr/x') && allowed('https://cas.emse.fr/cas/login') && !allowed('http://miconnect.emse.fr/'));
+  ok('a production refusal says so', /PRODUCTION/.test(pageVerdict('https://canari-emse.fr./x', DEV).why));
+  ok('a non-URL is refused', !allowed('not a url'));
+  // The registry: nothing registered refuses everything; site.mjs registers SITE.
+  const refusal = (url) => {
     try {
-      refuseProductionPage(url);
-      return false;
+      refuseForeignPage(url);
+      return null;
     } catch (e) {
-      return e instanceof EstateRefusedError;
+      return e;
     }
   };
-  ok('a tab on production is refused', throws(`${PROD}/chat`) && throws('https://canari.emse.fr/chat'));
-  ok('a tab on dev, local, blank or the Tauri scheme is not', !throws(`${DEV}/chat`) && !throws(`${SITE}/chat`) && !throws('about:blank') && !throws('http://tauri.localhost/chat'));
-  ok('the identity provider is not production\'s APP, and a login page on it passes', !throws('https://auth.canari-emse.fr/if/flow/x'));
+  const unregistered = refusal(`${DEV}/chat`);
+  ok('with no estate registered, even the estate is refused (no fallback)', unregistered instanceof EstateRefusedError && unregistered.reason === 'no-estate');
+  registerAttachOrigin(DEV);
+  const prodPage = refusal('https://canari-emse.fr./chat');
+  ok('registered on dev: a production page is refused, typed', prodPage instanceof EstateRefusedError && prodPage.reason === 'production');
+  ok('registered on dev: a dev page passes', refusal(`${DEV}/chat`) === null);
+  // Exact origins only, for SITE and every web ORIGIN.
+  const exact = (v) => {
+    try {
+      return requireExactOrigin(v) === v;
+    } catch {
+      return false;
+    }
+  };
+  ok('SITE must be exactly an origin', exact(DEV) && exact(SITE) && !exact(`${DEV}/`) && !exact(`${DEV}/chat`) && !exact('https://DEV.canari-emse.fr') && !exact('https://dev.canari-emse.fr.') && !exact('dev.canari-emse.fr'));
+  let slash = null;
+  try {
+    refuseForeignOrigins({ W1: `${DEV}/` }, 'dev');
+  } catch (e) {
+    slash = e;
+  }
+  ok('a web ORIGIN with a trailing slash is refused', slash instanceof EstateRefusedError && /ORIGIN\.W1/.test(slash.message));
+  // The attach path, the navigation path and the browser launch all go through the guard.
+  const cdpSource = readFileSync(new URL('../cdp.mjs', import.meta.url), 'utf8');
+  const launchSource = readFileSync(new URL('../launch.mjs', import.meta.url), 'utf8');
+  ok('listTargets refuses every listed page before returning it', cdpSource.includes('for (const t of pages) refuseForeignPage(String(t.url));'));
+  ok(
+    'every Page.navigate and Target.createTarget is judged before it is sent',
+    cdpSource.includes(`{ 'Page.navigate': 'url', 'Target.createTarget': 'url' }`) && cdpSource.includes('refuseForeignPage(String(params[NAVIGATIONS[method]]))')
+  );
+  ok('startBrowser judges its landing url and the pages the profile restored', launchSource.includes('refuseForeignPage(url);') && launchSource.includes('await listTargets(port);'));
+  const rawList = [];
+  for (const dir of [new URL('../', import.meta.url), new URL('./', import.meta.url)]) {
+    for (const name of readdirSync(dir)) {
+      // phone-ios.mjs lists the iPhone bridge to FIND the app page, then attaches through listTargets.
+      if (!name.endsWith('.mjs') || ['cdp.mjs', 'phone-ios.mjs', 'estate-selftest.mjs'].includes(name)) continue;
+      const code = readFileSync(new URL(name, dir), 'utf8').replace(/^\s*(\/\/|\*).*$/gm, '');
+      if (code.includes('/json/list')) rawList.push(name);
+    }
+  }
+  ok('no rig file reads /json/list itself, around the one attach path', rawList.length === 0);
+  if (rawList.length) console.log(`         offenders: ${rawList.join(' ')}`);
   let foreign = null;
   try {
     refuseForeignOrigins({ W1: DEV, W2: PROD, A1: 'http://tauri.localhost' }, 'dev');
@@ -298,6 +353,14 @@ ok('a non-local site has no aliases', localAliases(PROD, IFACES).length === 0);
         if (/\b(SITE|ORIGIN)\b/.test(m[1])) offenders.push(name);
       }
       if (/import\(\s*['"]\.\.?\/names\.mjs['"]\s*\)\)?\.(SITE|ORIGIN)/.test(source)) offenders.push(name);
+      // THE OTHER IMPORT FORMS (R1 review): a namespace import read as `N.SITE` or `N[...]`, a
+      // destructured dynamic import, and a `createRequire` of names.mjs in a file reading `.SITE`.
+      // Not covered, and said in the README: the one non-JS driver, `a1.py`, which reads no estate.
+      for (const ns of source.matchAll(/import\s*\*\s*as\s+(\w+)\s+from\s*['"]\.\.?\/names\.mjs['"]/g)) {
+        if (new RegExp(`\\b${ns[1]}\\s*(\\.\\s*(SITE|ORIGIN)\\b|\\[)`).test(source)) offenders.push(`${name} (namespace)`);
+      }
+      if (/\{[^}]*\b(SITE|ORIGIN)\b[^}]*\}\s*=\s*await\s+import\(\s*['"]\.\.?\/names\.mjs['"]/.test(source)) offenders.push(`${name} (dynamic)`);
+      if (/createRequire\([^)]*\)\(\s*['"]\.\.?\/names\.mjs['"]\s*\)/.test(source) && /\.\s*(SITE|ORIGIN)\b/.test(source)) offenders.push(`${name} (require)`);
     }
   }
   ok(`no rig file but site.mjs takes SITE or ORIGIN from names.mjs (${scanned} scanned)`, scanned > 100 && offenders.length === 0);

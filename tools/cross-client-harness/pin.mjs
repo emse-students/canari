@@ -185,8 +185,8 @@ async function assertLocalEstate(cx) {
     estates.length === 0
       ? `[pin] THIS CLIENT CONTACTED NO ESTATE IN TEN SECONDS, so which one it is built against is ` +
           `unknown - and a row that ran now would record a verdict nothing corroborates`
-      : `[pin] THIS CLIENT IS NOT ON THE LOCAL ESTATE: it called ${strangers.join(' ')} and the rig ` +
-          `reports on ${SITE}. Rebuild and reinstall the APK (bun a1apk.mjs) - a --no-build install ` +
+      : `[pin] THIS CLIENT IS NOT ON THE ESTATE THE RIG REPORTS ON (${SITE}): it called ${strangers.join(' ')}. ` +
+          `Rebuild and reinstall the APK (bun a1apk.mjs) - a --no-build install ` +
           `keeps whatever origins the artefact on disk was baked with`,
   );
   cx.close();

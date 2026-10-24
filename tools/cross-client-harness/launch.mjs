@@ -15,7 +15,8 @@
  */
 import { spawn, execSync } from "node:child_process";
 import { join } from "node:path";
-import { connect } from "./cdp.mjs";
+import { connect, listTargets } from "./cdp.mjs";
+import { refuseForeignPage } from "./estate-target.mjs";
 import { STATE_DIR } from "./names.mjs";
 import { SITE } from "./site.mjs";
 
@@ -159,6 +160,9 @@ export async function closeBrowser(which, timeoutMs = 20_000) {
  */
 export async function startBrowser(which, url = `${SITE}/chat`, extraArgs = []) {
   const { port, profile } = BROWSERS[which];
+  // THE LANDING PAGE IS JUDGED BEFORE CHROME IS ASKED TO OPEN IT (R1 review): a caller's `url` off
+  // the estate's allowlist never loads.
+  refuseForeignPage(url);
   if (await isUp(which)) throw new Error(`${which} is already up on ${port} - kill it first`);
   const child = spawn(
     CHROME,
@@ -180,11 +184,18 @@ export async function startBrowser(which, url = `${SITE}/chat`, extraArgs = []) 
 
   const t0 = Date.now();
   while (Date.now() - t0 < 30_000) {
+    let up = false;
     try {
-      const r = await fetch(`http://127.0.0.1:${port}/json/version`);
-      if (r.ok) return Date.now() - t0;
+      up = (await fetch(`http://127.0.0.1:${port}/json/version`)).ok;
     } catch {
       /* not up yet */
+    }
+    if (up) {
+      // AND EVERY PAGE THE PROFILE CAME BACK WITH: a profile can restore the tabs it last had, one
+      // of them on production. `listTargets` throws on any page off the allowlist - outside the
+      // `try` above, so a refusal is never read as "not up yet".
+      await listTargets(port);
+      return Date.now() - t0;
     }
     await new Promise((r) => setTimeout(r, 250));
   }

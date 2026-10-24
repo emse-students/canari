@@ -78,15 +78,35 @@ reported them as dev's.
 - **`site.mjs` is the only door to `SITE` and `ORIGIN`**, and its evaluation throws
   `EstateRefusedError` for any other `SITE` - production under either name, `http://dev...`, an
   undeclared host - before the importing entry point runs a line. `archive/estate-selftest.mjs`
-  fails the gate if any file takes `SITE` or `ORIGIN` from `names.mjs` directly.
+  fails the gate if any file takes `SITE` or `ORIGIN` from `names.mjs` directly - by a named,
+  namespace (`N.SITE`), destructured-dynamic or `createRequire` import. **`SITE` and every web
+  `ORIGIN` must be EXACTLY an origin** (`https://dev.canari-emse.fr`, no trailing slash, path, dot
+  or upper case): the rig compares them as strings. The scan covers `.mjs` only; the one other
+  driver, `a1.py`, drives the phone's native surfaces and reads no estate.
 - **`estate.mjs` has no production branch.** Local is `docker exec canari-local-*`; dev is `ssh
   <DEV_SSH_HOST>` (machine-local, in `names.mjs`) and the container found BY COMPOSE LABEL
   `com.docker.compose.project=canari-dev` - one running container per service, the label re-read
   before use, exit `97` otherwise - the lookup `infrastructure/dev/reset-dev-to-seed.sh` makes. The
   routing is pure (`estate-target.mjs`); the self-test drives it with stub transports and runs the
   resolver itself under `sh` against a fake `docker`.
-- **A tab already on production is refused too** (`chat.mjs` `client()`, the `cdp.mjs` CLI): a
-  profile keeps the page it last had, whatever `SITE` says.
+- **A page is attached to or navigated to by ALLOWLIST** (`pageVerdict` / `refuseForeignPage` in
+  `estate-target.mjs`): it must be on `SITE`'s origin, a Tauri engine page (`http://tauri.localhost`,
+  `tauri://localhost`), an inert browser page (`about:blank`, the new-tab page, Chrome's error
+  page) or an identity provider over https (MiConnect, its legacy name, CAS). Enforced in the ONE
+  attach path, `listTargets` in `cdp.mjs` (it refuses if ANY listed page is off the list, so a
+  profile still sitting on production stops the run before a socket exists), in every
+  `Page.navigate` / `Target.createTarget` a connection sends, and in `launch.mjs` `startBrowser`
+  (its landing url, and the tabs the profile restored). With no estate registered (`site.mjs` not
+  yet evaluated) `listTargets` loads it; the guard itself never passes a page by default.
+- **A NATIVE CLIENT RUNNING A PRODUCTION BUILD IS NOT REFUSED BY THE PAGE GUARD.** A Tauri app's
+  page is `http://tauri.localhost` / `tauri://localhost` whatever origins its build baked in, so
+  the guard cannot see that an APK or an iPhone build talks to production. That is checked AFTER
+  the fact, by `pin.mjs` (which origins the client actually contacted), and before the fact only for
+  APKs the rig builds itself (`a1apk.mjs` greps the packaged bundle). An installed store or
+  TestFlight build is not inspected: read what it contacts with `pin.mjs` before a row uses it.
+- **Every ledger row records its `estate` and `site`**, and `rows.mjs` reads only the rows of the
+  estate `SITE` names (a row older than R1 carries none and counts as local): one `STATE_DIR` serves
+  both estates.
 - **Verify the target before a run**: `bun estate.mjs` names the estate and resolves its containers
   (read-only); `archive/run.mjs`'s preflight does the same on its first lines and refuses on a miss.
 - **Dev is shared with testers.** Reads are free; writes to dev's database and Redis are allowed by

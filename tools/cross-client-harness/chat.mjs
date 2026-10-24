@@ -10,7 +10,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
-import { refuseProductionPage } from './estate-target.mjs';
 import { GATE_EXPR } from './gate-probe.mjs';
 import { isWebKitAgent } from './webkit-console.mjs';
 import { contentTypeOf, fileInjectionExpression } from './webkit-files.mjs';
@@ -268,9 +267,8 @@ export async function client(port, match = null, { focus = true, allowMany = fal
     );
   const t = hits[0];
   if (!t) throw new Error(`no target on ${port} matching ${match}; have ${targets.map((x) => x.url).join(' | ')}`);
-  // A PROFILE KEEPS THE TAB IT LAST HAD, and `SITE` only decides where the rig navigates: a page
-  // still sitting on production would be driven with the campaign's accounts. Refused by host.
-  refuseProductionPage(t.url);
+  // A PROFILE KEEPS THE TAB IT LAST HAD: `listTargets` above refused any page off the estate's
+  // allowlist (production included) before this tab could be chosen.
   const cx = connect(t.webSocketDebuggerUrl);
   await cx.ready;
   await cx.send('Runtime.enable');

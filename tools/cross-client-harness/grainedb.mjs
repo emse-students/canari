@@ -1,5 +1,5 @@
 /**
- * The three questions the COMM phase cannot ask a SCREEN, asked of production's database instead.
+ * The three questions the COMM phase cannot ask a SCREEN, asked of the estate's database instead (local or dev).
  *
  * WHY THE DATABASE AT ALL, in a phase that is otherwise about what a person sees. Since 2026-08-20 a
  * private salon's seeds travel on a group of its own, whose roster is the salon's members - so the
