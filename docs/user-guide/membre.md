@@ -129,7 +129,7 @@ aux membres.
 
 1. Ouvrez la page **Boutique** (`/shop`).
 2. Reperez le produit de type **"Cotisation"** de l'association qui vous interesse.
-3. Cliquez pour payer : vous etes redirige vers Stripe Checkout (carte bancaire securisee).
+3. Cliquez pour payer : vous etes redirige vers la page de paiement Lydia ("Paiement Canari").
 4. Apres le paiement, votre statut de cotisant est enregistre automatiquement.
 
 Une cotisation peut etre **a vie** (payee une seule fois) ou **annuelle** (a renouveler chaque
@@ -154,7 +154,7 @@ Les associations proposent des formulaires en ligne pour les inscriptions, adhes
 1. Cliquez sur le lien du formulaire (depuis un post ou depuis la fiche de l'association).
 2. Remplissez les champs.
 3. Si le formulaire necessite un paiement :
-   - **Paiement en ligne** : vous serez redirige vers Stripe Checkout (carte bancaire securisee).
+   - **Paiement en ligne** : vous serez redirige vers la page de paiement Lydia ("Paiement Canari").
    - **Paiement en especes** : votre inscription est enregistree en attente. Un responsable
      la validera apres avoir recu votre paiement.
 

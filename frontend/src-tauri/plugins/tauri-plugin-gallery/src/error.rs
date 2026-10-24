@@ -9,6 +9,8 @@ pub enum Error {
     #[cfg(mobile)]
     #[error(transparent)]
     PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
+    #[error("the media type is not a plain type/subtype")]
+    BadMime,
     #[error("the file name is empty or names a path")]
     BadName,
     #[error("the staging session is not a plain token")]
@@ -24,6 +26,9 @@ pub enum Error {
     #[cfg(not(mobile))]
     #[error("the phone's gallery exists only on Android and iOS")]
     Unsupported,
+    #[cfg(not(target_os = "android"))]
+    #[error("share suggestions exist only on Android")]
+    AndroidOnly,
 }
 
 impl Serialize for Error {

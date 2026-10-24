@@ -19,6 +19,12 @@ describe('cotisation grant blocker', () => {
     expect(cotisationGrantBlocker(false, '', 0, false)).toBe('no-payment');
   });
 
+  // A public form's guests have no account (WP-P1): the server refuses the grant whatever else holds.
+  it('names a public form right after the payment, even when everything else holds', () => {
+    expect(cotisationGrantBlocker(true, 'asso-1', 2, true, true)).toBe('public');
+    expect(cotisationGrantBlocker(false, 'asso-1', 2, true, true)).toBe('no-payment');
+  });
+
   it('names the beneficiary once the form is paid', () => {
     expect(cotisationGrantBlocker(true, '', 0, false)).toBe('no-association');
   });

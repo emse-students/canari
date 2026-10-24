@@ -26,6 +26,19 @@ export interface ChatSessionCallbacks {
   /** Restores conversations from IndexedDB and re-checks MLS state consistency. */
   loadAndRestoreConversations: () => Promise<void>;
   /**
+   * Retires the ending session's restore chain (`useConversations`' `RestoreGeneration`), so a
+   * restore it queued never runs as that account after the sign-out, and one still running never
+   * makes the next login's restore wait. Called by the teardown, next to the clearing of the map.
+   */
+  invalidateRestores: () => void;
+  /**
+   * Forgets the salon rows drawn from the store that no server page has confirmed yet
+   * (`useConversations`' `salonRowsDrawnUnconfirmed`). They belong to the ending account, and a
+   * failed load of theirs must not withdraw rows from the next account's first page of the same salon.
+   * Called by the teardown, next to the clearing of the map.
+   */
+  forgetUnconfirmedSalonDraws: () => void;
+  /**
    * Opens/closes the span during which a conversation may still appear from a startup source.
    *
    * The restore is only the first of those sources, and a deep-link landing that abandoned as soon

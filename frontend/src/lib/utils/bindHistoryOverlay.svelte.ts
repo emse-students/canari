@@ -2,6 +2,7 @@ import {
   pushHistoryOverlay,
   closeHistoryOverlayFromUi,
   releaseHistoryOverlay,
+  type OverlayCloseReason,
 } from './historyOverlayStack';
 
 /**
@@ -16,14 +17,19 @@ import {
  * (`historyOverlayStackDepth`). The explicit `syncOpen` stays for callers that already call it.
  *
  * @param getOpen whether the overlay is open now (read reactively).
- * @param onClose closes the overlay; called by the system Back and by {@link dismissFromUi}.
+ * @param onClose closes the overlay; called by the system Back and by {@link dismissFromUi}, told
+ *                WHY (`navigation`: the app is leaving the screen, so it must tidy up and never hold on).
+ *                A UI dismissal is a `back`.
  */
-export function bindHistoryOverlay(getOpen: () => boolean, onClose: () => void) {
-  let closeRef: (() => void) | null = null;
+export function bindHistoryOverlay(
+  getOpen: () => boolean,
+  onClose: (reason: OverlayCloseReason) => void
+) {
+  let closeRef: ((reason?: OverlayCloseReason) => void) | null = null;
 
   function syncOpen() {
     if (getOpen() && !closeRef) {
-      closeRef = () => onClose();
+      closeRef = (reason) => onClose(reason ?? 'back');
       pushHistoryOverlay(closeRef);
     } else if (!getOpen()) {
       // Closed by its owner's state: leave the stack too (see `releaseHistoryOverlay`).
@@ -36,7 +42,7 @@ export function bindHistoryOverlay(getOpen: () => boolean, onClose: () => void) 
     if (closeRef) {
       closeHistoryOverlayFromUi(closeRef);
     } else {
-      onClose();
+      onClose('back');
     }
   }
 

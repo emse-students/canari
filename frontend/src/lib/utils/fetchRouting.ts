@@ -11,7 +11,7 @@
  * asynchronously at startup, which nothing else can reach.
  */
 
-import { conformPluginFetch } from '$lib/utils/transportFailure';
+import { conformNativeFetch, conformPluginFetch } from '$lib/utils/transportFailure';
 
 /**
  * A WebView custom protocol wearing an `http(s)` URL, which no network client can ever resolve.
@@ -203,9 +203,10 @@ export function createRoutedFetch(
   firstPartyOrigins: () => readonly string[]
 ): typeof fetch {
   const conformed = conformPluginFetch(plugin);
+  const conformedNative = conformNativeFetch(native);
   return ((input: RequestInfo | URL, init?: RequestInit) =>
     shouldUseNativeFetch(fetchInputUrl(input), init, input, firstPartyOrigins())
-      ? native(input, init)
+      ? conformedNative(input, init)
       : conformed(input, init)) as typeof fetch;
 }
 

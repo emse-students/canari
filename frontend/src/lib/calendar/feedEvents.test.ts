@@ -18,6 +18,8 @@ import {
   eventAccentColor,
   eventOwners,
   eventOwnersLabel,
+  eventSummary,
+  eventTooltip,
   MAX_ORGANISER_FACES,
   organisersFullList,
   splitOrganiserFaces,
@@ -550,5 +552,42 @@ describe('organiserCentred', () => {
     const input = ['O', 'A', 'B'];
     organiserCentred(input);
     expect(input).toEqual(['O', 'A', 'B']);
+  });
+});
+
+describe('eventSummary and eventTooltip - every organiser, not the owner alone', () => {
+  const co = (n: number) => ({
+    associationId: `c${n}`,
+    name: `Co${n}`,
+    slug: `co${n}`,
+    color: null,
+    logoUrl: null,
+  });
+
+  it('writes `title - A + B` for two and counts the rest from three on', () => {
+    const two = event({ title: 'Soiree', associationName: 'Corpo', coOwners: [co(1)] });
+    const four = event({
+      title: 'Soiree',
+      associationName: 'Corpo',
+      coOwners: [co(1), co(2), co(3)],
+    });
+
+    expect(eventSummary(two)).toBe('Soiree - Corpo + Co1');
+    expect(eventSummary(four)).toBe(
+      `Soiree - ${m.calendar_owners_and_others({ first: 'Corpo', count: 3 })}`
+    );
+  });
+
+  it('keeps the single-owner shape unchanged', () => {
+    expect(eventSummary(event({ title: 'Soiree', coOwners: [] }))).toBe('Soiree - BDE');
+  });
+
+  it('lists all four in the tooltip, where the cell has no room to name them', () => {
+    const four = event({
+      title: 'Soiree',
+      associationName: 'Corpo',
+      coOwners: [co(1), co(2), co(3)],
+    });
+    expect(eventTooltip(four)).toBe('Soiree - Corpo, Co1, Co2, Co3');
   });
 });

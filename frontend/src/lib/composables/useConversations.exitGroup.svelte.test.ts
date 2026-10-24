@@ -14,6 +14,7 @@
  * end. The window is where the two paths overlapped, so the window is where the assertion belongs.
  */
 import { SvelteMap } from 'svelte/reactivity';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import type { Conversation } from '$lib/types';
 import { GroupExitRefusedError } from '$lib/mls-client/mlsDeliveryApi';
 
@@ -214,7 +215,7 @@ describe('exitGroupAndCleanup - the departure is recorded before it is performed
  * offline was lost, the group survived server-side, and discovery handed it straight back.
  */
 describe('exitGroupAndCleanup - an exit the server never answered stays owed', () => {
-  const NET = new TypeError('Failed to fetch');
+  const NET = new TransportFailureError(new TypeError('Failed to fetch'));
 
   async function exitWith(
     broadcast: typeof leaveGroupAndBroadcast,

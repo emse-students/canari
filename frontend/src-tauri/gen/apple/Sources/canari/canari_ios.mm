@@ -16,88 +16,65 @@ static volatile bool g_isInForeground = false;
 #import <FirebaseCore/FirebaseCore.h>
 #endif
 
-/// WP-SEC-1 one-shot migration: existing installs hold the device key only in
-/// push_context.json. Promote it to the Keychain (background-accessible item,
-/// AfterFirstUnlockThisDeviceOnly, shared via group.fr.emse.canari), then strip
-/// the field from the JSON and re-mirror. The NSE never falls back to the JSON —
-/// if the app has not run since the update, one push falls back to the generic
-/// text and the next launch fixes it permanently.
-static void CanariMigrateDeviceKeyFromJson(void) {
-  NSString *dir = CanariTauriDataDir();
-  if (dir == nil) {
-    return;
-  }
-  NSString *path = [dir stringByAppendingPathComponent:@"push_context.json"];
-  NSData *data = [NSData dataWithContentsOfFile:path];
-  if (data == nil) {
-    return;
-  }
-  id json = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];
-  if (![json isKindOfClass:[NSMutableDictionary class]]) {
-    return;
-  }
-  NSMutableDictionary *dict = (NSMutableDictionary *)json;
-  NSString *deviceKeyB64 = [dict[@"deviceKeyB64"] isKindOfClass:[NSString class]] ? dict[@"deviceKeyB64"] : @"";
-  if (deviceKeyB64.length == 0) {
-    return;
-  }
-  NSString *userId = [dict[@"userId"] isKindOfClass:[NSString class]] ? dict[@"userId"] : @"";
-  NSString *deviceId = [dict[@"deviceId"] isKindOfClass:[NSString class]] ? dict[@"deviceId"] : @"";
-  if (userId.length == 0 || deviceId.length == 0) {
-    return;
-  }
-
-  // Write the background-accessible Keychain item (mirrors KeystorePlugin.swift's bg item).
-  NSString *alias = [NSString stringWithFormat:@"mls_device_key_%@_%@", userId, deviceId];
-  NSString *account = [NSString stringWithFormat:@"mls_bg_key_%@", alias];
-  // RAW bytes, matching what KeystorePlugin.storeKeyBytes writes at login - it
-  // base64-decodes before hitting the Keychain, and the readers base64-encode on the way
-  // out. Storing the base64 TEXT here would make a migrated install disagree with a
-  // freshly logged-in one, and the readers would hand the FFI a double-encoded key.
-  NSData *keyData = [[NSData alloc] initWithBase64EncodedString:deviceKeyB64 options:0];
-  if (keyData.length != 32) {
-    NSLog(@"[CanariIOS] migrateDeviceKey: deviceKeyB64 is not 32 bytes - keeping JSON field");
-    return;
-  }
-
-  NSDictionary *deleteQuery = @{
+/// The install's native cache key (Rust `native_cache`, the only copy of the design): a random
+/// 32-byte key sealing `graine_seeds.json` and the push cache at rest. Kept exactly like the device
+/// key's background copy - a Keychain item `mls_bg_key_<alias>` shared with the notification
+/// extension through the App Group access group, AfterFirstUnlockThisDeviceOnly, never synchronised
+/// and never in a backup - so the extension and the app (through the keystore plugin's unattended
+/// read) both find it. CREATED HERE AND NOWHERE ELSE: one creator, so one file is never sealed under
+/// two keys. Created only on errSecItemNotFound; any other status (a locked device before its first
+/// unlock) leaves everything as it is and says so. Android twin: NativeCacheKey.ensure.
+static void CanariEnsureNativeCacheKey(void) {
+  NSString *account = @"mls_bg_key_canari_native_cache_key";
+  NSDictionary *probe = @{
     (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
     (__bridge id)kSecAttrService : @"fr.emse.canari",
     (__bridge id)kSecAttrAccount : account,
-  };
-  SecItemDelete((__bridge CFDictionaryRef)deleteQuery);
-
-  NSDictionary *addQuery = @{
-    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
-    (__bridge id)kSecAttrService : @"fr.emse.canari",
-    (__bridge id)kSecAttrAccount : account,
-    (__bridge id)kSecValueData : keyData,
     (__bridge id)kSecAttrAccessGroup : @"group.fr.emse.canari",
-    (__bridge id)kSecAttrAccessible : (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
   };
-  OSStatus status = SecItemAdd((__bridge CFDictionaryRef)addQuery, nil);
-  if (status != errSecSuccess) {
-    NSLog(@"[CanariIOS] migrateDeviceKey: Keychain write failed (status=%d) — keeping JSON field", (int)status);
+  OSStatus found = SecItemCopyMatching((__bridge CFDictionaryRef)probe, nil);
+  if (found == errSecSuccess) {
+    NSLog(@"[CanariIOS] nativeCacheKey: present");
     return;
   }
-
-  // Strip the field and rewrite.
-  [dict removeObjectForKey:@"deviceKeyB64"];
-  NSData *outData = [NSJSONSerialization dataWithJSONObject:dict options:0 error:nil];
-  if (outData != nil) {
-    [outData writeToFile:path atomically:YES];
+  if (found != errSecItemNotFound) {
+    NSLog(@"[CanariIOS] nativeCacheKey: ERROR Keychain unreadable (status=%d) - left as it is", (int)found);
+    return;
   }
-
-  // Delete the stale App Group mirror so the NSE copy stops carrying the key.
-  NSURL *container = [[NSFileManager defaultManager]
-      containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"];
-  if (container != nil) {
-    [[NSFileManager defaultManager]
-        removeItemAtURL:[container URLByAppendingPathComponent:@"push_context.json"]
-                  error:nil];
+  NSMutableData *key = [NSMutableData dataWithLength:32];
+  if (SecRandomCopyBytes(kSecRandomDefault, 32, key.mutableBytes) != errSecSuccess) {
+    NSLog(@"[CanariIOS] nativeCacheKey: ERROR no random bytes - not created");
+    return;
   }
+  NSMutableDictionary *add = [probe mutableCopy];
+  add[(__bridge id)kSecValueData] = key;
+  add[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
+  OSStatus status = SecItemAdd((__bridge CFDictionaryRef)add, nil);
+  [key resetBytesInRange:NSMakeRange(0, key.length)];
+  if (status == errSecSuccess) {
+    NSLog(@"[CanariIOS] nativeCacheKey: created");
+  } else if (status == errSecDuplicateItem) {
+    NSLog(@"[CanariIOS] nativeCacheKey: present (created meanwhile)");
+  } else {
+    NSLog(@"[CanariIOS] nativeCacheKey: ERROR creation failed (status=%d) - the native caches stay unwritten", (int)status);
+  }
+}
 
-  NSLog(@"[CanariIOS] migrateDeviceKey: key promoted to Keychain, JSON stripped, App Group mirror deleted");
+/// Keeps the two native caches - `graine_seeds.json` and the push cache - out of every backup, in
+/// the app's data directory and in the App Group container the notification extension reads. THE
+/// CACHES ONLY, NEVER THEIR DIRECTORY: it also holds `mls.bin`, `push_context.json` and the identity
+/// files, and those must come back with a restore together with WebKit's IndexedDB: one without the
+/// other would look like a damaged MLS state. (On a phone whose at-rest key is hardware-held, a
+/// restore onto ANOTHER phone brings the files without the key, and the at-rest marker that rides
+/// along makes that a typed lost-key state - auth.md.) The caches gain nothing from a restore:
+/// their key is a ThisDeviceOnly Keychain item that does not travel. Per file, so every writer
+/// re-applies it after its atomic write; this pass at bootstrap and activation covers a file an
+/// older build wrote. Android excludes its data domain (`data_extraction_rules.xml`).
+static void CanariExcludeNativeCachesFromBackup(void) {
+  CanariExcludeNativeCacheFilesFromBackup(CanariTauriDataDir());
+  CanariExcludeNativeCacheFilesFromBackup([[NSFileManager defaultManager]
+      containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"]
+                                              .path);
 }
 
 static void CanariProcessPendingPushSecret(void) {
@@ -216,6 +193,47 @@ static void CanariObserveDocumentScrollRange(void) {
   NSLog(@"[CanariIOS] watching the WebView scroll view's range");
 }
 
+/// One line per settled keyboard change: the scroll view's offset and range as UIKit holds them, beside
+/// the document's scroll and viewport and the composer's top as the PAGE reads them.
+///
+/// A REPORT, NOT A REPAIR. iPhone 12, `v1.2.9-alpha.7`, 2026-10-17: in a DM whose last message is a
+/// tall video, the keyboard's rise left every native glass piece one keyboard overlap (301 pt) above
+/// its web twin - the "+" mid-thread, the header off the top of the screen - while the web layer was
+/// drawn where it belongs. The salon, same keyboard, was right; and a later keyboard change in the same
+/// DM (the emoji keyboard, 301 -> 388) put everything back. The native pieces are placed at the page's
+/// `getBoundingClientRect()` (`nativeGlassPiece.svelte.ts`), so the page's coordinates and the screen
+/// disagreed by exactly the overlap. Three causes fit that and the source cannot choose between them:
+/// the page believes the document scrolled while UIKit's offset is 0 (`scrollY` 301, `offset` 0); the
+/// document kept a range and the offset sits legally inside it (`content` - `bounds` = 301, which the
+/// clamp above never touches); or the page laid the composer out at 186 itself (`composerTop` 186,
+/// both scrolls 0). This line separates the three on the next build, from the bench's syslog alone,
+/// since a store build's WebView cannot be inspected (docs/wiki/device-verification.md).
+static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
+  UIScrollView *scrollView = webView.scrollView;
+  CGFloat offset = scrollView.contentOffset.y;
+  CGFloat content = scrollView.contentSize.height;
+  CGFloat bounds = CGRectGetHeight(scrollView.bounds);
+  NSString *js =
+      @"(function(){var s=document.scrollingElement,v=window.visualViewport,"
+       "f=document.querySelector('.chat-composer-footer');"
+       "function r(n){return Math.round(n*10)/10}"
+       "return 'scrollY='+r(window.scrollY)+' scrollHeight='+(s?r(s.scrollHeight):'none')+"
+       "' innerHeight='+r(window.innerHeight)+' vvHeight='+(v?r(v.height):'none')+"
+       "' vvOffsetTop='+(v?r(v.offsetTop):'none')+' vvPageTop='+(v?r(v.pageTop):'none')+"
+       "' composerTop='+(f?r(f.getBoundingClientRect().top):'none')})()";
+  [webView evaluateJavaScript:js
+            completionHandler:^(id result, NSError *error) {
+              if (error != nil || ![result isKindOfClass:[NSString class]]) {
+                NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f | "
+                      @"page geometry NOT read: %@",
+                      offset, content, bounds, error);
+                return;
+              }
+              NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f | page %@",
+                    offset, content, bounds, result);
+            }];
+}
+
 /// Shrinks the WebView to the space the soft keyboard leaves - the iOS peer of Android's
 /// `MainActivity.applyKeyboardInsets`, taken for the same reason and with the same shape.
 ///
@@ -273,6 +291,7 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
                    completion:^(__unused BOOL finished) {
                      CanariClampDocumentScroll(webView.scrollView);
                      CanariPublishSafeAreaInsets();
+                     CanariReportSettledKeyboardGeometry(webView);
                    }];
 }
 
@@ -525,8 +544,33 @@ static void CanariHideKeyboardAccessoryBar(void) {
   }
 }
 
+/// Mirrors `g_isInForeground` into the App Group as a file the Notification Service Extension
+/// reads (`appInForegroundFile`): in the foreground the app tells a new device on the account in
+/// its own alert, and the extension posts nothing. A separate process cannot read the static.
+static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {
+  NSURL *container = [[NSFileManager defaultManager]
+      containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"];
+  if (!container) {
+    NSLog(@"[CanariIOS] App Group unavailable - foreground flag not written");
+    return;
+  }
+  NSURL *flag = [container URLByAppendingPathComponent:@"app_in_foreground"];
+  if (inForeground) {
+    if (![[NSData data] writeToURL:flag atomically:YES]) {
+      NSLog(@"[CanariIOS] foreground flag not written");
+    }
+  } else {
+    NSError *error = nil;
+    if (![[NSFileManager defaultManager] removeItemAtURL:flag error:&error] &&
+        error.code != NSFileNoSuchFileError) {
+      NSLog(@"[CanariIOS] foreground flag not removed: %@", error);
+    }
+  }
+}
+
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
+  CanariSetAppGroupForegroundFlag(YES);
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
   CanariApplyEdgeToEdge();
@@ -536,8 +580,11 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariPublishSafeAreaInsets();
   CanariPublishDynamicType();
   CanariProcessPendingPushSecret();
-  CanariMigrateDeviceKeyFromJson();
   CanariCheckKeystoreHealth();
+  // Before the frontend's first take of the push cache: the key that seals it, and the backup
+  // exclusion of where it lives. Both idempotent; the bootstrap ran them already when it could.
+  CanariEnsureNativeCacheKey();
+  CanariExcludeNativeCachesFromBackup();
   CanariPushCancelMessageNotifications();
   // Pick up whatever the NSE decrypted while we were killed or backgrounded. It writes into the
   // App Group because an extension cannot reach the app's data container; this is the hop that
@@ -558,6 +605,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
 
 static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
+  CanariSetAppGroupForegroundFlag(NO);
   canari_ios_on_pause();
   // Snapshot the latest decrypt state into the App Group container before suspending, so a push
   // arriving while backgrounded is decrypted by the NSE against fresh state.
@@ -697,6 +745,10 @@ void canari_ios_bootstrap(void) {
               }];
   CanariProcessPendingPushSecret();
   CanariCheckKeystoreHealth();
+  // The native cache key before any push can be handled by this process, and the backup exclusion
+  // of where the caches live (see each; the activation runs them again).
+  CanariEnsureNativeCacheKey();
+  CanariExcludeNativeCachesFromBackup();
   // Cold start: drain before the WebView exists, so the very first take_fcm_cache of
   // this launch already sees the pushes handled while the app was killed.
   CanariDrainAppGroupFcmCache();

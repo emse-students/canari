@@ -32,6 +32,7 @@ import {
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { retryOverheardPull } from '$lib/utils/chat/historyDiffAnswer';
 import { takeOwedPulls } from '$lib/utils/chat/historyOverheardPull';
+import { forgetHistoryAsks, noteJoinSolicited } from '$lib/utils/chat/historyAddressing';
 import {
   hasHistoryFrameBeenConsumed,
   markHistoryFrameConsumed,
@@ -41,6 +42,7 @@ import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { SenderMismatchError } from '../verifiedSender';
 import { createMlsStatePersister } from '../mlsStatePersister';
+import { receiveCheckpointSkipBudget } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import type { MessageHandlerDeps } from './deps';
@@ -113,13 +115,21 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   resetEpochGapRegistry();
   // Same rationale for the recovery cooldowns: a re-login must not inherit a stale throttle.
   resetReAddCooldowns();
+  // And the open history asks: an addressed answer is accepted only by the session that asked.
+  forgetHistoryAsks();
 
-  const statePersister = createMlsStatePersister({ mlsService, log });
+  const receiveSkipBudget = receiveCheckpointSkipBudget();
+  if (receiveSkipBudget > 0) {
+    console.warn(
+      `[MLS] MEASUREMENT SWITCH ON (non-production build): live receive-only drains skip their checkpoint while fewer than ${receiveSkipBudget} frames are unsaved`
+    );
+  }
+  const statePersister = createMlsStatePersister({ mlsService, log, receiveSkipBudget });
   registerMlsStatePersister(statePersister);
   installMlsStatePersisterLifecycle(statePersister);
 
   // The persister satisfies BulkIngestObserver (onBulkIngestStart/End): it defers the encrypted
-  // MLS checkpoint to one flush per drain. The UI render buffer registers its own observer in
+  // MLS checkpoint to one flush per window (per drain, per history replay). The UI render buffer registers its own observer in
   // sessionAuth; the two are independent subscribers, no longer multiplexed over one hook.
   mlsService.addBulkIngestObserver(statePersister);
 
@@ -507,6 +517,13 @@ async function handleWelcome({
       // Fall back to the envelope groupId if WASM returns undefined (should not happen).
       const joinedGroupId =
         (await mlsService.processWelcome(content, ratchetTreeBytes)) ?? groupId ?? '';
+      // OUR ADMISSION IS WHAT SOLICITS THE INVITER'S PUSH, which is addressed to this device and
+      // carries no request id: recorded here, before any frame of the group can be read, so the
+      // push is accepted as the answer to it (`historyAddressing.ts`).
+      noteJoinSolicited(joinedGroupId);
+      log(
+        `[HISTORY_ADDRESSED] ${joinedGroupId.slice(0, 8)}… admitted - the inviter's push is solicited`
+      );
 
       // FIX 1 — Add the conversation to the map early, to avoid the race between the Welcome
       // (which adds the group to WASM) and the arrival of system messages
@@ -1050,6 +1067,20 @@ async function handleKnownGroup({
       return true;
     }
 
+    // AN ADDRESSED CONVERSATION FRAME IS A HISTORY ANSWER OR NOTHING (step A, rule 5 of
+    // docs/wiki/protocols/history-answer-addressing.md). The server routed it to this device alone,
+    // so nobody else in the group sees it: a message, an edit or a reaction sent that way would show
+    // this device a conversation the rest of the group never saw. No honest build sends one - every
+    // other frame of a conversation reaches the whole group - so it is refused here, before any of it
+    // is applied, and ACKed: redelivery would not change the answer. What a `history_bundle` may
+    // carry is decided by its own handler (`systemMessageHandler`).
+    if (deliveryMeta?.addressed === true && msg.system?.event !== 'history_bundle') {
+      console.error(
+        `[HISTORY_ADDRESSED] REFUSED an addressed ${msg.system?.event ?? (msg.text || msg.reply || msg.media ? 'message' : 'frame')} in ${convoKey.slice(0, 8)}… from ${sender.slice(0, 8)} - only a history answer may be addressed in a conversation`
+      );
+      return true;
+    }
+
     // A LIVE frame from a device we owe a retry is the proof it is online NOW, and its device is the
     // one `verifiedSender` just checked against the credential. A pulled copy proves nothing about
     // now, and the author's own digest supersedes the entry rather than spending it (see
@@ -1149,6 +1180,7 @@ async function handleKnownGroup({
     // `assertVerifiedSender` already said so at ERROR and reported it; nothing here is a heal.
     if (kind === 'sender-mismatch') {
       noteConsumed();
+      statePersister.noteReceivedFrame(false);
       return true;
     }
     // EVICTED - and this arm is the whole reason the kind exists. The frame is for a group whose
@@ -1219,9 +1251,10 @@ async function handleKnownGroup({
       let rungOneIsExhausted = false;
       try {
         const replay = await attemptCommitReplay(mlsService, groupId, userId, log);
+        // Healed or not, applied commits moved the epoch: a partial replay is as durable-worthy.
+        if (replay.healed || replay.applied > 0) statePersister.persistNow();
         if (replay.healed) {
           clearEpochGap(groupId);
-          statePersister.persistNow();
           return true;
         }
         rungOneIsExhausted = replay.belowFloor || replay.gapAt !== undefined;

@@ -10,11 +10,11 @@ use std::path::Path;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mls_core::crypto::decode_base64_to_32_bytes;
+use mls_core::device_trust::{canonical_user_id, canonical_user_of};
 use mls_core::MlsManager;
 
 use super::proto_fields::extract_full_message_info;
 use super::push_text::PushLanguage;
-use crate::concurrency::background_write_mls_bin;
 
 /// Decodes a base64 device key and loads the MLS manager from the encrypted `mls.bin` bytes.
 ///
@@ -187,28 +187,35 @@ pub struct GrainePush<'a> {
 /// opened. A replayed push re-shows a banner the device already showed; the app, which does hold
 /// that record, shows the row once.
 ///
-/// `language` words what the scanner composes itself ([`PushLanguage`]).
+/// `language` words what the scanner composes itself ([`PushLanguage`]). `cache_key` is the
+/// install's native cache key the platform read (`native_cache`), which opens the sealed mirror;
+/// `None` reads only an older build's plaintext mirror and refuses a sealed one as unreadable.
 pub fn open_graine_push(
     data_dir: &Path,
+    cache_key: Option<&crate::native_cache::CacheKey>,
     push: &GrainePush<'_>,
     language: PushLanguage,
 ) -> serde_json::Value {
-    let held =
-        match crate::commands::push::read_graine_seed(data_dir, push.channel_id, push.session_id) {
-            Ok(Some(held)) => held,
-            Ok(None) => {
-                log::debug!(
-                    "[GraineBG] session {} of channel {} is not mirrored",
-                    push.session_id,
-                    push.channel_id
-                );
-                return refused("seed-not-mirrored");
-            }
-            Err(e) => {
-                log::error!("[GraineBG] mirror unreadable: {e}");
-                return refused("mirror-unreadable");
-            }
-        };
+    let held = match crate::commands::push::read_graine_seed(
+        data_dir,
+        cache_key,
+        push.channel_id,
+        push.session_id,
+    ) {
+        Ok(Some(held)) => held,
+        Ok(None) => {
+            log::debug!(
+                "[GraineBG] session {} of channel {} is not mirrored",
+                push.session_id,
+                push.channel_id
+            );
+            return refused("seed-not-mirrored");
+        }
+        Err(e) => {
+            log::error!("[GraineBG] mirror unreadable: {e}");
+            return refused("mirror-unreadable");
+        }
+    };
     if push.index < held.first_index {
         log::warn!(
             "[GraineBG] index {} is below session {}'s floor {} - refused, as the app refuses it",
@@ -236,7 +243,7 @@ pub fn open_graine_push(
     let Some((minter, signing_pk_b64)) = &held.v2 else {
         return open_graine_push_v1(&seed, push, &nonce, &ciphertext, language);
     };
-    if !push.sender_id.eq_ignore_ascii_case(minter) {
+    if canonical_user_id(push.sender_id) != canonical_user_id(minter) {
         log::error!(
             "[GraineBG] REFUSED: push names {} as the author of session {}, minted by {minter}",
             push.sender_id,
@@ -343,62 +350,489 @@ pub fn decrypt_media_blob(raw_key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Optio
     }
 }
 
-/// Creates an MLS Welcome for a new device from the background (app may be killed).
-/// Key-based variant: uses the pre-derived device key (base64) instead of the PIN.
-pub fn create_welcome_background_with_key(
+// The staged-state prefix and the stale ledger are named where `mls.bin`'s deletion sweeps them.
+use crate::commands::storage::{STAGED_WELCOME_PREFIX, STALE_WELCOME_LEDGER_FILE};
+/// The most groups the stale ledger names. A capacity, not a clock: a full ledger is emptied before
+/// the next entry, which costs each forgotten group ONE more refused answer and nothing else.
+pub const STALE_WELCOME_LEDGER_CAPACITY: usize = 64;
+
+/// The file a prepared Welcome stages its post-add state in, beside `mls.bin`, one per group so two
+/// requests for two groups answered at once never install each other's state:
+/// `digest of the loaded mls.bin (32) || sealed post-add state`.
+fn staged_welcome_path(files_dir: &Path, group_id: &str) -> std::path::PathBuf {
+    let tag = hex(&crate::concurrency::mls_bin_digest(group_id.as_bytes())[..8]);
+    files_dir.join(format!("{STAGED_WELCOME_PREFIX}{tag}"))
+}
+
+/// Writes a staged file by rename from a temporary of ITS OWN name, so two groups staged at once
+/// never share a temporary.
+fn write_staged(path: &Path, data: &[u8]) -> Result<(), String> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    std::fs::write(&tmp, data).map_err(|e| format!("write staged state: {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename staged state: {e}"))
+}
+
+/// Stages `file` for `group_id` ONLY while `mls.bin` is still the file the Welcome was built from,
+/// under the write lock every `mls.bin` writer takes: a foreground write that landed since (a
+/// checkpoint, a key change's re-seal) makes the staging a state the install would refuse, so it is
+/// refused HERE, before the commit goes to the server - never after the server accepted it.
+fn stage_over_loaded_state(
+    files_dir: &Path,
+    loaded: &[u8; 32],
+    group_id: &str,
+    file: &[u8],
+) -> Result<(), String> {
+    let _held = crate::concurrency::mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    let current = std::fs::read(files_dir.join("mls.bin"))
+        .map_err(|e| format!("re-read mls.bin before staging: {e}"))?;
+    if &crate::concurrency::mls_bin_digest(&current) != loaded {
+        return Err("mls.bin changed since the Welcome was built - not staged".to_string());
+    }
+    write_staged(&staged_welcome_path(files_dir, group_id), file)
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Runs `edit` on the stale ledger under the process-wide `mls.bin` write lock (every FCM thread
+/// shares that process), writing it back by rename when `edit` says it changed. An absent or
+/// unparsable ledger reads as empty, and the unparsable one is said.
+fn with_stale_ledger<R>(
+    files_dir: &Path,
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> (R, bool),
+) -> Result<R, String> {
+    let _guard = crate::concurrency::mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    let path = files_dir.join(STALE_WELCOME_LEDGER_FILE);
+    let mut map = match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(serde_json::Value::Object(m)) => m,
+            _ => {
+                log::warn!("[BG_WELCOME] stale ledger unparsable - read as empty");
+                serde_json::Map::new()
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(e) => return Err(format!("read {STALE_WELCOME_LEDGER_FILE}: {e}")),
+    };
+    let (result, changed) = edit(&mut map);
+    if changed {
+        let tmp = files_dir.join(format!("{STALE_WELCOME_LEDGER_FILE}.tmp"));
+        std::fs::write(&tmp, serde_json::Value::Object(map).to_string())
+            .map_err(|e| format!("write {STALE_WELCOME_LEDGER_FILE}: {e}"))?;
+        std::fs::rename(&tmp, &path)
+            .map_err(|e| format!("rename {STALE_WELCOME_LEDGER_FILE}: {e}"))?;
+    }
+    Ok(result)
+}
+
+/// Whether the server already refused, as stale, a Welcome for `group_id` built from THESE
+/// `mls.bin` bytes - and so whether answering again could only be refused again.
+///
+/// A PROOF, NOT A CLOCK. The gate's answer is a function of the base the commit was built on and
+/// of the group's epoch, and the server's epoch only moves forward: the same bytes build a commit on
+/// the same base, which the gate refuses again. Any write to `mls.bin` - the foreground's
+/// checkpoint, a background Welcome received, an outbox drain - changes the digest and lifts the
+/// entry, so the device answers again as soon as it holds anything new. Until then the newcomer's
+/// re-ask cadence (`requestReAdd`, every 60 s while its app is open) costs this phone one file read
+/// per ask instead of an add-lock, a key-package fetch, a load, a commit and a refusal.
+pub fn welcome_request_known_stale(files_dir: &Path, state_bytes: &[u8], group_id: &str) -> bool {
+    let digest = hex(&crate::concurrency::mls_bin_digest(state_bytes));
+    let known = with_stale_ledger(files_dir, |map| {
+        let known = map
+            .get(group_id)
+            .and_then(|e| e.get("digest"))
+            .and_then(|d| d.as_str())
+            == Some(digest.as_str());
+        (known, false)
+    });
+    match known {
+        Ok(known) => known,
+        Err(e) => {
+            log::warn!("[BG_WELCOME] stale ledger unreadable ({e}) - answered as not known");
+            false
+        }
+    }
+}
+
+/// The ledger key of a refused TARGET of `group_id`, beside the group's own (stale) entry.
+fn refused_target_key(group_id: &str, target: &str) -> String {
+    format!("{group_id}|{target}")
+}
+
+/// Whether a Welcome for `target` (`userId:deviceId`) in `group_id`, built from THESE `mls.bin`
+/// bytes, was already refused - and if so the token saying why: `stale-epoch-known` (the base was
+/// behind the server, whoever the target) or `target-refused-known` (the server refused this
+/// target: `welcome_target_unknown` / `welcome_target_not_member`).
+///
+/// The same proof as [`welcome_request_known_stale`]: any write to `mls.bin` lifts both. A target
+/// the server admits after the refusal - a grant, a re-registration - is answered from the next
+/// bytes this phone holds, or by any other holder or the foreground, which keep no such memo.
+pub fn welcome_request_known_refused(
+    files_dir: &Path,
+    state_bytes: &[u8],
+    group_id: &str,
+    target: &str,
+) -> Option<&'static str> {
+    if welcome_request_known_stale(files_dir, state_bytes, group_id) {
+        return Some("stale-epoch-known");
+    }
+    let digest = hex(&crate::concurrency::mls_bin_digest(state_bytes));
+    let key = refused_target_key(group_id, target);
+    let known = with_stale_ledger(files_dir, |map| {
+        let known = map
+            .get(&key)
+            .and_then(|e| e.get("digest"))
+            .and_then(|d| d.as_str())
+            == Some(digest.as_str());
+        (known, false)
+    });
+    match known {
+        Ok(true) => Some("target-refused-known"),
+        Ok(false) => None,
+        Err(e) => {
+            log::warn!("[BG_WELCOME] stale ledger unreadable ({e}) - answered as not known");
+            None
+        }
+    }
+}
+
+/// A refusal of [`prepare_welcome_background_with_key`], as the token the native callers branch on.
+fn welcome_refused(reason: &str) -> serde_json::Value {
+    log::warn!("[BG_WELCOME] prepare refused reason={reason}");
+    refused(reason)
+}
+
+/// One `welcome_request` this device answers: the group, the device the request was made for
+/// (`userId:deviceId`, the requester the push named), and the KeyPackage fetched FOR that device.
+pub struct WelcomeRequest<'a> {
+    pub group_id: &'a str,
+    /// The device the Welcome is for - the identity the KeyPackage's credential must name.
+    pub requester: &'a str,
+    pub key_package_b64: &'a str,
+}
+
+/// Builds the Welcome and the commit that add the request's KeyPackage to its group, and STAGES the
+/// state they produce beside `mls.bin`. Nothing is written to `mls.bin` here.
+///
+/// Answers `{"ok": true, "welcome", "ratchetTree", "commit", "groupInfo", "baseEpoch"}` (base64;
+/// `groupInfo` is the external-join base of the epoch the commit creates, published by the route
+/// in the advance's own transaction - COMM-22), or
+/// `{"ok": false, "reason"}` with one of: `foreground-active`, `stale-epoch-known`,
+/// `key-package-unreadable`, `state-unreadable`, `group-not-held`, `already-member`, `add-failed`,
+/// `stage-failed`, or the [`mls_core::SkippedKeyPackageReason`] wire name the package is refused for
+/// (`identity-mismatch`, `signature-key-changed`, `expired`, ...).
+///
+/// **THE PACKAGE IS BOUND TO THE REQUESTER** as the foreground's Add binds it: the delivery service
+/// chose the bytes, so a package whose credential names another device, or the requester under a
+/// key this device never pinned for it, is refused before anything is staged
+/// ([`mls_core::MlsManager::key_package_verdict`], the check the Add itself then re-runs).
+///
+/// **THE ADD IS INSTALLED ONLY ONCE THE SERVER ACCEPTS IT** ([`install_staged_welcome`]), the order
+/// the foreground has followed since C7 (stage, submit, merge on accept). This path used to merge and
+/// write first: a phone killed while its group moved on answered from its old epoch, the gate refused
+/// the commit as `epoch_mismatch`, and `mls.bin` was left holding an add nobody else applied - an
+/// epoch of its own, from which it could read no further message of the group, and a tree in which
+/// the newcomer already sat (`ALREADY_MEMBER` on the next request). Read on the Mi 9T, 2026-10-22.
+///
+/// **IT DOES NOT CATCH UP FIRST, ON PURPOSE.** The background never applies the group's commits to
+/// `mls.bin` (the catch-up in [`decrypt_push_message_with_commits_with_key`] is read-only): the
+/// foreground's commit replay owns that, with everything it does around a commit. A stale phone's
+/// answer is refused by the gate, discarded, and recorded so the same bytes are not offered again
+/// ([`discard_staged_welcome`]).
+pub fn prepare_welcome_background_with_key(
     files_dir: &Path,
     state_bytes: &[u8],
     key_b64: &str,
     user_id: &str,
     device_id: &str,
-    group_id: &str,
-    key_package_b64: &str,
-) -> Result<serde_json::Value, String> {
-    let kp_bytes = STANDARD
-        .decode(key_package_b64.trim())
-        .map_err(|e| format!("base64 decode key_package: {e}"))?;
-
-    let (mut manager, key) = load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id)?;
-
-    let base_epoch = manager.get_epoch(group_id).map_err(|e| e.to_string())?;
-
+    request: &WelcomeRequest,
+) -> serde_json::Value {
+    let WelcomeRequest {
+        group_id,
+        requester,
+        key_package_b64,
+    } = *request;
+    let short: String = group_id.chars().take(8).collect();
+    log::info!("[BG_WELCOME] prepare group={short} for {requester}");
+    // The foreground answers welcome_requests itself, and owns the state while it runs.
+    if crate::concurrency::foreground_is_active() {
+        return welcome_refused("foreground-active");
+    }
+    if welcome_request_known_stale(files_dir, state_bytes, group_id) {
+        return welcome_refused("stale-epoch-known");
+    }
+    let Ok(kp_bytes) = STANDARD.decode(key_package_b64.trim()) else {
+        return welcome_refused("key-package-unreadable");
+    };
+    let (mut manager, key) =
+        match load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id) {
+            Ok(pair) => pair,
+            Err(e) => {
+                log::error!("[BG_WELCOME] mls.bin unreadable with the device key: {e}");
+                return welcome_refused("state-unreadable");
+            }
+        };
+    // The events already waiting in the state are not this Add's; only those after them are.
+    let events_before = manager.pending_device_events().len();
+    let base_epoch = match manager.get_epoch(group_id) {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("[BG_WELCOME] group={short} not held: {e}");
+            return welcome_refused("group-not-held");
+        }
+    };
+    // Bound to the requester BEFORE staging, typed: the refusal travels as its wire name. mls-core
+    // has already logged a substitution (`identity-mismatch`, `signature-key-changed`) at ERROR.
+    match manager.key_package_verdict(&kp_bytes, requester) {
+        Ok(trust) => log::debug!(
+            "[BG_WELCOME] key package bound to {requester} ({}) group={short}",
+            trust.as_str()
+        ),
+        Err(reason) => {
+            log::error!(
+                "[BG_WELCOME] key package fetched for {requester} refused ({}) group={short} - nothing staged",
+                reason.as_str()
+            );
+            return welcome_refused(reason.as_str());
+        }
+    }
     log::debug!(
-        "[BG_WELCOME] add_member group={group_id} kp_len={} base_epoch={base_epoch}",
+        "[BG_WELCOME] add_member group={short} kp_len={} base_epoch={base_epoch}",
         kp_bytes.len()
     );
-    let (commit, welcome_opt) = manager
-        .add_member(group_id, &kp_bytes)
-        .map_err(|e| e.to_string())?;
-
-    let welcome = welcome_opt.ok_or_else(|| "add_member returned no welcome bytes".to_string())?;
-
-    // Stage-only add (C7-A). This background path cannot do the interactive validate-then-merge
-    // round-trip (the app may be killed); it is serialized by the add-lock like the bootstrap path,
-    // so merge immediately and export the post-merge ratchet tree the new member joins with.
-    manager
+    // `_with_base`: the external-join base of the epoch this commit CREATES travels with it, as the
+    // foreground's does (COMM-22) - only the committer can export it, and only now.
+    let (commit, welcome, group_info) =
+        match manager.add_members_bulk_with_base(group_id, &[kp_bytes.as_slice()], &[requester]) {
+            Ok(((commit, Some(welcome), _, _), group_info)) => (commit, welcome, group_info),
+            Ok(((_, None, _, skipped), _)) => {
+                log::error!(
+                    "[BG_WELCOME] add produced no welcome group={short} skipped={}",
+                    skipped.len()
+                );
+                return welcome_refused("add-failed");
+            }
+            Err(mls_core::MlsError::AlreadyMember(who)) => {
+                log::warn!("[BG_WELCOME] {who} already sits in the tree of group={short}");
+                return welcome_refused("already-member");
+            }
+            Err(e) => {
+                log::error!("[BG_WELCOME] add_member failed group={short}: {e}");
+                return welcome_refused("add-failed");
+            }
+        };
+    // The post-add state the new member joins: merged IN MEMORY, sealed, and staged.
+    let staged = manager
         .merge_pending_commit_for(group_id)
-        .map_err(|e| e.to_string())?;
-    let ratchet_tree = manager
-        .export_ratchet_tree_for(group_id)
-        .map_err(|e| e.to_string())?;
-
-    let enc = manager
-        .save_encrypted_with_key(&key)
-        .map_err(|e| e.to_string())?;
-    let mls_path = files_dir.join("mls.bin");
-    background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
+        .map_err(|e| e.to_string())
+        .and_then(|()| {
+            manager
+                .export_ratchet_tree_for(group_id)
+                .map_err(|e| e.to_string())
+        })
+        .and_then(|tree| {
+            manager
+                .save_encrypted_with_key(&key)
+                .map(|sealed| (tree, sealed))
+                .map_err(|e| e.to_string())
+        });
+    let (ratchet_tree, sealed) = match staged {
+        Ok(pair) => pair,
+        Err(e) => {
+            log::error!("[BG_WELCOME] post-add state not sealed group={short}: {e}");
+            return welcome_refused("stage-failed");
+        }
+    };
+    let loaded = crate::concurrency::mls_bin_digest(state_bytes);
+    let mut file = Vec::with_capacity(32 + sealed.len());
+    file.extend_from_slice(&loaded);
+    file.extend_from_slice(&sealed);
+    if let Err(e) = stage_over_loaded_state(files_dir, &loaded, group_id, &file) {
+        log::error!("[BG_WELCOME] post-add state not staged group={short}: {e}");
+        return welcome_refused("stage-failed");
+    }
     log::info!(
-        "[BG_WELCOME] mls.bin updated ({} bytes) for group={group_id}",
-        enc.len()
+        "[BG_WELCOME] staged group={short} base_epoch={base_epoch} ({} bytes) - mls.bin untouched until the server accepts",
+        sealed.len()
     );
-
-    Ok(serde_json::json!({
+    // The device this Add admitted may be a new device of THIS account - the phone serving its own
+    // account's new laptop. Its events ride in the STAGED state, so they reach `mls.bin` (and the
+    // app's notices) only with an accepted install, and vanish with a discard. The keys go to the
+    // caller for the local notification (`ownDeviceAdded`, as on the decrypt paths), which it raises
+    // only once the server ACCEPTED the commit.
+    let pending = manager.pending_device_events();
+    let added = &pending[events_before.min(pending.len())..];
+    let own_alerts = super::device_notice::owner_alert_keys_of(added, user_id, device_id);
+    let mut answer = serde_json::json!({
         "ok": true,
         "welcome": STANDARD.encode(&welcome),
         "ratchetTree": STANDARD.encode(&ratchet_tree),
         "commit": STANDARD.encode(&commit),
+        "groupInfo": STANDARD.encode(&group_info),
         "baseEpoch": base_epoch,
-    }))
+    });
+    if !own_alerts.is_empty() {
+        answer["ownDeviceAdded"] = serde_json::json!(own_alerts);
+    }
+    answer
+}
+
+/// Installs the state [`prepare_welcome_background_with_key`] staged for `group_id` - called ONLY
+/// after the server answered `accepted` - and deletes the staged file whatever happens.
+///
+/// Installed only over the very `mls.bin` it was built from
+/// ([`crate::concurrency::background_write_mls_bin_if_unchanged`]). Answers `{"ok": true}`, or
+/// `{"ok": false, "reason": "not-staged" | "install-refused"}`. The second means the server holds a
+/// commit this device does not, and the caller must say so loudly: the foreground's replay will meet
+/// this device's own commit, and the device recovers through the usual ladder.
+pub fn install_staged_welcome(files_dir: &Path, group_id: &str) -> serde_json::Value {
+    let short: String = group_id.chars().take(8).collect();
+    let path = staged_welcome_path(files_dir, group_id);
+    let file = match std::fs::read(&path) {
+        Ok(f) if f.len() > 32 => f,
+        Ok(_) => {
+            log::error!("[BG_WELCOME] install group={short}: staged state truncated");
+            let _ = std::fs::remove_file(&path);
+            return refused("not-staged");
+        }
+        Err(e) => {
+            log::error!("[BG_WELCOME] install group={short}: no staged state ({e})");
+            return refused("not-staged");
+        }
+    };
+    if let Err(e) = std::fs::remove_file(&path) {
+        log::warn!("[BG_WELCOME] staged state of group={short} not deleted: {e}");
+    }
+    let mut digest = [0u8; 32];
+    digest.copy_from_slice(&file[..32]);
+    match crate::concurrency::background_write_mls_bin_if_unchanged(
+        &files_dir.join("mls.bin"),
+        &digest,
+        &file[32..],
+    ) {
+        Ok(()) => {
+            log::info!(
+                "[BG_WELCOME] installed group={short} ({} bytes)",
+                file.len() - 32
+            );
+            serde_json::json!({ "ok": true })
+        }
+        Err(e) => {
+            log::error!("[BG_WELCOME] ACCEPTED AND NOT INSTALLED group={short}: {e}");
+            let mut out = refused("install-refused");
+            out["error"] = serde_json::Value::String(e);
+            out
+        }
+    }
+}
+
+/// What a discarded Welcome's refusal leaves in the stale ledger, so the same `mls.bin` bytes do not
+/// answer a request the server will refuse again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalMemo<'a> {
+    /// A refusal that says nothing about the next request: a racing commit, a removed requester, an
+    /// answer nobody read.
+    Nothing,
+    /// `epoch_mismatch`: recorded for the whole group, and only when `server_epoch > base_epoch`.
+    Stale { base_epoch: u64, server_epoch: u64 },
+    /// `welcome_target_unknown` / `welcome_target_not_member`: recorded for this target alone
+    /// (`userId:deviceId`).
+    TargetRefused { target: &'a str },
+}
+
+/// Deletes the state staged for `group_id` - the server refused the commit, or its answer was not
+/// an acceptance - and records what `memo` says against the bytes the commit was built from, so they
+/// are not offered again ([`welcome_request_known_refused`]).
+pub fn discard_staged_welcome(files_dir: &Path, group_id: &str, memo: RefusalMemo<'_>) {
+    let short: String = group_id.chars().take(8).collect();
+    let path = staged_welcome_path(files_dir, group_id);
+    let digest = std::fs::read(&path)
+        .ok()
+        .filter(|f| f.len() > 32)
+        .map(|f| hex(&f[..32]));
+    match std::fs::remove_file(&path) {
+        Ok(()) => log::info!("[BG_WELCOME] discarded the staged state of group={short}"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log::warn!("[BG_WELCOME] discard group={short}: nothing was staged")
+        }
+        Err(e) => log::warn!("[BG_WELCOME] staged state of group={short} not deleted: {e}"),
+    }
+    let Some(digest) = digest else {
+        return;
+    };
+    let (key, entry, said) = match memo {
+        RefusalMemo::Nothing => return,
+        RefusalMemo::Stale {
+            base_epoch,
+            server_epoch,
+        } => {
+            // ONLY A BASE BEHIND THE SERVER IS STALE. A base at or ahead of the server's counter (a
+            // phone ahead of a lagging counter) is a refusal the same bytes may not meet again, so it
+            // is not remembered: the memo must never hold back an answer that could later be valid.
+            if server_epoch <= base_epoch {
+                log::warn!(
+                    "[BG_WELCOME] group={short} refused at base {base_epoch} with the server at {server_epoch} - not behind, not recorded"
+                );
+                return;
+            }
+            (
+                group_id.to_string(),
+                serde_json::json!({ "digest": digest, "baseEpoch": base_epoch, "serverEpoch": server_epoch }),
+                format!("stale: base {base_epoch}, server {server_epoch}"),
+            )
+        }
+        RefusalMemo::TargetRefused { target } => (
+            refused_target_key(group_id, target),
+            serde_json::json!({ "digest": digest, "targetRefused": true }),
+            "its target refused".to_string(),
+        ),
+    };
+    let recorded = with_stale_ledger(files_dir, |map| {
+        if !map.contains_key(&key) && map.len() >= STALE_WELCOME_LEDGER_CAPACITY {
+            log::warn!(
+                "[BG_WELCOME] stale ledger full ({STALE_WELCOME_LEDGER_CAPACITY}) - emptied before recording group={short}"
+            );
+            map.clear();
+        }
+        map.insert(key, entry);
+        ((), true)
+    });
+    match recorded {
+        Ok(()) => log::info!(
+            "[BG_WELCOME] group={short} recorded {said} - not answered again from these bytes"
+        ),
+        Err(e) => log::warn!("[BG_WELCOME] stale ledger not written for group={short}: {e}"),
+    }
+}
+
+/// Writes a background engine's new state ONLY over the very `mls.bin` it loaded
+/// ([`crate::concurrency::background_write_mls_bin_if_unchanged`]) - the one write every background
+/// engine makes.
+///
+/// **THE FOREGROUND GUARD ALONE LET AN OLD KEY BACK IN.** An engine loads the bytes and the key, then
+/// works; the foreground can meanwhile re-seal `mls.bin` under another key (the move to the
+/// hardware-held key, a PIN change) and go to the background, which drops the guard at once. A plain
+/// write then put back the state under the key that no longer opens it. Any foreground write changes
+/// the bytes, so the compare refuses it - under the same lock every `mls.bin` writer takes. The
+/// refusal is an error: a send batch is discarded and re-encrypted at the next drain, a Welcome stays
+/// for the foreground.
+fn write_over_loaded_state(files_dir: &Path, loaded: &[u8], data: &[u8]) -> Result<(), String> {
+    crate::concurrency::background_write_mls_bin_if_unchanged(
+        &files_dir.join("mls.bin"),
+        &crate::concurrency::mls_bin_digest(loaded),
+        data,
+    )
+    .map_err(|e| {
+        log::error!("[BG_STATE] mls.bin NOT written: {e}");
+        format!("write mls.bin: {e}")
+    })
 }
 
 /// Applies an MLS Welcome received in the background (receiver side).
@@ -436,8 +870,7 @@ pub fn process_welcome_background_with_key(
     let enc = manager
         .save_encrypted_with_key(&key)
         .map_err(|e| e.to_string())?;
-    let mls_path = files_dir.join("mls.bin");
-    background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
+    write_over_loaded_state(files_dir, state_bytes, &enc)?;
     log::info!(
         "[BG_JOIN] joined group via Welcome: {group_id} (mls.bin {} bytes)",
         enc.len()
@@ -525,8 +958,7 @@ pub fn send_messages_background_with_key(
     let enc = manager
         .save_encrypted_with_key(&key)
         .map_err(|e| e.to_string())?;
-    let mls_path = files_dir.join("mls.bin");
-    background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
+    write_over_loaded_state(files_dir, state_bytes, &enc)?;
     log::info!(
         "[BG_SEND] batch encrypted {encrypted}/{} (mls.bin {} bytes, 1 load, 1 save)",
         entries.len(),
@@ -628,6 +1060,36 @@ pub fn decrypt_push_message_with_key(
         return refused("state-unreadable");
     };
 
+    let answer = decrypt_loaded(&mut manager, frame, language);
+    with_owner_alerts(answer, &mut manager, user_id, device_id)
+}
+
+/// Adds `ownDeviceAdded` - the keys of the "a new device was added to your account" alerts the
+/// commits this push path merged in memory produced (`device_notice::owner_alert_keys`) - to a
+/// push-decrypt answer, WHATEVER the answer is: a control frame, a message, a refusal after the
+/// catch-up applied its commits. Absent when there are none. The native caller claims the keys in
+/// the shared ledger and raises one local notification for those it claimed.
+fn with_owner_alerts(
+    mut answer: serde_json::Value,
+    manager: &mut MlsManager,
+    user_id: &str,
+    device_id: &str,
+) -> serde_json::Value {
+    let keys = super::device_notice::owner_alert_keys(manager, user_id, device_id);
+    if !keys.is_empty() {
+        if let Some(obj) = answer.as_object_mut() {
+            obj.insert("ownDeviceAdded".to_string(), serde_json::json!(keys));
+        }
+    }
+    answer
+}
+
+/// The body of [`decrypt_push_message_with_key`] once the state is loaded.
+fn decrypt_loaded(
+    manager: &mut MlsManager,
+    frame: &PushFrame<'_>,
+    language: PushLanguage,
+) -> serde_json::Value {
     let app = match manager.process_incoming_message_with_sender(frame.group_id, frame.ciphertext) {
         Ok(Some(app)) => app,
         Ok(None) => {
@@ -645,7 +1107,7 @@ pub fn decrypt_push_message_with_key(
         }
     };
 
-    classify_verified(&manager, frame.group_id, frame.sender_id, app, language)
+    classify_verified(manager, frame.group_id, frame.sender_id, app, language)
 }
 
 /// Refuses a decrypted frame whose envelope names another sender than the one MLS verified, then
@@ -662,11 +1124,10 @@ fn classify_verified(
     app: mls_core::IncomingApplication,
     language: PushLanguage,
 ) -> serde_json::Value {
-    let verified_user = app
-        .sender_identity
-        .as_deref()
-        .map(|identity| identity.split_once(':').map_or(identity, |(user, _)| user));
-    if !verified_user.is_some_and(|user| user.eq_ignore_ascii_case(envelope_sender)) {
+    // The user half of the ONE canonical identity the binding reads; a credential that is not a
+    // well-formed `user:device` names no user and is refused like a mismatch.
+    let verified_user = app.sender_identity.as_deref().and_then(canonical_user_of);
+    if verified_user != Some(canonical_user_id(envelope_sender)) {
         log::error!(
             "[PushBG] SENDER MISMATCH group={} envelope={envelope_sender} verified={} - REFUSED, the generic banner is shown",
             group_id.get(..8).unwrap_or(group_id),
@@ -869,19 +1330,22 @@ pub fn decrypt_push_message_with_commits_with_key(
         }
     }
 
-    let app = match manager.process_incoming_message_with_sender(frame.group_id, frame.ciphertext) {
-        Ok(Some(app)) => app,
+    let answer = match manager
+        .process_incoming_message_with_sender(frame.group_id, frame.ciphertext)
+    {
+        Ok(Some(app)) => {
+            classify_verified(&manager, frame.group_id, frame.sender_id, app, language)
+        }
         Ok(None) => {
             log::debug!("[PushBG] key-based catch-up: control frame applied, nothing to render");
-            return refused("control-frame");
+            refused("control-frame")
         }
         Err(e) => {
             log::error!("[PushBG] key-based catch-up decrypt failed: {e}");
-            return refused_by_mls(&e);
+            refused_by_mls(&e)
         }
     };
-
-    classify_verified(&manager, frame.group_id, frame.sender_id, app, language)
+    with_owner_alerts(answer, &mut manager, user_id, device_id)
 }
 
 #[cfg(test)]
@@ -894,6 +1358,16 @@ mod tests {
     }
 
     /// A temp directory of its own, so the `mls.bin` each test writes is its own.
+    /// `send_messages_background_with_key` writes `mls.bin` through `write_over_loaded_state`,
+    /// which refuses while the PROCESS-global foreground guard is up - and other modules' tests
+    /// raise it. So every test here that sends holds the shared serialiser and clears the guard,
+    /// or it fails whenever a foreground test runs beside it.
+    fn quiet_foreground() -> std::sync::MutexGuard<'static, ()> {
+        let guard = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        guard
+    }
+
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("canari-bg-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
@@ -955,10 +1429,11 @@ mod tests {
     /// it. A test that only checked the five would pass with a save that persisted just the first.
     #[test]
     fn one_load_and_one_save_cover_every_advance_in_the_batch() {
+        let _fg = quiet_foreground();
         let (alice, mut bob, group_id) = joined_pair("batch");
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(7)).expect("key");
         let state_bytes = alice.save_encrypted_with_key(&key).expect("encrypt state");
-        let dir = temp_dir("batch");
+        let dir = dir_holding("batch", &state_bytes);
 
         let plaintexts: Vec<Vec<u8>> = (0..5).map(|i| format!("msg-{i}").into_bytes()).collect();
         let entries: Vec<OutboxEntry> = plaintexts
@@ -1019,10 +1494,11 @@ mod tests {
     /// own result and the entries around it still encrypt and still decrypt in order.
     #[test]
     fn a_failing_entry_is_isolated_and_the_batch_continues() {
+        let _fg = quiet_foreground();
         let (alice, mut bob, group_id) = joined_pair("isolate");
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(9)).expect("key");
         let state_bytes = alice.save_encrypted_with_key(&key).expect("encrypt state");
-        let dir = temp_dir("isolate");
+        let dir = dir_holding("isolate", &state_bytes);
 
         let entries = vec![
             entry("ok-1", &group_id, b"first"),
@@ -1066,8 +1542,43 @@ mod tests {
         );
     }
 
+    /// THE OLD KEY NEVER COMES BACK. A drain loaded `mls.bin` under the key the PIN derived; the
+    /// foreground then re-sealed it under the hardware-held key (or a new PIN's) and went to the
+    /// background, so the foreground guard is down. The drain's write must be refused - it would put
+    /// back a state the key now in the keystore does not open - and the re-sealed file must survive.
+    #[test]
+    fn a_drain_never_writes_over_a_state_re_sealed_since_it_loaded() {
+        let _fg = quiet_foreground();
+        let (alice, _bob, group_id) = joined_pair("reseal");
+        let old_key = decode_base64_to_32_bytes(&key_b64(31)).expect("old key");
+        let new_key = decode_base64_to_32_bytes(&key_b64(32)).expect("new key");
+        let loaded = alice.save_encrypted_with_key(&old_key).expect("seal old");
+        let dir = dir_holding("reseal", &loaded);
+        let re_sealed = alice.save_encrypted_with_key(&new_key).expect("seal new");
+        std::fs::write(dir.join("mls.bin"), &re_sealed).expect("foreground re-seal");
+
+        let out = send_messages_background_with_key(
+            &dir,
+            &loaded,
+            &key_b64(31),
+            "reseal-alice",
+            "dev-a",
+            &[entry("id-0", &group_id, b"late")],
+        );
+        assert!(
+            out.is_err(),
+            "the drain must not persist over a re-sealed state"
+        );
+        assert_eq!(
+            std::fs::read(dir.join("mls.bin")).expect("mls.bin"),
+            re_sealed,
+            "the state under the new key survives"
+        );
+    }
+
     #[test]
     fn an_empty_batch_writes_nothing_and_returns_no_results() {
+        let _fg = quiet_foreground();
         let dir = temp_dir("empty");
         let _ = std::fs::remove_file(dir.join("mls.bin"));
         let out = send_messages_background_with_key(&dir, &[], &key_b64(3), "u", "d", &[])
@@ -1132,10 +1643,11 @@ mod tests {
     /// invariant is enforced by the type, which is stronger than a test of it.
     #[test]
     fn a_graine_seed_survives_the_push_path_that_used_to_drop_it() {
+        let _fg = quiet_foreground();
         let (alice, bob, group_id) = joined_pair("graine");
         let key = decode_base64_to_32_bytes(&key_b64(11)).expect("key");
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
-        let dir = temp_dir("graine");
+        let dir = dir_holding("graine", &alice_state);
 
         let seed = [42u8; 32];
         let frame = endorsed_seed_frame(&alice, "graine-alice", "sess-abc", &seed);
@@ -1184,6 +1696,7 @@ mod tests {
     /// shut phone behind its community's key group never received the seed of any new session.
     #[test]
     fn a_graine_seed_sealed_one_commit_ahead_survives_the_catch_up() {
+        let _fg = quiet_foreground();
         let (mut alice, bob, group_id) = joined_pair("graine-ahead");
         let key = decode_base64_to_32_bytes(&key_b64(13)).expect("key");
         let bob_behind = bob.save_encrypted_with_key(&key).expect("encrypt bob");
@@ -1203,7 +1716,7 @@ mod tests {
         let frame = endorsed_seed_frame(&alice, "graine-ahead-alice", "sess-new", &seed);
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
         let out = send_messages_background_with_key(
-            &temp_dir("graine-ahead"),
+            &dir_holding("graine-ahead", &alice_state),
             &alice_state,
             &key_b64(13),
             "graine-ahead-alice",
@@ -1257,7 +1770,7 @@ mod tests {
         let key = decode_base64_to_32_bytes(&key_b64(seed)).expect("key");
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
         let out = send_messages_background_with_key(
-            &temp_dir(tag),
+            &dir_holding(tag, &alice_state),
             &alice_state,
             &key_b64(seed),
             &format!("{tag}-alice"),
@@ -1297,12 +1810,45 @@ mod tests {
         assert_eq!(open("SENDER-ALICE")["ok"], true);
     }
 
+    /// A LEGACY BARE CREDENTIAL (`userId`, no device - builds before device identities) names its
+    /// user: a push it signed is that user's, as it was before the canonical reader. A credential
+    /// naming nobody (two separators) is still refused.
+    #[test]
+    fn a_push_from_a_bare_legacy_leaf_is_its_users() {
+        let manager = MlsManager::load_or_create("me", "dev-m", None).expect("manager");
+        let frame =
+            super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
+        let classify = |sender: &str, envelope: &str| {
+            super::classify_verified(
+                &manager,
+                "group-legacy",
+                envelope,
+                mls_core::IncomingApplication {
+                    plaintext: frame.clone(),
+                    sender_identity: Some(sender.to_string()),
+                },
+                PushLanguage::French,
+            )
+        };
+
+        assert_eq!(classify("Legacy-User", "legacy-user")["ok"], true);
+        assert_eq!(
+            classify("legacy-user", "mallory")["reason"],
+            "sender-mismatch"
+        );
+        assert_eq!(
+            classify("legacy-user:a:b", "legacy-user")["reason"],
+            "sender-mismatch"
+        );
+    }
+
     /// A frame whose generation the saved state already spent is refused FOR GOOD, and says so:
     /// the native callers skip the commit catch-up and the worker on that token, because no later
     /// epoch can read bytes refused at an epoch this device holds. An epoch gap keeps the old
     /// `mls-refused` - see `a_graine_seed_sealed_one_commit_ahead_survives_the_catch_up`.
     #[test]
     fn a_spent_generation_is_refused_for_good_and_not_handed_to_the_catch_up() {
+        let _fg = quiet_foreground();
         let tag = "spent";
         let (alice, mut bob, group_id) = joined_pair(tag);
         let key = decode_base64_to_32_bytes(&key_b64(19)).expect("key");
@@ -1310,7 +1856,7 @@ mod tests {
         let frame =
             super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
         let out = send_messages_background_with_key(
-            &temp_dir(tag),
+            &dir_holding(tag, &alice_state),
             &alice_state,
             &key_b64(19),
             &format!("{tag}-alice"),
@@ -1377,6 +1923,7 @@ mod tests {
     /// section 21.5): forged, or minted by a device the tree does not hold, it waits for the app.
     #[test]
     fn a_v2_seed_is_kept_only_when_the_tree_endorses_it() {
+        let _fg = quiet_foreground();
         use super::super::graine::{encode_endorsement_v2, seed_commitment, GraineEndorsementV2};
         use super::super::proto_fields::{build_graine_v2_app_message, GraineV2Fields};
 
@@ -1414,7 +1961,7 @@ mod tests {
             let key = decode_base64_to_32_bytes(&key_b64(20 + n)).expect("key");
             let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
             let out = send_messages_background_with_key(
-                &temp_dir(&format!("{tag}-{n}")),
+                &dir_holding(&format!("{tag}-{n}"), &alice_state),
                 &alice_state,
                 &key_b64(20 + n),
                 &alice_id,
@@ -1475,5 +2022,715 @@ mod tests {
             parse_outbox_entries_json(r#"[{"groupId":"g"}]"#).is_err(),
             "a missing proto is a malformed entry, not an empty one"
         );
+    }
+
+    // --- The background Welcome: staged, installed on acceptance, discarded on refusal ------------
+
+    /// A shut phone (`alice`) in a group that moved on without it: `bob` admitted `dave`, so the
+    /// group is one epoch past alice's `mls.bin`. Returns alice's stale sealed state, the commit that
+    /// moved the group, carol's key package (the newcomer asking for a Welcome) and the group id.
+    fn shut_phone_behind_its_group(
+        tag: &str,
+        key_seed: u8,
+    ) -> (Vec<u8>, MlsManager, Vec<u8>, String, String) {
+        let (alice, mut bob, gid) = joined_pair(tag);
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(key_seed)).expect("key");
+        let stale = alice.save_encrypted_with_key(&key).expect("seal alice");
+        let dave = MlsManager::load_or_create(&format!("{tag}-dave"), "dev-d", None).unwrap();
+        let (moved, _) = bob
+            .add_member(&gid, &dave.generate_key_package().unwrap())
+            .expect("bob adds dave");
+        bob.merge_pending_commit_for(&gid).expect("bob merges");
+        let carol = MlsManager::load_or_create(&format!("{tag}-carol"), "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+        (stale, bob, moved, kp, gid)
+    }
+
+    /// A data directory holding `state` as its `mls.bin`, as the phone's would.
+    fn dir_holding(name: &str, state: &[u8]) -> std::path::PathBuf {
+        let dir = temp_dir(name);
+        for entry in std::fs::read_dir(&dir).expect("read temp dir").flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+        std::fs::write(dir.join("mls.bin"), state).expect("write mls.bin");
+        dir
+    }
+
+    /// THE DEFECT READ ON THE MI 9T, 2026-10-22. The phone answered from its old epoch and the gate
+    /// refused the commit - and `mls.bin` already held the add, merged before the answer. The group's
+    /// next message was then unreadable (`same-epoch refusal`): the phone had made an epoch of its
+    /// own. Against the function this replaced, the last assertion fails.
+    #[test]
+    fn a_refused_background_welcome_leaves_mls_bin_able_to_follow_its_group() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, mut bob, moved, kp, gid) = shut_phone_behind_its_group("refused", 41);
+        let dir = dir_holding("refused", &stale);
+
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(41),
+            "refused-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "refused-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        assert_eq!(prepared["baseEpoch"], 1, "built on the stale base");
+        assert_eq!(
+            std::fs::read(dir.join("mls.bin")).unwrap(),
+            stale,
+            "nothing is written to mls.bin before the server answers"
+        );
+
+        // The server refused it as stale (epoch_mismatch, server at 2).
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 1,
+                server_epoch: 2,
+            },
+        );
+
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(41)).unwrap();
+        let on_disk = std::fs::read(dir.join("mls.bin")).unwrap();
+        let mut back =
+            MlsManager::load_with_key("refused-alice", "dev-a", Some(on_disk), &key).unwrap();
+        back.process_incoming_message(&gid, &moved)
+            .expect("the group's commit applies");
+        let next = bob.send_message(&gid, b"after").unwrap();
+        assert_eq!(
+            back.process_incoming_message(&gid, &next)
+                .expect("the phone reads the group's next message"),
+            Some(b"after".to_vec())
+        );
+    }
+
+    /// The accepted half: the staged state is installed, and it is the state the newcomer joined.
+    #[test]
+    fn an_accepted_background_welcome_installs_the_state_the_newcomer_joined() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("accepted");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(42)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("accepted", &state);
+        let mut carol = MlsManager::load_or_create("accepted-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(42),
+            "accepted-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "accepted-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        let installed = install_staged_welcome(&dir, &gid);
+        assert_eq!(installed["ok"], true, "installed: {installed}");
+
+        let mut back = MlsManager::load_with_key(
+            "accepted-alice",
+            "dev-a",
+            Some(std::fs::read(dir.join("mls.bin")).unwrap()),
+            &key,
+        )
+        .unwrap();
+        assert_eq!(back.get_epoch(&gid).unwrap(), 2, "the add is installed");
+        let welcome = STANDARD
+            .decode(prepared["welcome"].as_str().unwrap())
+            .unwrap();
+        let tree = STANDARD
+            .decode(prepared["ratchetTree"].as_str().unwrap())
+            .unwrap();
+        carol
+            .process_welcome(&welcome, Some(&tree))
+            .expect("carol joins");
+        let hello = back.send_message(&gid, b"welcome carol").unwrap();
+        assert_eq!(
+            carol.process_incoming_message(&gid, &hello).unwrap(),
+            Some(b"welcome carol".to_vec()),
+            "the installed state and the newcomer's are one epoch"
+        );
+        assert!(
+            install_staged_welcome(&dir, &gid)["reason"] == "not-staged",
+            "the staged file is consumed by its install"
+        );
+    }
+
+    /// COMM-22 on the background path: the prepare exports the external-join base of the epoch its
+    /// commit creates, so the route publishes it with the advance. Without it the published base
+    /// stays one epoch behind and an external joiner is refused as stale.
+    #[test]
+    fn a_prepared_welcome_carries_the_base_of_the_epoch_it_creates() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("base");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(48)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("base", &state);
+        let carol = MlsManager::load_or_create("base-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(48),
+            "base-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "base-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        let base = STANDARD
+            .decode(
+                prepared["groupInfo"]
+                    .as_str()
+                    .expect("the base travels with the commit"),
+            )
+            .unwrap();
+
+        let mut erin = MlsManager::load_or_create("base-erin", "dev-e", None).unwrap();
+        let (joined, _commit) = erin
+            .join_by_external_commit(&base)
+            .expect("an external joiner builds on the published base");
+        assert_eq!(joined, gid);
+        assert_eq!(
+            erin.get_epoch(&gid).unwrap(),
+            3,
+            "the base is the epoch the add creates (2), and the join moves it to 3"
+        );
+    }
+
+    /// An acceptance that arrives after `mls.bin` moved installs nothing over the newer file.
+    #[test]
+    fn an_install_refuses_an_mls_bin_that_moved_since_it_was_loaded() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("moved");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(43)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("moved", &state);
+        let carol = MlsManager::load_or_create("moved-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(43),
+            "moved-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "moved-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(prepared["ok"], true);
+
+        std::fs::write(dir.join("mls.bin"), b"a newer state").unwrap();
+        let installed = install_staged_welcome(&dir, &gid);
+
+        assert_eq!(installed["reason"], "install-refused");
+        assert_eq!(
+            std::fs::read(dir.join("mls.bin")).unwrap(),
+            b"a newer state"
+        );
+    }
+
+    /// A foreground write that lands between the build and the staging (a checkpoint, a key move's
+    /// re-seal) refuses the staging, so the commit never reaches the server.
+    #[test]
+    fn a_welcome_is_not_staged_over_a_file_that_moved_while_it_was_built() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("nostage");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(55)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("nostage", &state);
+        std::fs::write(dir.join("mls.bin"), b"written by the foreground").unwrap();
+        let carol = MlsManager::load_or_create("nostage-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(55),
+            "nostage-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "nostage-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(prepared["reason"], "stage-failed");
+        assert_eq!(install_staged_welcome(&dir, &gid)["reason"], "not-staged");
+    }
+
+    /// The settlement of a stale refusal: the same bytes are not offered again, and any write to
+    /// `mls.bin` lifts it - a proof, not a clock.
+    #[test]
+    fn a_stale_refusal_is_not_answered_again_from_the_same_bytes() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("ledger", 44);
+        let dir = dir_holding("ledger", &stale);
+
+        let first = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(44),
+            "ledger-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "ledger-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(first["ok"], true);
+        assert!(!welcome_request_known_stale(&dir, &stale, &gid));
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 1,
+                server_epoch: 2,
+            },
+        );
+        assert!(welcome_request_known_stale(&dir, &stale, &gid));
+
+        let again = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(44),
+            "ledger-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "ledger-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(again["reason"], "stale-epoch-known");
+        assert!(
+            !welcome_request_known_stale(&dir, b"any other mls.bin", &gid),
+            "new bytes are answered again"
+        );
+        assert!(
+            !welcome_request_known_stale(&dir, &stale, "another-group"),
+            "and only this group is known stale"
+        );
+    }
+
+    /// A phone AHEAD of a lagging server counter is not stale: the counter can reach its base, and
+    /// a later answer from the same bytes may then be valid. Only `server > base` is recorded.
+    #[test]
+    fn a_refusal_from_a_base_ahead_of_the_server_records_nothing() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("ahead", 49);
+        let dir = dir_holding("ahead", &stale);
+        let first = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(49),
+            "ahead-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "ahead-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(first["ok"], true);
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 3,
+                server_epoch: 2,
+            },
+        );
+        assert!(!welcome_request_known_stale(&dir, &stale, &gid));
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 2,
+                server_epoch: 2,
+            },
+        );
+        assert!(
+            !welcome_request_known_stale(&dir, &stale, &gid),
+            "equal is not stale either"
+        );
+    }
+
+    /// A refusal that says nothing about the next request records nothing.
+    #[test]
+    fn a_racing_or_membership_refusal_records_nothing() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("race", 45);
+        let dir = dir_holding("race", &stale);
+        let first = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(45),
+            "race-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "race-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(first["ok"], true);
+        discard_staged_welcome(&dir, &gid, RefusalMemo::Nothing);
+        assert!(!welcome_request_known_stale(&dir, &stale, &gid));
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), stale);
+    }
+
+    /// A refused TARGET (`welcome_target_unknown` / `welcome_target_not_member`) is remembered like a
+    /// stale base, against the bytes the refused commit was built from: a holder does not commit and
+    /// get refused again on each of the newcomer's asks. Keyed to that target alone - another
+    /// newcomer of the same group is still answered - and lifted by any write to `mls.bin`.
+    #[test]
+    fn a_refused_target_is_not_answered_again_from_the_same_bytes() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("target", 51);
+        let dir = dir_holding("target", &stale);
+        let first = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(51),
+            "target-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "target-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(first["ok"], true);
+        assert_eq!(
+            welcome_request_known_refused(&dir, &stale, &gid, "carol:phone-c"),
+            None
+        );
+
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::TargetRefused {
+                target: "carol:phone-c",
+            },
+        );
+
+        assert_eq!(
+            welcome_request_known_refused(&dir, &stale, &gid, "carol:phone-c"),
+            Some("target-refused-known")
+        );
+        assert_eq!(
+            welcome_request_known_refused(&dir, &stale, &gid, "dave:phone-d"),
+            None,
+            "another target of the same group is still answered"
+        );
+        assert_eq!(
+            welcome_request_known_refused(&dir, b"any other mls.bin", &gid, "carol:phone-c"),
+            None,
+            "new bytes are answered again"
+        );
+        assert!(
+            !welcome_request_known_stale(&dir, &stale, &gid),
+            "a refused target says nothing about the group's epoch"
+        );
+    }
+
+    /// The foreground answers welcome_requests itself and owns the state while it runs.
+    #[test]
+    fn no_welcome_is_prepared_while_the_foreground_runs() {
+        let _s = crate::concurrency::test_support::serialise();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("fg", 46);
+        let dir = dir_holding("fg", &stale);
+        crate::concurrency::mark_foreground_active();
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(46),
+            "fg-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "fg-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        crate::concurrency::mark_foreground_inactive();
+        assert_eq!(out["reason"], "foreground-active");
+    }
+
+    /// A newcomer already in the tree is a typed refusal, never an `add-failed` read from prose.
+    #[test]
+    fn a_newcomer_already_in_the_tree_is_refused_by_its_type() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, bob, gid) = joined_pair("member");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(47)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("member", &state);
+        let kp = STANDARD.encode(bob.generate_key_package().unwrap());
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(47),
+            "member-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "member-bob:dev-b",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(out["reason"], "already-member", "{out}");
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+    }
+
+    /// The delivery service chooses the KeyPackage the background answer is built from: one whose
+    /// credential names another device than the requester is refused, typed, and nothing is staged.
+    #[test]
+    fn a_substituted_key_package_is_refused_on_the_background_path() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("subst");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(52)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("subst", &state);
+        let mallory = MlsManager::load_or_create("subst-mallory", "dev-m", None).unwrap();
+        let kp = STANDARD.encode(mallory.generate_key_package().unwrap());
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(52),
+            "subst-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "subst-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(out["ok"], false, "{out}");
+        assert_eq!(out["reason"], "identity-mismatch", "{out}");
+        assert!(
+            !staged_welcome_path(&dir, &gid).exists(),
+            "nothing is staged"
+        );
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+    }
+
+    /// A package naming a device this phone pinned, under ANOTHER signature key, is refused: nothing
+    /// proves the change, so the background answer does not re-add it.
+    #[test]
+    fn a_key_package_under_an_unpinned_key_is_refused_on_the_background_path() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (mut alice, bob, gid) = joined_pair("rekey");
+        // bob leaves, so the request is a re-add and not an `already-member`.
+        alice
+            .remove_members_for_devices(&gid, &["rekey-bob:dev-b"])
+            .expect("remove bob");
+        alice.merge_pending_commit_for(&gid).expect("merge remove");
+        drop(bob);
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(53)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("rekey", &state);
+        let impostor = MlsManager::load_or_create("rekey-bob", "dev-b", None).unwrap();
+        let kp = STANDARD.encode(impostor.generate_key_package().unwrap());
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(53),
+            "rekey-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "rekey-bob:dev-b",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(out["reason"], "signature-key-changed", "{out}");
+        assert!(!staged_welcome_path(&dir, &gid).exists());
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+    }
+
+    /// User decision 2026-10-22: the owner's phone is told, even shut, when a device joins the
+    /// account. A commit adding one reaches it as a control frame (Android) or inside a catch-up
+    /// (both platforms), and BOTH answers carry the alert's key - whatever else they say.
+    #[test]
+    fn a_commit_adding_an_own_device_carries_the_owner_alert_on_both_push_paths() {
+        let tag = "own-device";
+        let (mut alice, bob, group_id) = joined_pair(tag);
+        let key = decode_base64_to_32_bytes(&key_b64(23)).expect("key");
+        let bob_behind = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+
+        // alice serves the welcome request of bob's new laptop.
+        let laptop = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-laptop", None)
+            .expect("laptop load_or_create");
+        let kp = laptop.generate_key_package().expect("laptop key package");
+        let (commit, _w, _a, _s) = alice
+            .add_members_bulk(&group_id, &[&kp])
+            .expect("add the laptop");
+        alice.merge_pending_commit_for(&group_id).expect("merge");
+
+        let as_control_frame = decrypt_push_message_with_key(
+            &bob_behind,
+            &key_b64(23),
+            &format!("{tag}-bob"),
+            "dev-b",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-alice"),
+                ciphertext: &commit,
+            },
+            PushLanguage::French,
+        );
+        assert_eq!(as_control_frame["reason"], "control-frame");
+        let keys = as_control_frame["ownDeviceAdded"]
+            .as_array()
+            .expect("the alert rides on the refusal");
+        assert_eq!(keys.len(), 1, "{as_control_frame}");
+        assert!(keys[0]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("{tag}-bob:dev-laptop|")));
+
+        // The catch-up: the commit replayed in memory, then a message decrypted at the new epoch.
+        let frame =
+            super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
+        let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let out = send_messages_background_with_key(
+            &dir_holding(tag, &alice_state),
+            &alice_state,
+            &key_b64(23),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &[entry("m-1", &group_id, &frame)],
+        )
+        .expect("alice encrypts");
+        let info = decrypt_push_message_with_commits_with_key(
+            &bob_behind,
+            &key_b64(23),
+            &format!("{tag}-bob"),
+            "dev-b",
+            &[commit],
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-alice"),
+                ciphertext: &ciphertexts_of(&out)[0],
+            },
+            PushLanguage::French,
+        );
+        assert_eq!(info["ok"], true, "{info}");
+        assert_eq!(info["ownDeviceAdded"], as_control_frame["ownDeviceAdded"]);
+
+        // A contact's phone merging the same commit has no owner alert.
+        let contact = decrypt_push_message_with_key(
+            &alice_state,
+            &key_b64(23),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-alice"),
+                ciphertext: &ciphertexts_of(&out)[0],
+            },
+            PushLanguage::French,
+        );
+        assert!(contact.get("ownDeviceAdded").is_none(), "{contact}");
+    }
+
+    /// The phone serving its own account's new device in the background names it for the local
+    /// notification, and the event reaches `mls.bin` - where the app takes it for the in-app alert -
+    /// ONLY with the accepted install: a discarded Add leaves no event for anyone to announce.
+    #[test]
+    fn a_background_add_of_an_own_device_reaches_the_app_only_once_accepted() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let tag = "own-welcome";
+        let (alice, _bob, gid) = joined_pair(tag);
+        let key = decode_base64_to_32_bytes(&key_b64(29)).expect("key");
+        let state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let laptop = MlsManager::load_or_create(&format!("{tag}-alice"), "dev-laptop", None)
+            .expect("laptop");
+        let kp = STANDARD.encode(laptop.generate_key_package().expect("kp"));
+        let requester = format!("{tag}-alice:dev-laptop");
+        let prepare = |dir: &Path| {
+            prepare_welcome_background_with_key(
+                dir,
+                &state,
+                &key_b64(29),
+                &format!("{tag}-alice"),
+                "dev-a",
+                &WelcomeRequest {
+                    group_id: &gid,
+                    requester: &requester,
+                    key_package_b64: &kp,
+                },
+            )
+        };
+        let owner_events = |dir: &Path| {
+            let saved = std::fs::read(dir.join("mls.bin")).expect("mls.bin");
+            let mut reloaded =
+                MlsManager::load_with_key(&format!("{tag}-alice"), "dev-a", Some(saved), &key)
+                    .expect("reload");
+            reloaded
+                .take_device_events()
+                .into_iter()
+                .filter(|e| e.is_owner_alert(&format!("{tag}-alice"), "dev-a"))
+                .count()
+        };
+
+        // Refused by the server: discarded, and nothing for the app to announce.
+        let refused_dir = dir_holding(&format!("{tag}-refused"), &state);
+        let out = prepare(&refused_dir);
+        assert_eq!(
+            out["ownDeviceAdded"].as_array().map(Vec::len),
+            Some(1),
+            "{out}"
+        );
+        discard_staged_welcome(&refused_dir, &gid, RefusalMemo::Nothing);
+        assert_eq!(
+            owner_events(&refused_dir),
+            0,
+            "a discarded Add announces nothing"
+        );
+
+        // Accepted: installed, and the event is the app's.
+        let accepted_dir = dir_holding(&format!("{tag}-accepted"), &state);
+        let out = prepare(&accepted_dir);
+        let keys = out["ownDeviceAdded"]
+            .as_array()
+            .expect("named for the notice");
+        assert_eq!(keys.len(), 1, "{out}");
+        assert!(keys[0]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("{requester}|")));
+        assert_eq!(install_staged_welcome(&accepted_dir, &gid)["ok"], true);
+        assert_eq!(owner_events(&accepted_dir), 1, "the installed Add's event");
     }
 }

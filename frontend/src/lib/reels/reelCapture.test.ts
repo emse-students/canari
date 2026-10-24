@@ -8,6 +8,7 @@ import {
   captureFileFrom,
   captureReducer,
   destinationRules,
+  handsBackTake,
   classifyLimitsFault,
   formatTakeTime,
   pickReelRecorderMime,
@@ -148,22 +149,38 @@ describe('shutterRingFraction', () => {
   });
 });
 
-describe('destinationRules (D-camera, 2026-10-11)', () => {
+describe('destinationRules (D-camera 2026-10-11; one camera, one behaviour 2026-10-19)', () => {
   it('a chat takes photos only, and hands the take back as a file', () => {
     expect(destinationRules('chat')).toEqual({
       photoOnly: true,
       microphone: 'never',
-      handsBackFile: true,
+      photoHandsBack: true,
+      videoHandsBack: true,
+      fromComposer: false,
       gallery: false,
       soundRemoval: false,
     });
   });
 
-  it('a post may film, hands back a file, and has no reel-only controls', () => {
+  it('a NEW post hands a photo back, and sends a filmed video to the reel publish step', () => {
     expect(destinationRules('post')).toEqual({
       photoOnly: false,
       microphone: 'separate',
-      handsBackFile: true,
+      photoHandsBack: true,
+      videoHandsBack: false,
+      fromComposer: true,
+      gallery: false,
+      soundRemoval: false,
+    });
+  });
+
+  it('the post EDITOR hands every take back: an existing post never becomes a reel', () => {
+    expect(destinationRules('post-edit')).toEqual({
+      photoOnly: false,
+      microphone: 'separate',
+      photoHandsBack: true,
+      videoHandsBack: true,
+      fromComposer: false,
       gallery: false,
       soundRemoval: false,
     });
@@ -173,10 +190,21 @@ describe('destinationRules (D-camera, 2026-10-11)', () => {
     expect(destinationRules('feed')).toEqual({
       photoOnly: false,
       microphone: 'with-lens',
-      handsBackFile: false,
+      photoHandsBack: false,
+      videoHandsBack: false,
+      fromComposer: false,
       gallery: true,
       soundRemoval: true,
     });
+  });
+
+  it('handsBackTake reads the media: a photo and a video of the same destination may part ways', () => {
+    const photo = new Blob(['p'], { type: 'image/webp' });
+    const video = new Blob(['v'], { type: 'video/mp4' });
+    expect(handsBackTake(destinationRules('post'), photo)).toBe(true);
+    expect(handsBackTake(destinationRules('post'), video)).toBe(false);
+    expect(handsBackTake(destinationRules('post-edit'), video)).toBe(true);
+    expect(handsBackTake(destinationRules('feed'), video)).toBe(false);
   });
 });
 

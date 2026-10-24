@@ -332,6 +332,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun test ./tools/dev-seed/
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh
+	@bash .github/scripts/tests/env-from-prod.test.sh
 	@bash .github/scripts/tests/deploy-migrations.test.sh
 	@bash .github/scripts/tests/deploy-registry-retry.test.sh
 	@bash .github/scripts/tests/deploy-replace.test.sh
@@ -343,6 +344,9 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/smoke-login.test.mjs
 	@bash .github/scripts/tests/dependabot-cargo-reach.test.sh
 	@bash .github/scripts/tests/cargo-blocked-update-report.test.sh
+	@bash .github/scripts/tests/cargo-lock-refresh.test.sh
+	@bash .github/scripts/tests/vendored-upstream-report.test.sh
+	@bash .github/scripts/tests/arm-auto-merge-app.test.sh
 	@bash .github/scripts/tests/github-alerts-report.test.sh
 	@bash .github/scripts/tests/bump-version.test.sh
 	@bash .github/scripts/tests/bump-staging.test.sh
@@ -355,6 +359,8 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/audit-dependencies.test.sh
 	@bash .github/scripts/tests/stream-json-premise.test.sh
 	@bash .github/scripts/tests/ignored-advisories-still-reported.test.sh
+	@bash .github/scripts/tests/image-scan-targets.test.sh
+	@bun .github/scripts/tests/image-scan-allowlist.test.mjs
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@bash .github/scripts/tests/backup-report.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
@@ -369,6 +375,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/adminer-route.test.mjs
 	@bun .github/scripts/tests/access-log-redaction.test.mjs
 	@bun .github/scripts/tests/api-error-cors.test.mjs
+	@bun .github/scripts/tests/live-segments-route.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
 	@bun .github/scripts/tests/undeclared-duplicates.test.mjs
@@ -389,7 +396,9 @@ test-ci-scripts: lint-ci-scripts
 	@bun tools/app-store/submit.test.mjs
 	@bun tools/store-divergence/divergence.test.mjs
 	@bun tools/version-report/lib.test.mjs
+	@bun tools/test-inventory/lib.test.mjs
 	@bun test tools/store-listings
+	@bun test tools/call-audio-fidelity
 
 # THE 158 SCRIPTS THAT PRODUCE EVERY CAMPAIGN VERDICT ARE LINTED HERE, and were linted by nothing at
 # all until 2026-09-07. `bun run lint` is scoped to `frontend/`; this recipe ran the self-tests and
@@ -448,6 +457,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/exit-selftest.mjs
 	@bun tools/cross-client-harness/archive/verdict-selftest.mjs
 	@bun tools/cross-client-harness/archive/staleness-selftest.mjs
+	@bun tools/cross-client-harness/archive/idpform-selftest.mjs
 	@bun tools/cross-client-harness/archive/lucide-selftest.mjs
 	@bun tools/cross-client-harness/archive/ports-selftest.mjs
 	@bun tools/cross-client-harness/archive/transport-selftest.mjs

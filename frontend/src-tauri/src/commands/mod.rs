@@ -1,10 +1,14 @@
 // The bench build's observables, absent from every store build; the pure halves also compile for
 // the host test run so CI pins them without the feature (see the module's own comment).
+pub mod at_rest_key;
 #[cfg(any(feature = "bench-observables", test))]
 pub mod bench;
 pub mod cookies;
+pub mod display_names;
+pub mod handoff;
 pub mod mls;
 pub mod notifications;
 pub mod picked_files;
 pub mod push;
+pub mod push_registration;
 pub mod storage;

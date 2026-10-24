@@ -39,6 +39,9 @@ export function coversScreen(node: HTMLElement, active: boolean = true) {
   const apply = (on: boolean): void => {
     if (on) covering.add(node);
     else covering.delete(node);
+    // THE MARK app.css READS to keep a minimised call's bar above this surface: while a call bar is
+    // up, a covering surface's top inset grows by the banner column (`[data-covers-screen]`).
+    node.toggleAttribute('data-covers-screen', on);
     publish();
   };
   apply(active);
@@ -49,6 +52,7 @@ export function coversScreen(node: HTMLElement, active: boolean = true) {
     },
     destroy() {
       covering.delete(node);
+      node.removeAttribute('data-covers-screen');
       publish();
     },
   };

@@ -19,6 +19,7 @@
   import { REEL_PAGE, listAllReels, reelsAfterFirstPage } from '$lib/reels/allReels';
   import { showToast } from '$lib/stores/toast.svelte';
   import { isTransportFailure } from '$lib/utils/transportFailure';
+  import { currentUserId } from '$lib/stores/userState.svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -79,6 +80,7 @@
     startPost={firstPage[0]}
     {authToken}
     loadPage={reelsAfterFirstPage(firstPage)}
+    likerId={currentUserId() ?? undefined}
     onClose={() => (firstPage = null)}
   />
 {/if}

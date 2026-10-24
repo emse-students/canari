@@ -1,4 +1,6 @@
 import { MOBILE_APP_PROTOCOL } from './appSiteAssociation';
+import { REPUBLICATION_REQUESTS_ROUTE } from '$lib/posts/notificationTarget';
+import { formResponsesRoute } from '$lib/forms/responsesLink';
 
 /**
  * The query parameter naming the comment a post link opens at - written by the server into a
@@ -11,9 +13,11 @@ export const POST_COMMENT_PARAM = 'comment';
  * notification tap lands through, kept apart from the hook that listens so it can be tested.
  *
  * The hosts are the ones the server writes into a social push (`socialDeepLink` in social-service)
- * and the ones Android and iOS build natively: `post/<id>`, `form/<id>`, `posts`, `calendar` and
- * `admin-agenda`. `posts` is what a payload naming nothing falls back to on the server, and it has
- * no id; the two agenda hosts mirror `notificationHref` (the in-app bell).
+ * and the ones Android and iOS build natively: `post/<id>`, `form/<id>`, `posts`, `calendar`,
+ * `admin-agenda`, `live/<id>`, `republication-requests` (D38b), `notifications` (WP-L8b) and
+ * `form-responses/<id>` (the organiser alert for a payment over capacity). `posts` is what a payload
+ * naming nothing falls back to on the server, and it has no id; the two agenda hosts and
+ * `republication-requests` mirror `notificationHref` (the in-app bell).
  *
  * Returns null for a host this table does not own (chat, callback, payment and open have their own
  * handling) or for a host that needs an id and has none, so the caller can log instead of guessing.
@@ -31,12 +35,27 @@ export function appRouteForDeepLink(u: URL): string | null {
     }
     case 'form':
       return id ? `/forms/${encodeURIComponent(id)}` : null;
+    // The organiser alert (a payment landed on a full form): that form's responses on the list.
+    case 'form-responses':
+      return id ? formResponsesRoute(id) : null;
     case 'posts':
       return '/posts';
     case 'calendar':
       return '/calendar';
     case 'admin-agenda':
       return '/admin/agenda';
+    // "X est en live" (WP-L7): the FEED, where the LIVE card is to be (L5). The live's own viewer
+    // page is WP-L5, still owed, so the id is not read yet; the host is owned here so the tap lands
+    // on the feed instead of the unknown-host branch of the hook.
+    case 'live':
+      return '/posts';
+    // D38b: a request to let an association carry a personal post - the author's inbox.
+    case 'republication-requests':
+      return REPUBLICATION_REQUESTS_ROUTE;
+    // WP-L8b: a notice whose subject has no page - a live moderators cut (deleted at its end), a
+    // suspension or a withdrawal of the right to broadcast. Its row on the list says it.
+    case 'notifications':
+      return '/notifications';
     default:
       return null;
   }

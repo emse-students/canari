@@ -19,13 +19,8 @@
  * THE ALLOWED SET IS PINNED RATHER THAN THE UNLOCK PATH SEARCHED, because the failure mode is a new
  * await appearing somewhere nobody thought of as "the unlock path". This test fails on any of them.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const SRC = resolve(here, '../..');
+import { readSource, relativeTo, sourceFiles } from '../../test/sourceTree';
 
 /** `await refreshAppVersionCheck(` - a caller made to wait for the probe. */
 const AWAITS_THE_PROBE = /\bawait\s+refreshAppVersionCheck\s*\(/;
@@ -33,28 +28,25 @@ const AWAITS_THE_PROBE = /\bawait\s+refreshAppVersionCheck\s*\(/;
 /**
  * The login button, and nothing else.
  *
- * Both of its awaits are deliberate: one on the OIDC button, one on the password form. A third
+ * Both of its awaits are deliberate: one on the OIDC button, one on the password form. A further
  * entry here should be a decision someone wrote down, not a line that drifted in.
  */
-const ALLOWED = new Set(['lib/components/auth/LoginPage.svelte']);
-
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'paraglide' || entry === 'node_modules') continue;
-    const full = resolve(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...sourceFiles(full));
-    else if (/\.(ts|svelte)$/.test(entry) && !entry.endsWith('.test.ts')) out.push(full);
-  }
-  return out;
-}
+const ALLOWED = new Set([
+  'lib/components/auth/LoginPage.svelte',
+  // DECIDED 2026-10-22 (calls flip review): `callsAvailableAnswered()` waits for the FIRST answer so
+  // an incoming call invite, or the session-start sibling check, is judged on the server's kill
+  // switch and not on its `off` default. Both run in an OPEN session, never in front of an unlock
+  // prompt, and the wait is skipped once any answer exists.
+  'lib/utils/callsAvailability.ts',
+]);
 
 describe('the version probe never sits in front of an unlock', () => {
   it('has no caller awaiting it outside the login button', () => {
-    const offenders = sourceFiles(SRC)
-      .map((file) => relative(SRC, file).replace(/\\/g, '/'))
-      .filter((rel) => !ALLOWED.has(rel))
-      .filter((rel) => AWAITS_THE_PROBE.test(readFileSync(resolve(SRC, rel), 'utf8')));
+    const offenders = sourceFiles({ under: 'src', extensions: ['ts', 'svelte'], tests: 'exclude' })
+      .map(({ path, text }) => ({ rel: relativeTo(path, 'src'), text }))
+      .filter(({ rel }) => !ALLOWED.has(rel))
+      .filter(({ text }) => AWAITS_THE_PROBE.test(text))
+      .map(({ rel }) => rel);
 
     expect(
       offenders,
@@ -69,7 +61,7 @@ describe('the version probe never sits in front of an unlock', () => {
   it('still guards the login button, which is where waiting is correct', () => {
     // The complement of the rule above: if these awaits ever disappear, a client below
     // minClientVersion would be sent to Authentik before anything refused it.
-    const loginPage = readFileSync(resolve(SRC, 'lib/components/auth/LoginPage.svelte'), 'utf8');
+    const loginPage = readSource('src/lib/components/auth/LoginPage.svelte');
     expect(AWAITS_THE_PROBE.test(loginPage)).toBe(true);
   });
 });

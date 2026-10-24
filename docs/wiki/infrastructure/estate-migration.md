@@ -177,3 +177,10 @@ The host is the school IT department's: no install, removal or security setting 
 without their written agreement, asked BEFORE ([durable-rules](../durable-rules.md)). The list of what
 this project installed (container runtime, runner accounts, units, cron entries, directories) was
 handed to the DSI for their audit and is kept in the private notes.
+
+## Two older project-team virtual machines are out of scope (decided 2026-10-18)
+
+Two older virtual machines belong to the project team, not to the school IT department. They are
+OUT OF SCOPE of this migration and of every audit and runbook here, and they are currently unused.
+Nothing in this repository names them, addresses them or describes a route to them; that stays in the
+private operations notes. Do not add them to a plan without a new decision.

@@ -28,6 +28,7 @@ await import('./useMessaging.svelte');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 import type { PendingMediaFile } from '$lib/media';
+import { flushMacrotask } from '../../test/flush';
 
 const CONVO = 'conversation-key';
 
@@ -129,6 +130,19 @@ describe('the staging belongs to ONE conversation and ONE account', () => {
     );
   });
 
+  it('a sign-out DURING the preparation stages nothing (a shared file never reaches the next account)', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    let signedIn = true;
+    // The preparation is where the seconds go; the member signs out inside it.
+    const stillWanted = vi.fn(() => signedIn);
+    const staging = messaging.handleFilesSelected([pdf('a.pdf')], ctx, { stillWanted });
+    signedIn = false;
+    await staging;
+    expect(stillWanted).toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO)).toHaveLength(0);
+  });
+
   it('a photo staged in A, Send in B posts nothing of A', async () => {
     const messaging = await freshMessaging();
     const ctx = makeContext();
@@ -154,7 +168,7 @@ describe('the staging belongs to ONE conversation and ONE account', () => {
     ctx.verifyCurrentUserMembership = () => new Promise((r) => (admit = r));
 
     const sending = messaging.handleSendChat(ctx, '');
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     await messaging.handleFilesSelected([pdf('second.pdf')], ctx);
     admit(true);
     await sending;

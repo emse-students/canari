@@ -65,6 +65,11 @@ HEAD_REF="${HEAD_REF:-}"
 [ -n "$HEAD_SHA" ] || { printf 'HEAD_SHA is not set\n' >&2; exit 2; }
 
 ecosystem="$(ceiling_ecosystem_from_ref "$HEAD_REF")"
+# The compose file a datastore image is compared with: the identity provider's stack runs its own
+# PostgreSQL major, so an update THERE is not judged against production's (see `lib/ceiling.sh`).
+compose="$(ceiling_compose_from_ref "$HEAD_REF")"
+# A tree no pull-request job builds refuses EVERY dependency it carries, whatever its name.
+tree_gate="$(ceiling_gate_for_ref "$HEAD_REF")"
 
 printf 'dependency ceiling - pull request #%s at %s\n' "$PR" "${HEAD_SHA:0:8}"
 printf 'ecosystem: %s (read off %s)\n' "${ecosystem:-unknown, so every arm applies}" "${HEAD_REF:-no branch given}"
@@ -93,16 +98,7 @@ message="$messages"
 
 # Dependabot writes a machine-readable block into its commit message. It is the only description of
 # the update that is not prose.
-parsed="$(awk '
-  /^ *- dependency-name:/ {
-    if (name != "") print name "|" type "|" version
-    name = $0; sub(/^ *- dependency-name: */, "", name); type = ""; version = ""
-    next
-  }
-  /^ *dependency-version:/ { version = $0; sub(/^ *dependency-version: */, "", version) }
-  /^ *update-type:/ { type = $0; sub(/^ *update-type: *version-update:semver-/, "", type) }
-  END { if (name != "") print name "|" type "|" version }
-' <<< "$message")"
+parsed="$(ceiling_parse_updates <<< "$message")"
 
 if [ -z "$parsed" ]; then
   echo "::error::No commit on #$PR carries an updated-dependencies block, so nothing here can tell what it changes. Refusing to guess."
@@ -122,28 +118,42 @@ fi
 # not a semver comparison it can make - so this line printed an empty `()` for the very update that
 # cost production 33 minutes, which reads as a field nobody filled in rather than as a fact.
 update_kind() { # <update-type> <proposed-version>
-  case "$2" in
-    0.*) if [ "$1" = "minor" ]; then printf 'minor, and BREAKING below 1.0'; return; fi ;;
-  esac
+  if [ "$1" = "minor" ] && ceiling_update_is_breaking "$1" "$2"; then
+    printf 'minor, and BREAKING below 1.0'
+    return
+  fi
   printf '%s' "${1:-unclassified}"
 }
 
 refused=0
 while IFS='|' read -r name type version; do
   [ -z "$name" ] && continue
-  # DEPENDABOT YAML-QUOTES ANY NAME STARTING WITH `@`, so a scoped npm package arrives as
-  # `"@nestjs/common"`, quotes included. Matching without stripping them misses the entire scope -
-  # which is how a first draft of this ceiling merged the exact `@nestjs/common` major it was
-  # written to refuse.
-  name="${name%\"}"
-  name="${name#\"}"
+  # The quotes Dependabot puts around a scoped name (`"@nestjs/common"`) are stripped by
+  # `ceiling_parse_updates`, the one parser this and `cargo-lock-refresh.sh` share.
 
   # The VERSION is passed because one arm needs it: a datastore is refused only when the update
   # crosses the major production runs, a patch WITHIN a major being exactly what the digest pin
   # exists to let through.
   # The ECOSYSTEM is passed for that same arm: it is about a data directory on a volume, so it
   # applies to an IMAGE and not to a client library that happens to share the name.
-  gate="$(gate_for_dependency "$name" "$version" "$ecosystem")"
+  gate="$(gate_for_dependency "$name" "$version" "$ecosystem" "$compose")"
+  if [ -z "$gate" ] && [ -n "$tree_gate" ]; then
+    gate="$tree_gate"
+  fi
+
+  # THE LOCKFILE REFRESH'S OWN REFUSALS, BOUND HERE TOO (WP-RUST-LOCK-AUTOMERGE). A `deps/lock-refresh/`
+  # pull request is opened and ARMED with no person in the loop, so what `cargo-lock-refresh.sh`
+  # refuses before opening it - a Tauri-runtime crate, a breaking update - is refused again by the
+  # check `CI passed` requires, rather than trusted to the job that opened the branch.
+  case "$HEAD_REF" in
+    deps/lock-refresh/*)
+      if [ -z "$gate" ] && ceiling_is_tauri_runtime_crate "$name"; then
+        gate="nothing: a crate of the Tauri runtime is a native work package owed a device reading, and the unattended lockfile refresh never carries one. A person takes this update."
+      elif [ -z "$gate" ] && ceiling_update_is_breaking "$type" "$version"; then
+        gate="nothing: a breaking update (type \`${type:-unclassified}\`) is never carried by the unattended lockfile refresh. A person takes this update."
+      fi
+      ;;
+  esac
 
   if [ -n "$gate" ]; then
     refused=$((refused + 1))

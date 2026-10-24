@@ -1,5 +1,6 @@
 // Stub Tauri internals before any import: the CJS `@tauri-apps/api/core` reads this global.
 const tauriInvokeStub = vi.fn((cmd: string) => {
+  if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
   if (cmd === 'get_fcm_token') return Promise.resolve('tok-perm');
   return Promise.resolve(undefined);
 });
@@ -72,6 +73,7 @@ describe('startPushService and the notification permission rationale', () => {
     isPermissionGranted.mockResolvedValue(false);
     requestPermission.mockResolvedValue('granted');
     tauriInvokeStub.mockImplementation((cmd: string) => {
+      if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
       if (cmd === 'get_fcm_token') return Promise.resolve('tok-perm');
       return Promise.resolve(undefined);
     });
@@ -109,7 +111,7 @@ describe('startPushService and the notification permission rationale', () => {
   }
 
   it('does not open the OS dialog until the rationale has been answered, and schedules no timer that could', async () => {
-    // WHAT THE OLD SHAPE DID IS EXACTLY THIS CALL: `setTimeout(r, 1200)` between the rationale and
+    // WHAT THE OLD SHAPE DID IS EXACTLY THIS CALL: a 1200 ms sleep between the rationale and
     // the OS dialog. Recording the schedule is a stronger statement than advancing a fake clock and
     // a cheaper one: it asserts that no clock EXISTS on this path, rather than that one particular
     // clock did not fire.

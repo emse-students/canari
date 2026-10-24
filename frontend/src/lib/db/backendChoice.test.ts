@@ -1,7 +1,5 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 
 /**
  * ONE PLACE DECIDES WHICH STORE A DEVICE HAS, AND IT IS `getStorage`.
@@ -24,8 +22,6 @@ import { describe, expect, it } from 'vitest';
  * The wipe is fixed to clear both, because a WebView exists on every platform. This test fixes the
  * cause: nothing outside `db.ts` may name a backend.
  */
-const here = dirname(fileURLToPath(import.meta.url));
-const SRC = resolve(here, '../..');
 
 /** `new IndexedDbStorage(` / `new SqliteStorage(` - a backend chosen by hand. */
 const NAMES_A_BACKEND = /\bnew\s+(IndexedDbStorage|SqliteStorage)\s*\(/;
@@ -38,23 +34,13 @@ const NAMES_A_BACKEND = /\bnew\s+(IndexedDbStorage|SqliteStorage)\s*\(/;
  */
 const ALLOWED = new Set(['lib/db.ts']);
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'paraglide' || entry === 'node_modules') continue;
-    const full = resolve(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...sourceFiles(full));
-    else if (/\.(ts|svelte)$/.test(entry) && !entry.endsWith('.test.ts')) out.push(full);
-  }
-  return out;
-}
-
 describe('the storage backend is chosen in one place', () => {
   it('has no call site outside db.ts naming a backend directly', () => {
-    const offenders = sourceFiles(SRC)
-      .map((file) => relative(SRC, file).replace(/\\/g, '/'))
-      .filter((rel) => !ALLOWED.has(rel))
-      .filter((rel) => NAMES_A_BACKEND.test(readFileSync(resolve(SRC, rel), 'utf8')));
+    const offenders = sourceFiles({ under: 'src', extensions: ['ts', 'svelte'], tests: 'exclude' })
+      .map(({ path, text }) => ({ rel: relativeTo(path, 'src'), text }))
+      .filter(({ rel }) => !ALLOWED.has(rel))
+      .filter(({ text }) => NAMES_A_BACKEND.test(text))
+      .map(({ rel }) => rel);
 
     expect(
       offenders,

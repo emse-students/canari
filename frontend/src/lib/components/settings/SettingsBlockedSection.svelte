@@ -4,6 +4,8 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { listBlockedUsers, unblockUser, type BlockedUser } from '$lib/users/blocks';
   import { Log } from '$lib/utils/Log';
+  import { refusalCode } from '$lib/utils/apiRefusal';
+  import { describeRefusalCode } from '$lib/utils/refusalCodes';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -45,7 +47,7 @@
     } catch (err) {
       Log.d('SettingsBlockedSection.handleUnblock failed', err);
       blocked = previous;
-      error = m.settings_blocked_unblock_error();
+      error = describeRefusalCode(refusalCode(err)) ?? m.settings_blocked_unblock_error();
     } finally {
       pendingId = null;
     }

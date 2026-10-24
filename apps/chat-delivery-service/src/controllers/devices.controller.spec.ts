@@ -3,7 +3,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, FindOperator, Not } from 'typeorm';
 import { DevicesController } from './devices.controller';
 import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
@@ -36,6 +36,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
     findOne: jest.Mock;
     count: jest.Mock;
     save: jest.Mock;
+    update: jest.Mock;
     create: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
@@ -70,6 +71,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
       findOne: jest.fn().mockResolvedValue(null),
       count: jest.fn().mockResolvedValue(0),
       save: jest.fn().mockResolvedValue({}),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       create: jest.fn((v) => v),
       createQueryBuilder: jest.fn(() => qb),
     };
@@ -116,6 +118,37 @@ describe('DevicesController.registerDevice - revoked device', () => {
     await controller.registerDevice(BODY, 'u1', undefined);
 
     expect(keyPackageRepo.save).toHaveBeenCalled();
+  });
+
+  it('refuses a device id another account holds, and writes nothing', async () => {
+    revokedDeviceRepo.findOne.mockResolvedValue(null);
+    // Answers by the `where`: the other account's row matches only a lookup that EXCLUDES the caller.
+    const rows = [{ id: 'kp-u2', userId: 'u2', deviceId: 'd1' }];
+    keyPackageRepo.findOne.mockImplementation(
+      async ({ where }: { where: { deviceId: string; userId: unknown } }) =>
+        rows.find(
+          (r) =>
+            r.deviceId === where.deviceId &&
+            (where.userId instanceof FindOperator
+              ? where.userId.type === 'not' && r.userId !== where.userId.value
+              : r.userId === where.userId)
+        ) ?? null
+    );
+
+    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
+      status: 409,
+      response: { error: 'device_id_taken' },
+    });
+    expect(keyPackageRepo.findOne).toHaveBeenCalledWith({
+      where: { deviceId: 'd1', userId: Not('u1') },
+      select: { id: true },
+    });
+    expect(recordKeys).not.toHaveBeenCalled();
+    expect(keyPackageRepo.save).not.toHaveBeenCalled();
+
+    // The owner itself re-registers the same id as before.
+    await controller.registerDevice({ ...BODY, userId: 'u2' }, 'u2', undefined);
+    expect(recordKeys).toHaveBeenCalledWith('u2', 'd1', ['a2V5'], 'register-device');
   });
 
   it('records the device signature key BEFORE storing the package, so a failure is retried', async () => {

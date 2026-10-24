@@ -7,7 +7,7 @@ export const LIVES_ONE_OPEN_PER_BROADCASTER = 'lives_one_open_per_broadcaster';
 /**
  * A live broadcast (WP-L2, docs/wiki/services/lives.md, migration 091).
  *
- * THE END IS THIS ROW'S STATE. `endedAt` is written once - by the broadcaster, by the sweep when
+ * THE END IS THIS ROW'S STATE. `endedAt` is written once - by the broadcaster, by staff (`cut`, WP-L8), by the sweep when
  * the broadcaster's segments stopped (`dropped`) or the hour ran out (`max_duration`), or by an
  * account erasure (`erased`) - and from then on every read answers 410, no segment is accepted, and
  * the sweep deletes the segments and then this row. There is no replay (L3).
@@ -26,10 +26,11 @@ export const LIVES_ONE_OPEN_PER_BROADCASTER = 'lives_one_open_per_broadcaster';
 @Check('lives_end_pair', `("endedAt" IS NULL) = ("endReason" IS NULL)`)
 @Check(
   'lives_end_reason',
-  `"endReason" IS NULL OR "endReason" IN ('broadcaster', 'dropped', 'max_duration', 'erased')`
+  `"endReason" IS NULL OR "endReason" IN ('broadcaster', 'dropped', 'max_duration', 'erased', 'cut')`
 )
 @Check('lives_next_index', `"nextIndex" >= 0`)
 @Check('lives_stored_bytes', `"storedBytes" >= 0`)
+@Check('lives_chat_seq', `"chatSeq" >= 0 AND "reactionSeq" >= 0`)
 @Check(
   'lives_pending_whole',
   `("pendingName" IS NULL) = ("pendingSha256" IS NULL) AND ("pendingName" IS NULL) = ("pendingAt" IS NULL)`
@@ -85,4 +86,23 @@ export class Live {
 
   @Column({ type: 'timestamptz', nullable: true })
   pendingAt: Date | null;
+
+  /**
+   * When the live's start was pushed to the broadcaster's followers (WP-L7, migration 094) - the
+   * CLAIM, written before the send, so a live is announced at most once whoever asks (`LiveAnnouncer`).
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  announcedAt: Date | null;
+
+  /**
+   * The last sequence number given to a chat message, or to a hide (WP-L6, migration 098). Taken
+   * under this row's lock in the transaction that writes the message, so numbers commit in their
+   * own order and a viewer's cursor never skips one (lives.md, C4).
+   */
+  @Column({ type: 'integer', default: 0 })
+  chatSeq: number;
+
+  /** The same for reaction bursts (C4, C7). */
+  @Column({ type: 'integer', default: 0 })
+  reactionSeq: number;
 }

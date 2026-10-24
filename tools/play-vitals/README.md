@@ -16,14 +16,10 @@ Exit code `0` nothing new, `1` a NEW or REGRESSED issue is present, `2` the run 
 ## The credential
 
 A dedicated Google Cloud service account, invited into the Play Console. **Canari is a public repository, so the key is never stored in it.** It lives in a directory outside the work tree, which `git clean -xdf` cannot reach and where
-nothing can be committed by accident. `PLAY_SA_KEY` overrides the path.
-
-**THAT PATH DID NOT MOVE WITH THE CAMPAIGN RIG ON 2026-09-03, AND THAT IS DELIBERATE.** The rig root
-moved further out, so that a campaign restarting from zero
-could not half-inherit the old one. This key is a STORE credential, not rig state - it has nothing
-to do with a Chrome profile or a verdict ledger - and `lib.mjs` resolves it by its own fixed path. Do
-not "tidy" it into the new root: the only thing that would achieve is a tool that stops finding its
-own key.
+nothing can be committed by accident. `PLAY_SA_KEY` takes precedence; otherwise the key is
+`play-console-sa.json` in the harness state directory, the same one `tools/cross-client-harness/names.mjs`
+exports as `STATE_DIR`. There is no other fallback: a missing key fails with a message naming both
+the override and the default path.
 
 Two enablements were needed once, and neither is re-doable by this tool: the
 **Play Developer Reporting API** turned on in the Google Cloud project, and the service account

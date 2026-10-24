@@ -128,7 +128,11 @@ describe('MessagingService - a tombstone is not a destination', () => {
         MessagingService,
         {
           provide: getRepositoryToken(QueuedMessage),
-          useValue: { ...emptyRepo(), createQueryBuilder: jest.fn(() => queryBuilder()) },
+          useValue: {
+            ...emptyRepo(),
+            createQueryBuilder: jest.fn(() => queryBuilder()),
+            count: jest.fn().mockResolvedValue(0),
+          },
         },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
         { provide: getRepositoryToken(Group), useValue: groupRepo },

@@ -355,6 +355,21 @@ export function organisersFullList(owners: EventOwnerIdentity[]): string {
   return owners.map((owner) => owner.name).join(', ');
 }
 
+/**
+ * The event's title followed by its organisers, for a calendar entry's SUMMARY and a share title:
+ * `Title - A`, `Title - A + B`, then `Title - A + N others` from three on. The same label the list
+ * rows draw, so an entry in a phone's calendar names the evening's hosts the way the agenda did -
+ * it used to name the owner alone, hiding up to three co-organisers (2026-10-10 backlog, (b)).
+ */
+export function eventSummary(event: AssociationCalendarFeedEvent): string {
+  return `${event.title} - ${organisersLabel(eventOwners(event))}`;
+}
+
+/** The title followed by EVERY organiser, for a hover tooltip (the grid cell has no room to name them). */
+export function eventTooltip(event: AssociationCalendarFeedEvent): string {
+  return `${event.title} - ${organisersFullList(eventOwners(event))}`;
+}
+
 /** How many faces a stack of organisers draws before it turns the rest into a `+N` pill. */
 export const MAX_ORGANISER_FACES = 3;
 

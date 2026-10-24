@@ -28,6 +28,8 @@ import {
   offDayShade,
   splitLogoBands,
   splitLogoWatermark,
+  dayFrameHtml,
+  sheetRuleCss,
 } from './calendarExport';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
@@ -185,7 +187,7 @@ describe('outline room and slot heights', () => {
   it('gives every title outline room for the outer half of its stroke, cancelled by a margin', () => {
     for (const size of [9, 10, 12, 13]) {
       const room = Math.ceil(outlineWidth(size) / 2);
-      expect(outlineRoomCss(size)).toBe(`padding:${room}px;margin:-${room}px;`);
+      expect(outlineRoomCss(size)).toBe(`padding:0 ${room}px;margin:0 -${room}px;`);
       expect(room * 2).toBeGreaterThanOrEqual(outlineWidth(size));
     }
   });
@@ -361,6 +363,48 @@ describe('buildPreviewInnerHtml - what the on-screen sheet points its logos at',
   });
 });
 
+describe('buildPreviewInnerHtml - a logo URL is an attribute value and nothing more', () => {
+  // The mock above passes an absolute URL through untouched, so this proves the sheet ITSELF
+  // escapes what it interpolates, whatever the resolver lets by.
+  const odd = 'https://x.test/a.png" data-extra="1';
+
+  function render(events: AssociationCalendarFeedEvent[]): HTMLElement {
+    const host = document.createElement('div');
+    host.innerHTML = buildPreviewInnerHtml(events, 2026, 4, {
+      ...DEFAULT_EXPORT_OPTIONS,
+      bgDataUrl: null,
+    });
+    return host;
+  }
+
+  it('keeps a quote inside the single-logo src', () => {
+    const host = render([makeEvent({ associationLogoUrl: odd })]);
+    expect(host.querySelector('[data-extra]')).toBeNull();
+    expect(host.querySelector('img')?.getAttribute('src')).toBe(odd);
+  });
+
+  it('keeps a quote inside every band of the split watermark', () => {
+    const host = render([
+      makeEvent({
+        associationLogoUrl: odd,
+        coOwners: [
+          { associationId: 'assoc-2', name: 'Asso 2', slug: 'a2', color: null, logoUrl: odd },
+        ],
+      }),
+    ]);
+    expect(host.querySelector('[data-extra]')).toBeNull();
+    const srcs = Array.from(host.querySelectorAll('img')).map((i) => i.getAttribute('src'));
+    expect(srcs).toEqual([odd, odd]);
+  });
+
+  it('splitLogoWatermark escapes each src it is handed', () => {
+    const host = document.createElement('div');
+    host.innerHTML = splitLogoWatermark([odd, `${odd}<b>`], 40);
+    expect(host.querySelector('[data-extra]')).toBeNull();
+    expect(host.querySelector('b')).toBeNull();
+  });
+});
+
 describe('background vignette and blur', () => {
   const withBg = (extra: object) =>
     buildPreviewInnerHtml([], 2026, 4, {
@@ -428,5 +472,80 @@ describe('event titles - white with a dark outline, centred in the tile', () => 
     // The day number is pinned over the tile, not given a row the title must dodge.
     expect(html).toContain('position:absolute;top:6px;left:8px');
     expect(html).not.toContain(`height:${DAY_NUM_H}px;flex-shrink:0`);
+  });
+});
+
+describe('the sheet reads at print size, and nothing moved (November 2026, 2026-10-18)', () => {
+  /** The cell carrying day `n`. */
+  function cellOf(html: string, n: number): HTMLElement {
+    const host = document.createElement('div');
+    host.innerHTML = html;
+    const spans = Array.from(host.querySelectorAll<HTMLElement>('span[data-pdf-text]'));
+    const num = spans.find((s) => s.textContent === String(n))!;
+    let el: HTMLElement = num;
+    while (!el.getAttribute('style')?.includes('border-radius:8px')) el = el.parentElement!;
+    return el;
+  }
+
+  const busy = [
+    makeEvent({ id: 'a', title: 'Conference', startsAt: '2026-11-26T17:00:00.000Z' }),
+    makeEvent({ id: 'b', title: 'Afterwork', startsAt: '2026-11-26T18:00:00.000Z' }),
+  ];
+
+  it('keeps the day number pinned over the first tile, and only repaints it', () => {
+    const html = buildPreviewInnerHtml(busy, 2026, 10);
+    expect(html).toContain('position:absolute;top:6px;left:8px');
+    // An empty day keeps its padded corner, now white with the dark outline.
+    const empty = cellOf(html, 2);
+    expect(empty.getAttribute('style')).toContain('padding:6px 8px');
+    expect(empty.querySelector('span')!.getAttribute('style')).toContain('paint-order:stroke fill');
+  });
+
+  it('keeps the logo the centred watermark under the title', () => {
+    const tile = Array.from(cellOf(buildPreviewInnerHtml(busy, 2026, 10), 26).children).find((t) =>
+      t.textContent?.includes('Conference')
+    )!;
+    expect(tile.querySelector('img')!.parentElement!.getAttribute('style')).toContain(
+      'position:absolute;inset:0;display:flex;align-items:center;justify-content:center'
+    );
+  });
+
+  it('frames every day and rules between stacked events', () => {
+    const html = buildPreviewInnerHtml(busy, 2026, 10);
+    const frame = 'border:2px solid rgba(17,17,17,0.75)';
+    expect(cellOf(html, 26).innerHTML).toContain(frame);
+    expect(cellOf(html, 26).innerHTML.match(/border-top:2px solid/g)).toHaveLength(1);
+    expect(cellOf(html, 2).innerHTML).toContain(frame);
+  });
+});
+
+describe('the cell border is adjustable (user, 2026-10-18)', () => {
+  const ev = [
+    makeEvent({ id: 'a', title: 'A', startsAt: '2026-11-26T17:00:00.000Z' }),
+    makeEvent({ id: 'b', title: 'B', startsAt: '2026-11-26T18:00:00.000Z' }),
+  ];
+
+  it('draws the 2px dark frame by default', () => {
+    expect(DEFAULT_EXPORT_OPTIONS.cellBorderWidth).toBe(2);
+    expect(DEFAULT_EXPORT_OPTIONS.cellBorderColor).toBe('dark');
+    expect(buildPreviewInnerHtml(ev, 2026, 10)).toContain('border:2px solid rgba(17,17,17,0.75)');
+  });
+
+  it('follows the chosen width and ink on the frame and the rule alike', () => {
+    const html = buildPreviewInnerHtml(ev, 2026, 10, {
+      cellBorderWidth: 3,
+      cellBorderColor: 'light',
+    });
+    expect(html).toContain('border:3px solid rgba(255,255,255,0.75)');
+    expect(html).toContain('border-top:3px solid rgba(255,255,255,0.75)');
+    expect(html).not.toContain('rgba(17,17,17,0.75)');
+  });
+
+  it('draws no frame at none, and keeps the faint rule between stacked events', () => {
+    expect(dayFrameHtml(0, 'dark')).toBe('');
+    expect(sheetRuleCss(0, 'light')).toBe('border-top:1px solid rgba(0,0,0,0.10);');
+    const html = buildPreviewInnerHtml(ev, 2026, 10, { cellBorderWidth: 0 });
+    expect(html).not.toMatch(/position:absolute;inset:0;border:/);
+    expect(html).toContain('border-top:1px solid rgba(0,0,0,0.10);');
   });
 });

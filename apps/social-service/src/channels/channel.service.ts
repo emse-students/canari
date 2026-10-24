@@ -1,5 +1,6 @@
 import {
   Injectable,
+  OnApplicationBootstrap,
   NotFoundException,
   ForbiddenException,
   Logger,
@@ -37,21 +38,27 @@ import {
 } from './distribution-group.client';
 
 import {
+  actorMayGrantRole,
   CHANNEL_PERMISSIONS,
   DEFAULT_ADMIN_PERMISSIONS,
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
+  INVITE_ROLE_NOT_GRANTABLE,
+  permissionsCover,
   PIN_REQUIRES_MODERATION,
+  REMOVAL_EXCEEDS_ACTOR,
+  ROLE_CHANGE_EXCEEDS_ACTOR,
   roleGrantsChannelManagement,
   roleGrantsModeration,
+  roleGrantsRoleManagement,
   writePolicyAllows,
 } from './permissions';
+import { narrowAdmissionVoucher } from './admission-voucher';
 
 import {
   CreateChannelDto,
   CreateRoleDto,
   CreateWorkspaceDto,
-  ChannelJoinDto,
   ChannelLeaveDto,
   ChannelInviteDto,
   ChannelUpdateRoleDto,
@@ -195,8 +202,15 @@ export function sortChannels<T extends Pick<Channel, 'id' | 'sortOrder' | 'creat
  */
 export const UNREAD_TRACKED_SINCE_MS = Date.UTC(2026, 9, 8);
 
+/** What the outbox entry of a salon row keeps for its push (migration 093). */
+export interface ChannelFanoutPayload {
+  mentionedUserIds?: string[];
+  seedFrame?: string;
+  seedGroupId?: string;
+}
+
 @Injectable()
-export class ChannelService {
+export class ChannelService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ChannelService.name);
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
 
@@ -895,6 +909,14 @@ export class ChannelService {
     return true;
   }
 
+  /**
+   * The community's base role - its lowest-priority role, "Membre" - which is what joining grants.
+   * THE ONLY definition: an invite link grants it, and an invitation may grant it whoever sent it.
+   */
+  private baseMemberRole(roles: readonly ChannelRole[]): ChannelRole | null {
+    return roles.slice().sort((a, b) => a.priority - b.priority)[0] ?? null;
+  }
+
   /** Revokes a set of invites in one statement, saying how many and why. */
   private async revokeInvites(invites: WorkspaceInvite[], reason: string): Promise<void> {
     if (invites.length === 0) return;
@@ -1036,11 +1058,19 @@ export class ChannelService {
   /**
    * Joins the caller into the invite's community: adds a workspace member with the base role.
    * The client fetches channel keys via the existing bootstrap once it loads the workspace.
+   *
+   * `admissionVoucher` is the proof the joiner built from the link's fragment (channel-encryption
+   * section 25): what lets a member hand them the community's past. It is stored on the membership
+   * row, and on the row a member ALREADY has when they follow a newer link - that is how somebody
+   * who joined through a link without a fragment is given a proof afterwards. A link without one
+   * still admits; it just gives no past.
    */
   async acceptWorkspaceInvite(
     token: string,
-    userId: string
+    userId: string,
+    rawVoucher?: unknown
   ): Promise<{ workspaceSlug: string; alreadyMember: boolean }> {
+    const admissionVoucher = narrowAdmissionVoucher(rawVoucher);
     const invite = await this.inviteRepo.findOne({ where: { token } });
     if (!invite || !this.inviteIsValid(invite)) {
       throw new NotFoundException('Invalid or expired invitation.');
@@ -1069,20 +1099,53 @@ export class ChannelService {
     const existing = await this.memberRepo.findOne({
       where: { workspaceId: ws.id, userId },
     });
-    if (existing) return { workspaceSlug: ws.slug, alreadyMember: true };
+    if (existing) {
+      // The joiner's OWN proof, so a newer one replaces an older one: it is about nobody else.
+      if (admissionVoucher) {
+        await this.memberRepo.update({ id: existing.id }, { admissionVoucher });
+        this.logger.log(
+          `[INVITE] admission voucher stored for an existing member workspace=${ws.id} user=${userId.slice(0, 8)}`
+        );
+      }
+      return { workspaceSlug: ws.slug, alreadyMember: true };
+    }
 
-    // Base member role = lowest priority role of the workspace (e.g. "Membre").
     const roles = await this.roleRepo.find({ where: { workspaceId: ws.id } });
-    const baseRole = roles.slice().sort((a, b) => a.priority - b.priority)[0] ?? null;
-    await this.memberRepo.save(
-      this.memberRepo.create({
-        workspaceId: ws.id,
-        userId,
-        roleIds: baseRole ? [baseRole.id] : [],
-      })
-    );
+    const baseRole = this.baseMemberRole(roles);
 
-    await this.inviteRepo.increment({ id: invite.id }, 'uses', 1);
+    // COUNTING THE USE IS WHAT ADMITS, in ONE statement that carries the bound. The read above is a
+    // preview only; the bound is decided here. The conditional UPDATE takes the invite's row lock, so a concurrent
+    // accept waits for this one and then re-evaluates the WHERE against the committed count - and
+    // the member is written in the same transaction, so a refused claim leaves nobody behind.
+    const claimed = await this.inviteRepo.manager.transaction(async (tx) => {
+      const [won]: [{ id: string }[], number] = await tx.query(
+        `UPDATE workspace_invites
+            SET uses = uses + 1
+          WHERE id = $1
+            AND revoked = false
+            AND ("expiresAt" IS NULL OR "expiresAt" >= now())
+            AND ("maxUses" IS NULL OR uses < "maxUses")
+      RETURNING id`,
+        [invite.id]
+      );
+      if (won.length === 0) return false;
+      const members = tx.getRepository(ChannelMember);
+      await members.save(
+        members.create({
+          workspaceId: ws.id,
+          userId,
+          roleIds: baseRole ? [baseRole.id] : [],
+          admissionVoucher,
+        })
+      );
+      return true;
+    });
+    if (!claimed) {
+      this.logger.warn(
+        `[INVITE] refused - claim matched no row (exhausted, revoked or expired meanwhile) workspace=${ws.id} user=${userId.slice(0, 8)}`
+      );
+      throw new NotFoundException('Invalid or expired invitation.');
+    }
 
     // Notify connected clients (the joining user's devices + existing members) to refresh.
     const repChannel = await this.channelRepo.findOne({
@@ -1105,7 +1168,9 @@ export class ChannelService {
         memberIds
       );
     }
-    this.logger.log(`[INVITE] accepted workspace=${ws.id} user=${userId.slice(0, 8)}`);
+    this.logger.log(
+      `[INVITE] accepted workspace=${ws.id} user=${userId.slice(0, 8)} voucher=${admissionVoucher ? 'yes' : 'no'}`
+    );
     return { workspaceSlug: ws.slug, alreadyMember: false };
   }
 
@@ -1291,14 +1356,52 @@ export class ChannelService {
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
-    const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
-    if (!member) {
+    if (!(await this.isWorkspaceMember(workspaceId, userId))) {
       this.logger.warn(
         `[DISTRIBUTION_GROUP] refused workspace=${workspaceId} user=${userId.slice(0, 8)} - not a member`
       );
       throw new ForbiddenException('Not a member of this workspace');
     }
     return workspace;
+  }
+
+  /** The membership half of {@link assertWorkspaceMember}, shared with {@link isDistributionGroupEntitled}. */
+  private async isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
+    return !!(await this.memberRepo.findOne({ where: { workspaceId, userId } }));
+  }
+
+  /** The access half of {@link assertChannelReader}, shared with {@link isDistributionGroupEntitled}. */
+  private async isChannelReader(channel: Channel, userId: string): Promise<boolean> {
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    return !!member && this.canAccessChannel(channel, member, userId);
+  }
+
+  /**
+   * Whether `userId` may hold a device in the key-distribution group of a scope - the question
+   * chat-delivery asks before it accepts an external commit to that group (WP-KEYGROUP-JOIN-GATE).
+   *
+   * The SAME predicates as the routes that serve the group's GroupInfo, which IS the capability to
+   * external-join: a community's group admits its members ({@link getDistributionGroupForMember}),
+   * a private salon's its readers ({@link getChannelDistributionGroupForMember}). So a commit is
+   * accepted exactly when the base it was built on could have been served to its author. A scope
+   * that no longer exists, or a salon that is no longer private, entitles nobody.
+   */
+  async isDistributionGroupEntitled(
+    kind: 'workspace' | 'channel',
+    scopeId: string,
+    userId: string
+  ): Promise<boolean> {
+    if (kind === 'workspace') {
+      const workspace = await this.workspaceRepo.findOne({
+        where: { id: scopeId },
+        select: { id: true },
+      });
+      return !!workspace && (await this.isWorkspaceMember(scopeId, userId));
+    }
+    const channel = await this.channelRepo.findOne({ where: { id: scopeId } });
+    return !!channel?.isPrivate && (await this.isChannelReader(channel, userId));
   }
 
   /**
@@ -1393,10 +1496,7 @@ export class ChannelService {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
-    const member = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId },
-    });
-    if (!member || !this.canAccessChannel(channel, member, userId)) {
+    if (!(await this.isChannelReader(channel, userId))) {
       this.logger.warn(
         `[CHANNEL_GRAINE] refused channel=${channelId} user=${userId.slice(0, 8)} - no access`
       );
@@ -1892,30 +1992,37 @@ export class ChannelService {
 
   // ================= ROLES =================
 
-  /** Creates a new workspace role. Only members with MANAGE_WORKSPACE or MANAGE_ROLES permission may call this. */
+  /**
+   * Creates a new workspace role. The actor manages roles, and the role grants nothing the actor
+   * does not hold (`actorMayGrantRole`): creating a role is granting what it carries.
+   */
   async createRole(input: CreateRoleDto & { actorUserId: string }) {
-    // Only workspace admins (MANAGE_WORKSPACE or MANAGE_ROLES) may create roles.
-    const actorMember = await this.memberRepo.findOne({
-      where: { workspaceId: input.workspaceId, userId: input.actorUserId },
-    });
-    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
-
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
-      );
+    const actorPermissions = await this.assertActorManagesRoles(
+      input.workspaceId,
+      input.actorUserId
+    );
+    if (!actorMayGrantRole(actorPermissions, input.permissions ?? [])) {
+      this.refuseRoleChangeBeyondActor('create', input.workspaceId, input.actorUserId);
     }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
+
+    // THE RANK IS THE SERVER'S, and the body's `priority` is not read: the lowest role is what
+    // joining grants (`baseMemberRole`) and the highest decides who is promoted when a community
+    // loses its last administrator, so neither end is a caller's to choose. A new role ranks just
+    // above the base role. The column has no default, so it is always set here.
+    const base = this.baseMemberRole(
+      await this.roleRepo.find({ where: { workspaceId: input.workspaceId } })
+    );
+    const priority = (base?.priority ?? 0) + 1;
 
     const role = this.roleRepo.create({
       workspaceId: input.workspaceId,
       name: input.name,
+      priority,
       permissions: input.permissions,
     });
+    this.logger.log(
+      `[ROLE] created workspace=${input.workspaceId} priority=${priority} perms=${(input.permissions ?? []).length} by=${input.actorUserId.slice(0, 8)}`
+    );
     return this.roleRepo.save(role);
   }
 
@@ -2526,54 +2633,6 @@ export class ChannelService {
     return roles.some((r) => roleGrantsChannelManagement(r.permissions));
   }
 
-  /** Adds a user to a workspace channel. Creates the workspace membership with the default Member role if this is their first channel in the workspace. */
-  async joinChannel(channelId: string, input: ChannelJoinDto) {
-    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException('Channel not found');
-
-    const workspace = await this.workspaceRepo.findOne({ where: { id: channel.workspaceId } });
-
-    let member = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId: input.userId },
-    });
-    const isNewMember = !member;
-
-    if (!member) {
-      const defaultRole = await this.roleRepo.findOne({
-        where: { workspaceId: channel.workspaceId, name: 'Member' },
-      });
-      member = this.memberRepo.create({
-        workspaceId: channel.workspaceId,
-        userId: input.userId,
-        roleIds: defaultRole ? [defaultRole.id] : [],
-      });
-      await this.memberRepo.save(member);
-    }
-
-    // Publish event to notify connected clients. The payload names the salon, so it goes to the
-    // people who may see that salon - plus the joiner, who is told about their own arrival whether
-    // or not this channel turns out to be one they can read.
-    if (isNewMember) {
-      const audience = await this.channelAudience(channel);
-      await this.redis.publishChannelEvent(
-        'channel.member.joined',
-        {
-          channelId,
-          channelName: channel.name,
-          workspaceId: channel.workspaceId,
-          workspaceSlug: workspace?.slug,
-          workspaceName: workspace?.name,
-          visibility: channel.isPrivate ? 'private' : 'public',
-          roleName: input.roleName || 'Member',
-          joinedBy: input.userId,
-        },
-        [...new Set([...audience, input.userId])]
-      );
-    }
-
-    return { success: true };
-  }
-
   /**
    * Whether the user has an active MLS device registered in chat-delivery.
    *
@@ -2589,6 +2648,50 @@ export class ChannelService {
   }
 
   /**
+   * The role an invitation may grant its invitee, or a refusal - never a silent downgrade, because
+   * a member invited as something other than what was asked would be a grant nobody chose.
+   *
+   * Inviting is `member.invite` (or `channel.manage`); granting a role is role management. So the
+   * invitation grants the community's base role - what an invite link grants - unless the request
+   * names another role AND `actorMayGrantRole` lets this actor hand it out, the same right the
+   * role-management endpoints require, bounded by what the actor holds. No role named means the
+   * base role. A named role the community does not have grants nothing, as it always has.
+   *
+   * @throws ForbiddenException `INVITE_ROLE_NOT_GRANTABLE` when the actor may not grant that role
+   */
+  private async resolveInviteGrantedRole(
+    workspaceId: string,
+    actorUserId: string,
+    actorRoles: readonly ChannelRole[],
+    requestedName: string | undefined
+  ): Promise<ChannelRole | null> {
+    const roles = await this.roleRepo.find({ where: { workspaceId } });
+    const base = this.baseMemberRole(roles);
+    if (!requestedName) return base;
+    const wanted = this.mapRoleInputToWorkspaceRoleName(requestedName);
+    // "Membre" is how every client names the ordinary invitation, so it means the base role even in
+    // a community whose lowest role is called something else.
+    if (wanted === 'Membre' || wanted === base?.name) return base;
+    const role = roles.find((r) => r.name === wanted) ?? null;
+    if (!role || role.id === base?.id) return role;
+
+    const actorPermissions = [...new Set(actorRoles.flatMap((r) => r.permissions))];
+    if (actorMayGrantRole(actorPermissions, role.permissions)) {
+      this.logger.debug(
+        `[INVITE] grant of role=${role.name} allowed workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+      );
+      return role;
+    }
+    this.logger.warn(
+      `[INVITE] refused - role=${role.name} not grantable by actor workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+    );
+    throw new ForbiddenException({
+      code: INVITE_ROLE_NOT_GRANTABLE,
+      message: 'This invitation cannot grant that role.',
+    });
+  }
+
+  /**
    * Invites a user to a channel: makes them a member of the community if they are not one yet, and
    * for a private channel adds them to `allowedUsers`.
    *
@@ -2597,6 +2700,7 @@ export class ChannelService {
    * `historyVisibility` and answered by another member over the distribution group, never here.
    */
   async inviteToChannel(channelId: string, input: ChannelInviteDto) {
+    const admissionVoucher = narrowAdmissionVoucher(input.admissionVoucher);
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
@@ -2608,17 +2712,25 @@ export class ChannelService {
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.INVITE_MEMBERS) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
-      );
-    }
+    const actorRoles =
+      actorMember.roleIds?.length > 0
+        ? await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } })
+        : [];
+    const hasPerm = actorRoles.some(
+      (r) =>
+        r.permissions.includes(CHANNEL_PERMISSIONS.INVITE_MEMBERS) ||
+        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
+        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
+    );
     if (!hasPerm) throw new ForbiddenException('Missing INVITE_USERS permission');
+
+    // Decided before anything is asked of another service: the role is in the request already.
+    const grantedRole = await this.resolveInviteGrantedRole(
+      channel.workspaceId,
+      input.actorUserId,
+      actorRoles,
+      input.roleName
+    );
 
     // A block closes this door too, and INSIDE A SHARED COMMUNITY as much as outside it. Almost
     // every salon invitation is issued from a community both people belong to, so exempting that
@@ -2660,19 +2772,19 @@ export class ChannelService {
     const isNewMember = !targetMember;
 
     if (!targetMember) {
-      // Find the role to assign (default to Member if not specified)
-      const roleName = this.mapRoleInputToWorkspaceRoleName(input.roleName || 'Membre');
-      const role = await this.roleRepo.findOne({
-        where: { workspaceId: channel.workspaceId, name: roleName },
-      });
-      const roleIds = role ? [role.id] : [];
-
       targetMember = this.memberRepo.create({
         workspaceId: channel.workspaceId,
         userId: input.targetUserId,
-        roleIds,
+        roleIds: grantedRole ? [grantedRole.id] : [],
+        // The inviting device's signed admission (channel-encryption section 25). Only on a row
+        // this call creates: an existing member's proof is theirs, and a salon invitation of a
+        // member already in is not an admission to the community.
+        admissionVoucher,
       });
       await this.memberRepo.save(targetMember);
+      this.logger.log(
+        `[INVITE] member added workspace=${channel.workspaceId} user=${input.targetUserId.slice(0, 8)} voucher=${admissionVoucher ? 'yes' : 'no'}`
+      );
     }
 
     if (isNewMember) {
@@ -2700,7 +2812,7 @@ export class ChannelService {
           workspaceSlug: workspace?.slug,
           workspaceName: workspace?.name,
           visibility: channel.isPrivate ? 'private' : 'public',
-          roleName: this.mapRoleInputToWorkspaceRoleName(input.roleName || 'Membre'),
+          roleName: grantedRole?.name ?? this.mapRoleInputToWorkspaceRoleName(input.roleName),
           joinedBy: input.targetUserId,
           invitedBy: input.actorUserId,
         },
@@ -2760,33 +2872,66 @@ export class ChannelService {
     return { success: true };
   }
 
-  /** Kicks a member from the workspace entirely (removes from all channels). Requires MANAGE_WORKSPACE, MANAGE_CHANNEL, or KICK_MEMBERS permission. */
-  async kickFromWorkspace(workspaceId: string, targetUserId: string, actorUserId: string) {
-    const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
-    if (!workspace) throw new NotFoundException('Workspace not found');
-
+  /**
+   * The actor's right to remove `targetUserId` from this workspace or one of its salons - refused
+   * here, never returned. THE ONE GATE of both removals (`kickFromWorkspace`,
+   * `removeMemberFromChannel`), so they cannot disagree about who may remove whom.
+   *
+   * The actor holds `member.kick`, `channel.manage` or `workspace.manage`, the target is a member,
+   * and the target's roles grant nothing the actor does not hold (`permissionsCover`, the bound
+   * every role change asks): an actor may not take away more than they hold.
+   *
+   * @throws ForbiddenException `REMOVAL_EXCEEDS_ACTOR` when the target holds more than the actor
+   */
+  private async assertActorMayRemoveMember(
+    workspaceId: string,
+    actorUserId: string,
+    targetUserId: string
+  ): Promise<void> {
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: actorUserId },
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS)
-      );
-    }
+    const actorPermissions = await this.permissionsOfMember(actorMember);
+    const hasPerm =
+      actorPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
+      actorPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
+      actorPermissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS);
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
 
-    // Verify the target user is a member
     const targetMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: targetUserId },
     });
     if (!targetMember) throw new NotFoundException('Target member not found in workspace');
+
+    if (!permissionsCover(actorPermissions, await this.permissionsOfMember(targetMember))) {
+      this.logger.warn(
+        `[WORKSPACE] refused removal - target holds more than the actor workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`
+      );
+      throw new ForbiddenException({
+        code: REMOVAL_EXCEEDS_ACTOR,
+        message: 'This member holds permissions you do not have.',
+      });
+    }
+  }
+
+  /** What a member's roles grant, as one de-duplicated list (empty for a member with no role). */
+  private async permissionsOfMember(member: ChannelMember): Promise<string[]> {
+    if (!member.roleIds?.length) return [];
+    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
+    return [...new Set(roles.flatMap((r) => r.permissions))];
+  }
+
+  /**
+   * Kicks a member from the workspace entirely (removes from all channels). Requires
+   * MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by `assertActorMayRemoveMember`.
+   */
+  async kickFromWorkspace(workspaceId: string, targetUserId: string, actorUserId: string) {
+    const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+
+    await this.assertActorMayRemoveMember(workspaceId, actorUserId, targetUserId);
 
     // The actor's permission was checked; the TARGET's roles never were, so KICK_MEMBERS alone
     // used to remove the sole Administrateur.
@@ -2826,7 +2971,10 @@ export class ChannelService {
   /**
    * Replaces a workspace member's roleIds with the single specified role (removes all existing
    * roles). Roles are a workspace-level concept, so this is keyed by workspaceId directly.
-   * Requires the actor to hold MANAGE_WORKSPACE or MANAGE_ROLES in the workspace.
+   * Requires the actor to manage roles, and bounds them by what they hold (`actorMayGrantRole`):
+   * the new role grants nothing they lack, and the target's CURRENT roles do not either - changing
+   * a member who holds more than the actor would be taking away what the actor could never give.
+   * The actor themselves is a target like any other, so nobody can promote themselves past it.
    */
   async updateWorkspaceMemberRole(
     workspaceId: string,
@@ -2834,21 +2982,7 @@ export class ChannelService {
     roleName: string,
     actorUserId: string
   ) {
-    const adminMember = await this.memberRepo.findOne({
-      where: { workspaceId, userId: actorUserId },
-    });
-    if (!adminMember) throw new ForbiddenException('Not a member of this workspace');
-
-    let hasPerm = false;
-    if (adminMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
-      );
-    }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
+    const actorPermissions = await this.assertActorManagesRoles(workspaceId, actorUserId);
 
     const targetMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: targetUserId },
@@ -2862,6 +2996,14 @@ export class ChannelService {
       },
     });
     if (!role) throw new NotFoundException('Role not found');
+
+    const targetPermissions = await this.permissionsOfMember(targetMember);
+    if (
+      !actorMayGrantRole(actorPermissions, role.permissions) ||
+      !actorMayGrantRole(actorPermissions, targetPermissions)
+    ) {
+      this.refuseRoleChangeBeyondActor(`assign role=${role.name}`, workspaceId, actorUserId);
+    }
 
     // A demotion is an exit from the admin set, so it faces the same postcondition as a departure.
     // MANAGE_ROLES alone used to be enough to strip the last Administrateur - including oneself -
@@ -2948,34 +3090,13 @@ export class ChannelService {
    *  For private channels, removes them from allowedUsers and rotates the key.
    *  For public channels, only rotates the key so the removed user's cached epoch key
    *  is invalidated (the user is still a workspace member and can re-join if invited again).
-   *  Requires MANAGE_WORKSPACE or MANAGE_CHANNELS permission. */
+   *  Requires MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by
+   *  `assertActorMayRemoveMember`. */
   async removeMemberFromChannel(channelId: string, targetUserId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
-    const adminMember = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId: actorUserId },
-    });
-    if (!adminMember) throw new ForbiddenException('Not a member of this workspace');
-
-    let hasPerm = false;
-    if (adminMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS)
-      );
-    }
-
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
-
-    // Verify the target user is a workspace member
-    const targetMember = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId: targetUserId },
-    });
-    if (!targetMember) throw new NotFoundException('Target member not found in workspace');
+    await this.assertActorMayRemoveMember(channel.workspaceId, actorUserId, targetUserId);
 
     // Remove from private channel's allowedUsers list
     if (channel.isPrivate) {
@@ -3100,8 +3221,15 @@ export class ChannelService {
    * ask for history, before any salon has been opened. Reaching for an arbitrary channel to get a
    * community's roster is the kind of indirection that breaks the first time the list is empty.
    */
+  /**
+   * The community's roster. Beside each member's role and arrival it carries the two facts a
+   * member's device needs to decide whether that member's admission is proven (channel-encryption
+   * section 25): the signed `admissionVoucher` stored with the membership, and whether they created
+   * the community - the one member nobody else admitted.
+   */
   async listWorkspaceMembers(workspaceId: string, actorUserId: string, withPresence = false) {
-    await this.assertWorkspaceMember(workspaceId, actorUserId);
+    const workspace = await this.assertWorkspaceMember(workspaceId, actorUserId);
+    const creator = String(workspace.createdBy ?? '').toLowerCase();
 
     const members = await this.memberRepo.find({ where: { workspaceId } });
     const roles = await this.roleRepo.find({ where: { workspaceId } });
@@ -3115,6 +3243,8 @@ export class ChannelService {
         userId: m.userId,
         role: this.normalizeRoleLabelToCanonical(highestRole?.name),
         joinedAt: m.createdAt,
+        isCreator: creator !== '' && m.userId.toLowerCase() === creator,
+        admissionVoucher: m.admissionVoucher ?? null,
       };
     });
     return withPresence ? this.withPresence(rows) : rows;
@@ -3224,7 +3354,12 @@ export class ChannelService {
     const clientMessageId = this.readClientMessageId(channel.id, input);
     if (clientMessageId) {
       const stored = await this.findByClientMessageId(channelId, input.senderId, clientMessageId);
-      if (stored) return stored;
+      if (stored) {
+        // A repeat drains the row's own outbox entry at once: if the process that wrote it died
+        // before handing its broadcast off, this is the first moment anyone can finish the job.
+        this.drainFanoutInBackground(stored.id);
+        return stored;
+      }
     }
 
     // A poll is just an encrypted message carrying a label-free descriptor: we
@@ -3259,9 +3394,12 @@ export class ChannelService {
       pinned: autoPin,
     });
 
-    const saved = await this.saveUnderUnusedKey(msg, input);
+    const saved = await this.saveUnderUnusedKey(msg, input, this.fanoutPayloadOf(input));
     // Two repeats racing: the other one wrote the row, this one is answered with it.
-    if (saved.replayed) return saved.row;
+    if (saved.replayed) {
+      this.drainFanoutInBackground(saved.row.id);
+      return saved.row;
+    }
     const savedMsg = saved.row;
     if (pollMeta) {
       this.logger.log(
@@ -3269,46 +3407,229 @@ export class ChannelService {
       );
     }
 
-    // Publish event fire-and-forget - do not block the HTTP response. Addressed to the people who
-    // may READ the salon: this frame carries the ciphertext inline, and a private channel's
-    // audience is not its community's.
-    this.channelAudience(channel)
-      .then((audience) =>
-        this.redis.publishChannelEvent(
-          'channel.message.created',
-          {
-            channelId,
-            messageId: savedMsg.id,
-            senderId: input.senderId,
-            ciphertext: input.ciphertext,
-            nonce: input.nonce,
-            senderSessionId: input.senderSessionId,
-            messageIndex: input.messageIndex,
-            signature: savedMsg.signature,
-            createdAt: savedMsg.createdAt,
-            silent: savedMsg.silent,
-            // Poll descriptor (no labels) so peers render the card live without refetch.
-            poll: this.servedPoll(pollMeta),
-            pinned: savedMsg.pinned,
-          },
-          audience
-        )
-      )
-      .catch((err) => this.logger.error(`Failed to publish channel message event: ${err}`));
-
-    // Fan out push notifications to offline/background members, honouring each member's
-    // per-channel level. Fire-and-forget: never block the HTTP response on FCM.
-    //
-    // A SILENT row rings nobody. A reaction that pushed would make every heart a notification, and
-    // a community where that happens is a community people mute. The author is still told, by the
-    // client, through the same targeted push a DM reaction uses.
-    if (!savedMsg.silent) {
-      this.notifyChannelRecipients(channel, savedMsg, input).catch((err) =>
-        this.logger.error(`[CHANNEL_PUSH] fan-out failed channel=${channelId}: ${err}`)
-      );
-    }
+    // The broadcast and the push run after the answer is ready - never block the HTTP response on
+    // them - and from the row's OUTBOX entry (migration 093), written in the send's transaction: a
+    // process killed from here on leaves the entry behind, and the next boot (or a repeat of this
+    // send) finishes the job.
+    this.fanoutInBackground(channel, savedMsg, this.fanoutPayloadOf(input));
 
     return savedMsg;
+  }
+
+  /**
+   * What a push needs that the stored row does not carry: the sender's cleartext mentions and the
+   * seed frame (an MLS private message, opaque here) riding the push. Kept in the outbox entry so a
+   * fan-out finished after a crash rings the same phones with the same payload.
+   */
+  private fanoutPayloadOf(input: SendChannelMessageDto): ChannelFanoutPayload {
+    return {
+      ...(input.mentionedUserIds?.length ? { mentionedUserIds: input.mentionedUserIds } : {}),
+      ...(input.seedFrame && input.seedGroupId
+        ? { seedFrame: input.seedFrame, seedGroupId: input.seedGroupId }
+        : {}),
+    };
+  }
+
+  /**
+   * Every fan-out running in THIS process, by message id. It answers two questions by proof rather
+   * than by a clock: `settleFanouts` (what must finish before a replaced replica exits - a normal
+   * deploy is the commonest process death there is) and `drainFanout` (an entry whose fan-out is
+   * running here is not drained a second time). It cannot see another replica's fan-outs: a claim
+   * across replicas is out of scope, and a duplicate there is settled downstream (see
+   * {@link runFanout}).
+   */
+  private readonly fanoutsInFlight = new Map<string, Promise<void>>();
+
+  /** Starts `work` as THE fan-out of `messageId`, visible to {@link settleFanouts} until it ends. */
+  private trackFanout(messageId: string, work: () => Promise<void>): Promise<void> {
+    const running = work().finally(() => this.fanoutsInFlight.delete(messageId));
+    this.fanoutsInFlight.set(messageId, running);
+    return running;
+  }
+
+  /**
+   * Resolves once every fan-out running in this process has ended, successfully or not. The SIGTERM
+   * path awaits it before the process exits (`drainOnSigterm`): a replaced replica's last requests
+   * were answered BEFORE their broadcast and push ran, and exiting first would leave their entries
+   * for a boot that may be days away. Bounded by nothing of its own: the shutdown mechanism's
+   * existing stop timeout is the bound.
+   */
+  async settleFanouts(): Promise<void> {
+    while (this.fanoutsInFlight.size > 0) {
+      this.logger.log(
+        `[CHANNEL_FANOUT] waiting for ${this.fanoutsInFlight.size} fan-out(s) before exit`
+      );
+      await Promise.allSettled(this.fanoutsInFlight.values());
+    }
+  }
+
+  /** Runs {@link runFanout} off the request path; a failure is logged and leaves the entry for the drain. */
+  private fanoutInBackground(
+    channel: Channel,
+    row: ChannelMessage,
+    payload: ChannelFanoutPayload
+  ): void {
+    this.trackFanout(row.id, () => this.runFanout(channel, row, payload)).catch((err) =>
+      this.logger.error(
+        `[CHANNEL_FANOUT] channel=${channel.id} message=${row.id} failed, the entry stays for the next drain: ${String(err)}`
+      )
+    );
+  }
+
+  /**
+   * The two things a stored salon row owes the world - the live `channel.message.created` frame to
+   * the people who may READ the salon, and the push to the members who should be rung - then the
+   * deletion of its outbox entry, but ONLY when both were handed off. The frame carries the
+   * ciphertext inline, so a private channel's audience is not its community's.
+   *
+   * A SILENT row rings nobody: a reaction that pushed would make every heart a notification, and a
+   * community where that happens is a community people mute. The author is still told, by the
+   * client, through the same targeted push a DM reaction uses.
+   *
+   * The two run independently (a refused push never stops the frame) and each failure is logged by
+   * branch. A kept entry is drained at the next boot, which can repeat a half that DID succeed:
+   * clients settle a duplicate frame by message id and Android settles a duplicate push by its
+   * `createdAt`.
+   */
+  private async runFanout(
+    channel: Channel,
+    row: ChannelMessage,
+    payload: ChannelFanoutPayload
+  ): Promise<void> {
+    const pollMeta = (row.metadata as { poll?: ChannelPollMeta } | null)?.poll ?? null;
+    const published = this.channelAudience(channel).then((audience) =>
+      this.redis.publishChannelEvent(
+        'channel.message.created',
+        {
+          channelId: channel.id,
+          messageId: row.id,
+          senderId: row.authorId,
+          ciphertext: row.content,
+          nonce: row.nonce,
+          senderSessionId: row.senderSessionId,
+          messageIndex: row.messageIndex,
+          signature: row.signature,
+          createdAt: row.createdAt,
+          silent: row.silent,
+          // Poll descriptor (no labels) so peers render the card live without refetch.
+          poll: this.servedPoll(pollMeta),
+          pinned: row.pinned,
+        },
+        audience
+      )
+    );
+    const pushed = row.silent
+      ? Promise.resolve()
+      : this.notifyChannelRecipients(channel, row, {
+          senderId: row.authorId,
+          ciphertext: row.content,
+          nonce: row.nonce,
+          senderSessionId: row.senderSessionId ?? '',
+          messageIndex: row.messageIndex ?? 0,
+          ...(row.signature ? { signature: row.signature } : {}),
+          ...payload,
+        } as SendChannelMessageDto);
+    const [frame, push] = await Promise.allSettled([published, pushed]);
+    if (frame.status === 'rejected') {
+      this.logger.error(
+        `Failed to publish channel message event: channel=${channel.id} message=${row.id}: ${frame.reason}`
+      );
+    }
+    if (push.status === 'rejected') {
+      this.logger.error(
+        `[CHANNEL_PUSH] fan-out failed channel=${channel.id} message=${row.id}: ${push.reason}`
+      );
+    }
+    if (frame.status === 'rejected' || push.status === 'rejected') return;
+    try {
+      await this.messageRepo.query(`DELETE FROM channel_message_fanout WHERE "messageId" = $1`, [
+        row.id,
+      ]);
+    } catch (err) {
+      this.logger.error(
+        `[CHANNEL_FANOUT] channel=${channel.id} message=${row.id} handed off but its entry could not be deleted - the next drain repeats it: ${String(err)}`
+      );
+    }
+  }
+
+  /**
+   * Finishes the fan-out of ONE stored row whose outbox entry is still there; false when there is
+   * none (the ordinary answer to a repeat of a send that completed).
+   */
+  private async drainFanout(messageId: string): Promise<boolean> {
+    if (this.fanoutsInFlight.has(messageId)) {
+      this.logger.log(
+        `[CHANNEL_FANOUT] message=${messageId.slice(0, 8)} is being fanned out here - not drained`
+      );
+      return false;
+    }
+    const entries: { payload: ChannelFanoutPayload }[] = await this.messageRepo.query(
+      `SELECT payload FROM channel_message_fanout WHERE "messageId" = $1`,
+      [messageId]
+    );
+    if (entries.length === 0) return false;
+    const row = await this.messageRepo.findOne({ where: { id: messageId } });
+    const channel = row ? await this.channelRepo.findOne({ where: { id: row.channelId } }) : null;
+    if (!row || !channel) {
+      // The entry cascades with its message, so this is a race with a delete: nothing to announce.
+      this.logger.warn(
+        `[CHANNEL_FANOUT] message=${messageId} has an entry but no row or channel - dropped`
+      );
+      await this.messageRepo.query(`DELETE FROM channel_message_fanout WHERE "messageId" = $1`, [
+        messageId,
+      ]);
+      return false;
+    }
+    // Checked again here: the awaits above are where a send's own fan-out can have started.
+    if (this.fanoutsInFlight.has(messageId)) return false;
+    this.logger.log(
+      `[CHANNEL_FANOUT] finishing the fan-out of message=${messageId.slice(0, 8)} channel=${channel.id} - its writer never handed it off`
+    );
+    await this.trackFanout(messageId, () => this.runFanout(channel, row, entries[0].payload ?? {}));
+    return true;
+  }
+
+  /** A repeat's drain: never blocks the answer, logs what it cannot do. */
+  private drainFanoutInBackground(messageId: string): void {
+    this.drainFanout(messageId).catch((err) =>
+      this.logger.error(`[CHANNEL_FANOUT] drain of message=${messageId} failed: ${String(err)}`)
+    );
+  }
+
+  /**
+   * Every entry still in the outbox, once each, in order. A crash is the only thing that leaves one
+   * behind, so at boot the table is ordinarily empty; an entry whose fan-out fails again stays for
+   * the next boot rather than being retried in a loop. A rolling deploy can drain an entry its old
+   * replica is still handing off: the duplicate frame and push are settled downstream.
+   */
+  async drainPendingFanouts(): Promise<number> {
+    const entries: { messageId: string }[] = await this.messageRepo.query(
+      `SELECT "messageId" FROM channel_message_fanout ORDER BY "createdAt"`
+    );
+    if (entries.length > 0) {
+      this.logger.warn(`[CHANNEL_FANOUT] ${entries.length} entries left by a process that died`);
+    }
+    let finished = 0;
+    for (const { messageId } of entries) {
+      try {
+        if (await this.drainFanout(messageId)) finished += 1;
+      } catch (err) {
+        this.logger.error(`[CHANNEL_FANOUT] drain of message=${messageId} failed: ${String(err)}`);
+      }
+    }
+    return finished;
+  }
+
+  /** Boot: finish the fan-outs a dead process left, without holding the boot. */
+  onApplicationBootstrap(): void {
+    // Not a precondition of serving, so a failure is said once at ERROR and the next boot repeats it.
+    // The table comes from migration 093, applied before any service starts; CI's boot job and local
+    // stacks build it from the entity.
+    this.drainPendingFanouts().catch((err) =>
+      this.logger.error(
+        `[CHANNEL_FANOUT] boot drain failed, retried at the next boot: ${String(err)}`
+      )
+    );
   }
 
   /**
@@ -3366,12 +3687,11 @@ export class ChannelService {
    */
   private async saveUnderUnusedKey(
     msg: ChannelMessage,
-    input: SendChannelMessageDto
+    input: SendChannelMessageDto,
+    fanout: ChannelFanoutPayload
   ): Promise<{ row: ChannelMessage; replayed: boolean }> {
     try {
-      const row = msg.clientMessageId
-        ? await this.saveUnlessDeleted(msg, msg.clientMessageId)
-        : await this.messageRepo.save(msg);
+      const row = await this.saveUnlessDeleted(msg, msg.clientMessageId, fanout);
       return { row, replayed: false };
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
@@ -3444,7 +3764,8 @@ export class ChannelService {
   }
 
   /**
-   * Inserts a message that carries a client id, unless that id names a message this author's salon
+   * Inserts a message AND its fan-out outbox entry (migration 093) in one transaction. A message
+   * that carries a client id is refused first, if that id names a message this author's salon
    * has DELETED (migration 090's tombstone). A delete drops the row, so the lookup in `sendMessage`
    * finds nothing for a repeat that arrives after it - a first POST whose answer was lost, its app
    * killed, the message removed by a moderator or by its author on another device - and without this
@@ -3456,19 +3777,32 @@ export class ChannelService {
    *
    * @throws GoneException `CHANNEL_MESSAGE_DELETED` (410): the client forgets the send.
    */
-  private saveUnlessDeleted(msg: ChannelMessage, clientMessageId: string): Promise<ChannelMessage> {
+  private saveUnlessDeleted(
+    msg: ChannelMessage,
+    clientMessageId: string | null,
+    fanout: ChannelFanoutPayload
+  ): Promise<ChannelMessage> {
     return this.messageRepo.manager.transaction(async (tx) => {
-      const params = [msg.authorId, msg.channelId, clientMessageId];
-      await tx.query(`SELECT ${clientIdLockSql('$1', '$2', '$3')}`, params);
-      // A new statement after the lock: READ COMMITTED reads what a delete holding it committed.
-      const tombstones: unknown[] = await tx.query(
-        `SELECT 1 FROM channel_message_client_tombstones
-          WHERE "authorId" = $1 AND "channelId" = $2 AND "clientMessageId" = $3`,
-        params
+      if (clientMessageId) {
+        const params = [msg.authorId, msg.channelId, clientMessageId];
+        await tx.query(`SELECT ${clientIdLockSql('$1', '$2', '$3')}`, params);
+        // A new statement after the lock: READ COMMITTED reads what a delete holding it committed.
+        const tombstones: unknown[] = await tx.query(
+          `SELECT 1 FROM channel_message_client_tombstones
+            WHERE "authorId" = $1 AND "channelId" = $2 AND "clientMessageId" = $3`,
+          params
+        );
+        if (tombstones.length > 0)
+          this.refuseDeletedRepeat(msg.channelId, msg.authorId, clientMessageId);
+      }
+      const saved = await tx.getRepository(ChannelMessage).save(msg);
+      // THE OUTBOX ENTRY COMMITS WITH THE ROW (migration 093): a process that dies after this
+      // transaction leaves both, and the fan-out it never made is found and finished at boot.
+      await tx.query(
+        `INSERT INTO channel_message_fanout ("messageId", payload) VALUES ($1, $2::jsonb)`,
+        [saved.id, JSON.stringify(fanout)]
       );
-      if (tombstones.length > 0)
-        this.refuseDeletedRepeat(msg.channelId, msg.authorId, clientMessageId);
-      return tx.getRepository(ChannelMessage).save(msg);
+      return saved;
     });
   }
 
@@ -4159,7 +4493,11 @@ export class ChannelService {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
-    const audience = await this.channelAudience(channel);
+    // THE SENDER IS NOT TOLD ABOUT THEIR OWN TYPING: the client dropped that frame on arrival (115
+    // frames back for 112 POSTs in one web console, 2026-10-18), so it was transport and a console
+    // line for nothing. The audience is a list of USER ids, so this also spares the sender's other
+    // devices - which have no use for it either, a typing indicator names someone ELSE.
+    const audience = (await this.channelAudience(channel)).filter((id) => id !== userId);
     await this.redis.publishChannelEvent(
       'channel.typing',
       { channelId, userId, state: isTyping ? 'start' : 'stop' },
@@ -4608,11 +4946,7 @@ export class ChannelService {
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
       const actorRoles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = actorRoles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
-      );
+      hasPerm = actorRoles.some((r) => roleGrantsRoleManagement(r.permissions));
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
 
@@ -4623,29 +4957,47 @@ export class ChannelService {
     };
   }
 
-  /** Updates a role's base permissions at the workspace level. */
   /**
-   * The actor's right to edit this workspace's roles - refused here, never returned.
+   * The actor's right to manage this workspace's roles - refused here, never returned - and, when
+   * they have it, the permissions they hold (the union over their roles), which is what bounds
+   * every role change they make (`actorMayGrantRole`).
    *
-   * Shared by the whole-list write and the single-key one so the two can never disagree about who
-   * may edit a role, which is the drift `writePolicyAllows` was extracted to end one feature over.
+   * THE ONE GATE of every role-management write - creating a role, assigning one, editing what one
+   * grants - so they can never disagree about who may do it, which is the drift
+   * `writePolicyAllows` was extracted to end one feature over.
    */
-  private async assertCanManageRoles(role: ChannelRole, actorUserId: string): Promise<void> {
+  private async assertActorManagesRoles(
+    workspaceId: string,
+    actorUserId: string
+  ): Promise<string[]> {
     const actorMember = await this.memberRepo.findOne({
-      where: { workspaceId: role.workspaceId, userId: actorUserId },
+      where: { workspaceId, userId: actorUserId },
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const actorRoles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = actorRoles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
-      );
+    const permissions = await this.permissionsOfMember(actorMember);
+    if (!roleGrantsRoleManagement(permissions)) {
+      throw new ForbiddenException('Missing MANAGE_ROLES permission');
     }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
+    return permissions;
+  }
+
+  /**
+   * Refuses a role change that would grant, or touch, more than the actor holds. Logged at warn
+   * with what was attempted, and typed, so a client maps it from the code and never the prose.
+   */
+  private refuseRoleChangeBeyondActor(
+    what: string,
+    workspaceId: string,
+    actorUserId: string
+  ): never {
+    this.logger.warn(
+      `[ROLE] refused ${what} - beyond the actor's own permissions workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+    );
+    throw new ForbiddenException({
+      code: ROLE_CHANGE_EXCEEDS_ACTOR,
+      message: 'This role change goes beyond your own permissions.',
+    });
   }
 
   /**
@@ -4753,7 +5105,7 @@ export class ChannelService {
   async setRoleBasePermission(roleId: string, actorUserId: string, key: string, granted: boolean) {
     const role = await this.roleRepo.findOne({ where: { id: roleId } });
     if (!role) throw new NotFoundException('Role not found');
-    await this.assertCanManageRoles(role, actorUserId);
+    const actorPermissions = await this.assertActorManagesRoles(role.workspaceId, actorUserId);
 
     const validPermissions = Object.values(CHANNEL_PERMISSIONS) as string[];
     if (!validPermissions.includes(key)) {
@@ -4779,7 +5131,20 @@ export class ChannelService {
       });
       if (!locked) throw new NotFoundException('Role not found');
 
+      // BOUNDED BY THE ACTOR, read on the LOCKED row so a concurrent grant cannot slip a role past
+      // the check: the role must grant nothing the actor lacks (their own role included), and a
+      // granted key must be one the actor holds.
       const current = locked.permissions ?? [];
+      if (
+        !actorMayGrantRole(actorPermissions, current) ||
+        (granted && !actorMayGrantRole(actorPermissions, [key]))
+      ) {
+        this.refuseRoleChangeBeyondActor(
+          `${granted ? 'grant' : 'revoke'} ${key} on role=${roleId}`,
+          role.workspaceId,
+          actorUserId
+        );
+      }
       locked.permissions = granted
         ? [...new Set([...current, key])]
         : current.filter((p) => p !== key);

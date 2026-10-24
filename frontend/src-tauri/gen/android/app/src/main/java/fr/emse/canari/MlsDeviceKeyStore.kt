@@ -13,10 +13,12 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 
 /**
- * Context-only (no Activity) reader/writer for the MLS device key stored in the Android Keystore.
+ * Context-only (no Activity) access to raw 32-byte keys stored in the Android Keystore: a READER of
+ * the MLS device key, and the reader/writer of the install's native cache key ([NativeCacheKey]).
  *
- * Mirrors the exact encryption scheme used by [KeystorePlugin] (Tauri keystore plugin):
- * - Keystore key alias: `mls_device_key_{userId}_{deviceId}`
+ * Mirrors the exact encryption scheme used by [KeystorePlugin] (Tauri keystore plugin), so the
+ * plugin's `getKeyBytesUnattended` reads what this writes, and the other way round:
+ * - Keystore key alias: `mls_device_key_{userId}_{deviceId}`, or `canari_native_cache_key`
  * - Prefs name: `"keystore_aliases"` (MUST match KeystorePlugin.kt)
  * - Prefs keys: `"${alias}_iv"` / `"${alias}_ct"`
  * - Cipher: `AES/GCM/NoPadding`, `GCMParameterSpec(128, iv)`
@@ -35,21 +37,43 @@ object MlsDeviceKeyStore {
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val GCM_TAG_LENGTH = 128
 
+    private const val MLS_DEVICE_KEY_ALIAS_PREFIX = "mls_device_key_"
+
     fun alias(userId: String, deviceId: String): String =
-        "mls_device_key_${userId}_${deviceId}"
+        "${MLS_DEVICE_KEY_ALIAS_PREFIX}${userId}_${deviceId}"
 
     /**
-     * Stores [keyB64] (base64-encoded 32-byte MLS device key) in the Android Keystore under
-     * the per-user+device alias returned by [alias]. The key is AES-256-GCM-encrypted with a
-     * keystore-backed key; the IV and ciphertext are persisted in SharedPreferences.
-     *
-     * Returns true on success, false on any failure (logged to logcat).
+     * Retrieves the base64-encoded 32-byte MLS device key from the Android Keystore.
+     * Returns null if the key was never stored, the keystore entry is missing, or decryption fails.
      */
-    fun store(context: Context, userId: String, deviceId: String, keyB64: String): Boolean {
-        return try {
-            val alias = alias(userId, deviceId)
-            val keyBytes = Base64.decode(keyB64, Base64.DEFAULT)
+    fun retrieve(context: Context, userId: String, deviceId: String): String? =
+        retrieveForAlias(context, alias(userId, deviceId))
 
+    // NO WRITER OF THE MLS DEVICE KEY HERE, ON PURPOSE (2026-10-22). On a migrated phone that entry
+    // is the only copy of the hardware-held at-rest key, so its writes and deletes belong to
+    // KeystorePlugin (same alias, same prefs), reached only through the app's Rust bridge, which asks
+    // the at-rest guard first (`keystore_bridge.rs`). [storeForAlias] refuses that alias family.
+
+    /**
+     * Wraps [keyBytes] under the Keystore key of [alias] (created if absent) and persists the IV and
+     * ciphertext. [durable] writes with `commit()` and reports its result, for a caller whose next
+     * step must find the value on disk (a key created once, that a crash must not half-write);
+     * otherwise `apply()`, as the plugin does.
+     *
+     * For the install's own keys ([NativeCacheKey]) only: an MLS device key alias is refused, since
+     * nothing here can ask the at-rest guard.
+     */
+    internal fun storeForAlias(
+        context: Context,
+        alias: String,
+        keyBytes: ByteArray,
+        durable: Boolean,
+    ): Boolean {
+        if (alias.startsWith(MLS_DEVICE_KEY_ALIAS_PREFIX)) {
+            Log.e(TAG, "store: refused - an MLS device key is written only through the guarded bridge")
+            return false
+        }
+        return try {
             // Generate the keystore key if it doesn't exist yet (no-op if already present).
             generateKeystoreKeyIfNeeded(alias)
 
@@ -62,10 +86,14 @@ object MlsDeviceKeyStore {
             val prefs: SharedPreferences = context.getSharedPreferences(
                 PREFS_NAME, Context.MODE_PRIVATE
             )
-            prefs.edit()
+            val edit = prefs.edit()
                 .putString("${alias}_iv", Base64.encodeToString(iv, Base64.DEFAULT))
                 .putString("${alias}_ct", Base64.encodeToString(ciphertext, Base64.DEFAULT))
-                .apply()
+            val written = if (durable) edit.commit() else { edit.apply(); true }
+            if (!written) {
+                Log.e(TAG, "store: prefs commit refused alias=$alias")
+                return false
+            }
 
             Log.d(TAG, "store: success alias=$alias")
             true
@@ -75,13 +103,25 @@ object MlsDeviceKeyStore {
         }
     }
 
+    /** Whether IV and ciphertext are persisted for [alias] - prefs only, no Keystore access. */
+    internal fun hasAlias(context: Context, alias: String): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.contains("${alias}_iv") && prefs.contains("${alias}_ct")
+    }
+
     /**
-     * Retrieves the base64-encoded 32-byte MLS device key from the Android Keystore.
-     * Returns null if the key was never stored, the keystore entry is missing, or decryption fails.
+     * Whether the Android Keystore holds the wrapping key of [alias]. `false` is a FACT (the entry
+     * is gone, so nothing wrapped under it will ever unwrap again), distinct from a read that threw.
      */
-    fun retrieve(context: Context, userId: String, deviceId: String): String? {
+    internal fun keystoreHoldsAlias(alias: String): Boolean =
+        KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.containsAlias(alias)
+
+    /**
+     * Retrieves the base64-encoded raw key stored under [alias], or null if it was never stored,
+     * the keystore entry is missing, or decryption fails.
+     */
+    internal fun retrieveForAlias(context: Context, alias: String): String? {
         return try {
-            val alias = alias(userId, deviceId)
             val prefs: SharedPreferences = context.getSharedPreferences(
                 PREFS_NAME, Context.MODE_PRIVATE
             )

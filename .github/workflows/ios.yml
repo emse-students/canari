@@ -376,7 +376,10 @@ jobs:
           # `local-estate` and every fetch to the workstation would be refused by the plugin. It is
           # written to GITHUB_ENV so it exists for the Rust step ONLY in this mode - an EMPTY
           # TAURI_CONFIG would be parsed and fail every release.
-          echo 'TAURI_CONFIG={"app":{"security":{"capabilities":["default","local-estate","ios-system-components"]}}}' >> "$GITHUB_ENV"
+          # READ FROM tauri.local.conf.json, never retyped (2026-10-22): the file also widens the
+          # WebView's Content-Security-Policy to the workstation (http:, ws:), and a copy written
+          # here would keep the capabilities and lose the policy - every request to it refused.
+          echo "TAURI_CONFIG=$(jq -c . src-tauri/tauri.local.conf.json)" >> "$GITHUB_ENV"
 
       # THE TWO KEYS iOS NEEDS BEFORE A WEBVIEW MAY TALK CLEARTEXT TO A MACHINE ON THE WI-FI, patched
       # into THIS build's Info.plist and never into the committed one: a store build must keep
@@ -492,11 +495,11 @@ jobs:
       - name: Prebuild Rust static lib (libapp.a)
         working-directory: frontend/src-tauri
         env:
-          # Match the lowest pbxproj IPHONEOS_DEPLOYMENT_TARGET (14.0). Without it,
+          # Match the lowest pbxproj IPHONEOS_DEPLOYMENT_TARGET (16.0, the app minimum since 2026-10-22). Without it,
           # rustc/cc default the objects' min-iOS to the SDK version, and every link
           # pass floods "object file built for newer iOS version than being linked"
           # (~75 ld warnings per run).
-          IPHONEOS_DEPLOYMENT_TARGET: "14.0"
+          IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         run: |
           # The Xcode "Build Rust Code" phase is disabled in the hand-maintained pbxproj
           # (it shells out to bun, which isn't on Xcode's PATH), and Externals/ is
@@ -673,6 +676,19 @@ jobs:
             echo "::error::Assets.car carries no AppIcon - the Icon Composer document did not compile"
             exit 1
           fi
+
+          # WHAT THE STORE BINARY DECLARES, PRINTED AND NEVER WRITTEN: the background modes and the
+          # microphone purpose string of the BUILT app, the iOS twin of the Android built-manifest step.
+          # `callsCompiled.test.ts` asserts the SOURCE plist; this is what App Review will read.
+          BUILT_PLIST="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 2 -name Info.plist -path '*.app/Info.plist' | head -1)"
+          if [ -z "$BUILT_PLIST" ]; then
+            echo "::error::the archive's app carries no Info.plist"
+            exit 1
+          fi
+          echo "UIBackgroundModes of the built app:"
+          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$BUILT_PLIST"
+          echo "NSMicrophoneUsageDescription of the built app:"
+          /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$BUILT_PLIST"
 
       - name: Export signed IPA
         if: env.LOCAL_URL == ''

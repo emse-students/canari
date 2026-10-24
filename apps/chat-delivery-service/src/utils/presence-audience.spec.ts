@@ -5,8 +5,9 @@ import { MAX_PRESENCE_AUDIENCE_USERS, parsePresenceAudienceBody } from './presen
 
 /**
  * The presence-audience question, against `libs/contracts/presence-audience.cases.json` - the one
- * file the gateway's `MAX_PRESENCE_USERS` and both services' validator are pinned to. BYTE-IDENTICAL
- * in chat-delivery-service and social-service, like the module it guards.
+ * file the gateway's `MAX_PRESENCE_USERS` and both services' validator are pinned to. The module is
+ * BYTE-IDENTICAL in chat-delivery-service and social-service (a declared duplicate), so this one
+ * spec proves both copies (docs/wiki/test-suite-reform.md section 7.2).
  */
 interface ContractCase {
   name: string;

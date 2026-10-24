@@ -11,6 +11,7 @@
     type Association,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import MyMembershipsSection from '$lib/components/associations/MyMembershipsSection.svelte';
   import AssociationTile from '$lib/components/associations/AssociationTile.svelte';
   import { groupAssociationsForSelect } from '$lib/associations/selectGroups';
   import { ChevronDown } from '@lucide/svelte';
@@ -29,8 +30,7 @@
 
   onMount(async () => {
     try {
-      // Institutions have their own page (/institutions, user 2026-10-05); "mine" still lists the
-      // ones the reader belongs to.
+      // Institutions and lists have their own tab (/institutions, /lists), each with its own "Mes ...".
       const [all, mine] = await Promise.all([
         listAssociationDirectory('association'),
         isLoggedIn ? listMyAssociations() : Promise.resolve([]),
@@ -45,28 +45,10 @@
   });
 
   const myIds = $derived(new Set(myAssociations.map((a) => a.id)));
-  /** The reader's memberships, one section per kind (the ONE classifier), empty ones dropped. */
-  const mineSections = $derived.by(() => {
-    const { assos, lists, institutions } = groupAssociationsForSelect(myAssociations);
-    return [
-      { key: 'assos', heading: m.assoc_list_mine_heading(), items: assos },
-      { key: 'lists', heading: m.assoc_list_mine_lists_heading(), items: lists },
-      {
-        key: 'institutions',
-        heading: m.assoc_list_mine_institutions_heading(),
-        items: institutions,
-      },
-    ].filter((s) => s.items.length > 0);
-  });
+  /** Only the reader's associations: institutions and lists have their own tab's "Mes ..." block. */
+  const myAssos = $derived(groupAssociationsForSelect(myAssociations).assos);
   const activeAssociations = $derived(associations.filter((a) => !a.archived));
   const archivedAssociations = $derived(associations.filter((a) => a.archived));
-
-  /** Memberships route to /lists for promo lists, /associations otherwise. */
-  function memberHref(a: Association): string {
-    return a.type === 'list'
-      ? `/lists/${encodeURIComponent(a.slug)}`
-      : `/associations/${encodeURIComponent(a.slug)}`;
-  }
 </script>
 
 <PageContainer width="grid">
@@ -89,18 +71,11 @@
         {error}
       </div>
     {:else}
-      <!-- My associations -->
-      <!-- One section per kind, never mixed: "Mes associations" holds associations only. -->
-      {#each mineSections as sec (sec.key)}
-        <section>
-          <h2 class="text-text-main mb-3 text-base font-bold">{sec.heading}</h2>
-          <div class={CARD_GRID}>
-            {#each sec.items as asso (asso.id)}
-              <AssociationTile association={asso} href={memberHref(asso)} isMember />
-            {/each}
-          </div>
-        </section>
-      {/each}
+      <MyMembershipsSection
+        heading={m.assoc_list_mine_heading()}
+        items={myAssos}
+        href={(a) => `/associations/${encodeURIComponent(a.slug)}`}
+      />
 
       <!-- All associations -->
       <section>

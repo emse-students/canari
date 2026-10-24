@@ -94,6 +94,10 @@ const PUBLIC_BY_INTENT = [
     why: 'the public-asset prefix - association logos and event images, served to an <img> on pages a signed-out visitor sees; every other media route needs the JWT',
   },
   {
+    route: 'GET /media/public/live/:liveId/:name',
+    why: 'one sealed live segment (WP-L4): ciphertext under the live key only social-service hands out, by a random uuid name learned only from the manifest; unauthenticated so the SAME bytes answer every viewer from the nginx cache (live_segments) and media-service runs once per segment, not per viewer; 404 unless LIVE_ENABLED (docs/wiki/services/lives.md)',
+  },
+  {
     route: 'GET /payments/provider',
     why: "global platform config ('lydia' | 'disabled'), never user-specific; social-service's resolvePaymentTarget (every checkout/purchase/delegation path) calls it directly over the Docker network, which never goes through nginx and so can never carry an x-user-id - a guard here 401ed all of them (2026-09-14)",
   },
@@ -296,9 +300,10 @@ const RUST_AUTH = [
   'caller_id',
   // `get_admin_presence` - the same header contract, one claim further along.
   'x-global-admin',
-  // Both WebSocket upgrades - the `canari_ws_token` JWT, which nginx never reads and `auth_request`
-  // therefore cannot have checked.
-  'decode::<Claims>',
+  // Both WebSocket upgrades - the access-token JWT, which nginx never reads and `auth_request`
+  // therefore cannot have checked. Each handler verifies it through `decode_access_claims`, which
+  // also refuses a refresh token.
+  'decode_access_claims',
 ];
 
 /**

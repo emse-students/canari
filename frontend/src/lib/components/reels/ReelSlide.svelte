@@ -2,6 +2,9 @@
   /** The reels already reported as carrying no video - shared by every slide, never read reactively. */
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a log's memory, never rendered
   const reportedWithoutVideo = new Set<string>();
+  /** The rows reported as outside the CanaReels rule (`fullScreenPageOf`), same lifetime. */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a log's memory, never rendered
+  const reportedOutOfRule = new Set<string>();
 </script>
 
 <script lang="ts">
@@ -23,6 +26,11 @@
    *
    * THE SAVE BUTTON (`ReelSaveButton`) is in the player's bar next to the volume button, for every
    * reel (user, 2026-10-09: "public or not"). Nothing here claims the video is protected.
+   *
+   * A POST OF ONE PICTURE IS A PAGE TOO (user, 2026-10-19, as Instagram's Reels mix them): the
+   * same frame, overlay and rail, its picture in place of the video and no player bar
+   * (`reels/fullScreenPost.ts` says which page a row is). THE RAIL (`ReelActionRail`) is drawn
+   * when the viewer hands its actions over - a post's reel, never a conversation's.
    */
   import PostMedia from '$lib/components/posts/PostMedia.svelte';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
@@ -37,6 +45,13 @@
   import { m } from '$lib/paraglide/messages';
   import ReelFrame from './ReelFrame.svelte';
   import ReelSaveButton from './ReelSaveButton.svelte';
+  import DoubleTapHeart from '$lib/components/posts/DoubleTapHeart.svelte';
+  import { doubleTapLike } from '$lib/actions/doubleTapLike';
+  import type { Point } from '$lib/utils/viewerGestures';
+  import ReelActionRail from './ReelActionRail.svelte';
+  import { fullScreenMediaOf, fullScreenPageOf } from '$lib/reels/fullScreenPost';
+  import { reactionTotal, type ReelRailActions } from '$lib/reels/reelRail';
+  import { commentCountOf } from '$lib/posts/commentChange';
 
   interface Props {
     post: PostEntity;
@@ -45,14 +60,39 @@
     active: boolean;
     /** The reel after the current one: its video is fetched ahead. */
     preload: boolean;
+    /**
+     * A double tap on the reel asks the viewer to like it. True when the reel now carries the
+     * reader's reaction (given now or before), which is when the heart is drawn. Absent - a reel
+     * opened from a conversation, which is not a post - a double tap does nothing.
+     */
+    onLike?: () => boolean;
+    /** The rail's actions (`ReelActionRail`); absent, no rail is drawn. */
+    rail?: ReelRailActions;
   }
 
-  let { post, authToken, active, preload }: Props = $props();
+  let { post, authToken, active, preload, onLike, rail }: Props = $props();
 
-  const video = $derived((post.media ?? post.images ?? [])[0]);
-  /** The reel's own shape when the publisher recorded it, else the canonical frame. */
+  /**
+   * The page this row is drawn as. A row the CanaReels rule does not cover (the server chose it,
+   * or a conversation built it) is drawn as a reel - the page it was before photos joined - and
+   * said once in the log below.
+   */
+  const page = $derived(fullScreenPageOf(post) ?? 'reel');
+  /** The reader's own reaction on the post, which the rail's heart draws. */
+  const readerReaction = $derived((rail && post.reactions?.[rail.readerId]) || null);
+
+  let hearts = $state<DoubleTapHeart | undefined>();
+
+  function likeOnDoubleTap(at: Point) {
+    if (onLike?.()) hearts?.burst(at);
+  }
+
+  /** The reel's one video, or the photo page's one picture. */
+  const media = $derived(fullScreenMediaOf(post));
+  const video = $derived(page === 'reel' ? media : undefined);
+  /** The media's own shape when it was recorded, else the canonical frame. */
   const ratio = $derived(
-    video?.width && video?.height ? video.width / video.height : REEL_FRAME_RATIO
+    media?.width && media?.height ? media.width / media.height : REEL_FRAME_RATIO
   );
   const authorName = $derived(postAuthorName(post));
   const authorHref = $derived(postAuthorHref(post));
@@ -64,6 +104,17 @@
   let overflows = $state(false);
   /** Whether the reel's frame reaches the screen bottom (`ReelFrame`): only then is the inset owed. */
   let frameReachesBottom = $state(true);
+
+  /**
+   * The room under the caption and the rail: the bottom safe-area inset when the frame reaches the
+   * screen bottom, plus a rem that clears the player's progress line (a reel's is 32 px of touch
+   * target, 2 px drawn, on that edge - no bar to leave room for since 2026-10-23).
+   */
+  const bottomPad = $derived(
+    frameReachesBottom ? 'pb-[calc(var(--safe-area-inset-bottom,0px)+1rem)]' : 'pb-4'
+  );
+  /** The rail carries a reel's tools (save, sound) even when it carries no social action. */
+  const showRail = $derived(!!rail || page === 'reel');
 
   function setExpanded(next: boolean) {
     console.debug(`[reel-viewer] caption ${next ? 'expanded' : 'folded'} on ${post.id}`);
@@ -88,10 +139,24 @@
    * nothing new about the same row.
    */
   $effect(() => {
-    if (active && !video && !reportedWithoutVideo.has(post.id)) {
+    if (active && page === 'reel' && !video && !reportedWithoutVideo.has(post.id)) {
       reportedWithoutVideo.add(post.id);
       console.error(
         `[reel-viewer] reel ${post.id} carries no video - a reel is its one video, nothing can play`
+      );
+    }
+  });
+
+  /**
+   * A ROW THE CANAREELS RULE KEEPS OUT, ON SCREEN, means the server's list and the client's reading
+   * of one row (`single-photo-sql.ts` against `fullScreenPost.ts`) disagree - the line accuses that
+   * seam. Once per row, as above.
+   */
+  $effect(() => {
+    if (active && fullScreenPageOf(post) === null && !reportedOutOfRule.has(post.id)) {
+      reportedOutOfRule.add(post.id);
+      console.error(
+        `[reel-viewer] post ${post.id} is neither a reel nor one picture - the server listed a row the client keeps out`
       );
     }
   });
@@ -103,21 +168,43 @@
   });
 </script>
 
-<!-- THE SAVE IS IN THE PLAYER'S BAR, BESIDE THE VOLUME, FOR EVERY REEL (user, 2026-10-09): public or
-     not, the member's own or anybody's. It saves what the viewer holds - the ref with its key that
-     the player itself decrypts - so nothing here asks the server who owns the reel. -->
-{#snippet barActions()}
-  <ReelSaveButton reel={post} />
+<!-- THE SAVE IS IN THE RAIL, UNDER THE SEND, FOR EVERY REEL (user, 2026-10-09: public or not, the
+     member's own or anybody's; moved from the player's bar 2026-10-23, the sound under it). It
+     saves what the viewer holds - the ref with its key that the player itself decrypts - so nothing
+     here asks the server who owns the reel. -->
+{#snippet railTools()}
+  <ReelSaveButton reel={post} rail />
 {/snippet}
 
-<div class="relative h-full w-full overflow-hidden bg-black" data-reel-slide={post.id}>
+<!-- A DOUBLE TAP ON THE REEL LIKES IT (`doubleTapLike`), the letterbox bands included. Nothing is
+     held: the first tap toggles the player's controls at once and the second toggles them back, so
+     the pair leaves them as they were. Not on a control - the player's bar, its play button, the
+     caption's toggle and backdrop, the author link - which acts at once as before. Only the reel on
+     screen listens. -->
+<div
+  class="relative h-full w-full overflow-hidden bg-black"
+  data-reel-slide={post.id}
+  use:doubleTapLike={{ onDoubleTap: likeOnDoubleTap, enabled: active && !!onLike }}
+>
+  <DoubleTapHeart bind:this={hearts} />
   <!-- THE SAME FRAME AS THE CAMERA, THE REVIEW AND THE EDITOR: what is published is what was framed,
        in the reel's own shape (a legacy reel was captured to a screen box, a gallery import has its
        own). The caption is INSIDE the frame, above the player's bar, so the two never overlap. -->
   <ReelFrame {ratio} bind:reachesBottom={frameReachesBottom}>
-    <div class="flex h-full w-full items-center justify-center">
-      {#if active && video}
-        <PostMedia media={video} {authToken} galleryMode {barActions} />
+    <div class="flex h-full w-full items-center justify-center" data-reel-page={page}>
+      {#if page === 'photo'}
+        <!-- A picture has no player to claim playback, so the next page's mounts ahead too. -->
+        {#if (active || preload) && media}
+          <PostMedia {media} {authToken} galleryMode />
+        {/if}
+      {:else if active && video}
+        <PostMedia
+          media={video}
+          {authToken}
+          galleryMode
+          minimalPlayer
+          playerSafeBottom={frameReachesBottom}
+        />
       {:else}
         <VideoPoster />
       {/if}
@@ -134,11 +221,9 @@
          letterboxed frame sits well above the home indicator, and the inset there would leave the
          caption about one line. -->
     <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent px-4 text-white {expanded
-        ? 'pt-4'
-        : 'pt-16'} {frameReachesBottom
-        ? 'pb-[calc(var(--safe-area-inset-bottom,0px)+4.5rem)]'
-        : 'pb-18'}"
+      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent pl-4 text-white {showRail
+        ? 'pr-16'
+        : 'pr-4'} {expanded ? 'pt-4' : 'pt-16'} {bottomPad}"
       data-reel-caption
       data-reel-caption-inset={frameReachesBottom ? 'safe-area' : 'none'}
     >
@@ -197,6 +282,25 @@
         {/if}
       {/if}
     </div>
+
+    {#if showRail}
+      <!-- THE RAIL, BOTTOM-RIGHT, ON THE CAPTION'S BASELINE (Instagram's, measured on the Mi 9T:
+           the column's centre ~30 dp from the edge, anchored to the bottom). Over the caption
+           (`z-30`), which leaves it the room (`pr-16`). Out of the double tap (`data-no-double-tap`)
+           and of the viewer's swipe (`data-reel-rail`, `NOT_A_GESTURE`). -->
+      <div class="pointer-events-none absolute right-1 bottom-0 z-30 {bottomPad}">
+        <ReelActionRail
+          {readerReaction}
+          reactionCount={reactionTotal(post.reactions)}
+          commentCount={commentCountOf(post)}
+          onHeart={rail?.onHeart}
+          onComments={rail?.onComments}
+          onSend={rail?.onSend}
+          tools={page === 'reel' ? railTools : undefined}
+          sound={page === 'reel'}
+        />
+      </div>
+    {/if}
   </ReelFrame>
 
   {#if expanded}

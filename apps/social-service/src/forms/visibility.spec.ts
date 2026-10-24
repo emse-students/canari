@@ -1,4 +1,9 @@
-import { normaliseCondition, visibleItemIds, type ConditionalItem } from './visibility';
+import {
+  answerSelections,
+  normaliseCondition,
+  visibleItemIds,
+  type ConditionalItem,
+} from './visibility';
 import type { PricingFacts } from '../pricing/audience';
 
 /**
@@ -122,5 +127,19 @@ describe('question visibility', () => {
 
   it('hides a question depending on one that does not exist', () => {
     expect(ids([{ id: 'q', dependsOn: 'gone', dependsValue: 'v' }], facts())).toEqual([]);
+  });
+});
+
+describe('answerSelections', () => {
+  it('keeps the declared questions only, in a map with no prototype', () => {
+    // As a JSON body arrives: `__proto__` and `constructor` are OWN keys here.
+    const answers = JSON.parse(
+      '{"a":"x","b":["y","z"],"n":3,"__proto__":["p"],"constructor":"c","undeclared":"u"}'
+    ) as Record<string, unknown>;
+    const items = [{ id: 'a' }, { id: 'b' }, { id: 'n' }, { id: 'absent' }];
+    const selections = answerSelections(items, answers);
+    expect(Object.getPrototypeOf(selections)).toBeNull();
+    expect(Object.keys(selections)).toEqual(['a', 'b', 'n']);
+    expect({ ...selections }).toEqual({ a: ['x'], b: ['y', 'z'], n: ['3'] });
   });
 });

@@ -29,7 +29,7 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function mountSection(comments: PostComment[], showComments: boolean) {
+function mountSection(comments: PostComment[]) {
   const target = document.createElement('div');
   document.body.appendChild(target);
   const app = mount(PostComments, {
@@ -37,13 +37,12 @@ function mountSection(comments: PostComment[], showComments: boolean) {
     props: {
       comments,
       topLevelComments: comments.filter((c) => !c.parentId),
-      showComments,
       commentText: '',
       submittingComment: false,
+      postId: 'p1',
       currentUserId: 'u1',
-      onToggleComments: vi.fn(),
       onCommentTextChange: vi.fn(async () => {}),
-      onAddComment: vi.fn(async () => {}),
+      onAddComment: vi.fn(async () => 'sent' as const),
       onLikeComment: vi.fn(),
       onEditComment: vi.fn(async () => {}),
       onDeleteComment: vi.fn(async () => {}),
@@ -55,7 +54,7 @@ function mountSection(comments: PostComment[], showComments: boolean) {
 }
 
 it('draws no list and no list gap above the composer of a post nobody has commented on', () => {
-  const section = mountSection([], true);
+  const section = mountSection([]);
   expect(section.querySelector('.space-y-1')).toBeNull();
   expect(section.className).not.toContain('py-4');
   expect(section.querySelector('.pt-3')).toBeNull();
@@ -70,7 +69,7 @@ it('keeps the list, and the gap that separates it from the composer, once there 
     createdAt: new Date(0).toISOString(),
     likes: [],
   } as unknown as PostComment;
-  const section = mountSection([comment], true);
+  const section = mountSection([comment]);
   const list = section.querySelector('.space-y-1');
   expect(list).not.toBeNull();
   expect(list!.className).toContain('mb-3');

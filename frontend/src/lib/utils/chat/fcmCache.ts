@@ -71,6 +71,7 @@ interface FcmCacheEntry {
   timestamp: number;
   type: string;
   replyTo?: { id: string; senderId: string; preview: string } | null;
+  /** `image | video | audio | file | reel` as the Rust push scanner read it; `reel` since WP-RC-7. */
   mediaKind?: string | null;
 }
 

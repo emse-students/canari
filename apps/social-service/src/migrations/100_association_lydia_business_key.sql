@@ -1,0 +1,21 @@
+-- Migration 100: the Lydia Business private token of an association, ENCRYPTED, to verify its callbacks.
+--
+-- See docs/wiki/frontend/modules/payments.md ("What confirms a payment").
+--
+-- Lydia signs a `request/do` callback (confirm / cancel / expire) with the BUSINESS private token of
+-- the Business that issued the request (sandbox, 2026-10-16). Each association's Business has its
+-- own, so the key is per association. It is entered by the association's MANAGE_PAYOUT_ACCOUNT holder
+-- (write-only: no route ever answers it to a browser) and read back, decrypted, only by core-service
+-- through an internal route, to verify a callback.
+--
+-- `"lydiaBusinessKeyCiphertext"`: AES-256-GCM under a key derived from LYDIA_KEY_ENCRYPTION_SECRET
+-- (`common/secret-box.ts`), bound to the association id AND its vendor token - so a ciphertext copied
+-- to another row, or left behind by a re-onboarding to another Business, does not open. NULL means
+-- "no key yet": that association's callbacks are refused, and the payer's return confirms instead.
+--
+-- Nullable, no default, no backfill: nobody has a key before a manager types one. Nothing dropped.
+-- The entity maps it select/insert/update: false, so no TypeORM statement names it before this runs.
+--
+-- Idempotent for CD.
+
+ALTER TABLE associations ADD COLUMN IF NOT EXISTS "lydiaBusinessKeyCiphertext" text;

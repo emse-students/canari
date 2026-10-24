@@ -3,6 +3,7 @@
  * persistence. These are pure functions that accept state by reference so they
  * work with Svelte 5's $state without requiring a specific composable wrapper.
  */
+import { clearConversationControlRefusals } from './controlRefusals.svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
@@ -223,6 +224,7 @@ export async function retireConversation(params: {
   if (!convo || convo.lifecycle === 'removed') return false;
   conversations.set(key, { ...convo, ...patch, lifecycle: 'removed' });
   forgetGroupReconciliation(groupId);
+  clearConversationControlRefusals(groupId);
   await saveConversation?.(key).catch(() => {});
   return true;
 }
@@ -291,7 +293,10 @@ export async function purgeConversation(params: {
   const { conversations, key, deleteStored } = params;
   const convo = conversations.get(key);
   const groupId = params.groupId ?? convo?.id;
-  if (groupId) forgetGroupReconciliation(groupId);
+  if (groupId) {
+    forgetGroupReconciliation(groupId);
+    clearConversationControlRefusals(groupId);
+  }
   await deleteStored?.(key).catch(() => {});
   return conversations.delete(key);
 }
@@ -966,187 +971,192 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // WASM MLS client which is not safe to invoke concurrently.
   //
   // The whole phase runs in one bulk-ingest window: replays defer their disk writes and a
-  // single encrypted checkpoint is flushed at the end; only then are the per-conversation
-  // progress markers (stream cursor / seen hashes) committed, so they never run ahead of
-  // the persisted ratchet state.
+  // single encrypted checkpoint is flushed at the end; the per-conversation progress markers
+  // (stream cursor / seen hashes) are committed by the helper only once a checkpoint that
+  // started after the last replay LANDED, so they never run ahead of the persisted ratchet.
   const pendingCommits: MlsReplayCommit[] = [];
-  await withMlsBulkIngest(ctx.mlsService, async () => {
-    let serverGroupIndex = null;
-    try {
-      const groups = await ctx.mlsService.getUserGroups(ctx.userId);
-      serverGroupIndex = buildUserGroupSyncIndex(groups);
-    } catch {
-      ctx.log('[WARN] getUserGroups unavailable — DM/group classification from the local cache');
-    }
-
-    const replayMetas = mergedConvMetas.filter((m) => !isChannelConversationId(m.id));
-    let batchFirstPages: Map<string, import('$lib/mls-client/historyTypes').HistoryPage> =
-      new Map();
-    if (replayMetas.length > 0 && ctx.mlsService.fetchHistoryBatch) {
+  await withMlsBulkIngest(
+    ctx.mlsService,
+    async () => {
+      let serverGroupIndex = null;
       try {
-        batchFirstPages = await ctx.mlsService.fetchHistoryBatch(
-          replayMetas.map((meta) => ({
-            groupId: meta.id,
-            afterStreamId: readHistoryStreamCursor(ctx.userId, meta.id),
-          }))
-        );
-        // Naming the request count, not "1 request": the list is chunked at
-        // HISTORY_BATCH_MAX_GROUPS, and a gap between asked and primed is a refused chunk.
-        const requests = Math.ceil(replayMetas.length / HISTORY_BATCH_MAX_GROUPS);
-        ctx.log(
-          `[CATCHUP] batch history: ${batchFirstPages.size}/${replayMetas.length} group(s) ` +
-            `primed in ${requests} request(s)`
-        );
-      } catch (e) {
-        ctx.log(`[WARN] batch history failed: ${String(e)} — sequential fallback`);
+        const groups = await ctx.mlsService.getUserGroups(ctx.userId);
+        serverGroupIndex = buildUserGroupSyncIndex(groups);
+      } catch {
+        ctx.log('[WARN] getUserGroups unavailable — DM/group classification from the local cache');
       }
-    }
 
-    for (const meta of mergedConvMetas) {
-      // A SALON'S STORED PAGE IS KEPT (F4 of community-open-budget): it is the copy its next open
-      // draws before the server page, which replaces it (`loadChannelHistory`). It used to be
-      // erased here at every boot, which is what made a salon's first open network-only.
-      if (isChannelConversationId(meta.id)) continue;
-      try {
-        const existingConvo = ctx.conversations.get(meta.id);
-        if (existingConvo && !isChannelConversationId(meta.id) && serverGroupIndex) {
-          const row = serverGroupIndex.byGroupId.get(meta.id);
-          if (row?.isGroup === false) {
-            // Repair a DM whose peer identity is corrupted: either misclassified as a group,
-            // or stored as direct but with a missing/self peer (legacy self-only group name).
-            // resolveDirectPeerId falls back to the authoritative roster when the name is unusable.
-            const self = ctx.userId.toLowerCase();
-            const currentPeer = (existingConvo.directPeerId ?? '').toLowerCase();
-            const needsRepair =
-              (existingConvo.conversationType ?? 'group') !== 'direct' ||
-              !currentPeer ||
-              currentPeer === self;
-            if (needsRepair) {
-              const peer = await resolveDirectPeerId(
-                ctx.mlsService,
-                meta.id,
-                row.name ?? meta.name,
-                ctx.userId,
-                ctx.log
-              );
-              // RE-READ AFTER THE AWAIT: a live delivery may have written this row while the roster
-              // was being asked, and spreading the copy read before it would erase that message.
-              const latest = ctx.conversations.get(meta.id);
-              if (!latest) {
-                // Every swallowed branch logs: the row left the map while its roster was asked
-                // (a leave, a delete or an account switch), so there is nothing left to repair.
-                ctx.log(
-                  `[RESTORE] DM repair skipped for ${meta.id} - the conversation vanished while its peer was resolved`
+      const replayMetas = mergedConvMetas.filter((m) => !isChannelConversationId(m.id));
+      let batchFirstPages: Map<string, import('$lib/mls-client/historyTypes').HistoryPage> =
+        new Map();
+      if (replayMetas.length > 0 && ctx.mlsService.fetchHistoryBatch) {
+        try {
+          batchFirstPages = await ctx.mlsService.fetchHistoryBatch(
+            replayMetas.map((meta) => ({
+              groupId: meta.id,
+              afterStreamId: readHistoryStreamCursor(ctx.userId, meta.id),
+            }))
+          );
+          // Naming the request count, not "1 request": the list is chunked at
+          // HISTORY_BATCH_MAX_GROUPS, and a gap between asked and primed is a refused chunk.
+          const requests = Math.ceil(replayMetas.length / HISTORY_BATCH_MAX_GROUPS);
+          ctx.log(
+            `[CATCHUP] batch history: ${batchFirstPages.size}/${replayMetas.length} group(s) ` +
+              `primed in ${requests} request(s)`
+          );
+        } catch (e) {
+          ctx.log(`[WARN] batch history failed: ${String(e)} — sequential fallback`);
+        }
+      }
+
+      for (const meta of mergedConvMetas) {
+        // A SALON'S STORED PAGE IS KEPT (F4 of community-open-budget): it is the copy its next open
+        // draws before the server page, which replaces it (`loadChannelHistory`). It used to be
+        // erased here at every boot, which is what made a salon's first open network-only.
+        if (isChannelConversationId(meta.id)) continue;
+        try {
+          const existingConvo = ctx.conversations.get(meta.id);
+          if (existingConvo && !isChannelConversationId(meta.id) && serverGroupIndex) {
+            const row = serverGroupIndex.byGroupId.get(meta.id);
+            if (row?.isGroup === false) {
+              // Repair a DM whose peer identity is corrupted: either misclassified as a group,
+              // or stored as direct but with a missing/self peer (legacy self-only group name).
+              // resolveDirectPeerId falls back to the authoritative roster when the name is unusable.
+              const self = ctx.userId.toLowerCase();
+              const currentPeer = (existingConvo.directPeerId ?? '').toLowerCase();
+              const needsRepair =
+                (existingConvo.conversationType ?? 'group') !== 'direct' ||
+                !currentPeer ||
+                currentPeer === self;
+              if (needsRepair) {
+                const peer = await resolveDirectPeerId(
+                  ctx.mlsService,
+                  meta.id,
+                  row.name ?? meta.name,
+                  ctx.userId,
+                  ctx.log
                 );
-              } else if (peer && peer !== self) {
-                ctx.conversations.set(meta.id, {
-                  ...latest,
-                  conversationType: 'direct',
-                  directPeerId: peer,
-                  contactName: peer,
-                  name: peer,
-                });
-                const normalizedName = canonicalDirectName(ctx.userId, peer);
-                if (meta.name !== normalizedName) {
-                  await ctx.storage.saveConversation({
-                    ...meta,
-                    name: normalizedName,
+                // RE-READ AFTER THE AWAIT: a live delivery may have written this row while the roster
+                // was being asked, and spreading the copy read before it would erase that message.
+                const latest = ctx.conversations.get(meta.id);
+                if (!latest) {
+                  // Every swallowed branch logs: the row left the map while its roster was asked
+                  // (a leave, a delete or an account switch), so there is nothing left to repair.
+                  ctx.log(
+                    `[RESTORE] DM repair skipped for ${meta.id} - the conversation vanished while its peer was resolved`
+                  );
+                } else if (peer && peer !== self) {
+                  ctx.conversations.set(meta.id, {
+                    ...latest,
+                    conversationType: 'direct',
+                    directPeerId: peer,
+                    contactName: peer,
+                    name: peer,
                   });
+                  const normalizedName = canonicalDirectName(ctx.userId, peer);
+                  if (meta.name !== normalizedName) {
+                    await ctx.storage.saveConversation({
+                      ...meta,
+                      name: normalizedName,
+                    });
+                  }
                 }
               }
             }
           }
-        }
 
-        const storedMessages = await ctx.storage.getMessagesPage(
-          meta.id,
-          ctx.deviceKeyB64,
-          INITIAL_MESSAGES_PAGE
-        );
-        const msgs = await retroactivelyResolveHexIds(
-          mapStoredMessagesToChatMessages(storedMessages, ctx.userId),
-          ctx.storage,
-          meta.id,
-          ctx.deviceKeyB64
-        );
-        const preReplayMsgIds = new Set(msgs.map((m) => m.id));
-        const existing = ctx.conversations.get(meta.id);
-        if (existing && msgs.length > 0) {
-          // MERGED, NEVER ASSIGNED (`mergeMessagePage`): the rows are seeded before this read, so a
-          // message delivered live since then is already on the row and is not in this page.
-          ctx.conversations.set(meta.id, {
-            ...existing,
-            messages: mergeMessagePage(existing.messages, msgs),
+          const storedMessages = await ctx.storage.getMessagesPage(
+            meta.id,
+            ctx.deviceKeyB64,
+            INITIAL_MESSAGES_PAGE
+          );
+          const msgs = await retroactivelyResolveHexIds(
+            mapStoredMessagesToChatMessages(storedMessages, ctx.userId),
+            ctx.storage,
+            meta.id,
+            ctx.deviceKeyB64
+          );
+          const preReplayMsgIds = new Set(msgs.map((m) => m.id));
+          const existing = ctx.conversations.get(meta.id);
+          if (existing && msgs.length > 0) {
+            // MERGED, NEVER ASSIGNED (`mergeMessagePage`): the rows are seeded before this read, so a
+            // message delivered live since then is already on the row and is not in this page.
+            ctx.conversations.set(meta.id, {
+              ...existing,
+              messages: mergeMessagePage(existing.messages, msgs),
+            });
+
+            // Restore reactions into the shared messageReactions map
+            for (const m of msgs) {
+              if (m.reactions && m.reactions.length > 0) {
+                ctx.messageReactions.set(m.id, m.reactions);
+              }
+            }
+          }
+          // Fetch from network → decrypt → save to DB (no direct UI update)
+          const commit = await replayConversationHistory({
+            mlsService: ctx.mlsService,
+            id: meta.id,
+            contactName: meta.id,
+            userId: ctx.userId,
+            deviceKey: () => ctx.deviceKeyB64,
+            storage: ctx.storage,
+            getConversation: (name) => ctx.conversations.get(name),
+            setConversation: (name, next) => ctx.conversations.set(name, next),
+            saveConversation: async (name) => {
+              const convo = ctx.conversations.get(name);
+              if (convo)
+                await ctx.storage.saveConversation(toConversationMeta(name, convo, ctx.userId));
+            },
+            messageReactions: ctx.messageReactions,
+            log: ctx.log,
+            primedFirstPage: batchFirstPages.get(meta.id),
           });
-
-          // Restore reactions into the shared messageReactions map
-          for (const m of msgs) {
-            if (m.reactions && m.reactions.length > 0) {
-              ctx.messageReactions.set(m.id, m.reactions);
+          if (commit) pendingCommits.push(commit);
+          // Reload from DB after network sync so display reflects new messages
+          const refreshed = await ctx.storage.getMessagesPage(
+            meta.id,
+            ctx.deviceKeyB64,
+            INITIAL_MESSAGES_PAGE
+          );
+          const refreshedMsgs = await retroactivelyResolveHexIds(
+            mapStoredMessagesToChatMessages(refreshed, ctx.userId),
+            ctx.storage,
+            meta.id,
+            ctx.deviceKeyB64
+          );
+          const current = ctx.conversations.get(meta.id);
+          if (current) {
+            // "Arrived during this replay" is only a PROXY for "not seen yet", and it breaks when
+            // the replay carries a history bundle - hence the watermark check in isUnreadForUser.
+            //
+            // COUNTED OVER THE MERGED LIST, NOT OVER THE PAGE. The page is one window of the store and
+            // a message delivered live while the replay ran is not in it, so counting the page alone
+            // both dropped that message from the display and then wrote a badge that did not include
+            // it - the same stale read, once as a loss and once as an undercount.
+            const myWatermark = watermarkFor(current.readWatermarks, ctx.userId.toLowerCase());
+            const messages = mergeMessagePage(current.messages, refreshedMsgs);
+            const newUnreadCount = messages.filter(
+              (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, myWatermark)
+            ).length;
+            ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
+            for (const m of refreshedMsgs) {
+              if (m.reactions && m.reactions.length > 0) {
+                ctx.messageReactions.set(m.id, m.reactions);
+              }
             }
           }
+        } catch (e) {
+          ctx.log(`[WARN] Conversation load failed ${meta.id}: ${String(e)}`);
         }
-        // Fetch from network → decrypt → save to DB (no direct UI update)
-        const commit = await replayConversationHistory({
-          mlsService: ctx.mlsService,
-          id: meta.id,
-          contactName: meta.id,
-          userId: ctx.userId,
-          deviceKey: () => ctx.deviceKeyB64,
-          storage: ctx.storage,
-          getConversation: (name) => ctx.conversations.get(name),
-          setConversation: (name, next) => ctx.conversations.set(name, next),
-          saveConversation: async (name) => {
-            const convo = ctx.conversations.get(name);
-            if (convo)
-              await ctx.storage.saveConversation(toConversationMeta(name, convo, ctx.userId));
-          },
-          messageReactions: ctx.messageReactions,
-          log: ctx.log,
-          primedFirstPage: batchFirstPages.get(meta.id),
-        });
-        if (commit) pendingCommits.push(commit);
-        // Reload from DB after network sync so display reflects new messages
-        const refreshed = await ctx.storage.getMessagesPage(
-          meta.id,
-          ctx.deviceKeyB64,
-          INITIAL_MESSAGES_PAGE
-        );
-        const refreshedMsgs = await retroactivelyResolveHexIds(
-          mapStoredMessagesToChatMessages(refreshed, ctx.userId),
-          ctx.storage,
-          meta.id,
-          ctx.deviceKeyB64
-        );
-        const current = ctx.conversations.get(meta.id);
-        if (current) {
-          // "Arrived during this replay" is only a PROXY for "not seen yet", and it breaks when
-          // the replay carries a history bundle - hence the watermark check in isUnreadForUser.
-          //
-          // COUNTED OVER THE MERGED LIST, NOT OVER THE PAGE. The page is one window of the store and
-          // a message delivered live while the replay ran is not in it, so counting the page alone
-          // both dropped that message from the display and then wrote a badge that did not include
-          // it - the same stale read, once as a loss and once as an undercount.
-          const myWatermark = watermarkFor(current.readWatermarks, ctx.userId.toLowerCase());
-          const messages = mergeMessagePage(current.messages, refreshedMsgs);
-          const newUnreadCount = messages.filter(
-            (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, myWatermark)
-          ).length;
-          ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
-          for (const m of refreshedMsgs) {
-            if (m.reactions && m.reactions.length > 0) {
-              ctx.messageReactions.set(m.id, m.reactions);
-            }
-          }
-        }
-      } catch (e) {
-        ctx.log(`[WARN] Conversation load failed ${meta.id}: ${String(e)}`);
       }
+      // Nothing to commit is said as `undefined`, so the helper owes no checkpoint for it.
+      return pendingCommits.length > 0 ? pendingCommits : undefined;
+    },
+    (commits) => {
+      for (const commit of commits) commit();
     }
-  });
-
-  // Encrypted checkpoint has flushed: durable progress markers are now safe to record.
-  for (const commit of pendingCommits) commit();
+  );
 }
 
 /**

@@ -12,7 +12,29 @@ export const LIVE_SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
 /** Every object of every live lives under this prefix, and nothing else does. */
 export const LIVE_PREFIX = 'live/';
 
+/**
+ * Any spelling of a uuid, for the INTERNAL routes: social-service may pass a live id as its client
+ * spelled it, and the key is written lower case whatever the input ({@link LiveSegmentsService.key}).
+ */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A uuid in its CANONICAL spelling, lower case only - no `/i`, deliberately. For the PUBLIC read:
+ * another spelling of the same id is a second public address for the same bytes, and nginx caches
+ * and rate-limits the canonical one only (WP-L4), so a variant reaching this service would skip both.
+ */
+const CANONICAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * The ONE public path of a live segment as this service receives it (global prefix `api`
+ * included): `/api/media/public/live/<liveId>/<name>`, both canonical uuids, nothing after - no
+ * trailing slash, no query, no percent-encoding, no other case. nginx's `^~ /api/media/public/live/`
+ * location sends exactly this and 404s everything else under the prefix; this is the same rule held
+ * a second time, for a request reaching the route by ANOTHER location (`/api/media/PUBLIC/live/...`
+ * through the authenticated `/api/media` one, which Express 5 matches case-insensitively and with
+ * a trailing slash).
+ */
+export const LIVE_SEGMENT_PUBLIC_PREFIX = '/api/media/public/live/';
 
 /**
  * THE SERVER-SIDE SWITCH OF THE LIVE FEATURE, the same variable social-service reads:
@@ -60,6 +82,19 @@ export class LiveSegmentsService {
   static key(liveId: string, name: string): string {
     if (!UUID_RE.test(name)) throw new BadRequestException('segment name must be a uuid');
     return `${LiveSegmentsService.prefix(liveId)}${name.toLowerCase()}`;
+  }
+
+  /**
+   * Whether a segment request came by its ONE canonical path ({@link LIVE_SEGMENT_PUBLIC_PREFIX}):
+   * both ids canonical, and the raw path exactly `<prefix><liveId>/<name>` with no query. The
+   * route's own match proves neither: Express 5 ignores case and a trailing slash.
+   */
+  static isCanonicalSegmentPath(rawUrl: string, liveId: string, name: string): boolean {
+    return (
+      CANONICAL_UUID_RE.test(liveId) &&
+      CANONICAL_UUID_RE.test(name) &&
+      rawUrl === `${LIVE_SEGMENT_PUBLIC_PREFIX}${liveId}/${name}`
+    );
   }
 
   /** Stores one sealed segment. Throws on a store failure: the caller must not count it. */

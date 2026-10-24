@@ -6,6 +6,7 @@ import {
   AUDIO_BITRATE,
   VIDEO_BUDGET_SHARE,
   VIDEO_MIN_BITRATE,
+  VIDEO_PROFILES,
   VIDEO_TARGET_BITRATE,
   budgetedVideoBitrate,
   outputDimensions,
@@ -90,5 +91,56 @@ describe('planVideoEncoding', () => {
   it('names why no plan exists', () => {
     expect(planVideoEncoding({ ...base, displayWidth: 0 }, CEILING)).toBe('no-dimensions');
     expect(planVideoEncoding({ ...base, durationSeconds: 3 * 3600 }, CEILING)).toBe('too-long');
+  });
+});
+
+describe('the chat profile (D-size: about 540p at 1.2 Mb/s)', () => {
+  const chat = VIDEO_PROFILES.chat;
+  const source = {
+    displayWidth: 1080,
+    displayHeight: 1920,
+    durationSeconds: 60,
+    frameRate: 60,
+    audioBitrate: chat.audioBitrate,
+  };
+
+  it('plans 540x960 at 1.2 Mb/s for a 1080p portrait take', () => {
+    expect(planVideoEncoding(source, CEILING, chat)).toEqual({
+      width: 540,
+      height: 960,
+      videoBitrate: 1_200_000,
+      frameRate: 30,
+    });
+  });
+
+  it.each([20, 60, 90])('fits maxBytes at %i s, the cap and well past it', (seconds) => {
+    const plan = planVideoEncoding({ ...source, durationSeconds: seconds }, CEILING, chat);
+    if (typeof plan === 'string') throw new Error(plan);
+    const bytes = ((plan.videoBitrate + chat.audioBitrate) * seconds) / 8;
+    expect(bytes).toBeLessThanOrEqual(CEILING * VIDEO_BUDGET_SHARE);
+  });
+
+  it('is about 9 MB at the 60 s chat cap', () => {
+    const bytes = ((chat.targetBitrate + chat.audioBitrate) * 60) / 8;
+    expect(bytes / MB).toBeGreaterThan(8.5);
+    expect(bytes / MB).toBeLessThan(10);
+  });
+
+  it('never scales a small clip up, and is cheaper than the feed at every length', () => {
+    expect(outputDimensions(480, 854, chat)).toEqual({ width: 480, height: 854 });
+    const feed = ((VIDEO_PROFILES.feed.targetBitrate + AUDIO_BITRATE) * 60) / 8;
+    expect(((chat.targetBitrate + chat.audioBitrate) * 60) / 8).toBeLessThan(feed / 2);
+  });
+
+  it('leaves the feed plan byte-identical: no profile is the feed profile', () => {
+    const feedSource = { ...source, durationSeconds: 90, audioBitrate: AUDIO_BITRATE };
+    const expected = { width: 720, height: 1280, videoBitrate: 2_500_000, frameRate: 30 };
+    expect(planVideoEncoding(feedSource, CEILING)).toEqual(expected);
+    expect(planVideoEncoding(feedSource, CEILING, VIDEO_PROFILES.feed)).toEqual(expected);
+    expect(VIDEO_PROFILES.feed).toEqual({
+      maxShortSide: 720,
+      targetBitrate: 2_500_000,
+      audioBitrate: 128_000,
+    });
   });
 });

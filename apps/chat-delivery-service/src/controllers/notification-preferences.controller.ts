@@ -32,6 +32,7 @@ import {
   type GroupNotificationLevel,
 } from '../entities/group-member.entity';
 import { cutUserId } from '../utils/log-repeat';
+import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 
 /**
  * The account's notification categories - what a client reads to draw the settings and to gate its
@@ -88,7 +89,9 @@ export class NotificationPreferencesController {
       this.logger.warn(
         `[NOTIF_PREF] group calls REFUSED group=${groupId} user=${cutUserId(userId)}: not a member`
       );
-      throw new ForbiddenException('Not a member of this conversation');
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.NOT_A_MEMBER, 'Not a member of this conversation')
+      );
     }
     this.logger.log(`[NOTIF_PREF] group=${groupId} user=${cutUserId(userId)} calls=${allowed}`);
     return { groupId, allowed };
@@ -123,7 +126,9 @@ export class NotificationPreferencesController {
       this.logger.warn(
         `[NOTIF_PREF] group level REFUSED group=${groupId} user=${cutUserId(userId)}: not a member`
       );
-      throw new ForbiddenException('Not a member of this conversation');
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.NOT_A_MEMBER, 'Not a member of this conversation')
+      );
     }
     this.logger.log(`[NOTIF_PREF] group=${groupId} user=${cutUserId(userId)} level=${level}`);
     return { groupId, level };

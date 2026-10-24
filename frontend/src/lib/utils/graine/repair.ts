@@ -12,7 +12,7 @@ import { isGraineReady, requireGraineRuntime, scopeForChannel } from './runtime'
 import { historyFloorFor, withinHistoryFloor } from './historyBoundary';
 import { distributionEpochFor, GraineDistributionUnavailableError } from './seedDistribution';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
-import { deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { canonicalUserId, deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { describeKeyGroupFrameLosses } from '$lib/mls-client/keyGroupFrameLosses';
 import {
   forgetHistoryHeldNothing,
@@ -522,7 +522,7 @@ function heldNothingView(
     unansweredOnline,
     /** The tree devices of `id` not yet recorded, or `null` when the tree is unknown. */
     unansweredOnTree: (id: string): Set<string> | null =>
-      tree ? new Set(unansweredOf(id, tree.get(id.toLowerCase()) ?? [])) : null,
+      tree ? new Set(unansweredOf(id, tree.get(canonicalUserId(id)) ?? [])) : null,
     /** The members the election skips: answered from every device, or from every one online. */
     skipped: new Set([...roster].filter((id) => done(id) || spent(id))),
     /** Every other member done, and our own other devices on the tree too, if any. */

@@ -21,6 +21,7 @@ import { applyFuzzyNameSearch } from './userSearch';
 import { UserBlocksService } from './user-blocks.service';
 import { EMPTY_PROFILE, legacyColumns, type MiconnectProfile } from './miconnect-profile';
 import { socialUrl } from '../internal/service-urls';
+import { RefusalCode, refusalBody } from '../common/refusal-codes';
 
 /** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
@@ -309,7 +310,12 @@ export class UsersService implements OnModuleInit {
     // type confusion (CWE-843) from flowing into the fuzzy SQL matcher.
     if (typeof query !== 'string') return [];
     if (!query || query.length < 1) return [];
-    if (query.length > 200) throw new BadRequestException('Search query too long (max 200 chars)');
+    if (query.length > 200)
+      throw new BadRequestException(
+        refusalBody(RefusalCode.USER_SEARCH_TOO_LONG, 'Search query too long (max 200 chars)', {
+          max: 200,
+        })
+      );
 
     const qb = this.userRepository
       .createQueryBuilder('user')
@@ -348,7 +354,10 @@ export class UsersService implements OnModuleInit {
       !!query.associationId;
     if (!hasFilter) {
       throw new BadRequestException(
-        'Provide at least one filter (name >= 2 chars, promo, cursus, campus, post, or association)'
+        refusalBody(
+          RefusalCode.USER_SEARCH_FILTER_REQUIRED,
+          'Provide at least one filter (name >= 2 chars, promo, cursus, campus, post, or association)'
+        )
       );
     }
 

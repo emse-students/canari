@@ -3,7 +3,7 @@
   import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { BellOff } from '@lucide/svelte';
+  import { BellOff, Repeat2 } from '@lucide/svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import NotificationRow from '$lib/components/notifications/NotificationRow.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -14,7 +14,11 @@
     type NotificationBucket,
   } from '$lib/utils/notifications/grouping';
   import type { PostNotification } from '$lib/posts/api';
-  import { resolveNotificationHref } from '$lib/posts/notificationTarget';
+  import {
+    REPUBLICATION_REQUESTS_ROUTE,
+    resolveNotificationHref,
+  } from '$lib/posts/notificationTarget';
+  import { countMyRepublicationRequests } from '$lib/proposals/api';
   import { getAssociation } from '$lib/associations/api';
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
@@ -40,6 +44,19 @@
    * midnight, silently - and would make the derivation impure.
    */
   let openedAt = $state(new Date());
+
+  /**
+   * How many republication requests wait on this reader (D38b) - the link to their inbox is drawn
+   * only when there is something in it. A failed count draws no link and says why in the log; the
+   * notification and the push still lead there.
+   */
+  let pendingRequests = $state(0);
+
+  onMount(() => {
+    countMyRepublicationRequests()
+      .then((count) => (pendingRequests = count))
+      .catch((e: unknown) => Log.d('notifications', `request count failed: ${String(e)}`));
+  });
 
   onMount(() => {
     /*
@@ -124,6 +141,16 @@
       {/each}
     </div>
   </PageHeader>
+
+  {#if pendingRequests > 0}
+    <a
+      href={resolve(REPUBLICATION_REQUESTS_ROUTE)}
+      class="border-cn-border bg-cn-surface text-text-main mb-3 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors hover:border-amber-400"
+    >
+      <Repeat2 size={16} strokeWidth={2.5} class="shrink-0 text-amber-600 dark:text-amber-400" />
+      {m.republication_requests_banner({ count: pendingRequests })}
+    </a>
+  {/if}
 
   {#if postNotifStore.loading && postNotifStore.notifications.length === 0}
     <div class="flex flex-col gap-3">

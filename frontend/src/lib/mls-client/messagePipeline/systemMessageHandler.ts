@@ -1,5 +1,6 @@
 import type { Conversation } from '$lib/types';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/incomingDelivery';
+import { canonicalIdentity, canonicalUserId, canonicalUserOf } from '$lib/mls-client/leafIdentity';
 import {
   serializeEnvelope,
   applyEditToBody,
@@ -10,6 +11,7 @@ import {
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
+import { clearMessageControlRefusals } from '$lib/utils/chat/controlRefusals.svelte';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { recordEviction } from '$lib/utils/chat/eviction';
@@ -25,6 +27,11 @@ import { parseHistoryStateKey } from '$lib/utils/chat/historyStateKey';
 import { answerAfterMailboxDrained, noteCoverageShortfall } from '$lib/utils/chat/historyReconcile';
 import { owedPullTicket } from '$lib/utils/chat/historyOverheardPull';
 import { dropOwnExcludedMessages } from '$lib/utils/chat/historyEntitlement';
+import {
+  boundAddressedMessages,
+  parseHistoryRequestId,
+  takeAddressedAsk,
+} from '$lib/utils/chat/historyAddressing';
 import {
   historyRangeStartFor,
   readHistoryEntries,
@@ -133,9 +140,11 @@ function probeSender(
   tag: string
 ): string | null {
   const from = String(data?.from ?? '');
-  const claimedUser = from.split(':')[0]?.toLowerCase();
-  const deviceId = from.slice(from.indexOf(':') + 1);
-  if (!claimedUser || !deviceId || claimedUser !== senderNorm) {
+  // Parsed by the ONE identity reader (`leafIdentity.ts`): `from` must name a DEVICE, so a bare user
+  // id or a second colon names nobody, and the user half compares as Rust compares it.
+  const device = canonicalIdentity(from);
+  const claimedUser = device === null ? null : canonicalUserOf(device);
+  if (claimedUser === null || claimedUser !== canonicalUserId(senderNorm)) {
     log(`[${tag}] Rejected: "${from}" does not match the MLS sender ${senderNorm}`);
     return null;
   }
@@ -259,7 +268,13 @@ export async function handleSystemEvent(
       log(`[HISTORY_DIGEST] No window stated by ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
-    const takenByAWaiter = noteProbeReceived(convoKey, from, { kind: 'digest', digest, since });
+    const requestId = parseHistoryRequestId(data?.requestId);
+    const takenByAWaiter = noteProbeReceived(convoKey, from, {
+      kind: 'digest',
+      digest,
+      since,
+      requestId,
+    });
     const size =
       digest.mode === 'ids'
         ? `${digest.ids.length} id(s)`
@@ -294,6 +309,7 @@ export async function handleSystemEvent(
           selfIdentity: digestIdentity(userId, mlsService.getDeviceId()),
           digest,
           since,
+          requestId,
           deps: { storage, deviceKeyB64: deviceKey(), mlsService, log },
         }).catch((e) =>
           log(
@@ -352,6 +368,7 @@ export async function handleSystemEvent(
       before: Math.floor(before),
       limit: Math.min(Math.floor(limit), HISTORY_RANGE_MAX),
       since,
+      requestId: parseHistoryRequestId(data?.requestId),
     });
     log(
       `[HISTORY_RANGE] ${senderNorm} wants up to ${limit} message(s) before ${new Date(before).toISOString()} in ${convoKey.slice(0, 8)}…`
@@ -461,9 +478,11 @@ export async function handleSystemEvent(
       log(
         `[HISTORY_PULL] ${senderNorm} wants ${wanted.length} message(s) from ${convoKey.slice(0, 8)}…`
       );
-      await sendHistoryBundleForIds(convoKey, wanted, deps, { to: puller, since }).catch((e) =>
-        log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`)
-      );
+      await sendHistoryBundleForIds(convoKey, wanted, deps, {
+        to: puller,
+        since,
+        requestId: parseHistoryRequestId(data?.requestId),
+      }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
     });
     return true;
   }
@@ -776,6 +795,8 @@ export async function handleSystemEvent(
           ...c,
           messages: c.messages.map((m, i) => (i === idx ? deletedMsg : m)),
         });
+        // Deleted by another of the author's devices: a refused act on it has nothing left to retry.
+        clearMessageControlRefusals(deletedMsg.id);
         if (storage) {
           try {
             // The tombstone and the replacement body, nothing else: the edit flags and the read
@@ -785,8 +806,9 @@ export async function handleSystemEvent(
               { isDeleted: true, content: deletedMsg.content },
               deviceKey()
             );
-          } catch {
-            // Non-blocking
+          } catch (e) {
+            // Non-blocking: the tombstone holds in memory, a reload shows the message again.
+            log(`[DELETE] tombstone of ${deletedMsg.id.slice(0, 8)} not persisted: ${String(e)}`);
           }
         }
       }
@@ -859,41 +881,83 @@ export async function handleSystemEvent(
   }
 
   if (event === 'history_bundle') {
-    // INGESTION IS FOR EVERYONE. A bundle is a group broadcast, so every member sees an exchange
-    // between two of them, and the messages are free to take - the merge below dedupes by id.
+    // A BROADCAST BUNDLE IS FOR EVERYONE: an answer from an older peer, or from a server that
+    // predates addressed answers, reaches every member and its messages are free to take - the merge
+    // below dedupes by id, and nothing about the addressee is discharged by reading it.
     //
-    // Nothing else about the addressee matters any more, and that is a simplification the state key
-    // paid for. A bundle used to DISCHARGE the receiver's durable awaiting-history marker, so
-    // reading somebody else's answer as our own stopped a solicitation on another device's evidence
-    // and lost history for good. There is no marker to discharge: what a device holds is compared
-    // again on its next connection, so an answer meant for a peer is simply free messages.
+    // AN ADDRESSED ONE IS BELIEVED ONLY AS THE ANSWER TO OUR OWN ASK (step A, rule 5 of
+    // docs/wiki/protocols/history-answer-addressing.md). The server routed it to this device alone,
+    // so nobody else in the group can see what it carries; accepting it unsolicited would let one
+    // member show this device a history the rest of the group never saw. So it must name an ask this
+    // device made (or its admission, for the inviter's push), it may carry only messages inside what
+    // that ask asked for, and it may only ADD them - the conversation state it restates is merged on
+    // the push alone, which is the one answer whose reader has no state of its own yet.
     const addressee = String(data?.to ?? '');
     const me = digestIdentity(userId, mlsService.getDeviceId()).toLowerCase();
-    if (addressee && addressee.toLowerCase() !== me) {
+    type BundleMsg = {
+      id: string;
+      senderId: string;
+      content: string;
+      timestamp: number;
+      reactions?: import('$lib/types').MessageReaction[];
+      isDeleted?: boolean;
+      isEdited?: boolean;
+      editedAt?: number;
+      serverTimestamp?: number;
+    };
+    let incoming: BundleMsg[] = Array.isArray(data?.messages) ? data.messages : [];
+    let addOnly = false;
+    if (deliveryMeta?.addressed === true) {
+      const requestId = parseHistoryRequestId(data?.requestId);
+      const claimsJoin = data?.join === true && requestId === undefined;
+      // THE ANSWERER IS THE DEVICE MLS VERIFIED: the decrypt compared the envelope's device with the
+      // credential, which it can only do when the envelope names one - so an answer naming none has
+      // no device to close the ask for, and is refused.
+      const answeringDevice = deliveryMeta.senderDeviceId;
+      const ask =
+        addressee.toLowerCase() === me && answeringDevice && (requestId !== undefined || claimsJoin)
+          ? takeAddressedAsk(
+              convoKey,
+              requestId,
+              `${senderNorm}:${answeringDevice}`,
+              data?.last === true
+            )
+          : null;
+      if (ask === null || (ask.kind === 'join') !== claimsJoin) {
+        // At error: an honest peer answers only an ask that carried an id, and closes it once, so
+        // this is a forged frame, a defect, or an ask this page no longer holds (a reload between
+        // ask and answer, or more than MAX_OPEN_ASKS_PER_GROUP open at once) - each worth a
+        // reader's attention, and the comparison runs again on the next connection either way. A
+        // SECOND responder to the same ask is not here (the rendezvous can re-elect once); a THIRD
+        // is, because nothing honest produces one (MAX_ANSWERERS_PER_ASK).
+        console.error(
+          `[HISTORY_ADDRESSED] REFUSED an addressed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - ${addressee.toLowerCase() !== me ? `addressed to ${addressee.slice(0, 8) || 'nobody'}…, not us` : !answeringDevice ? 'its envelope names no sending device' : requestId === undefined && !claimsJoin ? 'it names no ask' : 'it answers no ask this device has open, or its answerers are all taken'} (${incoming.length} message(s) not ingested)`
+        );
+        return true;
+      }
+      const bounded = boundAddressedMessages(ask, incoming);
+      if (bounded.outOfBound > 0) {
+        console.error(
+          `[HISTORY_ADDRESSED] ${bounded.outOfBound} message(s) of an addressed ${ask.kind} answer from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… lie outside what we asked - dropped`
+        );
+      }
+      incoming = bounded.kept;
+      addOnly = ask.kind !== 'join';
+    } else if (addressee && addressee.toLowerCase() !== me) {
       log(
-        `[HISTORY_BUNDLE] ${convoKey.slice(0, 8)}… - answer for ${addressee.slice(0, 8)}…, ingesting it anyway`
+        `[HISTORY_BUNDLE] ${convoKey.slice(0, 8)}… - broadcast answer for ${addressee.slice(0, 8)}…, ingesting it anyway`
       );
     }
     try {
-      type BundleMsg = {
-        id: string;
-        senderId: string;
-        content: string;
-        timestamp: number;
-        reactions?: import('$lib/types').MessageReaction[];
-        isDeleted?: boolean;
-        isEdited?: boolean;
-        editedAt?: number;
-        serverTimestamp?: number;
-      };
-      const msgs: BundleMsg[] = Array.isArray(data.messages) ? data.messages : [];
+      const msgs: BundleMsg[] = incoming;
 
       // 0) The conversation's own state - read watermarks and the shared history floor - which
       //    travels ONCE for the whole conversation rather than once per message. Merged before
       //    anything else so the unread recount in step 3 sees it, and merged even for an empty
       //    bundle: "you are missing no messages, and here is who has read what" is a perfectly
       //    ordinary answer. Both merges are `max`, so a value restated by every chunk is free.
-      const beforeMerge = conversations.get(convoKey);
+      //    Not from an addressed answer to an ask (`addOnly`): it may only add messages.
+      const beforeMerge = addOnly ? undefined : conversations.get(convoKey);
       if (beforeMerge) {
         const mergedWatermarks = mergeReadWatermarks(
           beforeMerge.readWatermarks,
@@ -917,7 +981,7 @@ export async function handleSystemEvent(
       // The pin register rides beside them, merged entry by entry on the same `at` the frames
       // carry. Reported only when something actually moved - a bundle restating what we already
       // hold is the common case and says nothing.
-      const pinsMerged = mergePinEntries(convoKey, data.pins);
+      const pinsMerged = addOnly ? 0 : mergePinEntries(convoKey, data.pins);
       if (pinsMerged > 0) {
         log(
           `[HISTORY_BUNDLE] ${pinsMerged} pin state(s) converged for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
@@ -975,8 +1039,12 @@ export async function handleSystemEvent(
         }
 
         // 2) Merge transport-carried state (reactions, delete/edit) onto the conversation
-        //    messages - both the ones just added and any that already existed.
-        const bundleById = new Map(msgs.map((m) => [m.id, m]));
+        //    messages - both the ones just added and any that already existed. An addressed answer
+        //    to an ask (`addOnly`) touches only the messages it just added.
+        const addedIds = new Set(toAdd.map((t) => t.messageId));
+        const bundleById = new Map(
+          (addOnly ? msgs.filter((m) => addedIds.has(m.id)) : msgs).map((m) => [m.id, m])
+        );
         const c = conversations.get(convoKey);
         if (c) {
           const changedIds = new Set<string>();

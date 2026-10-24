@@ -13,7 +13,7 @@
     type LinkedPostSummary,
   } from '$lib/associations/api';
   import type { AgendaExportEvent } from '$lib/calendar/agendaExport';
-  import { eventOwners, type EventOwnerIdentity } from '$lib/calendar/feedEvents';
+  import { eventOwners, eventSummary, type EventOwnerIdentity } from '$lib/calendar/feedEvents';
   import { CalendarDays, ClipboardList, Newspaper, Pencil, Trash2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
@@ -119,7 +119,7 @@
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     return {
       id: ev.id,
-      title: `${ev.title} - ${ev.associationName}`,
+      title: eventSummary(ev),
       description: ev.description,
       startsAt: ev.startsAt,
       endsAt: ev.endsAt,

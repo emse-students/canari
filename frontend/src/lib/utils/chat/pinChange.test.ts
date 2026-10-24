@@ -23,6 +23,7 @@ import type {
   StoredGraineSession,
   StoredMessage,
 } from '$lib/db';
+import { flushMacrotask } from '../../../test/flush';
 
 const storageForUser = new Map<string, IStorage>();
 vi.mock('$lib/db', async (importOriginal) => ({
@@ -42,6 +43,7 @@ const {
   KeyChangeInterruptedError,
   LocalStateUnopenableError,
   dropStoredFeedPages,
+  moveSealedStoresOnly,
   performPinChange,
   resealDeviceKeyStores,
 } = await import('./pinChange');
@@ -585,7 +587,7 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await Promise.resolve();
 
     const change = performPinChange(options('u-inflight', fakeMls()), OLD, NEW);
-    await new Promise((r) => setTimeout(r, 20));
+    await flushMacrotask();
     land();
     await Promise.all([inFlight, change]);
 
@@ -756,6 +758,39 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
 
     expect(flush).toBeDefined();
     expect((await flush!)?.text).toBe('queued o1');
+  });
+});
+
+describe('moveSealedStoresOnly - an install with no MLS state to carry', () => {
+  it('moves every store, finishing a half-moved one, and retires the old key from the vault', async () => {
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    // A run killed half way already moved one row: it counts as done, not damaged.
+    await s.raw.saveMessages([message('m9')], NEW);
+    storageForUser.set('u-stores-only', s.gated);
+    vault.clearDeviceKey.mockClear();
+
+    await moveSealedStoresOnly('u-stores-only', OLD, NEW, () => {});
+
+    await everyRowUnder(s.raw, NEW);
+    expect(vault.clearDeviceKey).toHaveBeenCalledWith('u-stores-only');
+  });
+
+  it('a failure in the stores is typed as data moved, so the caller restarts', async () => {
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-stores-only-kill', s.gated);
+    vi.spyOn(s.raw, 'swapSealedPayloads').mockRejectedValueOnce(new Error('disk full'));
+
+    const failure = await moveSealedStoresOnly('u-stores-only-kill', OLD, NEW, () => {}).catch(
+      (e: unknown) => e
+    );
+
+    expect(failure).toBeInstanceOf(KeyChangeInterruptedError);
+    expect((failure as InstanceType<typeof KeyChangeInterruptedError>).dataMoved).toBe(true);
+    // The same two keys finish it.
+    await moveSealedStoresOnly('u-stores-only-kill', OLD, NEW, () => {});
+    await everyRowUnder(s.raw, NEW);
   });
 });
 

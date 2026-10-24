@@ -6,10 +6,16 @@
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
+  import { swipeBack } from '$lib/actions/swipeBack';
+  import { insideViewerLayer } from '$lib/utils/viewerLayer';
   import {
     pushHistoryOverlay,
     closeHistoryOverlayFromUi,
     releaseHistoryOverlay,
+    armHistoryOverlayGesture,
+    backHistoryOverlayFromGesture,
+    isMobileOverlayLayout,
+    type HistoryGestureArm,
   } from '$lib/utils/historyOverlayStack';
 
   interface Props {
@@ -77,6 +83,11 @@
      * overflow and gets no line; the title bar's `border-b` is the same edge at the top.
      */
     footerEdge?: boolean;
+    /**
+     * `critical` for a dialog raised OVER a full-screen viewer (`--z-viewer` sits above `--z-modal`,
+     * so a plain modal would open hidden behind the live it is about).
+     */
+    layer?: 'modal' | 'critical';
     onClose: () => void;
     children?: Snippet;
     footer?: Snippet;
@@ -94,10 +105,14 @@
     phoneFullScreen = false,
     showTitleBar = true,
     footerEdge = false,
+    layer = 'modal',
     onClose,
     children,
     footer,
   }: Props = $props();
+
+  /** Opened from inside a full-screen viewer, the modal rung is under it (`utils/viewerLayer.ts`). */
+  const inViewer = insideViewerLayer();
 
   const backdropAlignClass = $derived(
     fullViewport || topAnchored || phoneFullScreen
@@ -137,6 +152,20 @@
   );
 
   let historyClose: (() => void) | null = null;
+
+  /**
+   * THE LEFT-EDGE SWIPE IS THIS LAYER'S BACK TOO. The iOS app has no system Back: its only one is
+   * the swipe the conversation draws (`swipeBack`), and a modal is portalled to `document.body`,
+   * OUT of the conversation, so a swipe over its backdrop reached nothing (iPhone 12, 2026-10-16;
+   * the camera layer met the same wall). It closes the TOP overlay through the same stack the
+   * Android back button uses.
+   *
+   * ENABLED ONLY WHEN `dismissible`: a gate registers NO entry, so the top overlay would be the one
+   * UNDER it and the swipe would close a layer the person is not looking at. `narrow` is the
+   * predicate the stack's entries share, read once: the layer lives for one open.
+   */
+  const narrow = isMobileOverlayLayout();
+  let gestureArm: HistoryGestureArm | null = null;
 
   /**
    * THE BACK GESTURE IS A DISMISSAL, AND IT IS THE ONE `dismissible` USED TO MISS.
@@ -220,10 +249,23 @@
       role="presentation"
       use:coversScreen
       data-keyboard-aware-overlay
-      class="fixed z-(--z-modal) flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
+      class="fixed {layer === 'critical'
+        ? 'z-(--z-critical)'
+        : inViewer
+          ? 'z-(--z-viewer-dialog)'
+          : 'z-(--z-modal)'} flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
         ? 'modal-phone-full'
         : ''}"
       onclick={handleBackdropClick}
+      use:swipeBack={{
+        onBack: () => {
+          const arm = gestureArm;
+          gestureArm = null;
+          void backHistoryOverlayFromGesture(arm);
+        },
+        onArm: () => (gestureArm = armHistoryOverlayGesture()),
+        enabled: narrow && dismissible,
+      }}
       in:fly={{ duration: 200, y: 0, opacity: 0 }}
     >
       <div
