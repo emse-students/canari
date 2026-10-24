@@ -1,6 +1,7 @@
 import { DataSource, type EntityManager } from 'typeorm';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { Group } from '../entities/group.entity';
@@ -28,7 +29,15 @@ export async function recordingDataSource(
 ): Promise<{ dataSource: DataSource; manager: EntityManager; statements: RecordedStatement[] }> {
   const dataSource = new DataSource({
     type: 'postgres',
-    entities: [DeviceGroupMembership, QueuedMessage, GroupMember, GroupMembershipInterval, Group],
+    // `QueuedPayload` because `QueuedMessage.payload` relates to it: metadata refuses a dangling relation.
+    entities: [
+      DeviceGroupMembership,
+      QueuedMessage,
+      QueuedPayload,
+      GroupMember,
+      GroupMembershipInterval,
+      Group,
+    ],
   });
   // Metadata only: `initialize()` would connect.
   await (dataSource as unknown as { buildMetadatas: () => Promise<void> }).buildMetadatas();
