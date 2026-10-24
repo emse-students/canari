@@ -63,11 +63,11 @@ describe('InvitationsController - a device leaving a group', () => {
     await controller.deleteDeviceMembership('bob', 'b1', 'g-1');
 
     expect(txDeletes).toEqual([
-      { entity: DeviceGroupMembership, where: { userId: 'bob', deviceId: 'b1', groupId: 'g-1' } },
       {
         entity: QueuedMessage,
         where: { recipientId: 'bob', deviceId: 'b1', groupId: 'g-1', isWelcome: true },
       },
+      { entity: DeviceGroupMembership, where: { userId: 'bob', deviceId: 'b1', groupId: 'g-1' } },
     ]);
     onlyInTheTransaction();
   });
@@ -76,11 +76,11 @@ describe('InvitationsController - a device leaving a group', () => {
     await controller.forceLeave('g-1', { deviceId: 'b1' }, 'bob');
 
     expect(txDeletes).toEqual([
-      { entity: DeviceGroupMembership, where: { userId: 'bob', deviceId: 'b1', groupId: 'g-1' } },
       {
         entity: QueuedMessage,
         where: { recipientId: 'bob', deviceId: 'b1', groupId: 'g-1', isWelcome: true },
       },
+      { entity: DeviceGroupMembership, where: { userId: 'bob', deviceId: 'b1', groupId: 'g-1' } },
     ]);
     onlyInTheTransaction();
   });
@@ -89,8 +89,8 @@ describe('InvitationsController - a device leaving a group', () => {
     await controller.deleteAllDeviceMemberships('bob', 'b1');
 
     expect(txDeletes).toEqual([
-      { entity: DeviceGroupMembership, where: { userId: 'bob', deviceId: 'b1' } },
       { entity: QueuedMessage, where: { recipientId: 'bob', deviceId: 'b1', isWelcome: true } },
+      { entity: DeviceGroupMembership, where: { userId: 'bob', deviceId: 'b1' } },
     ]);
     onlyInTheTransaction();
   });

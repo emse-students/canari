@@ -63,6 +63,11 @@ export class Group {
   @Column({ default: 0 })
   activeEpoch: number;
 
+  /** Moved by every eviction of anyone from this group, under its seat lock; a seat claim compares
+   *  it, so a claim any eviction overtook is refused (`utils/seat-eviction.ts`, migration 036). */
+  @Column({ type: 'integer', default: 0 })
+  seatGeneration: number;
+
   /** Soft-delete timestamp. Null = active. Set on explicit deletion.
    *  The row is intentionally kept as a tombstone so devices can detect the transition. */
   @Column({ type: 'timestamp', nullable: true, default: null })

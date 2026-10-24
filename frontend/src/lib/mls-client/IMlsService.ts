@@ -93,6 +93,12 @@ export type ExternalJoinOutcome =
   | { joined: false; reason: 'own_key_package_unverified' }
   /** The commit gate was never reached. Nothing is claimed about membership. */
   | { joined: false; reason: 'unreachable' }
+  /**
+   * The server's per-user commit limit refused it (`429`), or still holds from an earlier refusal.
+   * Nothing is claimed about membership; nothing else this account commits is accepted for
+   * `retryAfterMs`, so a sweep stops there rather than ask group after group.
+   */
+  | { joined: false; reason: 'rate_limited'; retryAfterMs: number }
   /** The gate refused every bounded attempt; `serverReason` is its own classification. */
   | { joined: false; reason: 'refused'; serverReason: string; serverEpoch?: number };
 

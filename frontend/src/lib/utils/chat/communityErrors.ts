@@ -14,6 +14,11 @@ import { m } from '$lib/paraglide/messages';
 const COMMUNITY_REFUSALS: Record<string, () => string> = {
   /** Leaving, being kicked or being demoted would leave the community with members and no admin. */
   WORKSPACE_WOULD_HAVE_NO_ADMIN: () => m.chat_community_no_admin_left_error(),
+  /**
+   * A departure (leaving, a removal, an access change) that could not be completed this time: the
+   * person is still a member and the same action may simply be retried.
+   */
+  DEPARTURE_SUPERSEDED: () => m.chat_community_departure_retry_error(),
   /** An invite link outliving its community: everyone who belonged to it is gone. */
   WORKSPACE_HAS_NO_MEMBERS: () => m.chat_community_gone_error(),
   /**

@@ -26,6 +26,12 @@ export const ERASURE_TARGETS = [
   {
     service: 'chat-delivery',
     kind: 'http',
+    // Social's part removes the person from every community, and each removal evicts their seats
+    // here, which records the eviction under their id (`dm_seat_evictions`). Run after social's part
+    // has completed, this part - its final pass included - erases those records, whatever order the
+    // two services happened to answer in. The cost: an account's MLS data waits for social's final
+    // pass, while the account itself is already deactivated.
+    after: 'social',
     url: (subjectId: string) => chatDeliveryUrl(`internal/users/${encodeURIComponent(subjectId)}`),
   },
   {

@@ -818,8 +818,11 @@ jobs:
   # The same shape as the social job above, for the same reason: `*.integration.spec.ts` here are
   # gated on `CHAT_DELIVERY_IT_DATABASE_URL` and report SKIPPED without it. Written 2026-10-22 with migration
   # 034 (a key-group frame stored once), whose collector, purge and pull join are SQL a mock cannot
-  # judge. Each spec builds its own throwaway schema, so an empty database is all it needs. Same
-  # Postgres digest as production (`ci-passed-gate.test.mjs` compares them); a skip is a failure.
+  # judge; the seat lock's orderings (`seat-lock.integration.spec.ts`: a per-group advisory lock
+  # ordering a seat's claim, its eviction, its route and a send's queued rows) run here too, since no
+  # fake can judge which side waits for which. Each spec builds its own throwaway schema, so an empty
+  # database is all it needs. Same Postgres digest as production (`ci-passed-gate.test.mjs` compares
+  # them); a skip is a failure.
   test-chat-delivery-integration:
     name: Chat-delivery-service integration specs (PostgreSQL)
     needs: [changes]
@@ -860,6 +863,7 @@ jobs:
         working-directory: apps/chat-delivery-service
         run: bun install --frozen-lockfile
 
+      # In band: each spec works in its own throwaway schema, but one database serves them all.
       - name: Run every integration spec
         working-directory: apps/chat-delivery-service
         env:

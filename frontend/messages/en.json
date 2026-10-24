@@ -489,6 +489,7 @@
   "chat_community_invite_bounds_uses_capped": "{uses} / {max} uses",
   "chat_community_invite_bounds_uses_unlimited": "{uses} uses, no limit",
   "chat_community_no_admin_left_error": "This community would be left with no administrator. Grant the role to another member first.",
+  "chat_community_departure_retry_error": "The departure could not be completed this time. Nothing changed: try again.",
   "chat_community_gone_error": "This community no longer exists.",
   "chat_invite_user_has_no_device_error": "This person has not installed Canari yet. They need to open the app at least once before they can be invited.",
   "chat_key_distribution_unavailable_error": "Cannot check right now: the key service is not answering. Try again in a moment.",

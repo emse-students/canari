@@ -709,6 +709,16 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     return;
   }
 
+  // THE SERVER REFUSED THIS ACCOUNT'S COMMITS FOR A WHILE (`429`, `commitRateLimit.ts`): the base is
+  // fine and nobody needs to re-add us, so asking a member for a Welcome would mutate the tree to
+  // work around a wait. The watchdog's next pass joins again once the wait has passed.
+  if (outcome.reason === 'rate_limited') {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... not asking a member to re-add us: the commit rate limit holds for ${Math.round(outcome.retryAfterMs / 1000)} s more`
+    );
+    return;
+  }
+
   // WHAT REACHES HERE IS THEREFORE BOUNDED BY SOMETHING: a group whose base is unpublished has a
   // member who will publish one, or a peer who can send a Welcome. Nothing that reaches this line
   // any longer has a server-side answer proving the request is hopeless.

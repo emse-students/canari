@@ -60,7 +60,11 @@ describe('the ONE writer of an active membership', () => {
     publish: jest.fn().mockResolvedValue(1),
   };
   const revokedDeviceRepo = { findOne: jest.fn().mockResolvedValue(null) };
-  const keyPackageRepo = { findOne: jest.fn().mockResolvedValue({ id: 'kp-1' }) };
+  const keyPackageRepo = {
+    findOne: jest.fn().mockResolvedValue({ id: 'kp-1' }),
+    // The key package as a seat writer re-reads it under the lock, before it inserts.
+    find: jest.fn().mockResolvedValue([{ userId: 'u1', deviceId: 'd1' }]),
+  };
   const deviceGroupRepo = {
     findOne: jest.fn().mockResolvedValue(null),
     upsert: jest.fn().mockResolvedValue(undefined),
@@ -75,15 +79,30 @@ describe('the ONE writer of an active membership', () => {
     delete: jest.fn().mockResolvedValue({ affected: 0 }),
     create: jest.fn().mockImplementation((e: unknown) => e),
   });
-  const groupRepo = emptyRepo();
+  const groupRepo: ReturnType<typeof emptyRepo> & { manager?: unknown } = emptyRepo();
   const groupMemberRepo = emptyRepo();
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // The seat lock's transaction: the lock statement answers nothing, the seat table is the
+    // in-memory one below - so a write and the route's re-read see the same rows.
+    groupRepo.manager = {
+      transaction: async (cb: (m: unknown) => Promise<unknown>) =>
+        cb({
+          query: async () => [],
+          getRepository: (entity: unknown) =>
+            entity === KeyPackage
+              ? keyPackageRepo
+              : entity === RevokedDevice
+                ? revokedDeviceRepo
+                : deviceGroupRepo,
+        }),
+    };
     groupRepo.findOne.mockResolvedValue(null);
     groupMemberRepo.findOne.mockResolvedValue(null);
     revokedDeviceRepo.findOne.mockResolvedValue(null);
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1' });
+    keyPackageRepo.find.mockResolvedValue([{ userId: 'u1', deviceId: 'd1' }]);
     deviceGroupRepo.findOne.mockResolvedValue(null);
     redis.xrange.mockResolvedValue([]);
 
@@ -113,6 +132,8 @@ describe('the ONE writer of an active membership', () => {
   });
 
   it('writes the row AND the routing set - the two facts a reachable device needs', async () => {
+    // The route is written after the seat's commit, against the seat re-read under the lock.
+    deviceGroupRepo.findOne.mockResolvedValue({ deviceId: 'd1' });
     const outcome = await service.activateDeviceMembership('u1', 'd1', 'g1', CREATOR);
 
     expect(outcome.ok).toBe(true);
@@ -158,6 +179,17 @@ describe('the ONE writer of an active membership', () => {
 
     expect(outcome).toEqual({ ok: false, reason: 'no_key_package' });
     expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a creator's seat whose key package is gone by the time the seat lock is held", async () => {
+    // Addressable at the gate; an account erasure deleted the key package before the write.
+    keyPackageRepo.find.mockResolvedValue([]);
+
+    const outcome = await service.activateDeviceMembership('u1', 'd1', 'g1', CREATOR);
+
+    expect(outcome).toEqual({ ok: false, reason: 'no_key_package' });
+    expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+    expect(redis.sadd).not.toHaveBeenCalled();
   });
 
   it('ACCUSES under the CALLER tag, so a refusal names the door that asked', async () => {
@@ -382,19 +414,106 @@ describe('the ONE writer of an active membership', () => {
       });
     });
 
+    /**
+     * The seat lock's transaction: `query` answers the claim re-read (the group's generation and the
+     * departure in progress) and records the lock taken, `getRepository` hands back the seat table.
+     */
+    const lockedManager = (
+      eviction: { generation: number; owedDeparture: number | null } | null
+    ) => {
+      const locks: string[] = [];
+      (groupRepo as unknown as { manager: unknown }).manager = {
+        transaction: async (cb: (m: unknown) => Promise<unknown>) =>
+          cb({
+            query: async (sql: string, params: unknown[]) => {
+              if (sql.includes('pg_advisory_xact_lock')) locks.push(String(params[0]));
+              return sql.includes('FROM dm_seat_evictions') && eviction ? [eviction] : [];
+            },
+            getRepository: (entity: unknown) =>
+              entity === KeyPackage
+                ? keyPackageRepo
+                : entity === RevokedDevice
+                  ? revokedDeviceRepo
+                  : deviceGroupRepo,
+          }),
+      };
+      return locks;
+    };
+    const claim = { groupId: 'g1', userId: 'u1', generation: 0, owed: false };
+
     it('lets every other authority create the seat it is the gate for', async () => {
       seats = [];
+      const locks = lockedManager(null);
 
-      for (const authority of [
-        'accepted_commit',
-        'group_creator',
-        'distribution_publisher',
-      ] as const) {
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', { authority: 'group_creator' })
+      ).resolves.toEqual({ ok: true });
+      for (const authority of ['accepted_commit', 'distribution_publisher'] as const) {
         await expect(
-          service.activateDeviceMembership('u1', 'd1', 'g1', { authority })
+          service.activateDeviceMembership('u1', 'd1', 'g1', { authority, claim })
         ).resolves.toEqual({ ok: true });
       }
       expect(seats).toHaveLength(1);
+      // Every write takes it - the creator's too, which inserts beside its key package like the
+      // others - and each of the three routes takes it again after its seat committed.
+      expect(locks).toEqual(Array(6).fill('seat:g1'));
+      expect(redis.sadd).toHaveBeenCalledTimes(3);
+    });
+
+    it('writes no route for a promoted seat an eviction deleted after its commit', async () => {
+      // The eviction lands between the promotion's commit and the route's re-read under the lock.
+      const transaction = (
+        groupRepo.manager as { transaction: (cb: (m: unknown) => Promise<unknown>) => unknown }
+      ).transaction;
+      let calls = 0;
+      (groupRepo as unknown as { manager: unknown }).manager = {
+        transaction: async (cb: (m: unknown) => Promise<unknown>) => {
+          if (++calls === 2) seats = [];
+          return transaction(cb);
+        },
+      };
+
+      await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+        ok: true,
+      });
+      expect(seats).toEqual([]);
+      expect(redis.sadd).not.toHaveBeenCalled();
+      expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain('route NOT written');
+    });
+
+    it('promotes a reported seat under the group seat lock', async () => {
+      const locks = lockedManager(null);
+
+      await service.activateDeviceMembership('u1', 'd1', 'g1', REPORT);
+
+      // The promotion, then the route after it committed.
+      expect(locks).toEqual(['seat:g1', 'seat:g1']);
+    });
+
+    it('writes no seat against a claim an eviction overtook, or a departure in progress', async () => {
+      seats = [];
+      lockedManager({ generation: 1, owedDeparture: null });
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', { authority: 'accepted_commit', claim })
+      ).resolves.toEqual({ ok: false, reason: 'departed' });
+
+      lockedManager({ generation: 0, owedDeparture: 1 });
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', {
+          authority: 'distribution_publisher',
+          claim,
+        })
+      ).resolves.toEqual({ ok: false, reason: 'departed' });
+      expect(seats).toHaveLength(0);
+    });
+
+    it('refuses a claimed authority that brought no claim, rather than writing an unguarded seat', async () => {
+      seats = [];
+      lockedManager(null);
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', { authority: 'accepted_commit' })
+      ).resolves.toEqual({ ok: false, reason: 'departed' });
+      expect(seats).toHaveLength(0);
     });
 
     it('follows kick-and-re-add end to end: kicked, admitted, then reported', async () => {
