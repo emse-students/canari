@@ -133,6 +133,44 @@ a device reads its key package under the lock" ([channel-encryption](protocols/c
 `heldKeyPackages`; and refuse the target itself, either by a roster-level tombstone that the erasure
 writes and that names no one once its own window ends, or by asking core whether the account exists.
 
+## P2 - `setNotificationLevel` saves a whole member copy and can undo a demotion (review of #2284, 2026-10-24)
+
+`setNotificationLevel` reads a membership row, changes `notifLevels` and `save`s the whole copy;
+TypeORM writes back every column the copy differs on, so a role change committed between its read
+and its save is reverted (`roleIds` written back) - a demoted admin restored by changing a salon's
+notification level. The fix is an `update` of `notifLevels` alone, the rule `social-service.md` now
+states for salon rows. `promoteSuccessor` and `setRole` also save whole member copies, but the
+column they mean to write is `roleIds` itself, so they only race each other.
+([social-service](services/social-service.md#removals-are-bounded-by-the-actor-and-so-is-hiding-a-salon-2026-10-24))
+
+## P3 - Edges of the community removal lock, left by the review of #2284 (2026-10-24)
+
+- **A salon reorder can deadlock with a departure or a community deletion.** A departure now locks
+  the community's private salons in one order (`ORDER BY id`) before the membership rows, and a grant
+  and `hardDeleteWorkspace` take salon rows before membership rows (the grant-vs-deletion cycle
+  #2284's review found is closed). Left: the reorder transaction writes several salon rows in the
+  order the client sent, and `hardDeleteWorkspace`'s bulk `DELETE` takes them in whatever order the
+  plan visits them, so either can cross a departure on two salons. PostgreSQL aborts one side
+  (`40P01`); an aborted departure settles `cancelled` and is retried inline, a reorder is answered
+  5xx. The fix is the same `ORDER BY id` lock (a `SELECT ... FOR UPDATE`) before each bulk write.
+- **`assertRemovalKeepsAnAdmin` is not asked again under the lock** (pre-existing): two admins
+  kicking each other at the same moment both pass it and can leave a community with members and no
+  admin. The fix is to re-ask it inside the kick's `guard`, reading the admin set `FOR SHARE`.
+- **A group retirement runs after the commit, outside any lock.** A makes a salon public, B makes it
+  private again (the idempotent mint returns the same group G), then A's retirement deletes G on
+  chat-delivery and nulls `distributionGroupId`: a private salon with no group. The fix is a
+  conditional retirement - `UPDATE ... WHERE "distributionGroupId" = G AND NOT "isPrivate"`, and the
+  delete only when that row changed.
+- **Case.** The removal bound's member map takes the LAST of two membership rows differing only by
+  case; it should merge their roles. Allowlist entries written before the actor id was lowercased may
+  be mixed case, which `stripFromChannels`' exact compare misses: one `GROUP BY` over production's
+  `allowedUsers` for an uppercase letter settles whether any exist. A comma inside a user id would
+  corrupt the comma-separated `allowedUsers` column (theoretical).
+- **An invitation that reads a salon public and loses the race to a private flip** announces it
+  `public` and grants nothing (pre-existing): the flip's allowlist does not name the invitee.
+
+([social-service](services/social-service.md#removals-are-bounded-by-the-actor-and-so-is-hiding-a-salon-2026-10-24))
+
 ## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
 
 `deleteUserData` tombstones the DMs its discovery found. A DM opened with the account after that
@@ -622,6 +660,16 @@ active REFUSED`, with the status, code and reason). A kicked device's report is 
 `1.2.7` (enforced by the client, which refuses to sign in below it), and of the 398 devices that
 committed in the 30 days before, 0 reporting a version below `0.18.28` and 0 reporting none committed
 after 2026-10-17, the day the floor reached `1.2.7`. So no re-add without admits is expected.
+
+## P3 - An invitation reads `Membre` as the base role, so a role literally named Membre is not grantable by invitation (2026-10-22)
+
+`inviteToChannel` maps `roleName: 'Membre'` (and the base role's own name) to the base role, because
+every client before #2277 sends `Membre` for an ordinary invitation, whatever the community calls its
+lowest role ([social-service](services/social-service.md#an-invitation-grants-only-a-role-the-inviter-may-grant-2026-10-22)).
+A community that names a higher role `Membre` cannot grant it by invitation; a role change after the
+join still can. **Lifted when `minClientVersion` reaches the first version carrying #2277's client**
+(which sends no `roleName` for an ordinary invitation): then match a role by its own name before the
+`Membre` fallback, with the test that a role literally named Membre above the base role is granted.
 
 ## P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)
 

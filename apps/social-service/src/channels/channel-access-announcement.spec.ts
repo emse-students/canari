@@ -57,6 +57,7 @@ describe('ChannelService.updateChannelAccess - announcing the new decision', () 
     const channelRepo = {
       findOne: jest.fn().mockResolvedValue(channel),
       find: jest.fn().mockResolvedValue([channel]),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       save: jest.fn((c: Record<string, unknown>) => Promise.resolve(c)),
     };
     const memberRepo = {
@@ -82,7 +83,7 @@ describe('ChannelService.updateChannelAccess - announcing the new decision', () 
     const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
 
     Object.assign(memberRepo, {
-      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo })),
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
     });
     const service = new ChannelService(
       noop as unknown as Repository<Workspace>,
@@ -209,6 +210,7 @@ describe('ChannelService.createChannel - a creation is a grant', () => {
     const channelRepo = {
       maximum: jest.fn().mockResolvedValue(null),
       create: jest.fn((c: Record<string, unknown>) => ({ ...c })),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       save: jest.fn((c: Record<string, unknown>) => {
         const row = { ...c, id: 'ch-new' };
         saved.push(row);
@@ -245,7 +247,7 @@ describe('ChannelService.createChannel - a creation is a grant', () => {
     const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
 
     Object.assign(memberRepo, {
-      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo })),
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
     });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
@@ -385,6 +387,7 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
     const channelRepo = {
       findOne: jest.fn().mockResolvedValue(channel),
       find: jest.fn().mockResolvedValue([channel]),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       save: jest.fn((c: Record<string, unknown>) => Promise.resolve(c)),
     };
     const memberRepo = {
@@ -415,7 +418,7 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
     const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
 
     Object.assign(memberRepo, {
-      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo })),
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
     });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,

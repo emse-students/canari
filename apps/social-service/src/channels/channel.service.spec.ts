@@ -74,6 +74,7 @@ describe('ChannelService security hardening', () => {
       // salon a leaver must be cut from), and a bare `jest.fn()` there fails as a TypeError deep
       // inside the service instead of as the assertion the test is about.
       find: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       save: jest.fn(),
     };
     const roleRepo = {
@@ -134,7 +135,7 @@ describe('ChannelService security hardening', () => {
     };
 
     Object.assign(memberRepo, {
-      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo })),
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
     });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
@@ -513,7 +514,7 @@ describe('ChannelService security hardening', () => {
     workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
     roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
-    memberRepo.find.mockResolvedValue([{ userId: 'u1' }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
 
     await service.kickFromWorkspace('ws1', 'u-bob', 'u1');
 
@@ -539,7 +540,7 @@ describe('ChannelService security hardening', () => {
     });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
     roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
-    memberRepo.find.mockResolvedValue([{ userId: 'u1' }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
 
     await service.removeMemberFromChannel('ch1', 'u-bob', 'u1');
 
@@ -2875,6 +2876,58 @@ describe('ChannelService security hardening', () => {
     expect(rows.find((r) => r.userId === 'mod')?.roleIds).toEqual(['r-admin']);
     expect(rows.map((r) => r.userId)).not.toContain('boss');
     expect(repos.hardDeletes).not.toHaveBeenCalled();
+  });
+
+  it('account deletion promotes by rank before what the roles grant', async () => {
+    // A Moderateur outranks a custom role even where the custom role grants more: counting
+    // permissions alone would promote 'aaa'.
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
+      { userId: 'aaa', roleIds: ['r-custom-big'] },
+      { userId: 'mod', roleIds: ['r-mod'] },
+    ]);
+    repos.roleRepo.find.mockResolvedValue([
+      ...GOVERNED_ROLES,
+      {
+        id: 'r-custom-big',
+        name: 'Gardien',
+        priority: 11,
+        permissions: ['channel.manage', 'channel.moderate', 'member.invite', 'member.kick'],
+      },
+    ]);
+
+    await repos.service.removeAccountFromWorkspaces('boss');
+
+    expect(rows.find((r) => r.userId === 'mod')?.roleIds).toEqual(['r-admin']);
+    expect(rows.find((r) => r.userId === 'aaa')?.roleIds).toEqual(['r-custom-big']);
+  });
+
+  it('account deletion breaks a tie in rank by what the roles grant, before the user id', async () => {
+    // Custom roles share one rank (`createRole` places each just above the base role), so among
+    // them the successor is the one whose roles grant the most: rank and user id alone would
+    // promote 'aaa'.
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
+      { userId: 'aaa', roleIds: ['r-custom-1'] },
+      { userId: 'bbb', roleIds: ['r-custom-2'] },
+    ]);
+    repos.roleRepo.find.mockResolvedValue([
+      ...GOVERNED_ROLES,
+      { id: 'r-custom-1', name: 'Aide', priority: 11, permissions: ['member.invite'] },
+      {
+        id: 'r-custom-2',
+        name: 'Gardien',
+        priority: 11,
+        permissions: ['member.invite', 'member.kick'],
+      },
+    ]);
+
+    await repos.service.removeAccountFromWorkspaces('boss');
+
+    expect(rows.find((r) => r.userId === 'bbb')?.roleIds).toEqual(['r-admin']);
+    expect(rows.find((r) => r.userId === 'aaa')?.roleIds).toEqual(['r-custom-1']);
   });
 
   it('account deletion deletes a community it emptied', async () => {
