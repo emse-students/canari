@@ -160,13 +160,130 @@ pub fn verify_graine_signature(
     }
 }
 
+/// The answer one check gives the JS side: `valid`, or the refusal's [`GraineSignatureError::code`].
+/// One spelling for the single verifier and the batch, so the two cannot name a verdict differently.
+pub fn graine_verdict_code(verdict: &Result<(), GraineSignatureError>) -> &'static str {
+    match verdict {
+        Ok(()) => "valid",
+        Err(e) => e.code(),
+    }
+}
+
+/// One signature to check inside a page batch: borrowed from the packed buffer, never copied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraineSignatureCheck<'a> {
+    pub public: &'a [u8],
+    pub message: &'a [u8],
+    pub signature: &'a [u8],
+}
+
+/// A packed batch that does not parse. A CONTRACT break between the WebView and this engine (the
+/// packer is `packGraineSignatureChecks` in `graineV2.ts`), never a verdict about any signature, so
+/// it fails the whole call instead of being spread over the rows as a refusal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum GraineBatchError {
+    /// The buffer ended inside the field starting at this offset.
+    #[error("packed Graine signature batch truncated at byte {0}")]
+    Truncated(usize),
+    /// Bytes were left after the announced number of checks.
+    #[error("packed Graine signature batch has {0} trailing byte(s)")]
+    Trailing(usize),
+}
+
+/// Reads a packed batch: `be32(count)`, then per check `lp(public) || lp(message) || lp(signature)`,
+/// every `lp` a 4-byte big-endian length. Length-prefixed, so a field can never bleed into the next.
+pub fn unpack_graine_signature_checks(
+    packed: &[u8],
+) -> Result<Vec<GraineSignatureCheck<'_>>, GraineBatchError> {
+    let mut at = 0usize;
+    let count = read_be32(packed, &mut at)? as usize;
+    // Every check is at least three 4-byte prefixes, so a count the buffer cannot hold is refused
+    // before anything is allocated for it.
+    if count > packed.len().saturating_sub(4) / 12 {
+        return Err(GraineBatchError::Truncated(at));
+    }
+    let mut checks = Vec::with_capacity(count);
+    for _ in 0..count {
+        let public = read_field(packed, &mut at)?;
+        let message = read_field(packed, &mut at)?;
+        let signature = read_field(packed, &mut at)?;
+        checks.push(GraineSignatureCheck {
+            public,
+            message,
+            signature,
+        });
+    }
+    if at != packed.len() {
+        return Err(GraineBatchError::Trailing(packed.len() - at));
+    }
+    Ok(checks)
+}
+
+fn read_be32(packed: &[u8], at: &mut usize) -> Result<u32, GraineBatchError> {
+    let end = at.checked_add(4).ok_or(GraineBatchError::Truncated(*at))?;
+    let bytes = packed
+        .get(*at..end)
+        .ok_or(GraineBatchError::Truncated(*at))?;
+    *at = end;
+    Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn read_field<'a>(packed: &'a [u8], at: &mut usize) -> Result<&'a [u8], GraineBatchError> {
+    let start = *at;
+    let len = read_be32(packed, at)? as usize;
+    let end = at
+        .checked_add(len)
+        .ok_or(GraineBatchError::Truncated(start))?;
+    let field = packed
+        .get(*at..end)
+        .ok_or(GraineBatchError::Truncated(start))?;
+    *at = end;
+    Ok(field)
+}
+
+/// Verifies a page's signatures in ONE call, each one exactly as [`verify_graine_signature`] does -
+/// same strict check, same refusals, same per-check log line - and answers one verdict per check, in
+/// order. **Not an Ed25519 batch verification**: that answers one bit for the whole set and is not
+/// strict, so one forged row would refuse its honest neighbours. What the batch saves is the bridge
+/// (one crossing instead of one per row), never a check.
+pub fn verify_graine_signatures(
+    checks: &[GraineSignatureCheck<'_>],
+) -> Vec<Result<(), GraineSignatureError>> {
+    let verdicts: Vec<_> = checks
+        .iter()
+        .map(|c| verify_graine_signature(c.public, c.message, c.signature))
+        .collect();
+    let refused = verdicts.iter().filter(|v| v.is_err()).count();
+    log::debug!(
+        "[GRAINE_SIG] batch of {} signature(s) verified, {refused} refused",
+        checks.len()
+    );
+    verdicts
+}
+
+/// [`unpack_graine_signature_checks`] then [`verify_graine_signatures`], answered as the verdict
+/// codes the JS side classifies on (`valid` or [`GraineSignatureError::code`]). The one entry both
+/// the Tauri command and the WASM export call, so the two platforms share the decoder too.
+pub fn verify_packed_graine_signatures(
+    packed: &[u8],
+) -> Result<Vec<&'static str>, GraineBatchError> {
+    let checks = unpack_graine_signature_checks(packed).inspect_err(|e| {
+        log::error!("[GRAINE_SIG] signature batch refused, nothing verified: {e}");
+    })?;
+    Ok(verify_graine_signatures(&checks)
+        .iter()
+        .map(graine_verdict_code)
+        .collect())
+}
+
 impl MlsManager {
     /// Signs `message` with this device's MLS credential key - the key every group this device is in
     /// already knows it by, which is what makes an endorsement checkable from a distribution group's
     /// tree without any new key to distribute.
     ///
     /// `message` must be a Graine structure (see the module docs for why that can never collide with
-    /// an MLS `SignContent`); this is not a general-purpose signing oracle and has no other caller.
+    /// an MLS `SignContent`); this is not a general-purpose signing oracle. Its callers are a v2 seed's
+    /// endorsement and an admission voucher (channel-encryption section 25), both label-prefixed.
     pub fn sign_with_device_credential(&self, message: &[u8]) -> Result<Vec<u8>, MlsError> {
         log::debug!("[GRAINE_SIG] endorsing with the device credential");
         self.keypair.sign(message).map_err(|e| {
@@ -231,6 +348,167 @@ mod tests {
     }
 
     const SHARED_VECTOR_SIGNATURE_HEX: &str = "0cbcd5afb70a886d305c0531c2d413a18e5e1290ec31b148d29b9c3e94f8aeea141f8d1c9013fc19ce9b95580944c02395d4379a8c3550df0bfd7c6250b5d209";
+
+    fn pack(checks: &[(&[u8], &[u8], &[u8])]) -> Vec<u8> {
+        let mut out = (checks.len() as u32).to_be_bytes().to_vec();
+        for (p, m, s) in checks {
+            for field in [p, m, s] {
+                out.extend_from_slice(&(field.len() as u32).to_be_bytes());
+                out.extend_from_slice(field);
+            }
+        }
+        out
+    }
+
+    /// The batch answers, check by check, what the single verifier answers - for every verdict the
+    /// single one can give - and one refused check changes nothing about its neighbours.
+    #[test]
+    fn a_batch_answers_each_check_exactly_as_the_single_verifier() {
+        let a = new_session_keypair().unwrap();
+        let b = new_session_keypair().unwrap();
+        let sig = sign_with_session_key(&a.secret, b"row-1").unwrap();
+        let sig2 = sign_with_session_key(&a.secret, b"row-2").unwrap();
+        // A 32-byte public key that is not a curve point (y = 2 has no x on Ed25519).
+        let mut not_a_point = [0u8; 32];
+        not_a_point[0] = 2;
+        let cases: Vec<(&[u8], &[u8], &[u8])> = vec![
+            (&a.public, b"row-1", &sig),
+            (&b.public, b"row-1", &sig), // another key
+            (&a.public, b"row-X", &sig), // tampered bytes
+            (&a.public[..31], b"row-1", &sig),
+            (&a.public, b"row-1", &sig[..63]),
+            (&not_a_point, b"row-1", &sig),
+            (&a.public, b"row-2", &sig2),
+        ];
+        let packed = pack(&cases);
+        let batch = verify_packed_graine_signatures(&packed).unwrap();
+        let single: Vec<&str> = cases
+            .iter()
+            .map(|(p, m, s)| graine_verdict_code(&verify_graine_signature(p, m, s)))
+            .collect();
+        assert_eq!(batch, single);
+        assert_eq!(batch[0], "valid");
+        assert_eq!(batch[1], "invalid");
+        assert_eq!(batch[2], "invalid");
+        assert_eq!(batch[3], "malformed-public-key");
+        assert_eq!(batch[4], "malformed-signature");
+        assert_eq!(batch[6], "valid");
+    }
+
+    #[test]
+    fn an_empty_batch_is_an_empty_answer() {
+        assert_eq!(
+            verify_packed_graine_signatures(&0u32.to_be_bytes()).unwrap(),
+            Vec::<&str>::new()
+        );
+    }
+
+    /// A malformed packing is a broken contract, refused whole - never a verdict about a row.
+    #[test]
+    fn a_malformed_packing_is_refused_whole() {
+        let a = new_session_keypair().unwrap();
+        let sig = sign_with_session_key(&a.secret, b"m").unwrap();
+        let packed = pack(&[(&a.public, b"m", &sig)]);
+        assert!(matches!(
+            verify_packed_graine_signatures(&packed[..packed.len() - 1]),
+            Err(GraineBatchError::Truncated(_))
+        ));
+        let mut trailing = packed.clone();
+        trailing.push(0);
+        assert_eq!(
+            verify_packed_graine_signatures(&trailing),
+            Err(GraineBatchError::Trailing(1))
+        );
+        assert!(matches!(
+            verify_packed_graine_signatures(&[0, 0]),
+            Err(GraineBatchError::Truncated(0))
+        ));
+        // A count the buffer cannot hold is refused before any allocation.
+        assert!(matches!(
+            verify_packed_graine_signatures(&u32::MAX.to_be_bytes()),
+            Err(GraineBatchError::Truncated(_))
+        ));
+        // A field length past the end.
+        let mut long = 1u32.to_be_bytes().to_vec();
+        long.extend_from_slice(&u32::MAX.to_be_bytes());
+        long.extend_from_slice(&[0u8; 8]);
+        assert!(matches!(
+            verify_packed_graine_signatures(&long),
+            Err(GraineBatchError::Truncated(4))
+        ));
+    }
+
+    /// The packing `graineV2.test.ts` asserts from `packGraineSignatureChecks`: the contract between
+    /// the WebView's packer and this decoder, pinned on both sides.
+    #[test]
+    fn unpacks_the_shared_packing_vector() {
+        let hex = shared_packing_vector_hex();
+        let bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let checks = unpack_graine_signature_checks(&bytes).unwrap();
+        assert_eq!(
+            checks,
+            vec![
+                GraineSignatureCheck {
+                    public: &[1u8; 32],
+                    message: b"ab",
+                    signature: &[2u8; 64],
+                },
+                GraineSignatureCheck {
+                    public: &[3],
+                    message: &[],
+                    signature: &[4, 5],
+                },
+            ]
+        );
+    }
+
+    fn shared_packing_vector_hex() -> String {
+        format!(
+            "00000002{}{}{}{}{}{}{}",
+            "00000020",
+            "01".repeat(32),
+            "000000026162",
+            "00000040",
+            "02".repeat(64),
+            "0000000103",
+            "00000000000000020405"
+        )
+    }
+
+    /// Not a gate: what one page of 200 checks costs in this engine, run with
+    /// `cargo test --release -p mls-core page_of_200 -- --ignored --nocapture`. The batch does the
+    /// same 200 verifications as 200 single calls; what it removes is 199 crossings of the bridge,
+    /// which no test here can run (`community-open-budget.md`, F7).
+    #[test]
+    #[ignore]
+    fn page_of_200_cost() {
+        let a = new_session_keypair().unwrap();
+        let rows: Vec<(Vec<u8>, Vec<u8>)> = (0..200)
+            .map(|i| {
+                let m = vec![i as u8; 400];
+                let s = sign_with_session_key(&a.secret, &m).unwrap();
+                (m, s)
+            })
+            .collect();
+        let cases: Vec<(&[u8], &[u8], &[u8])> = rows
+            .iter()
+            .map(|(m, s)| (a.public.as_slice(), m.as_slice(), s.as_slice()))
+            .collect();
+        let packed = pack(&cases);
+        let t = std::time::Instant::now();
+        for (p, m, s) in &cases {
+            assert!(verify_graine_signature(p, m, s).is_ok());
+        }
+        let single = t.elapsed();
+        let t = std::time::Instant::now();
+        let batch = verify_packed_graine_signatures(&packed).unwrap();
+        let batched = t.elapsed();
+        assert!(batch.iter().all(|v| *v == "valid"));
+        println!("200 checks: single calls {single:?}, one packed batch {batched:?}");
+    }
 
     #[test]
     fn the_device_credential_signs_what_its_public_key_verifies() {

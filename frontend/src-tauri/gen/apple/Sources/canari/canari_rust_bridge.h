@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -42,8 +43,10 @@ char *canari_native_decrypt_message_with_commits(
     size_t cipher_len,
     const char *locale);
 
+/// cache_key_b64 is the install's native cache key the mirror is sealed under, "" when unreadable.
 char *canari_native_open_graine_push(
     const char *data_dir,
+    const char *cache_key_b64,
     const char *channel_id,
     const char *session_id,
     uint32_t message_index,
@@ -54,9 +57,20 @@ char *canari_native_open_graine_push(
     const char *locale);
 
 /// Writes the seeds of a key-material frame (the `seeds` array of a graine-key-material refusal)
-/// into data_dir/graine_seeds.json, under the file lock every writer takes. Returns how many were
-/// kept, or -1 when the payload is not a JSON array. Channel-encryption section 19.
-int32_t canari_native_store_graine_seeds(const char *data_dir, const char *seeds_json);
+/// into data_dir/graine_seeds.json, sealed under cache_key_b64, under the file lock every writer
+/// takes. Returns how many were kept, or -1 when the payload is not a JSON array or there is no
+/// key (nothing is ever written in the clear). Channel-encryption section 19.
+int32_t canari_native_store_graine_seeds(
+    const char *data_dir, const char *cache_key_b64, const char *seeds_json);
+
+/// Whether data_dir/graine_seeds.json holds a session: 1 yes, 0 no, -1 unreadable.
+int32_t canari_native_graine_seed_held(
+    const char *data_dir, const char *cache_key_b64, const char *channel_id,
+    const char *session_id);
+
+/// Seals one push-cache line under cache_key_b64. NULL when there is no usable key - the caller then
+/// writes nothing. Free with canari_free_string.
+char *canari_native_seal_cache_line(const char *cache_key_b64, const char *line);
 
 unsigned char *canari_native_decrypt_media(
     const char *key_b64,
@@ -66,16 +80,6 @@ unsigned char *canari_native_decrypt_media(
     size_t *out_len);
 
 void canari_free_bytes(unsigned char *ptr, size_t len);
-
-char *canari_native_create_welcome_background(
-    const char *files_dir,
-    const unsigned char *state_ptr,
-    size_t state_len,
-    const char *device_key_b64,
-    const char *user_id,
-    const char *device_id,
-    const char *group_id,
-    const char *key_package_b64);
 
 int canari_native_process_welcome_background(
     const char *files_dir,
@@ -94,7 +98,8 @@ char *canari_native_send_messages_background(
     const char *device_key_b64,
     const char *user_id,
     const char *device_id,
-    const char *entries_json);
+    const char *entries_json,
+    size_t max_attempts);
 
 char *canari_native_build_text_message_proto(
     const char *message_id,
@@ -107,6 +112,38 @@ int canari_native_cleanup_pending_db(const char *files_dir);
 
 void canari_ios_on_resume(void);
 void canari_ios_on_pause(void);
+
+/* A share INTO Canari left by the Share Extension in the App Group (commands/app_group_share.rs):
+   carried into the app data and cache directories. Answers one of the codes below, which the
+   caller NSLogs - the launch call runs before the Rust logger exists. Pinned against the Rust
+   IMPORT_* constants by iosShareExtension.test.ts. */
+#define CANARI_SHARE_IMPORT_IMPORTED 1
+#define CANARI_SHARE_IMPORT_NOTHING 0
+#define CANARI_SHARE_IMPORT_BUSY 2
+#define CANARI_SHARE_IMPORT_DROPPED 3
+#define CANARI_SHARE_IMPORT_NO_DIRS (-1)
+#define CANARI_SHARE_IMPORT_NO_GROUP (-2)
+#define CANARI_SHARE_IMPORT_FAILED (-3)
+int canari_ios_import_app_group_share(const char *data_dir, const char *cache_dir);
+
+/* Once per process, before the page exists: deletes the share copies no current manifest names,
+   the App Group's leftover claim files, and repairs an App Group epoch behind the app's. The
+   report is NSLogged by the caller (Rust's CanariShareSweep, same layout; flags are SWEEP_*). */
+typedef struct {
+  int32_t deleted;
+  int32_t leftovers;
+  uint32_t flags;
+} CanariShareSweep;
+#define CANARI_SHARE_SWEEP_ALREADY_RAN (1u << 0)
+#define CANARI_SHARE_SWEEP_NO_DIRS (1u << 1)
+#define CANARI_SHARE_SWEEP_NO_GROUP (1u << 2)
+#define CANARI_SHARE_SWEEP_GROUP_BUSY (1u << 3)
+#define CANARI_SHARE_SWEEP_GROUP_LOCK_FAILED (1u << 4)
+#define CANARI_SHARE_SWEEP_EPOCH_UNREADABLE (1u << 5)
+#define CANARI_SHARE_SWEEP_EPOCH_REPAIRED (1u << 6)
+#define CANARI_SHARE_SWEEP_EPOCH_REPAIR_FAILED (1u << 7)
+#define CANARI_SHARE_SWEEP_LEFTOVER_FAILED (1u << 8)
+CanariShareSweep canari_ios_sweep_shared_inboxes(const char *data_dir, const char *cache_dir);
 
 #ifdef __cplusplus
 }

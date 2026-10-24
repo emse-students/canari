@@ -61,9 +61,9 @@ afterEach(() => {
 });
 
 describe('devicesToAdmit', () => {
-  it('keeps only the devices the tree holds no leaf for, case-insensitively', () => {
+  it('keeps only the devices the tree holds no leaf for, the user half without case', () => {
     const missing = devicesToAdmit({
-      leafIdentities: ['admin:web-1', 'BOB:Phone'],
+      leafIdentities: ['admin:web-1', 'BOB:phone'],
       newcomerUserId: 'bob',
       devices: [
         { deviceId: 'phone', keyPackage: kp(1) },
@@ -71,6 +71,17 @@ describe('devicesToAdmit', () => {
       ],
     });
     expect(missing.map((d) => d.deviceId)).toEqual(['web']);
+  });
+
+  // THE DEVICE HALF IS EXACT, as the canonical identity Rust binds and pins by: `bob:Phone` is not
+  // `bob:phone`, so reading it as one would leave a device of the newcomer unadmitted.
+  it('reads the device half exactly, as Rust does', () => {
+    const missing = devicesToAdmit({
+      leafIdentities: ['bob:Phone'],
+      newcomerUserId: 'bob',
+      devices: [{ deviceId: 'phone', keyPackage: kp(1) }],
+    });
+    expect(missing).toHaveLength(1);
   });
 
   it('is not fooled by another user holding a device of the same name', () => {
@@ -97,8 +108,8 @@ describe('admitNewcomerToDistributionGroup', () => {
     expect(mls.addMembersBulk).toHaveBeenCalledWith(
       'key-group',
       [
-        { deviceId: 'phone', keyPackage: kp(1) },
-        { deviceId: 'web', keyPackage: kp(2) },
+        { deviceId: 'phone', keyPackage: kp(1), userId: 'bob' },
+        { deviceId: 'web', keyPackage: kp(2), userId: 'bob' },
       ],
       ['bob:phone', 'bob:web']
     );
@@ -165,7 +176,7 @@ describe('admitNewcomerToDistributionGroup', () => {
 
     expect(mls.addMembersBulk).toHaveBeenCalledWith(
       'key-group',
-      [{ deviceId: 'phone', keyPackage: kp(1) }],
+      [{ deviceId: 'phone', keyPackage: kp(1), userId: 'bob' }],
       ['bob:phone']
     );
     expect(mls.sendWelcome).toHaveBeenCalledTimes(1);
@@ -209,6 +220,26 @@ describe('admitNewcomerToDistributionGroup', () => {
       mls.addMembersBulk.mock.calls[1][1].map((d: { deviceId: string }) => d.deviceId)
     ).toEqual(['phone']);
     expect(mls.sendWelcome).toHaveBeenCalledTimes(1);
+    expect(mls.releaseAddLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-builds at once an Add whose seat claim an unrelated eviction overtook', async () => {
+    // The server refused the whole commit and advanced nothing: the epoch did not move, and the
+    // retry meets a fresh claim. Each such refusal proves an eviction landed, which bounds it.
+    mls.getEpoch.mockReturnValue(5);
+    mls.addMembersBulk
+      .mockRejectedValueOnce(new CommitRefusedError('seat_claim_overtaken', 5, 5))
+      .mockResolvedValueOnce({
+        welcome: new Uint8Array([9]),
+        ratchetTree: new Uint8Array([8]),
+        addedDeviceIds: ['phone'],
+        skipped: [],
+      });
+
+    const out = await admitNewcomerToDistributionGroup(workspaceScope('ws-1'), 'bob', log);
+
+    expect(out).toMatchObject({ kind: 'admitted' });
+    expect(mls.addMembersBulk).toHaveBeenCalledTimes(2);
     expect(mls.releaseAddLock).toHaveBeenCalledTimes(1);
   });
 

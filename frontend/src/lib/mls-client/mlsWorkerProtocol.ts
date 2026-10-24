@@ -9,6 +9,8 @@
  * An object literal typed only by the worker's private interface is checked by nobody.
  */
 
+import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
+
 /** Plain CBOR snapshot to seal under the device key, off the main thread. */
 export interface MlsEncryptRequest {
   type: 'encrypt';
@@ -64,6 +66,8 @@ export type MlsCryptoPageResult =
       ok: true;
       data: ArrayBuffer | null;
       /** The verified sender, beside `data` only. */ sender?: string | null;
+      /** mls-core's author-proof verdict, beside `data` only. */
+      author?: AuthorVerdict;
     }
   | { ok: false; error: string };
 

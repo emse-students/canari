@@ -17,7 +17,8 @@ vi.mock('$lib/utils/previewTicket.svelte', () => ({
   gifMediaTicket: () => tickets.gif,
 }));
 
-const { fetchGifFile, isKlipyCdnUrl, proxiedGifUrl } = await import('$lib/utils/gifMediaProxy');
+const { fetchGifFile, GifRelayError, isKlipyCdnUrl, proxiedGifUrl } =
+  await import('$lib/utils/gifMediaProxy');
 
 const KLIPY = 'https://static.klipy.com/ii/abc/de/f.gif';
 
@@ -100,7 +101,7 @@ describe('fetchGifFile - a comment GIF read through the relay', () => {
     tickets.gif = '';
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    await expect(fetchGifFile(KLIPY)).rejects.toThrow('no GIF relay ticket');
+    await expect(fetchGifFile(KLIPY)).rejects.toMatchObject({ failure: 'rejected' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -109,6 +110,74 @@ describe('fetchGifFile - a comment GIF read through the relay', () => {
       'fetch',
       vi.fn(async () => new Response(null, { status: 413 }))
     );
-    await expect(fetchGifFile(KLIPY)).rejects.toThrow('HTTP 413');
+    await expect(fetchGifFile(KLIPY)).rejects.toMatchObject({ failure: 'rejected' });
+  });
+
+  it('tells a saturated relay (503) from a refusal, so the reader is told to wait', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 503 }))
+    );
+    const error = await fetchGifFile(KLIPY).catch((e) => e);
+    expect(error).toBeInstanceOf(GifRelayError);
+    expect(error.failure).toBe('busy');
+  });
+
+  it('classifies a transport failure as the network', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      })
+    );
+    await expect(fetchGifFile(KLIPY)).rejects.toMatchObject({ failure: 'network' });
+  });
+
+  it('refuses a body declared larger than the relay ceiling without reading it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () => new Response(new Uint8Array([1]), { headers: { 'content-length': '99999999' } })
+      )
+    );
+    await expect(fetchGifFile(KLIPY)).rejects.toMatchObject({ failure: 'too-large' });
+  });
+
+  it('reports progress while the body arrives', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(40));
+        controller.enqueue(new Uint8Array(60));
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { headers: { 'content-length': '100' } }))
+    );
+    const seen: number[] = [];
+    const file = await fetchGifFile(KLIPY, { onProgress: (f) => seen.push(f) });
+    expect(seen).toEqual([0.4, 1, 1]);
+    expect(file.size).toBe(100);
+  });
+
+  it('times out under its own deadline, and rethrows the caller abort as an abort', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            if (init.signal?.aborted) reject(init.signal.reason);
+            init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+          })
+      )
+    );
+    await expect(fetchGifFile(KLIPY, { timeoutMs: 20 })).rejects.toMatchObject({
+      failure: 'timeout',
+    });
+    const controller = new AbortController();
+    const pending = fetchGifFile(KLIPY, { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.not.toBeInstanceOf(GifRelayError);
   });
 });

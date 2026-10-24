@@ -308,7 +308,15 @@ const BENIGN = [
   // is owed. Deliberately NOT written as a `^\[OUTBOX\] \S+ withdrawn` prefix - the sibling branch
   // one `if` above it in `outbox.ts` fires when the send was already in flight, means the opposite
   // (the peers DO have it), and sits in `NOTABLE`. A prefix rule would silence that one too.
-  /^\[OUTBOX\] [0-9a-f]{8}… withdrawn from the queue before it was ever sent$/,
+  // Spelt as `outbox.ts` spells it since the lanes: "before this tab sent it" - the older wording
+  // matched nothing from then on.
+  /^\[OUTBOX\] [0-9a-f]{8}… withdrawn from the queue before (?:it was ever sent|this tab sent it)$/,
+  // A GROUP EXIT SETTLING ITS QUEUE (GRP-6, 2026-10-22): the leave or delete sends what the group
+  // still had queued before its server step, so none is refused 403 afterwards. Benign only at
+  // `0 lost`; a loss names its kinds and is the line's evidence. And the owed exit refusing a frame
+  // queued after it (the closing conversation's read mark): the gate doing its job.
+  /^\[OUTBOX\] (?:leave|delete) of [0-9a-f]{8}…: \d+ of \d+ queued entr(?:y|ies) sent before the server step, 0 lost$/,
+  /^\[OUTBOX\] [0-9a-f]{8}… \((?:control|text|reply|media)\) not queued: this device owes the (?:leave|delete) of [0-9a-f]{8}…, so nothing of it can be delivered$/,
   // AN EVICTION APPLIED TWICE. Commits are replayed - by a history drain, by a reconnect - and the
   // second application finds the conversation already retired. Nothing happened, and saying so is
   // what separates it from the first application, which DID something and sits in `STATE_CHANGE`.
@@ -450,16 +458,23 @@ const BENIGN = [
   /^\[GROUP\] My other devices: \d+ /,
   /^\[GROUP\] addMembersBulk result: welcome=(true|false) \(\d+ bytes\), added=\d+ /,
   /^\[GROUP\] Welcome -> \S+ OK$/,
-  /^\[GROUP\] Group ".*" created successfully \(id=\S+\)$/,
-  /^\[OK\] Group ".*" created\.$/,
+  // THE ID, NOT THE NAME, since the creation lines stopped printing a group's name (`groupCreation.ts`).
+  // The name-shaped rules matched nothing from then on, and every GRP row came back PASS-DIRTY on its
+  // own creation (2026-10-22).
+  /^\[GROUP\] Group created successfully \(id=[0-9a-f]{8}…\)$/,
+  /^\[OK\] Group [0-9a-f]{8}… created\.$/,
   /^Inviting \d+ member\(s\): \S+$/,
   /^\[SYNC\] bulk\.addedDeviceIds: \S+$/,
   /^\[SYNC\] Welcome -> \S+ OK$/,
   /^\[OK\] Added: \S+ \(\d+ device\(s\)\)\. \(\d+ user\(s\) delivered\)$/,
   /^\[SYNC\] Members added: \S+ \(\d+\/\d+ delivered\)$/,
   /^\S+ retire du groupe\.$/,
-  /^Groupe renomme en ".*"$/,
-  /^.{0,4}\s?Group renamed to ".*" by /,
+  // The rename, on the renamer (`useConversations`) and on the other member (`systemMessageHandler`),
+  // spelt as the app spells it since the name left the log line - the old rules matched nothing.
+  /^Group [0-9a-f]{8}… renamed$/,
+  /^.{0,4}\s?Group renamed by [0-9a-f]{8}…$/,
+  // A member leaving, seen by the one who stays (`systemMessageHandler`). GRP-6's subject.
+  /^\[INFO\] [0-9a-f]{8}… left group "[0-9a-f]{8}…"$/,
   // The invitee's side of the same commit. `already held ... (idempotent)` is the redelivery being
   // absorbed, which is the mechanism working - a redelivered Welcome that was NOT absorbed is what
   // would matter, and it does not match this.
@@ -478,6 +493,16 @@ const BENIGN = [
   // of a back-stack hand-off, the second of the band the keyboard layout is computed from.
   /^\[historyOverlay\] overlay \d+ takes the ghost entry under the pointer \(a hand-off\)$/,
   /^\[ChatComposer\] composer height (?:unset|\d+px) -> \d+px$/,
+  // FOUR MORE DECISION LINES, read 2026-10-22 on GRP, every one on a healthy conversation: the overlay
+  // stack written at boot (`historyOverlayStack.ts`); the send tone's audio output opened and suspended
+  // again (`toneOutput.ts`, the reason is one of the named ones); the outbox's durable write and its
+  // cost (`outbox.ts`); and the view following a group's new message (`[CHAT_VIEW]`, the group form of
+  // the `channel_` line `PAGE_BOOT_NARRATION` names).
+  /^\[historyOverlay\] stack ready - (?:entries written|no system Back, no entries)$/,
+  /^\[AUDIO\] opening the tone output for \w+$/,
+  /^\[AUDIO\] last tone ended, suspending the tone output$/,
+  /^\[OUTBOX\] [0-9a-f]{8}… durable write took \d+ ms \(\d+ file bytes\)$/,
+  /^\[CHAT_VIEW\] [0-9a-f]{8} messages \d+ \(hasNewMessage=(?:true|false), response=[a-z/-]+\)$/,
 ];
 
 /**
@@ -1087,10 +1112,9 @@ const NOTABLE = [
   // classifier has to be right on both sides of it.
   /^\[PENDING\] Welcome \u2192 \S+ \(user: \S+\) (?:pour|for) \S+$/,
   // THE FIFTH SPELLING OF "THE GUARD HELD", reached from the ERROR path rather than a pre-check:
-  // the Add threw `DuplicateSignatur`, so the leaf was already in the tree. It is the heaviest of
-  // the five - `handleDuplicateLeafError` follows and that KICKS - but the kick's own outcome lines
-  // carry their own verdicts (`[KICK]` has no rule at all, deliberately), so this line is `notable`
-  // and the repair behind it is judged on its own.
+  // the Add threw `DuplicateSignatur`, so the key was already in the tree. Nothing is kicked since
+  // 2026-10-22: the tree is read again, a leaf of this identity means the invitation is fulfilled,
+  // and any other holder of the key is a `console.error` judged on its own - so this line is `notable`.
   /^\[PENDING\] \S+ already in MLS tree of \S+$/,
   // THE WrongEpoch RACE RESOLVING ITSELF: the concurrent commit had already added this device, so
   // the membership reads `active` and the sweep stops. `notable` - the race is real and self-
@@ -1179,7 +1203,7 @@ const NOTABLE = [
   // passes reporting a different spelling of "the guard held". So the site was read whole
   // (actions.ts:753-975 plus sessionAuth.ts:987) and every line placed deliberately:
   //
-  //   notable      - the six below plus `Welcome -> `, `leaf in MLS tree - kick + re-add` (claimed
+  //   notable      - the six below plus `Welcome -> `, `leaf in MLS tree - remove + re-add in one commit` (claimed
   //                  by the generic `re-?add` rule) and `re-add suspended`. A guard that held.
   //   unexplained  - the ten that are a refusal, an abort, an error, or the >30-day KeyPackage
   //                  FALLBACK. Deliberately ruleless, and pinned that way in classify-selftest.mjs
@@ -1868,7 +1892,7 @@ const OFFLINE_NOISE =
 // `report` truncates at 300 characters - so the verb never survives to be matched. Matching the
 // SUBJECT instead is both shorter and immune to the truncation.
 const CUT_REACTION =
-  /WebSocket connection to '?wss?:|\[WS\] WebSocket error|\[WS\] Gateway connection failed|Connection lost\. Retrying|\[OUTBOX\] \S+ transient failure|Gateway inaccessible: WebSocket connection failed/i;
+  /WebSocket connection to '?wss?:|\[WS\] WebSocket error|\[WS\] Gateway connection failed|Connection lost\. Retrying|\[OUTBOX\] \S+ transient failure|Gateway inaccessible: (?:Error: )?WebSocket connection failed/i;
 
 /**
  * WHAT A COLD START SAYS, AND WHY IT IS FORGIVEN PER ROW RATHER THAN GLOBALLY BENIGN.
@@ -1940,6 +1964,15 @@ export const COLD_START_NARRATION = [
 export const EVICTED_REJOIN_NARRATION = [
   // Both scope shapes, for the reason given over the in-flight rule in `BENIGN`.
   /^\[GRAINE\] (?:community [0-9a-f]{8}|salon [0-9a-f]{8} of [0-9a-f]{8}): this device holds the distribution group but the group holds NO row for it \(0 device\(s\) for this user\) - the local group is stale, rejoining$/,
+];
+
+/**
+ * A MEMBER REMOVED AND ADDED BACK, SAID BY THE MEMBER: the Welcome of the re-add withdraws the removal
+ * notices it disproves (`eviction.ts`). The subject of GRP-8, which removes and re-adds the same member
+ * on purpose - and applied there alone, because a re-admission nobody asked for is a finding.
+ */
+export const READMISSION_NARRATION = [
+  /^\[EVICT\] [0-9a-f]{8}… - re-admitted, \d+ removal notice\(s\) withdrawn: the Welcome disproves them$/,
 ];
 
 /**
@@ -2387,7 +2420,7 @@ export function logcatReport(lines, label = 'A1') {
    * hand this app the platform's failures.
    */
   const OURS_BY_NAME =
-    /^(CanariRust|CanariFCM|CanariWorker|CanariApp|CanariBoot|CanariNotifAction|CanariOutboxRetry|MlsDeviceKeyStore|PushSecretKeystore|KeyboardMedia|MainActivity|mines_app_lib|tokio_tungstenite|RustStdoutStderr|Tauri\/Plugin)$/;
+    /^(CanariRust|CanariFCM|CanariWorker|CanariApp|CanariBoot|CanariNotifAction|CanariOutboxRetry|MlsDeviceKeyStore|NativeCacheKey|PushSecretKeystore|KeyboardMedia|MainActivity|mines_app_lib|tokio_tungstenite|RustStdoutStderr|Tauri\/Plugin)$/;
   const RUST_MODULE = /^[a-z][a-z0-9_]*(::[a-z0-9_]+)+$/;
   const isOurs = (tag) => OURS_BY_NAME.test(tag) || RUST_MODULE.test(tag);
 
@@ -2402,6 +2435,10 @@ export function logcatReport(lines, label = 'A1') {
     // being recorded rather than a tick. MSG-8 types into the composer, which is what raises it.
     ['ime-inset', /^IME inset: \d+ -> content padding$/],
     ['keystore-read', /^retrieve: success alias=/],
+    // The install's native cache key (`NativeCacheKey.ensure`, every process start): found, or made
+    // once on the first start of an install - and that one creation is the only `store:` it causes.
+    ['native-cache-key', /^ensure: (present|created)$/],
+    ['native-cache-key-store', /^store: success alias=canari_native_cache_key$/],
     ['keystore-health', /^checkKeystoreHealth: Keystore operational/],
     ['push-secret', /^processPendingPushSecret: /],
     ['installer', /^recordInstallerPackage: /],
@@ -2433,7 +2470,8 @@ export function logcatReport(lines, label = 'A1') {
     // banner is up. Only a 2xx is explained - a refused report is a blind banner the fleet never saw.
     ['fcm-channel-blind-reported', /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/],
     ['fcm-channel-redraw', /^handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=\S+ index=\d+$/],
-    ['fcm-channel-notify', /^handleChannelMessage: notification title=.*mentionsMe=(true|false)$/],
+    // No title and no body since 2026-10-22: a release log line carries no content (nativeLogContent.test.ts).
+    ['fcm-channel-notify', /^handleChannelMessage: notification posted showsMessage=(true|false) bodyChars=\d+ mentionsMe=(true|false)$/],
     // The seed arriving on its own push, and being stored. `decryptProto: graine key material` is a
     // DIFFERENT branch from the `success` one above - that one decrypted a message, this one
     // recognised key material and decrypted nothing - so it needs its own rule rather than a wider
@@ -2510,7 +2548,7 @@ export function logcatReport(lines, label = 'A1') {
     // ONLY THE `D` SITE, DELIBERATELY. Its sibling at `W` - "reaction push without groupId -
     // dropped, nothing to attach it to" - is a push that reached the device and was thrown away,
     // which is a real loss and must keep surfacing.
-    ['fcm-reaction', /^reaction: group=[0-9a-f]+ actor=[0-9a-f]+ emoji=/],
+    ['fcm-reaction', /^reaction: group=[0-9a-f]+ actor=[0-9a-f]+$/],
     // ── the boot receiver, and the reason it fires without a boot ────────────────────────────────
     // ANDROID REPLAYS THE BOOT BROADCAST TO A PACKAGE LEAVING THE STOPPED STATE, so `force-stop`
     // followed by a launch delivers `LOCKED_BOOT_COMPLETED` then `BOOT_COMPLETED` on a device that

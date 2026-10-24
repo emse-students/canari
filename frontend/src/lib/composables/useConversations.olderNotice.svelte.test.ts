@@ -1,7 +1,7 @@
 /**
  * The older-messages notice, through a REAL salon history load (channel-encryption section 21.7).
  *
- * Only the server and the seal are stubbed: `decodeChannelMessageRow`, `UnreadableRowTally` and the
+ * Only the server and the seal are stubbed: `decodeChannelMessagePage`, `UnreadableRowTally` and the
  * notice are the production ones, so the count the notice reads is the one the load really kept.
  */
 import { SvelteMap } from 'svelte/reactivity';
@@ -19,7 +19,22 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => {
 
 vi.mock('$lib/utils/graine/channelSeal', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/graine/channelSeal')>();
-  return { ...actual, openChannelMessage };
+  return {
+    ...actual,
+    openChannelMessage,
+    // The page entry answers each row with what the stubbed single open answers for it.
+    openChannelMessagePage: async (channel: string, rows: readonly unknown[]) => {
+      const out = [];
+      for (const r of rows) {
+        try {
+          out.push({ ok: true, bytes: await openChannelMessage(channel, r) });
+        } catch (error) {
+          out.push({ ok: false, error });
+        }
+      }
+      return out;
+    },
+  };
 });
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({

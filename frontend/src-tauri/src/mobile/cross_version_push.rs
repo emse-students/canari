@@ -422,12 +422,20 @@ mod through_the_mirror {
     use crate::mobile::background::{open_graine_push, GrainePush};
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-    /// A data directory holding one mirror entry for `channel`/`GRAINE_SESSION`.
+    /// The install key the mirror below is sealed under, as the native writers seal it.
+    const MIRROR_KEY: crate::native_cache::CacheKey = [2u8; 32];
+
+    /// A data directory holding one mirror entry for `channel`/`GRAINE_SESSION`, sealed.
     fn mirror(tag: &str, channel: &str, entry: serde_json::Value) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("canari-open-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
         let root = serde_json::json!({ channel: { GRAINE_SESSION: entry } });
-        std::fs::write(dir.join("graine_seeds.json"), root.to_string()).expect("write mirror");
+        let sealed = crate::native_cache::seal_file(
+            &MIRROR_KEY,
+            crate::native_cache::Purpose::SeedMirror,
+            root.to_string().as_bytes(),
+        );
+        std::fs::write(dir.join("graine_seeds.json"), sealed).expect("write mirror");
         dir
     }
 
@@ -458,6 +466,7 @@ mod through_the_mirror {
         };
         open_graine_push(
             dir,
+            Some(&MIRROR_KEY),
             &GrainePush {
                 channel_id: channel,
                 session_id: GRAINE_SESSION,
@@ -534,6 +543,7 @@ mod through_the_mirror {
         );
         let info = open_graine_push(
             &dir,
+            Some(&MIRROR_KEY),
             &GrainePush {
                 channel_id: "v1-salon",
                 session_id: GRAINE_SESSION,

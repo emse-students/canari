@@ -1,5 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 
 /**
  * NO CONSOLE LINE CARRIES A MEMBER'S MESSAGE TEXT (WP-CONSOLE-PLAINTEXT).
@@ -13,19 +12,14 @@ import { join, relative } from 'node:path';
  */
 const OFFENDER_RE = /\b(?:text|plaintext|caption|draft|snippet|preview)=\$\{/;
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === 'paraglide' || entry.name === 'wasm' || entry.name === 'proto') continue;
-      out.push(...sourceFiles(path));
-    } else if (/\.(ts|svelte)$/.test(entry.name) && !entry.name.endsWith('.test.ts')) {
-      out.push(path);
-    }
-  }
-  return out;
-}
+// Read from the run's shared source snapshot at module scope, never walked inside a test body: a
+// walk there is charged against vitest's 5 s timeout and took seconds under the full suite.
+const FILES = sourceFiles({
+  under: 'src',
+  extensions: ['ts', 'svelte'],
+  tests: 'exclude',
+  skipDirs: ['proto'],
+}).map(({ path, text }) => ({ file: relativeTo(path, 'src'), text }));
 
 /** The files whose text interpolates message text into a template literal as a named field. */
 export function consolePlaintextOffenders(files: ReadonlyArray<{ file: string; text: string }>) {
@@ -34,12 +28,8 @@ export function consolePlaintextOffenders(files: ReadonlyArray<{ file: string; t
 
 describe('no log line carries message text', () => {
   it('finds no offender in the source', () => {
-    const files = sourceFiles('src').map((path) => ({
-      file: relative('src', path).replaceAll(String.fromCharCode(92), '/'),
-      text: readFileSync(path, 'utf8'),
-    }));
-    expect(files.length).toBeGreaterThan(100);
-    expect(consolePlaintextOffenders(files)).toEqual([]);
+    expect(FILES.length).toBeGreaterThan(100);
+    expect(consolePlaintextOffenders(FILES)).toEqual([]);
   });
 
   it('names the file of a planted offender', () => {

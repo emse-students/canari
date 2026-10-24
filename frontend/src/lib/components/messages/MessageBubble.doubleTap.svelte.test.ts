@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * One tap opens the info panel, two taps like - NEVER BOTH (user, 2026-10-12).
  *
@@ -107,6 +108,30 @@ describe('MessageBubble single tap versus double tap', () => {
     vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS - 50);
     sample();
     tap(bubble);
+    vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+    sample();
+    expect(reactions).toEqual([['m1', '❤️']]);
+    expect(opens).toBe(0);
+  });
+
+  it('a second tap queued behind a slow first one is still a like: the gap is when they happened', () => {
+    const bubble = render();
+    const click = () => new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    const first = click();
+    vi.advanceTimersByTime(100);
+    const second = click(); // stamped now, waiting behind the first click's work
+    // That work takes 300 ms: the clock moves, and the queued input runs before the window's timer.
+    const slow = () => {
+      const after = performance.now() + 300;
+      vi.spyOn(performance, 'now').mockReturnValue(after);
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 300);
+    };
+    // On the mount target, after Svelte's delegated listener there: the work follows the first tap's
+    // handling (which stops the click's propagation, so the document would never see it).
+    document.body.lastElementChild!.addEventListener('click', slow, { once: true });
+    bubble.dispatchEvent(first);
+    bubble.dispatchEvent(second);
+    vi.restoreAllMocks();
     vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
     sample();
     expect(reactions).toEqual([['m1', '❤️']]);

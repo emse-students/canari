@@ -5,7 +5,6 @@
     Pencil,
     Trash2,
     Flag,
-    Link,
     Share2,
     Ellipsis,
     VenetianMask,
@@ -15,8 +14,7 @@
     Megaphone,
     X,
   } from '@lucide/svelte';
-  import { copyPostLink, sharePostLink } from '$lib/posts/sharePost';
-  import { canShareOut } from '$lib/sharing/shareOut';
+  import { Log } from '$lib/utils/Log';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
@@ -167,19 +165,27 @@
   }
 
   /**
-   * Shares the post's public link - the system sheet on a phone, a copy and a toast elsewhere
-   * (`posts/sharePost.ts`, shared with the CanaReels rail).
+   * "Partager" opens the post's share sheet (`PostShareSheet`): send into a conversation, copy the
+   * link, the system sheet. It is loaded on the first open, never with the card: the sheet reads
+   * the conversation list (`globalChatSingleton`), weight no card that is only scrolled past should
+   * pay - the reason `LinkPreviewCard` loads `PostMedia` the same way.
    *
-   * A TOAST, NOT AN IN-MENU CHECKMARK - `pick()` sets `open = false` in the same tick as this row
-   * flipped to its checkmark, so the confirmation only ever painted for the 150 ms slide-out
-   * transition before the whole menu unmounted, not the 2 s the old timeout intended.
+   * The sheet lives OUTSIDE the menu: `pick()` closes the menu on the same tap, and anything drawn
+   * inside it unmounts with it (the toast rule of 2026-09-27).
    */
-  function sharePost() {
-    sharePostLink(postId);
-  }
+  let ShareSheet = $state<typeof import('./PostShareSheet.svelte').default | null>(null);
+  let shareOpen = $state(false);
 
-  /** On a phone "Partager" opens the system sheet, so copying the link needs a row of its own. */
-  const nativeShare = canShareOut();
+  function openShareSheet() {
+    import('./PostShareSheet.svelte')
+      .then((mod) => {
+        ShareSheet = mod.default;
+        shareOpen = true;
+      })
+      .catch((e: unknown) =>
+        Log.d('PostActionsMenu', `the share sheet did not load: ${String(e)}`)
+      );
+  }
 
   /** One row per action: same box, same padding, so the menu reads as a list rather than a pile. */
   const ROW =
@@ -224,27 +230,12 @@
         <button
           type="button"
           role="menuitem"
-          onclick={() => pick(sharePost)}
+          onclick={() => pick(openShareSheet)}
           class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
         >
-          {#if nativeShare}<Share2 size={16} strokeWidth={2.5} />{:else}<Link
-              size={16}
-              strokeWidth={2.5}
-            />{/if}
+          <Share2 size={16} strokeWidth={2.5} />
           {m.post_share_label()}
         </button>
-
-        {#if nativeShare}
-          <button
-            type="button"
-            role="menuitem"
-            onclick={() => pick(() => copyPostLink(postId))}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
-          >
-            <Link size={16} strokeWidth={2.5} />
-            {m.post_copy_link_label()}
-          </button>
-        {/if}
 
         {#if canRepublish}
           <button
@@ -370,4 +361,8 @@
       </div>
     {/if}
   </div>
+
+  {#if ShareSheet}
+    <ShareSheet open={shareOpen} {postId} onClose={() => (shareOpen = false)} />
+  {/if}
 {/if}

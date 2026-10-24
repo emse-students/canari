@@ -1,5 +1,7 @@
+// @vitest-environment happy-dom
 // Stub Tauri internals before any import: the CJS `@tauri-apps/api/core` reads this global.
 const tauriInvokeStub = vi.fn((cmd: string) => {
+  if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
   if (cmd === 'get_fcm_token') return Promise.resolve('tok-perm');
   return Promise.resolve(undefined);
 });
@@ -72,6 +74,7 @@ describe('startPushService and the notification permission rationale', () => {
     isPermissionGranted.mockResolvedValue(false);
     requestPermission.mockResolvedValue('granted');
     tauriInvokeStub.mockImplementation((cmd: string) => {
+      if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
       if (cmd === 'get_fcm_token') return Promise.resolve('tok-perm');
       return Promise.resolve(undefined);
     });

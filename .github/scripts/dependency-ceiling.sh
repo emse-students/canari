@@ -65,6 +65,11 @@ HEAD_REF="${HEAD_REF:-}"
 [ -n "$HEAD_SHA" ] || { printf 'HEAD_SHA is not set\n' >&2; exit 2; }
 
 ecosystem="$(ceiling_ecosystem_from_ref "$HEAD_REF")"
+# The compose file a datastore image is compared with: the identity provider's stack runs its own
+# PostgreSQL major, so an update THERE is not judged against production's (see `lib/ceiling.sh`).
+compose="$(ceiling_compose_from_ref "$HEAD_REF")"
+# A tree no pull-request job builds refuses EVERY dependency it carries, whatever its name.
+tree_gate="$(ceiling_gate_for_ref "$HEAD_REF")"
 
 printf 'dependency ceiling - pull request #%s at %s\n' "$PR" "${HEAD_SHA:0:8}"
 printf 'ecosystem: %s (read off %s)\n' "${ecosystem:-unknown, so every arm applies}" "${HEAD_REF:-no branch given}"
@@ -131,7 +136,10 @@ while IFS='|' read -r name type version; do
   # exists to let through.
   # The ECOSYSTEM is passed for that same arm: it is about a data directory on a volume, so it
   # applies to an IMAGE and not to a client library that happens to share the name.
-  gate="$(gate_for_dependency "$name" "$version" "$ecosystem")"
+  gate="$(gate_for_dependency "$name" "$version" "$ecosystem" "$compose")"
+  if [ -z "$gate" ] && [ -n "$tree_gate" ]; then
+    gate="$tree_gate"
+  fi
 
   # THE LOCKFILE REFRESH'S OWN REFUSALS, BOUND HERE TOO (WP-RUST-LOCK-AUTOMERGE). A `deps/lock-refresh/`
   # pull request is opened and ARMED with no person in the loop, so what `cargo-lock-refresh.sh`

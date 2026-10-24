@@ -1,4 +1,4 @@
-.PHONY: garage-reset lint-ci-scripts check-services all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod local-env dump-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-android test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
+.PHONY: garage-reset lint-ci-scripts check-services all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod local-env production production-check build-frontend reload-services test test-gateway test-history test-frontend test-android test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -270,14 +270,6 @@ local-env:
 	  ./infrastructure/local/env-from-prod.sh "$$snap"
 	@echo "${GREEN}✅ .env locaux écrits${RESET}"
 
-# Copie la base de production dans la pile locale : dump lecture seule, restauration gardée par un
-# ALLOWLIST du projet compose local, effacements partagés avec la copie vers dev, puis vérification.
-dump-prod:
-	@echo "${BLUE}📦 Copie de la base de production vers la pile locale…${RESET}"
-	@dump=$$(./infrastructure/local/pull-prod-dump.sh | tail -1); \
-	  ./infrastructure/local/restore-into-local.sh "$$dump"
-	@echo "${GREEN}✅ Base locale restaurée et vérifiée${RESET}"
-
 # Cible principale
 test: test-gateway test-history test-frontend test-harness test-ci-scripts
 	@echo ""
@@ -332,6 +324,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun test ./tools/dev-seed/
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh
+	@bash .github/scripts/tests/env-from-prod.test.sh
 	@bash .github/scripts/tests/deploy-migrations.test.sh
 	@bash .github/scripts/tests/deploy-registry-retry.test.sh
 	@bash .github/scripts/tests/deploy-replace.test.sh
@@ -358,6 +351,8 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/audit-dependencies.test.sh
 	@bash .github/scripts/tests/stream-json-premise.test.sh
 	@bash .github/scripts/tests/ignored-advisories-still-reported.test.sh
+	@bash .github/scripts/tests/image-scan-targets.test.sh
+	@bun .github/scripts/tests/image-scan-allowlist.test.mjs
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@bash .github/scripts/tests/backup-report.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
@@ -388,6 +383,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/wait-default-blueprints.test.sh
 	@bash .github/scripts/tests/held-blueprints.test.sh
 	@bash .github/scripts/tests/bench-observables.test.sh
+	@bash .github/scripts/tests/ios-extensions.test.sh
 	@bash .github/scripts/swift-syntax.sh
 	@bash .github/scripts/tests/swift-syntax.test.sh
 	@bun tools/app-store/submit.test.mjs

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import type { Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 
@@ -16,6 +17,10 @@ vi.mock('$lib/utils/chat/groupSyncEligibility', async (importOriginal) => ({
 
 import { processPendingInvitations } from './actions';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import {
+  DeviceTrustRefusedError,
+  resetReportedDeviceTrustRefusals,
+} from '$lib/mls-client/deviceTrust';
 
 function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
   return {
@@ -25,12 +30,18 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     acquireAddLock: vi.fn().mockResolvedValue(true),
     releaseAddLock: vi.fn().mockResolvedValue(undefined),
     getGroupMembers: vi.fn().mockResolvedValue([]),
-    getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
+    // `peer` is a MEMBER by default: an automatic Add brings in a member's device, never a new person
+    // (`automaticAdmission`) - the cases about a new person are in `actions.admission.test.ts`.
+    getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
     fetchDeviceKeyPackage: vi.fn().mockResolvedValue({ kind: 'none', reason: 'unregistered' }),
     removeMemberDevice: vi.fn().mockResolvedValue(undefined),
     kickStaleDevice: vi.fn().mockResolvedValue(undefined),
     addMember: vi.fn(),
+    // A device seen before, pinned and never reaffirmed: what a remembered refusal is judged against.
+    pinnedSignatureKeys: vi
+      .fn()
+      .mockResolvedValue({ keys: [new Uint8Array([1])], anchored: true, reaffirmations: 0 }),
     updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
     registerMember: vi.fn().mockResolvedValue(undefined),
     sendWelcome: vi.fn().mockResolvedValue(undefined),
@@ -133,7 +144,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
         .mockResolvedValue([
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
-      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device']),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'peer', deviceId: 'peer-dev' }]),
       fetchUserDevices: vi
         .fn()
@@ -167,7 +178,9 @@ describe('processPendingInvitations - leaf already in tree', () => {
         .mockResolvedValue([
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
-      getGroupMemberIdentities: vi.fn().mockResolvedValue(['someone-else:peer-dev']),
+      getGroupMemberIdentities: vi
+        .fn()
+        .mockResolvedValue(['someone-else:peer-dev', 'peer:old-phone']),
       fetchUserDevices: vi
         .fn()
         .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
@@ -187,10 +200,11 @@ describe('processPendingInvitations - leaf already in tree', () => {
     expect(addMember).toHaveBeenCalled();
   });
 
-  // THREE ANSWERS, AND THE THIRD IS NOT A "NO". An unreadable tree falls through to the Add exactly
-  // as the swallowed `catch` here used to - but it says so first, which is the whole change: this
-  // branch was the one place a lost group could hide.
-  it('falls through to the add on an unreadable tree, and logs that it could not tell', async () => {
+  // THREE ANSWERS, AND THE THIRD IS NOT A "NO" - NOR A "YES". An unreadable tree cannot say whether
+  // the device's USER is a member, and an automatic Add of a new person is refused
+  // (`automaticAdmission`), so nothing is added and the line says why. It used to fall through to the
+  // Add; the row stays, and the next sweep asks again.
+  it('adds nothing on an unreadable tree, and logs that it could not tell', async () => {
     const addMember = vi
       .fn()
       .mockResolvedValue({ welcome: new Uint8Array([9]), ratchetTree: null });
@@ -218,7 +232,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
       log,
     });
 
-    expect(addMember).toHaveBeenCalled();
+    expect(addMember).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Tree of g1'));
     expect(log).toHaveBeenCalledWith(expect.stringContaining('GroupNotFound'));
   });
@@ -253,9 +267,12 @@ describe('processPendingInvitations - leaf already in tree', () => {
     });
 
     // addMember now runs the whole staged transaction and takes the commit-broadcast exclude list.
-    expect(mlsService.addMember).toHaveBeenCalledWith('g1', expect.any(Uint8Array), [
-      'peer:peer-dev',
-    ]);
+    // And the device the package was fetched for, which the Add checks the package names.
+    expect(mlsService.addMember).toHaveBeenCalledWith(
+      'g1',
+      { keyPackage: expect.any(Uint8Array), userId: 'peer', deviceId: 'peer-dev' },
+      ['peer:peer-dev']
+    );
     expect(mlsService.sendWelcome).toHaveBeenCalled();
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
   });
@@ -324,7 +341,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
         requestReAdd: () => Promise.resolve(),
         log,
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(true);
 
     // Both were attempted: the first refusal did not abandon the second invitation.
     expect(mlsService.updateInvitationStatus).toHaveBeenCalledTimes(2);
@@ -491,5 +508,215 @@ describe('processPendingInvitations - the group is absent from THIS device', () 
 
     expect(requestReAdd).not.toHaveBeenCalled();
     expect(mlsService.deleteDeviceMembership).toHaveBeenCalledWith('peer', 'peer-dev', 'g1');
+  });
+});
+
+// A KEY THIS MEMBER REFUSES IS ITS JUDGEMENT, NOT A FACT ABOUT THE DEVICE: the row stays for a
+// member who can judge otherwise, nothing is retried as a race, and the refusal is said once.
+describe('processPendingInvitations - a device key this member refuses', () => {
+  it('names the device being added to addMember, and keeps the row on a trust refusal', async () => {
+    resetReportedDeviceTrustRefusals();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
+      addMember: vi
+        .fn()
+        .mockRejectedValue(
+          new DeviceTrustRefusedError('signature-key-changed', 'peer', 'peer-dev')
+        ),
+    });
+
+    await processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+      requestReAdd: () => Promise.resolve(),
+      log: vi.fn(),
+    });
+
+    expect(mlsService.addMember).toHaveBeenCalledWith(
+      'g1',
+      { keyPackage: new Uint8Array([1]), userId: 'peer', deviceId: 'peer-dev' },
+      ['peer:peer-dev']
+    );
+    expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
+    expect(mlsService.registerMember).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(String(error.mock.calls[0][0])).toContain('peer:peer-dev');
+    error.mockRestore();
+  });
+
+  // A KEY CHANGE NO RETRY CAN LIFT IS REMEMBERED: the next sweep spends no one-time KeyPackage on
+  // a device it would refuse again, and an identity mismatch (a package the server chose) is not.
+  it('fetches nothing for a device refused for a changed key on an earlier sweep', async () => {
+    localStorage.clear();
+    resetReportedDeviceTrustRefusals();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
+      addMember: vi
+        .fn()
+        .mockRejectedValue(
+          new DeviceTrustRefusedError('signature-key-changed', 'peer', 'peer-dev')
+        ),
+    });
+    const sweep = () =>
+      processPendingInvitations({
+        mlsService,
+        storage: null,
+        userId: 'self',
+        deviceKeyB64: 'pin',
+        conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+        requestReAdd: () => Promise.resolve(),
+        log: vi.fn(),
+      });
+
+    await sweep();
+    await sweep();
+
+    expect(mlsService.fetchUserDevices).toHaveBeenCalledTimes(1);
+    expect(mlsService.fetchDeviceKeyPackage).not.toHaveBeenCalled();
+    expect(mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('fetches again after an identity mismatch, which the next package may not repeat', async () => {
+    localStorage.clear();
+    resetReportedDeviceTrustRefusals();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
+      addMember: vi
+        .fn()
+        .mockRejectedValue(new DeviceTrustRefusedError('identity-mismatch', 'peer', 'peer-dev')),
+    });
+    const sweep = () =>
+      processPendingInvitations({
+        mlsService,
+        storage: null,
+        userId: 'self',
+        deviceKeyB64: 'pin',
+        conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+        requestReAdd: () => Promise.resolve(),
+        log: vi.fn(),
+      });
+
+    await sweep();
+    await sweep();
+
+    expect(mlsService.fetchUserDevices).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+});
+
+// A DUPLICATE SIGNATURE KEY ON A PENDING INVITATION IS NOT A KICK: a leaf of this identity means the
+// invitation is fulfilled (vouched, no commit), and a key on another identity's leaf removes nothing.
+describe('processPendingInvitations - a duplicate signature key', () => {
+  const sweep = (mlsService: IMlsService) =>
+    processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+      requestReAdd: () => Promise.resolve(),
+      log: vi.fn(),
+    });
+  // The two tree reads before the Add (whether `peer` is a member, then whether this device is a
+  // leaf) hold `peer` by another device only; the read after the refusal is `afterRefusal`. `holder`
+  // is the leaf the tree says carries the package's key.
+  const withTree = (afterRefusal: string[], holder: string | null) =>
+    makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      getGroupMemberIdentities: vi
+        .fn()
+        .mockResolvedValueOnce(['self:self-device', 'peer:old-phone'])
+        .mockResolvedValueOnce(['self:self-device', 'peer:old-phone'])
+        .mockResolvedValue(afterRefusal),
+      leafHoldingKeyOf: vi.fn().mockResolvedValue(holder),
+      addMember: vi.fn().mockRejectedValue(new Error('AddMembers: DuplicateSignatureKey')),
+    });
+
+  it('vouches a leaf of the same identity as fulfilled, with no commit', async () => {
+    const mlsService = withTree(['self:self-device', 'peer:peer-dev'], 'peer:peer-dev');
+
+    await sweep(mlsService);
+
+    expect(mlsService.leafHoldingKeyOf).toHaveBeenCalledWith('g1', new Uint8Array([1]));
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(mlsService.updateInvitationStatus).toHaveBeenCalledWith(
+      'peer-dev',
+      'peer',
+      'g1',
+      'active'
+    );
+  });
+
+  it('removes nothing when the key sits on another identity, and says so as an error', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = withTree(['self:self-device', 'peer:other-dev'], 'peer:other-dev');
+
+    await sweep(mlsService);
+
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(mlsService.updateInvitationStatus).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('DUPLICATE KEY HELD BY ANOTHER DEVICE')
+    );
+    error.mockRestore();
+  });
+
+  // THE TREE HOLDING THIS IDENTITY DOES NOT MAKE THE DUPLICATE ITS LEAF: the key may be another
+  // device's, and vouching would tell the server a device is in on another device's key.
+  it('does not vouch when the identity is in the tree but another leaf holds the key', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = withTree(['self:self-device', 'peer:peer-dev'], 'peer:other-dev');
+
+    await sweep(mlsService);
+
+    expect(mlsService.updateInvitationStatus).not.toHaveBeenCalled();
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('DUPLICATE KEY HELD BY ANOTHER DEVICE')
+    );
+    error.mockRestore();
   });
 });

@@ -41,6 +41,7 @@
     loadControlRefusals,
     setControlRetryExecutor,
   } from '$lib/utils/chat/controlRefusals.svelte';
+  import { setJoinRequestHandlers } from '$lib/utils/chat/joinRequests.svelte';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { mayPinMessage } from '$lib/utils/chat/pinPermission';
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
@@ -69,7 +70,9 @@
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import { incomingShare, type SharedFileEntry } from '$lib/stores/incomingShare.svelte';
   import { stageSharedFiles } from '$lib/mobile/incomingShareDrain';
+  import { discardSharedFiles } from '$lib/mobile/sharedInbox';
   import { MediaService } from '$lib/media';
+  import { signOutGeneration } from '$lib/stores/auth';
   import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
@@ -834,6 +837,15 @@
     setControlRetryExecutor((refusal) => messaging.retryRefusedControl(refusal, msgCtx()));
     return () => setControlRetryExecutor(null);
   });
+  // A member's answer to a new person asking to join (`JoinRequestBanner`), run with the context of
+  // the tap: admitting is this device's own Add, declining removes the roster row.
+  onMount(() => {
+    setJoinRequestHandlers({
+      approve: (request) => convs.approveJoinRequest(request, convCtx()),
+      decline: (request) => convs.declineJoinRequest(request, convCtx()),
+    });
+    return () => setJoinRequestHandlers(null);
+  });
 
   // ─── Mount: event listeners (window focus, visibility, debug shortcut) ────
   onMount(() => {
@@ -981,12 +993,12 @@
   const heldSends = createHeldSendQueue();
   let heldCount = $state(0);
 
-  function whenSessionUp(what: string, run: () => void) {
+  function whenSessionUp(what: string, run: () => void, discard?: () => void) {
     if (session.isLoggedIn) {
       run();
       return;
     }
-    heldSends.hold({ what, target: convs.selectedContact, run });
+    heldSends.hold({ what, target: convs.selectedContact, run, discard });
     heldCount = heldSends.size;
     log(`[LANDING_PREVIEW] ${what} held until the session is up`);
   }
@@ -1158,9 +1170,18 @@
       // one at a time, each staged before the next is read, under the composer's own ceiling.
       const files = share.files;
       const destination = selected;
+      // THE SESSION THE SHARE WAS TAKEN IN, read NOW - not after a held send or a network round
+      // trip, either of which a sign-out can fall inside (`stageSharedFiles`, `stillWanted`).
+      const generation = signOutGeneration();
       whenSessionUp(
         `a share of ${files.length} file(s)`,
-        () => void stageShare(files, destination)
+        () => void stageShare(files, destination, generation),
+        // Held, then never run: its copies are this share's to delete.
+        () =>
+          void discardSharedFiles(
+            files.map((f) => f.path),
+            'held share not sent'
+          )
       );
     });
   });
@@ -1171,11 +1192,25 @@
    * copy that could not be read. Every file goes to `destination`, the conversation the share was
    * taken by, whichever one is on screen when its turn comes (`stageSharedFiles`).
    */
-  async function stageShare(files: SharedFileEntry[], destination: string) {
+  async function stageShare(files: SharedFileEntry[], destination: string, generation: number) {
     const limits = await new MediaService().uploadLimits();
-    const { lost, tooLarge } = await stageSharedFiles(files, destination, limits, (file, to) =>
-      messaging.handleFilesSelected([file], { ...msgCtx(), selectedContact: to })
+    // A sign-out since the share was taken stops the staging - before each file is read, and again
+    // after each is prepared - so nothing of it reaches the next account's composer.
+    const stillWanted = () => signOutGeneration() === generation;
+    const { lost, tooLarge } = await stageSharedFiles(
+      files,
+      destination,
+      limits,
+      (file, to) =>
+        messaging.handleFilesSelected(
+          [file],
+          { ...msgCtx(), selectedContact: to },
+          { stillWanted }
+        ),
+      stillWanted
     );
+    // Signed out meanwhile: nobody is here to be told, and the next account must not be.
+    if (!stillWanted()) return;
     if (lost > 0) showToast(m.share_items_lost({ count: lost }), 'error');
     if (tooLarge.length > 0 && limits) {
       showToast(

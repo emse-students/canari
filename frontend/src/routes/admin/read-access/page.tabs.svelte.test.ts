@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * WHO SEES WHICH LIST: a global admin gets both tabs, a BDE super-admin the reviewers alone with no
  * tab bar - the named readers are a global admin's (D24), and their endpoint refuses anyone else.

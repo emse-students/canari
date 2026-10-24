@@ -9,11 +9,25 @@
  * observed under `shared` is indistinguishable from a rule nobody enforces. The two arms are the
  * SAME function called with a different argument, so every difference between them is the setting.
  *
- * THE MECHANISM IS BINARY, AND THAT IS NOT AN APPROXIMATION. `gatherCommunityHistory` returns null
- * outright under `joined` - no bundle is sent at all - and under `shared` it sends every seed the
- * answering device holds. There is no per-message filtering anywhere, and the server holds no key
- * with which to do any. So a newcomer under `joined` reads what is minted after them only because
- * those seeds are distributed live to everyone; nothing older can ever reach them.
+ * THE MECHANISM IS A FLOOR AT THE MEMBER'S ARRIVAL (2026-10-22; it was a whole refusal before).
+ * Under `joined` `gatherCommunityHistory` hands over only what the asking MEMBER may read - each seed
+ * raised to the server's floor at `channel_members.createdAt`, a session wholly before it withheld -
+ * and under `shared` every seed the answering device holds. The server holds no key, so the floor is
+ * placed by the answering member and checked again by the receiver. A newcomer under `joined` reads
+ * what is minted after them; nothing wholly older can reach them.
+ *
+ * TWO MORE ARMS, ADDED 2026-10-22 AND OWED A FIRST RUN (no estate was available to the change that
+ * wrote them):
+ *
+ *   NEW DEVICE - under `joined`, a new device of the OWNER (W3, minted by `newdevice.mjs`) asks for
+ *                history in a community where the owner is the only member, so the ask reaches the
+ *                owner's own other device (W1). W1 must ANSWER, floored at the owner's arrival - the
+ *                whole past - where it used to refuse whole. The rows would also be repaired one
+ *                session at a time by the SESSIONS path, so the read alone proves nothing about the
+ *                bundle: W1's console line is the assertion.
+ *   WIDENED    - under `joined`, W2 joins after PAST (and cannot read it), then W1 switches the rule
+ *                to `shared` with W2 online. W2 must read PAST within the window, and its console
+ *                must name the ask `visibility-widened` - the live `workspace.updated` path.
  *
  * REMOVAL WIPES THE SEEDS LOCALLY (`purgeWorkspaceLocally` -> `forgetCommunityGraine`), which is
  * what makes the second half of this row sharp. A re-invited member is not a member resuming: they
@@ -76,6 +90,7 @@ import {
   workspaceIdOf,
 } from '../grainedb.mjs';
 import { PEER_NAME, PORTS } from '../names.mjs';
+import { becomeANewDevice } from '../newdevice.mjs';
 import { mark, record } from '../results.mjs';
 import {
   DELIVERY_CROSSING_NARRATION,
@@ -264,10 +279,139 @@ async function arm(visibility, peerId) {
   return out;
 }
 
+/**
+ * Every console line a watch (`wa`/`wb`) captured from line `from` on that contains `needle`. The
+ * arms run one after another on the same two clients, so an arm reads only the lines since it began
+ * - the `joined` arm's own history answers would otherwise count for the next arm.
+ */
+const linesWith = (watched, needle, from) =>
+  consoleLines(watched.cx)
+    .slice(from)
+    .filter((l) => l.includes(needle));
+
+/**
+ * NEW DEVICE: under `joined`, a new device of a member who has been in the community from its start
+ * asks for its history and is ANSWERED, floored at that member's arrival - so with the past whole.
+ *
+ * The owner is the community's only member here ON PURPOSE: the history ask elects the lowest OTHER
+ * member first, and a peer who arrived after PAST holds nothing of it. With nobody else, the ask
+ * reaches the owner's own other device (W1), which minted PAST - and W1's answer is the thing tested.
+ */
+async function newDeviceArm() {
+  const community = `C12 newdevice ${run}`;
+  const channel = `c12-newdevice-${run.toLowerCase()}`;
+  const marker = `${run}-PAST-newdevice`;
+  const out = { community, channel, marker };
+  const since = consoleLines(wa.cx).length;
+
+  const opened = await step('[newdevice] create the community', async () => {
+    await enterCommunities(w1);
+    await createCommunity(w1, community);
+    await openCommunity(w1, community);
+    return true;
+  });
+  if (!opened) return out;
+  out.workspaceId = await step('[newdevice] read the community id', () => workspaceIdOf(community));
+  if (!out.workspaceId) return out;
+  await step('[newdevice] set the history rule', () => setHistoryVisibility(w1, 'joined'));
+  out.stored = historyVisibilityOf(out.workspaceId);
+  await step('[newdevice] create the channel and post the past message', async () => {
+    await createChannel(w1, channel);
+    await post(community, channel, marker);
+  });
+  out.channelId = channelIdOf(out.workspaceId, channel);
+
+  // W3 becomes a device the server has never seen, signed in as the owner.
+  const minted = await step('[newdevice] mint a new device of the owner on W3', () =>
+    becomeANewDevice({ report: (s) => console.log(`  newdevice: ${s}`) })
+  );
+  out.minted = !!minted?.cx && !minted.refused;
+  if (out.minted) {
+    const w3 = minted.cx;
+    out.read = await step('[newdevice] read the past on the new device', async () => {
+      await enterCommunities(w3);
+      await openCommunity(w3, community);
+      await realClick(w3, `[aria-label*=${JSON.stringify(channel)}]`);
+      if ((await selectedChannel(w3)) !== channel) throw new Error('the channel did not open on W3');
+      return readWithin(w3, marker);
+    });
+  }
+  // THE BUNDLE, not the row: the SESSIONS repair would open PAST too. W1 must have ANSWERED the
+  // history ask under `joined`, floored, and must not have refused it whole.
+  out.answeredFloored = linesWith(wa, "floored at that member's arrival", since).length > 0;
+  out.refusedWhole = linesWith(wa, 'not sending history', since).length > 0;
+  out.storedMessages = out.channelId ? channelMessageCount(out.channelId) : null;
+
+  await step('[newdevice] delete the community', async () => {
+    await enterCommunities(w1);
+    await openCommunity(w1, community);
+    await deleteCommunity(w1, community);
+  });
+  return out;
+}
+
+/**
+ * WIDENED: a member who joined under `joined` is handed the past when the rule moves to `shared`,
+ * though they already hold seeds - the live broadcast path, with the member online.
+ */
+async function wideningArm(peerId) {
+  const community = `C12 widened ${run}`;
+  const channel = `c12-widened-${run.toLowerCase()}`;
+  const m = { past: `${run}-PAST-widened`, in1: `${run}-IN1-widened` };
+  const out = { community, channel, markers: m };
+  const since = consoleLines(wb.cx).length;
+
+  const opened = await step('[widened] create the community', async () => {
+    await enterCommunities(w1);
+    await createCommunity(w1, community);
+    await openCommunity(w1, community);
+    return true;
+  });
+  if (!opened) return out;
+  out.workspaceId = await step('[widened] read the community id', () => workspaceIdOf(community));
+  if (!out.workspaceId) return out;
+  await step('[widened] set the history rule', () => setHistoryVisibility(w1, 'joined'));
+  out.storedBefore = historyVisibilityOf(out.workspaceId);
+  await step('[widened] create the channel and post the past message', async () => {
+    await createChannel(w1, channel);
+    await post(community, channel, m.past);
+  });
+  out.channelId = channelIdOf(out.workspaceId, channel);
+
+  out.joined = await step('[widened] the peer joins', () => joinAsPeer(out.workspaceId, peerId));
+  await step('[widened] post while the peer is in', () => post(community, channel, m.in1));
+  out.beforeWidening = await step('[widened] read before the rule moves', async () => {
+    await anchorOnPeer(community, channel, m.in1);
+    return { in1: await readWithin(w2, m.in1), past: await readWithin(w2, m.past) };
+  });
+
+  await step('[widened] switch the rule to shared', async () => {
+    await enterCommunities(w1);
+    await openCommunity(w1, community);
+    await setHistoryVisibility(w1, 'shared');
+  });
+  out.storedAfter = historyVisibilityOf(out.workspaceId);
+  out.afterWidening = await step('[widened] read after the rule moved', () =>
+    readWithin(w2, m.past)
+  );
+  out.askedWidened = linesWith(wb, 'visibility-widened', since).length > 0;
+  out.storedMessages = out.channelId ? channelMessageCount(out.channelId) : null;
+
+  await step('[widened] delete the community', async () => {
+    await enterCommunities(w1);
+    await openCommunity(w1, community);
+    await deleteCommunity(w1, community);
+  });
+  return out;
+}
+
 const peerId = await step('resolve the peer user id', () => userIdOf(PEER_NAME));
 
 const joined = await arm('joined', peerId);
 const shared = await arm('shared', peerId);
+const widened = await wideningArm(peerId);
+// LAST: it wipes W3 and signs it in as a new device, which is the one destructive gesture here.
+const newDevice = await newDeviceArm();
 
 /** Whether W2's pane really rendered the marker - and never a zero read off a dead pane. */
 const reads = (s) => s?.composer === true && s.count > 0;
@@ -285,7 +429,19 @@ const armedArm = (a) =>
   a.removed?.clientSide === true &&
   a.joinedAgain === true &&
   a.storedMessages === 4;
-const armed = !!peerId && armedArm(joined) && armedArm(shared);
+const armedWidened =
+  !!widened.channelId &&
+  widened.storedBefore === 'joined' &&
+  widened.storedAfter === 'shared' &&
+  widened.joined === true &&
+  widened.storedMessages === 2;
+const armedNewDevice =
+  !!newDevice.channelId &&
+  newDevice.stored === 'joined' &&
+  newDevice.minted === true &&
+  newDevice.storedMessages === 1;
+const armed =
+  !!peerId && armedArm(joined) && armedArm(shared) && armedWidened && armedNewDevice;
 
 const expectations = {
   // -- What holds in BOTH arms, whatever the rule says --------------------------------
@@ -307,6 +463,16 @@ const expectations = {
   sharedGivesThePastAgainAfterReturning: reads(shared.secondJoin?.past),
   sharedGivesBackWhatTheRemovalWiped: reads(shared.secondJoin?.in1),
   sharedGivesTheWindowItMissed: reads(shared.secondJoin?.out),
+
+  // -- WIDENED: the past reaches a member already in when the rule opens it -----------
+  widenedRefusedThePastBefore: refuses(widened.beforeWidening?.past),
+  widenedGivesThePastAfter: reads(widened.afterWidening),
+  widenedAskedForIt: widened.askedWidened === true,
+
+  // -- NEW DEVICE: under `joined`, a member's new device is answered from the member's arrival --
+  newDeviceReadsThePast: reads(newDevice.read),
+  newDeviceHistoryAnsweredFloored: newDevice.answeredFloored === true,
+  newDeviceHistoryNotRefusedWhole: newDevice.refusedWhole === false,
 };
 
 const verdict = !armed
@@ -332,6 +498,8 @@ record('COMM-12', gated.verdict, {
   ...gated.detail,
   joined,
   shared,
+  widened,
+  newDevice,
   armed,
   ...expectations,
   failures,

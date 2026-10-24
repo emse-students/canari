@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A SALON ROW PRESSED PAST THE REORDER HOLD AND RELEASED IN PLACE OPENS THE SALON.
  *

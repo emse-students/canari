@@ -77,12 +77,12 @@ describe('channel push payload contract (social-service writer vs the three nati
   const kotlinHandler = functionBody(
     kotlinSource,
     /private fun handleChannelMessage\(/,
-    /\n {4}\/\*\*\n {5}\* Looks up a Graine session/
+    /\n {4}\/\*\*\n {5}\* Writes the seeds a silent key-material frame/
   );
   const swiftHandler = functionBody(
     swiftSource,
     /private func handleChannelMessage\(/,
-    /\n {2}\/\/\/ Looks up a Graine session/
+    /\n {2}\/\/\/ Whether the mirrored graine_seeds\.json holds/
   );
   const objcHandler = functionBody(
     objcSource,

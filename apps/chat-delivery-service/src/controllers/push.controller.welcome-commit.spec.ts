@@ -2,8 +2,10 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { PushSecretGuard } from '../guards/push-secret.guard';
+import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import { PushController } from './push.controller';
 import { PushToken } from '../entities/push-token.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -74,18 +76,22 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     })
       .overrideGuard(ThrottlerGuard)
       .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretThrottlerGuard)
+      .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })
       .compile();
     controller = module.get(PushController);
   });
 
-  it('hands the commit to validateCommit as `proto`, then sends the Welcome and broadcasts', async () => {
+  it('hands the commit to validateCommit as `proto`, WITH the Welcome it stores in the advance', async () => {
     const res = await controller.sendWelcomeAndCommitPush(AUTH, body);
 
     // THE REGRESSION THIS FILE EXISTS FOR: without `proto`, validateCommit throws a 400 and the
-    // Welcome below never happens. Asserted by value, not by presence - the proto must be the very
-    // commit that gets broadcast, or the commit log records something nobody replayed.
+    // Welcome below never happens. Asserted by value, not by presence - the proto is the very
+    // commit the gate records AND fans out, so the log holds what every member replays.
     // The committer is the device the PushSecret authenticated, held to the foreground gate.
     expect(validateCommit).toHaveBeenCalledWith(
       {
@@ -94,16 +100,55 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
         senderId: 'u1',
         baseEpoch: 7,
         proto: 'Q09NTUlU',
-        // The re-added device is recorded with the advance, before its Welcome or the broadcast.
+        // The re-added device is recorded with the advance, before its Welcome.
         admits: [{ userId: 'u2', deviceId: 'd2' }],
+        // AND ITS WELCOME, stored in the transaction that moves the epoch: an accepted commit
+        // always has its Welcome, so there is no second call left to fail after the advance.
+        welcome: { userId: 'u2', deviceId: 'd2', payload: 'V0VMQ09NRQ==', ratchetTree: 'VFJFRQ==' },
       },
       'u1'
     );
-    expect(sendWelcome).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ proto: 'Q09NTUlU', groupId: 'g1', isCommit: true })
+    expect(sendWelcome).not.toHaveBeenCalled();
+    // A TYPED ANSWER: the phone installs its staged state on `accepted` and on nothing else.
+    expect(res).toEqual({ status: 'accepted', newEpoch: 8 });
+  });
+
+  it('publishes the base of the epoch the commit creates WITH the commit, as the foreground does', async () => {
+    // COMM-22: the committer is the only device that can export the external-join base for the
+    // epoch it creates. Without it the published base stays one epoch behind, and every external
+    // join is refused as stale until a member republishes it.
+    await controller.sendWelcomeAndCommitPush(AUTH, { ...body, groupInfo: 'R0lORk8=' });
+
+    expect(validateCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ proto: 'Q09NTUlU', baseEpoch: 7, groupInfo: 'R0lORk8=' }),
+      'u1'
     );
-    expect(res).toEqual({ status: 'done' });
+  });
+
+  it('answers a Welcome target the gate refuses with 409 and its typed reason, sending nothing', async () => {
+    // Decided BEFORE the epoch moves now, so it is a refusal like any other: the phone discards
+    // what it staged and the group never holds a newcomer without a Welcome.
+    validateCommit.mockResolvedValue({
+      accepted: false,
+      reason: 'welcome_target_not_member',
+      currentEpoch: 7,
+    });
+
+    const refusal = await refusalOf(controller.sendWelcomeAndCommitPush(AUTH, body));
+
+    expect(refusal).toEqual({
+      status: 409,
+      body: { status: 'rejected', reason: 'welcome_target_not_member', currentEpoch: 7 },
+    });
+    expect(sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('leaves the fan-out to the gate, so every member receives the commit ONCE', async () => {
+    // `validateCommit` fans the accepted commit out itself, under its lock. The route broadcast it
+    // a second time, so every member received the same commit twice.
+    await controller.sendWelcomeAndCommitPush(AUTH, body);
+
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it('sends neither Welcome nor broadcast when the gate refuses the committer', async () => {
@@ -119,14 +164,6 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     );
     expect(sendWelcome).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
-  });
-
-  it('broadcasts the SAME bytes it asked the commit log to record', async () => {
-    await controller.sendWelcomeAndCommitPush(AUTH, body);
-
-    const recorded = validateCommit.mock.calls[0][0].proto;
-    const broadcast = sendMessage.mock.calls[0][0].proto;
-    expect(recorded).toBe(broadcast);
   });
 
   it('refuses a body with no baseEpoch, and neither validates nor sends anything', async () => {
@@ -152,26 +189,60 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('sends neither Welcome nor broadcast when the commit is rejected', async () => {
+  /** The refusal the route throws, read the way the phone reads it: a status and a body. */
+  async function refusalOf(call: Promise<unknown>): Promise<{ status: number; body: unknown }> {
+    const thrown = await call.then(
+      () => {
+        throw new Error('expected a refusal, got an answer');
+      },
+      (e: unknown) => e
+    );
+    expect(thrown).toBeInstanceOf(ConflictException);
+    const e = thrown as ConflictException;
+    return { status: e.getStatus(), body: e.getResponse() };
+  }
+
+  it('answers a stale base with 409 and a typed epoch_mismatch, sending nothing', async () => {
+    // THE DEFECT: this answered HTTP 201, and the phone, which reads the status code, logged
+    // "Welcome sent" for a Welcome that was never sent.
     validateCommit.mockResolvedValue({
       accepted: false,
       reason: 'epoch_mismatch',
       currentEpoch: 9,
     });
 
-    const res = await controller.sendWelcomeAndCommitPush(AUTH, body);
+    const refusal = await refusalOf(controller.sendWelcomeAndCommitPush(AUTH, body));
 
-    expect(res).toEqual({ status: 'rejected', reason: 'epoch_mismatch', currentEpoch: 9 });
+    expect(refusal).toEqual({
+      status: 409,
+      body: { status: 'rejected', reason: 'epoch_mismatch', currentEpoch: 9 },
+    });
     expect(sendWelcome).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('refuses a target who is not a member, before validating anything', async () => {
+  it('answers a commit racing another with 409 and a typed concurrent_commit', async () => {
+    validateCommit.mockResolvedValue({
+      accepted: false,
+      reason: 'concurrent_commit',
+      currentEpoch: 7,
+    });
+
+    const refusal = await refusalOf(controller.sendWelcomeAndCommitPush(AUTH, body));
+
+    expect(refusal).toEqual({
+      status: 409,
+      body: { status: 'rejected', reason: 'concurrent_commit', currentEpoch: 7 },
+    });
+    expect(sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('answers a target who is not a member with 409 and a typed not_a_member, validating nothing', async () => {
     groupMemberRepo.findOne.mockResolvedValue(null);
 
-    const res = await controller.sendWelcomeAndCommitPush(AUTH, body);
+    const refusal = await refusalOf(controller.sendWelcomeAndCommitPush(AUTH, body));
 
-    expect(res).toEqual({ status: 'rejected', reason: 'not_a_member' });
+    expect(refusal).toEqual({ status: 409, body: { status: 'rejected', reason: 'not_a_member' } });
     expect(validateCommit).not.toHaveBeenCalled();
     expect(sendWelcome).not.toHaveBeenCalled();
   });

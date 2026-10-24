@@ -4,7 +4,7 @@
  * and the CanaReels camera, so no screen spells its own.
  */
 import { m } from '$lib/paraglide/messages';
-import type { VideoPrepareError } from './prepareVideoForUpload';
+import type { VideoPrepareError, VideoPrepareFault } from './prepareVideoForUpload';
 
 /**
  * The sentence for a refused video, or `null` for `aborted` - a cancel the member asked for is not
@@ -24,6 +24,26 @@ export function videoPrepareFailureMessage(error: VideoPrepareError): string | n
       return m.video_prepare_unsupported();
     case 'encode':
       return m.video_prepare_failed();
+  }
+}
+
+/**
+ * Whether a fault is a FACT of the take or of this engine, so preparing the same take again on the
+ * same device is refused the same way (a queued chat reel then fails for good, RC-5). `encode` - the
+ * encoder or muxer failing while working - is the one left retryable: a device under memory pressure
+ * can succeed later. `aborted` is the member's act, not a refusal.
+ */
+export function isUnpreparableFault(fault: VideoPrepareFault): boolean {
+  switch (fault) {
+    case 'unreadable':
+    case 'no-video-track':
+    case 'too-long':
+    case 'unsupported':
+    case 'too-large':
+      return true;
+    case 'encode':
+    case 'aborted':
+      return false;
   }
 }
 

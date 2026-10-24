@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A frame lost to a rewound sender must trigger a RECONCILIATION, and nothing durable may stop it.
  *

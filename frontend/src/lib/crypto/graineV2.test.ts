@@ -5,7 +5,12 @@ import {
   encodeGraineHeaderV2,
   graineSeedCommitment,
   GraineSignatureError,
+  finishGraineV2Open,
   openWithGraineV2,
+  packGraineSignatureChecks,
+  prepareGraineV2Open,
+  GraineSignatureBatchError,
+  requireGraineVerdicts,
   sealWithGraineV2,
   verifyGraineEndorsementV2,
   type GraineEndorsementV2,
@@ -222,5 +227,102 @@ describe('graine v2 - inputs that cannot be bound', () => {
     const a = encodeGraineHeaderV2({ ...HEADER, channelId: 'ab', sessionId: 'c' });
     const b = encodeGraineHeaderV2({ ...HEADER, channelId: 'a', sessionId: 'bc' });
     expect(hex(a)).not.toBe(hex(b));
+  });
+});
+
+/**
+ * F7: a page's signatures cross the bridge as ONE packed buffer. The packing is the contract with
+ * `unpack_graine_signature_checks` in `mls-core/src/graine_signature.rs`, whose test decodes this
+ * same vector.
+ */
+describe('graine v2 - the packed signature batch', () => {
+  it('packs the shared vector', () => {
+    const packed = packGraineSignatureChecks([
+      {
+        publicKey: new Uint8Array(32).fill(1),
+        message: new TextEncoder().encode('ab'),
+        signature: new Uint8Array(64).fill(2),
+      },
+      { publicKey: Uint8Array.of(3), message: new Uint8Array(0), signature: Uint8Array.of(4, 5) },
+    ]);
+    expect(hex(packed)).toBe(
+      '00000002' +
+        '00000020' +
+        '01'.repeat(32) +
+        '000000026162' +
+        '00000040' +
+        '02'.repeat(64) +
+        '0000000103' +
+        '00000000000000020405'
+    );
+  });
+
+  it('accepts only an answer of one known verdict per check', () => {
+    expect(requireGraineVerdicts(['valid', 'invalid'], 2)).toEqual(['valid', 'invalid']);
+    for (const [answer, expected] of [
+      [null, 1],
+      ['valid', 1],
+      [['valid'], 2],
+      [['valid', 'maybe'], 2],
+      [['valid', 3], 2],
+      [['randomness'], 1],
+    ] as const) {
+      expect(() => requireGraineVerdicts(answer, expected)).toThrow(GraineSignatureBatchError);
+    }
+  });
+
+  it('packs an empty batch as a zero count', () => {
+    expect(hex(packGraineSignatureChecks([]))).toBe('00000000');
+  });
+
+  it('splits the open in two halves that answer exactly what the whole does', async () => {
+    const prepared = prepareGraineV2Open(HEADER, V.sealed, unhex(V.sessionPk));
+    const verdict = await webCryptoEngine.verifySignature(
+      prepared.check.publicKey,
+      prepared.check.message,
+      prepared.check.signature
+    );
+    expect(verdict).toBe('valid');
+    expect(decode(await finishGraineV2Open(SEED, prepared, verdict))).toBe(V.plaintext);
+    // A verdict other than `valid` is refused by its own code, before any key is derived.
+    const error = await finishGraineV2Open(SEED, prepared, 'invalid').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(GraineSignatureError);
+    expect((error as GraineSignatureError).verdict).toBe('invalid');
+  });
+
+  /**
+   * Not a gate on time (a wall clock is never asserted): what each shape puts on the Tauri bridge
+   * for a 200-row page, in characters - what the WebView builds and serialises on its main thread.
+   * The timings print for the record; the Mi 9T re-measure is owed (`community-open-budget.md`, F7).
+   */
+  it('puts a fraction of the per-row payload on the bridge for a 200-row page', () => {
+    const checks = Array.from({ length: 200 }, (_, i) => ({
+      publicKey: new Uint8Array(32).fill(i % 251),
+      // `H` (~90 bytes) + nonce (12) + a short message's ciphertext.
+      message: new Uint8Array(400).fill((i * 7) % 251),
+      signature: new Uint8Array(64).fill((i * 3) % 251),
+    }));
+    let t = performance.now();
+    let perRowChars = 0;
+    for (const c of checks) {
+      perRowChars += JSON.stringify({
+        publicKey: Array.from(c.publicKey),
+        message: Array.from(c.message),
+        signature: Array.from(c.signature),
+      }).length;
+    }
+    const perRowMs = performance.now() - t;
+    t = performance.now();
+    const batchChars = JSON.stringify({
+      packedB64: toBase64(packGraineSignatureChecks(checks)),
+    }).length;
+    const batchMs = performance.now() - t;
+    // Printed on demand only (`CANARI_BENCH=1 bun run test graineV2`): a test run stays silent.
+    if (process.env.CANARI_BENCH) {
+      console.info(
+        `[F7 bench] 200 checks: per-row ${perRowChars} chars over 200 invokes (${perRowMs.toFixed(2)} ms), batch ${batchChars} chars in 1 invoke (${batchMs.toFixed(2)} ms)`
+      );
+    }
+    expect(batchChars * 2).toBeLessThan(perRowChars);
   });
 });

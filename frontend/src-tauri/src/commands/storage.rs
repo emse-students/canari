@@ -167,6 +167,15 @@ fn reload_into(
         log::warn!(
             "[RESUME] reload REFUSED - the live manager holds a ratchet advance (a send or a decrypted frame) that no checkpoint has captured; installing mls.bin would put the secret tree BACK. The caller must persist the live state."
         );
+        if let Some(current) = live.as_ref() {
+            report_what_keeping_the_live_state_loses(
+                current,
+                path,
+                user_id,
+                device_id,
+                device_key_b64,
+            );
+        }
         return Ok(ReloadOutcome::LiveAhead);
     }
     // Read the file UNDER the write lock too (never read while a JNI engine writes). Released
@@ -197,6 +206,10 @@ fn reload_into(
             log::warn!(
                 "[RESUME] reload refused - mls.bin would regress a live group epoch, keeping live state (C2)"
             );
+            report_what_a_live_persist_erases(current, &candidate);
+            if let Some(dir) = path.parent() {
+                report_background_stages(dir, current);
+            }
             return Ok(ReloadOutcome::EpochRegression);
         }
         // THE GUARD ABOVE GRADES ON GROUP EPOCHS, AND KEY MATERIAL IS NOT A GROUP EPOCH.
@@ -251,6 +264,9 @@ fn reload_into(
             ),
         }
     }
+    if let Some(dir) = path.parent() {
+        report_background_stages(dir, &candidate);
+    }
     *live = Some(candidate);
     log::debug!("[RESUME] foreground manager reloaded from mls.bin (C2)");
     Ok(ReloadOutcome::Reloaded)
@@ -279,9 +295,257 @@ pub(crate) fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
     remove_mls_state_in(&data_dir)
 }
 
-/// [`delete_mls_state`] minus the `AppHandle`, so the pair it removes is tested on a real directory.
+/// The memo of background Welcomes the server refused as stale, keyed by the digest of `mls.bin`
+/// (`mobile/background.rs`). It describes `mls.bin`, so it leaves with it.
+pub(crate) const STALE_WELCOME_LEDGER_FILE: &str = "welcome_request_stale.json";
+
+/// A push key-group join's staged post-join state beside `mls.bin` (`mobile/key_group_join.rs`). It
+/// holds that state's epoch secrets, so it leaves with `mls.bin`. Named here, not in the module that
+/// writes it, because that module is not compiled on desktop and this sweep is.
+pub(crate) const STAGED_KEY_GROUP_JOIN_FILE: &str = "mls.bin.keygroup-join";
+
+/// The ledger of key-group joins the push service attempted (`mobile/key_group_join.rs`). Its
+/// `joined` entries name groups installed in THIS `mls.bin`, which the next start writes into the
+/// registry - so it leaves with `mls.bin`, or the next account to sign in would adopt them.
+pub(crate) const KEY_GROUP_PUSH_JOIN_LEDGER_FILE: &str = "key_group_push_joins.json";
+
+/// The background Welcome stages written into `mls.bin` and not yet settled by the engine that wrote
+/// them (`mobile/background.rs`): `{groupId: {"baseEpoch"}}`. The foreground's next load reports
+/// each against the state it then holds ([`report_background_stages`]), so a stage left to the
+/// foreground is either seen settled or seen GONE - never silently lost. It describes `mls.bin`, so it
+/// leaves with it.
+pub(crate) const BACKGROUND_STAGES_FILE: &str = "background_stages.json";
+
+/// Runs `edit` on the JSON-object ledger `file_name` beside `mls.bin`, under the process-wide
+/// `mls.bin` write lock (every FCM thread shares that process), writing it back by rename when
+/// `edit` says it changed. An absent or unparsable ledger reads as empty, and the unparsable one is
+/// said. The caller must NOT hold the write lock.
+pub(crate) fn with_json_ledger<R>(
+    data_dir: &std::path::Path,
+    file_name: &str,
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> (R, bool),
+) -> Result<R, String> {
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    edit_json_ledger_held(data_dir, file_name, edit)
+}
+
+/// [`with_json_ledger`] for a caller that ALREADY HOLDS [`mls_bin_write_lock`] - the background
+/// Welcome, which notes its stage under the same hold as the `mls.bin` write that stages it.
+pub(crate) fn edit_json_ledger_held<R>(
+    data_dir: &std::path::Path,
+    file_name: &str,
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> (R, bool),
+) -> Result<R, String> {
+    let path = data_dir.join(file_name);
+    let mut map = match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(serde_json::Value::Object(m)) => m,
+            _ => {
+                log::warn!("[MLS] ledger {file_name} unparsable - read as empty");
+                serde_json::Map::new()
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(e) => return Err(format!("read {file_name}: {e}")),
+    };
+    let (result, changed) = edit(&mut map);
+    if changed {
+        let tmp = data_dir.join(format!("{file_name}.tmp"));
+        std::fs::write(&tmp, serde_json::Value::Object(map).to_string())
+            .map_err(|e| format!("write {file_name}: {e}"))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("rename {file_name}: {e}"))?;
+    }
+    Ok(result)
+}
+
+/// What [`report_background_stages`] found, one count per verdict.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StagesReport {
+    pub found: usize,
+    pub merged: usize,
+    pub absent: usize,
+}
+
+/// Reports every background Welcome stage the ledger names against `held`, the state this
+/// foreground now keeps, and forgets them: FOUND (its staged commit and record are there - the
+/// foreground settles it by resubmission), ALREADY MERGED (the group is past its base), or ABSENT
+/// (said at ERROR: an Add the server may hold is not on this device, and the replay recovers it).
+/// Returns what was reported.
+pub(crate) fn report_background_stages(
+    data_dir: &std::path::Path,
+    held: &MlsManager,
+) -> StagesReport {
+    use mls_core::pending_submission::PendingSubmissionRead;
+    let reported = with_json_ledger(data_dir, BACKGROUND_STAGES_FILE, |map| {
+        let mut report = StagesReport::default();
+        if map.is_empty() {
+            return (report, false);
+        }
+        for (group_id, entry) in map.iter() {
+            let short: String = group_id.chars().take(8).collect();
+            let base = entry.get("baseEpoch").and_then(serde_json::Value::as_u64);
+            let found = matches!(
+                held.pending_submission(group_id),
+                PendingSubmissionRead::Recorded(ref r) if Some(r.base_epoch) == base
+            );
+            if found {
+                report.found += 1;
+                log::info!(
+                    "[MLS] background stage of group={short} (base {base:?}) found in the loaded state - settled by resubmission"
+                );
+                continue;
+            }
+            match (held.get_epoch(group_id), base) {
+                (Ok(epoch), Some(b)) if epoch > b => {
+                    report.merged += 1;
+                    log::info!(
+                        "[MLS] background stage of group={short} (base {b}) already merged (epoch {epoch})"
+                    );
+                }
+                (epoch, _) => {
+                    report.absent += 1;
+                    log::error!(
+                        "[MLS] background stage of group={short} (base {base:?}) is ABSENT from the state this foreground keeps (epoch {:?}) - an Add the server may hold is not on this device; the replay recovers it",
+                        epoch.ok()
+                    );
+                }
+            }
+        }
+        map.clear();
+        (report, true)
+    });
+    reported.unwrap_or_else(|e| {
+        log::error!("[MLS] background stage ledger unreadable ({e}) - its stages are not reported");
+        StagesReport::default()
+    })
+}
+
+/// What persisting `live` over the file `candidate` was read from ERASES, said at ERROR before the
+/// persist: the groups whose file copy holds a staged commit the live one does not, and the groups
+/// the file holds at a later epoch (or holds and the live one does not). Counts and group prefixes
+/// only. Returns the two counts.
+pub(crate) fn report_what_a_live_persist_erases(
+    live: &MlsManager,
+    candidate: &MlsManager,
+) -> (usize, usize) {
+    let short = |g: &String| g.chars().take(8).collect::<String>();
+    let mut staged = Vec::new();
+    let mut later = Vec::new();
+    for group_id in candidate.get_known_groups() {
+        if matches!(candidate.has_pending_commit(&group_id), Ok(true))
+            && !matches!(live.has_pending_commit(&group_id), Ok(true))
+        {
+            staged.push(short(&group_id));
+        }
+        match (candidate.get_epoch(&group_id), live.get_epoch(&group_id)) {
+            (Ok(file), Ok(kept)) if file > kept => later.push(short(&group_id)),
+            (Ok(_), Err(_)) => later.push(short(&group_id)),
+            _ => {}
+        }
+    }
+    if !staged.is_empty() || !later.is_empty() {
+        log::error!(
+            "[RESUME] persisting the live state ERASES what mls.bin holds beyond it: {} staged commit(s) {:?}, {} group(s) at a later epoch {:?}",
+            staged.len(),
+            staged,
+            later.len(),
+            later
+        );
+    }
+    (staged.len(), later.len())
+}
+
+/// The reports a refused reload owes before the live state is persisted over `path`: what the file
+/// holds beyond the live state ([`report_what_a_live_persist_erases`]), and the background stages
+/// the live state does not hold ([`report_background_stages`]). It reads and decrypts the file,
+/// which only a refused reload pays. A failure to read is said, and nothing else is affected.
+///
+/// **THE FILE IS READ WHETHER OR NOT A STAGE IS NOTED.** The stages ledger names only the background
+/// Welcome's stages; other background writers - a Welcome received in the background joining a new
+/// group (`process_welcome_background_with_key`) - write `mls.bin` with nothing noted, and the
+/// persist erases them just the same. Returns the counts of [`report_what_a_live_persist_erases`],
+/// `None` when the file could not be read or opened.
+fn report_what_keeping_the_live_state_loses(
+    current: &MlsManager,
+    path: &std::path::Path,
+    user_id: &str,
+    device_id: &str,
+    device_key_b64: &str,
+) -> Option<(usize, usize)> {
+    let bytes = {
+        let Ok(_guard) = mls_bin_write_lock().lock() else {
+            log::error!(
+                "[RESUME] mls_bin write lock poisoned - what the persist erases is not reported"
+            );
+            return None;
+        };
+        match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(e) => {
+                log::error!(
+                    "[RESUME] mls.bin unreadable ({e}) - what the persist erases is not reported"
+                );
+                return None;
+            }
+        }
+    };
+    let candidate = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64)
+        .map_err(|e| e.to_string())
+        .and_then(|key| {
+            MlsManager::load_with_key(user_id, device_id, Some(bytes), &key)
+                .map_err(|e| e.to_string())
+        });
+    let erased = match candidate {
+        Ok(candidate) => Some(report_what_a_live_persist_erases(current, &candidate)),
+        Err(e) => {
+            log::error!(
+                "[RESUME] mls.bin does not open ({e}) - what the persist erases is not reported"
+            );
+            None
+        }
+    };
+    if let Some(dir) = path.parent() {
+        report_background_stages(dir, current);
+    }
+    erased
+}
+
+/// [`delete_mls_state`] minus the `AppHandle`, so what it removes is tested on a real directory:
+/// `mls.bin`, its owner record, and the ledgers and push-join files built from it - no epoch secret
+/// outlives the state it belongs to.
 fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
-    for name in ["mls.bin", MLS_STATE_OWNER_FILE] {
+    log::debug!("[MLS] removing mls.bin and what was built from it");
+    // `mls.bin` GOES AFTER WHAT WAS BUILT FROM IT: the staged join and the ledgers describe it, so a
+    // sweep that fails part-way leaves the state intact and the next reset finishes the job - never
+    // staged epoch secrets, or a memo about a digest, beside no state...
+    // ...and the owner record AFTER it: a failed removal of `mls.bin` leaves the state with the
+    // record naming whose it is, never a state nobody is named for.
+    // UNDER THE `mls.bin` WRITE LOCK: a background Welcome writes its stage and notes it under one
+    // hold of that lock, so the sweep removes both or neither - never a ledger it re-creates after.
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    let stale_ledger_tmp = format!("{STALE_WELCOME_LEDGER_FILE}.tmp");
+    let join_staged_tmp = format!("{STAGED_KEY_GROUP_JOIN_FILE}.tmp");
+    let join_ledger_tmp = format!("{KEY_GROUP_PUSH_JOIN_LEDGER_FILE}.tmp");
+    let stages_tmp = format!("{BACKGROUND_STAGES_FILE}.tmp");
+    let owner_tmp = format!("{MLS_STATE_OWNER_FILE}.tmp");
+    for name in [
+        STALE_WELCOME_LEDGER_FILE,
+        stale_ledger_tmp.as_str(),
+        STAGED_KEY_GROUP_JOIN_FILE,
+        join_staged_tmp.as_str(),
+        KEY_GROUP_PUSH_JOIN_LEDGER_FILE,
+        join_ledger_tmp.as_str(),
+        BACKGROUND_STAGES_FILE,
+        stages_tmp.as_str(),
+        "mls.bin",
+        MLS_STATE_OWNER_FILE,
+        owner_tmp.as_str(),
+    ] {
         let path = data_dir.join(name);
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| format!("remove {name}: {e}"))?;
@@ -394,6 +658,33 @@ pub(crate) fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
     read_mls_state_blob(&app)
 }
 
+/// Whether `mls.bin` at `path` is PROVABLY absent: `Ok(true)` when the file does not exist or is
+/// empty, `Ok(false)` when it holds bytes, `Err` when the filesystem could not say.
+///
+/// THE ALLOWLIST OF A DESTRUCTIVE DECISION. A device whose id survived but whose state did not
+/// re-enrols under a new id and retires the old one; only a state KNOWN to be gone may start that.
+/// [`mls_state_size`] answers 0 on an unreadable directory too, which is right for "is there
+/// something to load" and wrong for this, so the error stays an error here.
+pub(crate) fn state_file_absent(path: &std::path::Path) -> Result<bool, String> {
+    match std::fs::metadata(path) {
+        Ok(m) => Ok(m.len() == 0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(e) => Err(format!("stat mls.bin: {e}")),
+    }
+}
+
+/// The frontend's view of [`state_file_absent`] for this install's `mls.bin`.
+#[tauri::command]
+pub(crate) fn mls_state_absent(app: tauri::AppHandle) -> Result<bool, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let absent = state_file_absent(&data_dir.join("mls.bin"));
+    log::debug!("[MLS] mls.bin provably absent: {absent:?}");
+    absent
+}
+
 /// The SIZE of {app_data_dir}/mls.bin, 0 when there is none.
 ///
 /// "Is there a saved state" is a question three call sites asked by loading the whole file: the
@@ -419,10 +710,11 @@ pub(crate) fn mls_state_size(app: tauri::AppHandle) -> u64 {
     }
 }
 
-/// Entries at the top of `{app_data_dir}` that this must NOT empty wholesale, for one of two
-/// reasons: they belong to a framework, or Canari only owns part of what is inside (`files` and
+/// Entries at the top of `{app_data_dir}` that this must NOT empty wholesale, for one of three
+/// reasons: they belong to a framework, Canari only owns part of what is inside (`files` and
 /// `shared_prefs`, both emptied selectively below - and a first draft of this constant omitted
-/// those two, which deleted Firebase's installation id and left both prefix lists dead code).
+/// those two, which deleted Firebase's installation id and left both prefix lists dead code), or the
+/// entry is an order a reset would move backwards (`share_epoch`).
 ///
 /// Everything else at that level is deleted, so the default for a file added tomorrow is ERASED.
 /// The filter this replaced kept only `*.db`, which is why a device revoked on 2026-08-28 was
@@ -444,9 +736,19 @@ const KEPT_AT_TOP_LEVEL: &[&str] = &[
     "databases",
     "lib",
     "no_backup",
+    // The sign-out's two push marks (`push_registration.rs`). A revoked device is wiped right after
+    // its sign-out wrote them, and the wipe must not undo the sign-out: without them the deletion
+    // of the OS push token is no longer owed, and a push that still arrives is no longer dropped.
+    crate::commands::push_registration::SIGNED_OUT_FILE,
+    crate::commands::push_registration::DELETION_OWED_FILE,
     // Shared with Firebase - emptied by prefix, not wholesale.
     "files",
     "shared_prefs",
+    // The share EPOCH is an ORDER that never moves back (`commands/handoff.rs`): reset to 0 here, a
+    // share captured before the wipe - on iOS, stamped from the App Group copy this wipe never
+    // reaches - would read as NEWER than the current session and be offered to the next account.
+    // It names no account and holds no secret.
+    "share_epoch",
 ];
 
 /// Names inside `{app_data_dir}/files`, a directory Canari SHARES with Firebase, that are ours.
@@ -474,9 +776,19 @@ pub(crate) fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
     // after everything else was removed.
     #[cfg(target_os = "ios")]
     {
-        let group = crate::app_group::app_group_dir().and_then(|g| wipe_group_names(&g));
+        // The names copy, and the share the Share Extension left there - its manifest and its
+        // copies - which no sign-out reaches if nobody signed in (`app_group_share`).
+        let group = crate::app_group::app_group_dir().and_then(|g| {
+            let names = wipe_group_names(&g);
+            let share = crate::commands::app_group_share::wipe_group_share(&g);
+            match (names, share) {
+                (Ok(()), Ok(())) => Ok(()),
+                (Err(a), Err(b)) => Err(format!("{a}; {b}")),
+                (Err(e), Ok(())) | (Ok(()), Err(e)) => Err(e),
+            }
+        });
         if let Err(e) = group {
-            log::error!("[RESET] the App Group names copy was not removed: {e}");
+            log::error!("[RESET] the App Group was not entirely wiped: {e}");
             return match wiped {
                 Ok(()) => Err(e),
                 Err(w) => Err(format!("{w}; {e}")),
@@ -863,6 +1175,21 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
 
+    /// Only a missing or empty file is "absent"; a file with bytes is not.
+    #[test]
+    fn state_file_absent_is_true_only_for_a_missing_or_empty_file() {
+        let dir = std::env::temp_dir().join(format!("canari-absent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mls.bin");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(state_file_absent(&path), Ok(true));
+        std::fs::write(&path, b"").unwrap();
+        assert_eq!(state_file_absent(&path), Ok(true));
+        std::fs::write(&path, b"x").unwrap();
+        assert_eq!(state_file_absent(&path), Ok(false));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A device key that is 32 bytes, base64, and constant - the reload takes it as text.
     const DEV_KEY_B64: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
@@ -870,6 +1197,39 @@ mod tests {
     fn persist(manager: &MlsManager, path: &Path) {
         let key = mls_core::crypto::decode_base64_to_32_bytes(DEV_KEY_B64).unwrap();
         std::fs::write(path, manager.save_encrypted_with_key(&key).unwrap()).unwrap();
+    }
+
+    /// A REFUSED RELOAD STILL SAYS WHAT IT ERASES WHEN NO STAGE IS NOTED: a Welcome received in the
+    /// background joins a group with nothing in the stages ledger, and the live persist erases it
+    /// just the same. The file is read and the group it holds beyond the live state is counted.
+    #[test]
+    fn what_a_refused_reload_erases_is_reported_with_an_empty_stages_ledger() {
+        let dir = std::env::temp_dir().join(format!("canari-erases-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mls.bin");
+        let live = MlsManager::load_or_create("erases-user", "dev-e", None).unwrap();
+        let mut file_copy = MlsManager::load_or_create("erases-user", "dev-e", None).unwrap();
+        file_copy
+            .create_group("g-joined-in-background".into())
+            .unwrap();
+        persist(&file_copy, &path);
+        assert!(!dir.join(BACKGROUND_STAGES_FILE).exists());
+
+        let erased = report_what_keeping_the_live_state_loses(
+            &live,
+            &path,
+            "erases-user",
+            "dev-e",
+            DEV_KEY_B64,
+        );
+
+        assert_eq!(
+            erased,
+            Some((0, 1)),
+            "the group the file holds beyond the live state is reported"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// THE RACE OF 2026-09-08, AS THE ONE PROPERTY THAT WOULD HAVE PREVENTED IT.
@@ -1107,6 +1467,85 @@ mod tests {
         assert_eq!(read_mls_state_owner(&dir), None);
         // And it is idempotent on an install that holds neither.
         remove_mls_state_in(&dir).unwrap();
+
+        // A background Welcome's stale memo goes with the state it was built from.
+        file(&dir, "mls.bin");
+        file(&dir, "welcome_request_stale.json");
+        file(&dir, "welcome_request_stale.json.tmp");
+        file(&dir, "unrelated.json");
+        remove_mls_state_in(&dir).unwrap();
+        assert!(!dir.join("welcome_request_stale.json").exists());
+        assert!(
+            !dir.join("welcome_request_stale.json.tmp").exists(),
+            "a ledger write cut before its rename leaves its tmp, which describes the same state"
+        );
+        assert!(
+            dir.join("unrelated.json").exists(),
+            "only what belongs to mls.bin"
+        );
+
+        // A push key-group join's staged state and its ledger go too: the stage holds epoch
+        // secrets, and the ledger's `joined` entries would be adopted by the next account's start.
+        file(&dir, "mls.bin");
+        file(&dir, "mls.bin.keygroup-join");
+        file(&dir, "mls.bin.keygroup-join.tmp");
+        file(&dir, "key_group_push_joins.json");
+        file(&dir, "key_group_push_joins.json.tmp");
+        remove_mls_state_in(&dir).unwrap();
+        for gone in [
+            "mls.bin",
+            "mls.bin.keygroup-join",
+            "mls.bin.keygroup-join.tmp",
+            "key_group_push_joins.json",
+            "key_group_push_joins.json.tmp",
+        ] {
+            assert!(!dir.join(gone).exists(), "{gone} outlived the sign-out");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `mls.bin` GOES AFTER THE LEDGER: a sweep that fails part-way leaves the state it was
+    /// sweeping intact, never a memo about a digest beside no state.
+    #[test]
+    fn a_sweep_that_fails_part_way_leaves_mls_bin_in_place() {
+        let dir = temp_dir("mls-sweep-order");
+        file(&dir, "mls.bin");
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        // A ledger name that cannot be removed as a file: the sweep fails on it.
+        std::fs::create_dir_all(dir.join("welcome_request_stale.json")).unwrap();
+
+        assert!(remove_mls_state_in(&dir).is_err());
+        assert!(
+            dir.join("mls.bin").exists(),
+            "the state outlives a sweep that did not finish"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// THE OWNER RECORD GOES AFTER `mls.bin`: a removal of `mls.bin` that fails leaves the state
+    /// WITH its owner, never a state nobody is named for - which the gate would read like any
+    /// other account's. Its temporary goes too.
+    #[test]
+    fn a_failed_mls_bin_removal_keeps_the_owner_record() {
+        let dir = temp_dir("mls-owner-order");
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        // A `mls.bin` that cannot be removed as a file.
+        std::fs::create_dir_all(dir.join("mls.bin")).unwrap();
+        file(&dir, "welcome_request_stale.json");
+
+        assert!(remove_mls_state_in(&dir).is_err());
+        assert_eq!(read_mls_state_owner(&dir).as_deref(), Some("user-a"));
+        assert!(
+            !dir.join("welcome_request_stale.json").exists(),
+            "what was built from mls.bin still goes before it"
+        );
+
+        std::fs::remove_dir_all(dir.join("mls.bin")).unwrap();
+        file(&dir, "mls.bin");
+        file(&dir, &format!("{MLS_STATE_OWNER_FILE}.tmp"));
+        remove_mls_state_in(&dir).unwrap();
+        assert_eq!(read_mls_state_owner(&dir), None);
+        assert!(!dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp")).exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1171,6 +1610,49 @@ mod tests {
         assert!(dir.join("app_textures/x").exists());
         assert!(dir.join("databases/x").exists());
         assert!(!dir.join("graine_seeds.json").exists(), "ours was kept");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The share epoch survives a wipe: a counter that restarted at 0 would make every share captured
+    /// before it look current again.
+    #[test]
+    fn keeps_the_share_epoch_which_never_moves_back() {
+        let dir = temp_dir("share-epoch");
+        file(&dir, "share_epoch");
+        file(&dir, "pending_share.json");
+
+        wipe_app_data(&dir).unwrap();
+
+        assert!(dir.join("share_epoch").exists(), "the epoch was reset");
+        assert!(
+            !dir.join("pending_share.json").exists(),
+            "a waiting share survived"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A revoked device is signed out and then wiped. The wipe keeps the sign-out's two push marks:
+    /// the OS token deletion stays owed until the native side completes it, and a push that still
+    /// arrives stays dropped until a new registration is answered.
+    #[test]
+    fn keeps_the_marks_a_sign_out_wrote_for_the_push_registration() {
+        use crate::commands::push_registration::{DELETION_OWED_FILE, SIGNED_OUT_FILE};
+        let dir = temp_dir("push-marks");
+        file(&dir, SIGNED_OUT_FILE);
+        file(&dir, DELETION_OWED_FILE);
+        file(&dir, "push_context.json");
+
+        wipe_app_data(&dir).unwrap();
+
+        assert!(
+            dir.join(SIGNED_OUT_FILE).exists(),
+            "the signed-out mark was wiped"
+        );
+        assert!(
+            dir.join(DELETION_OWED_FILE).exists(),
+            "the owed deletion was wiped"
+        );
+        assert!(!dir.join("push_context.json").exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -97,6 +97,7 @@ import { assertCreatorCampusGoverned, defaultCampusRules } from '../spaces/audie
 import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
+import { assertAssociationImageUrl } from './association-image-url';
 import type { CoOrganiserPort } from './co-organisers.port';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
@@ -242,7 +243,7 @@ export interface CalendarViewer {
 }
 
 /** HKDF purpose of the Business key's encryption key; bump the suffix to rotate the format. */
-const LYDIA_BUSINESS_KEY_PURPOSE = 'lydia-business-key/v1';
+export const LYDIA_BUSINESS_KEY_PURPOSE = 'lydia-business-key/v1';
 
 /**
  * What a Lydia Business private token may look like: printable ASCII, no whitespace, 8 to 256
@@ -341,6 +342,9 @@ export class AssociationsService {
         'Slug must start with a letter or digit and contain only lowercase letters, digits, and hyphens (2-50 chars)'
       );
     }
+    // The logo is normally set by the upload path; a value sent here is held to the same allowlist.
+    const logoUrl = dto.logoUrl?.trim() ? dto.logoUrl.trim() : null;
+    if (logoUrl !== null) assertAssociationImageUrl(logoUrl);
 
     const existing = await this.assoRepo.findOne({
       where: { slug: dto.slug },
@@ -351,6 +355,7 @@ export class AssociationsService {
 
     const asso = this.assoRepo.create({
       ...dto,
+      logoUrl,
       contactEmail: dto.contactEmail?.trim() ? dto.contactEmail.trim() : null,
       createdBy: userId,
     });
@@ -509,6 +514,16 @@ export class AssociationsService {
   async update(id: string, dto: UpdateAssociationDto) {
     const asso = await this.findById(id);
     const patch = { ...dto } as unknown as Partial<Association>;
+    // Blank clears the logo URL; anything else is held to the image URL allowlist before any write.
+    if (dto.logoUrl !== undefined) {
+      const logoUrl = dto.logoUrl === null ? '' : dto.logoUrl.trim();
+      if (logoUrl === '') {
+        patch.logoUrl = null;
+      } else {
+        assertAssociationImageUrl(logoUrl);
+        patch.logoUrl = logoUrl;
+      }
+    }
     if (dto.description !== undefined && dto.description.trim() === '') {
       patch.description = null;
     }

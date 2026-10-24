@@ -1276,8 +1276,10 @@ sweep, which collects them once nothing accesses them again.
 **Account deletion is the one path that cannot refuse.** It bypasses every guard above, because
 the account is going regardless. `ChannelService.removeAccountFromWorkspaces` takes each community
 in turn: cut off its private channels, repair it as if the account were already gone - a community
-left with nobody is hard-deleted, one left with members but no admin promotes its highest-priority
-survivor, ties broken by the lowest user id - and only THEN delete the membership row. A failed
+left with nobody is hard-deleted, one left with members but no admin promotes the survivor with the
+highest priority, then whose roles grant the most distinct permissions, then the lowest user id
+(custom roles all rank just above the base role, so among them what they grant decides) - and only
+THEN delete the membership row. A failed
 repair keeps that row and the call throws, so the erasure queue's retry finds the community again
 ([account-erasure](../account-erasure.md)); a swallowed failure used to strand an adminless
 community for ever. Logged at `warn` because an automatic promotion is something a human should be
@@ -1295,6 +1297,122 @@ last.
 expires. Bounds that would mint a dead link - an expiry already past, a cap below one - are refused
 (`INVITE_EXPIRY_INVALID`, `INVITE_EXPIRY_IN_THE_PAST`, `INVITE_MAX_USES_INVALID`) rather than stored,
 since `inviteIsValid` would otherwise hand back a token dead on arrival with nothing saying why.
+
+**Invite use counting is atomic (2026-10-22).** `acceptWorkspaceInvite`'s read of the invite is a
+preview; what admits is ONE conditional `UPDATE workspace_invites SET uses = uses + 1 WHERE id = $1
+AND revoked = false AND (not expired) AND ("maxUses" IS NULL OR uses < "maxUses") RETURNING id`, in
+the transaction that writes the membership. The row lock serialises concurrent accepts, each
+re-evaluates the WHERE against the committed count, and a claim that matches no row is refused
+(`404`) with nothing written. Pinned by `workspace-invite.integration.spec.ts`,
+which parks an accept on a held claim through `pg_blocking_pids`, never a sleep.
+
+### An invitation grants only a role the inviter may grant (2026-10-22)
+
+An invite LINK carries no role: whoever minted it, accepting grants the community's base role,
+its lowest-priority one (`baseMemberRole`, the one definition). A direct invitation
+(`inviteToChannel`) takes a `roleName` in its body, and since inviting is `member.invite` or
+`channel.manage` while granting a role is role management, it grants the base role unless
+`actorMayGrantRole` (`permissions.ts`) allows the named one: the actor holds
+`roleGrantsRoleManagement` - the same predicate every role-management endpoint now reads - and the
+role grants nothing the actor does not hold (`workspace.manage` holds everything). Otherwise
+`403 { code: 'INVITE_ROLE_NOT_GRANTABLE' }`, decided before the device lookup, never a silent
+downgrade. `Membre`, or the base role's own name, means the base role, so a deployed client's
+ordinary invitation works in a community whose lowest role is called otherwise; a role literally
+named `Membre` above the base role is therefore not grantable by invitation until `minClientVersion`
+reaches a client that sends no `roleName` for an ordinary invitation ([backlog](../backlog.md)).
+The client sends no `roleName` at all for an ordinary invitation since #2277, and names a role only
+when the inviter picked one.
+
+**Role changes are bounded by the actor's own permissions, by the same function.** Every
+role-management write goes through `assertActorManagesRoles` (the `roleGrantsRoleManagement` gate,
+returning the union of what the actor holds) and then `actorMayGrantRole`:
+
+| Write | Bound | Refusal |
+|---|---|---|
+| `updateWorkspaceMemberRole` | the new role AND the target's current roles grant nothing the actor lacks - the actor's own membership included | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+| `setRoleBasePermission` | the role being edited grants nothing the actor lacks (their own role included), and a granted key is one they hold; checked on the LOCKED row | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+| `createRole` | the new role grants nothing the actor lacks; it ranks just above the base role (`priority` is the server's, the body's is not read) | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+
+### Removals are bounded by the actor, and so is hiding a salon (2026-10-24)
+
+**Removals are bounded by the actor's own permissions, by the sibling predicate.**
+`kickFromWorkspace`, `removeMemberFromChannel`, every member an access-list rewrite takes the salon
+from (`updateChannelAccess`: the audience before - the allowlist, or the whole community while the
+salon is public - minus the allowlist after, so going private counts every member left off), and
+every member a private salon's creation leaves off (`createChannel`: everyone but the creator) share
+one gate, `assertActorMayRemoveMembers`: the actor holds `member.kick`, `channel.manage` or
+`workspace.manage`, and `permissionsCover` - the "holds at least as much" that `actorMayGrantRole`
+is built on - holds between the actor's permissions and each target's. Otherwise
+`403 REMOVAL_EXCEEDS_ACTOR`, which the client names (`COMMUNITY_REFUSALS`, as
+`ROLE_CHANGE_EXCEEDS_ACTOR` and `INVITE_ROLE_NOT_GRANTABLE`). An allowlist entry whose user is no
+longer a member has nothing to compare and is dropped. **Only high ranks make a salon private while
+an administrator exists** (user, 2026-10-24): a member holding only `channel.manage` can neither
+create a private salon nor make one private while it leaves off someone who outranks them.
+
+**The gate is asked twice: early, then under the lock.** The early answer comes before any call to
+chat-delivery, so a refused removal mints no group and begins no departure. The authoritative one
+runs inside the roster write of the departure (`departDistributionGroups`, which opens its
+transaction with the community removal lock, `pg_advisory_xact_lock` on
+`community_removal:<workspace id>`), or inside `withCommunityRemovalLock` for a private creation,
+and reads the actor's and every target's membership and role rows `FOR SHARE`. A role change writing
+any of those rows waits for the removal to commit, and a removal that started after a role change
+waits for it and reads the committed roles - so what was compared is what holds when the removal is
+saved. A refusal there abandons the departure, which is settled `cancelled`. No call to
+chat-delivery runs under the lock: the first evictions precede it, the second follow the commit
+([channel-encryption](../protocols/channel-encryption.md), "WP-21, and the gate it had nowhere to
+live").
+
+**The salon row is re-read `FOR UPDATE` in that transaction.** A roster write (`stripFromChannels`)
+removes the user from the locked row, never from the copy read before the lock, so an add granted in
+between is kept. An access-list rewrite compares the locked row with the copy its removals and first
+evictions were computed from; if the visibility or the allowlist changed, it is refused whole with
+`409 CHANNEL_ACCESS_CHANGED`, which the settings panel names: the visibility, the allowlist and the
+write policy are left as the other edit wrote them, and a departure the first evictions began is
+settled `cancelled` like any abandoned one. A public salon made private gets its distribution group
+before the lock; when the change is then refused, the group is left, not retired: its id stays on the
+row, inert while the salon is public, reused by the next flip (the mint is idempotent), and possibly
+the group of a concurrent flip that did commit.
+
+**Nothing writes a salon row from a copy read without a lock.** TypeORM's `save` re-reads the row
+and writes back every column the copy differs on, so a save of a stale copy reverted whatever a
+concurrent edit had committed - an admin's flip could make a salon public again, outside any lock,
+and the check under the lock would then pass. The group id (`ensureChannelDistributionGroup`,
+`retireChannelDistributionGroup`) and a rename write their one column with `update`; a grant (an
+admin joining a private salon, an invitation into one) adds the user to the row re-read `FOR UPDATE`
+in its own transaction (`grantPrivateChannelAccess`), so it cannot restore a member a removal has
+just taken off. The same transaction share-locks the grantee's membership row (and, for an admin's
+join, the roles granting `workspace.manage`), so a grantee kicked or demoted since the caller's reads
+gets nothing. An invitation into a salon deleted meanwhile answers `404` and announces nothing - a
+`public` event would hand the private salon's name to the community. A departure from the community
+re-reads its private salons row-locked in its roster write, and a salon granted since its first read
+(whose group it never cut) supersedes it. `removeFromWorkspace` retries such a departure inline, up to
+three, each from a fresh read; only a race that outlasts them answers `409 DEPARTURE_SUPERSEDED`,
+and an account erasure counts that answer as transient, so its queue retries instead of giving up.
+An invitation into a salon deleted meanwhile also takes back the membership it created (a departure
+with reason `invite_withdrawn`), so the `404` leaves nothing half-made.
+
+**Lock order.** Salon rows are locked before membership rows everywhere: the grant (salon, then the
+grantee's membership), a departure (all the community's private salons, `ORDER BY id`, then the
+membership delete), and `hardDeleteWorkspace` (salons deleted before memberships).
+
+Pinned by `removal-bound.integration.spec.ts` (PostgreSQL: the gate parked on an uncommitted role
+change through `pg_blocking_pids`, the removal lock, a rewrite raced by another, a flip computed
+from a public row another admin made private while its mint was in flight, a private creation,
+no advisory lock held at any call to chat-delivery) and `removal-bound.spec.ts`.
+
+`workspace.manage` holds every permission, so an administrator keeps all of it. Pinned by
+`role-change-bound.spec.ts` and `removal-bound.spec.ts`.
+
+### A membership carries the admission a member signed (2026-10-22)
+
+`channel_members."admissionVoucher"` (migration `107`, nullable text) holds the voucher a member's
+device signed for this membership: sent as `admissionVoucher` with a member's add
+(`POST /api/channels/:channelId/members/invite`) and with a link's accept (body of
+`POST /api/channels/invites/:token/accept`, written onto an existing row too, and onto a new one in
+the transaction that counts the invite's use). The service checks
+only that it is base64url and at most 4096 characters (`ADMISSION_VOUCHER_INVALID` otherwise) - it
+cannot verify it, and the members do. The workspace roster serves it with `isCreator`. Why, and the
+format: [channel-encryption section 25](../protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22).
 
 ### A user id becomes a property name, and four sites spelled the refusal differently (2026-09-23)
 

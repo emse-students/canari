@@ -69,6 +69,12 @@ class CanariBootReceiver : BroadcastReceiver() {
      * heals a token entry the backend dropped/expired while the device was off.
      */
     private fun reRegisterToken(context: Context) {
+        // The token a sign-out still owes the deletion of is not re-registered: it is deleted.
+        if (PushRegistrationEnd.isDeletionOwed(context)) {
+            Log.i(TAG, "reRegisterToken: a sign-out owes the token deletion - completing it instead")
+            PushRegistrationEnd.completeOwedDeletion(context)
+            return
+        }
         val token = try {
             Tasks.await(FirebaseMessaging.getInstance().token, TOKEN_FETCH_TIMEOUT_S, TimeUnit.SECONDS)
         } catch (e: Exception) {
@@ -92,8 +98,10 @@ class CanariBootReceiver : BroadcastReceiver() {
         }
         Log.i(TAG, "reRegisterToken: token ${if (token == previous) "unchanged" else "ROTATED"}")
 
+        // The context first: a signed-out device has none, and then the secret is not looked for -
+        // its absence is the sign-out, not a Keystore fault worth the error that lookup logs.
         val pushCtx = MlsContextLoader.loadPushContext(context)
-        val secret = CanariFirebaseMessagingService.retrievePushSecret(context)
+        val secret = pushCtx?.let { CanariFirebaseMessagingService.retrievePushSecret(context) }
         if (pushCtx == null || secret == null) {
             Log.d(TAG, "reRegisterToken: context/secret absent -> backend refresh deferred to foreground")
             return

@@ -54,6 +54,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
+  import { initialScrollDirection, nextScrollDirection } from '$lib/utils/scrollDirection';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
   import LiveViewer from '$lib/components/live/LiveViewer.svelte';
   import { livesAvailable } from '$lib/utils/livesAvailability';
@@ -164,6 +165,14 @@
    * reactive: nothing is drawn from it.
    */
   let tabLoad = 0;
+
+  /** Whether the tab row is drawn: false after a scroll down, true again on the first scroll up. */
+  let tabsShown = $state(true);
+  /**
+   * Whether focus is inside the tab row. A row that hid under a focused tab would turn `inert` and
+   * drop that focus to the body, so a keyboard user scrolling with a tab focused keeps the row.
+   */
+  let tabsFocused = $state(false);
 
   /**
    * Applies a failed feed read to the screen, as `firstPageFailure` classifies it: a 401/403 ends
@@ -324,6 +333,11 @@
   }
 
   let searchQuery = $state('');
+  /**
+   * The tab row is slid out only when the scroll says so, no search replaces the feed, and nothing
+   * in it holds focus.
+   */
+  const tabsHidden = $derived(!tabsShown && !searchQuery && !tabsFocused);
   let searchResults = $state<PostEntity[] | null>(null);
   let searching = $state(false);
   let searchDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -748,7 +762,21 @@
     const scrollContainer = document.querySelector<HTMLElement>('.page-scroll-wrap');
     if (scrollContainer) {
       const { destroy } = pullToRefresh(scrollContainer, { onRefresh: refreshPosts });
-      return destroy;
+      // The tab row comes back on the first scroll UP (see `tabsShown`). No log per event.
+      // Seeded at where the page already is (a restored scroll is not the top), so the first
+      // event measures from there rather than reading the whole offset as one scroll down.
+      let direction = initialScrollDirection(scrollContainer.scrollTop);
+      const onScroll = () => {
+        const max = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+        // Clamped so a bounce at the bottom never reads as an upward scroll.
+        direction = nextScrollDirection(direction, Math.min(scrollContainer.scrollTop, max));
+        if (direction.shown !== tabsShown) tabsShown = direction.shown;
+      };
+      scrollContainer.addEventListener('scroll', onScroll, { passive: true });
+      return () => {
+        scrollContainer.removeEventListener('scroll', onScroll);
+        destroy();
+      };
     }
   });
 </script>
@@ -869,7 +897,25 @@
 
   <!-- ONE ROW: the three tabs and the CanaReels entry (user, 2026-10-16). Its content hides while a
        search replaces the feed; its margin stays, as it always did. -->
-  <div class="mb-5">
+  <!-- COLLAPSING TAB ROW (a member, 2026-10-22: the tabs were only reachable at the very top). It is
+       `sticky` to the page's scroller and moves by a TRANSFORM driven by `tabsShown` alone, so no
+       layout changes and the feed neither jumps nor reflows. It is a direct child of the page column
+       because a sticky box only sticks inside its parent. `inert` while hidden keeps it out of the
+       tab order, and it never hides while focus is inside it (`tabsFocused`). `motion-reduce` drops
+       the slide. While a search replaces the feed its content is hidden, so it is neither sticky
+       nor padded: an empty opaque band would sit over the results. -->
+  <div
+    class="-mx-1 mb-2 px-1 transition-transform duration-200 ease-out motion-reduce:transition-none {searchQuery
+      ? ''
+      : 'bg-cn-bg sticky top-0 z-10 pb-3'} {tabsHidden ? '-translate-y-full' : ''}"
+    inert={tabsHidden}
+    onfocusin={() => (tabsFocused = true)}
+    onfocusout={(e) => {
+      const next = e.relatedTarget;
+      tabsFocused = next instanceof Node && e.currentTarget.contains(next);
+    }}
+    data-feed-tabs-collapsible
+  >
     <div class:hidden={!!searchQuery}>
       <FeedTabRow feed={activeFeed} onFeed={navigateFeed} {authToken} />
     </div>

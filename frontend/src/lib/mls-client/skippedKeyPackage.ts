@@ -11,7 +11,11 @@ export type SkippedKeyPackageReason =
   | 'invalid-signature'
   | 'unsupported-protocol-version'
   | 'malformed'
-  | 'internal';
+  | 'internal'
+  // The credential does not name the device the package was fetched for (`deviceTrust.ts`).
+  | 'identity-mismatch'
+  // The right device, under a signature key this device never pinned for it (`deviceTrust.ts`).
+  | 'signature-key-changed';
 
 /** One KeyPackage refused by the WASM/native layer: its position in the input and the typed reason. */
 export interface SkippedKeyPackage {

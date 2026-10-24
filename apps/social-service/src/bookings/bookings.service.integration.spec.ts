@@ -568,6 +568,26 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(await ds.getRepository(BookingBlock).countBy({ resourceId: r })).toBe(4);
     });
 
+    it('names the bookings to the linked account as bare ids, and to a stranger not at all', async () => {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      await ds.getRepository(BookingResource).update(r, { linkedUserId: DAN });
+      const { id } = await book(space.id, r, '10:00', '10:30');
+      const block = { startsAt: on('09:00'), endsAt: on('12:00') };
+      // The body is the code and the ids, never a name: the linked account is not a manager and
+      // reads nobody's identity (spaceBookings, the list that carries it, is manager-only).
+      expect(await refusal(service.addBlock(r, block, as(DAN), NOW))).toEqual({
+        code: 'bookings-inside-block',
+        bookingIds: [id],
+      });
+      expect(await refusal(service.spaceBookings(space.id, as(DAN), 0, 10, [id]))).toEqual({
+        code: 'not-manager',
+      });
+      expect(await refusal(service.addBlock(r, block, as(BOB), NOW))).toEqual({
+        code: 'not-manager',
+      });
+    });
+
     it('lets the linked account block its own resource, and refuses a past range', async () => {
       const { space, resourceIds } = await setup();
       const r = resourceIds[0];

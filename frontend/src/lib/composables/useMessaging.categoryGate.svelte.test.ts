@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE ACCOUNT'S "MESSAGES" / "COMMUNITY CHANNELS" SWITCH, honoured by the notifications this client
  * raises ITSELF from a socket frame. The server already refuses to push a muted category, but a

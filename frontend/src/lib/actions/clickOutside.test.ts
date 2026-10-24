@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { clickOutside } from './clickOutside';
 import { portal } from './portal';
 

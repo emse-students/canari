@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import axios from 'axios';
-import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/token-lifetimes';
+import { ACCESS_TOKEN_TTL_SECONDS, CREDENTIAL_SKEW_SECONDS } from '../auth/token-lifetimes';
 import {
   CORE_ERASURE_STATEMENTS,
   ERASURE_ORDER,
@@ -30,8 +30,6 @@ const OVERDUE_AFTER_HOURS = 24;
 const CLAIM_LEASE_SECONDS = 300;
 /** Above the slowest downstream erasure measured, below the lease. */
 const CALL_TIMEOUT_MS = 120_000;
-/** Seconds added to the token TTL before the final pass, for clock skew between the hosts. */
-const CREDENTIAL_SKEW_SECONDS = 120;
 /**
  * ONE job per claim: jobs run one after the other, each up to {@link CALL_TIMEOUT_MS}, so a batch
  * leased together would let the last ones' lease run out while the first still ran.

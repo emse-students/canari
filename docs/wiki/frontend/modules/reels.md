@@ -226,7 +226,8 @@ event, after the last chunk. Every failure is a typed `ReelRecorderError` (`unsu
 
 **A take is one history entry from its first frame to the end of its review**, so Back ends a
 recording or discards a review before it leaves the camera, and the tab swipe stands down meanwhile
-(it reads the overlay depth). The lens switch and the close button stand down during a take. The
+(it reads the overlay depth). The close button stands down during a take; the lens switch stays and
+flips WITHOUT ending the take ([below](#zoom-and-a-lens-flip-during-a-take-user-2026-10-22)). The
 review plays the take full screen and looping in `VideoPlayer`, with the camera held OFF
 (`CameraScreen`'s `paused`) so the privacy dot is not lit for nothing; discarding reopens it. Going to
 the background mid-take ENDS the take and keeps it (`onBeforeRelease`) rather than losing it with the
@@ -306,6 +307,91 @@ OWED, see below):
   `pdfDocument.ts` encodes nothing since 2026-10-11 (pages stay canvases) and the PDF thumbnail goes
   through `canvasToBlob` ([posts](posts.md#making-the-reader-fluid-on-a-phone-2026-10-11)). Re-measure before touching `reelRecorderMimeCandidates`: VP9 is NOT the
   cause of the photo wait; it stays a lead for the TAKE's end only.
+
+### Zoom and a lens flip during a take (user, 2026-10-22)
+
+**THE DECISIONS (user, 2026-10-22), not to be relitigated:**
+
+1. **SWIPE TO ZOOM.** While filming, with the finger held on the shutter, sliding UP zooms in and
+   sliding DOWN zooms out (Snapchat's and Instagram's gesture).
+2. **ONE GESTURE EVERYWHERE, TWO MODES.** Where the lens's track lists a `zoom` capability
+   (`getCapabilities().zoom`) the zoom is the HARDWARE's (`applyConstraints`). Where it lists none
+   (expected: iOS WKWebView) the SAME gesture zooms DIGITALLY - crop and enlarge. This is a user
+   decision, not a fallback: the mode is a fact of the track, logged ONCE per session and mode at
+   info (`zoom is digital on the user lens (1x-5x)`), never per gesture.
+3. **A DOUBLE TAP ON THE PREVIEW FLIPS THE LENS, DURING A TAKE TOO**, and the take continues across
+   the flip with its sound uninterrupted.
+
+**The zoom** (`reels/cameraZoom.ts`, pure). `zoomFromDrag` maps the held finger's vertical travel to
+a level on a LOGARITHMIC scale - 1x to 2x takes the same travel as 2x to 4x - with the whole range
+over `ZOOM_DRAG_FULL_RANGE_PX` (300 CSS px), continuous (no steps), clamped to the track's range or
+to 1x-`DIGITAL_ZOOM_MAX` (5x). `ReelShutter` reports the travel (`onmove`, positive up); `ReelCapture`
+zooms only while `recording` (a press still deciding between photo and video zooms nothing), from
+the level and travel of the first slide on the current lens, so a flip re-bases it. Every take
+starts at 1x, and a flip rests the new lens at 1x (`restingZoom`). A hardware lens gets at most ONE
+`applyConstraints` in flight, the latest level winning, so a drag never queues a backlog; a lens that
+refuses its own capability is logged once and keeps its real level. A request still running when a
+flip, a reopen or a stop takes its lens away is rejected by a track that is gone: that rejection
+belongs to an earlier generation and is NOT a refusal - nothing is accused, nothing changes, and a
+level the new lens asked for meanwhile is still applied. **The zoom is slide-only: no VoiceOver or
+keyboard equivalent exists** - accepted for an optional feature (the take films at 1x without it).
+
+**The recorded framing follows the zoom.** A take is recorded from the canvas `FramedStream` draws
+(above), never from the camera track. HARDWARE: the frame arrives zoomed, so the preview and the
+canvas both show it with no change. DIGITAL: the preview `<video>` gets `transform: scale(z)` about
+its centre (clipped by `ReelFrame`), and every capture - the take's canvas, the photo, the
+thumbnail - draws `digitalZoomCrop(coverCropRect(...), z)`, the centred `1/z` part of the preview's
+crop, which is exactly what the CSS scale shows (`PreviewBox.zoom`, read on every frame). The file's
+size is fixed by the UNZOOMED crop, so a zoom changes what is drawn, never the canvas.
+
+**The flip during a take** (`CameraSession.flipDuringTake`, `FramedStream`'s `FrameSource`). ONE
+recorder for the whole take: it records the canvas's track and the microphone's, and neither changes.
+The flip stops the old lens (a phone opens one camera at a time), opens the other ALONE through the
+session's lens opener (`openPhotoCamera`, no microphone request), and installs a new stream of that
+lens plus the KEPT microphone tracks - never stopped, never asked again. The phase stays `live`
+(`flipping` says the lens is missing), so the shutter held under the finger is never unmounted, and
+the shutter is not disabled for want of a frame during a take (a disabled button under the finger
+could swallow the release). The canvas reads its frame from whatever element shows the current lens,
+every frame; until the new lens has a decoded frame, the canvas re-paints its OWN last picture, so
+the canvas track keeps producing frames: the file shows a short FREEZE, never a hole, and the sound
+runs on. **What a flip costs is logged, not yet measured on hardware**: `[framed-capture] the new lens
+draws again: N frame(s) held over X ms` per flip, and the take's total at its end - the device
+readings are owed (Mi 9T, iPhone 12). A lens that cannot be opened during a take ends the session in
+its fault, and `ReelCapture` ENDS AND KEEPS the take (as the cap would); the old lens is not reopened
+behind the member's back. Outside a take, the button and the double tap keep the ordinary
+`switchFacing` (everything reopened). **Both stand down unless the capture is `ready` or
+`recording`** (`lensFlipAllowed`, the one predicate, handed to `CameraScreen` as `flipAllowed`):
+during `pressing` the hold timer could start a take on a lens being reopened, and during `finishing`
+a reopen would release the microphone before the recorder's last chunk arrived (review of #2291). The exact `facingMode`, the front lens's mirror
+(`shouldMirrorCapture`, read per frame, so a flipped take draws each lens as its preview showed it)
+and the permission handling are unchanged.
+
+**The double tap** (`reels/previewDoubleTap.ts`) uses the app's ONE double-tap arithmetic
+(`isDoubleTap`, `GESTURE.DOUBLE_TAP_MS`, `DOUBLE_TAP_SLOP_PX`, `TAP_MAX_MS`, `TAP_SLOP_PX`) but NOT
+`doubleTapLike`: that action counts the engine's `click`s, and during a take the flip is a SECOND
+finger's tap while the first holds the shutter, for which no engine synthesises a click. Taps are read
+from the pointers instead, per pointer, whatever other finger is down. The shutter row is
+`data-no-double-tap` (the held finger is never counted) and a control's press never counts. The
+preview has no single-tap action, so nothing waits for the double-tap window. A vertical slide on the
+shutter cannot reach the page's own gestures: the button is `touch-none`, captures its pointer and
+sits in `data-swipe-nav-ignore`; the viewer's swipe and `NOT_A_GESTURE` belong to `ReelViewer` and
+`MediaLightbox`, not to this screen.
+
+**Owed on hardware - nothing above was run on a camera** (tests mock the tracks, the canvas and the
+recorder): on the Mi 9T, whether the back lens lists `zoom` (hardware mode) and the zoom is smooth;
+on the iPhone 12, that the mode is digital and the recorded file's framing matches the zoomed
+preview; on both, a double tap DURING a take - that the second-finger tap registers while the
+shutter is held, that reopening a lens while the microphone track stays live is accepted
+(WKWebView in particular), the frames held per flip from the log line, that the file plays through
+the flip with continuous sound, and that a double tap outside a take never takes a photo. Three are
+named apart (review of #2291):
+
+- **iOS WKWebView, the second video-only `getUserMedia` while the take's audio track is live**: it
+  may mute or re-route the audio session - LISTEN to a flipped take's sound on the iPhone, past the
+  flip.
+- **The Mi 9T hardware zoom range** each lens lists (`zoom is hardware ... (Ax-Bx)` at info).
+- **How long the picture holds still after a flip**, on both phones (the `frame(s) held over X ms`
+  line).
 
 **The camera also takes still photos.** A photo is captured from the live frame, reviewed, and can
 be edited before publishing. The editor draws freehand strokes and app-font text, then bakes those
@@ -416,10 +502,11 @@ reel, and the server refuses a declaration over the cap, so it declares the cap
 
 ## Watching: the feed card and the full-screen viewer (C7)
 
-**In the feed a reel is a VERTICAL box** (`PostContent`): 9:16, 70 % of the screen's height, the
-video covering it. An ordinary attachment's box follows the file's ratio under the 60 % ceiling and
-cropped a phone's portrait clip into a wide strip; a reel is always portrait, so its box says so
-before the first frame. It plays muted while on screen like any feed video (`InlineVideo`), and a
+**In the feed a reel is drawn in the SAME box as any video** (`PostContent` `singleMedia`, user,
+2026-10-22): the clip's own ratio under the `--media-max-height` ceiling, the whole frame contained
+and the sides a blurred copy of its first frame; 9:16 only when the reel carries no dimensions
+([posts](posts.md)). It used to be a fixed 9:16 box 70 % of the screen high with the video covering
+it. It plays muted while on screen like any feed video (`InlineVideo`), and a
 touch opens the viewer instead of the media viewer.
 
 **A feed card fetches what its video is about to play, and gives it all back off screen (fix of
@@ -499,9 +586,9 @@ text instead of turning the reel. The fold is
 measured (`watchClampOverflow`, shared with the card), so a short caption has no button. Unfolding
 neither pauses nor turns the reel: the tap-outside layer is a button, and the unfolded text carries
 `data-reel-caption-open`, both in the viewer's `NOT_A_GESTURE`, so a drag there scrolls the text
-(`touch-pan-y`) instead of turning the reel. Anchored to the bottom, above the player's bar, so 2x
+(`touch-pan-y`) instead of turning the reel. Anchored to the bottom, above the player's line, so 2x
 type grows UPWARD. The viewer has nothing else at the bottom-right at 390 px (its step buttons are
-`md:` and mid-height; the save is in the player's bar), so nothing collides.
+`md:` and mid-height; the save and the sound are in the rail), so nothing collides.
 
 ### A double tap on a reel likes it (2026-10-19)
 
@@ -540,8 +627,8 @@ below; **owed on both phones**
 
 - **The rail** (`ReelActionRail`, inside `ReelSlide`'s frame, bottom-right on the caption's
   baseline; the caption keeps `pr-16` free for it): **heart** with the number of reactions,
-  **comments** with the number of comments, **send** (`sharePostLink`: the system share sheet on
-the public link in the phone apps, a copied link elsewhere). Drawn only when the viewer has a reader
+  **comments** with the number of comments, **send** (the post's share sheet, `PostShareSheet`:
+  into a conversation, copy the link, the system sheet - [sharing S6](../sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)). Drawn only when the viewer has a reader
   (`likerId`), so a conversation's reel (RC-1) has none. `data-no-double-tap` keeps it out of the
   double tap, `data-reel-rail` out of the viewer's swipe (`NOT_A_GESTURE`).
 - **The heart says "I reacted"** (`reels/reelRail.ts`): a post carries reactions of several kinds,
@@ -550,22 +637,40 @@ the public link in the phone apps, a copied link elsewhere). Drawn only when the
   2026-10-19), named "Votre réaction : ..., retirer" - so a tap, which takes the reader's reaction
   back, never removes a 😂 the rail did not show. With none, a tap gives "J'aime". The number is
   every reaction; a kind this client does not know (a newer server's) is named "Votre réaction",
-  never "J'aime". Changing to another kind stays the card's picker. Same path as the double tap
+  never "J'aime". Changing to another kind is the heart's drawer (next bullet). Same path as the double tap
   (`toggledReactions`, `sendPostReaction`, `publishPostReactions`, rollback + toast), and **one
   reaction in flight per reel**: a second tap (heart or double tap) before the server answered is
   ignored and logged, so two answers never land out of order and a rollback returns to a state no
   later tap moved. A request the server never answers does not hold the heart forever: every
   `apiFetch` carries its response deadline (`RequestDeadlineError`), which rolls the heart back
   with the card's sentence and frees it.
+- **A LONG PRESS ON THE HEART OPENS A REACTION DRAWER** (user, 2026-10-23, on 1.4.0: *"je ne peux
+  reagir qu'avec un coeur ... j'aimerais avoir le choix avec un appui long"*). `ReelActionRail`: a
+  vertical menu (`role="menu"`, `menuitemradio`) of the card's own set (`REACTIONS`, Noto SVG through
+  `EmojiText`) opening UPWARD from the heart with `reelReactionDrawerIn` (180 ms; the global
+  reduced-motion rule flattens it). The hold is the shared `actions/longPress` (450 ms, 10 px slop):
+  it swallows the click that ends the hold, so opening never also toggles, and it refuses the native
+  menu (`contextmenu` prevented; the heart is `select-none` with `-webkit-touch-callout:none`). A
+  short tap is unchanged. A pick is the card's picker through `ReelViewer.pickReaction`
+  (`pickedReactionToggle`): another kind replaces the reader's, the kind they hold is taken back;
+  same in-flight and mute guards and the same `sendReaction` path. Tap outside (a full-screen
+  button, so the viewer's swipe ignores it) and Escape close it - Escape is `preventDefault`ed so
+  the viewer stays open. No conflict with the double tap or the swipe/zoom: the rail is
+  `data-no-double-tap` and `data-reel-rail`, and the hold cancels past 10 px of travel. Keyboard:
+  ArrowUp on the heart, the context-menu key or Shift+F10 opens it, arrows walk it, focus returns
+  to the heart. **Owed: one hold on each phone** (iOS callout, Android selection, and that a drawer
+  opened under a thumb is not dismissed by the finger lifting - a jsdom test cannot say).
 - **The comment number is the server's total** (`commentCount`, `posts/commentChange.ts`): a list
   row carries only the newest twenty comments, so `comments.length` read "20" for a post of 57 -
   on the rail and on the card's button alike. Every write keeps the total in step, and "load all"
   (`GET /api/posts/:id`, every comment and no total) sets it to the rows it read - on the read's
   own object, so its served stamp survives. On the card, a comment write declares `comments` AND
   `commentCount` to its ledger: a read issued before the write adopts neither.
-- **Send is the post menu's share** (`posts/sharePost.ts`: copy the public link, toast). Sending a
-  post INTO a conversation does not exist; it is an owed decision, not built here.
-- **The comments sheet** (`ReelCommentsSheet`): the POST's own thread - `PostComments` in its
+- **Send is the post menu's share**: both open the post's share sheet (`PostShareSheet`, loaded on
+  the first send and drawn inside the viewer, so above it). Sending INTO a conversation lands the
+  link in that conversation's composer, and a tap on that link's card there opens the reel in this
+  viewer ([sharing S6](../sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)).
+- **The comments sheet** (`ReelCommentsSheet`, whose drawer is the shared `shared/CommentsDrawer` - a post's thread opens in the SAME one on a phone, 2026-10-23, see [posts](posts.md)): the POST's own thread - `PostComments` in its
   `docked` mode (the list scrolls, the composer stays at the bottom), written through
   `posts/postCommentThread.svelte.ts`, the class the card now uses too, and reported through
   `posts/reportComment.ts`, also the card's. No new request. 60 % of the screen, `rounded-t-3xl`,
@@ -634,6 +739,38 @@ dp in the WebView. So a slow drag commits SOONER in Canari (25 % against 50 %) a
 be about seven times FASTER. These numbers are the reference for tuning it; this change applies
 none of them. **Follow-up, after the phone reading of RR:** decide whether the reel pager moves
 towards these thresholds (lead's decision: not in the rail's pull request).
+
+### The minimal player and the rail tools (user, 2026-10-23)
+
+*"Les Reels d'instagram sont beaucoup plus epures, la barre de lecture est discrete et collee en bas,
+sans timecode."* The viewer's player is `VideoPlayer` with `minimal` (through `PostMedia`'s
+`minimalPlayer`); every other player (lightbox, conversations) keeps its bar.
+
+- **No control row, no timecode, no play button.** One progress line on the bottom edge of the frame,
+  **2 px drawn in a 32 px touch target**, `z-40` over the caption's vignette (`z-20`) so the scrim never
+  dims it. Touched or dragged it thickens (4 px) and shows a 12 px handle; a keyboard focus does the
+  same. It stays a `role="slider"` (arrows, Home/End through `videoKeyAction`) and is
+  `data-video-controls`, so a drag on it is a seek and never a swipe. It pads for the home indicator
+  (`--safe-area-inset-bottom`) only when the frame reaches the screen bottom (`playerSafeBottom`).
+  The caption's bottom pad is now `inset + 1rem`; the 4.5 rem it left for the bar is gone.
+- **A tap on the picture plays or pauses** (it toggled the controls before; a paused reel kept a big
+  play button). **The glyph is the feedback of a tap, never a state** (user, same day): nothing at load,
+  autoplay, an engine pause or the end; the icon of what the tap just did pops and fades in 600 ms
+  (`.reel-glyph`) and is not drawn under `prefers-reduced-motion`. A double tap that likes still
+  pauses then resumes (the first tap is the player's, as it always was).
+- **The rail, top to bottom: heart, comments, share, DOWNLOAD under share, SOUND under that** (the user
+  asked for this order; Instagram puts the sound top-right). The tools show on a reel page even
+  when the rail has no social action (a conversation's reel), and not on a photo page. The sound
+  button is `videoSound`'s one answer; `VideoPlayer` now also carries a store change to its element
+  (`app` scope), so the rail needs no handle on the player. The download is the same
+  `ReelSaveButton`, same logic, drawn plain (`rail`).
+- **The top**: a scrim under the status bar and the X, the X without a disc (it overlapped a
+  letterboxed frame's rounded corner), safe-area aware; the native status bar icons are held light
+  while the viewer is up (`themeStore.holdNativeBar('dark')`, the camera's mechanism).
+- **The bands around a short frame are intended**: the frame is the camera's 9:16 shown whole
+  (`ReelFrame`), the rest of the screen is `ReelBackdrop`'s blurred copy, never black. A reel whose
+  frame fills the stage has none. No screenshot is attached: the wasm bundle could not be built
+  where this was written, so the render is **owed on a phone**.
 
 ### The CanaReels entry - an icon beside the tabs that opens the viewer (user, 2026-10-16)
 
@@ -706,10 +843,9 @@ author's name. `expiresAt`, `expiringSoon` and `serverNow` stay on the server's 
 ([reels (server)](../../services/reels.md)), which no client reads any more.
 The publish step's own note ("visible 30 days...") is unchanged and is the user's to rule on.
 
-**The save** (`ReelSaveButton`) is **for EVERY reel, public or not, in the player's bar right after the
-volume button** (user, 2026-10-09: *"un bouton pour sauvegarder tous les reels, public ou non"*). It is a
-`barActions` snippet that `ReelSlide` hands to `PostMedia` (gallery mode), which hands it to `VideoPlayer`;
-it reads the video out of the media cache with the key the viewer's own ref carries, and gives it to:
+**The save** (`ReelSaveButton`) is **for EVERY reel, public or not** (user, 2026-10-09: *"un bouton pour
+sauvegarder tous les reels, public ou non"*). Since 2026-10-23 it is in the RAIL under the send, not in
+the player's bar ([the minimal player](#the-minimal-player-and-the-rail-tools-user-2026-10-23)); it reads the video out of the media cache with the key the viewer's own ref carries, and gives it to:
 
 | Where | Path | Permission |
 | --- | --- | --- |

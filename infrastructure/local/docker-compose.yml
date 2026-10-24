@@ -7,14 +7,14 @@
 # `docker compose down --remove-orphans`, which on a shared project means it would have DELETED that
 # stranger's container as an orphan of ours.
 #
-# It also gives the local database a nameable identity. `infrastructure/local/dump-prod-to-local.sh`
-# writes only to the container carrying this exact label, which is what a destructive control needs -
+# It also gives the local database a nameable identity: a destructive control writes only to the
+# container carrying this exact label, which is what it needs -
 # an ALLOWLIST of what it may touch. A name derived from whatever directory the caller happened to
 # invoke from cannot be that, and production's own project is called `infrastructure`.
 #
 # Renaming orphans any pre-existing `local_*` volume of ours: the data lived under the old prefix and
 # the stack starts fresh under `canari-local_*`. That is deliberate - the local database is fed by
-# `make dump-prod`, so it is reproducible by construction and nothing of value is in a volume.
+# the fictional seed, so it is reproducible by construction and nothing of value is in a volume.
 name: canari-local
 
 services:
@@ -58,7 +58,7 @@ services:
 
   postgres:
     # Same rule. The tag pinned the MAJOR only, so every patch arrived unannounced.
-    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
     ports:
       - "5432:5432"
     environment:
@@ -145,6 +145,9 @@ services:
       CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
       # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
       CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
+      # The key-group shared-payload WRITER (migration 034), off as on both estates; set it true
+      # here to exercise the writer locally.
+      QUEUED_PAYLOAD_SHARED_WRITES: ${QUEUED_PAYLOAD_SHARED_WRITES:-false}
       TURN_URL: ${TURN_URL:-turn:host.docker.internal:3478?transport=udp}
       TURN_USERNAME: ${TURN_USERNAME:-user}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-password}
@@ -305,6 +308,9 @@ services:
       # Empty by design (env-from-prod.sh BLANK): this stack signs in through the PRODUCTION MiConnect,
       # so a token here would let a local run edit a real person.
       MICONNECT_EDITOR_TOKEN: ${MICONNECT_EDITOR_TOKEN:-}
+      # Account restore (WP-RESTORE-1). Empty locally unless a debug APK's fingerprint is set: every
+      # /api/auth/restore route then answers 503 (docs/wiki/account-restore.md).
+      ANDROID_APP_LINK_SHA256: ${ANDROID_APP_LINK_SHA256:-}
       # WITHOUT THESE THREE, NO LOGIN CAN COMPLETE LOCALLY, AND THE FAILURE BLAMES THE SERVER.
       # `infrastructure/.env` carried all three correctly and this file forwarded none of them, so
       # the browser reached `/auth/callback?code=...` - Authentik having authenticated and redirected
@@ -375,6 +381,7 @@ services:
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
       LYDIA_KEY_ENCRYPTION_SECRET: ${LYDIA_KEY_ENCRYPTION_SECRET:-}
+      LIVE_KEY_ENCRYPTION_SECRET: ${LIVE_KEY_ENCRYPTION_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010

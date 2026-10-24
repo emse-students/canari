@@ -7,6 +7,7 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
+import { fakeDepartureManager } from './departure-transaction.fake-spec';
 
 /** A well-formed Graine v2 signature: every salon row carries one (channel-encryption 21.8). */
 const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
@@ -60,7 +61,11 @@ describe('channel audience', () => {
 
   function makeService(channel: Partial<Channel>) {
     const workspaceRepo = { findOne: jest.fn(() => Promise.resolve({ id: 'ws1', slug: 'ws' })) };
-    const channelRepo = { findOne: jest.fn(() => Promise.resolve(channel)), save: jest.fn() };
+    const channelRepo = {
+      findOne: jest.fn(() => Promise.resolve(channel)),
+      save: jest.fn(),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
     // Honours `In([...])`: several guards resolve one member's permissions with it, and a mock that
     // ignores the filter hands every role to every user - which silently turns an outsider into an
     // admin and makes a refusal test pass for the wrong reason.
@@ -95,6 +100,9 @@ describe('channel audience', () => {
     );
     const redis = { publishChannelEvent: jest.fn(() => Promise.resolve()) };
 
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
+    });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,

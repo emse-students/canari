@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Same import-cycle break as `BaseMlsService.externalJoin.test.ts`.
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
@@ -69,6 +70,9 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     distributionScopeByGroup: new Map<string, string>(),
     knownDistributionGroups: new Set<string>(),
+    // `destroy` settles the drain waiters too, and `Object.create` skips the field initialisers.
+    groupDrainedWaiters: new Map(),
+    groupDrainedArmed: new Set<string>(),
     distributionGroupInfo: null,
     joinByExternalCommit: vi.fn().mockResolvedValue({ groupId: 'g', commit: new Uint8Array([9]) }),
     getEpoch: vi.fn(() => 6),

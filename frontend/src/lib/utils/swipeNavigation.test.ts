@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { APP_PLACES, MOBILE_NAV_PLACES } from '$lib/navigation/places';
 import {
   GESTURE_LOCK_PX,

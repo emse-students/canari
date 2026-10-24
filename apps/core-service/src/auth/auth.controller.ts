@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ConflictException,
   ForbiddenException,
   Get,
   Head,
@@ -17,8 +18,12 @@ import {
   Res,
   ServiceUnavailableException,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import { AccountThrottlerGuard } from '../common/guards/account-throttler.guard';
+import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
 import * as jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
 import { parseProfileClaims, type MiconnectClaims } from '../users/miconnect-profile';
@@ -38,14 +43,63 @@ import {
 import { TAURI_WEBVIEW_ORIGINS } from '../cors-origins';
 import { REFRESH_HEADER, usesBodyRefreshTransport } from './refresh-transport';
 import { ACCESS_TOKEN_TTL_SECONDS } from './token-lifetimes';
+import { assertMintableUserId } from '../users/user-id';
 import {
   AccountErasureService,
   type ErasureState,
 } from '../account-erasure/account-erasure.service';
+import type { User } from '../users/entities/user.entity';
+import { RestoreCredentialsService } from './restore/restore-credentials.service';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 
 interface OidcCallbackDto {
   code: string;
   redirect_uri: string;
+  /**
+   * The PKCE verifier of the authorization request that produced `code` (RFC 7636). MiConnect checks
+   * it against the challenge the client sent, so a code captured on its way back cannot be redeemed
+   * here by anybody but the device that asked for it. Absent from a build that predates PKCE, and
+   * from a client that read no `oidcPkce` capability in `GET /api/version` before it signed in
+   * (docs/wiki/legacy-compatibility.md).
+   */
+  code_verifier?: string;
+}
+
+/**
+ * The typed refusals of `POST /auth/oidc/callback` when MiConnect will not redeem the code. The
+ * client renders on `code`, never on `message`.
+ *
+ * - `OIDC_PKCE_REFUSED`: the code was redeemed WITH a verifier and MiConnect answered `400`. The
+ *   verifier did not match the challenge, or the code was spent or expired - authentik answers
+ *   `invalid_grant` to all of them alike (measured by infrastructure/authentik/test-pkce.py), so
+ *   nothing finer can be stated truthfully. What it does state: the sign-in was a PKCE one.
+ * - `OIDC_CODE_REFUSED`: the code was redeemed WITHOUT a verifier and MiConnect answered `400` - a
+ *   spent or expired code from a client that did not challenge, or a challenged code whose verifier
+ *   the caller lost.
+ * - `OIDC_TOKEN_EXCHANGE_FAILED`: any other status. Not a judgement on the code.
+ */
+export type OidcTokenRefusalCode =
+  | 'OIDC_PKCE_REFUSED'
+  | 'OIDC_CODE_REFUSED'
+  | 'OIDC_TOKEN_EXCHANGE_FAILED';
+
+/**
+ * Classifies MiConnect's refusal of a code from the two facts this server KNOWS - the status it got
+ * and whether it sent a verifier - never from the provider's prose, which is logged and not returned.
+ */
+export function oidcTokenRefusal(
+  status: number,
+  verifierSent: boolean
+): { code: OidcTokenRefusalCode; message: string } {
+  if (status !== 400) {
+    return {
+      code: 'OIDC_TOKEN_EXCHANGE_FAILED',
+      message: `Authentik token exchange failed (${status})`,
+    };
+  }
+  return verifierSent
+    ? { code: 'OIDC_PKCE_REFUSED', message: 'MiConnect refused the code and its PKCE verifier' }
+    : { code: 'OIDC_CODE_REFUSED', message: 'MiConnect refused the code' };
 }
 
 /** Claims carried by the refresh JWT. `sid`/`jti` are absent on tokens issued before WP-SESS-2. */
@@ -73,6 +127,88 @@ interface SessionDto {
 interface BindDeviceDto {
   deviceId?: unknown;
 }
+
+/** Body of `POST /auth/restore/registration`. */
+interface RestoreRegistrationDto {
+  response?: unknown;
+  /** What the phone did: true when the key went to the Google backup, false on the second path. */
+  cloudBackup?: unknown;
+  /**
+   * The id of the key THIS INSTALL registered last for this session, or null. A key the session
+   * holds under any other id was not registered by this install, and replacing it is logged as the
+   * eviction of a foreign key (docs/wiki/account-restore.md, threat model).
+   */
+  previousCredentialId?: unknown;
+}
+
+/** Body of `POST /auth/restore/assertion`. */
+interface RestoreAssertionDto {
+  response?: unknown;
+}
+
+/** The account as a sign-in answers it - the MiConnect callback and a restore return the same shape. */
+interface SignedInUserDto {
+  id: string;
+  displayName: string;
+  promo: number | null;
+  firstName: string | null;
+  lastName: string | null;
+  bio: string | null;
+  admin: boolean;
+}
+
+/** What a sign-in answers, whichever way the account was proven. */
+interface IssuedSession {
+  access_token: string;
+  /** Present only for a client whose engine cannot keep the cookie - see `refresh-transport.ts`. */
+  refresh_token?: string;
+  user: SignedInUserDto;
+}
+
+/**
+ * The origins of the Android app's WebView. A restore key is created by Android's Credential
+ * Manager for this app, so a registration from any other origin is not this app - and refusing it
+ * is what stops a script holding a web session (an XSS) from registering a key of its own: a browser
+ * cannot forge `Origin` (docs/wiki/account-restore.md, threat model).
+ */
+const ANDROID_APP_ORIGINS: readonly string[] = [
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+];
+
+/** A restore refusal, as a code the client branches on (never on the message). */
+function restoreRefusal(code: string, message: string): { code: string; message: string } {
+  return { code, message };
+}
+
+/** No key with that id, or its session is gone - the client clears its key. */
+function restoreKeyUnknown(): UnauthorizedException {
+  return new UnauthorizedException(
+    restoreRefusal('RESTORE_KEY_UNKNOWN', 'This restore key is not valid any more')
+  );
+}
+
+/** A key this server registered did not verify, or its challenge was spent (a replay). */
+function restoreAssertionInvalid(): UnauthorizedException {
+  return new UnauthorizedException(
+    restoreRefusal('RESTORE_ASSERTION_INVALID', 'The restore key did not verify')
+  );
+}
+
+/**
+ * Requests per minute per ACCOUNT on each restore-key registration route. Every Android start calls
+ * the options route once (and the registration once more when a key is due), so ten a minute is a
+ * bound no honest account meets.
+ */
+const RESTORE_REGISTER_LIMIT_PER_MINUTE = 10;
+
+/**
+ * Requests per minute per visitor ADDRESS on each anonymous restore route. A campus sits behind one
+ * NAT address, so the ceiling is sized for a burst of fresh installs behind it, not for one phone;
+ * the client reads a 429 as "the server cannot answer now" and asks again at the next start, never
+ * as a verdict on its key.
+ */
+const RESTORE_ANONYMOUS_LIMIT_PER_MINUTE = 120;
 
 const REFRESH_COOKIE = 'canari_refresh';
 const REFRESH_MAX_AGE = SESSION_TTL_SECONDS; // 7 days in seconds - the cookie and the row must agree
@@ -102,7 +238,8 @@ export class AuthController {
     private readonly platformService: PlatformService,
     private readonly authSessions: AuthSessionsService,
     private readonly adminerAccess: AdminerAccessService,
-    private readonly accountErasure: AccountErasureService
+    private readonly accountErasure: AccountErasureService,
+    private readonly restoreCredentials: RestoreCredentialsService
   ) {
     const secret = process.env.JWT_SECRET;
     if (!secret || secret === 'change-me-in-production') {
@@ -184,6 +321,19 @@ export class AuthController {
         expiresIn: REFRESH_MAX_AGE,
       }
     );
+  }
+
+  /**
+   * Signs an access JWT. `sid` names the session it was minted for, so what a request does with it
+   * can be bound to that login: `/api/auth/verify` hands it to nginx as `X-Session-Id`, and
+   * chat-delivery-service stores it on the push registration it makes, which is how ending the
+   * session ends exactly that registration (`docs/wiki/sessions.md`). It authorises nothing: the
+   * refresh credential stays the only thing that names the login for the session's own endpoints.
+   */
+  private signAccessToken(userId: string, admin: boolean, sessionId: string): string {
+    return jwt.sign({ sub: userId, admin, type: 'access', sid: sessionId }, this.jwtSecret, {
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+    });
   }
 
   /**
@@ -279,6 +429,25 @@ export class AuthController {
     return cookie;
   }
 
+  /**
+   * The `sid` AND `jti` of the presented refresh credential, if one is present, parsable and carries
+   * both. Never throws. The `jti` says WHICH rotation of the session it is; only a caller that must
+   * hold the current one (a restore-key registration) reads it.
+   */
+  private currentRefreshCredential(req: Request): { sid: string; jti: string } | null {
+    const cookie = this.presentedRefreshToken(req);
+    if (!cookie) return null;
+    try {
+      const payload = jwt.verify(cookie, this.jwtSecret, {
+        algorithms: ['HS256'],
+      }) as RefreshClaims;
+      if (payload.type !== 'refresh' || !payload.sid || !payload.jti) return null;
+      return { sid: payload.sid, jti: payload.jti };
+    } catch {
+      return null;
+    }
+  }
+
   /** Reads the `sid` of the presented refresh credential, if one is present and parsable. Never throws. */
   private currentSessionId(req: Request): string | null {
     const cookie = this.presentedRefreshToken(req);
@@ -339,9 +508,22 @@ export class AuthController {
       admin: boolean;
     };
   }> {
-    const { code, redirect_uri } = body ?? {};
+    const { code, redirect_uri, code_verifier } = body ?? {};
     if (!code) throw new BadRequestException('code is required');
     if (!redirect_uri) throw new BadRequestException('redirect_uri is required');
+    if (code_verifier !== undefined && typeof code_verifier !== 'string') {
+      throw new BadRequestException('code_verifier must be a string');
+    }
+    if (!code_verifier) {
+      // A sign-in with no proof that the caller started it: a build older than PKCE, or a caller
+      // that is not the app at all. THIS LINE IS THE REMOVAL METRIC of the legacy branch
+      // (docs/wiki/legacy-compatibility.md, "an OIDC callback with no PKCE verifier"): the branch
+      // goes when it is silent on production for a week, so it stays a warn - demoting it to debug
+      // would make that condition true by hiding it, not by the clients upgrading.
+      this.logger.warn(
+        `OIDC callback without a PKCE verifier (origin=${req.get('origin') ?? 'none'}) - legacy client`
+      );
+    }
 
     if (!this.authentikBaseUrl || !this.authentikClientId || !this.authentikClientSecret) {
       throw new BadRequestException('Authentik OIDC is not configured on the server');
@@ -358,14 +540,19 @@ export class AuthController {
         redirect_uri,
         client_id: this.authentikClientId,
         client_secret: this.authentikClientSecret,
+        ...(code_verifier ? { code_verifier } : {}),
       }),
     });
 
     if (!tokenRes.ok) {
+      // The provider's answer is logged here and NOT handed to the caller: it describes the
+      // provider's checks to whoever POSTed the code, and the client has nothing to do with it.
       const errText = await tokenRes.text().catch(() => '');
-      throw new UnauthorizedException(
-        `Authentik token exchange failed (${tokenRes.status}): ${errText}`
+      const refusal = oidcTokenRefusal(tokenRes.status, Boolean(code_verifier));
+      this.logger.warn(
+        `Authentik token exchange refused (${tokenRes.status}, ${refusal.code}): ${errText}`
       );
+      throw new UnauthorizedException(refusal);
     }
 
     const tokenData = (await tokenRes.json()) as {
@@ -393,6 +580,8 @@ export class AuthController {
     if (!userinfo.sub) {
       throw new UnauthorizedException('Invalid userinfo response from Authentik');
     }
+    // `users.id` IS the subject: refused before any account exists unless it is a mintable id.
+    assertMintableUserId(userinfo.sub, this.logger, 'oidc-callback');
 
     // 3. Refuse an account whose erasure is still running. `users.id` IS the OIDC subject, so a
     // sign-in now would recreate the account under the same id, and the erasure's next pass would
@@ -410,45 +599,15 @@ export class AuthController {
       parseProfileClaims(userinfo)
     );
 
-    const platformConfig = await this.platformService.getConfig();
-    if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!user.admin)) {
-      throw new ServiceUnavailableException({
-        code: 'MAINTENANCE',
-        message:
-          platformConfig.maintenanceMessage ||
-          'Canari is under maintenance. Please try again later.',
-      });
-    }
+    await this.refuseDuringMaintenance(user);
 
     // 4b. Grant any cotisation a legacy estate recorded for them. On every sign-in, not just the
     // first: the claim terminates on durable state in social-service, so this is idempotent, and
     // a user who signed in before their association's list was loaded still gets their tag.
     await this.usersService.claimLegacyCotisations(user);
 
-    // 5. Issue internal JWT pair, backed by a session row so the refresh can be revoked
-    const access_token = jwt.sign({ sub: user.id, admin: !!user.admin }, this.jwtSecret, {
-      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-    });
-    const session = await this.authSessions.create(user.id, this.clientInfo(req));
-    const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
-
-    // 5b. The race step 3 cannot close: a `DELETE /users/me` that committed after the check. Under
-    // the erasure's per-subject lock, so it is either seen here (and what this sign-in wrote is
-    // erased again) or it runs after, deletes this session itself, and covers the access token
-    // with its final pass. The tokens are only returned once this has passed.
-    this.refuseDuringErasure(userinfo.sub, await this.accountErasure.confirmAfterSignIn(user.id));
-
-    // The cookie is set for EVERY client, including the ones that will drop it: it is unreadable by
-    // the page's own JavaScript, so it stays the preferred transport wherever it survives - and
-    // `tauri://localhost` covers desktop builds where it may well survive. The body copy is added
-    // only for origins whose engine can refuse the cookie, and only they are told to carry it.
-    this.setRefreshCookie(res, refresh_token);
-    const bodyTransport = this.carriesOwnRefreshCredential(req.get('origin'));
-    if (bodyTransport) {
-      this.logger.debug(
-        `OIDC callback: credential also returned in the body (origin=${req.get('origin')} may not keep a third-party cookie)`
-      );
-    }
+    // 5. Issue internal JWT pair, backed by a session row so the refresh can be revoked.
+    const issued = await this.issueSession(user, req, res);
 
     if (!tokenData.id_token) {
       // An `openid` exchange always carries one, so its absence is a provider misconfiguration - and
@@ -459,9 +618,58 @@ export class AuthController {
     }
 
     return {
+      ...issued,
+      ...(tokenData.id_token ? { id_token: tokenData.id_token } : {}),
+    };
+  }
+
+  /** Refuses a non-admin sign-in while the platform is in maintenance (503 `MAINTENANCE`). */
+  private async refuseDuringMaintenance(user: User): Promise<void> {
+    const platformConfig = await this.platformService.getConfig();
+    if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!user.admin)) {
+      throw new ServiceUnavailableException({
+        code: 'MAINTENANCE',
+        message:
+          platformConfig.maintenanceMessage ||
+          'Canari is under maintenance. Please try again later.',
+      });
+    }
+  }
+
+  /**
+   * MINTS A SESSION FOR AN ACCOUNT ALREADY PROVEN - the one sequence the MiConnect callback and a
+   * restore share, so the two can never drift (docs/wiki/account-restore.md).
+   *
+   * The access token, the session row, the erasure check that only the row can close, the cookie for
+   * everyone and the body copy for the clients that carry their own credential.
+   */
+  private async issueSession(user: User, req: Request, res: Response): Promise<IssuedSession> {
+    // The session first: the access token names it (`sid`), so what it registers is bound to this
+    // login.
+    const session = await this.authSessions.create(user.id, this.clientInfo(req));
+    const access_token = this.signAccessToken(user.id, !!user.admin, session.sessionId);
+    const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
+
+    // The race the check before the mint cannot close: a `DELETE /users/me` that committed after it.
+    // Under the erasure's per-subject lock, so it is either seen here (and what this sign-in wrote is
+    // erased again) or it runs after, deletes this session itself, and covers the access token with
+    // its final pass. The tokens are only returned once this has passed.
+    this.refuseDuringErasure(user.id, await this.accountErasure.confirmAfterSignIn(user.id));
+
+    // The cookie is set for EVERY client, including the ones that will drop it: it is unreadable by
+    // the page's own JavaScript, so it stays the preferred transport wherever it survives - and
+    // `tauri://localhost` covers desktop builds where it may well survive. The body copy is added
+    // only for origins whose engine can refuse the cookie, and only they are told to carry it.
+    this.setRefreshCookie(res, refresh_token);
+    const bodyTransport = this.carriesOwnRefreshCredential(req.get('origin'));
+    if (bodyTransport) {
+      this.logger.debug(
+        `Session issued: credential also returned in the body (origin=${req.get('origin')} may not keep a third-party cookie)`
+      );
+    }
+    return {
       access_token,
       ...(bodyTransport ? { refresh_token } : {}),
-      ...(tokenData.id_token ? { id_token: tokenData.id_token } : {}),
       user: {
         id: user.id,
         displayName: user.displayName || '',
@@ -624,9 +832,7 @@ export class AuthController {
     }
     const nextTokenId = result.tokenId;
 
-    const access_token = jwt.sign({ sub: payload.sub, admin: isAdmin }, this.jwtSecret, {
-      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-    });
+    const access_token = this.signAccessToken(payload.sub, isAdmin, sessionId);
     const new_refresh = this.signRefreshToken(payload.sub, sessionId, nextTokenId);
 
     // Rotate on BOTH transports the caller can hold, for the reason above. From this moment the old
@@ -658,6 +864,209 @@ export class AuthController {
     if (sessionId) await this.authSessions.revoke(sessionId);
     this.clearRefreshCookie(res);
     return { ok: true };
+  }
+
+  // ─── Restore keys (Android Restore Credentials, WP-RESTORE-1) ──────────────
+  // docs/wiki/account-restore.md. A restore key is bound to the session that registered it and a
+  // restore MOVES that session to the new phone: it never adds one.
+
+  /** 503 `RESTORE_UNAVAILABLE` when this estate has no signing fingerprint configured. */
+  private requireRestoreAvailable(): void {
+    if (!this.restoreCredentials.available) {
+      throw new ServiceUnavailableException(
+        restoreRefusal('RESTORE_UNAVAILABLE', 'Account restore is not configured on this server')
+      );
+    }
+  }
+
+  /**
+   * The caller's user and LIVE session, for the two registration routes - identified as
+   * `PUT sessions/current/device` identifies it, refused unless the request comes from the Android
+   * app (see {@link ANDROID_APP_ORIGINS}), AND refused unless the refresh credential presented is the
+   * session's CURRENT one. That last condition is what stops a thief holding a stale copy of the
+   * credential from planting a key without rotating it - the rotation's fork detection would never
+   * see them (docs/wiki/account-restore.md, threat model).
+   */
+  private async restoreRegistrationCaller(
+    req: Request
+  ): Promise<{ userId: string; sessionId: string; tokenId: string }> {
+    const { userId } = this.requireAccessToken(req);
+    const origin = req.get('origin') ?? '';
+    if (!ANDROID_APP_ORIGINS.includes(origin)) {
+      this.logger.warn(
+        `[RESTORE] registration refused user=${userId}: origin=${origin || 'none'} is not the Android app`
+      );
+      throw new ForbiddenException(
+        restoreRefusal('RESTORE_ORIGIN_REFUSED', 'Restore keys are registered by the Android app')
+      );
+    }
+    const presented = this.currentRefreshCredential(req);
+    if (
+      !presented ||
+      !(await this.restoreCredentials.isLiveSessionOf(
+        userId,
+        presented.sid,
+        new Date(),
+        presented.jti
+      ))
+    ) {
+      this.logger.warn(
+        `[RESTORE] registration refused user=${userId}: no live session, or not its current credential`
+      );
+      throw new NotFoundException(restoreRefusal('RESTORE_NO_SESSION', 'No live session'));
+    }
+    return { userId, sessionId: presented.sid, tokenId: presented.jti };
+  }
+
+  /**
+   * Creation options for the restore key of the calling session, and the id of the key it holds
+   * now. The client asks at EVERY start and re-registers unless that id is the one it registered
+   * itself, so a key planted by anybody else is evicted at the owner's next start.
+   */
+  @Post('restore/registration/options')
+  @HttpCode(200)
+  @UseGuards(AccountThrottlerGuard)
+  @Throttle({ default: { limit: RESTORE_REGISTER_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  async restoreRegistrationOptions(
+    @Req() req: Request
+  ): Promise<{ options: unknown; registeredCredentialId: string | null }> {
+    this.requireRestoreAvailable();
+    const { sessionId } = await this.restoreRegistrationCaller(req);
+    return {
+      options: await this.restoreCredentials.registrationOptions(sessionId, new Date()),
+      registeredCredentialId: await this.restoreCredentials.registeredKeyOf(sessionId),
+    };
+  }
+
+  /** Verifies and stores the restore key of the calling session (replacing its previous one). */
+  @Post('restore/registration')
+  @HttpCode(200)
+  @UseGuards(AccountThrottlerGuard)
+  @Throttle({ default: { limit: RESTORE_REGISTER_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  async restoreRegistration(
+    @Req() req: Request,
+    @Body() body: RestoreRegistrationDto
+  ): Promise<{ registered: true; credentialId: string }> {
+    this.requireRestoreAvailable();
+    const { userId, sessionId, tokenId } = await this.restoreRegistrationCaller(req);
+    const previous = body?.previousCredentialId;
+    if (
+      !body?.response ||
+      typeof body.response !== 'object' ||
+      typeof body.cloudBackup !== 'boolean' ||
+      (previous !== undefined && previous !== null && typeof previous !== 'string')
+    ) {
+      throw new BadRequestException('response and cloudBackup are required');
+    }
+    const result = await this.restoreCredentials.register(
+      userId,
+      sessionId,
+      tokenId,
+      body.response as RegistrationResponseJSON,
+      body.cloudBackup,
+      new Date()
+    );
+    switch (result.status) {
+      case 'registered':
+        if (result.replaced !== null && result.replaced !== (previous ?? null)) {
+          // The session held a key the client did not name. Two causes this end cannot separate:
+          // somebody else holding this session's credentials planted it, or this install merely
+          // lost its local record of its own key. The client tells them apart (its `held` id) and
+          // accuses at error on its side; here it is a `warn` carrying both readings.
+          this.logger.warn(
+            `[RESTORE] replaced a key the client did not name user=${userId} sid=${sessionId} replaced=${result.replaced.slice(0, 8)} named=${typeof previous === 'string' ? previous.slice(0, 8) : 'none'} - planted by another holder of this session, or this install lost its record of it`
+          );
+        }
+        return { registered: true, credentialId: result.credentialId };
+      case 'no-session':
+        throw new NotFoundException(restoreRefusal('RESTORE_NO_SESSION', 'No live session'));
+      case 'taken':
+        throw new ForbiddenException(
+          restoreRefusal('RESTORE_KEY_TAKEN', 'This key belongs to another session')
+        );
+      case 'conflict':
+        throw new ConflictException(
+          restoreRefusal(
+            'RESTORE_REGISTRATION_CONFLICT',
+            'Another registration for this session committed first'
+          )
+        );
+      case 'invalid':
+        throw new BadRequestException(
+          restoreRefusal('RESTORE_REGISTRATION_INVALID', 'The restore key did not verify')
+        );
+    }
+  }
+
+  /** Request options for an anonymous restore. Writes nothing. */
+  @Post('restore/assertion/options')
+  @HttpCode(200)
+  @UseGuards(ClientIpThrottlerGuard)
+  @Throttle({ default: { limit: RESTORE_ANONYMOUS_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  async restoreAssertionOptions(): Promise<unknown> {
+    this.requireRestoreAvailable();
+    return this.restoreCredentials.assertionOptions(new Date());
+  }
+
+  /**
+   * Signs the new phone in from a restore key, ending the session the key was bound to.
+   *
+   * THE ORDER IS THE TRANSFER, and it never leaves the account with a session more than before:
+   * 1. the signature is verified, writing nothing;
+   * 2. the refusals a MiConnect sign-in owes (erasure, maintenance) - a refusal keeps the key, so a
+   *    restore met by maintenance can be retried;
+   * 3. the key, the challenge AND the old session go in ONE transaction (the service's `consume`);
+   * 4. the new session is minted through the SAME {@link issueSession} as a MiConnect sign-in.
+   * A failure at 4 leaves NO session (the old phone is signed out, the new one signs in through
+   * MiConnect) - the failure mode the transfer can afford, where the reverse (revoking after the
+   * mint) could leave two.
+   */
+  @Post('restore/assertion')
+  @HttpCode(200)
+  @UseGuards(ClientIpThrottlerGuard)
+  @Throttle({ default: { limit: RESTORE_ANONYMOUS_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  async restoreAssertion(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Body() body: RestoreAssertionDto
+  ): Promise<IssuedSession> {
+    this.requireRestoreAvailable();
+    if (!body?.response || typeof body.response !== 'object') {
+      throw new BadRequestException('response is required');
+    }
+    const verified = await this.restoreCredentials.verifyAssertion(
+      body.response as AuthenticationResponseJSON,
+      new Date()
+    );
+    if (verified.status === 'unknown') throw restoreKeyUnknown();
+    if (verified.status === 'invalid') throw restoreAssertionInvalid();
+    const { assertion } = verified;
+
+    this.refuseDuringErasure(
+      assertion.userId,
+      await this.accountErasure.erasureState(assertion.userId)
+    );
+    const user = await this.usersService.findOne(assertion.userId);
+    await this.refuseDuringMaintenance(user);
+
+    const consumed = await this.restoreCredentials.consume(assertion);
+    if (consumed.status === 'unknown') throw restoreKeyUnknown();
+    if (consumed.status === 'invalid') throw restoreAssertionInvalid();
+
+    try {
+      const issued = await this.issueSession(user, req, res);
+      this.logger.log(
+        `[RESTORE] session moved to a restored phone user=${user.id} from sid=${assertion.sessionId}`
+      );
+      return issued;
+    } catch (e) {
+      // The old session is already gone with the key: the account now holds NO session from this
+      // transfer, never two. The user signs in through MiConnect on the new phone.
+      this.logger.error(
+        `[RESTORE] the new session could not be minted user=${user.id} after the old sid=${assertion.sessionId} was revoked: ${e instanceof Error ? e.message : String(e)}`
+      );
+      throw e;
+    }
   }
 
   // ─── Session management ────────────────────────────────────────────────────
@@ -810,6 +1219,7 @@ export class AuthController {
     res.set('X-User-Id', '');
     res.set('X-Logged-In', 'false');
     res.set('X-Global-Admin', 'false');
+    res.set('X-Session-Id', '');
 
     if (!rawHeaders) {
       return res.status(200).send();
@@ -828,6 +1238,7 @@ export class AuthController {
         sub: string;
         admin?: boolean;
         type?: string;
+        sid?: unknown;
       };
 
       // The refresh token is signed with the same key, so it verifies here too.
@@ -851,6 +1262,9 @@ export class AuthController {
       res.set('X-User-Id', payload.sub);
       res.set('X-Logged-In', 'true');
       res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
+      // The session this access token was minted for. Empty for a token minted before the claim
+      // existed (one TTL after the deploy at most): a push registration it makes is then unbound.
+      res.set('X-Session-Id', typeof payload.sid === 'string' ? payload.sid : '');
 
       // Mint a per-minute HMAC token so backend services can verify the request
       // genuinely came through nginx (not from a compromised container).

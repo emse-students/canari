@@ -78,3 +78,43 @@ export const DELIVERY = {
 export function addressedKeyMaterial(device: string): FrameDelivery {
   return { ...DELIVERY.keyMaterial, recipients: [device] };
 }
+
+/**
+ * A history answer on a conversation, to the ONE device that asked (step A,
+ * docs/wiki/protocols/history-answer-addressing.md): transport, as every history frame, and
+ * addressed - the server refuses an addressed conversation frame that is durable, and one to a device
+ * that did not declare {@link ADDRESSED_HISTORY_CAPABILITY}.
+ *
+ * @param device The asking device as `userId:deviceId`, the user id lower-cased (`digestIdentity`).
+ */
+export function addressedHistoryAnswer(device: string): FrameDelivery {
+  return { ...DELIVERY.transport, recipients: [device] };
+}
+
+/**
+ * The capability this build declares on its socket (`caps=` on `/api/ws`): it refuses an addressed
+ * conversation frame that is not a solicited, bounded history answer (`historyAddressing.ts`). The
+ * gateway records each session's declaration in a store every gateway process shares, chat-delivery
+ * addresses a conversation frame only to a device ALL of whose sessions declared it, and the gateway
+ * drops an addressed frame on a session that did not. The same literal is in chat-delivery
+ * (`ADDRESSED_HISTORY_CAPABILITY`) and the gateway (`addressing.rs`).
+ */
+export const ADDRESSED_HISTORY_CAPABILITY = 'addressed-history-1';
+
+/**
+ * The gateway socket URL, built in ONE place for both openers (web and Tauri) so the two cannot
+ * declare different capabilities. Every session declares: a tab is a reader of every frame routed
+ * to the device, so each one says what it applies. `redacted` is the same URL with the token masked,
+ * the only form that may reach a log line.
+ */
+export function gatewaySocketUrl(
+  wsBase: string,
+  deviceId: string,
+  token?: string
+): { url: string; redacted: string } {
+  const base = `${wsBase}/api/ws?device_id=${encodeURIComponent(deviceId)}&caps=${encodeURIComponent(ADDRESSED_HISTORY_CAPABILITY)}`;
+  return {
+    url: token ? `${base}&token=${encodeURIComponent(token)}` : base,
+    redacted: token ? `${base}&token=***` : `${base} (no token)`,
+  };
+}

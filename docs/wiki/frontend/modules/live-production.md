@@ -173,6 +173,8 @@ and the "Signalements, blocages, modération" row's purpose gains *", y compris 
 
 ## 6. The viewer cap - from 24 to none, in measured steps
 
+> **The owner, 2026-10-21: no VISIBLE ceiling.** The bounds with their arithmetic, the five options, the staged path and the decisions O-1..O-7 (O-3 revisits D-4 below) are on [live-scaling](live-scaling.md); S5 there moves from a Cache Rule to an R2 bucket, Cloudflare's terms being read.
+
 **Today: 24 seats for the whole host, every live together** (`LIVE_VIEWER_CAP` in
 `apps/social-service/src/lives/live.constants.ts`, served as `viewerCap` by `/limits`):
 

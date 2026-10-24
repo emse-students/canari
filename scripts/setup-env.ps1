@@ -237,27 +237,26 @@ Normalize-ImagePrefix $InfraEnv
 #
 Write-Info "Synchronizing JWT secrets..."
 
-$FrontendSecret = ""
 $InfraSecret = ""
 
 if (Test-Path $InfraEnv) {
     $InfraSecret = Read-EnvVar $InfraEnv "JWT_SECRET"
 }
 
-# Check if we need to generate a new secret
+# Generate a secret when the infrastructure one is missing, a placeholder or malformed
 $ShouldGenerate = $false
-if ([string]::IsNullOrEmpty($FrontendSecret) -or $FrontendSecret -eq "dev_secret_change_me_in_env_file_never_expose") {
+if ([string]::IsNullOrEmpty($InfraSecret) -or $InfraSecret -eq "dev_secret_change_me_in_env_file_never_expose") {
     $ShouldGenerate = $true
 }
-elseif (-not (Test-Secret $FrontendSecret)) {
-    Write-Warn "Frontend secret is not a valid 64-char hex string"
+elseif (-not (Test-Secret $InfraSecret)) {
+    Write-Warn "Infrastructure secret is not a valid 64-char hex string"
     $ShouldGenerate = $true
 }
 
 if ($ShouldGenerate) {
     if ($Prod) {
         Write-Error "Production mode requires a valid JWT_SECRET to be already configured"
-        Write-Error "Set JWT_SECRET in both .env files and retry with -Prod"
+        Write-Error "Set JWT_SECRET in infrastructure/.env and retry with -Prod"
         exit 1
     }
 
@@ -270,32 +269,14 @@ if ($ShouldGenerate) {
     }
 
     Write-Success "Generated new secret: $($NewSecret.Substring(0, 16))..."
-    $FrontendSecret = $NewSecret
     $InfraSecret = $NewSecret
-}
-else {
-    # Secrets exist, check if they're in sync
-    if ($FrontendSecret -ne $InfraSecret) {
-        if (-not $Prod) {
-            Write-Info "Frontend and infrastructure secrets don't match, synchronizing..."
-            $InfraSecret = $FrontendSecret
-        }
-        else {
-            Write-Error "Frontend and infrastructure JWT_SECRET don't match!"
-            Write-Error "Frontend: $($FrontendSecret.Substring(0, 16))..."
-            Write-Error "Infrastructure: $($InfraSecret.Substring(0, 16))..."
-            Write-Error "In production, they MUST be identical"
-            exit 1
-        }
-    }
 }
 
 # Write secrets to files
 if (Test-Path $FrontendEnv) {
-    Write-EnvVar $FrontendEnv "VITE_JWT_SECRET" $FrontendSecret
     Write-EnvVar $FrontendEnv "VITE_MEDIA_URL" "http://localhost:3011"
 
-    Write-Success "Updated frontend VITE_JWT_SECRET"
+    Write-Success "Updated frontend VITE_MEDIA_URL"
 }
 
 if (Test-Path $InfraEnv) {
@@ -307,21 +288,6 @@ if (Test-Path $InfraEnv) {
 # Validation
 #
 Write-Info "Validating configuration..."
-
-# Check frontend required vars
-if (Test-Path $FrontendEnv) {
-    $FrontendCheck = Read-EnvVar $FrontendEnv "VITE_JWT_SECRET"
-    if (Test-Secret $FrontendCheck) {
-        Write-Success "Frontend VITE_JWT_SECRET is valid"
-    }
-    else {
-        Write-Error "Frontend VITE_JWT_SECRET is invalid or missing"
-        exit 1
-    }
-}
-else {
-    Write-Warn "Frontend .env not found (will be created on first use)"
-}
 
 # Check infrastructure required vars
 if (Test-Path $InfraEnv) {
@@ -338,19 +304,6 @@ else {
     Write-Warn "Infrastructure .env not found (will be created on first use)"
 }
 
-# Verify synchronization
-if ((Test-Path $FrontendEnv) -and (Test-Path $InfraEnv)) {
-    $FeSecret = Read-EnvVar $FrontendEnv "VITE_JWT_SECRET"
-    $InfraSecretCheck = Read-EnvVar $InfraEnv "JWT_SECRET"
-    if ($FeSecret -eq $InfraSecretCheck) {
-        Write-Success "OK JWT secrets are synchronized"
-    }
-    else {
-        Write-Error "JWT secrets are NOT synchronized!"
-        exit 1
-    }
-}
-
 #
 # Summary
 #
@@ -362,8 +315,6 @@ Write-Host ""
 
 if (Test-Path $FrontendEnv) {
     Write-Host "Frontend:        $FrontendEnv" -ForegroundColor Cyan
-    $feSecret = Read-EnvVar $FrontendEnv "VITE_JWT_SECRET"
-    Write-Host "  VITE_JWT_SECRET: $($feSecret.Substring(0, 16))..." -ForegroundColor Yellow
 }
 
 if (Test-Path $InfraEnv) {

@@ -1,4 +1,11 @@
 import { exportBackup, importBackup } from '$lib/backup';
+import { formatRecoveryCode } from '$lib/crypto/backupRecoveryCode';
+import {
+  clearBackupOwedAfterKeyMove,
+  deviceRecoveryCode,
+  keepDeviceRecoveryCode,
+  type RecoveryCodeOrigin,
+} from '$lib/crypto/deviceRecoveryCode';
 import { fromHex, saveMlsState, hasMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
@@ -11,9 +18,7 @@ import {
   historyStateKeyFor,
   persistMlsStateAfterMutation,
   purgeLocalConversationRecord,
-  kickStaleLeaf,
   isGroupActiveOnServer,
-  handleDuplicateLeafError,
 } from '$lib/utils/chat/groupActions';
 import {
   awaitProbe,
@@ -26,7 +31,11 @@ import { pendingGroupExitIds } from '$lib/utils/chat/pendingGroupExits';
 import { welcomeSentAt } from '$lib/utils/chat/welcomeSent';
 import { ensureConversationForServerGroup } from '$lib/utils/chat/serverGroupConversation';
 import { retireConversation } from '$lib/utils/chat/conversations';
-import { refusalIsTemporary, refusalRetiresInvitation } from '$lib/mls-client/deviceKeyPackage';
+import {
+  refusalIsTemporary,
+  refusalRetiresInvitation,
+  type DeviceKeyPackage,
+} from '$lib/mls-client/deviceKeyPackage';
 import {
   classifyServerStatus,
   decideAbsentGroupFate,
@@ -41,6 +50,116 @@ import {
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { sameDeviceIdentity, treeHoldsDevice, treeHoldsUser } from '$lib/mls-client/leafIdentity';
+import {
+  DeviceTrustRefusedError,
+  isDeviceTrustRefusal,
+  reportDeviceTrustRefusal,
+  verdictAdmits,
+} from '$lib/mls-client/deviceTrust';
+import type { PendingInvitationRow } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  isRefusedDevice,
+  recordRefusedDevice,
+  reportRefusedDeviceSkipped,
+} from '$lib/mls-client/refusedDevices';
+
+/**
+ * A device asking to join, as an AUTOMATIC Add has to see it - the approval a member gives to bring
+ * a new person in, raised with {@link handleWelcomeRequest} and {@link processPendingInvitations}.
+ */
+export interface JoinApprovalRequest {
+  groupId: string;
+  requesterUserId: string;
+  requesterDeviceId: string;
+}
+
+/**
+ * Whether an AUTOMATIC Add may bring `userId`'s device into `groupId`, read from OUR tree.
+ *
+ * Both automatic adders act on what the delivery service says - a `pending` row, a roster row, a
+ * relayed `welcome_request` - and a delivery service under hostile control writes all three. What it
+ * cannot write is this device's ratchet tree. So the one question deciding an Add nobody asked for
+ * is answered there: a user who already holds a leaf is a member, and this is their new or
+ * recovering device (`member-device`); a user who holds none is a new person (`newcomer`), and
+ * bringing a new person in is a member's gesture - `inviteMembersToGroup`, or approving the join -
+ * never a reaction to a server row.
+ *
+ * `unreadable`: the tree could not be read, which proves no membership, so the caller adds nothing
+ * and asks no one - another member, or the next sweep, answers.
+ */
+type AutomaticAdmission = 'member-device' | 'newcomer' | 'unreadable';
+
+async function automaticAdmission(deps: {
+  mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
+  groupId: string;
+  userId: string;
+  /** The caller's log tag, so the line reads in the sequence it belongs to. */
+  tag: string;
+  log: (message: string) => void;
+}): Promise<AutomaticAdmission> {
+  const { mlsService, groupId, userId, tag, log } = deps;
+  try {
+    const identities = await mlsService.getGroupMemberIdentities(groupId);
+    return treeHoldsUser(identities, userId) ? 'member-device' : 'newcomer';
+  } catch (e) {
+    log(
+      `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${userId} is a member - nothing added: ${String(e).slice(0, 100)}`
+    );
+    return 'unreadable';
+  }
+}
+
+/**
+ * Puts a NEW PERSON's ask to this device's member ("X asks to join") - ONLY FOR A GROUP
+ * CONVERSATION, read off its conversation row.
+ *
+ * The ask's two answers are a group's: Add is `inviteMembersToGroup`, which only a group takes, and
+ * Decline removes the person's roster row. Raised for anything else they are wrong on both counts:
+ * a 1:1 conversation's `pending` rows are written for every group of a registering user, DMs
+ * included, so a peer holding no leaf there raised an ask whose Add always failed and whose Decline
+ * deleted the peer's own roster row of the DM. A key group has no conversation row at all - its
+ * members enter by external commit, entitled by their community. And a row not loaded yet answers
+ * nothing: the next sweep asks again, once the row is there.
+ *
+ * In none of those is the new person added either: an automatic Add never brings one in.
+ *
+ * AND ONLY FOR AN ASK THE SERVER HOLDS (`isAsk`, the row's `awaitingAdmission`): a person absent
+ * from the tree whose seat is not an invitation link's ask - a member's invite between its roster
+ * write and its Add, a seat written before the rule, a member whose leaves were removed - asked
+ * nobody anything, and a Decline would find nothing to withdraw (`not-awaiting`). Such a person is
+ * brought in by a member's own invite, never by an ask raised in their name.
+ */
+function askAMemberToAdmit(
+  conversations: ReadonlyMap<string, Conversation>,
+  request: JoinApprovalRequest,
+  isAsk: boolean | undefined,
+  tag: string,
+  log: (message: string) => void,
+  onJoinApprovalRequested: ((request: JoinApprovalRequest) => void) | undefined
+): void {
+  const short = request.groupId.slice(0, 8);
+  if (isAsk !== true) {
+    log(
+      `${tag} ${request.requesterUserId} has no leaf in ${short}... - not added, and nobody is asked: ` +
+        `their seat is not an invitation-link ask (a member's invite in flight, or a seat older than the rule)`
+    );
+    return;
+  }
+  const convo = conversations.get(request.groupId);
+  const kind = convo ? (convo.conversationType ?? 'group') : null;
+  if (kind !== 'group') {
+    log(
+      `${tag} ${request.requesterUserId} has no leaf in ${short}... - not added, and nobody is asked: ` +
+        `${kind === null ? 'no conversation row is loaded for it' : `a ${kind} conversation`} takes no join ask`
+    );
+    return;
+  }
+  log(
+    `${tag} ${request.requesterUserId} has no leaf in ${short}... - a new person is not added automatically, a member's approval is asked`
+  );
+  onJoinApprovalRequested?.(request);
+}
 
 /**
  * Whether `userId:deviceId`'s leaf is in OUR copy of `groupId`'s ratchet tree.
@@ -76,14 +195,120 @@ async function leafIsInLocalTree(deps: {
   try {
     const identities = await mlsService.getGroupMemberIdentities(groupId);
     // The WHOLE identity, never a bare device id: leaves are `userId:deviceId`, so a suffix or
-    // substring test would let one id answer for another's.
-    return identities.includes(`${userId}:${deviceId}`);
+    // substring test would let one id answer for another's. Compared under the ONE canonical
+    // identity Rust binds and pins by, so a leaf Rust takes for this device is never read as absent
+    // here - that would send an Add Rust then refuses.
+    return treeHoldsDevice(identities, userId, deviceId);
   } catch (e) {
     log(
       `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${deviceId.slice(0, 12)}... is a leaf: ${String(e).slice(0, 100)}`
     );
     return null;
   }
+}
+
+/**
+ * Confirms to the server that an invitation is fulfilled because the device's leaf is already in our
+ * tree - the vouch the server endpoint authorises ("adds no new authority"). Best-effort: a failure
+ * leaves the row pending and the next sync says so again.
+ */
+function vouchInvitationFulfilled(
+  mlsService: Pick<IMlsService, 'updateInvitationStatus'>,
+  inv: { userId: string; deviceId: string },
+  groupId: string,
+  log: (message: string) => void
+): void {
+  mlsService
+    .updateInvitationStatus(inv.deviceId, inv.userId, groupId, 'active')
+    .catch((e: unknown) =>
+      log(
+        `[PENDING] ${inv.deviceId} in tree for ${groupId} but the vouch failed: ${String(e).slice(0, 120)}`
+      )
+    );
+}
+
+/**
+ * Whose leaf carries the key an Add of `userId:deviceId` was refused as a DUPLICATE of.
+ *
+ * The refusal says the key is in the tree, never whose leaf holds it, and a tree that merely
+ * CONTAINS this identity does not say the duplicate is its leaf: assuming so would vouch for, or
+ * replace, a device on another device's key. So the tree is asked for the leaf carrying the
+ * package's key (`leafHoldingKeyOf`), and only that leaf being this identity's makes it ours.
+ *
+ * - `this`: the key is this identity's own leaf - the invitation is fulfilled, or the leaf is
+ *   repaired in ONE commit.
+ * - `another`: another identity's leaf carries it - nothing is vouched, replaced or removed.
+ * - `nowhere`: no leaf carries it any more (the tree moved since the refusal), and `unreadable`: the
+ *   tree or the package could not be read - a destructive action is never taken on doubt.
+ */
+type DuplicateKeyHolder =
+  | { kind: 'this' }
+  | { kind: 'another'; holder: string }
+  | { kind: 'nowhere' }
+  | { kind: 'unreadable' };
+
+async function duplicateKeyHolder(deps: {
+  mlsService: Pick<IMlsService, 'leafHoldingKeyOf'>;
+  groupId: string;
+  keyPackage: Uint8Array;
+  userId: string;
+  deviceId: string;
+  /** The caller's log tag, so the line reads in the sequence it belongs to. */
+  tag: string;
+  log: (message: string) => void;
+}): Promise<DuplicateKeyHolder> {
+  const { mlsService, groupId, keyPackage, userId, deviceId, tag, log } = deps;
+  try {
+    const holder = await mlsService.leafHoldingKeyOf(groupId, keyPackage);
+    if (holder === null) return { kind: 'nowhere' };
+    return sameDeviceIdentity(holder, `${userId}:${deviceId}`)
+      ? { kind: 'this' }
+      : { kind: 'another', holder };
+  } catch (e) {
+    log(
+      `${tag} Cannot say whose leaf holds the duplicate key of ${deviceId.slice(0, 12)}... in ${groupId.slice(0, 8)}...: ${String(e).slice(0, 100)}`
+    );
+    return { kind: 'unreadable' };
+  }
+}
+
+/**
+ * Says why an Add refused as a duplicate signature key is NOT repaired here, from the holder lookup
+ * that decided it ({@link duplicateKeyHolder}).
+ *
+ * A duplicate under the SAME identity is repaired by replacing that identity in one commit (or, for
+ * a pending invitation, is already fulfilled). Here the key sits on ANOTHER identity's leaf, which no
+ * legitimate flow produces - a device that changes id starts from a fresh state and a fresh key - so
+ * that is an ERROR line of its own, and nothing is vouched, replaced or removed: the leaf holding it
+ * is not this request's to touch. `nowhere` and `unreadable` are doubt, said at WARN, and the next
+ * request decides.
+ */
+function reportDuplicateKeyNotRepaired(
+  tag: string,
+  groupId: string,
+  identity: string,
+  found: DuplicateKeyHolder
+): void {
+  if (found.kind === 'another') {
+    console.error(
+      `${tag} DUPLICATE KEY HELD BY ANOTHER DEVICE: the package for ${sanitizeLogIdentity(identity)} carries the key of ${sanitizeLogIdentity(found.holder)}'s leaf in ${groupId.slice(0, 8)}... - not vouched, not replaced, nothing removed`
+    );
+    return;
+  }
+  const why = {
+    this: 'it is still its own leaf after a refused replace',
+    nowhere: 'no leaf carries it now',
+    unreadable: 'its holder is unreadable',
+  }[found.kind];
+  console.warn(
+    `${tag} Duplicate signature key for ${sanitizeLogIdentity(identity)} in ${groupId.slice(0, 8)}... and ${why} - nothing removed, the next request decides`
+  );
+}
+
+/** Shortens `userId:deviceId` for a log line the way the other lines of these paths do. */
+function sanitizeLogIdentity(identity: string): string {
+  const [user = '', device = ''] = identity.split(':');
+  return `${user.slice(0, 8)}:${device.slice(0, 12)}`;
 }
 
 /**
@@ -97,6 +322,9 @@ async function leafIsInLocalTree(deps: {
  * 1. Fetch all pending invitations from server (devices waiting to join groups this device is in)
  * 2. For each pending device, acquire add-lock → addMember → sendWelcome → update status
  * 3. On WrongEpoch: check if someone else already handled it → skip
+ *
+ * @returns whether the sweep read the server's pending rows - `false` when it could not, so a
+ *   caller settling what the sweep raised (`settleSweptJoinRequests`) settles nothing.
  */
 export async function processPendingInvitations(params: {
   mlsService: IMlsService;
@@ -116,27 +344,36 @@ export async function processPendingInvitations(params: {
    */
   requestReAdd: (groupId: string) => Promise<void>;
   log: (msg: string) => void;
-}) {
-  const { mlsService, storage, userId, deviceKeyB64, conversations, requestReAdd, log } = params;
+  /**
+   * A pending device whose USER holds no leaf in our tree is a new person, never added from a server
+   * row (`automaticAdmission`): this asks a member to approve the join instead. The row is left as
+   * it is - the approval, or the next sweep, is what answers it.
+   */
+  onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
+}): Promise<boolean> {
+  const {
+    mlsService,
+    storage,
+    userId,
+    deviceKeyB64,
+    conversations,
+    requestReAdd,
+    log,
+    onJoinApprovalRequested,
+  } = params;
 
   const myDeviceId = mlsService.getDeviceId();
 
   // 1. Fetch pending invitations for groups where this device is a full member
-  let pendingInvitations: Array<{
-    id: string;
-    userId: string;
-    deviceId: string;
-    groupId: string;
-    status: string;
-  }>;
+  let pendingInvitations: PendingInvitationRow[];
   try {
     pendingInvitations = await mlsService.getPendingInvitations(userId, myDeviceId);
   } catch (e) {
     log(`[PENDING] Error fetching pending invitations: ${e}`);
-    return;
+    return false;
   }
 
-  if (pendingInvitations.length === 0) return;
+  if (pendingInvitations.length === 0) return true;
 
   log(`[PENDING] ${pendingInvitations.length} pending invitation(s) to process`);
 
@@ -198,6 +435,42 @@ export async function processPendingInvitations(params: {
       const currentPending = invitations.filter((inv) => inv.status === 'pending');
 
       for (const inv of currentPending) {
+        const admission = await automaticAdmission({
+          mlsService,
+          groupId,
+          userId: inv.userId,
+          tag: '[PENDING]',
+          log,
+        });
+        if (admission === 'unreadable') continue;
+        if (admission === 'newcomer') {
+          askAMemberToAdmit(
+            conversations,
+            { groupId, requesterUserId: inv.userId, requesterDeviceId: inv.deviceId },
+            inv.awaitingAdmission,
+            '[PENDING]',
+            log,
+            onJoinApprovalRequested
+          );
+          continue;
+        }
+        // A DEVICE THIS ONE REFUSED FOR A CHANGED KEY IS NOT FETCHED AGAIN: every package it has
+        // carries the same key, so a fetch would only spend one. The row stays (it is this member's
+        // judgement), and the line names who can lift it (`refusedDevices.ts`).
+        if (
+          await isRefusedDevice(
+            { userId, deviceId: myDeviceId },
+            inv.userId,
+            inv.deviceId,
+            mlsService
+          )
+        ) {
+          reportRefusedDeviceSkipped('[PENDING]', groupId, inv.userId, inv.deviceId);
+          continue;
+        }
+        // The package the Add is built from, kept for the catch: a duplicate key is attributed by
+        // asking which leaf carries THIS package's key (`duplicateKeyHolder`).
+        let packageAdded: Uint8Array | null = null;
         try {
           // Fetch fresh KeyPackage for the pending device. fetchUserDevices only returns
           // devices active within the last 30 days; fall back to fetchDeviceKeyPackage for
@@ -205,7 +478,9 @@ export async function processPendingInvitations(params: {
           // Best-effort (`.catch(() => [])`) : a network error here must not short-circuit
           // the fetchDeviceKeyPackage fallback below (empty list => try the fallback).
           const devices = await mlsService.fetchUserDevices(inv.userId).catch(() => []);
-          let targetDevice = devices.find((d) => d.deviceId === inv.deviceId);
+          let targetDevice: DeviceKeyPackage | undefined = devices.find(
+            (d) => d.deviceId === inv.deviceId
+          );
           if (!targetDevice) {
             const answer = await mlsService.fetchDeviceKeyPackage(inv.userId, inv.deviceId);
 
@@ -292,13 +567,7 @@ export async function processPendingInvitations(params: {
             //
             // Best-effort and re-driven: a failure leaves the row pending and the next sync says
             // this again, which is exactly today's behaviour.
-            mlsService
-              .updateInvitationStatus(inv.deviceId, inv.userId, groupId, 'active')
-              .catch((e: unknown) =>
-                log(
-                  `[PENDING] ${inv.deviceId} in tree for ${groupId} but the vouch failed: ${String(e).slice(0, 120)}`
-                )
-              );
+            vouchInvitationFulfilled(mlsService, inv, groupId, log);
             log(
               `[PENDING] ${inv.deviceId} already in tree for ${groupId} - invitation fulfilled, vouching`
             );
@@ -310,9 +579,12 @@ export async function processPendingInvitations(params: {
           // or roll back on reject. A rejected commit throws WITHOUT advancing the local epoch (no
           // fork) and is handled by the outer catch as a benign retryable failure; the Welcome is
           // only sent once the commit is accepted. [[C7]]
-          const result = await mlsService.addMember(groupId, targetDevice.keyPackage, [
-            `${inv.userId}:${inv.deviceId}`,
-          ]);
+          packageAdded = targetDevice.keyPackage;
+          const result = await mlsService.addMember(
+            groupId,
+            { keyPackage: targetDevice.keyPackage, userId: inv.userId, deviceId: inv.deviceId },
+            [`${inv.userId}:${inv.deviceId}`]
+          );
 
           // Register member on server (upsert GroupMember row), keeping server state up to date.
           await mlsService.registerMember(groupId, inv.userId);
@@ -345,6 +617,14 @@ export async function processPendingInvitations(params: {
             log(`[HISTORY_BUNDLE] History send error to ${inv.userId}: ${String(e)}`)
           );
         } catch (e) {
+          // A REFUSED KEY IS NOT A RETRYABLE FAILURE AND RETIRES NOTHING: the package names
+          // another device, or this device's key changed with nothing to prove it. The row stays,
+          // because the refusal is this member's judgement and not a fact about the device.
+          if (e instanceof DeviceTrustRefusedError) {
+            reportDeviceTrustRefusal('[PENDING]', groupId, e);
+            await recordRefusedDevice({ userId, deviceId: myDeviceId }, e, mlsService);
+            continue;
+          }
           const errStr = String(e);
 
           // Device already a member: invitation fulfilled (its leaf is already in our MLS tree).
@@ -363,21 +643,30 @@ export async function processPendingInvitations(params: {
 
           if (errStr.includes('DuplicateSignatur')) {
             log(`[PENDING] ${inv.deviceId} already in MLS tree of ${groupId}`);
-            // The kick triggered here itself generates a commit: if rejected for fork,
-            // handleDuplicateLeafError surfaces the error -> we switch to recovery.
-            try {
-              await handleDuplicateLeafError({
-                mlsService,
+            // NOTHING IS KICKED, AND NO COMMIT IS MADE. The tree is asked WHOSE leaf carries the
+            // package's key: this identity's, and the invitation is fulfilled - the `alreadyALeaf`
+            // case above, which never repairs a valid leaf (a device that really lost its state asks
+            // by welcome_request, and that path replaces it in ONE commit). Any other leaf, and
+            // there is nothing this invitation may vouch for or remove.
+            const found: DuplicateKeyHolder = packageAdded
+              ? await duplicateKeyHolder({
+                  mlsService,
+                  groupId,
+                  keyPackage: packageAdded,
+                  userId: inv.userId,
+                  deviceId: inv.deviceId,
+                  tag: '[PENDING]',
+                  log,
+                })
+              : { kind: 'unreadable' };
+            if (found.kind === 'this') {
+              vouchInvitationFulfilled(mlsService, inv, groupId, log);
+            } else {
+              reportDuplicateKeyNotRepaired(
+                '[PENDING]',
                 groupId,
-                targetUserId: inv.userId,
-                targetDeviceId: inv.deviceId,
-                userId,
-                deviceKeyB64,
-                log,
-              });
-            } catch (kickErr) {
-              log(
-                `[PENDING] Kick error for ${inv.deviceId} in ${groupId}: ${String(kickErr).slice(0, 100)}`
+                `${inv.userId}:${inv.deviceId}`,
+                found
               );
             }
           } else if (
@@ -429,6 +718,7 @@ export async function processPendingInvitations(params: {
   if (totalWelcomes > 0) {
     log(`[PENDING] ${totalWelcomes} Welcome(s) sent.`);
   }
+  return true;
 }
 
 /**
@@ -679,17 +969,34 @@ export async function discoverMissingGroups(params: {
   }
 }
 
-/** Exports the user's full backup (conversations + messages + MLS state) as a `.canari` file. In Tauri opens a folder picker; in the browser triggers an anchor download. */
+/**
+ * Exports the user's full backup (conversations + messages + MLS state) as a `.canari` file. In Tauri
+ * opens a folder picker; in the browser triggers an anchor download.
+ *
+ * The file is sealed under THIS DEVICE'S recovery code (`deviceRecoveryCode.ts`): the same code for
+ * every backup the device exports, generated at the first one and kept sealed under the device key.
+ * It is returned with where it came from, so the surface says whether it is the code the user already
+ * holds. `null` when the save was cancelled: a code for a file that does not exist is neither shown
+ * nor kept.
+ */
 export async function exportUserBackup(params: {
   storage: IStorage;
   userId: string;
   deviceKeyB64: string;
   myDeviceId: string;
   log: (msg: string) => void;
-}) {
+}): Promise<{ recoveryCode: string; codeOrigin: RecoveryCodeOrigin } | null> {
   const { storage, userId, deviceKeyB64, myDeviceId, log } = params;
   const mlsStateHex = await exportMlsStateAsHex(userId);
-  const blob = await exportBackup(storage, userId, deviceKeyB64, myDeviceId, mlsStateHex);
+  const code = await deviceRecoveryCode(userId, deviceKeyB64, log);
+  const blob = await exportBackup(
+    storage,
+    userId,
+    deviceKeyB64,
+    myDeviceId,
+    mlsStateHex,
+    code.bytes
+  );
   const date = new Date().toISOString().split('T')[0];
   const filename = `canari-backup-${userId}-${date}.canari`;
 
@@ -701,11 +1008,17 @@ export async function exportUserBackup(params: {
     filename
   );
   log(saved ? `[OK] Backup exported: ${filename}` : '[..] Backup export cancelled');
+  if (!saved) return null;
+  await keepDeviceRecoveryCode(userId, code, deviceKeyB64);
+  clearBackupOwedAfterKeyMove(userId);
+  return { recoveryCode: formatRecoveryCode(code.bytes), codeOrigin: code.origin };
 }
 
 /** Imports a `.canari` backup file: decrypts conversations/messages, restores the MLS state if this is the same device, then reloads the conversation list. */
 export async function importUserBackup(params: {
   file: File;
+  /** The code shown at export; required for a v3 file. */
+  recoveryCode?: string;
   deviceKeyB64: string;
   storage: IStorage;
   myDeviceId: string;
@@ -716,6 +1029,7 @@ export async function importUserBackup(params: {
 }): Promise<{ conversations: number; messages: number; isSameDevice: boolean }> {
   const {
     file,
+    recoveryCode,
     deviceKeyB64,
     storage,
     myDeviceId,
@@ -726,16 +1040,23 @@ export async function importUserBackup(params: {
   } = params;
 
   const arrayBuffer = await file.arrayBuffer();
-  const { data: backup, isSameDevice } = await importBackup(
+  const {
+    data: backup,
+    isSameDevice,
+    mlsStateUsable,
+  } = await importBackup(
     new Uint8Array(arrayBuffer),
     deviceKeyB64,
     storage,
-    myDeviceId
+    myDeviceId,
+    recoveryCode
   );
 
   if (isSameDevice) {
     const existingMlsState = await hasMlsState(userId);
-    if (backup.mlsState && !existingMlsState) {
+    if (backup.mlsState && !existingMlsState && !mlsStateUsable) {
+      log('MLS state in the backup is sealed under another key - not restored.');
+    } else if (backup.mlsState && !existingMlsState) {
       await saveMlsState(userId, fromHex(backup.mlsState));
       log('MLS state restored (same device).');
     } else if (existingMlsState) {
@@ -816,6 +1137,11 @@ export async function handleWelcomeRequest(params: {
   groupId: string;
   /** Called when the terminal group exists but is not ready yet (Welcome in transit). */
   onNotReady?: (terminalGroupId: string) => void;
+  /**
+   * A requester whose USER holds no leaf in our tree is a new person, never added on a relayed
+   * request (`automaticAdmission`): this asks a member to approve the join instead.
+   */
+  onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
 }) {
   const {
     mlsService,
@@ -828,6 +1154,7 @@ export async function handleWelcomeRequest(params: {
     requesterDeviceId,
     groupId: requestedGroupId,
     onNotReady,
+    onJoinApprovalRequested,
   } = params;
 
   // Anti-self guard: the gateway broadcasts welcome_requests to ALL devices of the user,
@@ -887,6 +1214,30 @@ export async function handleWelcomeRequest(params: {
     return;
   }
 
+  // ── Admission guard (security) ──────────────────────────────────────────────
+  // The roster guard above reads the server, and so does everything that brought this request
+  // here. Whether the requester is a MEMBER is read from our own tree: a new person is brought in by
+  // a member's gesture, never by a relayed request (`automaticAdmission`).
+  const admission = await automaticAdmission({
+    mlsService,
+    groupId,
+    userId: requesterUserId,
+    tag: '[WELCOME_REQ]',
+    log,
+  });
+  if (admission === 'unreadable') return;
+  if (admission === 'newcomer') {
+    askAMemberToAdmit(
+      conversations,
+      { groupId, requesterUserId, requesterDeviceId },
+      userMembers.find((m) => m.userId === requesterUserId)?.awaitingAdmission,
+      '[WELCOME_REQ]',
+      log,
+      onJoinApprovalRequested
+    );
+    return;
+  }
+
   // Guard in-process: prevents two concurrent handles for the same group
   // in the same tab (rapid retries arrive before the first one finishes)
   if (welcomeRequestInProgress.has(groupId)) {
@@ -904,6 +1255,9 @@ export async function handleWelcomeRequest(params: {
     return;
   }
 
+  // The package the Add or the replace is built from, kept for the catch: a duplicate key is
+  // attributed by asking which leaf carries THIS package's key (`duplicateKeyHolder`).
+  let packageSent: Uint8Array | null = null;
   try {
     const attemptKey = `${groupId}:${requesterDeviceId}`;
     const now = Date.now();
@@ -918,6 +1272,14 @@ export async function handleWelcomeRequest(params: {
       log(
         `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... Welcome sent ${Math.round((now - lastWelcome) / 1000)}s ago - still joining, skip`
       );
+      return;
+    }
+
+    // A requester this device refused for a changed key is not fetched again, and is told by the
+    // line what lifts it (`refusedDevices.ts`). Before the anti-livelock count: it is not an attempt.
+    const ownDevice = { userId, deviceId: mlsService.getDeviceId() };
+    if (await isRefusedDevice(ownDevice, requesterUserId, requesterDeviceId, mlsService)) {
+      reportRefusedDeviceSkipped('[WELCOME_REQ]', groupId, requesterUserId, requesterDeviceId);
       return;
     }
 
@@ -943,7 +1305,9 @@ export async function handleWelcomeRequest(params: {
     // welcome_request until generateKeyPackage has succeeded.
     // Best-effort: a network error must not short-circuit the fetchDeviceKeyPackage fallback.
     const devices = await mlsService.fetchUserDevices(requesterUserId).catch(() => []);
-    let targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
+    let targetDevice: DeviceKeyPackage | undefined = devices.find(
+      (d) => d.deviceId === requesterDeviceId
+    );
     if (!targetDevice) {
       // fetchUserDevices applies a 30-day cutoff: the requesting device may be absent
       // (old device reconnecting). Retry via fetchDeviceKeyPackage, which has no cutoff -
@@ -970,8 +1334,8 @@ export async function handleWelcomeRequest(params: {
     // optimistically before the phone processes the Welcome. If the device loses its
     // WASM state (restart, fresh-install, NoMatchingKeyPackage), it resends a
     // welcome_request while already marked 'active' server-side.
-    // -> always kick + re-add when the leaf is present in the tree.
-    // Read the TREE, not the routing table - see `leafIsInLocalTree`. This decides a KICK, and the
+    // -> always replace (remove + add, ONE commit) when the leaf is present in the tree.
+    // Read the TREE, not the routing table - see `leafIsInLocalTree`. This decides a REMOVAL, and the
     // Rustdoc on `member_identities` is explicit that a decision to remove a leaf reads the tree.
     // `=== true` keeps the old fall-through: on an unreadable tree the Add is still attempted.
     const leafPresent = await leafIsInLocalTree({
@@ -983,55 +1347,87 @@ export async function handleWelcomeRequest(params: {
       log,
     });
     if (leafPresent === true) {
+      // THE REPLACEMENT IS VETTED BEFORE THE LEAF IT REPLACES IS REMOVED. A device that lost its
+      // state comes back under the same id with a NEW signature key, and nothing proves that key
+      // is the device's (the old one went with the state): the replace would refuse it, so it is
+      // refused here, with its typed cause, and nothing is staged.
+      const verdict = await mlsService.vetKeyPackage(
+        targetDevice.keyPackage,
+        requesterUserId,
+        requesterDeviceId
+      );
+      if (!verdictAdmits(verdict)) {
+        if (isDeviceTrustRefusal(verdict)) {
+          const refusal = new DeviceTrustRefusedError(verdict, requesterUserId, requesterDeviceId);
+          reportDeviceTrustRefusal('[WELCOME_REQ]', groupId, refusal);
+          await recordRefusedDevice(ownDevice, refusal, mlsService);
+        } else {
+          log(
+            `[WELCOME_REQ] KeyPackage for ${requesterDeviceId.slice(0, 12)}... refused (${verdict}) - no kick, no re-add`
+          );
+        }
+        return;
+      }
       // WHICH OF THE TWO CAUSES THIS REPAIRS, said from where it is already known: a Welcome this
       // session sent to the device long enough ago to be past the cooldown means the device lost
       // or failed to process it; none sent here means the leaf came from another path or session.
       log(
-        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... leaf in MLS tree - kick + re-add (` +
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... leaf in MLS tree - remove + re-add in one commit (` +
           (lastWelcome
             ? `last Welcome sent here ${Math.round((now - lastWelcome) / 1000)}s ago`
             : 'no Welcome sent from here this session') +
           ')'
       );
-      try {
-        await kickStaleLeaf(groupId, requesterUserId, requesterDeviceId, mlsService, log);
-
-        // Save MLS state after the remove commit
-        await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
-
-        // Re-fetch KeyPackage (may have changed after kick)
-        // Best-effort: empty list on network error => freshDevice not found => clean skip.
-        const freshDevices = await mlsService.fetchUserDevices(requesterUserId).catch(() => []);
-        const freshDevice = freshDevices.find((d) => d.deviceId === requesterDeviceId);
-        if (!freshDevice) {
-          log(`[WELCOME_REQ] KeyPackage not found after kick for ${requesterDeviceId} - skip`);
-          return;
-        }
-        // Update the reference for the add below - on a COPY: the row came out of a read shared by
-        // every simultaneous asker of this device list (WP-W4), so it is never mutated in place.
-        targetDevice = { ...targetDevice, keyPackage: freshDevice.keyPackage };
-      } catch (e) {
-        // BEHAVIOUR UNCHANGED - the Add is still attempted - but no longer silent. Whatever failed
-        // here, the leaf the Add is about to collide with may still be in the tree, so the
-        // DuplicateSignature that follows used to be the only trace this branch left.
-        //
-        // IT DOES NOT SAY "the kick failed", because `kickStaleLeaf` cannot throw - it reports its
-        // own two halves and returns. Persisting the post-kick state is what reaches here, and
-        // naming the kick instead would send a reader to the one call that had already spoken.
-        log(
-          `[WELCOME_REQ] Post-kick repair of ${requesterDeviceId.slice(0, 12)}... did not complete: ${String(e).slice(0, 100)} - attempting the add anyway`
-        );
-      }
     }
 
-    // ── Add the device to the MLS group (staged transaction, C7-A) ─────
-    // Stage the Add, validate the epoch server-side, then merge + broadcast on accept (excluding
-    // the inviter self and the invitee) or roll back on reject. A rejected commit throws WITHOUT
-    // advancing the local epoch (no fork) and is handled by the outer catch as a retryable failure;
-    // the Welcome is only sent once the commit is accepted. [[C7]]
-    const result = await mlsService.addMember(groupId, targetDevice.keyPackage, [
-      `${requesterUserId}:${requesterDeviceId}`,
-    ]);
+    // ── Add (or replace) the device in the MLS group (staged transaction, C7-A) ─────
+    // Stage, validate the epoch server-side, then merge + broadcast on accept (excluding the inviter
+    // self and the invitee) or roll back on reject. A rejected commit throws WITHOUT advancing the
+    // local epoch (no fork) and is handled by the outer catch as a retryable failure; the Welcome is
+    // only sent once the commit is accepted. [[C7]]
+    //
+    // A LEAF STILL IN THE TREE IS REPLACED IN ONE COMMIT, never kicked then re-added: no epoch has
+    // the device out of the tree, so the repair is no departure (`removalEpochs`) and the server
+    // cannot steer an honest member into a two-commit shape that would read as one.
+    const invitee = {
+      keyPackage: targetDevice.keyPackage,
+      userId: requesterUserId,
+      deviceId: requesterDeviceId,
+    };
+    packageSent = invitee.keyPackage;
+    const exclude = [`${requesterUserId}:${requesterDeviceId}`];
+    let result: { welcome?: Uint8Array; ratchetTree?: Uint8Array };
+    if (leafPresent === true) {
+      result = await mlsService.replaceMember(groupId, invitee, exclude);
+    } else {
+      try {
+        result = await mlsService.addMember(groupId, invitee, exclude);
+      } catch (e) {
+        // A DUPLICATE SIGNATURE KEY: the Add met a leaf already carrying this key. The tree is
+        // asked WHOSE leaf carries it. This identity's (the first read was unreadable, or the leaf
+        // arrived since), and it is the repair above, in ONE commit - never a kick and a re-add,
+        // which left the device out of the group for an epoch. Any other leaf, and nothing is
+        // replaced or removed (`reportDuplicateKeyNotRepaired`).
+        if (!String(e).includes('DuplicateSignatur')) throw e;
+        const found = await duplicateKeyHolder({
+          mlsService,
+          groupId,
+          keyPackage: invitee.keyPackage,
+          userId: requesterUserId,
+          deviceId: requesterDeviceId,
+          tag: '[WELCOME_REQ]',
+          log,
+        });
+        if (found.kind !== 'this') {
+          reportDuplicateKeyNotRepaired('[WELCOME_REQ]', groupId, exclude[0], found);
+          return;
+        }
+        log(
+          `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... leaf in MLS tree - remove + re-add in one commit (found by a duplicate key)`
+        );
+        result = await mlsService.replaceMember(groupId, invitee, exclude);
+      }
+    }
     await mlsService.registerMember(groupId, requesterUserId);
 
     // Send the Welcome + post-merge ratchet tree to the requesting device.
@@ -1061,6 +1457,11 @@ export async function handleWelcomeRequest(params: {
       to: digestIdentity(requesterUserId, requesterDeviceId),
     }).catch((e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`));
   } catch (e) {
+    if (e instanceof DeviceTrustRefusedError) {
+      reportDeviceTrustRefusal('[WELCOME_REQ]', groupId, e);
+      await recordRefusedDevice({ userId, deviceId: mlsService.getDeviceId() }, e, mlsService);
+      return;
+    }
     const errStr = String(e);
 
     if (errStr.includes('ALREADY_MEMBER')) {
@@ -1069,19 +1470,25 @@ export async function handleWelcomeRequest(params: {
         `[WELCOME_REQ] ${requesterDeviceId} already a member of ${groupId.slice(0, 8)}... - skip`
       );
     } else if (errStr.includes('DuplicateSignatur')) {
-      try {
-        await handleDuplicateLeafError({
-          mlsService,
-          groupId,
-          targetUserId: requesterUserId,
-          targetDeviceId: requesterDeviceId,
-          userId,
-          deviceKeyB64,
-          log,
-        });
-      } catch (kickErr) {
-        log(`[WELCOME_REQ] Kick error for ${requesterDeviceId}: ${String(kickErr).slice(0, 100)}`);
-      }
+      // Reached only from a REPLACE: it removed every leaf of this identity in the same commit, so a
+      // leaf still carrying the key is another identity's - named from the tree, not assumed.
+      const found: DuplicateKeyHolder = packageSent
+        ? await duplicateKeyHolder({
+            mlsService,
+            groupId,
+            keyPackage: packageSent,
+            userId: requesterUserId,
+            deviceId: requesterDeviceId,
+            tag: '[WELCOME_REQ]',
+            log,
+          })
+        : { kind: 'unreadable' };
+      reportDuplicateKeyNotRepaired(
+        '[WELCOME_REQ]',
+        groupId,
+        `${requesterUserId}:${requesterDeviceId}`,
+        found
+      );
     } else {
       log(`[WELCOME_REQ] Error for ${requesterDeviceId}: ${errStr.slice(0, 100)}`);
     }
@@ -1209,6 +1616,7 @@ export async function handleHistoryRequest(params: {
       before: probe.before,
       limit: probe.limit,
       since: probe.since,
+      requestId: probe.requestId,
     }).catch((e) => log(`[HISTORY_RANGE] Answer failed for ${short}...: ${String(e)}`));
     await ourCoverage(probe.since);
     return;
@@ -1262,6 +1670,14 @@ export async function handleHistoryRequest(params: {
     return;
   }
 
-  const { digest, since } = probe;
-  await answerHistoryDigest({ groupId, requesterIdentity, selfIdentity, digest, since, deps });
+  const { digest, since, requestId } = probe;
+  await answerHistoryDigest({
+    groupId,
+    requesterIdentity,
+    selfIdentity,
+    digest,
+    since,
+    requestId,
+    deps,
+  });
 }

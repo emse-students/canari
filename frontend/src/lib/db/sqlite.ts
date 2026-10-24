@@ -908,7 +908,11 @@ export class SqliteStorage implements IStorage {
   }
 
   /** One entry with its full payload, or null when not queued. Throws {@link OutboxPayloadUnreadableError}. */
-  async getOutboxEntry(id: string, deviceKeyB64: string): Promise<OutboxEntry | null> {
+  async getOutboxEntry(
+    id: string,
+    deviceKeyB64: string,
+    opts?: { withFile?: boolean }
+  ): Promise<OutboxEntry | null> {
     const rows: any[] = await this.db.select('SELECT * FROM outbox WHERE id = $1', [id]);
     if (rows.length === 0) return null;
     const row = rows[0];
@@ -923,6 +927,7 @@ export class SqliteStorage implements IStorage {
     } catch (e) {
       throw new OutboxPayloadUnreadableError(id, e);
     }
+    if (opts?.withFile === false) return entry;
     return attachOutboxBlob(this.blobs, entry, async () => {
       const again: any[] = await this.db.select('SELECT id FROM outbox WHERE id = $1', [id]);
       return again.length > 0;

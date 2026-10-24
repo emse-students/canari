@@ -26,6 +26,12 @@ export interface CanariLinkPreview {
    * association logo alone).
    */
   postImage?: PostMediaRef | null;
+  /**
+   * The post itself when it is a REEL, null otherwise: a reel's card opens it straight in the
+   * reels viewer rather than on its page (user, 2026-10-23). It is the post the reader's OWN
+   * session read, so the viewer shows exactly what this reader may see.
+   */
+  reelPost?: PostEntity | null;
 }
 
 export type CanariLinkTarget =

@@ -2,6 +2,7 @@ import { writable, get } from 'svelte/store';
 import { resolveServiceUrl } from '$lib/utils/apiUrl';
 import type { IMlsService } from '$lib/mls-client';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { holdLeafRefresh } from '$lib/mls-client/leafRefresh';
 import { canari } from '../proto/canari.js';
 import { encodeAppMessage, mkCallAnswered, mkCallHangup, mkCallInvite } from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
@@ -34,6 +35,8 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
 import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
+import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
+import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import {
@@ -50,12 +53,12 @@ import {
 } from '$lib/utils/callStats';
 import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
 import {
-  applyCallVideoSenderLimits,
   callVideoConstraints,
   canHoldVideoToVp8,
   preferVp8,
   type CameraFacing,
 } from '$lib/utils/callVideo';
+import { CallVideoQualityLoop } from '$lib/utils/callVideoQuality';
 import {
   describeE2eReport,
   e2eBypassedSides,
@@ -452,6 +455,11 @@ export class CallService {
   private cameraOpTarget: 'on' | 'off' = 'off';
   /** The worker's `videoCodecUnexpected` was logged in this call: one ERROR line, not one per post. */
   private videoCodecUnexpectedLogged = false;
+  /**
+   * The camera sender's quality ladder (`utils/callVideoQuality.ts`), for the peer connection and
+   * sender it was started on; `null` when no camera transceiver exists.
+   */
+  private videoQuality: CallVideoQualityLoop | null = null;
 
   public callState = writable<CallState>('idle');
   /**
@@ -488,6 +496,12 @@ export class CallService {
    */
   public peerMicSuspended = writable<boolean>(false);
   public isVideoOff = writable<boolean>(true);
+  /**
+   * THIS side's picture is sent reduced: the quality ladder stands at or below
+   * `CALL_VIDEO_REDUCED_FROM_RUNG` because the link or the CPU could not carry more. The screen
+   * says so while the camera is on. `false` outside a call and while no ladder runs.
+   */
+  public videoSendReduced = writable<boolean>(false);
   /** Which camera is sending (`user` = the screen side, mirrored in the self view). */
   public cameraFacing = writable<CameraFacing>('user');
   /** The device has more than one camera, so the switch is offered (read once the camera is open). */
@@ -505,7 +519,28 @@ export class CallService {
 
   private chatNotifier: CallChatNotifier | null = null;
 
-  constructor(private mlsService: IMlsService) {}
+  /** Releases the leaf-refresh hold this service took on its call's group, when it holds one. */
+  private releaseLeafRefreshHold: (() => void) | null = null;
+  /** The group {@link releaseLeafRefreshHold} is for. */
+  private leafRefreshHeldGroup: string | null = null;
+
+  constructor(private mlsService: IMlsService) {
+    // NO LEAF REFRESH IN A GROUP WHILE ONE OF ITS CALLS RINGS, IS SET UP OR RUNS. Each end derives
+    // the media keys from the group's CURRENT epoch (`setupEncryption`), the caller before the
+    // ring and the callee after the answer: a refresh in between - a read receipt sent while it
+    // rings is enough - gives the two ends different keys. Held from leaving `idle` until the
+    // call is over (`idle` or `ended`); a commit a person asked for is not delayed by it.
+    this.callState.subscribe((state) => this.syncLeafRefreshHold(state));
+  }
+
+  /** Takes, moves or releases the leaf-refresh hold to follow the call's state and group. */
+  private syncLeafRefreshHold(state: CallState): void {
+    const groupId = state === 'idle' || state === 'ended' ? null : this.currentGroupId;
+    if (groupId === this.leafRefreshHeldGroup) return;
+    this.releaseLeafRefreshHold?.();
+    this.releaseLeafRefreshHold = groupId ? holdLeafRefresh(groupId, 'call') : null;
+    this.leafRefreshHeldGroup = groupId;
+  }
 
   /** Registers callbacks that insert call system messages into the chat timeline. */
   public setChatNotifier(notifier: CallChatNotifier | null): void {
@@ -570,6 +605,15 @@ export class CallService {
     if (callMsg.offerSdp === 'START' || (callMsg.callId && !this.currentCallId)) {
       if (senderNorm === userNorm) {
         appendLog('[Call] ignoring invite from own account on another device');
+        return;
+      }
+      // The server's kill switch (`calls_mode`, B12): with calls closed the server refuses every
+      // call request, so an invite that reaches us anyway (a caller on an older client, or one
+      // that skipped the server) must not ring a call this estate does not allow.
+      if (!(await callsAvailableAnswered())) {
+        appendLog(
+          `[Call] invite ${callMsg.callId} in ${groupId} not rung - calls are off on the server (mode=${serverCallsMode()})`
+        );
         return;
       }
       // The conversation's call permission: the server already withheld the ring push, and the
@@ -892,8 +936,9 @@ export class CallService {
     }
 
     // The call is over from here: a microphone the system gives back during the summary is no
-    // longer news for anyone.
+    // longer news for anyone. Nor is the link: the camera's ladder stops reading it.
     this.stopWatchingMicrophone();
+    this.stopVideoQuality();
 
     // Show the "ended" summary screen briefly (1.5 s) so the user sees the call
     // duration and result before the overlay disappears (P4).
@@ -1010,6 +1055,7 @@ export class CallService {
     this.incomingHasVideo = false;
     this.callHasVideo = false;
     this.cameraTransceiver = null;
+    this.stopVideoQuality();
     this.cameraBusy = false;
     this.offPending = false;
     this.videoCodecUnexpectedLogged = false;
@@ -1639,8 +1685,10 @@ export class CallService {
       // The new peer connection earns its own E2E claim and its own path check: nothing the dead
       // one proved is evidence about it.
       this.resetE2eEvidence();
-      // The new peer connection gets the camera on its own transceiver (`initPeerConnection`).
+      // The new peer connection gets the camera on its own transceiver (`initPeerConnection`),
+      // and its own ladder: the dead link's evidence says nothing about the new one.
       this.cameraTransceiver = null;
+      this.stopVideoQuality();
       // It counts its bytes from zero: a rate against the old one's totals would be negative.
       // (A tick of the old one still in flight is refused by `writeEndReport`: it names its pc.)
       this.lastSnapshot = null;
@@ -2302,7 +2350,7 @@ export class CallService {
             continue;
           }
           this.cameraTransceiver = transceiver;
-          void applyCallVideoSenderLimits(sender, appendLog);
+          this.startVideoQuality(pc, sender);
         }
       }
       await configureCallAudioSenders(pc, this.callHasVideo, appendLog);
@@ -3319,7 +3367,12 @@ export class CallService {
    */
   private adoptCameraTrack(track: MediaStreamTrack, requested: CameraFacing): void {
     this.localStream?.addTrack(track);
-    const settled = track.getSettings?.().facingMode;
+    const settings = track.getSettings?.() ?? {};
+    const settled = settings.facingMode;
+    // What the camera REALLY captures (the constraints are ideals): the top rung is this size.
+    appendLog(
+      `[Call] camera captures ${settings.width ?? '?'}x${settings.height ?? '?'} at ${settings.frameRate ?? '?'} fps (${settled ?? requested})`
+    );
     this.cameraFacing.set(settled === 'environment' || settled === 'user' ? settled : requested);
     track.onunmute = () => this.recheckE2eOnMediaStart('after the camera unmuted');
     track.onended = () => {
@@ -3390,6 +3443,8 @@ export class CallService {
       if (t) {
         await t.sender.replaceTrack(track);
         t.direction = 'sendrecv';
+        // The ladder paused while the sender had no camera: it samples again, from a new baseline.
+        this.videoQuality?.resume();
         this.scheduleE2ePathCheck(pc, 'after the camera came back');
         appendLog('[Call] camera on again (replaceTrack on its sender, sendrecv - renegotiating)');
         return;
@@ -3433,8 +3488,40 @@ export class CallService {
     }
     this.cameraTransceiver = transceiver;
     this.scheduleE2ePathCheck(pc, 'after the camera was added');
-    void applyCallVideoSenderLimits(transceiver.sender, appendLog);
+    this.startVideoQuality(pc, transceiver.sender);
     appendLog('[Call] camera added mid-call on a fresh transceiver (renegotiating)');
+  }
+
+  /**
+   * Starts the camera sender's quality ladder (`CallVideoQualityLoop`, the loop the rig runs too):
+   * the start rung applied now, then one `getStats()` sample every 2 s while the camera sends. It
+   * belongs to THIS sender of THIS peer connection; a rebuilt one stops it.
+   */
+  private startVideoQuality(pc: RTCPeerConnection, sender: RTCRtpSender): void {
+    this.stopVideoQuality();
+    const loop = new CallVideoQualityLoop({
+      pc,
+      sender,
+      log: appendLog,
+      onReduced: (reduced) => {
+        if (this.videoQuality === loop) this.videoSendReduced.set(reduced);
+      },
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (id) => window.clearTimeout(id),
+    });
+    this.videoQuality = loop;
+    loop.start();
+  }
+
+  /**
+   * Stops the ladder: the call ended or its peer connection was rebuilt, so the picture it reduced
+   * is gone too. (A rung the ENGINE refused stops the loop by itself and leaves the flag as the
+   * sender still is.)
+   */
+  private stopVideoQuality(): void {
+    this.videoQuality?.stop();
+    this.videoQuality = null;
+    this.videoSendReduced.set(false);
   }
 
   /**

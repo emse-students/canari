@@ -1,6 +1,6 @@
 [package]
 name = "canari"
-version = "1.4.0-alpha.3"
+version = "1.4.1-alpha.1"
 description = "Le réseau des marteaux"
 authors = ["Léon Muselli / Jolan Boudin"]
 edition = "2021"
@@ -30,6 +30,8 @@ tauri-plugin-biometric = "2"
 tauri-plugin-keystore = "2.1.0-alpha.1"
 tauri-plugin-customtabs = { path = "plugins/tauri-plugin-customtabs" }
 tauri-plugin-gallery = { path = "plugins/tauri-plugin-gallery" }
+# Account restore on a new Android phone (WP-RESTORE-1): Android only, iOS answers Unsupported.
+tauri-plugin-restore = { path = "plugins/tauri-plugin-restore" }
 tauri-plugin-http = { version = "2.8", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-fs = "2"

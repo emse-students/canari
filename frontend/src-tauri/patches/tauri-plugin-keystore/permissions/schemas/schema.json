@@ -343,10 +343,10 @@
           "markdownDescription": "Denies the store_key_bytes command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-store-key-bytes`\n- `allow-get-key-bytes`\n- `allow-delete-key-bytes`\n- `allow-has-key-bytes`",
+          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-get-key-bytes`\n- `allow-has-key-bytes`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-store-key-bytes`\n- `allow-get-key-bytes`\n- `allow-delete-key-bytes`\n- `allow-has-key-bytes`"
+          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-get-key-bytes`\n- `allow-has-key-bytes`"
         }
       ]
     }

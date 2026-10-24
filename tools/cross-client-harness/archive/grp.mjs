@@ -57,10 +57,13 @@ import { addMember, openGroupSettings } from './addmember.mjs';
 import { conversationRows, groupIdByName } from './idb.mjs';
 import { psql } from '../estate.mjs';
 import { closeOverlays, createGroup, deleteGroup, openGroup } from '../groupnav.mjs';
+import { confirmDialog } from '../comm.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import {
   GROUP_CREATION_NARRATION,
+  PAGE_BOOT_NARRATION,
+  READMISSION_NARRATION,
   awaitLine,
   consoleLines,
   ignoringExpectedLog,
@@ -228,7 +231,16 @@ async function panelReaches(cx, want, timeoutMs = 60000) {
 async function removeMember(cx, userId) {
   const before = (await panelOf(cx)).count;
   await realClick(cx, `[data-remove-member="${userId}"]`);
-  await until(cx, `/MEMBRES\\s*\\(${before - 1}\\)/i.test(document.body.innerText)`, 25000);
+  // THE CLICK ONLY ASKS: the removal is confirmed in `showConfirm` since #816 ("Retirer ce membre du
+  // groupe ?"). Unanswered, the dialog left the roster at two and covered every later click, so
+  // GRP-3 ended in ERROR and GRP-4..10 were blocked behind it (2026-10-22).
+  await confirmDialog(cx, 'common_remove_label');
+  // AN EXPIRED DEADLINE DOES NOT THROW, as in `addPeer`: the caller reads the roster as it really
+  // stands and fails on that evidence. A throw ended GRP-3 as an ERROR with neither console drained,
+  // so a removal that never landed and one that never rendered read the same.
+  await until(cx, `/MEMBRES\\s*\\(${before - 1}\\)/i.test(document.body.innerText)`, 25000).catch(
+    () => console.log(`[grp] removeMember: the roster did not reach ${before - 1} within 25 s`)
+  );
   await sleep(2000);
 }
 
@@ -998,7 +1010,8 @@ async function grp4() {
           redactionNote:
             'the join token is a capability for a real group on production and is never recorded.',
         },
-        { W1: await asCreator(o1), W2: await asCreator(o2) }
+        // W2 LOADS THE LINK AS A PAGE (`goto` above), so its boot narration is this row's own doing.
+        { W1: await asCreator(o1), W2: ignoringExpectedLog(await asCreator(o2), PAGE_BOOT_NARRATION) }
       );
       return ok;
     });
@@ -1202,7 +1215,14 @@ async function grp7() {
             joinedAfterReconnectMs: joinedMs,
             readPreJoinMessageMs: readMs,
           },
-          { W1: await asCreator(o1), W2: ignoringExpectedLog(ignoringOfflineCut(await report(o2)), GROUP_CREATION_NARRATION) }
+          // The cut RELOADS W2 to install its patch (`net.mjs`), so W2's boot narration is this row's.
+          {
+            W1: await asCreator(o1),
+            W2: ignoringExpectedLog(
+              ignoringExpectedLog(ignoringOfflineCut(await report(o2)), GROUP_CREATION_NARRATION),
+              PAGE_BOOT_NARRATION
+            ),
+          }
         );
         return ok;
       } finally {
@@ -1292,10 +1312,14 @@ async function grp8() {
           negativeWindowMs: NEGATIVE_WINDOW_MS,
         },
         // W2 ALONE, and only this row: `READMISSION_RACE_403` says why the removed device cannot
-        // avoid asking, and why forgiving it anywhere else would hide a regression.
+        // avoid asking, and why forgiving it anywhere else would hide a regression. The re-add's
+        // withdrawal of the removal notices is this row's subject too (`READMISSION_NARRATION`).
         {
           W1: await asCreator(o1),
-          W2: ignoringExpectedRefusal(await asCreator(o2), READMISSION_RACE_403),
+          W2: ignoringExpectedLog(
+            ignoringExpectedRefusal(await asCreator(o2), READMISSION_RACE_403),
+            READMISSION_NARRATION
+          ),
         }
       );
       return ok;

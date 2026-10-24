@@ -285,7 +285,7 @@ fn graine_seeds(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
     }
 
     let mut out: Vec<serde_json::Value> = Vec::new();
-    let mut absorb = |graine: &[u8]| {
+    let mut absorb = |graine: &[u8], relayed: bool| {
         let channel_id = find_length_delimited_field(graine, 1)
             .and_then(|b| String::from_utf8(b).ok())
             .unwrap_or_default();
@@ -331,15 +331,21 @@ fn graine_seeds(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
             entry["signingPublicKeyB64"] = bytes(9).into();
             entry["endorsementB64"] = bytes(10).into();
         }
+        if relayed {
+            entry["relayed"] = true.into();
+        }
         out.push(entry);
     };
 
     if let Some(graine) = &single {
-        absorb(graine);
+        absorb(graine, false);
     }
     if let Some(bundle) = &bundle {
+        // A BUNDLE'S SEEDS ARE RELAYED, and the writer treats them apart: an answerer gathers them
+        // from a store keyed by community, so only the app - which knows which salons ride which key
+        // group - may admit one for a salon this device has never read (`store_graine_seeds_json`).
         for graine in find_repeated_length_delimited_field(bundle, 3) {
-            absorb(&graine);
+            absorb(&graine, true);
         }
     }
     Some(out)
@@ -1259,6 +1265,49 @@ mod tests {
             .map(|s| s["sessionId"].as_str().unwrap())
             .collect();
         assert_eq!(ids, ["s-1", "s-2", "s-3"]);
+        // Each marked RELAYED, which the mirror writer treats apart (`store_graine_seeds_json`).
+        assert!(seeds.iter().all(|s| s["relayed"] == true));
+        // A sender's own distribution is not relayed.
+        let single = extract_full_message_info(
+            &build_graine_app_message("ch-1", "sess-1", &[7u8; 32], 1),
+            PushLanguage::French,
+        );
+        assert!(single["seeds"][0].get("relayed").is_none());
+    }
+
+    /// `GraineBundleMsg.page_index` / `page_count` (fields 7 and 8, 2026-10-22) are unknown to this
+    /// reader: a page of a paged answer is an ordinary bundle here, every seed it carries handed
+    /// over. In practice a page is far over the inline push budget and is fetched by reference, so
+    /// this guards the shape, not a path a page is expected to take.
+    #[test]
+    fn a_page_of_a_paged_answer_hands_over_its_seeds_like_any_bundle() {
+        let mut bundle = Vec::new();
+        write_string_field(&mut bundle, 1, "ws-1");
+        write_string_field(&mut bundle, 2, "r-p");
+        for (i, session) in ["s-4", "s-5"].iter().enumerate() {
+            write_bytes_field(
+                &mut bundle,
+                3,
+                &build_graine_msg("ch-1", session, &[i as u8; 32], 2_000 + i as i64),
+            );
+        }
+        write_tag(&mut bundle, 7, 0);
+        write_varint(&mut bundle, 1);
+        write_tag(&mut bundle, 8, 0);
+        write_varint(&mut bundle, 3);
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 12, &bundle);
+
+        let info = extract_full_message_info(&msg, PushLanguage::French);
+        assert_eq!(info["ok"], false);
+        assert_eq!(info["kind"], "graine_key_material");
+        let ids: Vec<&str> = info["seeds"]
+            .as_array()
+            .expect("seeds array")
+            .iter()
+            .map(|s| s["sessionId"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["s-4", "s-5"]);
     }
 
     /// A seed that could not be used is dropped HERE rather than written and failing later: the

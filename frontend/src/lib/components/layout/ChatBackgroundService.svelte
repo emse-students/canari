@@ -1,5 +1,6 @@
 <script lang="ts">
   import { forgetPostComposerMedia } from '$lib/posts/postComposerDraft';
+  import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
   import { resolve } from '$app/paths';
   /**
    * Always-on layout component for the MLS session lifecycle.
@@ -28,6 +29,7 @@
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
+    withholdsResetForUnreadKey,
     isVaultRefusal,
     type LoginErrorCode,
     provesLocalStateExists,
@@ -118,7 +120,7 @@
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
   import IncomingShareHost from './IncomingShareHost.svelte';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
-  import { CALLS_ENABLED } from '$lib/features';
+  import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
   import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
@@ -359,8 +361,17 @@
    * by a session.
    */
   let deviceHoldsOtherAccount = $state(false);
+  /**
+   * The last unlock could not READ the hardware-held key (`hardware_key_unreadable`): it may still
+   * exist, so the gate withholds the reset - which would erase data a retry opens - and says why. Set
+   * and cleared by every failed unlock (`applyPinFailure`), and cleared with the other flag.
+   */
+  let keyReadRefused = $state(false);
   $effect(() => {
     if (globalSession.isLoggedIn) deviceHoldsOtherAccount = false;
+  });
+  $effect(() => {
+    if (globalSession.isLoggedIn) keyReadRefused = false;
   });
   let pinLoading = $state(false);
   /** The PIN typed on the gate, bound to `PinModal` so a refusal can empty it (`refusePinAttempt`). */
@@ -432,6 +443,7 @@
       return;
     }
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
+    keyReadRefused = withholdsResetForUnreadKey(code);
     // A TYPED PIN CAN MEET ANOTHER ACCOUNT'S STATE TOO, not only a saved unlock: `mls.owner` names
     // that account when this one's key does not open `mls.bin`. Read on every path, or the keypad
     // path offered the reset the saved-unlock path withheld.
@@ -634,6 +646,7 @@
     // The refused account leaves with its session: kept, the flag withheld the reset from the NEXT
     // account's gate on this shell (the root layout outlives `/login`), which may be the owner's.
     deviceHoldsOtherAccount = false;
+    keyReadRefused = false;
     _loginInProgress = false;
     globalSession.isLoginInProgress = false;
 
@@ -707,6 +720,7 @@
    */
   async function handlePinSignOut() {
     deviceHoldsOtherAccount = false;
+    keyReadRefused = false;
     appendLog('[AUTH] Sign-out from the PIN gate - ending the session, keeping the local state.');
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
@@ -862,11 +876,13 @@
   /**
    * Warns when another device of the same account is already in a call.
    */
-  function checkSiblingCallWarning() {
-    // One /api/calls/sibling-status request fires per session start. While calls are held off it
-    // could only ever report a legacy device, and it would say so in a toast about a call this
-    // client cannot join - a request and a line that are both pure noise.
-    if (!CALLS_ENABLED) return;
+  async function checkSiblingCallWarning() {
+    // One /api/calls/sibling-status request fires per session start. While calls are held off - by
+    // this build or by the server's kill switch - it could only ever report a legacy device, and it
+    // would say so in a toast about a call this client cannot join: pure noise.
+    // Awaited until /api/version has answered: at session start the switch reads `off` by default,
+    // and skipping on that would silence the check for the whole session.
+    if (!(await callsAvailableAnswered())) return;
     const deviceId = globalSession.myDeviceId;
     if (!deviceId || globalSession.callState !== 'idle') return;
     void warnIfSiblingDeviceInCall(deviceId);
@@ -1212,7 +1228,7 @@
         // every later expiry of the same process - no sign-out, no redirect, a dead session left up.
         _sessionExpiredHandled = false;
         dismissAuthPrompts();
-        checkSiblingCallWarning();
+        void checkSiblingCallWarning();
         overrides.onMlsReady?.();
       },
       onSessionExpired: handleSessionExpired,
@@ -1700,6 +1716,10 @@
           };
           await globalSession.ensureMls().reloadStateFromDisk();
           stepDone('reload');
+          // The push-join ledger is the warm process's too (channel-encryption section 26): taken
+          // right after the reload, so a group joined while away is registered before the drain.
+          await takeKeyGroupPushJoins(globalSession.ensureMls(), (line) => console.log(line));
+          stepDone('key-group-joins');
           if (storage) await reconcileOutboxSent(storage).catch(() => {});
           stepDone('outbox');
           // WP-XP-5: the user may have answered a CallKit ring while we were away - record
@@ -1731,7 +1751,7 @@
             sessionCb(),
             `resume prepared in ${Math.round(performance.now() - resumeStart)} ms: ${steps.join(', ')} ms`
           );
-          checkSiblingCallWarning();
+          void checkSiblingCallWarning();
         })();
       }
     };
@@ -1961,6 +1981,13 @@
       pinError = m.auth_pin_reset_blocked_other_account();
       return;
     }
+    if (keyReadRefused) {
+      appendLog(
+        '[PIN_RESET] REFUSED - the hardware-held key could not be read but may exist; a reset would erase data a retry opens.'
+      );
+      pinError = m.auth_pin_reset_withheld_key_unreadable();
+      return;
+    }
     pinError = '';
     pinLoading = true;
     pinStep = m.auth_pin_step_resetting();
@@ -2065,8 +2092,12 @@
   isLoading={pinLoading}
   loadingStep={pinStep}
   isFirstSetup={isFirstPinSetup}
-  onForgotPinReset={deviceHoldsOtherAccount ? undefined : handlePinReset}
-  resetWithheldNotice={deviceHoldsOtherAccount ? m.auth_pin_reset_blocked_other_account() : ''}
+  onForgotPinReset={deviceHoldsOtherAccount || keyReadRefused ? undefined : handlePinReset}
+  resetWithheldNotice={deviceHoldsOtherAccount
+    ? m.auth_pin_reset_blocked_other_account()
+    : keyReadRefused
+      ? m.auth_pin_reset_withheld_key_unreadable()
+      : ''}
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
   account={globalSession.userId}
 />

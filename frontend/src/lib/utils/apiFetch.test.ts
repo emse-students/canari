@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RefreshFailedError, SessionExpiredError, setToken } from '$lib/stores/auth';
 import { connectivity } from '$lib/stores/connectivity.svelte';

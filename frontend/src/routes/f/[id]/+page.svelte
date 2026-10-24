@@ -181,14 +181,7 @@
       <p class="text-red-err font-semibold">{loadError}</p>
     </div>
   {:else}
-    <FormHeader
-      {form}
-      priceLabel={price.priceDecided && !price.priceUnavailable && price.priceCents > 0
-        ? m.form_view_from_price({ price: formatAmount(price.priceCents, form.currency) }) +
-          price.appliedLabel
-        : null}
-      {submitted}
-    />
+    <FormHeader {form} {submitted} />
 
     {#if submitted}
       <div class="border-cn-border space-y-4 rounded-3xl border bg-(--cn-surface) p-8 text-center">
@@ -281,7 +274,7 @@
       <div class="mt-6 flex flex-col items-center gap-2">
         {#if total > 0}
           <p class="text-text-muted text-xs font-medium">
-            {m.form_view_total_to_pay()}
+            {m.form_view_total_to_pay()}{price.appliedLabel}
             <span class="text-cn-dark text-base font-bold">
               {formatAmount(total, form.currency)}
             </span>

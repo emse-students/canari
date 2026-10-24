@@ -119,6 +119,17 @@ describe('Tauri capabilities', () => {
     expect(granted.has('dialog:default')).toBe(true);
   });
 
+  it('grants no keystore store or delete in any capability file, overlays included', () => {
+    // On a phone the keystore entry is the only copy of the hardware-held at-rest key (2026-10-22):
+    // every write and delete goes through the at-rest guard in the app's Rust bridge, and a grant in
+    // ANY file here - not only `default.json` - would be a WebView path around it.
+    // `keystore:default` stays allowed: `nativePluginCommands.test.ts` holds that it has neither.
+    const granted = [...grantedIdentifiers()].filter((id) =>
+      /^keystore:allow-(store|delete)$/.test(id)
+    );
+    expect(granted).toEqual([]);
+  });
+
   it('lets a calendar subscription link leave the app', () => {
     // `opener:default` scopes `openUrl` to http(s), mailto and tel. The subscribe modal hands the
     // OS a `webcal:` link on iOS and a `webcals:` one elsewhere (`subscribeLinks.ts`); without

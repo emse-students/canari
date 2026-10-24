@@ -28,10 +28,17 @@ const AWAITS_THE_PROBE = /\bawait\s+refreshAppVersionCheck\s*\(/;
 /**
  * The login button, and nothing else.
  *
- * Both of its awaits are deliberate: one on the OIDC button, one on the password form. A third
+ * Both of its awaits are deliberate: one on the OIDC button, one on the password form. A further
  * entry here should be a decision someone wrote down, not a line that drifted in.
  */
-const ALLOWED = new Set(['lib/components/auth/LoginPage.svelte']);
+const ALLOWED = new Set([
+  'lib/components/auth/LoginPage.svelte',
+  // DECIDED 2026-10-22 (calls flip review): `callsAvailableAnswered()` waits for the FIRST answer so
+  // an incoming call invite, or the session-start sibling check, is judged on the server's kill
+  // switch and not on its `off` default. Both run in an OPEN session, never in front of an unlock
+  // prompt, and the wait is skipped once any answer exists.
+  'lib/utils/callsAvailability.ts',
+]);
 
 describe('the version probe never sits in front of an unlock', () => {
   it('has no caller awaiting it outside the login button', () => {

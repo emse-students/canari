@@ -21,6 +21,14 @@ import { svelteFiles, withoutComments } from './markupSources';
 const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 // A Windows checkout reads CRLF, and every pattern below is written in LF.
 const css = readFileSync(join(src, 'app.css'), 'utf8').replace(/\r\n/g, '\n');
+// THE TREE IS READ ONCE, HERE, AND NOT INSIDE A TEST. Reading every `.svelte` file is the slow part
+// of this file, and a test body is charged against vitest's 5 s timeout: under the full suite, with
+// every worker reading the disk at once, two bodies that each walked the tree timed out while
+// asserting nothing wrong. Module scope is collection time, which no per-test timeout measures.
+const markup = svelteFiles(src).map((path) => ({
+  path,
+  text: withoutComments(readFileSync(path, 'utf8')),
+}));
 
 const rung = (name: string): number => {
   const match = css.match(new RegExp(`--z-${name}:\\s*(\\d+);`));
@@ -31,8 +39,7 @@ const rung = (name: string): number => {
 /** The rungs a covering surface can take: every rung named in a file that uses `coversScreen`. */
 function coveringRungs(): { file: string; name: string }[] {
   const out: { file: string; name: string }[] = [];
-  for (const path of svelteFiles(src)) {
-    const text = withoutComments(readFileSync(path, 'utf8'));
+  for (const { path, text } of markup) {
     if (!text.includes('use:coversScreen')) continue;
     for (const match of text.matchAll(/--z-([a-z-]+)/g)) {
       out.push({ file: relative(src, path).replace(/\\/g, '/'), name: match[1] });
@@ -80,9 +87,9 @@ describe('the call bar and the layers that cover the screen', () => {
   });
 
   it('no component reads the top inset from env() - that one would not move below the bar', () => {
-    const readers = svelteFiles(src)
-      .filter((p) => /env\(safe-area-inset-top/.test(withoutComments(readFileSync(p, 'utf8'))))
-      .map((p) => relative(src, p).replace(/\\/g, '/'));
+    const readers = markup
+      .filter(({ text }) => /env\(safe-area-inset-top/.test(text))
+      .map(({ path }) => relative(src, path).replace(/\\/g, '/'));
     expect(readers).toEqual([]);
   });
 });

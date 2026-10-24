@@ -36,7 +36,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const WEB_DEVICE_WINDOW_MS = 90 * DAY_MS;
 
 /**
- * What a phone or a desktop retains: 5 years - longer than the longest tenure anyone has here, so
+ * What a phone or a desktop CLAIMS to retain: 5 years (NOTE: the local garbage collector in
+ * `ChatBackgroundService.svelte` deletes at 90 days on every platform, so this is the intent, not
+ * the enforced value - see the backlog P2 on local retention) - longer than the longest tenure anyone has here, so
  * no user meets that bound while they are still a member.
  *
  * Bounded rather than literally infinite for two reasons, neither of them rendering cost (history

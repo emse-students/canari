@@ -3,26 +3,27 @@
 # The things a COPY of production's database must not carry, and the ones it CANNOT carry, in ONE
 # place.
 #
-# WHY THIS FILE EXISTS. There is ONE copy of production left: the on-demand one into a developer's
-# local stack (`infrastructure/local/restore-into-local.sh`, added 2026-09-02 when development moved
-# local). The weekly copy into the dev.canari-emse.fr estate, for which this list was first written,
-# was DELETED on 2026-10-16 (owner, GDPR review) - dev now loads a fictional seed through
-# `infrastructure/dev/reset-dev-to-seed.sh`, which reads only the media-residue question below.
+# WHY THIS FILE EXISTS. The weekly copy of production into the dev.canari-emse.fr estate, for which
+# this list was first written, was DELETED on 2026-10-16 (owner, GDPR review), and the on-demand
+# copy into a developer's local stack on 2026-10-24: production data is never copied to a workstation.
+# Dev loads a fictional seed through `infrastructure/dev/reset-dev-to-seed.sh`, which reads only the
+# media-residue question below.
 # The strip list's failure mode is an ABSENCE - a payment column added to an entity next month is a
 # live identifier the copy would carry, with nothing to say so - and
 # `.github/scripts/tests/local-copy-guards.test.sh` DERIVES the list from the entity declarations
 # to catch exactly that.
 #
-# The caller passes the name of ITS OWN guarded SQL function: `restore-into-local.sh` re-checks the
-# local compose label on every call. That keeps the allowlist of writable targets in the script that
-# owns the target, and keeps this file about WHAT is stripped rather than WHERE.
+# NO CALLER APPLIES THE STRIPS ANY MORE (the local restore that did was removed 2026-10-24): the dev reset
+# reads only the media-residue question below, and `apply_copy_strips` is kept, with its completeness
+# test, so a future copy of anything starts from a derived list rather than a remembered one.
 #
-# Usage:
+# Usage of the strips: the caller passes the name of ITS OWN guarded SQL function, which keeps the
+# allowlist of writable targets in the script that owns the target.
 #   . "$ROOT/infrastructure/lib/copy-strips.sh"
-#   apply_copy_strips local_sql "$DATABASE" "[restore-into-local]"
-
+#   apply_copy_strips guarded_sql "$DATABASE" "[caller]"
+#
 # The ONE question that says whether (d) actually happened, kept in the file that owns (d) so the
-# strip and its proof cannot drift apart. The local copy reads it back in its step 5, the dev reset
+# strip and its proof cannot drift apart. The dev reset
 # reads it after loading the seed, and an answer other than 0 means rows pointing at objects the
 # estate never received.
 #

@@ -8,12 +8,14 @@ import { MessagingService } from './services/messaging.service';
 import { GROUP_REDIS_KEY_PREFIXES, groupRedisKeys } from './utils/group-purge';
 import { Group } from './entities/group.entity';
 import { QueuedMessage } from './entities/queued-message.entity';
+import { QueuedPayload } from './entities/queued-payload.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { GroupInvite } from './entities/group-invite.entity';
 import { GroupMembershipInterval } from './entities/group-membership-interval.entity';
+import { SeatEviction } from './entities/seat-eviction.entity';
 import { UserDismissedGroup } from './entities/user-dismissed-group.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
@@ -45,13 +47,15 @@ const TOMBSTONED = 'g-dead';
 
 /** What a purge takes, in order. A HARD delete: the group row is already gone, so the marker goes. */
 const SWEPT = [
-  QueuedMessage,
   GroupMember,
+  QueuedMessage,
+  QueuedPayload,
   DeviceGroupMembership,
   MlsCommitLog,
   MlsGroupInfo,
   GroupInvite,
   GroupMembershipInterval,
+  SeatEviction,
   UserDismissedGroup,
 ];
 
@@ -62,13 +66,15 @@ const SWEPT = [
  */
 const FAKE_TABLE = new Map<unknown, string>([
   [Group, 'table_of_group'],
-  [QueuedMessage, 'table_of_queued_message'],
   [GroupMember, 'table_of_group_member'],
+  [QueuedMessage, 'table_of_queued_message'],
+  [QueuedPayload, 'table_of_queued_payload'],
   [DeviceGroupMembership, 'table_of_device_membership'],
   [MlsCommitLog, 'table_of_commit_log'],
   [MlsGroupInfo, 'table_of_group_info'],
   [GroupInvite, 'table_of_invite'],
   [GroupMembershipInterval, 'table_of_membership_interval'],
+  [SeatEviction, 'table_of_seat_eviction'],
   [UserDismissedGroup, 'table_of_dismissal'],
 ]);
 
@@ -132,14 +138,16 @@ describe('an orphan group - one repair, three paths', () => {
   const queryBuilder = () => {
     const state = { skip: 0, take: 0 };
     const qb = {
+      leftJoinAndSelect: () => qb,
       where: () => qb,
       andWhere: () => qb,
       orderBy: () => qb,
-      skip: (n: number) => {
+      addOrderBy: () => qb,
+      offset: (n: number) => {
         state.skip = n;
         return qb;
       },
-      take: (n: number) => {
+      limit: (n: number) => {
         state.take = n;
         return qb;
       },
@@ -210,7 +218,11 @@ describe('an orphan group - one repair, three paths', () => {
         MessagingService,
         {
           provide: getRepositoryToken(QueuedMessage),
-          useValue: { ...emptyRepo(), createQueryBuilder: jest.fn(() => queryBuilder()) },
+          useValue: {
+            ...emptyRepo(),
+            createQueryBuilder: jest.fn(() => queryBuilder()),
+            count: jest.fn().mockResolvedValue(0),
+          },
         },
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },

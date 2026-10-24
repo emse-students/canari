@@ -23,6 +23,11 @@ export interface HeldSend {
   target: string | null;
   /** The ordinary send, run when the session is up and `target` is still selected. */
   run: () => void;
+  /**
+   * Called instead of `run` when the send is NOT run - dropped, or misdirected - for a send that
+   * owns something to release (a share's copies on disk, which nothing else would delete).
+   */
+  discard?: () => void;
 }
 
 /** What {@link HeldSendQueue.release} did. */
@@ -59,11 +64,13 @@ export function createHeldSendQueue(): HeldSendQueue {
       const misdirected: HeldSend[] = [];
       for (const h of taken) (h.target === selected ? sent : misdirected).push(h);
       for (const h of sent) h.run();
+      for (const h of misdirected) h.discard?.();
       return { sent, misdirected };
     },
     drop() {
       const taken = queue;
       queue = [];
+      for (const h of taken) h.discard?.();
       return taken;
     },
   };

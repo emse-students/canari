@@ -134,6 +134,10 @@ jobs:
           LYDIA_PROVIDER_TOKEN: ${{ secrets.LYDIA_PROVIDER_TOKEN }}
           LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.LYDIA_PROVIDER_PRIVATE_TOKEN }}
           LYDIA_KEY_ENCRYPTION_SECRET: ${{ secrets.LYDIA_KEY_ENCRYPTION_SECRET }}
+          LIVE_KEY_ENCRYPTION_SECRET: ${{ secrets.LIVE_KEY_ENCRYPTION_SECRET }}
+          # `production` or `homologation`, said explicitly: the template's own default is
+          # `homologation`, which would send production's Provider pair to Lydia's sandbox.
+          LYDIA_ENV: ${{ secrets.LYDIA_ENV }}
           # THE VARIABLE IS NAMED AFTER THE SECRET, NOT AFTER THE KEY IT RENDERS. render-env.sh
           # reads the manifest's SOURCE column verbatim for production, so `AUTHENTIK_BASE_URL`
           # here would leave `$AUTHENTIK_URL` unset and fail a `required` row at deploy time.
@@ -157,6 +161,7 @@ jobs:
           MICONNECT_EDITOR_TOKEN: ${{ secrets.MICONNECT_EDITOR_TOKEN }}
           GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.GOOGLE_SAFE_BROWSING_API_KEY }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
+          ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
           CHANNELS_ENCRYPTION_SECRET: ${{ secrets.CHANNELS_ENCRYPTION_SECRET }}
           INTERNAL_SHARED_SECRET: ${{ secrets.INTERNAL_SHARED_SECRET }}
           CALL_ROOM_SECRET: ${{ secrets.CALL_ROOM_SECRET }}

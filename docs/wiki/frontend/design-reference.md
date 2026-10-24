@@ -3269,3 +3269,27 @@ click-opened `MessageInfoTooltip`, and the panels (`ReactorsPanel`, `SeenByHeads
 the screen has its shape (within 2 %), else `rounded-2xl` (12 px, the larger card) centred over a
 blurred canvas copy of the same picture. The scale has no step above 12 px that means "media surface";
 `--radius-4xl` (24 px) is unscaled and was not used. See [reel-editor](modules/reel-editor.md#one-frame-for-capture-edit-and-publish-2026-10-11-replaces-the-cover-and-crop-of-1739).
+
+## Motion: three durations, one easing, one reduced-motion rule (2026-10-23)
+
+User, on 1.4.0: small animations, for instance when the comments section opens. The scale is in
+`app.css` (`:root`), and every class built on it moves `transform` or `opacity` ONLY - no layout, no
+blur, no shadow animation, which is what a Mi 9T cannot afford.
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `--motion-fast` | 120 ms | press feedback (`motion-press`: scale 0.9 while `:active`) |
+| `--motion-base` | 200 ms | a fade (`motion-fade-in`), one arriving item (`motion-pop-in`: 8 px rise + fade) |
+| `--motion-slow` | 250 ms | a bottom sheet rising from its edge (`motion-sheet-in`) |
+| `--motion-ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | all of them, and the sheet's drag release |
+
+**Reduced motion has ONE mechanism**, the global rule at the end of `app.css` that takes every CSS
+animation and transition to 0.01 ms. A class on this scale carries no media query of its own; use CSS
+(not Svelte's `transition:` directive, which runs on the Web Animations API and that rule does not
+reach). JS-driven moves (`ReelCommentsSheet.settle`) ask `matchMedia` and skip.
+
+Where it is used: the reel comments sheet (slides up while the reel shrinks into a rounded card above it (scale 0.34 of the screen, `ReelViewer`, as Instagram's); the X, Escape
+and a tap on the reel slide it out on the drag release snap, the reel growing back with it, before the history entry goes), a new
+comment in `PostComments` (`commentArrivals`: one new id plays the entrance - never the first draw,
+never a page of older comments, never the swap of the reader's local id for the server's row), and
+the three buttons of the reel action rail (`motion-press`). There is no reaction drawer on `main`.

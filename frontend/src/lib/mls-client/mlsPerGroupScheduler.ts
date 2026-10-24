@@ -16,6 +16,12 @@ export interface MlsQueuedMessage {
   ratchetTreeBytes?: Uint8Array;
   queuedMessageId?: string;
   queuedCreatedAt?: number;
+  /**
+   * The server routed this copy to this device ALONE (`queued_message.addressed`). MLS encrypts for
+   * the whole group, so only this says it - read by the conversation gate of step A
+   * (docs/wiki/protocols/history-answer-addressing.md, rule 5).
+   */
+  addressed?: boolean;
   /** Tauri: persisted control frame (e.g. `group_reset`). */
   type?: string;
   /**

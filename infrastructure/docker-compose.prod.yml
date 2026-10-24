@@ -111,7 +111,7 @@ services:
     # images are Alpine, so both clusters are musl and the collation does not move under the
     # indexes). The procedure, its numbers and its rollback are in
     # `docs/wiki/infrastructure/databases.md`, the only copy.
-    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
     restart: always
     expose:
       - "5432"
@@ -132,12 +132,16 @@ services:
     # PINNED BY DIGEST, not `:latest` - and `:latest` was the worst of the three floating tags, on a
     # database admin UI, in PRODUCTION. The image carries no version label, so the digest is the only
     # name it has.
-    image: adminer@sha256:49a7d30e71de97fb18933ffe7d46cc2b343c49fd7a63a7791c8be2548eb65115
+    image: adminer@sha256:251295c1cd51d3889f1c42ffa4864b24eeab51f0caf395cfe5bf4726c5ec9a2a
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:8080"
     environment:
       ADMINER_DEFAULT_SERVER: postgres
+    # upload progress OFF (host IT's request, 2026-10-22): Adminer does not use it, and PHP is patched here
+    # by moving the image digest, not by the host's unattended-upgrades - the container is already php-cli.
+    volumes:
+      - ./adminer/php-hardening.ini:/usr/local/etc/php/conf.d/zz-hardening.ini:ro
     depends_on:
       - postgres
 
@@ -246,6 +250,9 @@ services:
       CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
       # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
       CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
+      # The key-group shared-payload WRITER (migration 034). A literal of env-manifest.tsv: false
+      # until a release AFTER the one shipping its readers. Neither true nor false: no boot.
+      QUEUED_PAYLOAD_SHARED_WRITES: ${QUEUED_PAYLOAD_SHARED_WRITES:-false}
       TURN_URL: ${TURN_URL:-}
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
@@ -433,6 +440,10 @@ services:
       # PRODUCTION ONLY (WP4): the authentik service account that writes a person's profile. Dev holds
       # none and refuses the edit with a typed error, because both estates share ONE MiConnect.
       MICONNECT_EDITOR_TOKEN: ${MICONNECT_EDITOR_TOKEN:-}
+      # Account restore on a new Android phone (WP-RESTORE-1): the signing-certificate SHA-256 the
+      # restore key's origin is computed from. Empty, every /api/auth/restore route answers 503
+      # (docs/wiki/account-restore.md).
+      ANDROID_APP_LINK_SHA256: ${ANDROID_APP_LINK_SHA256:-}
       # THE ONE FIELD THAT TELLS THE TWO ESTATES APART AT RUNTIME, and until 2026-09-02 nothing
       # delivered it. `render-env.sh` computes it for dev, the manifest declares it,
       # `deploy-build.ts` parses it and `version.service.spec.ts` tests it - and no compose file
@@ -501,6 +512,7 @@ services:
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
       LYDIA_KEY_ENCRYPTION_SECRET: ${LYDIA_KEY_ENCRYPTION_SECRET:-}
+      LIVE_KEY_ENCRYPTION_SECRET: ${LIVE_KEY_ENCRYPTION_SECRET:-}
     healthcheck:
       # `/api/health` since 2026-09-24, like the other three services. It probed
       # `/api/channels/health` - a route that belongs to ChannelsController and answers about the
@@ -600,7 +612,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: pinned
-    image: nginx:1.31.7-alpine@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
+    image: nginx:1.31.8-alpine@sha256:1ef7ca94d7879df82421428ce13bd1eaa412404953859cf7a5b6512c25e67a60
     restart: always
     command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]
     # The DIRECTORY, not the file: `git reset --hard` replaces a file by a new inode, and a bind mount

@@ -4,6 +4,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, ForbiddenException, HttpException, Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { PushSecretGuard } from '../guards/push-secret.guard';
+import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import * as crypto from 'crypto';
 import { PushController } from './push.controller';
 import { PushToken } from '../entities/push-token.entity';
@@ -55,6 +57,10 @@ describe('PushController - POST mls/push/channel-read', () => {
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PushSecretThrottlerGuard)
       .useValue({ canActivate: () => true })
       .compile();
     controller = module.get(PushController);

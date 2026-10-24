@@ -484,9 +484,9 @@
       {disabled}
       class="call-control flex size-16 items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40 disabled:active:scale-100 {tone ===
       'danger'
-        ? 'bg-red-500 text-white hover:bg-red-400'
+        ? 'bg-call-decline text-white hover:brightness-110'
         : tone === 'accept'
-          ? 'bg-emerald-500 text-white hover:bg-emerald-400'
+          ? 'bg-call-accept text-white hover:brightness-110'
           : tone === 'on'
             ? 'text-cn-ink bg-white'
             : 'bg-white/15 text-white hover:bg-white/25'}"
@@ -521,6 +521,22 @@
     style="padding: var(--safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) var(--safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);"
     transition:fade={{ duration: 150 }}
   >
+    {#if !videoShowing && primary}
+      <!-- Messenger's and WhatsApp's backdrop: the other person's own photo, blown up, blurred and
+           dimmed behind the call. The SAME Avatar component (one cache, one fallback), never a
+           second fetch path; decorative, so hidden from assistive tech. A reader without a photo
+           gets the blurred initials tile, which is just a colour field. -->
+      <div
+        class="pointer-events-none absolute inset-0 overflow-hidden"
+        aria-hidden="true"
+        data-testid="call-backdrop"
+      >
+        <div class="absolute inset-0 scale-150 opacity-60 blur-3xl">
+          <Avatar userId={primary.userId} fill shape="soft" fallbackLabel={primary.displayName} />
+        </div>
+        <div class="bg-cn-scrim/55 absolute inset-0"></div>
+      </div>
+    {/if}
     {#if remoteVideoStream}
       <video
         bind:this={remoteVideo}
@@ -615,7 +631,7 @@
         : 'justify-center'}"
     >
       {#if !videoShowing}
-        <div class="relative size-28 md:size-36">
+        <div class="relative size-32 md:size-44">
           {#if isIncoming || call.kind === 'ringing'}
             <!-- The ring: a halo that breathes while the call rings, on either side. -->
             <div class="absolute inset-0 rounded-full bg-white/15 motion-safe:animate-ping"></div>
@@ -640,10 +656,10 @@
             userId={primary.userId}
             fallback={primary.displayName}
             link={false}
-            class="block max-w-full truncate font-bold {videoShowing ? 'text-lg' : 'text-2xl'}"
+            class="block max-w-full truncate font-bold {videoShowing ? 'text-lg' : 'text-3xl'}"
           />
         {:else}
-          <p class="font-bold {videoShowing ? 'text-lg' : 'text-2xl'}">{m.call_label()}</p>
+          <p class="font-bold {videoShowing ? 'text-lg' : 'text-3xl'}">{m.call_label()}</p>
         {/if}
         <p
           class="text-white/75 tabular-nums {videoShowing ? 'text-sm' : 'text-base'} {call.kind ===
@@ -661,6 +677,16 @@
           >
             <MicOff size={16} class="shrink-0" />
             <span>{micNotice}</span>
+          </p>
+        {/if}
+        {#if call.kind === 'live' && !call.isVideoOff && call.videoSendReduced}
+          <!-- The quality ladder had to shrink THIS side's picture (CallService.videoSendReduced). -->
+          <p
+            class="mt-1 inline-flex max-w-full items-center gap-2 text-sm text-amber-200"
+            data-testid="call-video-reduced"
+          >
+            <Video size={16} class="shrink-0" />
+            <span>{m.call_video_reduced_notice()}</span>
           </p>
         {/if}
         {#if callView.audioBlocked}

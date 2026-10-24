@@ -1,9 +1,12 @@
 /// <reference types="jest" />
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 
 import {
   AuthSessionsService,
+  DEVICE_ID_PATTERN,
   ROTATION_GRACE_SECONDS,
   SESSION_TTL_SECONDS,
   SWEEP_INTERVAL_MS,
@@ -113,6 +116,24 @@ class FakeRepo {
   createQueryBuilder(): FakeQueryBuilder {
     return new FakeQueryBuilder(this);
   }
+
+  /**
+   * The transaction a revocation runs: every repository it asks for is this one, and a callback
+   * that throws restores the rows it saw, as a rollback would.
+   */
+  get manager(): { transaction: <T>(cb: (m: unknown) => Promise<T>) => Promise<T> } {
+    return {
+      transaction: async <T>(cb: (m: unknown) => Promise<T>): Promise<T> => {
+        const snapshot = [...this.rows];
+        try {
+          return await cb({ getRepository: () => this });
+        } catch (e) {
+          this.rows = snapshot;
+          throw e;
+        }
+      },
+    };
+  }
 }
 
 const UPDATE_WHERE = 'id = :id AND "tokenId" = :presented AND "expiresAt" > :now';
@@ -123,6 +144,7 @@ class FakeQueryBuilder {
   private mode: 'update' | 'delete' | null = null;
   private patch: Partial<AuthSession> = {};
   private params: Record<string, unknown> = {};
+  private returned: string[] = [];
 
   constructor(private readonly repo: FakeRepo) {}
 
@@ -161,7 +183,12 @@ class FakeQueryBuilder {
     return this;
   }
 
-  execute(): Promise<{ affected: number }> {
+  returning(columns: string[]): this {
+    this.returned = columns;
+    return this;
+  }
+
+  execute(): Promise<{ affected: number; raw?: Array<Record<string, unknown>> }> {
     if (this.mode === 'update') {
       const { id, presented, now } = this.params as {
         id: string;
@@ -177,18 +204,42 @@ class FakeQueryBuilder {
     }
 
     const { userId, keep } = this.params as { userId: string; keep?: string };
-    const before = this.repo.rows.length;
-    this.repo.rows = this.repo.rows.filter(
-      (r) => r.userId !== userId || (keep !== undefined && r.id === keep)
-    );
-    return Promise.resolve({ affected: before - this.repo.rows.length });
+    const deleted = (r: AuthSession) =>
+      r.userId === userId && (keep === undefined || r.id !== keep);
+    // RETURNING: the deleted rows, reduced to the columns asked for, as the driver hands them back.
+    const raw = this.repo.rows
+      .filter(deleted)
+      .map((r) =>
+        Object.fromEntries(
+          this.returned.map((c) => [c, (r as unknown as Record<string, unknown>)[c]])
+        )
+      );
+    this.repo.rows = this.repo.rows.filter((r) => !deleted(r));
+    return Promise.resolve({ affected: raw.length, raw });
   }
 }
 
-function makeService(): { service: AuthSessionsService; repo: FakeRepo } {
+/** Records every push ending the service queued, and every drain it started after a commit. */
+function makeService(): {
+  service: AuthSessionsService;
+  repo: FakeRepo;
+  enqueue: jest.Mock;
+  drain: jest.Mock;
+  queued: () => string[];
+} {
   const repo = new FakeRepo();
-  const service = new AuthSessionsService(repo as never);
-  return { service, repo };
+  const enqueue = jest.fn((_manager: unknown, ended: unknown[], _cause: string) =>
+    Promise.resolve(ended.length)
+  );
+  const drain = jest.fn(() => Promise.resolve());
+  const service = new AuthSessionsService(repo as never, { enqueue, drain } as never);
+  const queued = () =>
+    enqueue.mock.calls.flatMap(([, ended, cause]) =>
+      (ended as Array<{ id: string; userId: string; deviceId?: string | null }>).map(
+        (row) => `${row.userId}/${row.deviceId ?? 'unnamed'}/${row.id}/${cause}`
+      )
+    );
+  return { service, repo, enqueue, drain, queued };
 }
 
 describe('AuthSessionsService', () => {
@@ -399,6 +450,126 @@ describe('AuthSessionsService', () => {
     });
   });
 
+  describe('a session that ends records its push ending in the same transaction', () => {
+    /** Opens a session of `userId` bound to `deviceId`. */
+    async function boundSession(
+      service: AuthSessionsService,
+      userId: string,
+      deviceId: string
+    ): Promise<string> {
+      const opened = await service.create(userId);
+      await service.bindDevice(userId, opened.sessionId, deviceId);
+      return opened.sessionId;
+    }
+
+    it('logout records the ending of the session it deleted, then drains', async () => {
+      const { service, queued, drain } = makeService();
+      const sid = await boundSession(service, 'user-1', 'phone-1');
+
+      await service.revoke(sid);
+
+      expect(queued()).toEqual([`user-1/phone-1/${sid}/logout`]);
+      expect(drain).toHaveBeenCalledTimes(1);
+    });
+
+    it('the owner revoking a device records that session ending', async () => {
+      const { service, queued } = makeService();
+      const sid = await boundSession(service, 'user-1', 'phone-1');
+
+      await expect(service.revokeOwned('user-1', sid)).resolves.toBe(true);
+
+      expect(queued()).toEqual([`user-1/phone-1/${sid}/revoked-by-owner`]);
+    });
+
+    it('a refused revocation of someone else session records nothing', async () => {
+      const { service, queued, drain } = makeService();
+      const sid = await boundSession(service, 'user-2', 'phone-2');
+
+      await expect(service.revokeOwned('user-1', sid)).resolves.toBe(false);
+
+      expect(queued()).toEqual([]);
+      expect(drain).not.toHaveBeenCalled();
+    });
+
+    it('revoking the other sessions records each one, and never the kept session', async () => {
+      const { service, queued } = makeService();
+      const keep = await boundSession(service, 'user-1', 'phone-1');
+      const laptop = await boundSession(service, 'user-1', 'laptop-1');
+      const tab = await service.create('user-1');
+      await boundSession(service, 'user-2', 'phone-2');
+
+      await service.revokeOthers('user-1', keep);
+
+      expect(queued().sort()).toEqual(
+        [
+          `user-1/laptop-1/${laptop}/revoked-others`,
+          `user-1/unnamed/${tab.sessionId}/revoked-others`,
+        ].sort()
+      );
+    });
+
+    it('a replayed refresh token, which revokes the session, records its ending', async () => {
+      const { service, repo, queued } = makeService();
+      const opened = await service.create('user-1');
+      await service.bindDevice('user-1', opened.sessionId, 'phone-1');
+      // Two rotations: the original token is now neither current nor inside the grace window.
+      const first = await service.rotate(opened.sessionId, opened.tokenId);
+      if (first.status !== 'rotated') throw new Error('expected a rotation');
+      await service.rotate(opened.sessionId, first.tokenId);
+
+      await expect(service.rotate(opened.sessionId, opened.tokenId)).resolves.toEqual({
+        status: 'replayed',
+      });
+
+      expect(repo.rows).toHaveLength(0);
+      expect(queued()).toEqual([`user-1/phone-1/${opened.sessionId}/replay`]);
+    });
+
+    it('a session that never named a device is still recorded: it may have registered before it did', async () => {
+      const { service, queued, drain } = makeService();
+      const opened = await service.create('user-1');
+
+      await service.revoke(opened.sessionId);
+
+      expect(queued()).toEqual([`user-1/unnamed/${opened.sessionId}/logout`]);
+      expect(drain).toHaveBeenCalledTimes(1);
+    });
+
+    it('a logout of a session already gone records nothing', async () => {
+      const { service, enqueue } = makeService();
+      await service.revoke('00000000-0000-4000-8000-000000000000');
+      expect(enqueue.mock.calls.every(([, ended]) => (ended as unknown[]).length === 0)).toBe(true);
+    });
+
+    it('binding a device revokes its strays without recording an ending', async () => {
+      const { service, queued } = makeService();
+      await boundSession(service, 'user-1', 'phone-1');
+      await boundSession(service, 'user-1', 'phone-1');
+
+      expect(queued()).toEqual([]);
+    });
+
+    it('an ending that cannot be recorded rolls the session delete back - both or neither', async () => {
+      const { service, repo, enqueue, drain } = makeService();
+      const sid = await boundSession(service, 'user-1', 'phone-1');
+      enqueue.mockRejectedValueOnce(new Error('relation does not exist'));
+
+      await expect(service.revoke(sid)).rejects.toThrow('relation does not exist');
+
+      expect(repo.rows.map((r) => r.id)).toEqual([sid]);
+      expect(drain).not.toHaveBeenCalled();
+    });
+
+    it('the revocation never waits for chat-delivery: the drain runs after the commit, unawaited', async () => {
+      const { service, repo, drain } = makeService();
+      drain.mockReturnValue(new Promise(() => undefined));
+      const sid = await boundSession(service, 'user-1', 'phone-1');
+
+      await expect(service.revoke(sid)).resolves.toBeUndefined();
+      expect(repo.rows).toHaveLength(0);
+    });
+  });
+
   describe('listForUser', () => {
     it('returns only the caller sessions', async () => {
       const { service } = makeService();
@@ -462,6 +633,30 @@ describe('AuthSessionsService', () => {
 
       await expect(service.bindDevice('user-1', opened.sessionId, 'web-c-d')).resolves.toBe(true);
       expect(repo.rows[0].deviceId).toBe('web-c-d');
+    });
+
+    it('refuses an identifier chat-delivery-service would refuse to address', async () => {
+      // A session naming it would record push endings that a 400 refuses for ever.
+      const { service, repo } = makeService();
+      const opened = await service.create('user-1');
+
+      for (const bad of ['dev 1', 'dev/1', 'dev+1', 'dev;1']) {
+        await expect(service.bindDevice('user-1', opened.sessionId, bad)).resolves.toBe(false);
+      }
+      await expect(service.bindDevice('user-1', opened.sessionId, 'web-a:b@c.d_1')).resolves.toBe(
+        true
+      );
+      expect(repo.rows[0].deviceId).toBe('web-a:b@c.d_1');
+    });
+
+    it('holds the device id contract chat-delivery-service holds', () => {
+      const contract = JSON.parse(
+        readFileSync(
+          join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'device-id.json'),
+          'utf8'
+        )
+      ) as { pattern: string };
+      expect(DEVICE_ID_PATTERN.source).toBe(contract.pattern);
     });
 
     it('refuses an empty or oversized identifier rather than truncating it', async () => {

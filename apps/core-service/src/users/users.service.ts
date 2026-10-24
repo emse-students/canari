@@ -22,6 +22,7 @@ import { UserBlocksService } from './user-blocks.service';
 import { EMPTY_PROFILE, legacyColumns, type MiconnectProfile } from './miconnect-profile';
 import { socialUrl } from '../internal/service-urls';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
+import { assertMintableUserId } from './user-id';
 
 /** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
@@ -56,6 +57,8 @@ export class UsersService implements OnModuleInit {
 
   /** Persists a new user entity and returns it. */
   async create(createUserDto: CreateUserDto): Promise<User> {
+    // The administrator's mint point: the same rule as the sign-in callback (`user-id.ts`).
+    assertMintableUserId(createUserDto.id, this.logger, 'admin-create');
     const user = this.userRepository.create(createUserDto);
     return await this.userRepository.save(user);
   }

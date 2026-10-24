@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE DASHBOARD HUB, PER READER. Pinned: a member sees identity, Explorer and Compte; a manager
  * adds "Mes associations" (live memberships holding a right, lists under `/lists`); staff add the

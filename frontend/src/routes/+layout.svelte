@@ -22,7 +22,7 @@
   import {
     clearEdgeExclusionsForNewDocument,
     excludeLeftEdgeOver,
-    wantsFeedLeftEdgeExclusion,
+    wantsTabLeftEdgeExclusion,
   } from '$lib/mobile/edgeGestureExclusion';
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
   import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
@@ -45,6 +45,8 @@
   import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
+  import NewDeviceBanner from '$lib/components/shared/NewDeviceBanner.svelte';
+  import JoinRequestBanner from '$lib/components/shared/JoinRequestBanner.svelte';
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
@@ -304,16 +306,23 @@
   /** Whether this screen can swipe at all - `isSwipeNavArmed` owns the reasoning. */
   const swipeNavArmed = $derived(isSwipeNavArmed(pathname, swipeNavViewport));
 
-  // THE FEED'S LEFT EDGE IS THE CAMERA SWIPE'S, NOT ANDROID'S BACK (Mi 9T, 2026-10-21: a swipe
-  // started in the left 30 CSS px was taken as Back, 8 of 8). Declared on the feed alone and only
-  // while its swipe can happen; the cleanup removes it on every route change, keyboard rise,
-  // covering overlay or viewport change, so the left-edge Back is untouched everywhere else (and
-  // closes a reel viewer or a modal over the feed). A no-op off Android.
-  const feedLeftEdgeExcluded = $derived(
-    wantsFeedLeftEdgeExclusion(pathname, swipeNavArmed, isKeyboardOpen, screenCover.covered)
+  // A TAB'S LEFT EDGE IS THE SECTION SWIPE'S, NOT ANDROID'S BACK (Mi 9T, 2026-10-21: a swipe
+  // started in the left 30 CSS px was taken as Back, 8 of 8 on the feed; owner 2026-10-24: on every
+  // tab root). Declared only while the swipe to the previous section can happen; the cleanup
+  // removes it on every route change, keyboard rise, covering overlay or viewport change, so the
+  // left-edge Back is untouched everywhere else (and closes a reel viewer or a modal over a tab).
+  // A no-op off Android.
+  const tabLeftEdgeExcluded = $derived(
+    wantsTabLeftEdgeExclusion(
+      pathname,
+      swipeNavArmed,
+      isKeyboardOpen,
+      screenCover.covered,
+      isMobileConvoOpen
+    )
   );
   $effect(() => {
-    if (!feedLeftEdgeExcluded || !pageScrollWrap) return;
+    if (!tabLeftEdgeExcluded || !pageScrollWrap) return;
     return excludeLeftEdgeOver(pageScrollWrap);
   });
 
@@ -674,6 +683,10 @@
       <MaintenanceAdminBanner />
     {/if}
     <MlsFatalErrorBanner />
+    <!-- A device joined this account: a security fact the owner must see, until seen. -->
+    <NewDeviceBanner />
+    <!-- A new person asking to join a group: only a member's own Add lets them in, so it waits here. -->
+    <JoinRequestBanner />
     <!-- A MINIMISED CALL (2026-10-19) - right after the interrupting facts, before the transients: a
          call in progress is what the reader is doing, and its hang-up must stay at the top of the
          screen, the one edge no native chrome is drawn over (CallBanner). -->

@@ -501,8 +501,14 @@
             : null,
         maxUses: shareMaxUses > 0 ? shareMaxUses : null,
       });
+      // THE FRAGMENT IS WHAT GIVES THE PAST (channel-encryption section 25): this device stands
+      // behind the link with a key minted for this display, carried after the `#`, which no browser
+      // sends to a server. A link without it still admits, with no past - so failing to mint it
+      // fails the display rather than handing out the weaker link silently.
+      const { mintInviteFragment } = await import('$lib/utils/graine/admissionIssue');
+      const fragment = await mintInviteFragment(workspaceDbId, invite.expiresAt ?? null);
       shareInvite = invite;
-      shareLink = publicAppUrl(`/c/join/${invite.token}`);
+      shareLink = `${publicAppUrl(`/c/join/${invite.token}`)}#${fragment}`;
       try {
         await navigator.clipboard.writeText(shareLink);
         shareCopied = true;

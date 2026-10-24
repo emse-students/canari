@@ -119,6 +119,10 @@ impl MlsManager {
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(e.to_string()))?;
 
+        // THE TREE IS PINNED AT THE MERGE, NOT HERE: it came from a GroupInfo the server served, and
+        // a join the server refuses is forgotten. `merge_pending_commit_for` pins it once accepted.
+        self.pending_external_joins.insert(group_id.clone());
+
         self.groups.insert(group_id.clone(), group);
         self.mark_state_dirty();
         Ok((group_id, commit))
@@ -297,6 +301,16 @@ impl MlsManager {
         let group = staged_welcome
             .into_group(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Join error (into_group): {:?}", e)))?;
+
+        // Every identity in the tree this Welcome hands over is pinned on first sight, and a changed
+        // key for one pinned already is recorded - see `crate::device_trust`.
+        let own_identity = String::from_utf8_lossy(self.credential.identity()).to_string();
+        self.device_trust.observe_joined_tree(
+            &group_id,
+            welcome_epoch,
+            &crate::device_trust::leaf_keys(&group),
+            &own_identity,
+        );
 
         self.groups.insert(group_id.clone(), group);
         self.mark_state_dirty();

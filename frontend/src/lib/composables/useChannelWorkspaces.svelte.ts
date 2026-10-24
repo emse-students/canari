@@ -25,6 +25,7 @@ import {
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
 import {
+  markCommunityListed,
   narrowHistoryVisibility,
   registerChannelWorkspace,
   registerCommunityHistoryVisibility,
@@ -51,6 +52,8 @@ import {
   ensureCommunityDistributionGroup,
   enterPrivateSalonGroup,
 } from '$lib/utils/graine/distributionGroup';
+import { leaveKeyGroupToMainTab } from '$lib/utils/graine/followerTabKeyGroup';
+import { requestCommunityHistory } from '$lib/utils/graine/repair';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
 import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
@@ -74,6 +77,7 @@ import {
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
+import { signDirectAdmission } from '$lib/utils/graine/admissionIssue';
 
 /** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {
@@ -538,6 +542,9 @@ export function useChannelWorkspaces() {
         })
       );
     }
+    // EVERY SALON THE LISTING NAMED IS REGISTERED: from here a salon it did not name, met on the
+    // community's key group, is not one this viewer may read as public (`markCommunityListed`).
+    markCommunityListed(workspaceId);
 
     // THE ENTRY WAITS FOR THE KEY GROUP, as it always did: a private salon's own group and the send
     // gate both come after the community's group is registered - and so after MLS is READY, which
@@ -555,7 +562,9 @@ export function useChannelWorkspaces() {
         viewerHasAccess,
         ensureMls: ctx.ensureMls,
         log: ctx.log,
-      });
+      }).catch((e: unknown) =>
+        leaveKeyGroupToMainTab(e, `the salon ${actualId}`, { gesture: false, log: ctx.log })
+      );
       assertListingSession(session, `the salon ${actualId}`);
       // ENTERED: a send typed into this salon before the walk reached it goes now (`salonSendGate`).
       openSalonSendGate(actualId);
@@ -591,7 +600,12 @@ export function useChannelWorkspaces() {
     assertListingSession(session, `the key group of ${workspaceId}`);
     const mls = await ctx.ensureMls();
     assertListingSession(session, `the key group of ${workspaceId}`);
-    await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
+    await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log).catch((e: unknown) =>
+      leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, {
+        gesture: false,
+        log: ctx.log,
+      })
+    );
   }
 
   /**
@@ -1103,6 +1117,22 @@ export function useChannelWorkspaces() {
     // group, and the community's still carries every public salon of the same community. The join
     // itself is idempotent and coalesced per scope (`ensureDistributionGroupFor`), so a second
     // channel joined in the same session costs one shared promise and no second external commit.
+    // A follower tab may enter neither group: said once to the member, and the join goes on without.
+    try {
+      await enterJoinedChannelGroups(channelId, workspaceId, isPrivate, ensureMls, log);
+    } catch (e) {
+      leaveKeyGroupToMainTab(e, `the salon ${channelId}`, { gesture: true });
+    }
+  }
+
+  /** The two groups {@link enterJoinedChannel} enters, in order. */
+  async function enterJoinedChannelGroups(
+    channelId: string,
+    workspaceId: string,
+    isPrivate: boolean,
+    ensureMls: (() => IMlsService | Promise<IMlsService>) | undefined,
+    log: (message: string) => void
+  ): Promise<void> {
     if (ensureMls) {
       const mls = await ensureMls();
       await ensureCommunityDistributionGroup(mls, service, workspaceId, log);
@@ -1558,7 +1588,10 @@ export function useChannelWorkspaces() {
     // sidebar, and `ensureCommunityDistributionGroup` logs the cause.
     if (workspaceId && ctx.ensureMls) {
       const mls = await ctx.ensureMls();
-      await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
+      await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log).catch(
+        (e: unknown) =>
+          leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, { gesture: true })
+      );
     }
 
     // Immediately load the channels the backend created (e.g. the default "general" channel)
@@ -1594,6 +1627,7 @@ export function useChannelWorkspaces() {
             })
           );
         }
+        markCommunityListed(workspaceId);
       } catch {
         // Non-fatal: channels will load on next full refresh
       }
@@ -1663,7 +1697,9 @@ export function useChannelWorkspaces() {
         viewerHasAccess: true,
         ensureMls: ctx.ensureMls,
         log: ctx.log,
-      });
+      }).catch((e: unknown) =>
+        leaveKeyGroupToMainTab(e, `the salon ${actualId}`, { gesture: true })
+      );
       openSalonSendGate(actualId);
 
       const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
@@ -1719,16 +1755,27 @@ export function useChannelWorkspaces() {
     const workspaceImageMediaId = currentWorkspace?.imageMediaId || undefined;
 
     try {
-      // Map frontend role names to backend role names (capitalized)
+      // An ordinary invitation names NO role: the server grants the community's base role, whatever
+      // it is called there. A role is named only when the inviter picked one above it.
       const backendRoleName =
-        roleName === 'admin'
-          ? 'Administrateur'
-          : roleName === 'moderator'
-            ? 'Modérateur'
-            : 'Membre';
+        roleName === 'admin' ? 'Administrateur' : roleName === 'moderator' ? 'Modérateur' : null;
+      // THE PROOF THAT LETS A MEMBER HAND THE NEWCOMER THE PAST (channel-encryption section 25),
+      // signed by this device and stored with the membership. Without it the invitation still
+      // admits; the newcomer then reads from their arrival on, so a failure is said, not hidden.
+      let admissionVoucher: string | undefined;
+      if (currentWorkspace?.workspaceDbId) {
+        try {
+          admissionVoucher = await signDirectAdmission(currentWorkspace.workspaceDbId, memberId);
+        } catch (e) {
+          console.error(
+            `[GRAINE] admission of ${memberId.slice(0, 8)} NOT signed - they will read only from their arrival on: ${String(e)}`
+          );
+        }
+      }
       const invited = await service.inviteToChannel(channelId, {
         targetUserId: memberId,
-        roleName: backendRoleName,
+        ...(backendRoleName ? { roleName: backendRoleName } : {}),
+        ...(admissionVoucher ? { admissionVoucher } : {}),
       });
 
       // WHOEVER ADMITS A NEWCOMER WELCOMES THEM (channel-encryption section 20). This device is
@@ -2428,10 +2475,27 @@ export function useChannelWorkspaces() {
     imageMediaId?: string;
     historyVisibility?: string;
   }) {
+    const previous = channelWorkspaces.find(
+      (ws) => ws.workspaceDbId === event.workspaceId
+    )?.historyVisibility;
     const visibility =
       event.historyVisibility === undefined
         ? undefined
         : adoptHistoryVisibility(event.workspaceId, event.historyVisibility);
+    if (visibility !== undefined && previous !== undefined && visibility !== previous) {
+      // THE RULE MOVED UNDER AN OPEN SESSION. The history ask is where a closed past is recorded and
+      // where a widened one is asked for again (`historyClosedSeen.ts`): a member already in, holding
+      // seeds floored at their arrival, would otherwise never be handed the past the admin just
+      // opened. A device that is offline now meets the same change at its next listing.
+      console.info(
+        `[CHANNEL] history rule of ${event.workspaceId.slice(0, 8)} moved ${previous} -> ${visibility}`
+      );
+      requestCommunityHistory(event.workspaceId).catch((e: unknown) =>
+        console.warn(
+          `[GRAINE] could not ask for the history of community ${event.workspaceId.slice(0, 8)} after its rule moved: ${String(e)}`
+        )
+      );
+    }
     channelWorkspaces = channelWorkspaces.map((ws) =>
       ws.workspaceDbId === event.workspaceId
         ? {

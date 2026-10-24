@@ -8,4 +8,7 @@ permissions = [
   "allow-share-text",
   "allow-share-staged",
   "allow-discard-shared-out",
+  "allow-publish-share-targets",
+  "allow-clear-share-targets",
+  "allow-clear-conversation-shortcuts",
 ]

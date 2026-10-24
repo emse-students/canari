@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A CHECKPOINT MAKES THE RATCHET DURABLE, SO IT MUST MAKE THE REPLAY'S MARKS DURABLE TOO.
  *

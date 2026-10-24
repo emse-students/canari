@@ -376,7 +376,7 @@ The app itself is NOT in this stack: `bun run dev` serves it from the host on **
 ### Every `/api/*` request goes through nginx, and that is not a preference
 
 **nginx is where a bearer token becomes an identity.** It runs
-`auth_request /internal/auth/verify` against `core-service:3012/api/auth/verify`, then copies four
+`auth_request /internal/auth/verify` against `core-service:3012/api/auth/verify`, then copies five
 headers out of that subrequest onto the upstream request:
 
 | From the auth subrequest | Forwarded as |
@@ -385,6 +385,7 @@ headers out of that subrequest onto the upstream request:
 | `X-Logged-In` | `X-User-Logged-In` |
 | `X-Global-Admin` | `X-Global-Admin` |
 | `X-Internal-Token` | `X-Internal-Token` |
+| `X-Session-Id` | `X-Session-Id` |
 
 A service reads `X-User-Id` and nothing else; it never validates a JWT itself. So a request that
 did not pass through nginx has no identity at all, and core-service answers it

@@ -282,7 +282,12 @@ jobs:
           # `bun.lock` and `patches/` decide which library code the suite runs (2026-10-13): a
           # lockfile-only bump of a patched dependency drops its patch silently, and only
           # `patchedDependencies.test.ts` and the behavioural test behind the patch would say so.
+          # `channel-retention.scheduler.ts` IS IN THIS LIST FOR THE SAME REASON: the frontend's
+          # `retentionFloorPin.test.ts` reads `CHANNEL_MESSAGE_RETENTION_DAYS` from it and fails
+          # when the graine retention floor no longer matches, so a PR changing ONLY that constant
+          # must run the frontend suite instead of breaking a later, unrelated frontend PR.
           if has '^frontend/src/' || has '^frontend/src-tauri/' || has '^frontend/static/' || \
+             has '^apps/social-service/src/channels/channel-retention\.scheduler\.ts$' || \
              has '^frontend/package\.json' || has '^frontend/bun\.lock' || has '^frontend/patches/' || \
              has '^frontend/svelte\.config' || \
              has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
@@ -371,6 +376,21 @@ jobs:
       fail-fast: false
       matrix:
         component: ${{ fromJSON(needs.changes.outputs.rust-matrix) }}
+    # THE GATEWAY'S PRESENCE SCRIPTS (`apps/chat-gateway/src/addressing.rs`, `redis_it`): a session's
+    # field and its expiry in one command, a refresh that cannot resurrect a retired session, the
+    # presence going with the last session on any process - Lua a fake cannot judge. Gated on
+    # `GATEWAY_IT_REDIS_URL`, and the tests FAIL rather than skip when it is unset under CI. The same
+    # digest as production (`ci-passed-gate.test.mjs` compares them).
+    services:
+      redis:
+        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v7
@@ -470,6 +490,8 @@ jobs:
 
       - name: Run Component Task
         working-directory: ${{ matrix.component.path }}
+        env:
+          GATEWAY_IT_REDIS_URL: redis://127.0.0.1:6379
         run: ${{ matrix.component.cmd }}
 
   # =================================================================================================
@@ -515,7 +537,7 @@ jobs:
         # schema with `synchronize` (extensions included) and the account-erasure SQL runs on it below:
         # proving either on another major proves it on a server production does not run. Bump it WITH
         # the compose files, never alone.
-        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: boot-probe
@@ -641,12 +663,43 @@ jobs:
       # MIGRATION 015 (the lives kill switch) AGAINST POSTGRESQL: lands `off` on an existing row,
       # replays as a no-op, and its CHECK refuses a value no service reads. The spec builds its own
       # `platform_config` in a throwaway schema, so the boot's database is all it needs.
+      # THE CHECK-AND-PUBLISH SCRIPT OF AN ADDRESSED HISTORY ANSWER (history-answer-addressing, rule
+      # 6) against the production Redis this job already runs: its point is that the check and the
+      # PUBLISH are one atomic step. Gated on `CHAT_DELIVERY_IT_REDIS_URL`, so jest's own report is
+      # read and a skipped or absent test fails the step.
+      - name: Addressed publish script against Redis
+        if: ${{ matrix.service == 'apps/chat-delivery-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CHAT_DELIVERY_IT_REDIS_URL: redis://localhost:6379
+        run: |
+          node --run test -- addressing.redis --json --outputFile "$RUNNER_TEMP/addressing-it.json"
+          node -e '
+            const r = require(process.argv[1]);
+            if (r.numPendingTests > 0 || r.numPassedTests < 5) {
+              console.error(`addressing.redis: ${r.numPassedTests} passed, ${r.numPendingTests} skipped - the script ran nowhere`);
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/addressing-it.json"
+
       - name: Lives kill switch migration against PostgreSQL
         if: ${{ matrix.service == 'apps/core-service' }}
         working-directory: ${{ matrix.service }}
         env:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- lives-mode-migration.integration
+
+      # A SESSION'S END AND ITS PUSH ENDING, ONE TRANSACTION (core migration 016). The spec builds its
+      # own tables in a throwaway schema, so the boot's database is all it needs
+      # (docs/wiki/sessions.md). Its chat-delivery half, the delete by session (migration 037), is a
+      # `*.integration.spec.ts` like every other chat-delivery one, so `test-chat-delivery-integration`
+      # runs it, skip-refused.
+      - name: Push-ending outbox against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- session-push-end.integration
 
   # =================================================================================================
   # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
@@ -673,7 +726,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: it-probe
@@ -760,6 +813,87 @@ jobs:
           fi
           if [ "$tests" -eq 0 ] || [ "$skipped" -ne 0 ]; then
             echo "::error::$skipped integration test(s) skipped - with the database and Redis set, a skip means a spec did not run"
+            jq -r '.testResults[] | select(any(.assertionResults[]; .status != "passed")) | .name' "$report"
+            exit 1
+          fi
+
+  # =================================================================================================
+  # CHAT-DELIVERY-SERVICE AGAINST A REAL POSTGRESQL
+  # =================================================================================================
+  # The same shape as the social job above, for the same reason: `*.integration.spec.ts` here are
+  # gated on `CHAT_DELIVERY_IT_DATABASE_URL` and report SKIPPED without it. Written 2026-10-22 with migration
+  # 034 (a key-group frame stored once), whose collector, purge and pull join are SQL a mock cannot
+  # judge; the seat lock's orderings (`seat-lock.integration.spec.ts`: a per-group advisory lock
+  # ordering a seat's claim, its eviction, its route and a send's queued rows) run here too, since no
+  # fake can judge which side waits for which. Each spec builds its own throwaway schema, so an empty
+  # database is all it needs. Same Postgres digest as production (`ci-passed-gate.test.mjs` compares
+  # them); a skip is a failure.
+  test-chat-delivery-integration:
+    name: Chat-delivery-service integration specs (PostgreSQL)
+    needs: [changes]
+    if: ${{ contains(needs.changes.outputs.ts-matrix, 'apps/chat-delivery-service') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+        env:
+          POSTGRES_USER: canari
+          POSTGRES_PASSWORD: it-probe
+          POSTGRES_DB: chat_it
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U canari"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      # jest runs under node, for the reason given on `Run Test` in the matrix below.
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Install Dependencies
+        working-directory: apps/chat-delivery-service
+        run: bun install --frozen-lockfile
+
+      # In band: each spec works in its own throwaway schema, but one database serves them all.
+      - name: Run every integration spec
+        working-directory: apps/chat-delivery-service
+        env:
+          CHAT_DELIVERY_IT_DATABASE_URL: postgres://canari:it-probe@localhost:5432/chat_it
+        run: >-
+          node --run test -- --runInBand
+          --testPathPatterns '\.integration\.spec\.ts$'
+          --json --outputFile "$RUNNER_TEMP/chat-it.json"
+
+      - name: Every integration spec ran, and none was skipped
+        working-directory: apps/chat-delivery-service
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/chat-it.json"
+          on_disk="$(find src -name '*.integration.spec.ts' | wc -l)"
+          suites="$(jq '.numTotalTestSuites' "$report")"
+          tests="$(jq '.numTotalTests' "$report")"
+          skipped="$(jq '.numPendingTests + .numTodoTests' "$report")"
+          echo "on disk: $on_disk spec(s); jest ran $suites suite(s), $tests test(s), $skipped skipped"
+          if [ "$on_disk" -eq 0 ] || [ "$suites" -ne "$on_disk" ]; then
+            echo "::error::jest ran $suites integration suite(s) and $on_disk exist - the pattern no longer selects them all"
+            exit 1
+          fi
+          if [ "$tests" -eq 0 ] || [ "$skipped" -ne 0 ]; then
+            echo "::error::$skipped integration test(s) skipped - with the database set, a skip means a spec did not run"
             jq -r '.testResults[] | select(any(.assertionResults[]; .status != "passed")) | .name' "$report"
             exit 1
           fi
@@ -1221,10 +1355,13 @@ jobs:
           # `infrastructure/dev/version-gap.yml` is here because the datastore refusal NAMES it as
           # the way to retire itself. Without it `dev_proven_major` read an absent file in CI and
           # answered empty, so a rehearsal recorded there would have lifted nothing.
+          # `infrastructure/authentik/compose.yml` for the same reason as production's: the identity
+          # provider runs its OWN PostgreSQL major, and an update to that file is compared with it.
           sparse-checkout: |
             .github/scripts
             infrastructure/docker-compose.prod.yml
             infrastructure/dev/version-gap.yml
+            infrastructure/authentik/compose.yml
 
       # THE TABLE IS TESTED IN THE RUN THAT USES IT, and it had no test at all until it cost an
       # outage: `postgres` was simply absent from the ceiling. `ceiling.test.sh` derives the
@@ -1285,6 +1422,7 @@ jobs:
   # request red until the one that fixes it merges, which is the point; and an outage makes this
   # job slow (three attempts with backoff) without making it red. The nightly `scheduled.yml` keeps
   # `registry_outage_is_failure: true`, so a tree npm never answered for is still reported there.
+  # The container image scan (`image-scan`, 2026-10-23) is in the same half on the same terms.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   dependency-audit:
     name: Dependency audit
@@ -1372,7 +1510,7 @@ jobs:
     name: CI passed
     if: always()
     needs:
-      [changes, test-rust, boot-nest-apps, test-social-integration, test-typescript-backend, test-frontend, test-android, test-harness,
+      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-android, test-harness,
       test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, security, dependency-audit]
     runs-on: ubuntu-24.04
     steps:

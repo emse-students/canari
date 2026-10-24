@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A picked video's composer thumbnail: its own first frame (a `<video>` seeked to `#t=0.1`), or, for
  * a take the in-app camera filmed, the picture the camera attached - a recorder's file has no seek

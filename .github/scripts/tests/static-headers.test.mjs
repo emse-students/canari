@@ -53,6 +53,9 @@ const BROWSER_FACING = new Set([
   '@app_shell',
 ]);
 
+/** The blocks that answer an HTML page, whose Content-Security-Policy SvelteKit writes. */
+const PAGE_BLOCKS = new Set(['@ssr', '@app_shell']);
+
 /** The three the CSP comment at the top of the Dockerfile requires of any block that sets a header. */
 const SECURITY = [
   { needle: 'snippets/csp.conf', name: 'the CSP include' },
@@ -187,8 +190,21 @@ for (const block of locations) {
     );
   }
 
+  // A PAGE IS THE ONE ANSWER WHOSE POLICY THIS FILE DOES NOT WRITE (2026-10-22). SvelteKit sends it
+  // with the hash of each inline script the page carries (kit.csp, frontend/src/lib/security/
+  // cspPolicy.js); csp.conf holds no hash, and a second policy is INTERSECTED with the first, so
+  // including it here would refuse the page's own scripts - a blank site. The page blocks include
+  // csp-page.conf, which states only frame-ancestors, the one directive a <meta> policy cannot carry.
+  const isPage = PAGE_BLOCKS.has(block.name);
+  if (isPage && block.body.includes('snippets/csp.conf')) {
+    failures.push(
+      `location ${block.name} answers a PAGE and includes csp.conf: that policy carries no script ` +
+        `hash and would be intersected with SvelteKit's, refusing every inline script of the page.`
+    );
+  }
   for (const { needle, name } of SECURITY) {
-    if (!block.body.includes(needle)) {
+    const required = isPage && needle === 'snippets/csp.conf' ? 'snippets/csp-page.conf' : needle;
+    if (!block.body.includes(required)) {
       failures.push(
         `location ${block.name} sets headers of its own but does not restate ${name}. nginx drops ` +
           `the whole inherited add_header set from such a block, so this one is not sent at all.`

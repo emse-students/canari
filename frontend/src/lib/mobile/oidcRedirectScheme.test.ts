@@ -1,8 +1,9 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 import { MOBILE_APP_PACKAGE, OIDC_MOBILE_REDIRECT_URI } from './appSiteAssociation';
 
 /**
@@ -38,6 +39,14 @@ import { MOBILE_APP_PACKAGE, OIDC_MOBILE_REDIRECT_URI } from './appSiteAssociati
 const here = dirname(fileURLToPath(import.meta.url));
 const AUTH_STORE = resolve(here, '../stores/auth.ts');
 const TAURI_CONF = resolve(here, '../../../src-tauri/tauri.conf.json');
+// Shipped `.ts`/`.svelte` under `src`, from the run's shared source snapshot at module scope: a walk
+// inside a test body is charged against vitest's 5 s timeout and took seconds under the full suite.
+const SHIPPED_SOURCES = sourceFiles({
+  under: 'src',
+  extensions: ['ts', 'svelte'],
+  tests: 'exclude',
+  skipDirs: ['proto'],
+});
 
 /** `{ scheme, host }` pairs the deep-link plugin registers for mobile, custom schemes only. */
 function declaredMobileLinks(): { scheme: string; host: string }[] {
@@ -113,27 +122,18 @@ describe('the identifier is spelled once in the frontend source', () => {
     // The scheme is derived from MOBILE_APP_PACKAGE so a second package id is one change. A literal
     // elsewhere is a deep link that would keep pointing at the old app. Comments and tests are
     // allowed to name it.
-    const SRC = resolve(here, '../..');
     const offenders: string[] = [];
-    const walk = (dir: string) => {
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, e.name);
-        if (e.isDirectory()) {
-          if (e.name !== 'paraglide' && e.name !== 'wasm' && e.name !== 'proto') walk(full);
-          continue;
-        }
-        if (!/\.(ts|svelte)$/.test(e.name) || e.name.endsWith('.test.ts')) continue;
-        if (full.endsWith(join('mobile', 'appSiteAssociation.ts'))) continue;
-        const code = readFileSync(full, 'utf8')
-          .split('\n')
-          .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
-          .join('\n');
-        if (/fr\.emse\.canari(:\/\/|:?['"`])/.test(code) || /id=fr\.emse\.canari/.test(code)) {
-          offenders.push(relative(SRC, full));
-        }
+    for (const { path, text } of SHIPPED_SOURCES) {
+      if (path === 'src/lib/mobile/appSiteAssociation.ts') continue;
+      const code = text
+        .split('\n')
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+        .join('\n');
+      if (/fr\.emse\.canari(:\/\/|:?['"`])/.test(code) || /id=fr\.emse\.canari/.test(code)) {
+        offenders.push(relativeTo(path, 'src'));
       }
-    };
-    walk(SRC);
+    }
+    expect(SHIPPED_SOURCES.length).toBeGreaterThan(100);
     expect(offenders).toEqual([]);
   });
 });

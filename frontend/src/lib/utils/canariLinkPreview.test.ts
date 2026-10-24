@@ -6,7 +6,10 @@ import {
 import { setLocale } from '$lib/paraglide/runtime';
 import type { PostEntity, PostMediaRef } from '$lib/posts/api';
 
-vi.mock('$lib/posts/api', () => ({ getPost: vi.fn() }));
+vi.mock('$lib/posts/api', () => ({
+  getPost: vi.fn(),
+  isReel: (p: Pick<PostEntity, 'kind'>) => p.kind === 'reel',
+}));
 
 const { getPost } = await import('$lib/posts/api');
 const getPostMock = getPost as unknown as ReturnType<typeof vi.fn>;
@@ -145,5 +148,18 @@ describe('fetchCanariLinkPreview (post) - the small logo slot and the own-photo 
     getPostMock.mockResolvedValue(post({ media: [media] }));
     const preview = await fetchCanariLinkPreview('https://canari-emse.fr/posts/p3');
     expect(preview?.postImage).toBeNull();
+  });
+
+  it('carries a REEL whole, so its card opens it in the reels viewer', async () => {
+    const reel = post({ kind: 'reel' } as Partial<PostEntity>);
+    getPostMock.mockResolvedValue(reel);
+    const preview = await fetchCanariLinkPreview('https://canari-emse.fr/posts/r1');
+    expect(preview?.reelPost).toBe(reel);
+  });
+
+  it('carries no reel for an ordinary post: its card opens the post page', async () => {
+    getPostMock.mockResolvedValue(post({}));
+    const preview = await fetchCanariLinkPreview('https://canari-emse.fr/posts/p4');
+    expect(preview?.reelPost).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { AppController } from './app.controller';
@@ -11,6 +12,8 @@ import { UserBlock } from './users/entities/user-block.entity';
 import { ProfileChange } from './users/entities/profile-change.entity';
 import { ProfileCorrectionRequest } from './users/entities/profile-correction-request.entity';
 import { AuthSession } from './auth/entities/auth-session.entity';
+import { RestoreChallengeSpent, RestoreCredential } from './auth/restore/restore-credential.entity';
+import { SessionPushEnding } from './auth/entities/session-push-ending.entity';
 import { PlatformConfig } from './platform/entities/platform-config.entity';
 import { PlatformAnnouncement } from './platform/entities/platform-announcement.entity';
 import { PlatformAnnouncementSeen } from './platform/entities/platform-announcement-seen.entity';
@@ -25,6 +28,8 @@ import { SkyModule } from './sky/sky.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // The anonymous restore routes (WP-RESTORE-1) are throttled per visitor; nothing else here is.
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 10 }]),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
@@ -46,6 +51,9 @@ import { SkyModule } from './sky/sky.module';
           ProfileChange,
           ProfileCorrectionRequest,
           AuthSession,
+          RestoreCredential,
+          RestoreChallengeSpent,
+          SessionPushEnding,
           PlatformConfig,
           PlatformAnnouncement,
           PlatformAnnouncementSeen,

@@ -140,6 +140,38 @@ if (!it) {
   else bad('its pattern does not select live-seats.spec.ts - the seat scripts run nowhere');
 }
 
+console.log('the addressing scripts run against a real Redis:');
+{
+  const rust = /\n  test-rust:[\s\S]*?(?=\n  [a-z-]+:\n)/.exec(ci)?.[0] ?? '';
+  if (/image: redis:/.test(rust)) ok('test-rust runs a Redis service');
+  else bad('test-rust runs no Redis - the gateway presence scripts would run nowhere');
+  if (/GATEWAY_IT_REDIS_URL: redis:\/\//.test(rust)) ok('test-rust sets GATEWAY_IT_REDIS_URL');
+  else bad('test-rust does not set GATEWAY_IT_REDIS_URL - the gateway presence tests fail under CI');
+  const boot = /\n  boot-nest-apps:[\s\S]*?(?=\n  [a-z-]+:\n)/.exec(ci)?.[0] ?? '';
+  if (/CHAT_DELIVERY_IT_REDIS_URL: redis:\/\//.test(boot) && /addressing\.redis/.test(boot)) {
+    ok('boot-nest-apps runs addressing.redis with CHAT_DELIVERY_IT_REDIS_URL');
+  } else bad('boot-nest-apps does not run addressing.redis against Redis - the publish script runs nowhere');
+}
+
+console.log('the chat-delivery integration job runs on the database production runs:');
+const chatIt = jobBlock('test-chat-delivery-integration');
+if (!chatIt) {
+  bad('no test-chat-delivery-integration job - the chat-delivery integration specs run nowhere');
+} else {
+  const image = /\n\s+image: (postgres:\S+)/.exec(chatIt)?.[1];
+  const prod = /\n\s+image: (postgres:\S+)/.exec(
+    readFileSync(resolve(repoRoot, 'infrastructure/docker-compose.prod.yml'), 'utf8')
+  )?.[1];
+  if (image && prod && image === prod) ok(`same image as production: ${image}`);
+  else bad(`chat-delivery integration job runs ${image}, production runs ${prod} - bump them together`);
+  if (/CHAT_DELIVERY_IT_DATABASE_URL: postgres:\/\//.test(chatIt)) ok('it sets CHAT_DELIVERY_IT_DATABASE_URL');
+  else bad('it does not set CHAT_DELIVERY_IT_DATABASE_URL - every spec would skip, and pass');
+  // The seat lock's orderings run here too (`seat-lock.integration.spec.ts`): a spec that skipped
+  // must fail the job, never pass it.
+  if (/numPendingTests/.test(chatIt)) ok('it refuses a skipped test');
+  else bad('it does not read the skipped count - a spec that skipped would pass');
+}
+
 console.log('every Redis CI runs is the one production runs:');
 {
   const prodRedis = /\n\s+image: (redis:\S+)/.exec(

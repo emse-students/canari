@@ -21,6 +21,7 @@ import {
   DEFAULT_MODERATOR_PERMISSIONS,
   PIN_REQUIRES_MODERATION,
 } from './permissions';
+import { fakeDepartureManager } from './departure-transaction.fake-spec';
 
 /** A well-formed Graine v2 signature: every salon row carries one (channel-encryption 21.8). */
 const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
@@ -73,6 +74,7 @@ describe('ChannelService security hardening', () => {
       // salon a leaver must be cut from), and a bare `jest.fn()` there fails as a TypeError deep
       // inside the service instead of as the assertion the test is about.
       find: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       save: jest.fn(),
     };
     const roleRepo = {
@@ -83,7 +85,9 @@ describe('ChannelService security hardening', () => {
     const memberRepo = {
       findOne: jest.fn(),
       find: jest.fn(),
+      create: jest.fn((x: unknown) => x),
       save: jest.fn(),
+      update: jest.fn(() => Promise.resolve({ affected: 1 })),
       delete: jest.fn(),
     };
     // The Graine history floor is the one read that goes through a query builder rather than a
@@ -130,6 +134,9 @@ describe('ChannelService security hardening', () => {
       ),
     };
 
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
+    });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,
@@ -507,7 +514,7 @@ describe('ChannelService security hardening', () => {
     workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
     roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
-    memberRepo.find.mockResolvedValue([{ userId: 'u1' }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
 
     await service.kickFromWorkspace('ws1', 'u-bob', 'u1');
 
@@ -533,7 +540,7 @@ describe('ChannelService security hardening', () => {
     });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
     roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
-    memberRepo.find.mockResolvedValue([{ userId: 'u1' }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
 
     await service.removeMemberFromChannel('ch1', 'u-bob', 'u1');
 
@@ -2746,6 +2753,112 @@ describe('ChannelService security hardening', () => {
     ).toMatchObject({ code: 'INVITE_MAX_USES_INVALID' });
   });
 
+  // ── The admission voucher (channel-encryption section 25) ──────────────────
+  //
+  // A member hands a community's past only to a newcomer whose admission it can verify. The proof is
+  // signed by a member's device and the server cannot forge it; it STORES it on the membership row
+  // and serves it with the roster, which is all this side does.
+
+  /** A live link to ws1, with one admin in the community. */
+  function arrangeLiveInvite(repos: ReturnType<typeof makeService>) {
+    const rows = arrangeGovernedCommunity(repos, [{ userId: 'boss', roleIds: ['r-admin'] }]);
+    repos.inviteRepo.findOne.mockResolvedValue({
+      id: 'inv1',
+      workspaceId: 'ws1',
+      token: 't',
+      revoked: false,
+      expiresAt: null,
+      maxUses: null,
+      uses: 0,
+    });
+    repos.memberRepo.save.mockImplementation((m: { userId: string }) => {
+      rows.push(m as never);
+      return Promise.resolve(m);
+    });
+    // The claim is ONE conditional UPDATE that wins here; the membership is written in its
+    // transaction, through the same member repository.
+    Object.assign(repos.inviteRepo, {
+      manager: {
+        transaction: (cb: (tx: unknown) => Promise<unknown>) =>
+          cb({
+            query: () => Promise.resolve([[{ id: 'inv1' }], 1]),
+            getRepository: () => repos.memberRepo,
+          }),
+      },
+    });
+    return rows;
+  }
+
+  it('a link accepted with a voucher stores it on the new membership row', async () => {
+    const repos = makeService();
+    const rows = arrangeLiveInvite(repos);
+
+    await repos.service.acceptWorkspaceInvite('t', 'newcomer', 'AAEC-_x');
+
+    expect(rows.find((r) => r.userId === 'newcomer')).toMatchObject({
+      admissionVoucher: 'AAEC-_x',
+    });
+  });
+
+  it('a link accepted with no voucher still admits - it just carries no proof', async () => {
+    const repos = makeService();
+    const rows = arrangeLiveInvite(repos);
+
+    await expect(repos.service.acceptWorkspaceInvite('t', 'newcomer')).resolves.toMatchObject({
+      alreadyMember: false,
+    });
+    expect(rows.find((r) => r.userId === 'newcomer')).toMatchObject({ admissionVoucher: null });
+  });
+
+  it('a member following a new link stores its voucher on the row it already has', async () => {
+    // The re-issue path: joined through an old link, so no proof, then sent a fresh one.
+    const repos = makeService();
+    arrangeLiveInvite(repos);
+    repos.memberRepo.findOne.mockResolvedValue({
+      id: 'm-boss',
+      workspaceId: 'ws1',
+      userId: 'boss',
+    });
+
+    await expect(repos.service.acceptWorkspaceInvite('t', 'boss', 'Zm9v')).resolves.toMatchObject({
+      alreadyMember: true,
+    });
+    expect(repos.memberRepo.update).toHaveBeenCalledWith(
+      { id: 'm-boss' },
+      { admissionVoucher: 'Zm9v' }
+    );
+  });
+
+  it('refuses a voucher that is not a bounded base64url string', async () => {
+    const repos = makeService();
+    arrangeLiveInvite(repos);
+
+    for (const bad of ['has space', 'x'.repeat(4097), 42 as unknown as string]) {
+      expect(
+        await refusalCode(repos.service.acceptWorkspaceInvite('t', 'newcomer', bad))
+      ).toMatchObject({ code: 'ADMISSION_VOUCHER_INVALID' });
+    }
+    expect(repos.memberRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('serves each member voucher and the creator mark with the roster', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', createdBy: 'boss' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'boss', roleIds: [] });
+    memberRepo.find.mockResolvedValue([
+      { id: 'm1', userId: 'boss', roleIds: [], createdAt: 'then', admissionVoucher: null },
+      { id: 'm2', userId: 'guest', roleIds: [], createdAt: 'now', admissionVoucher: 'dm91Y2g' },
+    ]);
+    roleRepo.find.mockResolvedValue([]);
+
+    const roster = await service.listWorkspaceMembers('ws1', 'boss');
+
+    expect(roster.map((m) => [m.userId, m.isCreator, m.admissionVoucher])).toEqual([
+      ['boss', true, null],
+      ['guest', false, 'dm91Y2g'],
+    ]);
+  });
+
   it('account deletion promotes a successor rather than leaving a community ungoverned', async () => {
     const repos = makeService();
     // The departing admin's row still exists: the repair runs BEFORE it is deleted, treating it as
@@ -2763,6 +2876,58 @@ describe('ChannelService security hardening', () => {
     expect(rows.find((r) => r.userId === 'mod')?.roleIds).toEqual(['r-admin']);
     expect(rows.map((r) => r.userId)).not.toContain('boss');
     expect(repos.hardDeletes).not.toHaveBeenCalled();
+  });
+
+  it('account deletion promotes by rank before what the roles grant', async () => {
+    // A Moderateur outranks a custom role even where the custom role grants more: counting
+    // permissions alone would promote 'aaa'.
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
+      { userId: 'aaa', roleIds: ['r-custom-big'] },
+      { userId: 'mod', roleIds: ['r-mod'] },
+    ]);
+    repos.roleRepo.find.mockResolvedValue([
+      ...GOVERNED_ROLES,
+      {
+        id: 'r-custom-big',
+        name: 'Gardien',
+        priority: 11,
+        permissions: ['channel.manage', 'channel.moderate', 'member.invite', 'member.kick'],
+      },
+    ]);
+
+    await repos.service.removeAccountFromWorkspaces('boss');
+
+    expect(rows.find((r) => r.userId === 'mod')?.roleIds).toEqual(['r-admin']);
+    expect(rows.find((r) => r.userId === 'aaa')?.roleIds).toEqual(['r-custom-big']);
+  });
+
+  it('account deletion breaks a tie in rank by what the roles grant, before the user id', async () => {
+    // Custom roles share one rank (`createRole` places each just above the base role), so among
+    // them the successor is the one whose roles grant the most: rank and user id alone would
+    // promote 'aaa'.
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
+      { userId: 'aaa', roleIds: ['r-custom-1'] },
+      { userId: 'bbb', roleIds: ['r-custom-2'] },
+    ]);
+    repos.roleRepo.find.mockResolvedValue([
+      ...GOVERNED_ROLES,
+      { id: 'r-custom-1', name: 'Aide', priority: 11, permissions: ['member.invite'] },
+      {
+        id: 'r-custom-2',
+        name: 'Gardien',
+        priority: 11,
+        permissions: ['member.invite', 'member.kick'],
+      },
+    ]);
+
+    await repos.service.removeAccountFromWorkspaces('boss');
+
+    expect(rows.find((r) => r.userId === 'bbb')?.roleIds).toEqual(['r-admin']);
+    expect(rows.find((r) => r.userId === 'aaa')?.roleIds).toEqual(['r-custom-1']);
   });
 
   it('account deletion deletes a community it emptied', async () => {

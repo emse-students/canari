@@ -16,11 +16,13 @@ The core-service is the authentication and user management hub. It:
 
 ## Auth model
 
-- **Access token**: JWT HS256, 1-hour TTL, stateless, stored in memory only (never localStorage).
+- **Access token**: JWT HS256, 1-hour TTL, stateless, stored in memory only (never localStorage). It
+  carries `sid`, the session it was minted for - a label, not an authorisation: a push registration
+  is bound to it ([sessions](../sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
 - **Refresh token**: HttpOnly cookie, 7-day idle TTL, **backed by a row in `auth_sessions`** and
   rotated on each use.
 - **WebSocket auth**: cookie `canari_ws_token` carrying the access token.
-- **Nginx verification**: `GET /api/auth/verify` injects `X-User-Id`, `X-Logged-In`, `X-Global-Admin` on success.
+- **Nginx verification**: `GET /api/auth/verify` injects `X-User-Id`, `X-Logged-In`, `X-Global-Admin` and `X-Session-Id` on success.
 
 ### Sessions (`auth_sessions`)
 
@@ -105,6 +107,10 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | PUT | `/api/auth/sessions/current/device` | Bearer (+ cookie) | Bind the calling session to an MLS device, destroying any other session claiming it |
 | DELETE | `/api/auth/sessions` | Bearer (+ cookie) | Revoke every session except the current one |
 | DELETE | `/api/auth/sessions/:id` | Bearer | Revoke one of the caller's sessions (scoped to the caller) |
+| POST | `/api/auth/restore/registration/options` | Bearer + the CURRENT refresh credential, app `Origin`; 10/min per account | WebAuthn creation options for the calling session's restore key, and the id of the key it holds ([account-restore](../account-restore.md)) |
+| POST | `/api/auth/restore/registration` | same | Verify and store THE restore key of the calling session |
+| POST | `/api/auth/restore/assertion/options` | none | A stateless HMAC challenge for a restore |
+| POST | `/api/auth/restore/assertion` | none | Verify a restore key, then consume it WITH the old session and its push ending (`session_push_endings`, cause `restored`) in one transaction, then mint the new phone's session (a transfer) |
 | GET | `/api/auth/verify` | Bearer | Validate JWT for Nginx auth_request |
 | HEAD | `/api/auth/verify` | Bearer | Same as GET (Nginx HEAD probe) |
 
@@ -480,6 +486,8 @@ PostgreSQL (`auth_db`). Main tables:
 |---|---|
 | `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `admin`, `notesCiphertext`, `notesKey`, `notes` (legacy) |
 | `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp`, `deviceId` |
+| `restore_credentials` | `id` (credential id), `userId` (FK CASCADE), `sessionId` (UNIQUE, FK `auth_sessions` CASCADE), `publicKey`, `counter`, `cloudBackup`, `createdAt` - [account-restore](../account-restore.md) |
+| `restore_challenges_spent` | `nonce`, `expiresAt` - written only after a verified assertion, swept hourly |
 | `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion`, `paymentProvider`, `callsMode` (`calls_mode`, migration 014: `off` / `audio` / `audio_video`, default `off`, enforced by chat-delivery-service on every call request), `livesMode` (`lives_mode`, migration 015: `off` / `on`, default `off`, enforced by social-service on every live route and relayed to media-service's segment routes - [lives](lives.md#the-two-switches-live_enabled-and-lives_mode)) |
 | `platform_announcements` | `title_fr/en`, `body_fr/en`, `min_client_version`, `max_client_version`, `active`, `created_by` |
 | `platform_announcement_seen` | `announcement_id` (FK CASCADE), `user_id` — PK is the pair |
@@ -613,6 +621,7 @@ That decision is taken for all three services (2026-10-17). Presence about an ar
 | `AUTHENTIK_ISSUER` | yes | Authentik issuer URL |
 | `FRONTEND_URL` | yes | OIDC redirect URI base |
 | `INTERNAL_SECRET` | yes | Shared secret for service-to-service calls |
+| `ANDROID_APP_LINK_SHA256` | no | The APK signing-certificate SHA-256 fingerprint(s) a restore key's origin is computed from; empty, every `/api/auth/restore` route answers 503 ([account-restore](../account-restore.md)) |
 
 ##### An absence is remembered, and a group photo is stored (2026-10-05)
 

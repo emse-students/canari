@@ -210,6 +210,45 @@ CEILING_HEAD_REF=dependabot/cargo/frontend/mls-core/tauri-plugin-fs-2.4.1
 check "Dependabot's own branch still leaves a runtime patch to the suite" 0 "$work/tauri.json" "tauri-plugin-fs -> 2.4.1"
 unset CEILING_HEAD_REF
 
+# -- The branch decides WHICH compose file and WHICH tree (2026-10-23) -------------------------
+# The identity provider's PostgreSQL is judged against its own file: production's major, proposed
+# there, is a crossing. Built from the two files so it keeps meaning the same after either moves.
+auth_major=$(prod_image_major postgres "$CEILING_AUTHENTIK_COMPOSE")
+if [ -n "$auth_major" ] && [ "$auth_major" != "$pg_major" ]; then
+  cat > "$work/authentik-pg.json" <<FIXTURE
+chore(deps): bump docker.io/library/postgres from ${auth_major}-alpine to ${pg_major}-alpine
+
+updated-dependencies:
+- dependency-name: docker.io/library/postgres
+  dependency-version: ${pg_major}-alpine
+  dependency-type: direct:production
+FIXTURE
+  CEILING_HEAD_REF=dependabot/docker_compose/infrastructure/authentik/docker.io/library/postgres-${pg_major}-alpine
+  export CEILING_HEAD_REF
+  check "the identity provider's database is judged against its own major" 1 "$work/authentik-pg.json" "authentik/compose.yml"
+  CEILING_HEAD_REF=dependabot/docker_compose/infrastructure/docker.io/library/postgres-${pg_major}-alpine
+  check "the same version on production's file is production's own major" 0 "$work/authentik-pg.json" "postgres -> ${pg_major}-alpine"
+  unset CEILING_HEAD_REF
+else
+  echo "skip the identity provider runs production's postgres major (${auth_major:-unreadable}); ceiling.test.sh still covers its crossing"
+fi
+
+cat > "$work/gradle.json" <<'FIXTURE'
+chore(deps): bump com.google.firebase:firebase-messaging-ktx
+
+updated-dependencies:
+- dependency-name: com.google.firebase:firebase-messaging-ktx
+  dependency-version: 24.1.1
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+FIXTURE
+CEILING_HEAD_REF=dependabot/gradle/frontend/src-tauri/gen/android/com.google.firebase-firebase-messaging-ktx-24.1.1
+export CEILING_HEAD_REF
+check "a Gradle update to the Android app is refused: nothing builds it on a pull request" 1 "$work/gradle.json" "compiles the Android"
+CEILING_HEAD_REF=dependabot/gradle/frontend/src-tauri/android-tests/com.google.firebase-firebase-messaging-ktx-24.1.1
+check "a Gradle update to the JVM test project is the suite's business" 0 "$work/gradle.json" "firebase-messaging-ktx -> 24.1.1"
+unset CEILING_HEAD_REF
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed."
   exit 1

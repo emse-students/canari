@@ -60,12 +60,79 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   // The Welcome row is written through a transaction that first takes a read lock on the group, so
   // a group deleted mid-flight queues nothing. A live group keeps that path inert here.
   const queuedSave = jest.fn().mockImplementation(async (rows: unknown) => rows);
+  /** Every read inside the store's transaction, in order, so a test can see what was locked when. */
+  const txReads: string[] = [];
+  // The target's roster seat as the store's transaction re-reads it, under a lock.
+  const txSeat = jest.fn();
+  // The lift of `awaitingAdmission` the store makes for the Welcome's target.
+  const txLift = jest.fn();
+  type EvictionRow = { generation: number; owedDeparture: number | null };
+  /** A key-group target's `dm_seat_evictions` row when its claim is taken, before the store. */
+  let claimRow: EvictionRow | null;
+  /** The same row as the store's transaction re-reads it, under the seat lock. */
+  let txEvictionRow: EvictionRow | null;
+  /** Whether the target's key package is still there when the store re-reads it under the lock. */
+  let txKeyPackage: boolean;
   const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
     cb({
-      getRepository: (entity: unknown) =>
-        entity === Group
-          ? { find: jest.fn().mockResolvedValue([{ id: 'g1', deletedAt: null }]) }
-          : { save: queuedSave },
+      // The seat lock, and the eviction row a key-group target's claim is checked against.
+      query: jest.fn(async (sql: string) => {
+        if (sql.includes('pg_advisory_xact_lock')) {
+          txReads.push(sql.includes('_shared') ? 'seat-lock-shared' : 'seat-lock');
+          return [];
+        }
+        if (sql.includes('FROM dm_seat_evictions')) {
+          txReads.push('claim');
+          return txEvictionRow ? [txEvictionRow] : [];
+        }
+        return [];
+      }),
+      getRepository: (entity: unknown) => {
+        if (entity === Group) {
+          return {
+            find: jest.fn(async () => {
+              txReads.push('group');
+              return [{ id: 'g1', deletedAt: null }];
+            }),
+          };
+        }
+        if (entity === GroupMember) {
+          return {
+            findOne: jest.fn(async (q: unknown) => {
+              txReads.push('seat');
+              return txSeat(q);
+            }),
+            // The store lifts the invitation-link ask its Welcome answers.
+            update: jest.fn(async (where: unknown, set: unknown) => {
+              txReads.push('lift');
+              return txLift(where, set);
+            }),
+          };
+        }
+        if (entity === DeviceGroupMembership) {
+          return {
+            createQueryBuilder: jest.fn(() => {
+              txReads.push('pending-row');
+              return insertBuilder;
+            }),
+          };
+        }
+        // The target's key package, read FOR SHARE before its pending row is inserted.
+        if (entity === KeyPackage) {
+          return {
+            find: jest.fn(async () => {
+              txReads.push('key-package');
+              return txKeyPackage ? [{ userId: 'u2', deviceId: 'd2' }] : [];
+            }),
+          };
+        }
+        return {
+          save: jest.fn(async (rows: unknown) => {
+            txReads.push('save');
+            return queuedSave(rows);
+          }),
+        };
+      },
     })
   );
   const queuedMessageRepo = {
@@ -99,7 +166,11 @@ describe('MessagingService - sendWelcome does not touch membership status or the
 
   // Held as consts so the authorization cases below can say what each table answers.
   const groupMemberRepo = emptyRepo();
-  const groupRepo = { ...emptyRepo(), manager: { transaction } };
+  // `query` answers a key-group target's seat claim, read before social-service is asked.
+  const claimQuery = jest.fn(async (sql: string) =>
+    sql.includes('FROM dm_seat_evictions') && claimRow ? [claimRow] : []
+  );
+  const groupRepo = { ...emptyRepo(), manager: { transaction, query: claimQuery } };
   // The conversation's user roster, which `dm_group_members` answers from.
   let roster: Set<string>;
 
@@ -114,6 +185,12 @@ describe('MessagingService - sendWelcome does not touch membership status or the
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    txReads.length = 0;
+    txSeat.mockResolvedValue({ id: 'm-u2' });
+    txLift.mockResolvedValue({ affected: 0 });
+    claimRow = null;
+    txEvictionRow = null;
+    txKeyPackage = true;
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1', userId: 'u2', deviceId: 'd2' });
     deviceGroupRepo.createQueryBuilder.mockReturnValue(insertBuilder);
     deviceGroupRepo.findOne.mockResolvedValue(null);
@@ -168,6 +245,89 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     // Nothing is queued and no membership row is written for the outsider's device.
     expect(queuedSave).not.toHaveBeenCalled();
     expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
+    expect(redis.publish).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A REMOVAL RACING THE STORE: the seat was there when the target was checked, and the removal
+   * committed before the store's transaction re-read it. The store re-reads it under a share lock
+   * IN its own transaction, after the group, so the two serialise: a removal that committed first
+   * leaves no seat and nothing is stored; one that comes second waits, then deletes the Welcome.
+   */
+  it("re-reads the target's seat under a lock in the transaction that stores the Welcome", async () => {
+    await service.sendWelcome('u1', body);
+
+    expect(txSeat).toHaveBeenCalledWith({
+      where: { groupId: 'g1', userId: 'u2' },
+      lock: { mode: 'pessimistic_write' },
+    });
+    expect(txReads).toEqual([
+      'seat-lock-shared',
+      'group',
+      'seat',
+      'key-package',
+      'save',
+      'pending-row',
+      // The invitation-link ask its Welcome answers, lifted in the same transaction.
+      'lift',
+    ]);
+  });
+
+  /**
+   * A WELCOME STORED BY AN ADMITTED MEMBER ADMITS ITS TARGET: the ask an invitation link wrote is
+   * lifted with it, whatever client sent it - one older than `admits` declares nobody in its commit,
+   * and this is the one door that still sees its Add.
+   */
+  it("lifts the target's invitation-link ask, guarded on the flag, in the store's transaction", async () => {
+    txLift.mockResolvedValueOnce({ affected: 1 });
+
+    await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+
+    expect(txLift).toHaveBeenCalledTimes(1);
+    const [where, set] = txLift.mock.calls[0] as [
+      { groupId: string; userId: { value: string[] }; awaitingAdmission: boolean },
+      unknown,
+    ];
+    expect(where.groupId).toBe('g1');
+    expect(where.awaitingAdmission).toBe(true);
+    expect(where.userId.value).toEqual(['u2']);
+    expect(set).toEqual({ awaitingAdmission: false });
+  });
+
+  /**
+   * THE PENDING ROW IS A SEAT, SO IT IS WRITTEN WITH THE WELCOME, UNDER THE SAME LOCK. Written after
+   * the store's transaction, an eviction committing in between left a pending row behind for a
+   * person it had just cut off.
+   */
+  it('writes the pending row in the transaction that stores the Welcome', async () => {
+    await service.sendWelcome('u1', body);
+
+    expect(txReads.indexOf('pending-row')).toBeGreaterThan(txReads.indexOf('save'));
+    expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
+    expect(insertBuilder.orIgnore).toHaveBeenCalledTimes(1);
+  });
+
+  it('stores nothing when the seat is gone by the time the transaction reads it', async () => {
+    txSeat.mockResolvedValue(null);
+
+    await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+      response: { error: 'welcome_target_not_member' },
+    });
+    expect(queuedSave).not.toHaveBeenCalled();
+    expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
+    expect(redis.publish).not.toHaveBeenCalled();
+  });
+
+  // An account erasure deletes the key packages first: a pending row inserted after it would name
+  // an erased account with nothing left to find it.
+  it('stores nothing when the target key package is gone by the time the transaction reads it', async () => {
+    txKeyPackage = false;
+
+    await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+      response: { error: 'welcome_target_not_member' },
+    });
+    expect(queuedSave).not.toHaveBeenCalled();
+    expect(txReads).not.toContain('pending-row');
     expect(redis.publish).not.toHaveBeenCalled();
   });
 
@@ -273,6 +433,64 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       });
     });
 
+    /**
+     * A KEY GROUP'S SEAT IS SOCIAL-SERVICE'S ANSWER, TAKEN AGAINST A CLAIM. The claim is read
+     * before the question; the store re-reads it under the seat lock the eviction takes, so an
+     * eviction that commits between the answer and the store is seen, and nothing is stored.
+     */
+    it('takes the seat lock before the group row and re-reads the claim under it', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      social(true);
+
+      await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+      expect(txReads).toEqual([
+        'seat-lock-shared',
+        'group',
+        'claim',
+        'key-package',
+        'save',
+        'pending-row',
+      ]);
+      // The claim is read before social-service is asked.
+      const claimRead = claimQuery.mock.calls.findIndex(([sql]) =>
+        String(sql).includes('FROM dm_seat_evictions')
+      );
+      expect(claimRead).toBeGreaterThanOrEqual(0);
+      expect(claimQuery.mock.invocationCallOrder[claimRead]).toBeLessThan(
+        fetchSpy.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('stores nothing when the target is evicted after social-service answered', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      social(true);
+      // The eviction committed after the claim was read: its generation moved.
+      txEvictionRow = { generation: 1, owedDeparture: null };
+
+      await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+        response: { error: 'welcome_target_not_member' },
+      });
+      expect(queuedSave).not.toHaveBeenCalled();
+      expect(insertBuilder.values).not.toHaveBeenCalled();
+      expect(redis.publish).not.toHaveBeenCalled();
+    });
+
+    it("stores nothing while the target's departure is in progress", async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      social(true);
+      claimRow = { generation: 1, owedDeparture: 1 };
+      txEvictionRow = { generation: 1, owedDeparture: 1 };
+
+      await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+        response: { error: 'welcome_target_not_member' },
+      });
+      expect(queuedSave).not.toHaveBeenCalled();
+      expect(insertBuilder.values).not.toHaveBeenCalled();
+    });
+
     it("refuses a key group's Welcome to a target social-service does not entitle", async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionChannelId: 'salon-1' });
       deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
@@ -304,10 +522,12 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       expect(queuedSave).not.toHaveBeenCalled();
     });
 
-    it('still asks dm_group_members for an ordinary conversation', async () => {
+    it('still asks dm_group_members for an ordinary conversation - an ADMITTED seat only', async () => {
       await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+      // A seat still awaiting a member decides nothing: its holder Welcoming a device of their own
+      // would lift their own ask.
       expect(groupMemberRepo.findOne).toHaveBeenCalledWith({
-        where: { groupId: 'g1', userId: 'u1' },
+        where: { groupId: 'g1', userId: 'u1', awaitingAdmission: false },
       });
     });
 

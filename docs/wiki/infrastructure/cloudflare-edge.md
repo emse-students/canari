@@ -21,7 +21,9 @@ buys nothing and can break the tunnel.
 
 ## Who owns a response header
 
-**Nginx owns every response header, including `Content-Security-Policy`. The edge adds none.**
+**The origin owns every response header, including `Content-Security-Policy`. The edge adds none.**
+At the origin, nginx writes them all except a PAGE's policy, which SvelteKit writes because only it
+knows the hashes of the page's scripts ([below](#no-script-runs-unless-the-policy-names-it-2026-10-22)).
 
 This is a rule, not a description, and it was written after the incident below.
 
@@ -68,20 +70,104 @@ removed with the harness residue; what it did is the whole of it - listen for
 `securitypolicyviolation` on the page, exercise the load, and read the collected violations rather
 than the element's own error.
 
-Counting the headers is the other half, and `curl -sI` is enough: **two `content-security-policy`
-lines mean the edge is injecting one.** There should be exactly one.
+Counting the headers is the other half, and `curl -sI` is enough. **A PAGE carries exactly two**
+since 2026-10-22 - SvelteKit's full policy and nginx's `frame-ancestors 'none'` (below) - and every
+other response exactly one. **One more than that means the edge is injecting one.**
+
+### No script runs unless the policy names it (2026-10-22)
+
+**Scripts have no `'unsafe-inline'` and no `'unsafe-eval'`, on the web and in the native WebView.**
+An injected `<script>` or an `onerror="..."` attribute is refused; only the bundle (`'self'`), the
+inline scripts whose SHA-256 the policy carries, and WebAssembly compilation run.
+
+**Who writes which policy:**
+
+| Response | Policy | Written by |
+|---|---|---|
+| A web page (`@ssr`, a header) | the directives below, plus the hash of SvelteKit's start script and of each of `app.html`'s four inline scripts | SvelteKit, `kit.csp` in hash mode, built from `frontend/src/lib/security/cspPolicy.js` (web build only) |
+| The degraded shell (`@app_shell`) | the same, as a `<meta>` written at prerender | SvelteKit |
+| Both page blocks, in addition | `frame-ancestors 'none'` - the one directive a `<meta>` cannot carry | nginx, `snippets/csp-page.conf` |
+| Every other web response (scripts, workers, the WASM binary, JSON, media) | the same directives, no hash | nginx, `snippets/csp.conf` |
+| The native WebView (Android, iOS) | its own directive map, plus the hashes Tauri computes for every inline script it embeds | `frontend/src-tauri/tauri.conf.json` (`app.security.csp`) |
+
+**Why a page is not given `csp.conf`.** A second policy is INTERSECTED with the first, and
+`csp.conf` holds no hash - only the build knows them - so it would refuse every inline script of the
+page and leave it blank. `static-headers.test.mjs` fails a page block that includes it. **Why the
+two copies exist anyway.** A worker's policy is its OWN response's, so the MLS worker compiles its
+WebAssembly under nginx's `'wasm-unsafe-eval'`; `csp.test.ts` holds `csp.conf` equal to
+`cspPolicy.js`. **Hash, never nonce:** a page is cached at the edge for 60 s, and a nonce would be
+served to every visitor of that minute.
+
+**Why each source is there** is written once, beside the directives, in `cspPolicy.js`. The ones a
+narrowing must not touch: `'wasm-unsafe-eval'` (`WebAssembly.instantiate` of the MLS engine - without
+it every encrypted conversation stops), `img-src https:` (a GIF pasted from any host is drawn
+directly, owner decision 2026-10-18, [chat](../frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18)),
+and `style-src 'unsafe-inline'` (Svelte `style=` attributes; styles cannot run code). `connect-src`
+names no bare `ws:`/`wss:` any more: both WebSockets are same-origin, and the estate's own `wss://`
+names are listed, because `'self'` matches `wss:` only under CSP Level 3 (an older Safari).
+
+**What made the inline scripts hashable.** `app.html`'s WASM preload used to be written by the server
+with the content-hashed binary URL INSIDE it - a new text, so an unhashable one, on every build. The
+script is now fixed text in `app.html`; the server writes the URL into the attributes of the marker
+`<meta>` it reads (`frontend/src/lib/server/wasmPreload.ts`). The trombinoscope export's photo
+fallback was an `onerror="..."` attribute and is a listener (`trombinoscope.ts`); `csp.test.ts` fails
+on any inline handler left in an HTML string.
+
+**The native policy.** `connect-src` names Tauri's IPC bridge (`ipc:`, `http://ipc.localhost`) and,
+in `https` and `wss` form, every backend a store build may bake (the names
+`.github/scripts/lib/backend-url.sh` classifies): a read from the API goes through the WebView's own
+`fetch` (`fetchRouting.ts`), and the call signalling socket is the WebView's. The HTTP and WebSocket
+PLUGINS do not go through the policy at all - their reach is the capability scope
+(`capabilities/default.json`). Tauri would also add the hash of each inline `<style>` to `style-src`,
+which makes a browser IGNORE `'unsafe-inline'` there; `dangerousDisableAssetCspModification:
+["style-src"]` stops that for that one directive. **The local-estate overlay**
+(`tauri.local.conf.json`, merged over the release config and read verbatim by `ios.yml`'s
+local-device build) widens `connect-src`, `media-src` and `img-src` to `http:`/`ws:`; no release
+build may name a plaintext origin. No capability declares `remote`, so no page served from the
+network is given the IPC.
+
+**Not done, and why.**
+- **`require-trusted-types-for 'script'`:** Svelte 5 builds every component's DOM by assigning
+  template HTML to `innerHTML`, and `{@html}` does the same. Under Trusted Types each of those throws
+  unless a DEFAULT policy passes strings through - which is the absence of the control under its
+  name. Not feasible without a renderer that does not write `innerHTML`.
+- **WebKit before 16 and Chromium before 97 do not know `'wasm-unsafe-eval'`** and refuse
+  WebAssembly under any policy without `'unsafe-eval'` - which stays out. So:
+  - **the iOS app needs iOS 16** (owner decision 2026-10-22, [mobile](../frontend/mobile.md#ios-project));
+    a web visitor on Safari 15 had the same limit before this change;
+  - **Android**: the native WebView is the Android System WebView, updated through the Play Store
+    apart from the OS. One older than 97 (released January 2022) would refuse the MLS engine; the
+    app requires API 28, and a device that has not updated its WebView since then is the only case.
+
+**What the edge may inject, and the policy now refuses.** Several Cloudflare features rewrite an HTML
+response to add an inline or a third-party script: Bot Fight Mode / JavaScript detections, Web
+Analytics (automatic injection), Rocket Loader, Email Address Obfuscation, Zaraz, Browser Insights,
+the challenge / "Under Attack" interstitials and Automatic Platform Optimization. Under this policy
+each one is refused on the page (and Rocket Loader would break every script). Which of them are on for
+the zones in front of the web estates has NOT been read; it is a check owed before the stable, in
+the dashboard - none is fixed by widening the policy.
+
+**Also in the policy's wake.** pdf.js needs no eval: the 6.x line dropped its `new Function` glyph
+compiler and the `isEvalSupported` option with it (no `new Function` in `pdfjs-dist/build`), so there
+is nothing to switch off. `tauri dev` has its own `devCsp`: the same
+script rules, plus the Vite server on port 1420 (its scripts and its hot-reload WebSocket).
+
+**The reading this owes**, because a refusal is indistinguishable from an ordinary failure: load the
+web app and the Android app, open a chat, a community, an image and a video, the GIF picker, the PDF
+viewer, a trombinoscope export and the sign-in, and read the console for `securitypolicyviolation`
+(see the measurement above). An empty list is the verdict.
 
 ### The origin policy is stated once, and it is a description of the client's code
 
 `infrastructure/local/Dockerfile.frontend` writes the policy into `/etc/nginx/snippets/csp.conf` and
 every block that sets response headers pulls it in with `include`. That indirection exists because
 **nginx's `add_header` REPLACES the inherited set rather than adding to it**, so each of the three
-blocks that sets a header of its own (the server block, `location /`, `@app_shell`) has to carry the
-whole policy - and three verbatim copies of a security policy is precisely how one of them keeps an
+blocks that sets a header of its own (the server block, `location /`, the asset blocks) has to carry the
+whole policy - the two PAGE blocks excepted, above - - and three verbatim copies of a security policy is precisely how one of them keeps an
 old value after the other two are updated. One definition makes that impossible.
 
-`frontend/src/lib/security/csp.test.ts` asserts the invariants: exactly one declaration, more than
-one `include`, KLIPY's GIF host `static.klipy.com` present in `connect-src` and its search API
+`frontend/src/lib/security/csp.test.ts` asserts the invariants: one declaration per snippet, more
+than one `include`, the three policies above free of `'unsafe-inline'`/`'unsafe-eval'`, KLIPY's GIF host `static.klipy.com` present in `connect-src` and its search API
 `api.klipy.com` ABSENT (the search goes through chat-delivery since 2026-10-16,
 [chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)), and no bare
 scheme there. Since the GIF relay (2026-10-18) the current bundle reads no byte from

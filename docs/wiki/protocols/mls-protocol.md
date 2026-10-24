@@ -13,7 +13,7 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 | Protocol | MLS RFC 9420 |
 | Cipher suite | MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 |
 | Forward secrecy | Per epoch (key ratchet on every commit) |
-| Post-compromise security | Devices can be removed and re-added |
+| Post-compromise security | Every device refreshes its own leaf at most every 7 days of activity per conversation ([periodic leaf refresh](#the-periodic-leaf-refresh)); a revoked device's leaf is removed by the stray-leaf collector |
 | Server role | Routing + persistence of encrypted blobs only |
 
 ## Non-negotiable invariants (post-2026-06 rewrite)
@@ -164,6 +164,7 @@ kick gets. The current device has no delete button at all.
 | POST | `/api/mls/push/register` | Register FCM push token |
 | DELETE | `/api/mls/push/unregister/:deviceId` | Deregister push token |
 | POST | `/api/mls/push/commits` | PushSecret-authed ordered commits `sinceEpoch` (background in-memory catch-up) |
+| POST | `/api/mls/push/key-group-base`, `/api/mls/push/key-group-join` | PushSecret-authed key-group base and external commit: a shut phone joining a salon's key group from the push ([channel-encryption section 26](channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)) |
 | GET | `/api/mls/history/:groupId` | Redis Stream history (incremental) |
 
 **`sinceEpoch` IS REQUIRED ON BOTH REPLAY ROUTES, AND THEY SHARE ONE POLICY** (`sanitizeEpoch`):
@@ -380,6 +381,39 @@ identically. Read as an epoch gap it produced the worst possible outcome: a repl
 commits, reported `healed=true` because `epoch >= activeEpoch` was trivially satisfied, and ACKed the
 message off the server (WP-PENDING-2).
 
+### Fork detection: a signed epoch fingerprint in every application frame (2026-10-22)
+
+Two members can hold two different trees for one conversation at the SAME epoch number - a fork -
+and each side sees only the other's frames refused (`same-epoch-refusal`). To tell the two apart,
+every application frame carries, in the MLS `PrivateMessage`'s authenticated data
+(set with `group.set_aad`, cleared again on every exit), a signed claim of the sender's view:
+
+- `fp = SHA-256(lp("canari-mls-epoch-fp-v1") lp(epoch_authenticator))[..16]`;
+- signed with the sender's credential key over `lp("canari-mls-fork-v1") lp(groupId) be64(epoch)
+  lp(fp) lp(identity)`; AAD = `version(1) lp(identity) fp sig`.
+
+**Why the AAD and not the ciphertext.** A member on the other branch of a fork cannot decrypt the
+frame at all, so a fingerprint inside the ciphertext would only ever reach members that agree - a
+check that can never fire. The AAD is readable before the decrypt, on exactly the arm that fails -
+and so by everything that handles the frame's bytes; who that is, and what the `userId:deviceId` in
+it adds, is stated in
+[history-reconciliation](history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22).
+
+**The verdicts** (`mls-core/src/fork_check.rs`), judged on the same-epoch refusal and on success:
+
+| Verdict | Means | Logged |
+| --- | --- | --- |
+| no claim | an older sender | nothing |
+| agrees | same fingerprint, so the frame itself is damaged, not the tree | warn |
+| `fork` | a different fingerprint, signed by the sender's key in OUR tree | ERROR, recorded |
+| `unproven` | a different fingerprint we cannot attribute | warn, recorded |
+| `contradiction` | the frame decrypted at our epoch yet claims another fingerprint | ERROR, recorded |
+
+Findings are bounded (64) and handed over by `take_fork_findings` (WASM) / `prendre_constats_fork`
+(Tauri); the client drains them after a same-epoch refusal and reports each through the integrity
+finding path ([history-reconciliation](history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22)).
+The UI comes later.
+
 ### A frame from a PAST epoch is two events, and only `content_type` separates them (2026-08-11)
 
 `process_incoming_on_group` compares the frame's epoch to the group's before deciding anything, and
@@ -590,6 +624,399 @@ enqueueMessage()      enqueueMessage()
 
 **TauriMlsService** uses a `callbackLock` promise chain so `fetchPendingMessages` and `processQueue` never call the Rust layer concurrently.
 
+## Device binding
+
+**A KeyPackage is checked against the device it was fetched for, and device keys are pinned on first
+sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the TypeScript face is
+`frontend/src/lib/mls-client/deviceTrust.ts`. Tests: `frontend/mls-core/tests/device_binding.rs`,
+`deviceTrust.test.ts`, `BaseMlsService.deviceTrust.test.ts`, `actions.welcomeRequest.test.ts`,
+`actions.pendingInvitations.test.ts`, `refusedDevices.test.ts`.
+
+- **Binding.** Every Add carries, beside each package, the `userId:deviceId` it was fetched for
+  (`add_members_bulk_with_base(.., expected_identities)`). A credential naming anything else is
+  skipped as `identity-mismatch`. The user half compares case-insensitively, the device half
+  exactly, and an identity holds exactly one `:` - the TypeScript parsers (`leafIdentity.ts`) read
+  an identity with more as naming nobody. Pin lookup and binding use ONE canonical identity
+  (`canonical_identity`: user half lowercased, device half as is): the pin store is keyed by it,
+  every lookup and comparison goes through it - the tree-key lookup a seed endorsement is checked
+  against (`member_signature_key`), the removals by user and by device, the batch dedupe, and the
+  native push checks (`canonical_user_of`, `canonical_user_id`). `canonical_user_of` also reads the
+  LEGACY BARE `userId` credential as its user with no device; it is never pinned and never matches a
+  device ([legacy-compatibility](../legacy-compatibility.md)). A persisted record NOT keyed
+  canonically is dropped with an ERROR at load, never merged into a pin: merging would turn a key
+  conflict between two records into trust. Its TypeScript twin is `leafIdentity.ts` (`canonicalIdentity`,
+  `canonicalUserId`, `sameDeviceIdentity`, `treeHoldsDevice`), tested on the same cases. It is used
+  by every TypeScript tree check and every comparison against a leaf's user half, so a spelling Rust
+  takes for a device never reads as absent and falls through to an Add.
+- **Pins.** Each identity maps to the SET of signature keys this device has seen for it, kept in the
+  sealed MLS state (`PersistedState.device_pins`, CBOR, `#[serde(default)]`). A state written before
+  pins existed is seeded at load from every tree it holds, so nothing already trusted is refused. A
+  package for a known device under an unknown key is skipped as `signature-key-changed`. Nothing
+  today can prove such a change - the old key goes with the lost state and there is no
+  cross-signing - so the refusal stands until the device re-enrols under a new id, or a merged tree
+  shows it still holding its pinned key (below).
+- **Bounded.** Past 8192 pinned identities (`MAX_PINNED_IDENTITIES`), the pins of identities no held
+  tree contains are dropped, AT LOAD ONLY (`prune_absent`) - never when a group is forgotten, since a
+  forget is half of a forget-and-re-Welcome heal and the pins it would drop are about to be needed.
+  A pin of a device still in a held tree is never dropped. A dropped identity is remembered
+  (`device_pins_pruned`, bounded at 8192), and a pin written for it again is UNANCHORED: learned
+  from a tree after this device had already forgotten it, so it vouches for less than a pin held
+  since first sight. A prune is reported at WARN (`PINS PRUNED`, with the counts), and every load's
+  `state composition` line carries `pins <n>, <m> pruned remembered`. Both go to the device log
+  only - pins are client state the server never sees.
+- **A group the load does not seed.** A group with a staged commit at load is not seeded (its tree
+  may be an external join's server-served one). It is seeded from the tree the first merged commit
+  was built on - ours accepted, or a member's - or, if its commit is refused, from the tree it falls
+  back to at that moment.
+- **Reaffirmations.** A pin counts the merged commits that showed its device holding the pinned key -
+  its leaf re-entering under that key, or a commit it signed. A merge with nothing pending signed
+  nothing and counts nothing (`a_merge_with_nothing_pending_reaffirms_no_pin`). This is what lifts
+  a remembered refusal (below).
+- **The replace path: ONE commit.** `handleWelcomeRequest`, for a device whose leaf is still in the
+  tree, sends Remove and Add in the SAME commit (`replaceMember` -> Rust
+  `MlsManager::replace_device_with_base`, WASM `replace_device`, Tauri `remplacer_appareil`); the
+  Welcome goes to the re-added device. It used to kick the leaf, then re-add it in a second commit,
+  which left the device out of the group in between and recorded a departure for a device that never
+  left. The package is vetted FIRST, in TypeScript and again in Rust: a refused package stages
+  nothing. Its signature key must also EQUAL the key of every leaf it removes - local signed
+  evidence that holds with or without a pin. `addMember` and `replaceMember` throw the typed `DeviceTrustRefusedError` before staging,
+  and the callers log it once per identity per session (`reportDeviceTrustRefusal`) and retire
+  nothing. No path kicks any more: an Add refused as a `DuplicateSignature` asks the tree WHOSE
+  leaf carries the package's key (`leafHoldingKeyOf`, Rust `leaf_holding_key_of`) - the tree merely
+  containing the identity does not make the duplicate its leaf. If the holder is this identity, a
+  welcome request replaces it in one commit, and a pending invitation is already fulfilled (vouched,
+  no commit). If another identity holds it, which no legitimate flow produces (a device that changes
+  id starts with a fresh key), nothing is vouched, replaced or removed, and the line is an ERROR of
+  its own (`DUPLICATE KEY HELD BY ANOTHER DEVICE`). A holder that cannot be read, or a key no leaf
+  carries any more, is a WARN and the next request decides.
+- **A refusal no retry can lift is remembered.** Every package of a device carries the same
+  signature key, so a `signature-key-changed` refusal would come back at every sweep, each one
+  spending a one-time KeyPackage. It is recorded per own device (`refusedDevices.ts`,
+  `ACCOUNT_KEY.refusedDevices`), and `processPendingInvitations` and `handleWelcomeRequest` skip that
+  device without fetching anything, with a line naming the remedy: its owner resets it, and it
+  re-enrols under a new id. An `identity-mismatch` is not remembered - the next package may be the
+  right one. Each entry stores the pin's reaffirmation count when it was refused, and is LIFTED when
+  the count has grown (a merged tree showed the device under its pinned key, so the refused package
+  was not the device's) or when the pin is gone. Nothing is remembered for a device with no pin. A
+  device that rotates its own id drops what its old id remembered (`forgetRefusedDevicesOf`). The
+  bulk-Add skip report (`warnSkippedKeyPackages`) says each refused device once per session.
+- **External commits.** Pins gate the Adds this device builds. An external commit is a joiner
+  adding itself under its own signature, which another member cannot refuse without forking, so it
+  is merged as signed and what it admitted is recorded like any other admission. The joiner pins the
+  tree it joined only once its commit is MERGED (`pending_external_joins`): a join the server refused
+  pins nothing. The marker is in the sealed state, so a checkpoint and a restart before the merge
+  keep it, and the load-time seeding skips any group with a pending commit. Clearing an external
+  join's pending commit forgets the group: there is no prior epoch to fall back to.
+- **Events.** Every NEW device a merged commit admitted - ours or a peer's, the signer read from the
+  verified commit - is recorded as a `DeviceEvent` (`identity`, `keyFingerprint`, `trust`:
+  `first-sight` / `key-changed`, `addedBy`). The diff is on `(identity, key)` pairs, never on leaf
+  indexes, and a device re-added under its pinned key records nothing - a heal or a resync re-adds
+  devices daily, and an event each time would announce the same device again. The list is bounded
+  (512, the oldest dropped, said once per filling) and lives in the sealed state until
+  `IMlsService.takeDeviceEvents()` takes it. It is recorded whatever kind of group admitted the
+  device: the kind decides where a notice is PLACED (`deviceEventAudience`), not what is recorded. A
+  commit another member made is applied as signed - refusing it would fork the group - and what it
+  admitted is recorded.
+
+- **A key this device has seen: `pinnedSignatureKeys(userId, deviceId)`.** THE one source for any
+  verifier of a signature made by a device key (an admission voucher, a signed history entry): the
+  pins, never a key the server published alone. It answers a `DevicePin` -
+  `{ keys: Uint8Array[]; anchored: boolean; reaffirmations: number }` - or `null`. `null` is a device
+  never seen, or one whose pin was pruned past the bound - a verifier reads it as UNVERIFIED, never
+  as FORGED. `anchored: false` is a pin re-learned after a prune: a signature verifying under it is
+  weaker evidence, and a verifier says so rather than calling it verified. Several keys come back
+  only for a state seeded from trees that disagreed; a signature verifying under any of them was
+  made by a key this device saw. The "no pin" line is logged once, in Rust. Rust
+  `MlsManager::pinned_signature_keys`, WASM `pinned_signature_keys`, Tauri
+  `cles_signature_epinglees`.
+- **Departures: `removalEpochs(groupId, userId)`.** When a merged commit - live, replayed on
+  catch-up, or our own - removes a USER's last leaf from a tree, `(groupId, user, epoch)` is recorded
+  in the sealed state (`PersistedState.device_departures`, bounded at 8192 like the pins: past it,
+  the departures of groups no longer held are dropped). Recorded at merge time, so a device that
+  only caught up on a kick and a re-add still sees the removal. Compared per user over the trees: a
+  one-commit leaf swap (an external rejoin, a heal, the one-commit replace above) and one device
+  among several leaving record nothing; a kick and a re-add in two commits is a departure whatever
+  the kick was for. Two properties a reader must hold: it is PER USER, not per device, and it holds
+  only the commits THIS device merged - a commit before it joined, or one it skipped through a
+  Welcome, is absent. Never a device event and never shown. An empty answer is NOT SEEN, never
+  "never happened". Rust
+  `MlsManager::removal_epochs`, Tauri `epoques_departs`.
+
+### What each legitimate flow does
+
+| Flow | Outcome |
+|---|---|
+| Last-resort or one-time package rotation | Same device signature key, so the pin matches: no change. |
+| PIN change | Re-seals the state, the signature key is unchanged: no change. |
+| Several devices on one account | Each `userId:deviceId` has its own pin. |
+| Web device ids (`web-<user>-...`) | Ordinary identities, pinned like any other. |
+| Reinstall or factory wipe (new id) | A new device: first sight, admitted. |
+| Restore (WP-RESTORE-1) | Enrols as a new device, first sight. |
+| A device that kept its id but lost its state | **It is a new device** (decided 2026-10-22): at start-up it rotates to a new id (`reenrolLostState`) and its owner's devices see a new device. Taken only when the id pre-existed this boot AND the store PROVES the state absent - no `mls.bin` or an empty one (`mls_state_absent`), no IndexedDB record - never on a decryption failure, a PIN problem or a read the store could not answer. The old id is recorded (`abandonedDevices.ts`) before its deletion is asked and leaves the record only once the server confirms it, so it is retired exactly once; the live id is never deleted. A device that did a same-id fresh start on an older build is refused re-adds by upgraded peers (remembered, so no package of it is fetched again) until it resets; meanwhile it can still re-enter a group by external commit, which pins do not gate. |
+| Downgrade to a build without pins, then upgrade | The older build drops the pins it cannot read; the upgrade re-seeds them from the trees. |
+| A Tauri resume reload | Events not yet persisted in `mls.bin` can be lost with the reload, as any unsaved state is. |
+
+### New-device notices (decided by the user 2026-10-22, refined the same day)
+
+No mandatory approval of a new device. Instead, **produced by the client from the signed commit it
+processed, never from a server message** (a server that stays silent must not silence them):
+
+- the account owner gets an alert "a new device was added to your account", in the app and as a
+  local notification on the phone, whichever group the commit came from;
+- contacts see a discreet line "X added a device" in **private conversations only** (1:1 and
+  groups), **never in a community or salon key group**, where it would be noise.
+
+**What counts as a new device** is decided where the event is recorded, as a fact
+(`DeviceEvent.memberAlreadyPresent`: the user already had a leaf before the commit) and one predicate,
+`announcesNewDevice()` / `DeviceEvent::announces_new_device`:
+
+| Event | Announced? |
+|---|---|
+| first sight, the user was already in the conversation | yes |
+| first sight, the user arrives with it (a new member, a new conversation) | no - that is the member-added line |
+| a resync, a heal, a kick and re-add under the pinned key | no - not even recorded (`pinned` is refused by the predicate as well) |
+| `key-changed` admitted by a commit | yes, wherever it is - nothing proves it |
+| `key-changed` found in a joined tree (`addedBy` null) | no - no commit admitted it |
+| the processing device itself | never |
+| an event recorded before `memberAlreadyPresent` existed | no |
+
+Then `deviceEventAudience()` (`deviceTrust.ts`) routes it: `owner-alert` for this account, from
+any group; `contact-line` for a contact, asked once PER CONVERSATION the line could go in, so a
+community or salon key group never gets it; `none` otherwise. Rust's
+`DeviceEvent::is_owner_alert` applies the owner half for the background engines, and both are held
+to ONE table, `frontend/mls-core/tests/fixtures/device_notices.json`, read by a Rust and a TypeScript
+test. One device under one key is announced once (`deviceEventKey()` = `notice_key()`).
+
+**First sight by THIS device is not "new to its owner"** (#2278 review): a fresh install, a restore,
+a pin dropped by the bound, or a heal re-adding a device that was never in a tree this device holds
+all show OLD devices for the first time - and heals happen daily. So the app weighs one more piece
+of evidence, `isNewToItsOwner()` (`deviceTrust.ts`): the server's first sight of the device's key
+(`DeviceSignatureKey.firstSeenAt`, served as `firstSeen` by `GET /api/mls/devices/:u/:d/signature-keys`).
+It is used ONLY TO SUPPRESS, never to raise - the signed commit stays the only source of a notice,
+and the device list stays the place to audit the account:
+
+| Key first seen by the server | Owner alert | Contact line |
+|---|---|---|
+| never dated (published before the key history began) | no | no |
+| before THIS device enrolled (first sight of its own key) | no | no |
+| since this device enrolled | yes, however late this device learns of it | only within 7 days (`CONTACT_NEW_DEVICE_WINDOW_MS`) of learning of it |
+
+Chosen over a per-contact baseline of pins, which cannot tell a contact's old laptop a heal brings
+into a DM from a new one; the window trades a late line for no false one (the user: notices must not
+become noise). An age the server did not answer keeps the event for the next delivery
+(`undecided`, durable, 64 at most) - neither raised without evidence nor lost for want of it. The
+app finds the key by fingerprint (`keyFingerprintOf()`, Rust's `key_fingerprint`, held to
+`mls-core/tests/fixtures/key_fingerprints.json`).
+
+**Who consumes the events.** `BaseMlsService.setDeviceEventConsumer` hands the taken events to
+`deliverDeviceEvents` (`utils/chat/deviceNotices.svelte.ts`, registered by `registerDeviceNotices`
+at session start): after every drain, after this device's own Adds (`addMember`,
+`addMembersBulk`, `replaceMember`), and once at registration for what the sealed state already
+holds - so the 512-event store drains. An EMPTY take is handed over too: it is the durable moment
+the notices retry what they parked (an `undecided` event, an owed line), so a quiet account does not
+leave an alert parked until some unrelated device event arrives. With no consumer they stay:
+sign-out removes it (`unregisterDeviceNotices`), so the events wait in the state for the account
+that consumes them next.
+
+- **The contact line** is a client-written system row (`chat_system_device_added`), message id
+  `device-added:<groupId>:<key>` - one per conversation, idempotent, not unread, no sound, like every
+  `system` row. It is written in EVERY 1:1 and group row whose tree (`getGroupMemberIdentities`,
+  read locally) holds a leaf of the device's owner, whichever group admitted the device - a
+  contact's new device is often first seen in a community they share, and the line still reaches
+  the private conversations. Never in a channel row or a key group. Written once per device and
+  key, durably (`lined`, the last 256), not only against the messages a conversation has loaded.
+  A device is LINED only once no line is still owed: a group this device holds
+  (`getLocalGroups`) with the contact in its tree but no row loaded yet - the start-up drain may
+  run before the rows load - or whose tree is unreadable keeps the line OWED (`owedLines`, durable,
+  64 at most, an overflow warned with its count), retried at each hand-over without asking the
+  evidence again, and dropped past the 7-day contact window (the drop is persisted too). A held
+  group with no row loaded is owed only if the DURABLE store holds a live row for it
+  (`IStorage.getConversation`, lifecycle not `removed`): a key group never has one, and the
+  session-local `isDistributionGroup` may not name it yet at start-up; a deleted conversation's
+  lingering state has lost its row.
+- **A reset device re-added in one commit** (`replaceMember`) under a key a member never saw for it
+  reads to that member as "added a device": it is a device under a key they never saw, which is
+  what the line says. Defensible, and deliberate - the line never claims the device id is new. A
+  repair under the PINNED key announces nothing (`pinned`).
+- **The owner alert in the app** is `NewDeviceBanner.svelte` in the layout's banner column: the
+  device's name when the device list has one, when this device learned of it, and a link to
+  `/settings/security`. Durable per account (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the
+  last 256 announced keys) until dismissed or followed.
+- **A refused device of the owner's own** (`refusedDevices.ts`, a changed key under a kept id) is
+  told in the same banner column, with the remedy (`device_refused_remedy`: remove it from the
+  devices, sign in on it again, and it enrols as a new device). Built from the refusals this device
+  remembers at registration and from each new one (`setRefusedDeviceListener`); dismissed once, it
+  does not come back (`refusedSeen`). A contact's refused device is not told to anyone: its owner
+  learns of it only from a device of their own that refuses it too.
+- **The local notification** is raised by the native background engines only, from a commit they
+  merged in memory: the Android FCM service (a commit push, a catch-up, or its own background Add of
+  the account's new device once the server accepted it) and the iOS notification extension (a
+  catch-up before a message - the extension never sees a silent commit push, so an iPhone whose app
+  is closed learns of the device at the next message push or when the app opens). Each push-decrypt
+  answer carries `ownDeviceAdded` (`mobile/device_notice.rs`); the keys are claimed in a ledger of
+  one marker file per key (`create_new`, atomic across the app and the extension), in the app data
+  directory on Android and the App Group on iOS. The app claims the keys it showed
+  (`claim_device_notices`), so a later push replaying the commit notifies nothing. In the
+  foreground neither engine posts: Android reads `MainActivity.isInForeground`, the iOS extension
+  the `app_in_foreground` file the app keeps in the App Group (`CanariSetAppGroupForegroundFlag`).
+  The engines have no key ages, so at registration the app PRE-CLAIMS every key of the account's
+  other listed devices that `isNewToItsOwner` calls old - an old device a heal brings back is then
+  never posted. The ledger is swept with the account's push files on deletion.
+- **A background Add the server refused** (Android `processWelcomeRequestBackground`) admitted
+  nobody, and announces nothing. Its events exist only in the STAGED post-add state
+  (`prepare_welcome_background_with_key`), which is installed into `mls.bin` only on the server's
+  acceptance and discarded otherwise, so a refusal leaves the app no event to read. The service
+  posts the notification on `Outcome.Accepted` alone: the server admitted the device, whether or
+  not this phone could install its own copy.
+
+**Known limits, owed a decision or a reading:** a phone whose WebView is alive in the background
+processes the commit itself and so shows the in-app alert only, with no local notification; and a
+device first seen inside a tree this device JOINED (its leaf pinned silently) is never announced.
+The pre-claim reads the device list, which omits devices idle for 30 days, so a background engine
+can still post for such a device when a heal brings it back; the app does not announce it. A
+contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
+the history began carry that date, not their device's enrolment.
+
+### Who admits a new person (2026-10-23)
+
+**A new person enters a conversation by a member's own gesture, never by an automatic Add.** The
+two automatic adders - the pending-invitation sweep (`processPendingInvitations`) and the
+`welcome_request` handler, plus the Android background answer (`prepare_welcome_background_with_key`)
+- act on what the delivery service says: a `pending` row, a roster row, a relayed request. None of
+that is a member's decision. So before either builds an Add, it reads THIS device's tree: a requester
+whose USER already holds a leaf is a member's new or recovering device, and is added as before; a
+user who holds none is a new person, and is not added (`automaticAdmission` in `actions.ts`,
+`MlsManager::user_holds_leaf` in Rust, `treeHoldsUser` in TypeScript). A tree that cannot be read
+proves no membership, so nothing is added (it used to fall through to the Add).
+
+Instead, the ask is put to a member: **"X asks to join this group. Only a member can add them."** (`join_request_body`), with Add and Decline
+(`JoinRequestBanner` for the conversations not on screen, and `JoinRequestRow` - a card at the end of
+the thread - for the one that is, user decision 2026-10-24: in the conversation, any member may
+accept; `joinRequests.svelte.ts`). The card FOLLOWS the store and is not a persisted system row: a
+stored row would outlive the ask and keep Add and Decline on screen for someone another member
+already admitted. Both answer through one path (`answerJoinRequestOrToast`). Add is the member's own Add (`inviteMembersToGroup`,
+signed by their device); Decline withdraws the ask (`declineJoinRequest`, below), which is what
+stops it coming back. The sweep reads the server's `pending` rows, the durable state, so each
+completed sweep replaces the asks on screen: one another member answered leaves with the next sweep.
+The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>`), which used to
+admit the person with no member involved. The Android background answer refuses such a request as
+`newcomer` and leaves it to the foreground's sweep. Only a GROUP conversation takes an ask
+(`askAMemberToAdmit`): a 1:1 conversation's `pending` rows and a key group's requests raise nothing -
+a DM ask's Add always failed and its Decline deleted the peer's own roster row. And only a seat the
+server holds AS an ask is asked about: the pending rows (`GET mls/invitations/pending`) and the roster
+read (`GET .../user-members`) carry `awaitingAdmission`, and a person absent from the tree whose seat
+is not flagged - a member's invite between its roster write and its Add, a seat written before
+migration 038, a member whose leaves were removed - is neither added nor asked about (logged "not an
+invitation-link ask"). A member's own invite brings such a person in. The banner shows an ask only
+while the chat page that answers it is mounted (`canAnswerJoinRequests`).
+
+**An answer leaves the screen only when it happened** (`joinAnswers.ts`). The invite never throws; it
+returns a typed `BulkAdditionOutcome` (`added` with the users the merged commit put in the tree, or
+`not-added` with `add-lock-busy`, `no-device-added`, `failed`...), and Add is done only when the
+person is among `addedUsers` - or already holds a leaf, another member's Add having come first. Decline
+is `POST mls/groups/:groupId/join-requests/:userId/decline`, answered only to an ADMITTED member
+other than the asker (`403 NOT_A_MEMBER` otherwise). Under the seat lock it deletes the seat ONLY
+while `awaitingAdmission` still stands (`withdrawAwaitingSeat`), and answers a typed outcome:
+`withdrawn` (roster row, queued Welcomes and device rows gone, the open interval deleted - no
+eviction and no exclusion interval are written for someone who was never in), `already-admitted`
+(a member's Add came first; nothing is touched, so a Decline can never strip an admitted person),
+`not-awaiting` (the flag was never set and the server holds no trace of an Add - no `active` device
+row, no `admittedAtEpoch`, no queued Welcome: the seat was never an ask, nothing is touched), or
+`gone`. All four leave the screen; a refused or failed call keeps the ask. A Decline that wins
+the race against an Add makes that Add an ordinary invitation by the adding member, which registers
+the roster row as any invite does. Anything else keeps the ask, logged with its reason.
+
+**The link is an ASK, carried from the server that knows it.** Accepting a link writes the roster row
+with `awaitingAdmission = true` (`dm_group_members`, migration 038; only `acceptGroupInvite` sets it),
+and the server holds the person outside until a member answers:
+
+- `getDeviceMemberships` says `awaitingAdmission` per row, so the joiner's `requestReAdd` reads
+  `awaiting-admission` (`readWelcomeOwedFromRow`) and sends a `welcome_request` instead of an
+  external join - the request that raises the ask on a member's device. Nothing is learned by failing.
+- The external-join base (`GET`/`PUT .../group-info`) answers **409 `awaiting_admission`** to such a
+  person - deliberately not a 403, which older clients read as `NotAGroupMemberError` and retire the
+  conversation on - and the commit gate refuses every commit from them, external or member.
+- The flag has ONE writer that clears it, `liftAwaitingAdmission`, at the two doors through which a
+  member's Add reaches the server: inside the transaction of an accepted commit, for the devices its
+  `admits` name and the target of its inline Welcome; and inside the transaction that stores a
+  Welcome sent apart (`sendWelcome` -> `enqueueForLiveGroup`). Every Add ships a Welcome, so a
+  member client that declares no `admits` (older than #1151) still lifts it - otherwise its Add
+  would leave the person refused on every commit. Only an admitted member can store that Welcome:
+  `memberOfGroupKind` does not count an awaiting seat, so the asker cannot Welcome themselves.
+- An ACTIVE device row is never read as awaiting: the membership reads report the flag only on a
+  row that is not `active`, the client's `readWelcomeOwedFromRow` ignores it on one, and the commit
+  gate reads such a seat as admitted and logs `[ADMISSION]` at ERROR - the invariant broke upstream.
+  The report of `active` is refused with **409 `awaiting_admission`** while the flag stands, so a
+  row cannot become active ahead of the lift. The Welcome path reads the roster row `FOR UPDATE`
+  (`seatStandsFor`), the lock the lift upgrades to, so two Welcomes stored at once cannot deadlock.
+- An unanswered ask EXPIRES WHOLE (`expireUnansweredAsks`, in the hourly stale-pending sweep): once
+  no device of the person is `active` or pending since the 14-day cutoff, the seat is withdrawn as
+  a Decline withdraws it, per seat under its lock; the device-only purge never touches an awaiting
+  seat, so it cannot leave a roster row that answers 409 to a fresh ask forever. The stranded-seat
+  reports count these seats apart (`awaiting-member`).
+- **A seat awaiting a member is not a membership ANYWHERE a caller is checked** (review of #2358,
+  B1). Every caller predicate of the controllers reads the seat through ONE helper,
+  `callerSeatStanding` (`utils/group-membership.ts`): enrolling or removing someone
+  (`POST`/`DELETE mls/groups/:groupId/members`), minting an invitation link, vouching for or
+  kicking a device, and reading the roster (`user-members`, `members`; `group-rosters` lists the
+  group in `refused`) are all answered **409 `awaiting_admission`** for such a seat. Counted as a
+  membership, a person still waiting enrolled an accomplice whose seat read as not awaiting, who then
+  read the base and entered by external commit with no member's Add. Leaving is the one thing it may
+  do (the removal of its own seat). The re-review (F1) found four reads that never asked the flag;
+  they go through the same helpers now: the history (`GET mls/history/:groupId` answers the 409,
+  the batch omits the group; `callerSeatStandings`), the exclusion windows, a Decline by a caller
+  whose own seat waits (409, never `NOT_A_MEMBER`), and every call route (initiate, room token, ICE,
+  ring, ring-end). WHO SHARES a conversation reads one `where` fragment, `ADMITTED_SEAT`: the
+  presence audience (both directions) and the call ring's callees, so a waiting seat neither sees nor
+  is seen online, and is rung by nobody. Each refusal is one WARN at the 1st, 10th, 100th... repeat
+  per (route, group, person) (`refuseAwaitingSeat`), and the client types it at the throw
+  (`AwaitingAdmissionError`, a 409 `ApiRefusalError`) on the roster, members, exclusions and base
+  reads.
+- **The wait is quiet on the server.** The waiting device asks a member on every recovery cadence
+  for up to the 14 days of its ask, and an older client meets the withheld base each time: the
+  `[WELCOME_REQ]` lines of such an ask and the `[GROUP_INFO] base withheld` line are said at the 1st,
+  10th, 100th... repeat per (group, device) (`awaitingAskRepeats`, a `RepeatCounter`), every relay
+  still made. The joiner reads "Waiting for a member of X to add you" on the link page
+  (`group_join_sent_desc`); the conversation appears once a member adds them.
+- **"Holds a leaf" is not "is a member" (review of #2358, P2-2).** A removal deletes the roster row
+  BEFORE the member's Remove commit lands; if that commit never lands, the removed person keeps a
+  leaf. Following a link later, they are re-added automatically: `automaticAdmission` reads their
+  user in the tree as `member-device`, and the commit's `admits` lifts the flag. Open in
+  [backlog](../backlog.md#p2---a-removed-member-whose-leaf-survived-is-re-added-automatically-by-a-link-review-of-2358).
+- **"Only through a member's decision" holds from a client floor**, not from this build:
+  a member client older than the rule still auto-Adds a link joiner, and that Add legitimately lifts
+  the flag. It holds once `minClientVersion` floors at this build, with migration 038 deployed with
+  it ([legacy-compatibility](../legacy-compatibility.md)).
+- **WHEN THE FLOOR IS RAISED (user, 2026-10-24): once BOTH stores serve the version carrying this
+  change** - not at the deploy, not on a date. Until then an older client meets the tolerated
+  **409 `awaiting_admission`** path above (it falls back to asking a member) and an older member's
+  automatic Add is honoured through the Welcome lift. That tolerance is the shim, and its removal
+  condition is that floor, with no calendar date.
+
+The other reading was refused: treating the link as the member's decision would mean a member's
+device honouring a server-written flag, the very trust in server rows this policy removes.
+
+**A new person who entered by their own commit is made visible.** It shows in the signed commit as a
+`DeviceEvent` whose `addedBy` IS the admitted leaf and whose `memberAlreadyPresent` is `false`
+(`entersUninvited`, pinned in Rust by
+`an_external_commit_by_a_new_user_is_recorded_as_signed_by_the_device_it_admits`). In a conversation
+- decided on its row, loaded or durable, never on the session-local key-group set - the client writes
+"X entered the conversation without being added by a member" (`chat_system_uninvited_entry`, owed
+durably until the row loads), logs it at ERROR and reports it once (`POST mls/uninvited-entry`,
+`[UNINVITED_ENTRY]` in the delivery log). Never in a community or salon key group, where an external
+commit is how every member enters. The shape is `sender-mismatch`'s: a measurement, read on
+production before anything is decided about such entries. The receiving side is hardened in a
+second step.
+
+**A legitimate rejoin is not written, only counted.** The report carries a `kind`
+(`UninvitedEntryKind`): `returning` when this device saw the same user leave the tree at an earlier
+epoch (`removalEpochs`), `direct-peer` for the other person of a 1:1 conversation, `new-person`
+otherwise - and only `new-person` is written and logged at ERROR. A departure read that fails keeps
+the entry owed rather than guessing. A device that never saw the departure still reads a returning
+member as `new-person`. The server takes the report from a member of the group only (403
+`not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
+(group, entrant, epoch), so N members reporting one entry make one line, not N.
+
 ## Key packages
 
 ### The two kinds of key package
@@ -625,17 +1052,20 @@ being served twice, the pool prekey must not - and
 `apps/chat-delivery-service/src/controllers/devices.controller.static-fallback.spec.ts` pins the
 server's side of the promise, so the pair cannot drift apart silently.
 
-### The 84-day lifetime outlives the device, and a leaf is NEVER updated
+### The 84-day lifetime outlives the device
 
 A KeyPackage carries a `Lifetime` (OpenMLS default: 84 days, `not_before` backdated one hour for
-clock skew), and the leaf node minted from it carries that same lifetime into the ratchet tree. The
-tree keeps it: **nothing in this product ever updates a leaf.** There is no periodic self-update
-commit, and the only thing that takes a leaf out of a tree is another member committing a Remove.
+clock skew), and the leaf node minted from it carries that same lifetime into the ratchet tree. A
+device that keeps sending replaces that leaf (every commit it builds carries a path, and the
+[periodic leaf refresh](#the-periodic-leaf-refresh) makes one at least every 7 days of activity) and
+the replacement has no lifetime at all. A device that stops running does not.
 
 So a device that stops running - wiped, reinstalled, abandoned, or reset through the button on the
 login page - leaves a leaf behind in every group it was in, and on day 85 that leaf elapses. Purging
 the device's server-side footprint does not touch it: `DELETE mls/devices/:userId/:deviceId` deletes
-routing rows, and a ratchet tree is not a routing row.
+routing rows, and a ratchet tree is not a routing row. What takes the leaf out is a member's commit:
+the stray-leaf collector removes the leaf of a device the server names as REVOKED
+([below](#a-revoked-devices-leaf-is-removed-from-every-conversation)), and only that.
 
 **Until 2026-09-11 that elapsed leaf closed the group to everybody else.** RFC 9420 7.3 recommends
 validating leaf lifetimes when a ratchet tree is IMPORTED, and OpenMLS did so on both paths a device
@@ -670,6 +1100,288 @@ join nor a Welcome is refused - and that a KeyPackage already elapsed is still r
 beside a good one, so the assertion distinguishes "that package was refused" from "the batch fell
 over". Remove either `skip_lifetime_validation()` and two of the three tests fail with the
 production error.
+
+### The periodic leaf refresh
+
+Post-compromise security in MLS comes from a member replacing its own leaf's encryption key: once it
+has, an attacker who copied the old key material stops reading new epochs. Every commit a device
+builds already does that (openmls gives every member commit a path - an Add or a Remove refreshes the
+committer's leaf too, pinned in `frontend/mls-core/tests/self_update.rs`), so a device that commits
+often is already refreshing. The periodic refresh covers the device that only SENDS.
+
+**The commit.** `MlsManager::stage_self_update` (`frontend/mls-core/src/self_update.rs`) stages an
+empty commit with a forced path: no proposal store is consumed (a queued external proposal is never
+swept in), membership is unchanged, the leaf's HPKE key and path secrets are new. It goes through
+`BaseMlsService.runCommitTransaction` like every other commit - stage, server validation
+(`submitCommit`), then merge or clear, with the successor base attached - so the single-writer and
+commit-gate rules hold unchanged. A refused refresh clears its pending commit and retries nothing.
+
+**A submit with no answer (every commit, not only the refresh).** A transport failure or a non-OK
+answer to `submitCommit` used to leave the staged commit pending; the next checkpoint persisted it,
+and openmls then refused every commit the device staged in that group. Reading the server's log at
+that moment does not answer it either: an empty log says "not landed YET" as well as "never", so a
+clear decided from it races the request still in flight. So the answer is made definitive
+(`commitSubmission.ts`): `runCommitTransaction` RESUBMITS THE SAME BYTES, and the commit gate answers
+a commit it already accepted from that device at that base epoch as accepted again (`duplicate`,
+[chat-delivery](../services/chat-delivery.md)). Accepted or duplicate -> merge; a refusal (another
+commit took the epoch, or a 4xx, sent only before the gate) -> clear and catch up; still no answer
+(a transport failure, a 5xx, or `concurrent_commit` - a lock our own first request may hold) -> the
+staged commit is KEPT (already on disk, see below), and `CommitOutcomeUnknownError` (a `TransportFailureError`)
+is thrown. Until a resubmission answers, the group takes no commit and no send. The resubmission runs
+at the next gateway connection (before the pending messages are drained), before the next send or
+commit in the group, and a commit replay settles it from the log only when the log holds a row AT its
+base epoch, which is decided for good. No clock decides anything.
+
+**No submission holds the MLS lock unbounded.** Every submission - the first and each resubmission - is
+awaited INSIDE the global MLS lock, which also guards the incoming processing of every group, so a
+POST hung on a half-open connection or a captive portal froze decryption in every conversation. Since
+the periodic refresh makes an unasked commit ordinary, `submitCommit` runs under the `write` head
+deadline (`requestDeadline.ts`: 30 s plus the time its body needs to leave). Its expiry is a
+`RequestDeadlineError`, a transport failure - NO ANSWER, never a refusal - so it takes the path above:
+the same bytes are resubmitted once, and a second expiry keeps the stage as unknown. The deadline does
+not decide the outcome; the next resubmission does (`BaseMlsService.unresolvedCommit.test.ts`, "a
+commit gate that never answers"). ONE budget bounds the whole hold of a transaction, settlement and
+rebuilds included: `COMMIT_LOCK_HOLD_BUDGET_MS`, three `write` deadlines (the settlement's
+resubmission, the first request, its resubmission - each deadline also stretched by its body's upload
+time), read before each request and again after the checkpoint that precedes the first. A request it
+does not let start leaves the outcome unknown, or - for a first request - is never sent, its stage
+cleared and the commit refused (`lock_budget_spent`).
+
+**The server's commit lock lives 5 s; the client waits 30 s - so a resubmission can overlap its own
+first request.** The Redis lock (`EX 5`, `messaging.service.ts`) expires while a first request
+stalled inside its transaction (waiting on the seat lock, say) is still running. The resubmission
+then passes the lock, reads the base still active, waits on the group row, and when the first
+request commits it loses the advance (`EpochAdvanceLost`) - while a third device's commit, queued
+behind, may already have moved the epoch past `base + 1`. A key group's Add with admits is refused
+even earlier, by the admits pre-check, before the lock. **So the gate asks its commit log before
+EVERY refusal on the epoch or a seat** (`answerIfAlreadyAccepted`): the admits pre-check, the strict
+gate, and the lost or rolled-back advance (`EpochAdvanceLost`, `SeatClaimOvertaken`,
+`WelcomeSeatGone`). The row is keyed by base epoch and written in the transaction that moves the
+epoch, so when this request finds it holding the same bytes from the same device, the answer is
+`duplicate`, whatever epoch the group has reached. On a resubmission, then (`commitSubmission.ts`):
+
+- `epoch_mismatch` is definitive at any epoch: our own commit would have been answered `duplicate`;
+- a `409 SEAT_CLAIM_OVERTAKEN` is UNKNOWN: the stage is kept, never cleared and never rebuilt, and the
+  next settlement decides. The gate reads seat claims per REQUEST, so the 409 refuses only the copy
+  that got it - a first request still on its way reads its own claims and may land. Only a FIRST
+  request the gate answered `409` is rebuilt. A REAL 409 (an eviction overtook the claim) costs one
+  settlement, not the group: the next resubmission reads fresh claims too, and is answered for good
+  - accepted, `duplicate`, or refused on the epoch.
+
+**One store, one call.** What a resubmission needs - the commit, its successor base, its Welcome,
+and the client's intent (whom it excludes, admits and removes) - is kept BESIDE the staged commit in
+the MLS state itself (`mls-core/src/pending_submission.rs`), and written by the SAME platform call
+that stages the commit (`*_recorded` in the crate; the WASM stage bindings and the Tauri stage
+commands take the intent as an argument). Every commit that goes through the gate is staged this way,
+the one-commit device replacement (`replace_device_recorded`) included: its record carries its
+Welcome, so a settled replacement owes it to the device it re-admits as an Add does. It used to be two calls, and a checkpoint - which does not
+take the MLS lock - could run between them and save a staged commit with no record; a device killed
+after sending then read "no record" as "never sent" and cleared a commit the server had accepted. One
+call leaves no such moment. The request is composed from the record (`composeSubmission`), so the
+first submission and every resubmission are the same bytes. A staged commit found with no record was
+never submitted through the gate, and is cleared. The crate ties the record's life to the staged
+commit: a new stage, the merge, the clear, a forget, or another member's commit (which clears ours)
+each end it, and only live ones are saved - in a `#[serde(default)]` field of the state, so an older
+state loads with none and an older build drops the field when it saves. The client keeps a derived
+in-memory index of the groups holding one, so a send does not cross into the platform to ask.
+
+**On disk before the first request leaves.** One call makes the stage and its record inseparable;
+it does not make them durable. `runCommitTransaction` therefore awaits a structural checkpoint
+between the stage and the first `submitCommit` (`checkpointStageBeforeSend`). Before that, a crash
+after the send and before the next checkpoint reloaded the state from BEFORE the stage: the server
+might hold the commit, and the device could neither merge it nor resubmit it (it fell to rung 1 or 2).
+Now any crash after the send reloads the stage and its record, and the resubmission at the next
+connection merges or clears it. The checkpoint the kept-unresolved path used to await afterwards
+is gone: the state it wrote is already on disk.
+
+**A checkpoint that throws sends nothing, and WHERE it threw decides the stage** (2026-10-23), read
+from the type (`checkpointWroteNothing`, `utils/hex.ts`):
+
+- **It stored nothing** - refused by the version guard or an ended document
+  (`MlsStateWriteRefusedError`), or failed before anything was stored (`MlsCheckpointNotWrittenError`:
+  the export and seal, or the IndexedDB transaction, which stores all of it or none). The commit never
+  left and this write did not save it, so the stage is CLEARED and the failure is definitive
+  (`CommitStageNotSavedError`). Kept unknown instead, a checkpoint that keeps failing (a full quota)
+  blocked every send in the group for the rest of the session. If the clear itself fails, the stage
+  stays and the outcome is unknown.
+- **Anything else** may have thrown after its write landed (the native checkpoint is one call, so its
+  failure is always this kind), and the stage may be on disk; clearing it and reporting a failure was
+  contradicted by the next reload, whose settle landed the commit. It is kept, reported as
+  `CommitOutcomeUnknownError` like an unanswered commit, and the settle that decides it awaits its own
+  checkpoint before the resubmission: no request leaves carrying a commit that is not on disk. That
+  settle checkpoint is paid only when a kept commit is settled.
+
+**A follower tab does not commit** (`FollowerTabCommitError`, refused before anything is staged, by
+`externalJoin` too - a join is a commit - and by `createGroup`, at the service's own entry: a group
+created in a follower's copy is one the leader never holds). Its
+state is a copy loaded once: the version guard refuses its writes once the leader has written, so the
+checkpoint above would fail on every follower commit; and before that checkpoint existed, a commit
+sent from a follower moved the group past the state the leader keeps, because the leader cannot read
+a commit of its own leaf back (`OwnPrivateMessage`). Commits are reached from a follower's UI
+(`groupActions.ts`, `groupCreation.ts`, `actions.ts`); refusing them by the leadership fact is the
+gate the outbox already applies to sends. The member is told, by type: a creation answers the
+`follower-tab` refusal, and an invite or a removal shows the same sentence
+(`reportFollowerTabRefusal`, `conversationRefusalMessage.ts`) - do it in the main tab. A community's
+or a salon's key group refused this way (`leaveKeyGroupToMainTab`, `followerTabKeyGroup.ts`) tells
+the member on a gesture (creating a community or a salon, joining a salon) and goes on without the
+group; on a load it is logged and the load goes on, since the main tab enters it.
+
+**Cost: one checkpoint per commit, awaited under the MLS lock**, which blocks decrypts and sends in
+every group while it runs. The live web path is the WASM ChaCha20 seal
+(`MLS_STATE_SEAL_V2_WRITER_ENABLED` is still `false`): **~196-200 ms for a 7.7 MB state in desktop
+Chrome** (seal + IndexedDB put, [performance-audit](../frontend/performance-audit-2026-10-12.md));
+the v2 WebCrypto seal's ~47 ms is not live yet. On a phone it is far more: the Mi 9T capture of
+2026-10-13 (a DEBUG build) read **~1.4-2 s per checkpoint**, with a checkpoint in flight ~93 % of the
+time after a sign-in ([community-open-slowness](../frontend/community-open-slowness-mi9t-2026-10-13.md#finding-2---after-a-sign-in-the-checkpoint-runs-93--of-the-time-and-each-one-costs-more)).
+A request for durability made while a checkpoint is running waits for the NEXT one, so one commit
+costs up to two checkpoints, and **a burst of N commits serialises to ~2N under the lock** - on that
+phone, several seconds of blocked decrypts for a handful of commits. Commits are rare next to
+checkpoints (the fleet ceiling is ~200 a day, see the leaf-refresh interval above, against 247
+checkpoints in 432 s on ONE phone after a sign-in), but the burst cost is real where commits cluster:
+a group creation adding several devices, a roster reconcile. **Owed: a release-build phone
+measurement** of a commit's checkpoint (Mi 9T and iPhone 12). Desktop native release figures
+(`mls-core/tests/heavy_state_checkpoint.rs`, 2026-10-22: export + seal 12.3 ms at 7.7 MB, without the
+file write) are a floor, not a phone.
+
+**A record that cannot be read decides nothing.** "No record" proves the commit never left; a record
+that does not decode (the crate's CBOR, or the intent inside it) proves nothing, and the bytes a
+resubmission or a log comparison would need are the unreadable part. Clearing would be one guess,
+merging the other. So the staged commit is KEPT and the group is marked in the epoch-gap registry,
+which keeps sends out of it and hands it to the sync watchdog's rung 2 (forget + re-Welcome) - the
+one repair right whichever way the commit went - with a `[COMMIT] ... UNREADABLE` line at error level.
+
+**An Add accepted only through a later resubmission still delivers its Welcome, once**: the Welcome is
+a separate request after the accept, and the call that staged the Add is gone by then, so the
+settlement sends it. The owed Welcome is STATE (`mls-core/src/owed_welcome.rs`): the merge writes
+"owed to these devices", with the ratchet tree of the epoch the Add created, in the same platform call
+(`merge_pending_commit_owing_welcome`); the client awaits a checkpoint, sends, and clears each
+recipient as its send returns. A reload mid-settlement therefore finds the Add merged and only the
+uncleared recipients owed - it never re-merges and re-sends the whole Add - and a failed send stays
+owed for the next connection. A joiner handed a copy of a Welcome for a group it holds treats it as a
+redelivery before the core sees it (`setupMessageHandler`); the core itself refuses such a copy
+(its key package is spent) and leaves the group untouched (`mls-core/tests/owed_welcome.rs`).
+
+**What is left.** A commit-log row pruned before the resubmission reads as a refusal: rows are kept
+365 days and the last 20 000 epochs of each group (`COMMIT_LOG_RETENTION_MS`,
+`COMMIT_LOG_MAX_PER_GROUP` in `messaging.service.ts`), so the window is a commit left unresolved for a
+year, or one its group moved 20 000 epochs past. A state saved before this change can hold a staged
+commit with no submission that WAS sent (the old lost-answer defect); it is cleared at the next
+settlement, and if it had landed that device is one epoch behind its own commit (rung 2).
+
+**Staged only on the branch the server publishes.** The server's gate compares epoch NUMBERS, so a
+device that merged a commit nobody else did is at the right number on the wrong branch, and its
+refresh would be accepted and break every healthy member. The two commits a MECHANISM decides on
+its own - `refreshOwnLeaf` and the revoked-leaf removal (`removeMemberDevice`, next section) - go
+through ONE check, `BaseMlsService.assertOnPublishedBranch` (`mls-client/publishedBranch.ts`): it
+reads the published base (outside the MLS lock) and, under the lock, stages only when its epoch is
+ours and our group context - tree hash and confirmed transcript hash - is the one it describes
+(`MlsManager::own_context_matches_base`); otherwise nothing is staged and `UnpublishedBranchError`
+says why (`no-base`, `other-epoch`, `diverged`). **`diverged` is a fork, and it is handed to the
+recovery ladder where it is thrown** (2026-10-23): the group is marked in the epoch-gap registry,
+which keeps every send out of it and hands it to the sync watchdog's rung 2 (forget + re-Welcome),
+with a `[FORK] ... DIVERGES` line at error level - the route an unreadable submission record
+already takes, for the same reason: rung 1 (replaying the log) cannot help a device that is not
+behind but beside. The evidence is the base the server stored WITH the accepted commit (strictly
+monotonic, so the first base of an epoch owns it); a commit from a client too old to carry one
+leaves the base to a holder's repair, which is the one way that base could itself be a branch.
+The **signature key is not rotated**: one device key signs every leaf and every KeyPackage of the
+device, and a stolen signature key is answered by revocation (next section), not by a refresh.
+
+**The trigger is durable state, not a timer.** After `sendMessage` delivers a conversation frame -
+`DELIVERY.visible` or `DELIVERY.mutation`, an allowlist by identity, because a seed is shaped exactly
+like a mutation and an addressed seed is a fresh object - the service hands the group to
+`refreshLeafIfDue` (`frontend/src/lib/mls-client/leafRefresh.ts`), outside the send barrier and
+single-flight per group. It refreshes only when the leaf is DUE:
+
+| Leaf age basis | Source | Due when |
+|---|---|---|
+| Admitted from a KeyPackage | `not_before + 1 h` read from the tree (`own_leaf_minted_at`), and an observation OF THAT LEAF in the ledger | the later of: older than the interval, and the observation plus the offset |
+| Replaced by an own commit | the ledger `mls_leaf_refresh:<userId>:<deviceId>` (`{groupId: {at, epoch}}`), written after EVERY accepted own commit and external join | older than the interval |
+| Replaced by a commit, observed (no refresh of ours on record) | the observation `{at, epoch, observed: true, mintedAtSec: null}` | the observation plus the offset |
+| No entry, an entry of another incarnation, or one dated in the future | first sight: an observation is recorded | never on first sight |
+
+**The first refresh is spread, or it is a herd** (review, 2026-10-23). The day this ships, every
+leaf is older than the interval, so a decision on age alone makes every seat refresh at its first
+send: ~1600 commits in the first week, back to back in the 109-seat group, where a slow device
+keeps only two past epochs (`max_past_epochs`) and loses the frames sealed in the epochs it
+skipped. So a leaf this device holds no refresh of its own for is first OBSERVED - a ledger entry
+written at its first send, naming the leaf by `own_leaf_minted_at`, never due then - and its first
+refresh is owed at the observation plus an offset in `[0, 7 d)` derived from `(deviceId, groupId)`
+alone (`leafRefreshOffsetMs`: FNV-1a with MurmurHash3's finaliser, `utils/hash32.ts`, the hash
+`historyRangeOf` already used). No clock and no random draw per run choose the day: a reload, a
+second tab or a retry read the same one. The 109 seats of one group land on ~16 a day instead of
+109 on day one (`leafRefresh.test.ts` pins the spread and the determinism). After its first
+refresh each seat's next one follows its own, so the spread holds without being re-applied, and a
+young leaf (a fresh admission) is still owed at its own seven days - the offset only ever delays.
+
+It skips a community key group, a group this device was removed from, a group in an epoch gap (the
+[recovery ladder](mls-recovery-ladder.md) owns it), a group HELD by something that needs its epoch to
+stay put (`holdLeafRefresh`: `CallService` holds its call's group from the ring until the call is
+over, because each end derives the media keys from the CURRENT epoch one after the other - another
+device of either user is not held, see [calls](../frontend/modules/calls.md)), and a second attempt at the epoch a first one
+failed at in this session - the epoch moving is what makes another attempt different. The ledger is
+capped at 512 groups and is swept with the account's local keys.
+
+**The interval is read on this device's clock, and that is acknowledged rather than derived away.**
+It is a duration, and no durable MLS fact measures one: an epoch moves on commits, so a quiet group
+would never be due and a busy one would be due hourly. What a WRONG clock would mean: it decides only
+WHEN a refresh is owed, never what a commit contains. A clock ahead makes refreshes early - at most
+one per group per forward jump, since the refresh it causes is dated by the same clock; a clock
+behind makes them late. A ledger date in the FUTURE (a clock that was ahead has come back) is not
+believed - the leaf is observed again - so the delay is bounded by one interval rather than by how
+far ahead that clock was. The cost of a wrong clock is therefore timing, bounded on both sides, and
+never traffic beyond one refresh per group per jump.
+
+**Why 7 days.** It matches the 7-day cap of a Graine session, so a compromise of either half heals in
+the same bound, and it is twelve times inside the 84-day leaf lifetime. A refresh is owed only after
+ACTIVITY, so a silent device adds nothing.
+
+**What it costs, on the fleet measured 2026-10-21** ([dm-vs-community-encryption](dm-vs-community-encryption.md)):
+at most one refresh per device seat per group per 7 days, and only for a seat that sent.
+
+| Scope | Seats | Ceiling (every seat sends weekly) | Today's commits |
+|---|---|---|---|
+| 236 one-to-one conversations | median 6 seats | ~200 commits/day | ~30/day (903 per 30 days) |
+| 15 group conversations | max 109, median 11 | ~15.6/day for the largest alone | ~8/day (241 per 30 days) |
+
+The ceiling is not the expectation: only seats that send count, and an own commit (Add, Remove)
+already resets the clock. A commit races like any other: a lost epoch race is a refusal, logged, and
+the next send after the epoch moves tries again.
+
+**Community key groups are excluded, deliberately - re-decided on main's rotation rule
+(2026-10-23).** Since 2026-10-22 a key group's seeds rotate on a DEPARTURE, not on every epoch
+(`graineOutboundVerdict`, [graine-removal-tracker](graine-removal-tracker.md)), and a refresh is not
+one: it removes no leaf, brings no user and keeps the signature key, so it continues the clean run.
+Its real cost is therefore not a seed per refresh but this: each refresh moves the epoch, so every
+sender's next send in that scope REDISTRIBUTES its seed - one extra frame per sender per refresh -
+and a redistributed session takes the reused caps (50 messages, 24 hours FROM ITS MINT), so any
+session already past a day ROTATES instead. With one refresh per active device per week, a
+community whose devices refresh daily keeps every sender's session under a day old: the rotation
+rate the departure-only rule was written to bring down returns through the caps. A key group's
+leaves are refreshed by its own Adds and Removes meanwhile; what refreshing them would need (a
+refresh that does not tighten the caps, or caps counted from the redistribution) is in
+[backlog](../backlog.md).
+
+### A revoked device's leaf is removed from every conversation
+
+Revoking a device (`DELETE mls/devices/:userId/:deviceId`) writes a `revoked_device` row and purges
+routing; it cannot touch a tree. The roster batch (`POST /api/mls/group-rosters`) now also answers,
+per answered group, the ACTIVE revocations of the people on that roster (`revoked`, as
+`userId:deviceId`). `removeStrayLeaves` (`frontend/src/lib/utils/chat/strayLeaves.ts`) removes a leaf
+whose whole identity is in that list, by device (`removeMemberDevice`), after the departures and on a
+fresh tree and a fresh answer. It is an ALLOWLIST: a leaf the routing table merely forgot is never a
+candidate, and a device never removes its own leaf. Like the refresh, nobody asked for this commit,
+so it is staged only on the published branch (`assertOnPublishedBranch` above; a refusal is logged
+`[STRAY] ... NOT removed` and nothing is staged). Key groups are not covered yet: their roster
+collector (`reconcileDistributionGroupRoster`) does not read the `revoked` answer, a separate
+question from the refresh's cost ([backlog](../backlog.md)).
+
+**And the revoked device cannot commit** (2026-10-23). The commit gate (`validateCommit`) refuses a
+commit from a device under an active revocation - `403 DEVICE_REVOKED`, FIRST: before the ownership
+check, the lock and the duplicate answer, read by the pair on the denylist's existing
+`(userId, deviceId)` unique index ([chat-delivery](../services/chat-delivery.md)). The revocation
+purges the static KeyPackage, so an ownership check asked first answers `device_not_owned` - true by
+coincidence, and not the answer the device's client acts on.
 
 ### Static fallback key package
 
@@ -948,7 +1660,11 @@ has the before/after table).
   question nobody has to answer if it never happens. Derived once per device key on the web, as a
   non-extractable `CryptoKey`.
 - **The 16 header bytes are the AAD**, so a rewritten version or fingerprint fails the tag instead of
-  steering the reader somewhere plausible.
+  steering the reader somewhere plausible. **They are ALL the AAD binds**: nothing about whose state
+  it is, or how recent. A blob swapped for another sealed under the same device key therefore OPENS;
+  what refuses to install it is the identity check after the open (`IDENTITY_MISMATCH`, the
+  credential must name this `user:device`). An older checkpoint of the SAME identity put back is not
+  detected by the seal at all - the same as v1 and legacy.
 - **The writer is TypeScript only** (`mlsStateSeal.ts`, routed by `sealWebMlsState` in
   `mlsEncryptWorkerSession.ts`, which THROWS inside Tauri). `mls-core` has no v2 writer, so a native
   build cannot produce one by construction.
@@ -958,9 +1674,41 @@ has the before/after table).
   `loadAndInitWasm`) and the WASM gets plain CBOR. Measured, not chosen: the WASM reader's software
   AES opened 7.7 MB in 610 ms against 240 ms for ChaCha - a cold-start regression that would have
   eaten the checkpoint saving. Every OTHER shape still goes to `mls-core` sealed. The two v2 readers
-  open the same committed fixture and throw the same codes (`STATE_KEY_MISMATCH` before the cipher,
-  `STATE_ALTERED` for a failed tag, `STATE_UNDECRYPTABLE` for a stub), which is what keeps them from
-  drifting.
+  open the same committed fixture and throw the same codes for what the BYTES decide
+  (`STATE_KEY_MISMATCH` before the cipher, `STATE_UNDECRYPTABLE` for a stub), which is what keeps them
+  from drifting.
+- **A WebCrypto refusal is NOT `STATE_ALTERED` (review of #2074, 2026-10-18).** WebKit names an
+  engine fault (memory pressure on a ~19 MB state) and a failed tag with the same `OperationError`, and
+  `altered` makes `init` rotate the device identity even under `noFreshStart` - irreversibly. So the
+  web opener throws `MlsStateUnreadableNowError` (blob size, error name, whether the key derivation
+  succeeded), and `loadAndInitWasm` asks `mls-core`'s deterministic reader for the verdict through
+  `state_blob_verdict` (`mls-wasm`). **The verdict crosses the boundary as a CODE, classified on the
+  Rust variant** (`MlsError::state_verdict_code`), never by matching the text of a thrown message:
+  `OPENED`, or one of `STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`,
+  `IDENTITY_MISMATCH`, which returns as the typed `MlsStateVerdictError` that
+  `classifyStateLoadFailure` reads by type - so `altered` is only ever its proof and the old-PIN
+  recovery stays reachable. Each code is also the `Display` prefix the Tauri commands surface, so
+  both boundaries use the same word (pinned in `state_load_failure_is_typed.rs`). A REJECTION from
+  `state_blob_verdict` is by contract no verdict, whatever its text. If the reader OPENS the bytes,
+  the engine fault is proven; what it loaded is dropped inside the call, never installed (a witness,
+  not a second load path), and a re-read of the same bytes does not ask again; a rejection (a trap)
+  drops the memoised WASM instance. Anything but a verdict stays `unreadable_now`:
+  `WebMlsService.loadStateWithKey` reads the state up to `MLS_STATE_UNREADABLE_NOW_READS` (3) times,
+  then `init` throws `SavedStateUnopenedError('unreadable_now')` with or without `noFreshStart` -
+  nothing rotated or written, the login shows `auth_local_state_unreadable_now`
+  (`local_state_unreadable_now`, in no recovery predicate), the next start reads again. The PIN
+  recovery says the same (`LocalStateUnreadableNowError` in `pinChange.ts`), never the "damaged,
+  reset" sentence of `LocalStateUnopenableError`. Pinned by `WebMlsService.unreadableNow.test.ts`,
+  `mlsWasmLoader.test.ts` and, on the REAL WASM, `mlsStateSeal.realWasm.test.ts`.
+- **`unreadable_now` HAS NO EXIT IN CODE, AND THAT IS DECIDED, NOT FORGOTTEN.** A browser that
+  refuses the same bytes on every start lands on the same message on every start. Nothing repairs it
+  silently: installing the state `mls-core` opened would be a second load path behind a failed
+  primary one, and rotating is the irreversible loss this branch exists to refuse. **The remedy is
+  the user's, and the message names it**: free memory (Canari's other tabs, heavy tabs and apps),
+  restart the browser and sign in again; meanwhile use the app or another browser, which are other
+  devices and leave this one's state intact; ask support before any reset, which would erase it. The
+  persistent case - what, if anything, the product offers after N starts - is an owed item
+  ([backlog](../backlog.md#p2---unreadable-right-now-on-every-start-has-no-exit-but-the-user)).
 - **The seal runs on the calling thread, not the encrypt worker**: WebCrypto already runs the cipher
   off the JavaScript thread; what remains on it is the input copy, measured as the main thread's
   longest stall.
@@ -970,12 +1718,39 @@ has the before/after table).
 **Downgrade story.** A build with the v1 reader (`>= v0.18.18`) refuses version 2 by name
 ("written by a newer client, so this is a downgrade"); an older one reads `CANARIS\x02` as a nonce
 and fails the ChaCha tag. Both are `STATE_UNDECRYPTABLE`: loud, nothing destroyed, the user asked for
-the PIN - and holding a state that build cannot open. That is why **the writer ships OFF**
-(`MLS_STATE_SEAL_V2_WRITER_ENABLED = false`), read-first like v1. Three paths would hand a v2 blob to
-an old build: a web deploy rolled back; a tab still running the previous bundle that re-reads
-IndexedDB; and a web `.canari` backup restored on a phone whose store build predates the reader.
-**The flip is one line, owed once a stable carrying this reader has served the web AND
-`minClientVersion` is at or past it** (the second closes the backup path).
+the PIN - and holding a state that build cannot open. That is why **the writer ships OFF**,
+read-first like v1. Two paths hand a v2 blob to an older web bundle: a tab still running the previous
+bundle that re-reads IndexedDB (an unlock after a deploy), and a web deploy rolled back.
+
+**A v2 reader is not enough: the HARDENED one is, so the writer is still OFF.** A v2 reader is in
+every build since `v1.2.7` (#1793), but the builds before the hardening above turn a v2 blob that
+WebCrypto refuses into a wrong answer: `v1.2.7` into `STATE_UNDECRYPTABLE` (the PIN-recovery prompt,
+for a state no PIN opens there), and `v1.4.0` into `STATE_ALTERED`, after which
+`noPinOpensState('altered')` ROTATES the identity, irreversibly - for bytes that may have been
+healthy and only met an engine fault. A v2 blob reaching such a build (an old tab re-initialising, or
+a web rollback down to one) is the backlog's "a damaged MLS state is called a PIN rotation" again. So
+the release carrying the hardened reader ships with `MLS_STATE_SEAL_V2_WRITER_ENABLED = false`, and
+**the flip is its own later pull request, owed once BOTH floors are at or past the release tag that
+carries this reader**: production's `minClientVersion`, AND the lowest tag a web rollback is still
+allowed to reach. A tag, never a date ([durable-rules](../durable-rules.md)). Owed in
+[backlog](../backlog.md#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12).
+
+**Every reader, enumerated on `main` (2026-10-18), for the flip to rely on:** the web load
+(`loadAndInitWasm` -> `openMlsStateBlobV2`) is the ONE entry of the init, the PIN-recovery open
+(`openLocalStateWithKey` -> `loadStateWithKey`) and the reload after a key-package round; every
+native load (Tauri commands, `concurrency.rs`, the Android background JNI, the iOS NSE, the
+`.canari` restore probe in `storage.rs`, the other-account check) goes through
+`MlsManager::load_with_key` / `state_blob::parse`, which reads v2. Nothing else in the frontend reads
+the blob's bytes. Native builds never WRITE v2 (`sealWebMlsState` throws inside Tauri), so on a phone
+the flip changes only the phone's BROWSER.
+
+**Once flipped, it is a one-way door for the DATA, never for the code.** Setting the constant back to
+`false` stops new v2 writes and nothing else: a v2 blob stays v2 until its next checkpoint rewrites
+it legacy. So from the flip on **both v2 readers are permanent**, and the web rollback floor can
+never again go below the tag carrying the hardened reader. `mlsStateSeal.test.ts` already fails if
+the web dispatch or `mls-core`'s `open_v2` leaves the tree, and asserts the writer OFF - the flip PR
+moves that assertion. The encrypt worker and `encryptMlsStateOnMainThread` keep their legacy caller
+until the flip has shipped in a stable, so a revert stays one line; they are deleted after.
 
 **Pinned by** `mls-core/tests/state_blob_v2.rs` (the TypeScript writer's own bytes, frozen in
 `tests/fixtures/webcrypto-v2-peer-state.bin` by `frontend/scripts/freeze-v2-state-blob-fixture.ts`,

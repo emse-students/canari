@@ -157,7 +157,6 @@ a valid file staged by a check that then passes.
 | --- | --- | --- | --- |
 | `tools/cross-client-harness/names.mjs` | `../../../../canari-harness/` | `<parent-of-EMSE>/canari-harness/` | `names.mjs`, the three Chrome profiles, `results.ndjson`, `logs`, `test-accounts.json` |
 | `tools/play-vitals/lib.mjs` | `../../../canari-harness/` | `<EMSE>/canari-harness/` | `play-console-sa.json`, `google-services.json`, `dumps`, AND a stale `names.mjs` |
-| `infrastructure/local/pull-prod-dump.sh` | `$ROOT/../canari-harness/dumps` | `<EMSE>/canari-harness/` | the production dumps |
 
 Both are live and neither is wrong alone; the trap is the shared NAME and that the directory the harness
 does NOT read holds a decoy `names.mjs`, one `VENUE` line apart. Editing it changes nothing and says

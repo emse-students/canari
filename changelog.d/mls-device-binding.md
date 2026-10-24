@@ -1,0 +1,3 @@
+### Security - a KeyPackage is checked against the device it was fetched for; device keys are pinned on first sight
+
+A device whose saved state is provably gone re-enrols as a new device, and its old id is retired once. A device whose leaf is still in the tree is re-added in one commit (Remove and Add together), never for a package that cannot be bound to it, a refusal no retry can lift is remembered rather than re-fetched, the pinned keys and the users seen leaving each tree are exposed for verifiers, and every new device admitted by a signed commit is recorded for the new-device notices the user decided on 2026-10-22. See [mls-protocol](docs/wiki/protocols/mls-protocol.md#device-binding).

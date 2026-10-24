@@ -231,6 +231,52 @@ change failing.
 - **Risk**: low-medium: a test that silently relied on `window` for a fallback. Revalidate: same
   case count, same pass set, and the list of moved files in the PR.
 
+**Built 2026-10-18 (draft PR `chore/tests-t4-node-env`).** `vitest.config.ts` says
+`environment: 'node'`, and the **391** files (2026-10-24) that need a DOM say so on their own first line:
+`// @vitest-environment happy-dom`. The population was SEEDED from `--environment=node` runs, never
+guessed: 149 plain test files (the first whole-suite run) and 150 of the 179 `*.svelte.test.ts` (a
+second run of those alone; the other 29 pass under node and now run there), plus 3 that `main` added
+before the merge and that the node default turned red at once, as designed. The merge of 2026-10-23 seeded 70 more the same way, from one whole-suite run under node: every one failed on a missing DOM global or on an assertion over a `typeof window` arm, none on a timeout. One more passed its tests under node and still read `localStorage` AFTER them (16 unhandled rejections on CI): a seeding run must read the unhandled errors too, not only the failed tests. Of the 150, 142 failed
+on a missing global and 8 on an ASSERTION - code that branches on `typeof window` took its other arm
+(`useChannelWorkspaces`, `.offlineWrites`, `useConversations.currentConvoScope`,
+`feedPaintIdentity`, `signedFeedUrl`, `displayName.reactive`, `displayNames`, `memberOrder`). Both
+are red, which is what seeding needs; the residual risk is the third kind, a test that PASSES under
+node on a non-DOM arm, which no seeding run can see - those files assert what they now run.
+
+**A pragma per file, not a list, and why.** The first version named the 149 plain files in a
+`vitest.dom-files.ts` beside the config. The pragma won on three counts: it travels with the file (a
+rename or a move keeps it, where a list entry goes stale and an entry for a deleted file stays for
+ever, silently); it puts the decision where the reader of the test is; and **a central sorted list of
+149 to 299 paths is one block every parallel pull request appends to**, the exact conflict
+`changelog.d/` was created to remove, and a conflict here blocks the automatic merge. Its one cost is
+real and is guarded: vitest takes the FIRST match of the pragma ANYWHERE in a file's text
+(`detectCodeBlock`), comments and strings included, so a test that merely MENTIONED it would move
+onto happy-dom without a word.
+
+**Revalidated by a permanent guard, and by breaking it twice.** `src/test/environment.test.ts` carries
+no pragma, so it runs where a new DOM test that forgot the line would: it asserts there is no
+`document`/`window` and that a DOM call throws `document is not defined`, and it scans every test
+file for the pragma anywhere but line 1, exactly spelled. Its twin `environment.dom.test.ts` pins that
+the pragma is honoured. Deliberate breaks, then restored: the pragma removed from
+`clickOutside.test.ts` turned all 13 of its cases red with `ReferenceError: document is not
+defined`; the pragma moved to line 2 of `portal.test.ts` made the scan name that file. Same cases
+(8,449 on `main`, +3 guards = 8,452), same pass set; `check` 0 errors, `lint` and `format` clean.
+
+**Time: NO CLAIM, measured locally under load.** One interleaved pair on this machine with other
+agents running: happy-dom everywhere 370 s wall (10 files failing), node by default 395 s (14
+failing); the first version's pair read 733 s vs 641 s mean. The noise is larger than the effect, so
+nothing is concluded locally. On CI, the pull request's first run (list version) took 10.6 min in
+`Test Frontend (Svelte)`, against 7.4-12.7 min (most near 11.6) for the 19 other frontend jobs of the
+same morning: inside the spread. The delta is owed to a few CI runs of this branch against `main`'s.
+
+**What the runs found, owed to WP-T6.** Every local failure in both pairs is vitest's 5 s
+`testTimeout`, and most are WHOLE-TREE SCANS doing their walk inside a test (`accent`,
+`toastLocalization`, `apiUrl.absolute`, `ModalOverlay`, `versionProbeOnUnlockPath`,
+`useNotifications.singleBuilder`, `sectionMenus`, `groupSweep`, `conversations.retire`): each
+re-walks `src/` on its own, and `accent`'s scan alone takes 3.9 s here. Re-run alone, 5 of 6 such
+files were green and `accent` was not - a wall clock measuring the machine, which is WP-T6's class,
+and one shared, memoised file list is the fix it points at.
+
 ### WP-T5 (M) - Triage the source-text tests
 
 - **Change**: each file gets one disposition, written in its header: (a) rewrite as a behavioural
@@ -380,6 +426,26 @@ tests took 2.0 s and 1.8 s ALONE, because ChatArea's mount cost grows with the W
 the 60-row window (300 rows 2.0 s, 70 rows 0.5 s); the test now mounts 80 rows, which shows the same
 60-row cap, median 0.6 s. One run in 20 still crossed 5 s there while the box was running other
 sessions' suites (that run's wall was 59 s against a 15 s median); `testTimeout` was NOT raised.
+
+**The cause of that cost was the component (2026-10-22).** A CPU profile of a 300-row mount put
+~700 ms of ~850 ms in `ChatMessageGroups` creating rows. The first render mounted the WHOLE thread
+(301 groups) before the entry effect cut it to 20 in the same flush
+([chat](frontend/modules/chat.md)). Fixed in `ChatArea`: until the entry effect has run, the window
+is the entry frame. The test mounts 61 rows (the least above 60) and pins that no more than 20
+rows ever exist during the mount. The parallel-run readings are in #2286.
+
+**Two more load failures, and neither is a timeout to raise (2026-10-22).**
+- `graine/frameHandler.test.ts`: the hold on repair announcements is module state, kept on purpose
+  across `setGraineRuntime(null)`. A test interrupted between its hold and its release left the depth
+  at 1, and every later test expecting an announcement failed. One timeout became six failures,
+  shown by throwing inside the drain test. `afterEach` now closes leftover holds through the public
+  path, announcing a probe and releasing until it is delivered. The drain test also signs its 26
+  endorsements before it opens the hold.
+- `PostCard.doubleTap`: a REAL wall-clock dependence. The gesture compares `performance.now()`
+  against a 250 ms window, and the first click's work ran between the two dispatches. Under load
+  that gap passed 250 ms and the double tap read as two single taps (assertion failures, not
+  timeouts). The helper holds the clock still for the pair. With a clock that advances 300 ms per
+  read, 5 of 10 tests fail on the old helper and none on the new one.
 
 ## 6. Expected end state
 

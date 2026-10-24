@@ -207,10 +207,13 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
             val prefs: SharedPreferences = activity.getSharedPreferences(
                 "keystore_aliases", Context.MODE_PRIVATE
             )
-            prefs.edit()
+            // commit(), like the write: a delete that answered before reaching the disk would let a
+            // later write race it.
+            val removed = prefs.edit()
                 .remove("${args.alias}_iv")
                 .remove("${args.alias}_ct")
-                .apply()
+                .commit()
+            if (!removed) throw IllegalStateException("the key entry could not be removed from disk")
 
             invoke.resolve()
         } catch (e: Exception) {
@@ -287,21 +290,23 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
         return cipher
     }
 
-    /// Stores IV + ciphertext in SharedPreferences namespaced by alias.
+    /// Stores IV + ciphertext in SharedPreferences namespaced by alias, DURABLY.
+    ///
+    /// `commit()`, never `apply()`: `apply()` answers before the file is written, and a key change
+    /// moves rows as soon as this resolves - a kill in between left rows under a key the disk never
+    /// held. The Rust bridge then reads the entry back before it counts the write
+    /// (`PluginDeviceKeyStore::store_guarded`).
     private fun storeCipherDataForAlias(
         alias: String, iv: ByteArray, ct: ByteArray
     ) {
         val prefs: SharedPreferences = activity.getSharedPreferences(
             "keystore_aliases", Context.MODE_PRIVATE
         )
-        val editor = prefs.edit()
-        editor.putString(
-            "${alias}_iv", Base64.encodeToString(iv, Base64.DEFAULT)
-        )
-        editor.putString(
-            "${alias}_ct", Base64.encodeToString(ct, Base64.DEFAULT)
-        )
-        editor.apply()
+        val written = prefs.edit()
+            .putString("${alias}_iv", Base64.encodeToString(iv, Base64.DEFAULT))
+            .putString("${alias}_ct", Base64.encodeToString(ct, Base64.DEFAULT))
+            .commit()
+        if (!written) throw IllegalStateException("the key entry could not be written to disk")
     }
 
     /// Reads IV + ciphertext from SharedPreferences for the given alias.

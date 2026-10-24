@@ -612,6 +612,40 @@ it always did.
   `static.klipy.com` - owed as a network trace on dev after an alpha, and on the phones
   ([backlog](../../backlog.md)).
 
+### The GIF picker loads in a controlled way, and a comment GIF says what it is doing (2026-10-22)
+
+User report: the picker shifted its content, was slow to fill, and GIFs struggled to send. Measured
+with a CDP harness (headless Chrome, a modelled relay that answers 503 `busy` past 16 distinct
+downloads, a shared pipe slowing each download as more run together):
+
+| | before | after |
+| --- | --- | --- |
+| relay refusals (blank tiles) | 7 phone / 5 desktop | 0 / 0 |
+| downloads in flight at once | 16 | 6 |
+| tiles that moved (desktop) | 13 (the scrollbar appearing narrowed the grid) | 0 |
+| layout shift (desktop) | 0.0044 | 0 |
+
+- **Weight.** The server adds the provider's smallest rendition as an optional `tiny` when it is
+  strictly narrower than `preview` (`klipy.ts`). `pickGridRendition(gif, tileWidth)` draws the
+  lightest rendition that still covers the tile, from the declared sizes. A comment attaches the
+  small rendition (`commentGifRendition`), not the medium one a chat sends: it is shown at most
+  224 px wide, and the medium one (median 1.1 MB, up to 11.7 MB against the relay's 12 MiB ceiling)
+  was downloaded only to be re-encrypted and uploaded.
+- **Order.** `gifImageGate` lets 6 thumbnails download together, in the order tiles asked (top
+  first); a tile that scrolls away before its turn leaves the queue and never asks the network.
+  `GifTileImage` retries a failed thumbnail once, then shows an icon instead of staying blank.
+- **No shift.** Tiles are always rendered at their declared box (a skeleton tone until the picture
+  lands) and the scroller carries `scrollbar-gutter: stable`, so the grid width never changes.
+- **Reopening is instant.** `gifSearchCache` keeps the pages read in the last five minutes (the
+  server's own `max-age`), in memory only. The query stays the same private, never-logged request.
+- **A failed page can be retried**: a button for the first page and under the grid for a later one,
+  and a search that does not answer in 10 s counts as failed.
+- **Comments.** `fetchGifFile` reads the body as it arrives (progress), under a 25 s deadline, and
+  throws a typed `GifRelayError` (`busy` for the relay's 503, `timeout`, `too-large`, `network`,
+  `rejected`). The composer shows the chip at once with a progress bar, the cause in words and a
+  retry, and holds the send button while the GIF is still arriving. The relay ticket is asked as the
+  composer mounts.
+
 ### The GIF search is the whole screen, and a quoted GIF is a picture (2026-10-05)
 
 **Two reports from the user.** Typing in the panel's search left the picker as a 200 px strip above
@@ -2737,6 +2771,51 @@ function that cannot see the durable row. **A classifier is only installed where
 travelling** - enumerate the frames between the throw and the reader, because one `catch` anywhere
 between them makes the reader unreachable while every test of the reader still passes.
 
+### An exit takes the group's queue with it, before its server step (GRP-6, 2026-10-22)
+
+GRP-6 recorded `[OUTBOX] … REFUSED with 403 … parked, no retry until the next sign-in` on the
+leaver: an entry written at +0 ms, the local state dropped at +26 ms, the refusal at +54 ms. **It was
+not the `memberLeft` notice.** The notice is a direct `mlsService.sendMessage`, which resolves on the
+`POST /api/mls/send` answer (`BaseMlsService.emitFrame` awaits `postApplicationMessage`), so the
+server exit already waited for its DELIVERY. The refused entry was another frame of the same group in
+the durable outbox: dropping the selection ends the open conversation's read debounce, whose cleanup
+hands the owed read watermark to the outbox, and that flush lost the race to the membership's end.
+
+So `exitGroupAndCleanup`, for a leave and a delete alike:
+
+- revokes the group's owed read mark (`forgetDmReadMark`) synchronously, before any await, so the
+  debounce cleanup no longer names the group and no sign-in re-queues it;
+- after recording the owed exit and BEFORE the server step, SETTLES the group's outbox
+  (`drainOutboxForExit` -> `OutboxController.drainForExit`). A lane already running for the group is
+  AWAITED, so a send in flight settles before the membership ends rather than racing it. The exit
+  then claims the lane and drains it in queue order, each entry skipping its backoff once: the
+  membership and the MLS state still exist, so a text written just before leaving is SENT. What
+  cannot go (offline, held, an upload still running) is withdrawn under the same claim - so nothing
+  withdrawn can be on the wire - and logged by kind as lost
+  (`[OUTBOX] leave of <id>…: N of M queued entries sent before the server step, K lost (1 text)`);
+- every enqueue reads the DURABLE owed exit (`pendingGroupExits`) and refuses a group whose exit is
+  owed, before its write and again after it - whichever of the exit and the write comes second sees
+  the other, so no clock is involved. A refused read mark then leaves the owed-mark ledger too; a
+  refused text or file is said at `warn`, since only an exit refused for ever can reach that;
+- every ordinary flush reads the same owed exit, once per lane pass, and WITHDRAWS the group's rows
+  instead of sending them (`[OUTBOX] lane <id>…: this device owes the leave of the group ... N queued
+  entries withdrawn, never sent into the refusal`, at `warn`). Only the exit's own drain (`exiting`)
+  may still send. This covers a KILL between `recordPendingGroupExit` and that drain: on relaunch the
+  replay of the owed exit may end the membership before or after the first flush, and either way no
+  row of the group is posted into the 403 (review of #2259). The replay itself is unchanged and needs
+  no live outbox controller, so its order against the outbox at start-up does not matter;
+- a withdrawn entry whose send fails is dropped, and the line says what that means for who withdrew
+  it: an author's delete, a newer read mark superseding it, the exit, or another tab.
+
+**A notice that fails is LOST, not sent later, and the exit goes on.** It cannot be queued - a frame
+needs the MLS state and the membership the exit removes - and holding the exit for it would keep a
+user in a group they asked to leave for as long as the link is down. The failure is logged
+(`[GROUP] memberLeft notice … NOT delivered`, `[DELETE] groupDeleted notice … NOT delivered`), where
+it used to be a bare `catch`. What the others lose is the visible line only: the roster changes with
+the server half (replayed by the owed exit when it failed too), and `removeStrayLeaves` collects the
+leaver's leaf. An eviction is NOT this seam: the evicted device did not ask to be out, a re-add can
+reverse it, and its queued entries stay for that case.
+
 ## The render window is a pointer into an array the component does not own (WP-EMPTYVIEW-1)
 
 `ChatArea` never renders a whole conversation. It renders a WINDOW - `messageGroups.slice(start,
@@ -2780,6 +2859,7 @@ render, and every consumer - the slice, the hidden-above count, `loadOlderGroups
 `fillViewportThenPin`, `navigateToMessage` - reads the clamped value while pagination keeps writing
 the raw state. The invariant it guarantees is the one worth remembering: **a non-empty list always
 yields a non-empty window.** `renderWindow.test.ts` pins it across every combination of stored index
+and list length, which is the assertion that fails against the old arithmetic.
 
 **The entry window is 20 groups, then 60 (2026-10-14).** Mounting a page of rows is one task that
 scales with the rows (339-635 ms for 56-200 rows on a Mi 9T) and nothing paints until it ends. So an
@@ -2792,7 +2872,17 @@ the start. Known duplication: that scroll compensation repeats what `observeThre
 growth above the viewport; folding the two is a note, not done. The salon skeleton raised by a history
 request issued at the tap is keyed by its salon (`skeletonSalon`). `ChatArea.entryWindow.svelte.test.ts`
 pins the row counts under a modelled geometry.
-and list length, which is the assertion that fails against the old arithmetic.
+
+**The render BEFORE the entry is the entry frame too (2026-10-22).** The entry effect sets
+`windowStart`, but an effect runs AFTER the render it follows. So the first render of a mount used
+the initial `windowStart` of 0 and mounted EVERY group of the thread. A switch used the window the
+previous conversation had left. The entry frame then cut it to 20 in the same flush, so the DOM
+looked right while the work was thrown away. That cost grew with the whole thread, not the window:
+2.0 s at 300 rows against 0.5 s at 70 under happy-dom, and the 20/60 split above existed to bound
+it. `awaitingEntry` (the conversation's entry key differs from `lastConversationKey`) now makes the
+window the entry frame until the effect has run. The test counts every row that EXISTED during the
+mount, from the observer's removals as well as its additions, because the DOM after the flush shows
+20 either way.
 
 The replacement itself - the reason the window and the list could disagree at all - is gone as of
 2026-08-12, see below.

@@ -13,8 +13,7 @@ import { appendLog } from '$lib/utils/sessionLog';
  * the call ends, and hands the notification's hang-up back to the call.
  *
  * The bridge is `window.canariCall`, registered by `MainActivity` ONLY in a build whose manifest
- * declares the service (`src/calls/AndroidManifest.xml`, merged when `VITE_DEPLOY_ENVIRONMENT` is
- * `development`). Outcomes come back as one DOM event, {@link NATIVE_CALL_EVENT}.
+ * declares the service (the main manifest, since the flip of `CALLS_COMPILED`). Outcomes come back as one DOM event, {@link NATIVE_CALL_EVENT}.
  *
  * Off Android this does nothing BY DESIGN: the browser has no such service and iOS's equivalent is
  * CallKit (WP-C-BG-I). On Android with no bridge, the call works on screen only, and the log says so

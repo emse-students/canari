@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A FAILED SALON SEND SHOWS ITS FAILURE WHEREVER IT IS, AND OFFERS RETRY AND DISCARD (WP-OFF-2).
  *

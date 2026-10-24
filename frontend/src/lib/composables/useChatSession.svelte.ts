@@ -484,7 +484,8 @@ export function useChatSession() {
       file: File,
       log: (msg: string) => void,
       clearConversations: () => void,
-      reloadConversations: () => Promise<void>
+      reloadConversations: () => Promise<void>,
+      recoveryCode?: string
     ) =>
       importBackupImpl(
         ctx,
@@ -494,7 +495,8 @@ export function useChatSession() {
           isImporting = v;
         },
         clearConversations,
-        reloadConversations
+        reloadConversations,
+        recoveryCode
       ),
     /** Processes pending MLS invitations from our other devices (multi-device sync). */
     processDeviceInvitationsLocally: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>

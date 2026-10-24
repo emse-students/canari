@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A POST'S VIDEO IS PLAYED BY CANARI'S PLAYER, NEVER BY THE ENGINE'S `controls` (user, 2026-10-01).
  *
@@ -94,6 +95,16 @@ describe("PostMedia - a video is Canari's to play", () => {
     for (const video of document.querySelectorAll('video')) {
       expect(video.hasAttribute('controls')).toBe(false);
     }
+  });
+
+  it('a letterboxed clip is CONTAINED, the whole frame, and a gallery cell crops it', async () => {
+    const whole = await mountVideo({ letterbox: true });
+    const contained = whole.querySelector('video')!;
+    expect(contained.getAttribute('class')).toContain('object-contain');
+    expect(contained.getAttribute('class')).not.toContain('object-cover');
+    document.body.innerHTML = '';
+    const cell = await mountVideo({ letterbox: true, videoFit: 'cover' });
+    expect(cell.querySelector('video')!.getAttribute('class')).toContain('object-cover');
   });
 
   it("shows Canari's poster while the bytes are on their way", async () => {

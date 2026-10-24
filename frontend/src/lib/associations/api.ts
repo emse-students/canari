@@ -1,6 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, mediaUrl, socialUrl } from '$lib/utils/apiUrl';
+import { imageSrcOrNull } from '$lib/utils/imageSrc';
 import {
   setAssociationSuperAdmin,
   setContentModerator,
@@ -367,10 +368,13 @@ export function mediaPublicBaseUrl(): string {
   return mediaUrl();
 }
 
-/** Resolve association logo URL for `<img src>` (handles relative `/api/…` paths). */
+/**
+ * Resolve association logo URL for `<img src>` (handles relative `/api/…` paths). A value that is
+ * neither a path nor an http(s) URL resolves to `null` (see `imageSrcOrNull`).
+ */
 export function associationLogoSrc(logoUrl: string | null | undefined): string | null {
-  if (!logoUrl?.trim()) return null;
-  const u = logoUrl.trim();
+  const u = imageSrcOrNull(logoUrl);
+  if (u === null) return null;
   if (u.startsWith('/')) {
     return `${mediaPublicBaseUrl()}${u}`;
   }

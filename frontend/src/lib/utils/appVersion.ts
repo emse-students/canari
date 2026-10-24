@@ -73,6 +73,8 @@ export type ServerVersionInfo = {
   maintenance: PlatformMaintenanceInfo;
   callsMode: CallsMode;
   livesMode: LivesMode;
+  /** Whether this core-service redeems a code with a PKCE verifier - see {@link AppVersionCheckResult}. */
+  oidcPkce: boolean;
 };
 
 export type AppVersionCheckResult = {
@@ -87,6 +89,13 @@ export type AppVersionCheckResult = {
   callsMode: CallsMode;
   /** Whether the server lets lives answer; `off` until a server has said otherwise. */
   livesMode: LivesMode;
+  /**
+   * A CAPABILITY of the server, not a switch: core-service forwards a PKCE `code_verifier` to
+   * MiConnect. `startOidcLogin` sends a `code_challenge` only when this is true, because an older
+   * core-service drops the verifier and MiConnect refuses a challenged code redeemed without it.
+   * `false` until a server has said so, and for every server older than the field.
+   */
+  oidcPkce: boolean;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -129,6 +138,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     maintenance?: unknown;
     calls?: unknown;
     lives?: unknown;
+    oidcPkce?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -139,6 +149,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     maintenance: normalizeMaintenance(obj.maintenance),
     callsMode: normalizeCallsMode(obj.calls),
     livesMode: normalizeLivesMode(obj.lives),
+    oidcPkce: obj.oidcPkce === true,
   };
 }
 
@@ -154,6 +165,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   maintenance: PlatformMaintenanceInfo;
   calls: { mode: CallsMode };
   lives: { mode: LivesMode };
+  oidcPkce: boolean;
 } {
   return {
     version: info.version,
@@ -161,6 +173,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     maintenance: info.maintenance,
     calls: { mode: info.callsMode },
     lives: { mode: info.livesMode },
+    oidcPkce: info.oidcPkce,
   };
 }
 /**
@@ -325,6 +338,7 @@ export function buildAppVersionCheckResult(
     maintenance,
     callsMode: serverInfo?.callsMode ?? 'off',
     livesMode: serverInfo?.livesMode ?? 'off',
+    oidcPkce: serverInfo?.oidcPkce ?? false,
   };
 }
 

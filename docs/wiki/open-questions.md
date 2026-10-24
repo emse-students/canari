@@ -16,20 +16,6 @@ measurement or a device nobody here has. None of them is waiting on an implement
 
 ---
 
-### DECISION OWED - should a shared association post preview, whatever its audience? (2026-10-18)
-
-**What happens today.** `PostPreviewService.findShareable` previews EVERY published association post to
-somebody with no session. It used to refuse a post whose author narrowed the audience (D33, WP6b);
-the per-post audiences table was dropped in migration 073 and nothing narrows a post any more, so a
-post only a campus was meant to read now unfurls its text and image to anyone holding the link.
-
-**The question for the user.** Is "an association post is a communication its authors want carried"
-still true for posts scoped to a campus, or should the preview refuse (generic card) the posts the
-feed shows to one campus only? Nothing is to be built until this is answered
-([seo](frontend/seo.md#a-shared-post-and-the-ten-days-it-previewed-as-nothing)).
-
----
-
 ### DECISION OWED - may a drain that only RECEIVED application frames skip its full checkpoint? (2026-10-13)
 
 **ANSWERED 2026-10-18 (user): yes, but ONLY after the Mi 9T crash measurement below.** The work package is [WP-CHECKPOINT-SKIP](backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered); this section stays as the measured reasoning and the protocol, and is deleted when the measurement is read and the build ships.
@@ -355,7 +341,7 @@ would be a threshold nobody has measured against the population it would run on.
 > **Already shipped, do not re-open:** _"ne garder que les messages les plus recents (dernier mois),
 > et le reste recuperable en demandant l'historique a un appareil mobile"_ is exactly the device
 > window plus the scrollback range request delivered in the history-reconciliation rework - web keeps
-> 90 days, mobile and desktop 5 years, and reaching the top of the scrollback asks a peer for the
+> 90 days, mobile and desktop 5 years CLAIMED (the local garbage collector prunes at 90 days everywhere today - [backlog](backlog.md)), and reaching the top of the scrollback asks a peer for the
 > range below the window. See [history-reconciliation](protocols/history-reconciliation.md) and
 > `historyWindow.ts`.
 

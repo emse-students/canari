@@ -57,9 +57,19 @@ describe('the gate reads what it claims', () => {
   });
 });
 
-describe('every menu is a segmented control or a hub', () => {
-  const markup = allMarkup(src).map(({ file, body }) => ({ file: posix(file), body }));
+// THE TREE IS READ ONCE, HERE, AND NOT INSIDE A TEST. A test body is charged against vitest's 5 s
+// timeout, and under the full suite, with every worker reading the disk at once, the walk of every
+// shipped `.ts` and `.svelte` file took seconds on its own. Module scope is collection time, which
+// no per-test timeout measures.
+const markup = allMarkup(src).map(({ file, body }) => ({ file: posix(file), body }));
+const code = shippedSourceFiles(join(src, 'lib'))
+  .concat(shippedSourceFiles(join(src, 'routes')))
+  .map((file) => ({
+    file: posix(relative(src, file)),
+    body: withoutAnyComments(readFileSync(file, 'utf8')),
+  }));
 
+describe('every menu is a segmented control or a hub', () => {
   it('no variable is switched between string literals by inline handlers (a hand-drawn tab row)', () => {
     const offenders = markup.flatMap(({ file, body }) =>
       [...inlineTabAssignments(body)]
@@ -78,14 +88,7 @@ describe('every menu is a segmented control or a hub', () => {
   });
 
   it('nothing but the overlay stack writes the History API', () => {
-    const files = shippedSourceFiles(join(src, 'lib')).concat(
-      shippedSourceFiles(join(src, 'routes'))
-    );
-    const writers = files
-      .map((file) => ({
-        file: posix(relative(src, file)),
-        body: withoutAnyComments(readFileSync(file, 'utf8')),
-      }))
+    const writers = code
       .filter(({ body }) => /\bhistory\.(pushState|replaceState)\s*\(/.test(body))
       .map(({ file }) => file);
     expect(writers).toEqual([HISTORY_OWNER]);

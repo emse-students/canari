@@ -1,5 +1,5 @@
 import { GraineSealUnavailableError, type GraineSealUnavailableReason } from './sealUnavailable';
-import type { IMlsService } from '$lib/mls-client/IMlsService';
+import type { GraineRunReading, IMlsService } from '$lib/mls-client/IMlsService';
 import { scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import type { GraineDistributionFrame, StoredGraineSession } from '$lib/db/types';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
@@ -83,6 +83,22 @@ export function readDistributionEpoch(
   if (!mlsService.isDistributionBaseSettled(groupId)) return { unavailable: 'key-group-unsettled' };
   if (isInEpochGap(groupId)) return { unavailable: 'key-group-catching-up' };
   return { epoch: mlsService.getEpoch(groupId) };
+}
+
+/**
+ * The departure tracker of `scope`'s key group at its current epoch - what the outbound rotation
+ * judges an epoch move by (`docs/wiki/protocols/graine-removal-tracker.md`).
+ *
+ * Read from the same MLS instance whose next send seals the distribution frame. Throws like the
+ * distribution does when the scope has no group, so a seal never proceeds on a run it could not read.
+ */
+export async function readKeyGroupRun(
+  mlsService: IMlsService,
+  scope: DistributionScope
+): Promise<GraineRunReading> {
+  const groupId = mlsService.distributionGroupFor(scope);
+  if (!groupId) throw new GraineDistributionUnavailableError(scope, 'key-group-unregistered');
+  return mlsService.graineRun(groupId);
 }
 
 /**

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -20,7 +21,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const tauriInvokeStub = vi.fn((_cmd?: string): Promise<unknown> => Promise.resolve(null));
 
 Object.defineProperty(globalThis, '__TAURI_INTERNALS__', {
-  value: { invoke: tauriInvokeStub, transformCallback: vi.fn() },
+  // No sign-out owes a token deletion in these cases, whatever each one stubs for the rest.
+  value: {
+    invoke: (cmd?: string) =>
+      cmd === 'complete_owed_push_token_deletion' ? Promise.resolve(true) : tauriInvokeStub(cmd),
+    transformCallback: vi.fn(),
+  },
   writable: true,
   configurable: true,
 });

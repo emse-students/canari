@@ -7,7 +7,7 @@ import {
   Param,
   Query,
   BadRequestException,
-  ForbiddenException,
+  ConflictException,
   UseGuards,
   Headers,
   Res,
@@ -24,7 +24,9 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { PushSecretGuard, verifyPushSecret } from '../guards/push-secret.guard';
+import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import type { Response } from 'express';
 import {
   sanitizeEpoch,
@@ -33,6 +35,9 @@ import {
   sanitizeQueryValue,
 } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
+import { parseVoipTokenField } from '../utils/voip-token';
+import { PAYLOAD_RELATION, materializeDeliveries } from '../utils/queued-payload';
+import { parseSessionId } from '../utils/session-id';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
@@ -44,10 +49,47 @@ import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 const PUSH_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
 
 /**
+ * What `POST mls/push/send-welcome-and-commit` answers, typed so a native caller branches on a
+ * TOKEN and never on prose.
+ *
+ * - `accepted` (HTTP 201): the commit passed the gate at `newEpoch - 1` and the members have it.
+ *   Its Welcome was stored in the same transaction, so an acceptance always has its Welcome. The
+ *   caller installs the state it staged, and only on this answer.
+ * - `rejected` (HTTP 409): nothing was recorded, fanned out or sent. `reason` is the gate's token -
+ *   `epoch_mismatch` (the caller's base is not the group's epoch, `currentEpoch` says which is),
+ *   `concurrent_commit` (another commit held the lock), `not_a_member` (the target was removed),
+ *   `welcome_target_unknown` / `welcome_target_not_member` (the Welcome's target is refused) -
+ *   and the caller discards what it staged.
+ */
+export type BackgroundWelcomeAnswer =
+  | { status: 'accepted'; newEpoch?: number }
+  | { status: 'rejected'; reason: string; currentEpoch?: number };
+
+/** A refusal of the background Welcome route: HTTP 409 carrying the typed body. */
+function backgroundWelcomeRefusal(
+  answer: Extract<BackgroundWelcomeAnswer, { status: 'rejected' }>
+): ConflictException {
+  return new ConflictException(answer);
+}
+
+/**
  * What a blind salon banner may say it lacked - the four terms of the phone's own test
  * (`postChannelNotification` on Android, `handleChannelMessage` in the iOS extension).
  */
 const BLIND_BANNER_TERMS = new Set(['seed', 'ciphertext', 'nonce', 'messageIndex']);
+
+/**
+ * Key-group requests one user may make per minute on EACH of `mls/push/key-group-base` and
+ * `mls/push/key-group-join` (separate buckets: the throttler keys on the route).
+ *
+ * Sized on the client's own bound, not on an average: a push service attempts each key group once
+ * per app start (the native ledger), and that ledger holds at most 64 groups - so 64 a minute is
+ * every group a device can legitimately try at once, and anything past it is a stream nobody's
+ * phone produces. Each request asks social-service for the entitlement, which is the cost bounded.
+ * A refusal is the throttler's `429`, before the PushSecret's work is spent on the service; the
+ * phone settles it `deferred` on that base, never `lost`.
+ */
+export const KEY_GROUP_PUSH_LIMIT_PER_MINUTE = 64;
 
 /** Outcome vocabulary of the `[PUSH_AVATAR]` line. */
 type AvatarPushOutcome = 'served' | 'absent' | 'unavailable' | 'unreachable' | 'rejected';
@@ -72,62 +114,15 @@ export class PushController {
 
   /**
    * Verifies the PushSecret auth header against the stored secret for the given device.
-   * Throws ForbiddenException on failure. Used by all background-service endpoints.
+   * Throws ForbiddenException on failure. Used by all background-service endpoints; the check
+   * itself is `verifyPushSecret`, shared with `PushSecretGuard`.
    */
   private async verifyPushSecretAuth(
     authHeader: string,
     userId: string,
     deviceId: string
   ): Promise<void> {
-    const secret = authHeader?.startsWith('PushSecret ')
-      ? authHeader.slice('PushSecret '.length).trim()
-      : null;
-    if (!secret) {
-      this.logger.warn(
-        `[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=header_missing`
-      );
-      throw new ForbiddenException('PushSecret header required');
-    }
-    const pt = await this.pushTokenRepo.findOne({
-      where: { userId, deviceId },
-    });
-    const stored = pt?.pushSecret;
-    if (!stored) {
-      this.logger.warn(
-        `[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=no_stored_secret`
-      );
-      throw new ForbiddenException('Invalid push secret');
-    }
-
-    // Try SHA-256 hash first (new format)
-    const hashed = crypto.createHash('sha256').update(secret).digest('hex');
-    if (stored.length === hashed.length) {
-      try {
-        if (crypto.timingSafeEqual(Buffer.from(stored, 'utf8'), Buffer.from(hashed, 'utf8'))) {
-          return; // OK - new format
-        }
-      } catch {
-        /* fall through */
-      }
-    }
-
-    // Fallback: compare plaintext (legacy format, backward-compatible)
-    try {
-      if (
-        stored.length === secret.length &&
-        crypto.timingSafeEqual(Buffer.from(stored, 'utf8'), Buffer.from(secret, 'utf8'))
-      ) {
-        // Migrate silently to hashed format
-        await this.pushTokenRepo.update({ userId, deviceId }, { pushSecret: hashed });
-        this.logger.log(`[PUSH_SECRET] migrated to hash for ${userId}:${deviceId}`);
-        return; // OK - legacy format, now migrated
-      }
-    } catch {
-      /* fall through */
-    }
-
-    this.logger.warn(`[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=mismatch`);
-    throw new ForbiddenException('Invalid push secret');
+    await verifyPushSecret(this.pushTokenRepo, this.logger, authHeader, userId, deviceId);
   }
 
   private isTerminalPushTokenError(error: unknown): boolean {
@@ -287,6 +282,13 @@ export class PushController {
   /**
    * Register or refresh a push token for a device.
    * Upserts on (userId, deviceId) - one token per device per user.
+   *
+   * The row is BOUND TO THE SESSION that registered it: `X-Session-Id` is the `sid` claim of the
+   * caller's access token, set by nginx from core-service's verify (never by the client - nginx
+   * overwrites it on every authenticated location). Ending that session deletes this row and no
+   * other, so a re-sign-in on the same device, which rewrites the row with its own session, is never
+   * undone by the old session's end. Written on EVERY registration, null included: a row rewritten
+   * by a token without the claim must not keep naming a session that did not write it.
    */
   @UseGuards(ThrottlerGuard, HeaderAuthGuard)
   @Post('mls/push/register')
@@ -296,25 +298,25 @@ export class PushController {
       token: string;
       deviceId: string;
       platform?: string;
-      voipToken?: string;
+      voipToken?: string | null;
       locale?: string;
     },
-    @Headers('x-user-id') userIdRaw: string
+    @Headers('x-user-id') userIdRaw: string,
+    @Headers('x-session-id') sessionIdRaw?: string
   ) {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const sessionId = parseSessionId(sessionIdRaw, 'X-Session-Id');
 
     if (typeof body.token !== 'string' || !body.token.trim()) {
       throw new BadRequestException('token is required');
     }
     const token = body.token.trim().slice(0, 500);
     const platform: 'android' | 'ios' = body.platform === 'ios' ? 'ios' : 'android';
-    // PushKit VoIP token (iOS, WP-XP-5): present when the native registry already fired at
-    // registration time; otherwise attached later via POST /mls/push/refresh-token.
-    const voipToken =
-      typeof body.voipToken === 'string' && body.voipToken.trim()
-        ? body.voipToken.trim().slice(0, 255)
-        : undefined;
+    // PushKit VoIP token (iOS, WP-C6): a token, an explicit null from a binary without the native
+    // ring (clears the column), or nothing (left alone) - see `parseVoipTokenField`. A ring build
+    // whose registry has not fired yet attaches it later via POST /mls/push/refresh-token.
+    const voipToken = platform === 'ios' ? parseVoipTokenField(body.voipToken) : undefined;
 
     // The language this device reads, for the ONE sentence this server still composes
     // (`APNS_FALLBACK_BODY`). Stored raw and bounded rather than validated against a list: a value
@@ -342,14 +344,16 @@ export class PushController {
         token,
         platform,
         pushSecret,
-        ...(voipToken ? { voipToken } : {}),
+        sessionId,
+        ...(voipToken !== undefined ? { voipToken } : {}),
         ...(locale ? { locale } : {}),
       },
       { conflictPaths: ['userId', 'deviceId'] }
     );
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform} ` +
-        `locale=${locale ?? 'unstated'}`
+        `locale=${locale ?? 'unstated'} voip=${voipToken === undefined ? 'unstated' : voipToken === null ? 'none' : 'set'} ` +
+        `session=${sessionId ? sessionId.slice(0, 8) : 'none'}`
     );
     // rawSecret returned ONCE - the client must persist it.
     return { status: 'registered', pushSecret: rawSecret };
@@ -374,9 +378,14 @@ export class PushController {
 
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
-    const queued = await this.queuedMessageRepo.findOne({
+    const found = await this.queuedMessageRepo.findOne({
       where: { id: messageId, recipientId: userId, deviceId },
+      relations: PAYLOAD_RELATION,
     });
+    // A key-group record stores its ciphertext once, in `queued_payload`: put it back on the row. A
+    // record whose payload is missing is withheld (accused at error there) and answered as absent,
+    // never as a frame - the phone hands an empty answer nothing to decrypt and nothing to ACK.
+    const [queued] = found ? materializeDeliveries([found], this.logger, 'fetch-proto') : [];
     if (!queued) {
       // Already ACKed or non-existent - return empty (no error to avoid retry loops).
       return { proto: '', ratchetTree: '' };
@@ -727,18 +736,25 @@ export class PushController {
   }
 
   /**
-   * Sends a Welcome to the target device and broadcasts the accompanying commit
-   * to all current group members. Called by the background service after creating
-   * the Welcome package via Rust JNI (nativeCreateWelcomeBackground).
+   * Sends a Welcome to the target device once the accompanying commit has passed the gate.
+   * Called by the Android background service after staging the Welcome via Rust JNI
+   * (`nativePrepareWelcomeBackground`).
    *
-   * The commit is validated (epoch-gated) before any Welcome or broadcast, exactly like the
-   * foreground `/api/mls/commit` path: this keeps the server's `activeEpoch` in phase with the real
-   * MLS epoch so subsequent foreground commits are not rejected as `epoch_mismatch` (C6). A
-   * rejected commit yields neither a Welcome nor a broadcast.
+   * The commit is validated (epoch-gated) before any Welcome, exactly like the foreground
+   * `/api/mls/commit` path: this keeps the server's `activeEpoch` in phase with the real MLS epoch
+   * so subsequent foreground commits are not rejected as `epoch_mismatch` (C6). `validateCommit`
+   * records the commit, stores its Welcome in the same transaction, fans the commit out and
+   * delivers the Welcome from its stored row; this route only authenticates and answers.
    *
    * `baseEpoch` and `commitPayload` are BOTH required, and both are handed to `validateCommit` -
-   * the payload as `proto`, which is what makes the commit replayable. Passing one without the
-   * other is what broke this route: see the CHANGELOG entry for this fix.
+   * the payload as `proto`, which is what makes the commit replayable. `groupInfo`, the base of the
+   * epoch the commit creates, rides with it and is published in the same transaction (COMM-22).
+   *
+   * THE ANSWER SAYS WHAT HAPPENED, IN ITS STATUS AND ITS BODY ({@link BackgroundWelcomeAnswer}).
+   * `201 {status: 'accepted'}` is the one answer after which the phone installs the state it
+   * staged; every refusal is a `409 {status: 'rejected', reason}`. A refusal used to be a 201
+   * too, and the phone - which reads the status code - logged "Welcome sent" for a Welcome the
+   * server had refused (2026-10-22, docs/wiki/backlog.md).
    *
    * Auth: PushSecret (no JWT).
    */
@@ -756,6 +772,8 @@ export class PushController {
       ratchetTreePayload?: string;
       commitPayload: string;
       baseEpoch: number;
+      /** The external-join base of the epoch this commit creates (COMM-22), base64. */
+      groupInfo?: string;
     }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
@@ -775,8 +793,8 @@ export class PushController {
     //
     // `baseEpoch` was optional, and its absence meant "broadcast without validating" - the exact
     // hole `validateCommit`'s own `proto` guard exists to close, reached by the one door that
-    // skipped it. Both native callers send it whenever their JNI reports one, and the current JNI
-    // always does (`nativeCreateWelcomeBackground` puts `baseEpoch` in its result unconditionally),
+    // skipped it. The native caller sends it whenever its JNI reports one, and the current JNI
+    // always does (`nativePrepareWelcomeBackground` puts `baseEpoch` in its result unconditionally),
     // so the only client that can omit it now is one whose NATIVE code predates that. Such a client
     // is told it is too old instead of silently advancing an epoch nothing recorded.
     if (typeof body.baseEpoch !== 'number' || !Number.isFinite(body.baseEpoch)) {
@@ -803,15 +821,15 @@ export class PushController {
       this.logger.warn(
         `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} not in dm_group_members (removed) - re-add refused`
       );
-      return { status: 'rejected', reason: 'not_a_member' };
+      throw backgroundWelcomeRefusal({ status: 'rejected', reason: 'not_a_member' });
     }
 
     // The background commit advances the real epoch: validate it first (same as foreground path)
     // to keep activeEpoch in sync, otherwise the next foreground commit is wrongly rejected (C6).
-    // Validate BEFORE sending the Welcome: a rejection must neither broadcast the commit nor deliver
-    // a Welcome into a state other members won't adopt.
+    // A rejection neither broadcasts the commit nor stores a Welcome into a state other members
+    // won't adopt.
     //
-    // `proto` is the commit itself, and it is the same value broadcast below. Without it
+    // `proto` is the commit itself, the value recorded and fanned out. Without it
     // `validateCommit` refuses outright - a commit it cannot record may not move the counter,
     // because `IDX_mls_commit_log_group_epoch` is UNIQUE and no later call can refill a skipped
     // epoch.
@@ -826,45 +844,47 @@ export class PushController {
         proto: body.commitPayload,
         // The one device this re-add commit puts in the tree, recorded with the advance.
         admits: [{ userId: targetUserId, deviceId: targetDeviceId }],
+        // THE BASE OF THE EPOCH THIS COMMIT CREATES, published in the advance's own transaction
+        // exactly as the foreground's `submitCommit` does (COMM-22). Only the committer can export
+        // it; without it the published base stays one epoch behind and every external join is
+        // refused as stale until a member that holds the tree republishes it.
+        ...(typeof body.groupInfo === 'string' && body.groupInfo
+          ? { groupInfo: body.groupInfo }
+          : {}),
+        // ITS WELCOME, held to the Welcome's bar before the epoch moves and stored in the same
+        // transaction as the advance - so an accepted commit always has its Welcome.
+        welcome: {
+          userId: targetUserId,
+          deviceId: targetDeviceId,
+          payload: body.welcomePayload,
+          ...(typeof body.ratchetTreePayload === 'string'
+            ? { ratchetTree: body.ratchetTreePayload }
+            : {}),
+        },
       },
       userId
     );
     if (!validation.accepted) {
       this.logger.warn(
-        `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - neither Welcome nor broadcast`
+        `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - no Welcome, answered 409`
       );
-      return {
+      throw backgroundWelcomeRefusal({
         status: 'rejected',
-        reason: validation.reason,
+        reason: validation.reason ?? 'unspecified',
         currentEpoch: validation.currentEpoch,
-      };
+      });
     }
     this.logger.log(
       `[BG_WELCOME][${traceId}] commit accepted -> activeEpoch=${validation.newEpoch}`
     );
 
-    // Send Welcome to target device (null authUserId skips membership check)
-    await this.messagingService.sendWelcome(undefined, {
-      targetDeviceId,
-      targetUserId,
-      senderUserId: userId,
-      welcomePayload: body.welcomePayload,
-      ratchetTreePayload: body.ratchetTreePayload,
-      groupId,
-    });
-
-    // Broadcast commit to all existing group members (sender + target excluded)
-    await this.messagingService.sendMessage({
-      proto: body.commitPayload,
-      groupId,
-      senderId: userId,
-      senderDeviceId: deviceId,
-      isCommit: true,
-      excludeDeviceIds: [`${targetUserId}:${targetDeviceId}`],
-    });
-
-    this.logger.log(`[BG_WELCOME][${traceId}] DONE`);
-    return { status: 'done' };
+    // THE WELCOME WAS STORED WITH THE ADVANCE (`ValidateCommitBody.welcome`) and delivered from
+    // that row by `validateCommit`, which also fanned the commit out, excluding the admitted target.
+    // There is no second call left to fail after the epoch moved, so an acceptance always has its
+    // Welcome.
+    this.logger.log(`[BG_WELCOME][${traceId}] DONE Welcome stored with the commit`);
+    const answer: BackgroundWelcomeAnswer = { status: 'accepted', newEpoch: validation.newEpoch };
+    return answer;
   }
 
   /**
@@ -896,6 +916,63 @@ export class PushController {
     const sinceEpoch = sanitizeEpoch(body.sinceEpoch, 'sinceEpoch');
 
     return this.messagingService.getCommitsSince(groupId, sinceEpoch, userId);
+  }
+
+  /**
+   * The external-join base of a key group, for a phone whose app is killed and that just received a
+   * salon push sealed on a key group it holds no seat in (channel-encryption section 26). Gated by
+   * the same social-service entitlement as the app's own join - see
+   * {@link MessagingService.readKeyGroupBaseForPush}.
+   *
+   * Auth: PushSecret (no JWT - app may be killed), proven ONCE by `PushSecretGuard` - the handler
+   * does not verify it again, which would be a second database read for the same answer.
+   */
+  @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
+  @Throttle({ default: { limit: KEY_GROUP_PUSH_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @Post('mls/push/key-group-base')
+  async getKeyGroupBasePush(@Body() body: { userId: string; deviceId: string; groupId: string }) {
+    // The PushSecret of `userId:deviceId` is proven by `PushSecretGuard`, first on this route.
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
+    return this.messagingService.readKeyGroupBaseForPush(groupId, userId, deviceId);
+  }
+
+  /**
+   * Submits the external commit a killed app built from {@link getKeyGroupBasePush}'s base. Only an
+   * external commit into a key group is taken here; everything else about it is `validateCommit`'s
+   * - see {@link MessagingService.submitKeyGroupJoinForPush}.
+   *
+   * Auth: PushSecret (no JWT - app may be killed), proven ONCE by `PushSecretGuard`.
+   */
+  @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
+  @Throttle({ default: { limit: KEY_GROUP_PUSH_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @Post('mls/push/key-group-join')
+  async submitKeyGroupJoinPush(
+    @Body()
+    body: {
+      userId: string;
+      deviceId: string;
+      groupId: string;
+      baseEpoch: number;
+      proto: string;
+      groupInfo?: string;
+    }
+  ) {
+    // The PushSecret of `userId:deviceId` is proven by `PushSecretGuard`, first on this route.
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    return this.messagingService.submitKeyGroupJoinForPush(
+      {
+        groupId: body.groupId ?? '',
+        deviceId,
+        senderId: userId,
+        baseEpoch: body.baseEpoch,
+        proto: body.proto,
+        groupInfo: body.groupInfo,
+      },
+      userId
+    );
   }
 
   /**

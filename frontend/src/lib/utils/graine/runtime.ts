@@ -69,7 +69,10 @@ export function setGraineRuntime(next: GraineRuntime | null): void {
   runtime = next ? { ...next, userId: next.userId.toLowerCase() } : null;
   if (!next) {
     scopeByChannel.clear();
+    listedCommunities.clear();
+    seedsAwaitingListing.clear();
     historyVisibilityByWorkspace.clear();
+    dropHistoryRuleWaiters(null, 'the session ended');
     seedCache.clear();
     openedKeys.clear();
     repairListener = null;
@@ -101,7 +104,59 @@ export function registerCommunityHistoryVisibility(
 ): GraineHistoryVisibility {
   const narrowed = narrowHistoryVisibility(visibility);
   historyVisibilityByWorkspace.set(workspaceId, narrowed);
+  const waiting = historyRuleWaiters.get(workspaceId);
+  if (waiting) {
+    historyRuleWaiters.delete(workspaceId);
+    console.info(
+      `[GRAINE] community ${workspaceId.slice(0, 8)}'s history rule is known ('${narrowed}') - ` +
+        `resuming ${waiting.length} step(s) that waited for it`
+    );
+    for (const resume of waiting) resume();
+  }
   return narrowed;
+}
+
+/** Steps deferred until a community's history rule is known - see {@link whenHistoryRuleKnown}. */
+const historyRuleWaiters = new Map<string, (() => void)[]>();
+
+/** How many steps may wait for a history rule at once, across communities. */
+export const MAX_HISTORY_RULE_WAITERS = 256;
+
+/**
+ * Runs `resume` once the server has stated `workspaceId`'s history rule
+ * ({@link registerCommunityHistoryVisibility}) - for a step that may neither guess the rule nor
+ * read the fail-closed default as a floor: a seed bundle that arrived before the community listing,
+ * or a seed ask this device cannot answer yet (`parkedAsks.ts`).
+ *
+ * Event-driven, never a clock. Dropped with the session, or with the community leaving this device,
+ * said out loud: what waited is then asked for again by the next start's history ask. Bounded by
+ * {@link MAX_HISTORY_RULE_WAITERS}, since nothing but the rule drains it.
+ *
+ * @returns false when the bound is reached: `resume` will never run, and the caller says so.
+ */
+export function whenHistoryRuleKnown(workspaceId: string, resume: () => void): boolean {
+  let waitingNow = 0;
+  for (const steps of historyRuleWaiters.values()) waitingNow += steps.length;
+  if (waitingNow >= MAX_HISTORY_RULE_WAITERS) return false;
+  const waiting = historyRuleWaiters.get(workspaceId) ?? [];
+  waiting.push(resume);
+  historyRuleWaiters.set(workspaceId, waiting);
+  return true;
+}
+
+/** Drops the deferred steps of `workspaceId` (all communities with `null`), saying how many. */
+function dropHistoryRuleWaiters(workspaceId: string | null, why: string): void {
+  const dropped =
+    workspaceId === null
+      ? [...historyRuleWaiters.values()].reduce((n, w) => n + w.length, 0)
+      : (historyRuleWaiters.get(workspaceId)?.length ?? 0);
+  if (workspaceId === null) historyRuleWaiters.clear();
+  else historyRuleWaiters.delete(workspaceId);
+  if (dropped > 0) {
+    console.info(
+      `[GRAINE] dropping ${dropped} step(s) that waited for a history rule: ${why} - the next start asks again`
+    );
+  }
 }
 
 /**
@@ -134,6 +189,24 @@ export function historyVisibilityFor(workspaceId: string): GraineHistoryVisibili
     `[GRAINE] no history rule known for community ${workspaceId.slice(0, 8)} - refusing to hand the past over`
   );
   return 'joined';
+}
+
+/**
+ * A community's history rule as the server last said it in this session, or `null` when it never
+ * did - WITHOUT the fail-closed reading of {@link historyVisibilityFor}.
+ *
+ * For the questions where `joined` by default would be a lie rather than a precaution:
+ *
+ * - whether the community's past was CLOSED to this member, which is what makes a later `shared` a
+ *   widening owed a history ask (`requestCommunityHistory`). Recording a closed past from a rule
+ *   nobody stated would ask the whole past again the first time the real `shared` arrived;
+ * - whether a seed may be handed over or kept FLOORED (`frameHandler`). A floor drawn under a rule
+ *   nobody stated is not a precaution but a loss: a `shared` community's newcomer answered with
+ *   the floored past records it as answered and never asks again. So an unknown rule answers with
+ *   silence and defers a bundle, and never floors.
+ */
+export function knownHistoryVisibility(workspaceId: string): GraineHistoryVisibility | null {
+  return historyVisibilityByWorkspace.get(workspaceId) ?? null;
 }
 
 /**
@@ -320,6 +393,101 @@ export function registerChannelWorkspace(
     channel,
     isPrivate ? channelScope(workspaceId, channel) : workspaceScope(workspaceId)
   );
+  releaseSeedsAwaitingListing(channel, isPrivate);
+}
+
+/**
+ * Communities whose salon listing has ANSWERED in this session - the fact that turns "a salon this
+ * device does not know" from "not listed YET" into "not a salon this viewer may read".
+ *
+ * The listing names every PUBLIC salon of the community to every member; a PRIVATE salon only to
+ * its members and to the community's administrators. So once it has answered, a salon it did not
+ * name is either private and closed to this viewer, or created since - and a salon created since
+ * reaches this device through `registerChannelWorkspace` (the channel-created event, or the next
+ * listing), which is what releases its waiting seeds.
+ */
+const listedCommunities = new Set<string>();
+
+/**
+ * Records that `workspaceId`'s salon listing answered and every salon it named is registered.
+ *
+ * Called after the registration loop, never before it: a mark set first would class the salons
+ * still being registered as unlisted.
+ */
+export function markCommunityListed(workspaceId: string): void {
+  listedCommunities.add(workspaceId);
+}
+
+/** Whether `workspaceId`'s salon listing has answered in this session. */
+export function isCommunityListed(workspaceId: string): boolean {
+  return listedCommunities.has(workspaceId);
+}
+
+/**
+ * Seeds that arrived on a community's key group for a salon its answered listing did not name,
+ * raw channel id -> the admissions to run if that salon turns out public.
+ *
+ * NOT STORED, AND NOT LOST. Such a seed is either a private salon's this viewer may not read - it
+ * must never be stored - or a public salon's created after the listing, whose seed beat the
+ * channel-created event. Only the registration tells the two apart, so the seed waits for it in
+ * memory: registered public, it is admitted; registered private, or the session ends, it is
+ * dropped. Bounded by {@link MAX_SEEDS_AWAITING_LISTING}, since nothing but a registration drains it.
+ */
+const seedsAwaitingListing = new Map<
+  string,
+  { workspaceId: string; admits: (() => Promise<void>)[] }
+>();
+
+/** How many seeds may wait for a listing at once; past it a new one is dropped, out loud. */
+const MAX_SEEDS_AWAITING_LISTING = 256;
+
+/**
+ * Holds `admit` until `channelId` is registered (see {@link seedsAwaitingListing}).
+ *
+ * @returns false when the bound is reached and the seed was dropped.
+ */
+export function awaitSalonListing(
+  workspaceId: string,
+  channelId: string,
+  admit: () => Promise<void>
+): boolean {
+  const channel = rawChannelId(channelId);
+  let waiting = 0;
+  for (const entry of seedsAwaitingListing.values()) waiting += entry.admits.length;
+  if (waiting >= MAX_SEEDS_AWAITING_LISTING) {
+    console.warn(
+      `[GRAINE] ${waiting} seed(s) already wait for a salon listing - dropping one more for salon ${channel.slice(0, 8)}; a repair asks for it once its salon is listed`
+    );
+    return false;
+  }
+  const entry = seedsAwaitingListing.get(channel) ?? { workspaceId, admits: [] };
+  entry.admits.push(admit);
+  seedsAwaitingListing.set(channel, entry);
+  return true;
+}
+
+/** Runs, or drops, the seeds that waited for `channel`'s registration. */
+function releaseSeedsAwaitingListing(channel: string, isPrivate: boolean): void {
+  const waiting = seedsAwaitingListing.get(channel)?.admits;
+  if (!waiting) return;
+  seedsAwaitingListing.delete(channel);
+  if (isPrivate) {
+    // Registered as a private salon: its seeds ride its own key group, never the community's.
+    console.info(
+      `[GRAINE] dropping ${waiting.length} seed(s) that arrived on the community's key group for salon ${channel.slice(0, 8)}: it is a private salon`
+    );
+    return;
+  }
+  console.debug(
+    `[GRAINE] salon ${channel.slice(0, 8)} is listed as public - admitting the ${waiting.length} seed(s) that waited for it`
+  );
+  for (const admit of waiting) {
+    admit().catch((e: unknown) =>
+      console.error(
+        `[GRAINE] a seed that waited for salon ${channel.slice(0, 8)} could not be admitted: ${String(e)}`
+      )
+    );
+  }
 }
 
 /** The community a channel belongs to, or null when this session has never loaded it. */
@@ -357,9 +525,16 @@ export function forgetWorkspaceGraineState(
 ): void {
   for (const sessionId of sessionIds) seedCache.delete(sessionId);
   for (const channelId of channelIds) scopeByChannel.delete(rawChannelId(channelId));
+  // By community, not by the channels handed over: a seed waits precisely for a salon no listing
+  // named, so it is in none of them.
+  for (const [channel, entry] of seedsAwaitingListing) {
+    if (entry.workspaceId === workspaceId) seedsAwaitingListing.delete(channel);
+  }
+  listedCommunities.delete(workspaceId);
   // A send still waiting for one of these salons can never be sealed now: refused as `left`.
   forgetSalonSendGates(channelIds);
   historyVisibilityByWorkspace.delete(workspaceId);
+  dropHistoryRuleWaiters(workspaceId, 'the community left this device');
 }
 
 /**

@@ -228,6 +228,13 @@ Two consequences, both handled where the assumption lived:
   Over-delivering there costs the receiver disk and nothing else - and under-delivering would lose
   messages the joiner has no other way to obtain. It is bounded by the sender's own window anyway.
 
+  **What is actually enforced today (verified 2026-10-22): 90 days on EVERY platform.** The window
+  above is what a device CLAIMS (`historyWindow.ts:39-47`, `deviceWindowMs()`), but the only local
+  deletion is the garbage collector in `ChatBackgroundService.svelte:1789-1802`, which calls
+  `deleteOldMessages(90 days)` every 6 hours with no platform check, on IndexedDB
+  (`db/indexeddb.ts:924`) and on SQLite (`db/sqlite.ts:773`) alike. So a native device prunes at 90
+  days while claiming 5 years - an open decision, in [backlog](../backlog.md) (P2, local retention).
+
 ### Completeness is asked from the requester's side
 
 A device is complete when it holds everything that exists in
@@ -744,9 +751,14 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   pushed the past in that window, and the push says so once per session at error
   ([legacy-compatibility](../legacy-compatibility.md)).
 - **`for` answers only for a person with a device added since the caller arrived** (a device row in
-  the group created at or after the caller's own arrival, compared case-insensitively): a newcomer,
-  or a new device of a member of any age. The caller witnessed that add. For any other member it has
-  no entry, so a member cannot read the arrival of somebody whose devices all predate their own.
+  the group created at or after the start of the caller's CURRENT interval, its recorded admission
+  when earlier; `for` compared case-insensitively): a newcomer, or a new device of a member of any
+  age. The caller witnessed that add. For any other member it has no entry, so a member cannot read
+  the arrival of somebody whose devices all predate their own. **The current interval, not the first
+  arrival** (review of #2226): measured from the first, a member who left and came back could read
+  the arrival of a person added while they were out. One consequence is the rule's own and stays: a
+  member who adds a device makes their arrival readable to members who came later, since that add
+  is one they witnessed. Each answer is a time, never a message.
   **It was a row STATUS first (`pending`), and that starved the push it exists for**: the invitee
   promotes its row to `active` as soon as it processes its Welcome, while the push may still be
   re-reading its windows chunk by chunk, so the entry vanished mid-push and the push stopped.
@@ -763,8 +775,27 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   device rows, but 4 of the 24 late joiners held a device row up to 268 hours before their first
   interval. The likeliest reading is an offline invitee whose admitted row waited. Without the device
   row, their next device would have lost those 268 hours.
+- **The arrival survives a revoked device (migration `033`, review of #2226).** A device row is not
+  durable: revoking the device (`purgeDeviceFootprint`) deletes its rows, and for a member enrolled
+  late the first row was the only record of the real arrival, so it moved later and their next
+  device lost the span. `ensureGroupMember` now copies the person's earliest device row onto the
+  interval it opens, as `admittedAt`, when it is older than the enrolment. The first arrival is the
+  earliest of every interval's `joinedAt` and `admittedAt` and of the device rows still present (an
+  invitee admitted and not yet enrolled has only those). `admittedAt` never moves a gap: the
+  2026-10-14 window still ends at the re-enrolment's `joinedAt`. **Only a row younger than the
+  person's last `leftAt` counts** (review of #2254): a removal deletes the device rows and closes
+  the interval in two transactions, and a `registerDevice` in between can leave a row of the
+  previous membership, which would date the re-add from before the removal and reopen `for` for
+  people added while they were out. **A database clock running ahead of chat-delivery's** makes a
+  genuine earlier admission look no earlier than the enrolment, so nothing is recorded and the
+  arrival is the enrolment: history lost, nothing handed out. The migration backfills every open
+  interval from the device rows present under the same bound, which is what the reader derived from
+  them already, so it changes no answer. The deploy applies it, so the release carrying it is the
+  application. Two arrivals stay lost: one a purge erased before the migration ran, and one
+  whose device is revoked between its admission and the enrolment. Both cost that person history
+  and hand nobody anything.
 - **Two clocks, bounded.** An interval is stamped by chat-delivery's process clock, and a device row
-  by the database (the transaction's start). The admitting transaction commits before the commit
+  by the database (the transaction's start; `admittedAt` is that instant, copied). The admitting transaction commits before the commit
   that lets the device read anything is fanned out, so the database instant can only be early, by at
   most one transaction. Unifying them needs a column and a migration for that bound, and was declined.
 - **The person who arrived WITH the group has no span (2026-10-22).** Nothing precedes the creation,
@@ -774,29 +805,23 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   `CREATION_ARRIVAL_BOUND_MS` (1 s, either side) of the group row's `createdAt` is the creation, and
   gets its gaps only. Measured on the local estate: the creator's interval 4 ms after the group row,
   the next member 13.5 s. A joiner's span is unchanged.
-- `sendFullHistoryBundle` passes the invitee (`userIdOfLeaf(to)`) to `entitledHistorySelection`,
-  whose filter becomes the union of gaps plus that one person's withheld windows. This is safe as a
-  broadcast because every other member is entitled to a superset of what the invitee is. For a new
-  device of a continuous member, the span ends at that member's own arrival, so the restore is
-  untouched (`groupActions.historyEntitlement.test.ts`).
+- Against a server that predates addressed answers, `sendFullHistoryBundle` still passes the invitee
+  (`userIdOfLeaf(to)`) to `entitledHistorySelection`, whose filter is the union of gaps plus that one
+  person's withheld windows.
 - Receiver hygiene: `dropOwnExcludedMessages` reads this device's own `withheld` windows, so an honest
   newcomer drops what precedes its arrival from any bundle it overhears.
 
-**The residual of C, stated as the verdict asked:** a newcomer can still read pre-arrival messages
-from broadcast answers meant for others' new devices until A lands. Answers to a request (the diff
-`sendHistoryBundleForIds` and the scrollback `sendHistoryRangeBundle`) still filter on the union of
-gaps only, since they are broadcasts with no one person to filter for. An honest client drops what it
-overhears. A modified one keeps it.
+**Step A - every answer is addressed to the device that asked, and filtered for it (built
+2026-10-22).** The diff, the scrollback AND the push go to `recipientDevices = [to]` and are filtered
+on that reader's own `withheld` windows (`readerHistorySelection`), so an answer reaches only the device
+that asked, and that device is not held to the union of everyone's gaps. The design, its six rules, what it protects against (an honest server and
+an honest answerer, nothing more: addressing is a routing control and MLS still encrypts for the whole
+group) and what it does not close are on
+[history-answer-addressing](history-answer-addressing.md), the only copy. **Owed: the rig row
+GRP-ADDR-1** ([cross-client-testing](../cross-client-testing.md)).
 
-**Step A - DESIGN FIRST, reviewed before any code: answers addressed to the asking device.** The
-design is owed as its own page. It covers the equivocation threat of lifting the `recipientDevices`
-allowlist (`messaging.service.ts`, which accepts it on a key group only), the server marking
-addressed rows, the receiver refusing an addressed frame that is not a history control (at error),
-the split-view residual through bundle contents, and why sealing to an ephemeral X25519 key was not
-chosen.
-
-**What neither closes.** An older client keeps pushing its whole store at invitation until
-`minClientVersion` is a release carrying C, and that floor moves only once both stores serve the
+**What neither closes.** An older client keeps pushing and answering by broadcast until
+`minClientVersion` is a release carrying A, and that floor moves only once both stores serve the
 reader. The server cannot refuse such a frame, because it cannot read it. What a newcomer has already
 received cannot be taken back. Tracked in [backlog](../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not).
 
@@ -1133,6 +1158,123 @@ Two of these are corrections, not restatements of today's behaviour - see
 [Defects this work must fix](#defects-this-work-must-fix), D3 and D5. Pruning is **not** monotone,
 which is exactly what the floor is for: pruning below it is invisible to the merge, and pruning above
 it is forbidden.
+
+### Restored history carries its author's signature (2026-10-22)
+
+A `history_bundle` is written by whichever member answered, and until this change every field in it
+was taken on that member's word. Since this change the restored history of a private conversation
+(1:1 and group) carries each message's ORIGINAL author signature, and the reader decides from it.
+
+**The proof.** mls-core signs every application frame it sends (`send_authored_message`,
+`mls-core/src/authorship.rs`) with the device's MLS credential key - the key Graine v2's endorsement
+uses - over `lp("canari-mls-author-v1") lp(groupId) lp(userId:deviceId) lp(SHA-256(body))`, `body`
+being the exact `AppMessage` bytes (message id, the author's timestamp, the content). The proof
+travels INSIDE the plaintext, appended as `AppMessage` field 14 (`AuthorProof`), so MLS encrypts it
+with the message. On receipt mls-core keeps the proof only when it names the frame's MLS sender and
+verifies under that sender's leaf key; otherwise it strips it and logs `[AUTHORSHIP] REFUSED` at
+ERROR. A frame from an older build simply has none.
+
+**Kept beside the message.** The device records `{body, proof, group}` in the sealed row payload
+(`StoredMessage.authorship`; `editProof`, `deleteProof`, and `MessageReaction.proof` for the
+mutations), for frames it received AND frames it sent (the outbox records its own). `group` is the
+conversation the proof was signed in: a row can move between conversations (a merged DM, a re-key),
+and a proof checked against the wrong group would read as a forgery. A deletion purges the original
+bytes and keeps only the author's signed tombstone.
+
+**Relayed and checked, one rule for every way a bundle arrives.** `serializeForBundle` relays the
+proofs; `restoredAuthorship.ts` decides each entry
+([`messageAuthorship.ts`](../../../frontend/src/lib/crypto/messageAuthorship.ts) does the crypto,
+with a shared vector against the Rust side). `bundleVetting.ts` (`vetBundle`, `mergeVettedRow`) is
+the one orchestration, used by the live handler (`systemMessageHandler.ts`) AND by the archive
+replay (`historySystemEvents.ts`), which sees a bundle an older build wrote durably: the same
+verdicts, marker, vouching rule and upgrade, only the writes batched per page:
+
+| Entry | Taken when | Otherwise |
+| --- | --- | --- |
+| message | the author's proof verifies and names this id and this author - content and timestamp are then read from the SIGNED bytes, never from the relayer's fields; or the relayer IS the author | no proof, or a proof signed in another conversation: kept, drawn normally and MARKED `restoredUnverified` (a small "non verifie" under the bubble, explained on tap - never hidden); a proof an anchored pin contradicts, or a malformed one: REFUSED |
+| edit, deletion | the author's signed event names this message; or the relayer is the author | dropped, never applied on a third party's word - nor its "edited" flag and time, which are taken on the same grounds as the edit, or onto a row already marked |
+| reaction | the reactor's signed frame proves exactly this state; or the relayer is the reactor | dropped |
+
+**"The relayer is the author" holds only for a row the relayer vouches for.** A row a device holds
+MARKED is relayed with `authorUnproven: true` (`serializeForBundle`), and the reader then gives the
+relayer's own word no weight for that row's message or edit (`relayerVouches` in
+`restoredAuthorship.ts`): the device holds a third party's word, not its own, even when the row names
+its own user. Only the row's own proof can then verify it.
+
+**A marked row is upgraded by proof, and only a marked row.** A held row marked `restoredUnverified`
+is replaced ENTIRELY by a later copy whose proof verifies here - sender (the proven author: a marked
+row's sender was a relayer's word like its body), body and time from the signed bytes, the mark and
+the unproven edit state cleared, in memory and at rest (`upgradedRow`, `upgradePatch`); a changed
+sender is logged at WARN. A held row that is not marked is never replaced. The archive replay holds
+the rows its page already queued like stored ones - a bundle naming one updates it in place, never
+queues a second, and the same merge reaches that row's copy in memory when both name one author -
+and its batch write never downgrades a stored proven row, and keeps a stored proof the incoming copy
+lacks (`replayedStoredRow`). Not downgrading is about the copy's own word only: an author-signed
+tombstone or edit that a marked copy carries still applies to the proven row, the edit's signed TEXT
+onto that row's own body (`provenRowUnderMarkedCopy`). Memory follows the batch write in the same
+pass: a row it shows marked that the page wrote proven - a decrypted original included - is replaced
+by the written row, a tombstone surviving (`provenRowsIntoMemory`). Within one bundle that
+carries an id twice, a proven copy wins over a marked one in either order
+(`systemMessageHandler.ts`, `upgradeUnverifiedRows`).
+
+**Mutations need a signature, and that has a cost (lead decision, 2026-10-22).** An unsigned edit,
+deletion or reaction is dropped, so one made by an author on a client older than signed authorship
+is missing from restored history until that author updates. The unsigned MESSAGE is the only shim,
+with its removal condition in [legacy-compatibility](../legacy-compatibility.md).
+
+**Keys - only those this device trusts, tried in order.** The author's leaf in the current tree,
+which MLS authenticated, then the keys this device pinned for that device
+(`pinnedSignatureKeys`, the key-binding work) - so an author who has LEFT the tree still verifies.
+A key the SERVER publishes is never evidence either way: it can neither verify a proof (a server
+could list a key for a device that never existed) nor accuse one (an erasure, or a server, can drop
+a real key). An author with no trusted key is `unproven` - kept, marked, exactly like an unsigned
+message. Every lookup and comparison uses the ONE canonical identity of `leafIdentity.ts` (Rust's:
+ASCII letters lowered, nothing else), and a bare legacy `userId` names a user, never a device, so
+a proof naming one never verifies - and never accuses either: it reads `unproven`. mls-core signs
+as its credential, always `user:device` (one constructor in `state.rs`, whose loader refuses any
+other identity), but nothing proves a user id can never hold a colon.
+
+**Verifying and accusing are different questions.** A key that verifies proves the author; a key
+that fails to verify accuses only if it is the key the author held WHEN it signed. The current tree
+cannot say so - a heal's re-Welcome replaces the leaf, and the proof names no epoch - and a pin
+re-taken after a prune may be a server-served key. So neither accuses: a contradiction is
+`unproven`. Only a pin the key-binding work marks ANCHORED (`DevicePin.anchored`: no prune since
+it was first taken, so it holds every key this device saw for that device) accuses - a signature
+valid under none of its keys is `forged`, as is a malformed proof.
+
+**An edited message is verified only with its edit.** The signed bytes are the ORIGINAL body. A
+restored message marked edited whose edit is not proven by the author's signed `edit_message` keeps
+the relayed (edited) body and is marked unverified - a retracted text never comes back looking
+authenticated. The archive replay of `edit_message` and `delete_message` frames stores their signed proofs like the live path, and a replayed bundle goes through the same `bundleVetting.ts` as a live one.
+
+**A refusal is loud.** Every refused entry is an ERROR line and an integrity finding
+([`integrityFindings.ts`](../../../frontend/src/lib/mls-client/integrityFindings.ts)), reported once
+per session to `POST mls/integrity-finding`. The route accepts a report only from a member of the
+group; it logs the authenticated reporter as a fact and the peer as `claimedPeer`. The level is read
+from the report's typed `proven` boolean, never from its free-text `detail`: `false` (an `unproven`
+fork) is a warn, as in mls-core and on the client; `true`, or no boolean, is ERROR. The UI for
+findings comes later.
+
+**Only mls-core's verdict records a proof.** Both bindings hand `author` (`unsigned`, `verified`,
+`refused`) beside each decrypted plaintext, and `recordAuthorship` keeps a proof on `verified` alone.
+It never re-derives the answer from the bytes: protobufjs skips a group field (wire types 3 and 4)
+that mls-core's parser does not read, so the two can disagree on whether a plaintext ends with a
+field 14, and only mls-core checked the signature.
+
+**A verified row needs a signed timestamp.** A proof whose signed `AppMessage` carries no `sentAt`
+is treated like no proof (marked, or vouched for when its author relays it): verified, the row would
+otherwise carry the relayer's timestamp under the author's name.
+
+**What the fork claim makes visible.** The fork check's claim
+([mls-protocol](mls-protocol.md#fork-detection-a-signed-epoch-fingerprint-in-every-application-frame-2026-10-22))
+sits in the `PrivateMessage` authenticated data, which MLS authenticates but does not encrypt. It
+carries the sender's `userId:deviceId`, a 16-byte epoch fingerprint and a signature, readable by
+everything that handles the frame's bytes: the delivery service and its stored queue and archive
+rows, every member device that receives or fetches the frame, and the push providers (FCM, APNs)
+when the frame is inlined in a notification. The delivery service already records the sending user
+and device beside each frame, and a push payload already names the sending user (`senderId`); the
+device id in a push payload is what the claim adds there. The author proof of this section is inside
+the ciphertext and adds nothing visible.
 
 ### Reactions
 

@@ -8,6 +8,11 @@
    * does not turn the page, and it captures the pointer so a finger sliding off the button still ends
    * a hold where it lifts. A long press must not raise the system's context menu, a text selection or
    * iOS's callout, so all three are switched off here.
+   *
+   * THE HELD FINGER ALSO ZOOMS (user, 2026-10-22): its vertical travel since the press is reported
+   * (`onmove`, positive UP), and the capture screen turns it into a zoom while a take is filmed
+   * (`cameraZoom.ts`). The button is `touch-none` and holds the pointer, so the slide neither
+   * scrolls nor reaches the page's own gestures.
    */
   import { m } from '$lib/paraglide/messages';
 
@@ -22,6 +27,8 @@
     onrelease: (at: number) => void;
     /** The touch was taken away (a system gesture): neither a tap nor a release. */
     oncancel: () => void;
+    /** The held finger moved: its travel since the press, in CSS px, positive UP. */
+    onmove?: (upPx: number) => void;
   }
 
   let {
@@ -32,10 +39,13 @@
     onpress,
     onrelease,
     oncancel,
+    onmove,
   }: Props = $props();
 
   /** The pointer this button is following, so a second finger is not a second press. */
   let pointerId: number | null = null;
+  /** Where the followed pointer came down, for the slide's travel. */
+  let pressY = 0;
 
   /** The ring's circumference in the SVG's own units (r = 45). */
   const CIRCUMFERENCE = 2 * Math.PI * 45;
@@ -43,9 +53,15 @@
   function down(event: PointerEvent) {
     if (disabled || pointerId !== null) return;
     pointerId = event.pointerId;
+    pressY = event.clientY;
     (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
     event.preventDefault();
     onpress(event.timeStamp);
+  }
+
+  function move(event: PointerEvent) {
+    if (event.pointerId !== pointerId) return;
+    onmove?.(pressY - event.clientY);
   }
 
   function up(event: PointerEvent) {
@@ -88,6 +104,7 @@
     data-reel-shutter
     {disabled}
     onpointerdown={down}
+    onpointermove={move}
     onpointerup={up}
     onpointercancel={cancel}
     onkeydown={key}

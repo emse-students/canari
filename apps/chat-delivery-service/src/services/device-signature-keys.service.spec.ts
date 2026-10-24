@@ -99,3 +99,31 @@ describe('DeviceSignatureKeysService.keysFor', () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining('unreadable or foreign'));
   });
 });
+
+/**
+ * The age of a device's key, as evidence that a device is NEW to its owner (the new-device notices,
+ * mls-protocol "New-device notices"): only keys the history recorded carry a date - a key published
+ * before the history began has none, and is answered without one rather than with a guess.
+ */
+describe('DeviceSignatureKeysService.firstSeenFor', () => {
+  it('answers each recorded key with the instant the server first saw it, oldest first', async () => {
+    const { service, keyRepo } = build();
+    keyRepo.find.mockResolvedValue([
+      { signatureKey: 'old-key', firstSeenAt: new Date('2026-09-30T10:00:00Z') },
+      { signatureKey: ALICE_KEY, firstSeenAt: new Date('2026-10-21T08:00:00Z') },
+    ]);
+    await expect(service.firstSeenFor('alice-user', 'dev-a1')).resolves.toEqual([
+      { signatureKey: 'old-key', firstSeenAt: '2026-09-30T10:00:00.000Z' },
+      { signatureKey: ALICE_KEY, firstSeenAt: '2026-10-21T08:00:00.000Z' },
+    ]);
+    expect(keyRepo.find).toHaveBeenCalledWith({
+      where: { userId: 'alice-user', deviceId: 'dev-a1' },
+      order: { firstSeenAt: 'ASC' },
+    });
+  });
+
+  it('never dates the current package key the history does not hold', async () => {
+    const { service } = build({ history: [] });
+    await expect(service.firstSeenFor('alice-user', 'dev-a1')).resolves.toEqual([]);
+  });
+});

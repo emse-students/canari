@@ -26,6 +26,9 @@ pub enum Error {
     #[cfg(not(mobile))]
     #[error("the phone's gallery exists only on Android and iOS")]
     Unsupported,
+    #[cfg(not(target_os = "android"))]
+    #[error("share suggestions exist only on Android")]
+    AndroidOnly,
 }
 
 impl Serialize for Error {

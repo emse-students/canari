@@ -3,8 +3,22 @@
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
 
+/// What a native log line says of an NSError: its domain and code, never its text. A
+/// `localizedDescription` often quotes the file it failed on (a shared file's name, a path), and
+/// NSLog redacts nothing (`nativeLogContent.test.ts`, docs/wiki/frontend/mobile.md).
+static inline NSString *_Nonnull CanariErrorReason(NSError *_Nullable error) {
+  if (error == nil) {
+    return @"no error";
+  }
+  return [NSString stringWithFormat:@"%@ %ld", error.domain, (long)error.code];
+}
+
 /// Tauri `app_data_dir` (Application Support/fr.emse.canari) of the CALLING process.
 FOUNDATION_EXPORT NSString *_Nullable CanariTauriDataDir(void);
+
+/// Tauri `app_cache_dir` (Library/Caches/fr.emse.canari) of the CALLING process: where the copies of
+/// a share into Canari are moved for `take_picked_file` to read.
+FOUNDATION_EXPORT NSString *_Nullable CanariTauriCacheDir(void);
 
 /// Reads the push secret. pending_push_secret.txt WINS over the Keychain when present -
 /// it is newer by construction; see the implementation for why the reverse order 403s.
@@ -52,5 +66,11 @@ void CanariMirrorPushStateToAppGroup(void);
 /// container over to the app's own file, the only one `take_fcm_cache` reads. Call it
 /// at the same transitions as the mirror above.
 void CanariDrainAppGroupFcmCache(void);
+
+/// Marks the native caches in `dir` - `graine_seeds.json` and every `fcm_message_cache*.ndjson` -
+/// excluded from iCloud and computer backups, and nothing else in it: the directory also holds
+/// `mls.bin`, `push_context.json` and the identity files a restore must bring back. Per file, so it
+/// is re-applied after every atomic write (a new inode does not carry the flag). nil is a no-op.
+void CanariExcludeNativeCacheFilesFromBackup(NSString *_Nullable dir);
 
 #endif

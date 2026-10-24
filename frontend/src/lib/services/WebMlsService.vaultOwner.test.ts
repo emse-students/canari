@@ -28,6 +28,8 @@ function makeCtx(loadStateWithKey: ReturnType<typeof vi.fn>) {
     loadStateWithKey,
     classifyStateLoadFailure: WebMlsService.prototype['classifyStateLoadFailure'],
     rotateDeviceIdentity: vi.fn().mockResolvedValue('rotated'),
+    // The id is not a returning one here, so a lost-state re-enrolment never applies.
+    reenrolLostState: vi.fn().mockResolvedValue(false),
   };
 }
 

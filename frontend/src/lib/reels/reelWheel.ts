@@ -33,7 +33,7 @@ export function wheelStep(e: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'ctrlKey'>):
 export function wheelOverScrollable(target: EventTarget | null, root: Element): boolean {
   let el = target instanceof Element ? target : null;
   while (el && el !== root) {
-    if (el.matches('[data-reel-comments], [data-reel-caption-open]')) return true;
+    if (el.matches('[data-comments-drawer], [data-reel-caption-open]')) return true;
     const overflowY = getComputedStyle(el).overflowY;
     if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
       return true;

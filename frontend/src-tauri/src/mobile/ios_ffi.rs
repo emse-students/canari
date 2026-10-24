@@ -13,10 +13,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use crate::concurrency::mark_foreground_active;
 
 use super::background::{
-    background_group_epoch_with_key, cleanup_pending_db, create_welcome_background_with_key,
-    decode_commits_b64_json, decrypt_push_message_with_commits_with_key,
-    decrypt_push_message_with_key, open_graine_push, parse_outbox_entries_json,
-    process_welcome_background_with_key, send_messages_background_with_key, GrainePush, PushFrame,
+    background_group_epoch_with_key, cleanup_pending_db, decode_commits_b64_json,
+    decrypt_push_message_with_commits_with_key, decrypt_push_message_with_key, open_graine_push,
+    parse_outbox_entries_json, process_welcome_background_with_key,
+    send_messages_background_with_key, GrainePush, PushFrame,
 };
 use super::proto_fields::{build_read_watermark_app_message, build_text_app_message};
 use super::push_text::PushLanguage;
@@ -207,11 +207,14 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
 /// implementation both platforms share (`background::open_graine_push`). `signature_b64` is an
 /// empty string when the push carried none. Returns the same JSON as
 /// `canari_native_decrypt_message`. Read-only and lock-free. FFI mirror of the Android JNI
-/// `nativeOpenGrainePush`. `locale` as for `canari_native_decrypt_message`.
+/// `nativeOpenGrainePush`. `locale` as for `canari_native_decrypt_message`. `cache_key_b64` is the
+/// install's native cache key the caller read from the shared Keychain item (`native_cache`), or an
+/// empty string when it could not.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn canari_native_open_graine_push(
     data_dir: *const c_char,
+    cache_key_b64: *const c_char,
     channel_id: *const c_char,
     session_id: *const c_char,
     message_index: u32,
@@ -223,6 +226,7 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
 ) -> *mut c_char {
     if [
         data_dir,
+        cache_key_b64,
         channel_id,
         session_id,
         sender_id,
@@ -236,6 +240,7 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
     {
         return json_to_c_string(serde_json::json!({ "ok": false, "reason": "ffi-null" }));
     }
+    let cache_key = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64));
     let dir = str_from_c_str(data_dir);
     let channel = str_from_c_str(channel_id);
     let session = str_from_c_str(session_id);
@@ -245,6 +250,7 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
     let signature = str_from_c_str(signature_b64);
     json_to_c_string(open_graine_push(
         std::path::Path::new(&dir),
+        cache_key.as_ref(),
         &GrainePush {
             channel_id: &channel,
             session_id: &session,
@@ -265,20 +271,98 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
 /// `canari_native_decrypt_message` returned it. The extension calls this when it opens the seed
 /// frame a salon push carries (channel-encryption section 19). `data_dir` is the App Group
 /// directory both the app and the extension read the mirror from. FFI mirror of the Android JNI
-/// `nativeStoreGraineSeeds`, and the same implementation behind it.
+/// `nativeStoreGraineSeeds`, and the same implementation behind it. `cache_key_b64` as for
+/// [`canari_native_open_graine_push`]; with none, nothing is written (-1).
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_store_graine_seeds(
     data_dir: *const c_char,
+    cache_key_b64: *const c_char,
     seeds_json: *const c_char,
 ) -> i32 {
-    if data_dir.is_null() || seeds_json.is_null() {
+    if data_dir.is_null() || cache_key_b64.is_null() || seeds_json.is_null() {
         log::error!("[GRAINE_PUSH] ffi: null argument");
         return -1;
     }
+    let cache_key = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64));
     crate::commands::push::store_graine_seeds_json(
         &path_from_c_str(data_dir),
+        cache_key.as_ref(),
         &str_from_c_str(seeds_json),
     )
+}
+
+/// Whether the seed mirror under `data_dir` holds a session: 1 yes, 0 no, -1 it cannot be read.
+/// What the push paths ask before choosing between the mirror and a seed frame, so the seed itself
+/// never leaves Rust. FFI mirror of the Android JNI `nativeGraineSeedHeld`.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_graine_seed_held(
+    data_dir: *const c_char,
+    cache_key_b64: *const c_char,
+    channel_id: *const c_char,
+    session_id: *const c_char,
+) -> i32 {
+    if [data_dir, cache_key_b64, channel_id, session_id]
+        .iter()
+        .any(|p| p.is_null())
+    {
+        log::error!("[GRAINE_MIRROR] ffi: null argument");
+        return -1;
+    }
+    let cache_key = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64));
+    crate::commands::push::graine_seed_held(
+        &path_from_c_str(data_dir),
+        cache_key.as_ref(),
+        &str_from_c_str(channel_id),
+        &str_from_c_str(session_id),
+    )
+}
+
+/// Seals one push-cache line (`native_cache`) and returns it as a heap C string to free with
+/// `canari_free_string`, or NULL when there is no usable key - in which case the caller writes
+/// NOTHING. Never a line in the clear. FFI mirror of the Android JNI `nativeSealCacheLine`.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_seal_cache_line(
+    cache_key_b64: *const c_char,
+    line: *const c_char,
+) -> *mut c_char {
+    if cache_key_b64.is_null() || line.is_null() {
+        log::error!("[FCM_CACHE] ffi: null argument");
+        return std::ptr::null_mut();
+    }
+    let Some(key) = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64)) else {
+        return std::ptr::null_mut();
+    };
+    let sealed = crate::native_cache::seal_line(
+        &key,
+        crate::native_cache::Purpose::PushCache,
+        &str_from_c_str(line),
+    );
+    match std::ffi::CString::new(sealed) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Claims the `ownDeviceAdded` keys of a decrypt answer in the device-notice ledger under
+/// `data_dir` (the App Group directory, which the app's own claim uses too) and returns the keys
+/// nobody announced before as a JSON array - free with `canari_free_string`. NULL arguments claim
+/// nothing and answer `[]`. FFI mirror of the Android JNI `nativeClaimDeviceNotices`, and the same
+/// implementation behind it (`mobile::device_notice`).
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_claim_device_notices(
+    data_dir: *const c_char,
+    keys_json: *const c_char,
+) -> *mut c_char {
+    if data_dir.is_null() || keys_json.is_null() {
+        log::error!("[DEVICE_NOTICE] ffi: null argument - nothing claimed");
+        return json_to_c_string(serde_json::json!([]));
+    }
+    let claimed = super::device_notice::claim_device_notices_json(
+        &path_from_c_str(data_dir),
+        &str_from_c_str(keys_json),
+    );
+    let value = serde_json::from_str(&claimed).unwrap_or_else(|_| serde_json::json!([]));
+    json_to_c_string(value)
 }
 
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail
@@ -336,45 +420,6 @@ pub unsafe extern "C" fn canari_free_bytes(ptr: *mut u8, len: usize) {
     drop(Vec::from_raw_parts(ptr, len, len));
 }
 
-/// Creates an MLS Welcome. Returns an allocated JSON (`welcome`, `commit`, `baseEpoch`, ...).
-#[no_mangle]
-pub unsafe extern "C" fn canari_native_create_welcome_background(
-    files_dir: *const c_char,
-    state_ptr: *const u8,
-    state_len: usize,
-    device_key_b64: *const c_char,
-    user_id: *const c_char,
-    device_id: *const c_char,
-    group_id: *const c_char,
-    key_package_b64: *const c_char,
-) -> *mut c_char {
-    if files_dir.is_null()
-        || state_ptr.is_null()
-        || device_key_b64.is_null()
-        || user_id.is_null()
-        || device_id.is_null()
-        || group_id.is_null()
-        || key_package_b64.is_null()
-    {
-        return json_to_c_string(serde_json::json!({ "ok": false }));
-    }
-
-    let files_dir = path_from_c_str(files_dir);
-    let state_bytes = slice::from_raw_parts(state_ptr, state_len);
-    match create_welcome_background_with_key(
-        &files_dir,
-        state_bytes,
-        &str_from_c_str(device_key_b64),
-        &str_from_c_str(user_id),
-        &str_from_c_str(device_id),
-        &str_from_c_str(group_id),
-        &str_from_c_str(key_package_b64),
-    ) {
-        Ok(v) => json_to_c_string(v),
-        Err(e) => err_json_to_c_string(e),
-    }
-}
-
 /// Applies a received Welcome. Returns 1 on success, 0 otherwise.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_process_welcome_background(
@@ -420,7 +465,8 @@ pub unsafe extern "C" fn canari_native_process_welcome_background(
 /// Encrypts a WHOLE outbox batch against one load of `mls.bin` and returns
 /// `{"ok":true,"results":[{"id":..,"ok":..,"ciphertext"|"error":..}, ...]}`.
 ///
-/// `entries_json` is `[{"id":"...","groupId":"...","proto":"<b64>"}, ...]`. Android twin:
+/// `entries_json` is `[{"id":"...","groupId":"...","proto":"<b64>"}, ...]`; at most `max_attempts`
+/// of them are encrypted, a group held behind an unsettled staged commit taking none. Android twin:
 /// `nativeSendMessagesBackground`. See `send_messages_background_with_key` for why the drain is a
 /// batch and why the save must precede the return.
 #[no_mangle]
@@ -432,6 +478,7 @@ pub unsafe extern "C" fn canari_native_send_messages_background(
     user_id: *const c_char,
     device_id: *const c_char,
     entries_json: *const c_char,
+    max_attempts: usize,
 ) -> *mut c_char {
     if files_dir.is_null()
         || state_ptr.is_null()
@@ -456,6 +503,7 @@ pub unsafe extern "C" fn canari_native_send_messages_background(
         &str_from_c_str(user_id),
         &str_from_c_str(device_id),
         &entries,
+        max_attempts,
     ) {
         Ok(v) => json_to_c_string(v),
         Err(e) => err_json_to_c_string(e),

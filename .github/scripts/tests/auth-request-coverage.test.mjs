@@ -158,13 +158,13 @@ const IN_BODY_AUTH = [
 ];
 
 /**
- * The four values the sub-request answers with, and the header each is forwarded as.
+ * The five values the sub-request answers with, and the header each is forwarded as.
  *
  * THIS IS THE PRECONDITION FOR ONE SHARED GUARD, AND IT IS WHY THERE ARE STILL THREE.
  * `NginxAuthGuard` (core-service, social-service) refuses on an empty `x-user-id`;
  * `HeaderAuthGuard` (chat-delivery-service) refuses on `x-user-logged-in !== 'true'`. Two
  * discriminators for one rule, and they agree only because every `auth_request` location copies the
- * SAME four values out of the sub-request and forwards all four. A location that set `$user_id` and
+ * SAME values out of the sub-request and forwards all of them. A location that set `$user_id` and
  * forgot `X-User-Logged-In` would pass every core-service route and refuse every chat-delivery one,
  * with nothing in either service able to say why - and `X-Internal-Token` missing is a service with
  * `INTERNAL_SHARED_SECRET` set refusing everybody, which reads as an outage rather than as a config.
@@ -177,6 +177,9 @@ const IDENTITY = [
   ['$user_logged_in', 'X-User-Logged-In'],
   ['$global_admin', 'X-Global-Admin'],
   ['$internal_token', 'X-Internal-Token'],
+  // The session the access token was minted for (its `sid`): chat-delivery binds a push
+  // registration to it, so ending that session ends exactly that registration (2026-10-23).
+  ['$session_id', 'X-Session-Id'],
 ];
 
 /** The nginx locations carrying `auth_request`, the upstream each proxies to, and what each
@@ -300,9 +303,10 @@ const RUST_AUTH = [
   'caller_id',
   // `get_admin_presence` - the same header contract, one claim further along.
   'x-global-admin',
-  // Both WebSocket upgrades - the `canari_ws_token` JWT, which nginx never reads and `auth_request`
-  // therefore cannot have checked.
-  'decode::<Claims>',
+  // Both WebSocket upgrades - the access-token JWT, which nginx never reads and `auth_request`
+  // therefore cannot have checked. Each handler verifies it through `decode_access_claims`, which
+  // also refuses a refresh token.
+  'decode_access_claims',
 ];
 
 /**

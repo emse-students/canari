@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * EVERY REACTION ON A MESSAGE IS DRAWN, AND THE ROW DOES NOT CLIP.
  *

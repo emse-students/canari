@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE FILTERED-FEED MODE IS GONE (user, 2026-10-16): the CanaReels entry opens the reel viewer, so
  * the feed itself is never narrowed to reels any more. A `?kind=reel` link written by the 1.2.9

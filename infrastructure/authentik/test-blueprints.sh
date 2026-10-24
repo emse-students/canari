@@ -91,6 +91,16 @@ if ! run_ak_shell "$worker" <"$here/test-enrollment-flow.py" 2>&1 | tee >(cat >&
 fi
 echo "the enrolment flow lets the right people in, refuses the others, and writes the profile"
 
+# THE WAYS IN THAT ARE NOT THE CAS, DRIVEN. A password sign-in refuses a superuser, asks for a second
+# factor that exists, and stops after five wrong passwords; the enrolment flow does not plan without a
+# source (infrastructure/authentik/test-password-guard.py).
+echo "password sign-in and direct enrolment: driving them through the executor"
+if ! run_ak_shell "$worker" <"$here/test-password-guard.py" 2>&1 | tee >(cat >&2) | grep -qx 'PASSWORD-GUARD-OK'; then
+  echo "::error::a way into MiConnect that is not the CAS is not guarded - read the assertion above"
+  exit 1
+fi
+echo "password sign-in is guarded and enrolment starts only from a source"
+
 # THE PROFILE EDITOR, USED. Applying 80-profile-editor.yaml proves the account, role and token exist;
 # only calling the API with the token shows what a holder of it can DO - read and change users, and
 # nothing else (infrastructure/authentik/test-profile-editor.py).
@@ -100,6 +110,16 @@ if ! run_ak_shell "$worker" <"$here/test-profile-editor.py" 2>&1 | tee >(cat >&2
   exit 1
 fi
 echo "the profile editor reads and changes users, and nothing else"
+
+# PKCE, REDEEMED. Canari's sign-in sends an S256 challenge and core-service redeems the code with its
+# verifier; what makes a captured code worthless is MiConnect REFUSING it without the verifier. Only
+# the real token endpoint shows that (infrastructure/authentik/test-pkce.py).
+echo "PKCE: authorizing with a challenge and redeeming with and without the verifier"
+if ! run_ak_shell "$worker" <"$here/test-pkce.py" 2>&1 | tee >(cat >&2) | grep -qx 'PKCE-OK'; then
+  echo "::error::MiConnect did not enforce PKCE as the sign-in relies on - read the assertion above"
+  exit 1
+fi
+echo "a challenged code is redeemed with its verifier only, and a verifier is never ignored"
 
 # THE TERMS OF USE ARE HELD (user, 2026-10-17: stable 1.2.9 ships without them; docs/wiki/backlog.md).
 # 45-consent.yaml waits in blueprints/held/, so the driven test (test-consent-flow.py) has no stage to
@@ -118,3 +138,54 @@ PY
   exit 1
 fi
 echo "the terms stage is held: every provider authorizes through the implicit-consent flow"
+
+# EVERY SAML SOURCE IS SIGNED AND GATED. A SAML source with no verification key pair verifies no
+# signature (authentik's ResponseProcessor.parse checks signatures only `if source.verification_kp`),
+# so if such a source is ENABLED a forged, unsigned assertion is accepted and enrols an account. This
+# asserts, on the instance just built, that the configuration can never be in that shape: no source
+# is enabled without a verification key pair, every source demands a signed response AND a signed
+# assertion, no source runs a weak (SHA-1/MD5) signature or digest algorithm, none allows
+# IdP-initiated SSO (which skips request-ID validation), and each uses an expected NameID format.
+echo "SAML sources: signed on both levels, no weak algorithm, and none enabled without a certificate"
+if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -qx 'SAML-SOURCES-OK'; then
+from authentik.sources.saml.models import SAMLSource
+
+ALLOWED_NAME_ID = {
+    "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+    "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+    "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+}
+WEAK = ("sha1", "md5", "#rsa-sha1", "#dsa-sha1")
+
+problems = []
+for s in SAMLSource.objects.all():
+    tag = f"saml source '{s.slug}'"
+    if not s.signed_assertion:
+        problems.append(f"{tag}: signed_assertion is False (unsigned assertions would be accepted)")
+    if not s.signed_response:
+        problems.append(f"{tag}: signed_response is False (unsigned responses would be accepted)")
+    if s.allow_idp_initiated:
+        problems.append(f"{tag}: allow_idp_initiated is True (request-ID validation is skipped)")
+    for field in ("signature_algorithm", "digest_algorithm"):
+        val = (getattr(s, field, "") or "").lower()
+        if not val:
+            problems.append(f"{tag}: {field} is empty")
+        elif any(w in val for w in WEAK):
+            problems.append(f"{tag}: {field} is weak ({getattr(s, field)})")
+    if s.name_id_policy not in ALLOWED_NAME_ID:
+        problems.append(f"{tag}: name_id_policy {s.name_id_policy!r} is not in the allowlist")
+    # The invariant: the IdP's certificate is what makes verification possible, so it is required the
+    # instant a source is enabled. A source that lacks it must stay disabled.
+    if s.enabled and s.verification_kp is None:
+        problems.append(f"{tag}: ENABLED with no verification_kp (signatures are not verified)")
+
+if problems:
+    for p in problems:
+        print("  -", p)
+    raise SystemExit("a SAML source is unsigned, weakly signed, or enabled without a certificate")
+print("SAML-SOURCES-OK")
+PY
+  echo "::error::a SAML source is unsigned, weakly signed, or enabled without a verification certificate - read the assertion above"
+  exit 1
+fi
+echo "every SAML source is signed, strongly, and none is enabled without a verification certificate"

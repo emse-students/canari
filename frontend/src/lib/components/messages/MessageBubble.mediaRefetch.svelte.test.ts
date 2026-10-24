@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A REFETCH OF THE THREAD MUST NOT RE-DOWNLOAD, RE-DECRYPT OR RE-RENDER AN ATTACHMENT THAT DID NOT
  * CHANGE. Every refetch of a salon's messages hands each row a NEW message object carrying the SAME

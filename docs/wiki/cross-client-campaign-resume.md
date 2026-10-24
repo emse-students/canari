@@ -1,5 +1,9 @@
 # Resuming the cross-client campaign
 
+> **OBSOLETE (2026-10-24), to be deleted with the next `CLAUDE.md` update.** It describes the
+> 2026-09-03 restart onto the local estate. The `1.4.1` campaign on dev and its bring-up are
+> [cross-client-campaign-1-4-1](cross-client-campaign-1-4-1.md#3-what-the-rig-must-gain-before-a-row-on-dev-means-anything).
+
 The campaign was paused on 2026-08-30 for want of a phone. **It does not resume - it RESTARTS, from
 zero, on a rig that does not exist yet.** That is the honest description of what 2026-09-03 did to
 it, and this page is the only copy of what that costs and in what order it is paid.
@@ -53,9 +57,9 @@ deliberately, which is what rung 18 CORRUPT has always wanted and never had.
 
 **Costs, and each is stated on the row rather than assumed away.**
 
-- **Local is production's DATA, not production's POPULATION.** It is a snapshot; the local copy
-  (`restore-into-local.sh`) truncates `push_token`; the MLS trees are whatever the local clients built. So the four population
-  rows written into rung 12 MULTI measure the snapshot, and a `PASS` there answers "does the
+- **Local holds NO production data, and no production population.** Production data is never copied
+  to a workstation (owner, 2026-10-24); the local estate holds only what the local clients build, so
+  the four population rows written into rung 12 MULTI measure that, and a `PASS` there answers "does the
   mechanism work", never "is production's estate sound".
 - **The refresh cookie is not the same.** `ALLOW_INSECURE_COOKIES=true` flips
   `Secure; SameSite=None` to `SameSite=Lax` without `Secure` - decision 11 of the
@@ -63,12 +67,11 @@ deliberately, which is what rung 18 CORRUPT has always wanted and never had.
   having no `Secure` cookie to send. A differing PORT is still same-site, so local is sound for what
   it measures; **a row whose question is about CROSS-SITE behaviour is measuring something else, and
   says so in its own cell.**
-- **THE OBJECT STORE IS EMPTY, and `make dump-prod` does not fill it.** The dump copies the
-  DATABASE; Garage starts with **zero objects**. So every avatar, every attachment and every post
-  image that predates this estate answers 404 while its row in Postgres says it exists. Measured
-  2026-09-04 on `/posts`, where it reads exactly like a broken media path. **It is not a defect and
-  no row may report it as one** - a row whose question is about media uploads what it then reads,
-  in the same pass.
+- **THE OBJECT STORE IS EMPTY.** Garage starts with **zero objects**, and no database is copied in, so
+  a media row exists only if a local client uploaded it in the same pass. (Measured 2026-09-04, when
+  a production dump still fed the database: its rows pointed at objects this estate never held and
+  read as a broken media path - that feed is gone, and a row whose question is about media uploads
+  what it then reads.)
 - **FCM reaches no real device**, so every `+push` row needs the local estate given its own push
   credentials before it means anything.
 - **The phone needs `adb reverse`, per device, and it does not survive a replug.** Neither phone can

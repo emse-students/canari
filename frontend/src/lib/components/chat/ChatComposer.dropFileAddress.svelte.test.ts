@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A LOCAL FILE THE ENGINE WITHHELD IS NOT TEXT TO INSERT (reported 2026-09-25, Firefox + Nemo).
  *

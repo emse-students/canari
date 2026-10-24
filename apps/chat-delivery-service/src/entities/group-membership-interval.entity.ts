@@ -18,7 +18,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 
  * the partial unique index enforces, so a second enrolment of somebody already present is a no-op
  * exactly as it is on `dm_group_members`.
  *
- * Both instants are written by this service's own clock (`new Date()`), the clock `sendMessage`
+ * Both instants of the stretch are written by this service's own clock (`new Date()`), the clock `sendMessage`
  * stamps `queued_message.createdAt` with - the server receive time the client compares them
  * against. No client clock ever enters this table. The columns carry no time zone, so the service
  * must run in UTC (it does, as does Postgres - read on production 2026-10-14).
@@ -48,4 +48,23 @@ export class GroupMembershipInterval {
   /** When the removal that closed it was written; `null` while the person is still a member. */
   @Column({ type: 'timestamp', nullable: true })
   leftAt: Date | null;
+
+  /**
+   * When a commit admitted this person's first device into the stretch, if that was EARLIER than
+   * `joinedAt`; `null` when no device row preceded the enrolment (migration 033).
+   *
+   * **WHY IT IS HERE, AND NOT READ FROM THE DEVICE ROWS** (review of #2226). A commit can admit an
+   * invitee's device days before their enrolment opens this row (added = arrived, see
+   * `withheldWindows`), and that device row was the only record of the real arrival. Revoking the
+   * device (`purgeDeviceFootprint`) deletes its rows, so the arrival moved later and the person's
+   * next device lost the span between the two. Copied here at enrolment, the arrival is a fact a
+   * purge cannot reach.
+   *
+   * It decides the before-arrival span and the start of the stretch for `for`, NEVER a gap: the
+   * 2026-10-14 window still ends at `joinedAt`. Written by `ensureGroupMember` from the database's
+   * clock (the device row's `CreateDateColumn`), the second of the two clocks `withheldWindows`
+   * bounds.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  admittedAt: Date | null;
 }

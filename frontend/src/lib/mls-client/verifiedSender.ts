@@ -1,4 +1,4 @@
-import { deviceIdOfLeaf, userIdOfLeaf } from './leafIdentity';
+import { canonicalUserId, deviceIdOfLeaf, userIdOfLeaf } from './leafIdentity';
 
 /**
  * The sender the delivery server's ENVELOPE names, checked against the one OpenMLS VERIFIED.
@@ -88,7 +88,7 @@ export function checkVerifiedSender(
     groupId,
     path: envelope.path,
     kind,
-    envelopeUserId: envelope.userId.toLowerCase(),
+    envelopeUserId: canonicalUserId(envelope.userId),
     envelopeDeviceId: envelope.deviceId ?? null,
     verifiedIdentity: verified,
   };
@@ -136,7 +136,7 @@ export function assertVerifiedSender(
 
 function classify(envelope: EnvelopeSender, verified: string | null): SenderMismatchKind | null {
   if (verified === null) return 'unverifiable';
-  if (userIdOfLeaf(verified) !== envelope.userId.toLowerCase()) return 'user';
+  if (userIdOfLeaf(verified) !== canonicalUserId(envelope.userId)) return 'user';
   if (envelope.deviceId && envelope.deviceId !== deviceIdOfLeaf(verified)) return 'device';
   return null;
 }

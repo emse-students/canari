@@ -975,3 +975,68 @@ describe('an expiry queued behind a running complete re-judges under the lock', 
     await done;
   });
 });
+
+describe('the client resume protocol of a chat reel (reels-in-chat RC-5), walked as the client walks it', () => {
+  /**
+   * What `uploadResumable` does after a kill, in this order: GET the status, PUT only the parts it
+   * does not list, complete; and after a kill between complete and its answer, GET the status and
+   * read the mediaId from the memo without sending a byte. Across process restarts on both sides.
+   */
+  it('a part cut mid-body, a server restart and a lost complete answer: every part stored once, one object, one reservation', async () => {
+    const first = rig();
+    const s = await open(first, 'alice', 6000, 1024, 'chat-reel');
+    // Life 1 of the client: parts 0 and 1 land, part 2 is cut mid-body by the link.
+    await put(first, 'alice', s.uploadId, 0, sliceOf(s.blob, 1024, 0));
+    await put(first, 'alice', s.uploadId, 1, sliceOf(s.blob, 1024, 1));
+    const cut = new Readable({
+      read() {
+        this.push(sliceOf(s.blob, 1024, 2).subarray(0, 100));
+        this.destroy(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }));
+      },
+    });
+    await expect(first.svc.putPart('alice', s.uploadId, 2, cut, 1024)).rejects.toThrow(
+      BadRequestException
+    );
+
+    // The server restarts meanwhile; life 2 of the client asks what it holds.
+    const second = rig(first.dir);
+    const fact = await second.svc.status('alice', s.uploadId);
+    expect(fact.received).toEqual([0, 1]);
+    expect(fact.mediaId).toBeUndefined();
+    const missing = [...Array(fact.totalParts).keys()].filter((i) => !fact.received.includes(i));
+    for (const i of missing) await put(second, 'alice', s.uploadId, i, sliceOf(s.blob, 1024, i));
+    const { mediaId } = await second.svc.complete('alice', s.uploadId);
+    expect(second.stored).toHaveLength(1);
+    expect(second.stored[0].bytes.equals(s.blob)).toBe(true);
+
+    // The answer to complete was lost and the client killed; life 3 asks the status - the memo
+    // answers, and nothing else is sent. A stray PUT from a stale life is 409, not a second object.
+    const third = rig(first.dir);
+    expect(await third.svc.status('alice', s.uploadId)).toMatchObject({ mediaId });
+    await expect(
+      put(third, 'alice', s.uploadId, 0, sliceOf(s.blob, 1024, 0))
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(third.stored).toHaveLength(0);
+    expect(reserved(third)).toBe(0);
+  });
+
+  it('another member cannot read the status of, resume or complete the session (403)', async () => {
+    const r = rig();
+    const s = await open(r, 'alice', 3000, 1024, 'chat-reel');
+    await expect(r.svc.status('mallory', s.uploadId)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(put(r, 'mallory', s.uploadId, 0, sliceOf(s.blob, 1024, 0))).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    await expect(r.svc.complete('mallory', s.uploadId)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('a cancelled session is 404 to the client, which then opens a new one - its budget given back first', async () => {
+    const r = rig();
+    const s = await open(r, 'alice', 3000, 1024, 'chat-reel');
+    await r.svc.cancel('alice', s.uploadId);
+    expect(reserved(r)).toBe(0);
+    await expect(r.svc.status('alice', s.uploadId)).rejects.toBeInstanceOf(NotFoundException);
+    const again = await open(r, 'alice', 3000, 1024, 'chat-reel');
+    expect(reserved(r)).toBe(again.blob.length);
+  });
+});

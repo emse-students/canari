@@ -20,13 +20,20 @@
 /** Tauri plugin name - the prefix of every command below. */
 export const KEYSTORE_PLUGIN = 'keystore';
 
-/** Rust command names (snake_case, as declared in the plugin's `generate_handler!`). */
+/**
+ * Rust command names (snake_case, as declared in the plugin's `generate_handler!`).
+ *
+ * READS ONLY (2026-10-22). The plugin's write and delete are not in the WebView's permissions: on a
+ * phone the entry is the only copy of the hardware-held at-rest key, so a delete goes through the
+ * app command {@link DELETE_DEVICE_KEY_COMMAND}, which asks the at-rest guard first.
+ */
 export const KEYSTORE_COMMAND_NAMES = {
-  storeKeyBytes: 'store_key_bytes',
   getKeyBytes: 'get_key_bytes',
-  deleteKeyBytes: 'delete_key_bytes',
   hasKeyBytes: 'has_key_bytes',
 } as const;
+
+/** The app command deleting one keystore entry through the at-rest guard (`at_rest_key.rs`). */
+export const DELETE_DEVICE_KEY_COMMAND = 'supprimer_cle_appareil';
 
 /** Fully-qualified `invoke()` identifier for a keystore command. */
 export function keystoreCommand(name: keyof typeof KEYSTORE_COMMAND_NAMES): string {

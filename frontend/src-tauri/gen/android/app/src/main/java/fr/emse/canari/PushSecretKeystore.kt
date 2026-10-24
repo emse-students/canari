@@ -20,6 +20,14 @@ object PushSecretKeystore {
     private const val GCM_TAG_LENGTH = 128
 
     /**
+     * Held by every move of a secret between `pending_push_secret.txt` and this store
+     * ([CanariApplication.processPendingPushSecret], `CanariFirebaseMessagingService.retrievePushSecret`)
+     * and by the sign-out's erasure ([PushRegistrationEnd]), so an adoption that read the pending
+     * file before the sign-out removed it cannot store the secret after the sign-out cleared it.
+     */
+    val handoffLock = Any()
+
+    /**
      * Encrypts [secret] with AES-256-GCM using an Android Keystore key,
      * then stores the ciphertext and IV in the app's SharedPreferences.
      * Must be called exactly once from [CanariApplication] at startup.
@@ -42,6 +50,25 @@ object PushSecretKeystore {
             .putString(PREFS_KEY_ENC, Base64.encodeToString(encrypted, Base64.NO_WRAP))
             .putString(PREFS_KEY_IV, Base64.encodeToString(iv, Base64.NO_WRAP))
             .apply()
+    }
+
+    /**
+     * Erases the stored secret: a sign-out ends the registration it authenticated
+     * ([PushRegistrationEnd]). Only the ciphertext goes - the Keystore key is not the account's
+     * and wraps the next registration's secret. `commit()`, not `apply()`: the caller reports the
+     * sign-out finished, and a pending write a process death drops would bring the secret back.
+     */
+    fun clear(context: Context): Boolean {
+        if (!DirectBoot.storageReadable(context)) {
+            Log.e(TAG, "clear: storage still locked (pre-unlock process) - the secret was NOT erased")
+            return false
+        }
+        val erased = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .remove(PREFS_KEY_ENC)
+            .remove(PREFS_KEY_IV)
+            .commit()
+        if (!erased) Log.e(TAG, "clear: SharedPreferences commit failed - the secret was NOT erased")
+        return erased
     }
 
     /**

@@ -9,10 +9,12 @@ import { Group } from '../entities/group.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { SeatEviction } from '../entities/seat-eviction.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { PushToken } from '../entities/push-token.entity';
 import { KeyPackage } from '../entities/key-package.entity';
@@ -44,13 +46,15 @@ const GROUP_ID = 'g-1';
 
 /** The six tables a SOFT delete sweeps. `UserDismissedGroup` is deliberately not among them. */
 const SWEPT = [
-  QueuedMessage,
   GroupMember,
+  QueuedMessage,
+  QueuedPayload,
   DeviceGroupMembership,
   MlsCommitLog,
   MlsGroupInfo,
   GroupInvite,
   GroupMembershipInterval,
+  SeatEviction,
 ];
 
 interface Doors {
@@ -105,8 +109,11 @@ function makeRepos() {
       manager: {
         transaction: jest.fn(),
         // The account erasure's own-records half, outside the group sweep this file measures.
-        query: jest.fn().mockResolvedValue([[], 0]),
+        // A SELECT answers rows (the account's eviction rows: none); a raw DELETE `[rows, count]`.
+        query: jest.fn(async (sql: string) => (sql.trim().startsWith('SELECT') ? [] : [[], 0])),
         delete: jest.fn().mockResolvedValue({ affected: 0 }),
+        // The account's key packages, deleted on their own before anything is read.
+        getRepository: () => ({ delete: jest.fn().mockResolvedValue({ affected: 0 }) }),
       },
     },
     groupMember: {
@@ -122,6 +129,8 @@ describe('a group ends - one policy, three routes', () => {
   let repos: Repos;
   /** Every entity the sweep asked to delete inside the transaction, `Group` excluded. */
   let swept: unknown[];
+  /** How many transactions tombstoned the group. */
+  let sweeps: number;
   /** What happened, in order, so "Redis after the commit" is a fact rather than a hope. */
   let order: string[];
   let redis: { del: jest.Mock; srem: jest.Mock; smembers: jest.Mock };
@@ -138,17 +147,34 @@ describe('a group ends - one policy, three routes', () => {
     // The transaction fake hands `Group` back to the real mock - so the tombstone assertions measure
     // the actual write - and every other entity to a counting fake, so a table dropped from the
     // sweep shows up as a missing name rather than as silence.
-    const transactional = {
-      getRepository: jest.fn((entity: unknown) => {
-        if (entity === Group) return repos.group;
-        swept.push(entity);
-        return { delete: jest.fn().mockResolvedValue({ affected: 1 }) };
-      }),
-    };
+    //
+    // ONLY THE TRANSACTION THAT TOMBSTONES THE GROUP IS THE SWEEP. Any other transaction never
+    // touches `Group` - that is how they are told apart here.
+    sweeps = 0;
     repos.group.manager.transaction.mockImplementation(
       async (cb: (m: unknown) => Promise<unknown>) => {
+        let tombstones = false;
+        const entities: unknown[] = [];
+        const transactional = {
+          getRepository: jest.fn((entity: unknown) => {
+            if (entity === Group) {
+              tombstones = true;
+              return repos.group;
+            }
+            entities.push(entity);
+            return {
+              delete: jest.fn().mockResolvedValue({ affected: 1 }),
+              // The account's device rows, read before they end: none left in these cases.
+              find: jest.fn().mockResolvedValue([]),
+            };
+          }),
+        };
         const out = await cb(transactional);
-        order.push('commit');
+        if (tombstones) {
+          sweeps += 1;
+          swept.push(...entities);
+          order.push('commit');
+        }
         return out;
       }
     );
@@ -169,6 +195,8 @@ describe('a group ends - one policy, three routes', () => {
       delete: jest.fn().mockResolvedValue({ affected: 0 }),
       update: jest.fn().mockResolvedValue({ affected: 0 }),
       save: jest.fn(),
+      // The erasure's count of the device rows it leaves for the final pass: none here.
+      count: jest.fn().mockResolvedValue(0),
     });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -226,7 +254,7 @@ describe('a group ends - one policy, three routes', () => {
 
       await end(doors);
 
-      expect(repos.group.manager.transaction).toHaveBeenCalledTimes(1);
+      expect(sweeps).toBe(1);
       expect(swept).toEqual(SWEPT);
     });
 

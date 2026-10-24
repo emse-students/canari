@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -43,6 +44,7 @@ const {
 /** The live wipe right after the DELETE, in the realm that ran the session. */
 const AFTER_DELETE = { closeThisRunsHandles: false, expectNativeDatabase: false };
 const { ACCOUNT_KEY } = await import('$lib/utils/accountLocalKeys');
+const { m } = await import('$lib/paraglide/messages');
 
 const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>();
 
@@ -215,6 +217,17 @@ describe('the subject comes back as a NEW account (scenario A of the fourth revi
     );
     await expect(handleOidcCallback('code', 'st')).rejects.toThrow();
     expect(pendingDeletedAccountWipes()).toEqual(['user-1']);
+  });
+
+  it('words a subject the server refuses as a user id through Paraglide, never its English', async () => {
+    localStorage.setItem('canari_oidc_state', 'st');
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ code: 'USER_ID_INVALID', rule: 'colon', message: 'server English' }),
+        { status: 400 }
+      )
+    );
+    await expect(handleOidcCallback('code', 'st')).rejects.toThrow(m.auth_user_id_invalid());
   });
 });
 

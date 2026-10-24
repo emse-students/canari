@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The reel viewer's overlay, as on Instagram (user, 2026-10-16): bottom-left, the publisher's
  * picture and name linking where the post card links (the association for an association post,
@@ -199,7 +200,7 @@ it('unfolded on a letterboxed reel, the text never outgrows the frame, and outsi
   // A frame that does not reach the screen bottom (here: unmeasured) owes no safe-area inset; when
   // it does is `frameReachesBottom`'s, tested on its own (`reelFrame.test.ts`).
   expect(block.getAttribute('data-reel-caption-inset')).toBe('none');
-  expect(block.classList).toContain('pb-18');
+  expect(block.classList).toContain('pb-4');
   expect(q('[data-reel-caption-open]')!.classList).toContain('min-h-0');
   expect(q('[data-reel-caption-toggle]')!.classList).toContain('shrink-0');
   // The tap-outside layer spans the whole slide, letterbox bands included, under the caption.

@@ -51,16 +51,35 @@ char *canari_native_decrypt_message_with_commits(const unsigned char *state_ptr,
 /// the author, the signature and the AAD (channel-encryption section 21.5). nonce_b64,
 /// ciphertext_b64 and signature_b64 are the push's own fields; signature_b64 is "" when it carried
 /// none. Same JSON contract as canari_native_decrypt_message. Read-only and lock-free.
-char *canari_native_open_graine_push(const char *data_dir, const char *channel_id,
+/// cache_key_b64 is the install's native cache key the mirror is sealed under, "" when unreadable.
+char *canari_native_open_graine_push(const char *data_dir, const char *cache_key_b64,
+                                     const char *channel_id,
                                      const char *session_id, uint32_t message_index,
                                      const char *sender_id, const char *nonce_b64,
                                      const char *ciphertext_b64, const char *signature_b64,
                                      const char *locale);
 
 /// Writes the seeds of a key-material frame (the `seeds` array of a graine-key-material refusal)
-/// into data_dir/graine_seeds.json, under the file lock every writer takes. Returns how many were
-/// kept, or -1 when the payload is not a JSON array. Channel-encryption section 19.
-int32_t canari_native_store_graine_seeds(const char *data_dir, const char *seeds_json);
+/// into data_dir/graine_seeds.json, sealed under cache_key_b64, under the file lock every writer
+/// takes. Returns how many were kept, or -1 when the payload is not a JSON array or there is no
+/// key (nothing is ever written in the clear). Channel-encryption section 19.
+int32_t canari_native_store_graine_seeds(const char *data_dir, const char *cache_key_b64,
+                                         const char *seeds_json);
+
+/// Whether data_dir/graine_seeds.json holds a session: 1 yes, 0 no, -1 unreadable. The seed itself
+/// never leaves Rust.
+int32_t canari_native_graine_seed_held(const char *data_dir, const char *cache_key_b64,
+                                       const char *channel_id, const char *session_id);
+
+/// Seals one push-cache line under cache_key_b64. NULL when there is no usable key - the caller then
+/// writes nothing. Free with canari_free_string.
+char *canari_native_seal_cache_line(const char *cache_key_b64, const char *line);
+
+/// Claims the `ownDeviceAdded` keys of a decrypt answer (a JSON array of strings) in the shared
+/// device-notice ledger under data_dir (the App Group directory) and returns, as a JSON array, the
+/// keys nobody announced before - the ones a "new device on your account" notification is raised
+/// for. Caller frees with canari_free_string.
+char *canari_native_claim_device_notices(const char *data_dir, const char *keys_json);
 
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) into raw plaintext bytes for a
 /// notification thumbnail (WP-XP-3). key_b64/iv_b64 are the base64 CEK (32 bytes) + IV (12 bytes)

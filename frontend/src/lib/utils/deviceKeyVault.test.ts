@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The vault's THREE ways of not returning a key, and why each one owes a different line - and,
  * since 2026-10-14, the account it belongs to.
@@ -28,6 +29,10 @@ import {
   saveDeviceKey,
   setDeviceKeyPersistence,
 } from './deviceKeyVault';
+import {
+  forgetHardwareHeldKeysForTest,
+  noteHardwareHeldDeviceKey,
+} from '$lib/crypto/hardwareHeldKey';
 
 const A = 'alice-0000-account';
 const B = 'bob-11111-account';
@@ -119,6 +124,19 @@ describe('loadDeviceKey', () => {
 
     expect(await loadDeviceKey(A)).toEqual({ deviceKeyB64: 'ZGV2aWNlLWtleQ==', ownerProven: true });
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('never copies a hardware-held key into WebView storage', async () => {
+    // A phone's at-rest key lives in the keystore; a vault blob beside its wrap key in the app's
+    // files would be a second, software-only copy of it.
+    noteHardwareHeldDeviceKey('aGFyZHdhcmUta2V5');
+    try {
+      await saveDeviceKey(A, 'aGFyZHdhcmUta2V5');
+      expect(store().getItem(SLOT_A)).toBeNull();
+      expect(store().getItem(WRAP)).toBeNull();
+    } finally {
+      forgetHardwareHeldKeysForTest();
+    }
   });
 
   it('NEVER hands one account the key another account left, and leaves that key intact', async () => {

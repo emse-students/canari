@@ -27,6 +27,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
   let e2eProven = $state(false);
   let localMicSuspended = $state(false);
   let peerMicSuspended = $state(false);
+  let videoSendReduced = $state(false);
   let localStream = $state<MediaStream | null>(null);
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- replaced whole by the service's store, never mutated here
   let remoteStreams = $state<Map<string, MediaStream>>(new Map());
@@ -48,6 +49,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
       service.e2eProven.subscribe((v) => (e2eProven = v)),
       service.localMicSuspended.subscribe((v) => (localMicSuspended = v)),
       service.peerMicSuspended.subscribe((v) => (peerMicSuspended = v)),
+      service.videoSendReduced.subscribe((v) => (videoSendReduced = v)),
       service.localStreamStore.subscribe((v) => {
         localStream = v;
         localVideoTrack = v?.getVideoTracks().find((t) => t.readyState === 'live') ?? null;
@@ -135,6 +137,10 @@ export function useCallModel(getService: () => CallService | null | undefined) {
     /** The other party's OS holds ITS microphone, as it told us (`CallService.peerMicSuspended`). */
     get peerMicSuspended() {
       return peerMicSuspended;
+    },
+    /** THIS side's picture is sent reduced by the quality ladder (`CallService.videoSendReduced`). */
+    get videoSendReduced() {
+      return videoSendReduced;
     },
     /** `mm:ss` since the media path connected; frozen once the call ended. */
     get duration() {

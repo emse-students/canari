@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The catch-up session is opened by a frame, never by the possibility of one.
  *

@@ -14,6 +14,20 @@ export function createMlsServiceStub(
     persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     generateKeyPackage: vi.fn().mockResolvedValue(new Uint8Array([9])),
     addMember: vi.fn().mockResolvedValue({ welcome: new Uint8Array([1]) }),
+    replaceMember: vi.fn().mockResolvedValue({ welcome: new Uint8Array([1]) }),
+    // Default: the package is the device's pinned one - a test about a refusal overrides it.
+    vetKeyPackage: vi.fn().mockResolvedValue('pinned'),
+    // Default: no leaf carries the package's key - a duplicate-key test names the holder.
+    leafHoldingKeyOf: vi.fn().mockResolvedValue(null),
+    takeDeviceEvents: vi.fn().mockResolvedValue([]),
+    setDeviceEventConsumer: vi.fn(),
+    // Default: a device never seen - a verifier test overrides it with the key it pins.
+    pinnedSignatureKeys: vi.fn().mockResolvedValue(null),
+    // Default: no departure seen.
+    removalEpochs: vi.fn().mockResolvedValue([]),
+    // Default: every group drained - a test about a held commit overrides it.
+    isGroupDrained: vi.fn().mockReturnValue(true),
+    whenGroupDrained: vi.fn().mockResolvedValue(undefined),
     addMembersBulk: vi.fn().mockResolvedValue({
       addedDeviceIds: [],
       skipped: [],
@@ -51,6 +65,9 @@ export function createMlsServiceStub(
     // `null` IS a value of this contract and `undefined` never was: the publisher answers
     // `{ stored, baseEpoch } | null` since #571, and `null` means the publish did not land - which
     // is what a stub that publishes nowhere honestly did. A test about a base that LANDS overrides.
+    // Default: no commit of this device has an unknown outcome.
+    settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+    settleUnresolvedCommitFromLog: vi.fn().mockResolvedValue('none'),
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
     // The DEFAULT outcome is the one a test that does not care should get: no base published, so
     // nothing joined. A bare `false` no longer type-checks, and that is the point - every caller
@@ -98,6 +115,7 @@ export function createMlsServiceStub(
     setGroupImage: vi.fn().mockResolvedValue(undefined),
     deleteGroupOnServer: vi.fn().mockResolvedValue(true),
     removeMemberFromServer: vi.fn().mockResolvedValue(undefined),
+    declineJoinRequest: vi.fn().mockResolvedValue('withdrawn'),
     removeMember: vi.fn().mockResolvedValue(undefined),
     removeMemberDevice: vi.fn().mockResolvedValue(undefined),
     getGroupMembers: vi.fn().mockResolvedValue([]),
@@ -109,7 +127,11 @@ export function createMlsServiceStub(
       async (_groupId: string, forUserId?: string) =>
         new Map(forUserId ? [[forUserId.toLowerCase(), []]] : [])
     ),
-    getGroupRosters: vi.fn().mockResolvedValue({ rosters: new Map(), refused: new Set() }),
+    // As every server since step A answers: addressed history answers are routed.
+    getAddressedAnswersSupported: vi.fn().mockResolvedValue(true),
+    getGroupRosters: vi
+      .fn()
+      .mockResolvedValue({ rosters: new Map(), refused: new Set(), revoked: new Map() }),
     getUserGroups: vi.fn().mockResolvedValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),
     getPendingInvitations: vi.fn().mockResolvedValue([]),

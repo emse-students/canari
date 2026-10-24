@@ -168,7 +168,9 @@ export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
       e.stopPropagation();
     }
     heldOpener = opener;
-    taps.tap({ x: e.clientX, y: e.clientY, t: performance.now() });
+    // WHEN THE TAP HAPPENED, never when it was handled: on a busy phone the second click waits
+    // behind the first one's work, and a clock read here would count that work into the gap.
+    taps.tap({ x: e.clientX, y: e.clientY, t: e.timeStamp });
   }
 
   function onPointerDown(e: PointerEvent) {

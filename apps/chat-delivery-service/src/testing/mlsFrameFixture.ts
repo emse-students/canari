@@ -30,12 +30,44 @@ export function mlsFrame(
 }
 
 /**
- * A well-formed EXTERNAL commit's clear header: a `PublicMessage` whose `FramedContent` continues
+ * A well-formed EXTERNAL commit's clear part: a `PublicMessage` whose `FramedContent` continues
  * with `sender_type` new_member_commit (4), an empty `authenticated_data<V>` and `content_type`
- * commit (3) - the shape every production external commit has (`readCommitFrame`).
+ * commit (3), then a `Commit` - one ExternalInit proposal and the mandatory `UpdatePath`, whose
+ * `LeafNode` carries a BasicCredential naming `leafIdentity` - the shape every production external
+ * commit has (`readCommitFrame`). Keys are filler bytes: nothing on the server verifies them.
  */
-export function externalCommitFrame(groupId: string, epoch: bigint, prefixBytes: 1 | 2 | 4 = 1) {
-  return mlsFrame(1, groupId, epoch, prefixBytes, [4, 0x00, 3, 0xad]);
+export function externalCommitFrame(
+  groupId: string,
+  epoch: bigint,
+  leafIdentity = 'user-1:device-1',
+  prefixBytes: 1 | 2 | 4 = 1
+) {
+  return mlsFrame(1, groupId, epoch, prefixBytes, [
+    4,
+    0x00,
+    3,
+    ...externalCommitBody(leafIdentity),
+  ]);
+}
+
+/** The `Commit` of an external join whose path leaf names `leafIdentity` (`externalCommitFrame`). */
+export function externalCommitBody(leafIdentity: string): number[] {
+  const key = (fill: number) => [32, ...Array.from({ length: 32 }, () => fill)];
+  // ProposalOrRef: type proposal (1), proposal_type external_init (6), kem_output<V>.
+  const externalInit = [1, 0x00, 0x06, ...key(0x11)];
+  const identity = [...Buffer.from(leafIdentity, 'utf8')];
+  return [
+    externalInit.length,
+    ...externalInit,
+    1, // optional<UpdatePath>: present
+    ...key(0x22), // encryption_key<V>
+    ...key(0x33), // signature_key<V>
+    0x00,
+    0x01, // credential_type basic
+    identity.length,
+    ...identity,
+    0xad, // the rest of the leaf node, which nothing here reads
+  ];
 }
 
 /** A member commit as Canari sends one: a `PrivateMessage`, whose sender is encrypted. */

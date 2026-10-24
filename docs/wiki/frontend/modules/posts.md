@@ -28,6 +28,25 @@ filter bar is gone ([reels](reels.md#the-canareels-entry---an-icon-beside-the-ta
 The publisher's picture, name and link (`PostAuthorAvatar`, `postAuthorName`, `postAuthorHref`)
 and the text renderer (`PostMarkdown`) are shared by the card and the reel viewer's overlay.
 
+**The tab row collapses like Instagram's header (member report, 2026-10-22: the tabs were reachable
+only at the very top).** The wrapper in `routes/posts/+page.svelte` is `sticky top-0` in
+`.page-scroll-wrap` (the one scroller, at every width, so desktop behaves the same) and slides out
+with `-translate-y-full` when `tabsShown` is false: a transform on one boolean, so nothing reflows
+and the infinite scroll's position is untouched. The direction is read from that container's
+`scrollTop` by `nextScrollDirection` ([`utils/scrollDirection.ts`](../../../../frontend/src/lib/utils/scrollDirection.ts)),
+a pure step with an 8 px dead zone measured from where the reader turned; the row is always shown
+at the top, and `scrollTop` is clamped to the maximum so a bottom bounce is not an upward scroll.
+The handler is passive and logs nothing per event. `motion-reduce` drops the slide, `inert` keeps
+the hidden row out of the tab order, and **the row never hides while focus is inside it**
+(`focusin`/`focusout` drive `tabsFocused`): `inert` on a focused row would drop that focus to the
+body. The direction is **seeded at the container's `scrollTop` at mount**
+(`initialScrollDirection(top)`), not at 0, so a page restored mid-scroll does not read its whole
+offset as one scroll down and hide the row unasked. **While a search replaces the feed** the row's
+content is hidden and the wrapper is neither `sticky` nor padded, so no empty opaque band sits over
+the results. Read by code and unit test only: no phone has looked at it (the tab swipe, #1223, is a
+horizontal gesture on the same container and is not touched). **Owed ONE iPhone reading** (review,
+2026-10-23): the row when the page header unmounts with the keyboard open.
+
 ## An anonymous poll stores a tally and no voters (2026-09-30)
 
 A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creation like a form's
@@ -153,12 +172,18 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   vertical clip became a strip between black bands over a grey one. Now `preparePostMedia` records
   a video's `width`/`height` at upload (the on-device encoder's own output since R2,
   [video-preparation](../video-preparation.md)), so `PostContent` reserves the box
-  at the clip's own shape; the video FILLS it (`object-cover`, cropped only by the
-  `--media-max-height` ceiling - a clip's subject is in its middle, unlike a poster's text, and the
-  whole frame is one tap away) and plays muted on its own (`InlineVideo`, rule in
+  at the clip's own shape; the video is CONTAINED in it (`object-contain`: the WHOLE
+  frame at the clip's own ratio, never cropped - user, 2026-10-22, a portrait clip past the
+  `--media-max-height` ceiling used to lose its top and bottom). The bands the ceiling leaves on the
+  sides are a blurred copy of the clip's own first frame, the picture post's backdrop
+  (`BlurredBackdrop`): `InlineVideo` draws the frame it already decoded ONCE into a 48 px canvas
+  (`captureVideoFrame`) - no second `<video>`, no second stream, one `drawImage` and a few hundred
+  bytes - and until it exists the box is the neutral `bg-cn-surface` under the usual poster. A reel
+  goes through the SAME box (`singleMedia`), with a 9:16 fallback when it carries no dimensions. The
+  square gallery cell still crops (`videoFit="cover"`, its shape being the point). It plays muted on its own (`InlineVideo`, rule in
   [durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts)).
   The download lives in the viewer. A video posted before this carries no dimensions and keeps the
-  4:3 box, filled the same way. Measured on the Mi 9T: a 1080 x 2340 clip in a 402 x 567 box,
+  4:3 box, contained the same way. Measured on the Mi 9T: a 1080 x 2340 clip in a 402 x 567 box,
   playing, looping, silent at every start until its button is pressed, then audible on every video
   at once; the viewer opening PAUSES the feed's video and closing it resumes it - before that rule
   the two played together, sound on both.
@@ -401,8 +426,9 @@ explicit-type-then-mime fallback:
 **The reservation also carries a CEILING, and that is the half that keeps a feed scrollable.** The
 ratio is clamped to `[0.25, 4]`, which still allows a box four times the card's width - about two
 phone screens of a single picture - so `mediaAspectStyle` emits `max-height: var(--media-max-height)`
-(80svh, defined once in `app.css`) alongside the `aspect-ratio`. Past the ceiling the media is
-CROPPED rather than shrunk. **The crop is CENTRED** (`object-cover object-center`): the ceiling was
+(80svh, defined once in `app.css`) alongside the `aspect-ratio`. Past the ceiling a PICTURE or a
+VIDEO is no longer cropped: both are contained over a blurred backdrop (see the video paragraph
+above). **The crop below is the one that remains - the gallery cell's, and it is CENTRED** (`object-cover object-center`): the ceiling was
 first shipped with a top anchor, on the argument that a screenshot or an infographic says what it
 has to say at the top - but a post attachment is overwhelmingly a photograph, whose subject is in
 the middle, and a top anchor reads as a bug on one. The full frame is one tap away in the viewer,
@@ -1424,6 +1450,12 @@ its own click's propagation. Two clicks within `GESTURE.DOUBLE_TAP_MS` (250) and
 `GESTURE.DOUBLE_TAP_SLOP_PX` (50) are a double, decided by `isDoubleTap` through
 `createTapDisambiguator` - the arithmetic the media viewer's zoom and the message bubble's heart
 already share, not a third copy. A third quick tap belongs to the same gesture (`quietAfterDouble`).
+**The gap is measured between the events' `timeStamp`s - when each tap HAPPENED - never with a
+clock read in the handler** (2026-10-22): on a busy phone the second click waits in the queue behind
+the first one's handling and render, and a handler-time read counted that work into the 250 ms, so a
+real double tap read as two singles. The message bubble had the same read (`Date.now()`) and takes
+the same fix; the media viewer already used `timeStamp`. `doubleTapLike.test.ts` and
+`MessageBubble.doubleTap.svelte.test.ts` queue the second click behind a 300 ms first handler.
 
 - **On text, the header, a poll's question, a reel in the viewer: no single tap is held.** The first
   click goes on to its target at once. On text it does nothing; on a reel it toggles the player's
@@ -1914,3 +1946,7 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 ## The edit picker always lists the attached form (2026-10-21)
 
 `GET /api/forms` returns only the forms its reader owns or manages (`MANAGE_FORMS`), so an editor whose post carries a form they do not manage (a moderator, an officer without that right) saw "Aucun formulaire pour l'instant" under a post that visibly had one (user report, production). `EditPostForm` now passes the list through `withAttachedForm` (`$lib/posts/editableForms.ts`), which reads the attached form by id (`GET /api/forms/:id`, open to any signed-in reader) and puts it first when the list lacks it; a failed read is logged and the list stays as it was. Saving never depended on the picker: `attachedFormId` is written from the selected id, so the form was kept all along - only the display lied. Not changed: the create picker (a new post has no attached form) and who may attach a form they do not manage (the server still decides).
+
+### The thread on a phone is the CanaReels drawer, with nothing quoted above it (user, 2026-10-23, phones only)
+
+`PostCommentsSheet` picks by `phoneViewport()` (below `md`): the shared `shared/CommentsDrawer` - the very component `ReelCommentsSheet` is built on - rising over the interface on `motion-sheet-in` over a dimmed, tappable backdrop, closed by a drag down on its grabber/title, Back (one history entry), Escape, the X or a tap above. Over the page (`scrim`) it is portalled to the body, `aria-modal`, `focusTrap`ped, and the opener (read at initialisation, BEFORE `focusTrap` moves the focus) gets the focus back. It rides the keyboard (`keyboard-aware-bottom`, capped at `--app-viewport-height`) exactly as the reels sheet does. From `md` up the dialog (`Modal`) is unchanged. **The quoted-post reminder (avatar, author, two lines of text) under the title is REMOVED everywhere**, dialog included; the sheet no longer takes a `post` prop. Tests: `PostCard.drawer.svelte.test.ts` (phone) and `PostCard.sheet.svelte.test.ts` (wide). Only a phone confirms the entrance feel and the soft-keyboard behaviour.

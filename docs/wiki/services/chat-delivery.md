@@ -656,6 +656,234 @@ refusals by reason with a sample of group ids, and `fetchPendingMessages` report
 `waitForMessageQueueIdle`** - the rows are enqueued, not handled, so what was refused is only known
 once the queue has drained. Silent when there is nothing to say.
 
+### The background Welcome answers what happened, and the stage is merged only on an acceptance (2026-10-22)
+
+A killed Android phone answers a `welcome_request_pending` push from its `mls.bin`
+(`processWelcomeRequestBackground` in `CanariFirebaseMessagingService.kt`, Rust
+`prepare_welcome_background_with_key` / `settle_background_welcome` in `mobile/background.rs`). Read on the Mi 9T on 2026-10-22: the phone had been shut while its group moved
+from epoch 1 to 3, built its add on base 1, the gate refused it (`epoch_mismatch`), the route answered
+`201`, and the phone logged "Welcome sent". Worse, it had merged the add into `mls.bin` before the
+answer, so it held an epoch nobody else had and could not read the group's next message.
+
+- **The route's answer is typed.** `201 {status: 'accepted', newEpoch}` after the gate accepted;
+  `409 {status: 'rejected', reason, currentEpoch?}` otherwise. The phone classifies
+  the body's `status` token (`push/BackgroundWelcomeAnswer.kt`), so it reads a pre-2026-10-22 server
+  (`201 {status: 'rejected'}`, `201 {status: 'done'}`) correctly too.
+- **The phone stages the Add IN `mls.bin`, and merges it only on an acceptance** - the foreground's
+  order since C7, and its recorded stage (`add_members_recorded`, `mls-core/src/pending_submission.rs`):
+  the pending commit and its submission record are written by compare-and-swap over the bytes the Add
+  was built from, BEFORE the commit leaves. `accepted` merges it, a refusal clears it, each written by
+  compare-and-swap over the `mls.bin` loaded at that moment. A transport failure or a 5xx is
+  `unknown`: nothing is settled, because guessing either way is the fork this exists to prevent.
+  So is every untyped 4xx but a WHITELIST - 400 and 413 (`BYTES_REFUSALS`), which refuse the bytes
+  and so every wire copy alike: Android's `HttpURLConnection` silently retries a POST on a reused
+  connection, so the request read may be a copy of one the server accepted, and a 401/403/408/429 from
+  the guards or a 404/405/409 from an edge says nothing of it. The stage is left for the foreground's
+  resubmission. A typed
+  `concurrent_commit` is left too: the lock it reports may be this commit's own first copy, as the
+  client's resubmission rule reads it (`resubmissionVerdict`), and the group answers `commit-pending`
+  until the foreground settles it. A 400, a 413 and every other typed `rejected` body still clear. One
+  route-side gap is owed: the membership guard answers `not_a_member` before the duplicate check
+  ([backlog](../backlog.md#p3---the-background-welcome-route-refuses-not_a_member-before-it-asks-whether-these-bytes-already-landed-review-of-2329-2026-10-24)).
+- **Only a COLD process stages or settles** (`background_write_mls_bin_if_unchanged_and_cold`, the
+  key-group join's writer). In a process whose foreground manager is loaded
+  (`live_manager_in_process`), that manager persists over `mls.bin` at its next resume or checkpoint
+  and would erase the stage while the server holds the commit. The prepare refuses `warm-process`
+  and sends nothing - the app's own load answers the request, and the newcomer re-asks every 60 s; a
+  settle in a process warmed inside the round trip is `left-to-foreground`, whose loaded state holds
+  the stage. The stage's ledger entry is written under the same hold of the `mls.bin` write lock as
+  the stage, and the sign-out sweep (`remove_mls_state_in`) takes that lock, so it removes both or
+  neither. The entry names its commit's digest, so a settle forgets its own stage and never a later
+  one of the same group. The warm mark is STICKY (set by the first foreground load, never cleared while
+  the process lives), so a process Android keeps alive refuses every background Welcome; its rate is
+  owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
+- **What the background cannot settle, the foreground does - and nothing waits.** No answer read, a
+  busy state lock, a foreground that started or wrote inside the round trip: the stage stays in
+  `mls.bin`, and whoever loads it next holds it. The foreground settles it as it settles its own
+  commits (`settleUnresolvedCommits`, at connect, before a send in that group, and after a resume
+  reload that installed a new state): it resubmits the recorded commit, the gate answers an accepted
+  one `duplicate`, and it merges - then sends the Welcome its record owes (`excludeDeviceIds` and
+  `keyPackageDevices` name the admitted device; the intent is pinned on both sides by
+  `src/lib/mls-client/test/fixtures/background-welcome-intent.json`). The joiner refuses the second
+  copy of a Welcome it already took. A group holding an unsettled stage is not answered again
+  (`commit-pending`), and the background outbox seals nothing in it (the entry stays queued).
+- **The KeyPackage is bound to the requester, as the foreground's Add binds it.** The phone hands
+  Rust the `userId:deviceId` the push named (`WelcomeRequest.requester`). A package whose credential
+  names another device, or that device under a key the phone never pinned for it, is refused BEFORE
+  anything is staged (`MlsManager::key_package_verdict`, the check the Add re-runs). The answer's
+  reason is the skip's wire name: `identity-mismatch` or `signature-key-changed`, logged at ERROR.
+  Pinned by `a_substituted_key_package_is_refused_on_the_background_path` and
+  `a_key_package_under_an_unpinned_key_is_refused_on_the_background_path`.
+- **No catch-up and no retry.** The background never applies the group's commits to `mls.bin` (the
+  foreground's replay owns that, and what it does around a commit); a stale phone is refused, and the
+  request is left to the foreground or another member. An `epoch_mismatch` whose server epoch is
+  AHEAD of the base (never a base at or past a lagging counter) is recorded in
+  `welcome_request_stale.json` against the digest of `mls.bin`, so the newcomer's re-ask every 60 s is
+  not answered again from the same bytes; any write to `mls.bin` lifts it. A refused TARGET
+  (`welcome_target_unknown` / `welcome_target_not_member`) is remembered the same way, for that target
+  alone (`{group}|{userId:deviceId}`), so a holder does not commit and get refused on every ask; a
+  target admitted later is answered from the next bytes, or by another holder or the foreground. The memo of a refusal is written
+  against the bytes the clear WROTE, which are the bytes the next request is answered from. Deleting
+  the MLS state (`remove_mls_state_in`) sweeps the memo and its `.tmp` with it - and deletes
+  `mls.bin` after them, so a sweep that fails part-way leaves the state intact for the next reset to
+  finish; the owner record
+  (`mls.owner` and its `.tmp`) goes after `mls.bin`, so a failed removal never leaves a state nobody
+  is named for.
+- **The newcomer heals on its own cadence**: `requestReAdd` re-asks every 60 s while its app is open
+  (external join first, then `welcome_request`), so it joins as soon as a base is published again or a
+  member with a current state answers. A shut, stale phone alone never serves it.
+- **The base of the new epoch travels with the commit** (COMM-22), as the foreground's does: the
+  prepare exports it (`add_members_bulk_with_base`), the phone sends it as `groupInfo`, and
+  `validateCommit` publishes it in the advance's own transaction. So an accepted background add never
+  leaves the published base one epoch behind, whether or not the phone's install then succeeds.
+- **An accepted commit always has its Welcome.** The route hands the Welcome to `validateCommit`
+  (`ValidateCommitBody.welcome`), which holds its target to `sendWelcome`'s bar (a registered device,
+  on the roster or entitled by social-service) BEFORE the epoch moves - a refusal is a typed
+  `welcome_target_unknown` / `welcome_target_not_member` 409 - and writes the Welcome row in the
+  advance's own transaction, then delivers it from that row. The Welcome used to be queued by a second
+  call after the advance; when that failed, the newcomer sat in the tree with no Welcome, every holder
+  then answered it `already-member`, and nothing durable recovered it. A failed realtime delivery now
+  costs nothing: the row is the delivery, and the device takes it on its next pull.
+  `welcome` is the background route's alone: `POST /mls/commit` hands the gate an allowlist of the
+  fields `submitCommit` sends (`foregroundCommitBody` in `messaging.controller.ts`), so a foreground
+  body carrying one stores nothing. And **every path that ends a device's membership deletes the
+  Welcomes still queued for it, in the transaction that ends it**, through one helper,
+  `endDeviceMemberships` (`utils/group-membership.ts`): a device pulls its queue whatever the roster
+  says, so a Welcome left behind would let it enter the epoch it was built for. The paths: a removal
+  or self-leave (`removeGroupMember`), a key-group eviction - community kick, leave, salon removal -
+  (`evictFromDistributionGroup`, whole queue), account erasure (`deleteUserData`, whole queue), a
+  deleted, revoked or collected device (`purgeDeviceFootprint`, whole queue), and the three device
+  routes `DELETE device-memberships/...` and `force_leave`. Deliberately NOT: a kick back to
+  `pending` and the cron's purge of a stale pending seat, where the person stays on the roster and a
+  queued Welcome is the Add the device is owed. The helper refuses an empty or missing `userId`, and
+  an empty `deviceId` or `groupId` when the scope names one, because a criterion left out of a delete
+  widens it to every row.
+- **A removal and a Welcome store serialise on the target's roster row.** `addGroupMember` and
+  `removeGroupMember` write `dm_group_members` first, then the membership interval, then the device
+  rows and (on a removal) the queued Welcomes. Two transactions that take the same rows in the same
+  order wait for each other instead of deadlocking (`members.controller.lock-order.spec.ts` reads
+  that order off the SQL the real TypeORM builder generates, via `testing/recordingDataSource.ts`;
+  it cannot run two live sessions, so it proves the order and not the wait). Both Welcome stores -
+  `validateCommit`'s transaction and `sendWelcome`'s `enqueueForLiveGroup` - re-read the target's
+  `dm_group_members` row `FOR SHARE` after the group row and before writing (`lockWelcomeSeat`).
+  If the removal committed first, the row is gone and the store is refused `welcome_target_not_member`
+  with nothing written. If the store got there first, the removal waits on that lock, then deletes
+  the Welcome it just stored. A key-distribution group has no roster row on this side (social-service
+  holds its roster), so its target is checked by the entitlement read instead.
+- **The commit is fanned out once.** `validateCommit` fans an accepted commit out itself; the route used
+  to broadcast it a second time.
+- **What the phone does with the answer is decided in `BackgroundWelcomeAnswer.apply`**, behind a
+  `StagedWelcome` seam the JVM tests drive: a merge or a clear that finds the MLS state lock busy never
+  ran, and the stage is left to the foreground (`stage left in mls.bin (lock busy)`).
+- **The state refuses what its index allows.** The WebView keeps an index of the groups holding a
+  staged commit, and a resume reload swaps the state under it. So the index is dropped BEFORE the
+  swap, and the native send (`envoyer_message_bytes`) refuses, typed, a group whose state holds a
+  staged commit (`Scellement::CommitPending`, `StagedCommitPendingError`): `sendMessage` settles it
+  and seals once more, or answers `CommitOutcomeUnknownError`. The background outbox holds such a
+  group without spending a slot of its batch (`maxAttempts` counts only the entries attempted).
+- **Every stage is traced to its end.** The prepare names the stage in `background_stages.json`; a
+  settlement by the background forgets it; the foreground's next load reports each one left
+  (`report_background_stages`): `found in the loaded state` (settled by resubmission), `already
+  merged`, or `is ABSENT from the state this foreground keeps` at ERROR.
+- **What is left open:** the foreground's checkpoint is a BLIND write (`write_mls_state_blob`). A live
+  manager that never loaded the stage - a resume reload refused as `live-ahead` (which then persists
+  the live state) or as an epoch regression - writes over it, and an accepted Add is then held by the
+  server and not by this device. Staging only in a cold process closes that for a process warmed
+  BEFORE the prepare; what is left is a process warmed inside the round trip, whose load read the
+  stage, and a manager that then never re-reads the file. It is SAID, not prevented: before the
+  persist - whether or not a stage is noted, since a Welcome received in the background joins a group
+  with nothing in the ledger - `... ERASES` at ERROR
+  with the counts and group prefixes of the stages and later epochs the file holds; at the
+  background's answer, `ACCEPTED AND NOT HELD`; at the next load, `is ABSENT`. The device recovers
+  through the usual ladder. The same write loses any background advance, not only this one; it is its
+  own work package
+  ([backlog](../backlog.md#p2---wp-checkpoint-cas-the-foreground-checkpoint-writes-over-a-file-it-did-not-load-2026-10-23-design-one-mls-manager-per-process-owed-a-review-before-code)).
+  iOS has no background re-add (its branch was unreachable and is deleted).
+
+### A key-group frame is stored once (migration 034, 2026-10-22)
+
+**Measured on production 2026-10-21:** each key-group payload sat in 31 `queued_message` rows on
+average, and the key groups held **883 MB of a 1.5 GB queue**
+([dm-vs-community-encryption](../protocols/dm-vs-community-encryption.md#where-each-system-can-improve)).
+The ciphertext of one fan-out is the same for every seat, so it is now stored once.
+
+**The per-device row is still the DELIVERY RECORD, and nothing a device sees changed.** Its `id` is
+what the device ACKs, what a push names (`queuedMessageId`, `fetch-proto`), what the deferred push
+checks, and what the client deduplicates on. Its `createdAt` is what the pull pages on. So the
+record keeps every column. On a key-group fan-out its `proto` is NULL and `payloadId` points at one
+`queued_payload` row (`groupId`, `proto`, `createdAt`). All the code is in
+[`utils/queued-payload.ts`](../../../apps/chat-delivery-service/src/utils/queued-payload.ts):
+
+| Step | Function | What it guarantees |
+| --- | --- | --- |
+| Decide | `sharesPayload` | A key-distribution group (community or salon), at least 2 records, the same `proto` on all of them, no Welcome. A DM, a group conversation and a single addressed seat stay inline |
+| Write | `saveWithSharedPayload`, from `enqueueForLiveGroup`, **only while `QUEUED_PAYLOAD_SHARED_WRITES=true`** (OFF as shipped, see below) | The payload and all its records in ONE transaction, under the `dm_groups` row lock the send already takes. The records come back with `proto` set in memory, because the realtime envelope is built from them. OFF, the fan-out is the inline per-seat write every release has made |
+| Read | `materializeDeliveries`, from `fetchMessages` (per chunk, before the byte budget) and `fetch-proto` | The payload is JOINED in the statement that reads the record (`q.payload`, a many-to-one with no foreign key), so the pair is one snapshot and cannot race the collector. The function puts `proto` back and REMOVES `payloadId` and `payload`, so the pull's JSON keeps the shape every shipped client parses. The pull pages with SQL `OFFSET`/`LIMIT`: TypeORM's `skip`/`take` would turn the join into a second query. A record whose payload is missing is logged as a `[PAYLOAD] MISSING` error and WITHHELD - never served as an empty frame, which the device would ACK, deleting the only evidence of the loss; `fetch-proto` answers it as absent |
+| Collect | `collectUnreferencedPayloads`, hourly after the 90-day retention delete | `DELETE ... WHERE NOT EXISTS` a record pointing at it, in one statement. This is an allowlist based on durable state, never on age |
+| End a group | `deleteGroupOwnedRows` | `queued_payload` is in `GROUP_OWNED_TABLES`, right after `queued_message`, so a group's payloads go with its records in the same transaction, and orphan discovery sees them |
+
+**Why one collector is enough, and what would break it.** A payload's reference set only shrinks:
+all its records are inserted in the transaction that inserts it, and nothing ever adds a record to
+an existing payload. So "no record references it now" means no record ever will. Every path that
+deletes RECORDS (an ACK, `purgeDeviceFootprint`, the retention, an account erasure, the internal
+deletes) never touches a payload. Whichever of them removes the last record, the next hourly pass
+takes the payload. The cost is that a payload can outlive its last record by up to an hour. **A
+future writer that points a new record at an existing payload breaks this argument** and must take
+the payload row `FOR SHARE` to restore it.
+
+**No backfill, no transition logic.** Rows written before migration 034 carry their `proto` inline
+and `payloadId` NULL. That is exactly what every reader already serves, so they stay correct untouched
+and leave the queue by ACK or retention as before. There is no foreign key, like every other column
+that joins this service's tables.
+
+**THE READERS SHIP FIRST, AND THE WRITER IS A SWITCH THAT SHIPS OFF.** Once a shared record
+exists, its `proto` column is NULL. An image older than the readers does not join `queued_payload`,
+so it would serve that record as an empty frame, and the device would ACK it away: the message is
+lost, silently - and re-running an older release IS the documented rollback. So the release that
+carries migration 034 carries the join, `materializeDeliveries` and the collector, and writes NOTHING
+shared: `enqueueForLiveGroup` calls the writer only while `QUEUED_PAYLOAD_SHARED_WRITES` is `true`
+(`readSharedPayloadWrites` in `utils/queued-payload.ts`, read once at boot; unset or `false` is OFF,
+anything else stops the boot). The key is a `literal:false` row of
+`infrastructure/deploy/env-manifest.tsv`, passed by both estate compose files.
+
+**Turning the writer on is a code change in a LATER release, never an operator flip.** Once the
+release carrying the readers is the STABLE in production (so every image a rollback can land on reads
+the join), a pull request changes that manifest row to `literal:true` and the matching expectation
+of `.github/scripts/tests/deploy-env.test.sh`; it ships in the next pre-release, then the next stable.
+From then on a rollback may go back as far as the readers' release and no further.
+
+**The migration sets `lock_timeout = '5s'`** (`migrations.lock-timeout.spec.ts` asserts it for 034
+and 035). `ADD COLUMN` takes ACCESS EXCLUSIVE on `queued_message`, the service's busiest table, and
+every send would queue behind it while it waits. A timeout fails the deploy instead, and a re-run is
+safe because every statement is idempotent. The `payloadId` index is PARTIAL (`WHERE "payloadId" IS
+NOT NULL`) and built `CONCURRENTLY`, which the runner allows: `infrastructure/lib/migrations.sh`
+feeds the file to psql on stdin with no `--single-transaction`. A concurrent build that fails leaves
+an INVALID index under its name that `IF NOT EXISTS` would keep for ever, so a `DO` block drops an
+invalid leftover first (a plain `DROP INDEX`, an instant under the same timeout).
+
+**Where it is tested.** `queued-payload.integration.spec.ts` runs against the production Postgres
+digest in CI's `test-chat-delivery-integration` job, which fails if any integration spec of the
+service did not run or was skipped; it applies the migration statement by statement over one
+session, as psql does, over an INVALID leftover, twice. The pull also orders by `q.id` after
+`createdAt`, so records sharing a timestamp page in a total order: `messaging.pending-page.spec.ts`
+fails without it (a fake that orders by nothing it was not told), because a quiet PostgreSQL happens
+to repeat its tie order and passes either way.
+
+**What the reports count.** `reportQueueDepth` sizes a shared record by its payload
+(`LEFT JOIN queued_payload`), because draining it costs the device the whole payload. The admin
+storage panel lists `queued_payload` beside `queued_message`.
+
+**Scope is the key groups only, deliberately.** That is where the bytes are. A group conversation
+of 109 seats has the same shape, and widening `sharesPayload` to it is a one-line change once its
+queue is measured. A DM (2 to 5 rows) would pay a second row and a join for almost nothing.
+
+Pinned by `queued-payload.spec.ts` (the switch, the decision, the write shape, the read shape),
+`messaging.send-race.spec.ts` (the same fan-out OFF, ON, and a bad value refusing the boot) and
+`queued-payload.integration.spec.ts`. The integration spec runs against PostgreSQL through the
+service's own `sendMessage` (booted ON, and once OFF), `fetchMessages`, `acknowledgeMessages`,
+`purgeDeviceFootprint`, the retention cron and `reportQueueDepth`, and it is gated on
+`CHAT_DELIVERY_IT_DATABASE_URL`.
+
 ### A roster seat is not a key, and only a Welcome tells the two apart
 
 `addGroupMember` writes a `dm_device_group_memberships` row with `status: 'pending'` for **every**
@@ -988,7 +1216,7 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 | POST | `/api/mls/groups/:groupId/members` | Add member record to group |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
-| POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused }`) |
+| POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused, revoked }`) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 
@@ -1036,12 +1264,18 @@ one. Pinned by `members.controller.group-rosters.spec.ts` (one query, refusal pe
 `strayLeaves.test.ts` (one roster read for every held group, after every tree; a leaver who
 rejoined after the batch read is spared).
 
+**And the revoked devices of each roster (2026-10-22).** The answer carries `revoked`: per ANSWERED
+group, the `userId:deviceId` of every active revocation (`activeRevocationWhere`) among that group's
+roster users, read in ONE `revoked_device` query over every answered user. A refused or unanswered
+group names nobody. The client removes exactly those leaves
+([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)).
+
 ### Messaging
 
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/mls/send` | Send MLS message/commit (publishes to Redis, queues for offline devices); answers `receivedAt`, the `Date` written into every queued copy's `createdAt` ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)) |
-| POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22) |
+| POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22). A RESUBMISSION of the exact bytes the log already holds at that base epoch from the same device is answered `{ accepted: true, duplicate: true }` with nothing advanced or fanned out again - how a committer whose first answer was lost learns the outcome ([mls-protocol](../protocols/mls-protocol.md#the-periodic-leaf-refresh)). A device under an active revocation is refused `403 DEVICE_REVOKED` before the lock and before that duplicate answer, read by the pair on the denylist's `(userId, deviceId)` unique index ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits to catch up a lagging device |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
@@ -1095,7 +1329,7 @@ those groups' first pages itself, which is the path every group took before the 
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ optional iOS `voipToken`) |
+| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ iOS `voipToken`: a token, or `null` from a build without the native ring, which clears it) |
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
 | GET / PUT | `/api/mls/notification-preferences` | JWT | The account's switched-off notification categories (`{ disabled: string[] }`); PUT replaces the set and refuses an unknown id |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background push service |
@@ -1108,7 +1342,9 @@ those groups' first pages itself, which is the path every group took before the 
 | DELETE | `/api/mls/push/release-add-lock` | PushSecret | Release add-lock |
 | GET | `/api/mls/push/key-package` | PushSecret | Get key package for background service |
 | POST | `/api/mls/push/commits` | PushSecret | Replayable commits since `sinceEpoch`, for the in-memory catch-up of a device whose app is killed |
-| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit` - a commit this route cannot validate is not broadcast |
+| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit`, which records the commit, stores its Welcome in the same transaction, fans the commit out and delivers the Welcome from its row. **The answer is typed** ([background Welcome](#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)): `201 {status: 'accepted', newEpoch}`, or `409 {status: 'rejected', reason, currentEpoch?}` with `reason` one of `epoch_mismatch`, `concurrent_commit`, `not_a_member`, `welcome_target_unknown`, `welcome_target_not_member` |
+| POST | `/api/mls/push/key-group-base` | PushSecret, then 64 per user per minute (`PushSecretGuard` -> `PushSecretThrottlerGuard`, 429) | A shut phone's read of a KEY GROUP's scope and external-join base, for the join from a salon push ([channel-encryption section 26](../protocols/channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)). 403 not a key group or not entitled, 503 entitlement unanswered; `welcomeOwed` instead of a base when a Welcome is queued or the add lock is held |
+| POST | `/api/mls/push/key-group-join` | PushSecret, then 64 per user per minute (429, its own bucket) | That phone's external commit into the key group. External commits into key groups only (400 / 403 otherwise), then `validateCommit` unchanged; admits, removes and excludes are not taken here |
 | POST | `/api/mls/push/send` | PushSecret | Send message from background service |
 | POST | `/api/mls/push/broadcast-test` | JWT | Test push to all devices of caller |
 | POST | `/api/mls/push/unavailable` | JWT | A device reporting that it CANNOT obtain a push token (writes nothing - see below) |
@@ -1473,8 +1709,10 @@ per member token:
 - **iOS with a `voipToken`** → **direct APNs VoIP push** (`ApnsVoipService`) - the single
   deliberate exception to the all-FCM rule, because FCM cannot carry `apns-push-type: voip`
   and only a VoIP push may wake CallKit from a killed state. ES256 provider JWT (cached 40 min)
-  over node:http2, topic `<bundle>.voip`, `apns-expiration` now+45 s; a 410 response clears the
-  stored `voipToken`.
+  over node:http2, topic `<bundle>.voip`, `apns-expiration` = the ring's answer deadline; a 410
+  response clears the stored `voipToken`. The payload carries ids and the deadline, never a name,
+  and is sent only while the ring is live; without the APNs key such a device is not rung (ERROR,
+  no FCM alert instead) - [calls](../frontend/modules/calls.md#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22).
 - **iOS without `voipToken`** (legacy builds) → FCM alert banner ("📞 Appel entrant").
 
 `/api/calls/ring-end` (reason `answered`/`cancelled`/`ended`) is sent to **all** members
@@ -2155,7 +2393,7 @@ be pushed is a population question, answered by `tools/cross-client-harness/devi
 | `APNS_VOIP_KEY_ID` | no | Key ID of the APNs auth key |
 | `APNS_VOIP_TEAM_ID` | no | Apple Developer Team ID (`4CLNB8SR6L`) |
 | `APNS_VOIP_TOPIC` | no | VoIP topic, default `fr.emse.canari.voip` |
-| `APNS_VOIP_SANDBOX` | no | `true` to target the APNs sandbox (dev builds) |
+| `APNS_VOIP_SANDBOX` | no | `true` to target the APNs sandbox - Xcode debug builds only; a TestFlight build (dev estate included) is `aps-environment production` |
 
 ### The push avatar log line
 
@@ -2182,5 +2420,18 @@ the push; the iOS NSE processes no Welcome at all. So inlining a Welcome could n
 
 **The decision** is `decideProtoCarriage` in `push-payload.ts`, a typed `ProtoCarriage`: `inlined`
 (a message that fits), `by-reference` (every Welcome, whatever its size; debug line, expected),
-`over-budget` (a MESSAGE that did not fit: the fixed fields grew; `warn`), `empty`. No client change
+`long-frame` (a MESSAGE too long to fit even beside empty names - a long text, carried by reference,
+debug; every frame is about 360 B raw longer since it carries its author's signature and a signed
+epoch claim, measured in `mls-core/tests/authored_frames.rs`), `over-budget` (a MESSAGE that would
+have fit beside empty names: the fixed fields grew; `warn`), `empty`. No client change
 and no native work was needed. `push-payload.spec.ts` pins the 4608 B case.
+
+**Key material over the budget is carried by reference too (2026-10-22).** A Graine seed bundle is
+routinely kilobytes, and since a history answer is paged at up to 255 KiB
+([channel-encryption §4.4](../protocols/channel-encryption.md#44-joining-and-what-a-share-link-is-worth)),
+every multi-seed answer to an offline device was logged `over-budget` at warn, once per page.
+`isKeyDistribution` (the `dm_groups` distribution columns the push already reads) now makes such a
+frame `by-reference` with `reason: 'key-material'`, at debug. Key material that fits is still inlined,
+because the native mirror reads seeds from it. A frame whose group row could not be read
+(`isKeyDistribution` undefined) still reports `over-budget`. The device behaviour is unchanged: a push
+with an empty `proto` was already fetched by `queuedMessageId`.

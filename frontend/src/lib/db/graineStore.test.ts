@@ -252,6 +252,28 @@ describe('graineCodec - the seam both backends share', () => {
     ).toBeUndefined();
   });
 
+  // The rotation anchor (graine-removal-tracker): sealed, since its fingerprint is derived from an
+  // MLS secret, and all-or-nothing, since reuse across an epoch move rests on every field of it.
+  it('keeps the rotation anchor sealed, round-trips it whole, and reads a partial one as absent', () => {
+    const rotationAnchor = {
+      runId: 'run-A',
+      epochFingerprint: 'fp-secretish',
+      redistributed: true,
+    };
+    const s = session({ rotationAnchor });
+
+    expect(JSON.stringify(graineClearColumns(s))).not.toContain('fp-secretish');
+    expect(
+      decodeGraineSession(graineClearColumns(s), encodeGraineSensitive(s)).rotationAnchor
+    ).toEqual(rotationAnchor);
+    expect(
+      decodeGraineSession(graineClearColumns(s), {
+        seedB64: 'abc',
+        rotationAnchor: { runId: 'run-A', epochFingerprint: 'fp' },
+      }).rotationAnchor
+    ).toBeUndefined();
+  });
+
   it('orders ties by session id, so two devices keep the same sessions', () => {
     const a = session({ sessionId: 'aaa', createdAt: 5 });
     const b = session({ sessionId: 'bbb', createdAt: 5 });

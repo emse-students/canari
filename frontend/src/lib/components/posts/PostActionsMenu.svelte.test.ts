@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE MENU IS PORTALLED, SO A HOVERED CARD CANNOT TRAP IT UNDER THE NEXT POST.
  *

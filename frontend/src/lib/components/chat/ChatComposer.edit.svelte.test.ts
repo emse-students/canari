@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * EDITING A MESSAGE HAPPENS IN THE CLASSIC COMPOSER, NOT IN THE BUBBLE (user, 2026-10-02:
  * *"modification des messages -> pas dans la bulle, dans le composer de message classique"*).

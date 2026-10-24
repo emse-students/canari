@@ -47,7 +47,7 @@ class name, so most are singular unless the entity declares `@Entity('...')`).
 | Service | Tables (key ones) |
 |---|---|
 | core-service | `users` (the personal notepad is a `notes` column, not a table), `platform_config` |
-| chat-delivery-service | `key_package`, `one_time_key_package`, `queued_message`, `dm_groups`, `dm_group_members`, `dm_device_group_memberships`, `dm_user_dismissed_groups`, `group_invites`, `mls_commit_log`, `mls_group_info`, `push_token`, `revoked_device`, `pin_verifier` |
+| chat-delivery-service | `key_package`, `one_time_key_package`, `queued_message`, `queued_payload`, `dm_groups`, `dm_group_members`, `dm_device_group_memberships`, `dm_user_dismissed_groups`, `group_invites`, `mls_commit_log`, `mls_group_info`, `push_token`, `revoked_device`, `pin_verifier` |
 | social-service | `channel_workspaces`, `channels`, `channel_members`, `channel_roles`, `channel_messages`, `channel_key_distributions`, `workspace_invites`, `forms`, `submissions`, `form_reminders`, `associations`, `association_members`, `association_products`, `association_categories`, `association_documents`, `purchase_records`, `webhook_deliveries`, `product_checkouts` ([payments](../frontend/modules/payments.md#a-product-checkout-is-a-row-one-per-attempt-2026-10-21)), `booking_spaces`, `booking_resources`, `booking_availability_rules`, `booking_availability_exceptions`, `booking_blocks`, `bookings`, `booking_participants` ([bookings](../bookings-chantier.md#wp-b1-as-built-2026-10-16)) |
 
 Full schema: see `docs/wiki/architecture.md` (PostgreSQL schema overview section).
@@ -98,6 +98,8 @@ permission - the route would be open to the internet.
   never holds, fills in or forwards one. Adminer's own login throttle still applies.
 - **Audit:** every session opened, every refusal, and every cookie refused for a bad signature or a lost
   role is a `warn` line in core-service's log.
+
+**PHP hardening (2026-10-22, host IT):** `infrastructure/adminer/php-hardening.ini` is mounted read-only into the container and sets `session.upload_progress.enabled = Off` (measured on the pinned image: default `1`, `0`-equivalent with the file). The image already runs the CLI SAPI (`php -S`), so there is no FPM or Apache to move; PHP is patched by moving the digest, never by the host's unattended-upgrades, which cannot reach a container. IT was told Docker is the chosen route.
 
 **The database account Adminer asks for is the user's decision** (2026-10-02). A `SELECT`-only role
 is the way to narrow the route and is tracked in the [backlog](../backlog.md).
@@ -421,7 +423,9 @@ Redis is used for three distinct purposes:
 
 ### Presence keys
 
-`user:online:{userId}:{deviceId}` — TTL 20 seconds, refreshed on each WebSocket Pong. Deleted immediately on clean disconnect.
+`user:online:{userId}:{deviceId}` — TTL 20 seconds, refreshed on each WebSocket Pong. Deleted immediately on clean disconnect. Its value is `sessions-1` from a current gateway (never written over an older gateway's `true`).
+
+`addressing:sessions:{userId}:{deviceId}` — hash, one field `{process}:{connection}` per live session of the device on any gateway process, valued `addressed-history-1` or `-`; each field is written with its expiry (`HSETEX`, the presence TTL) and is removed when its session ends. `addressing:left:{userId}:{deviceId}` — hash of the sessions that ended, each for one presence TTL, so a refresh in flight cannot rewrite a retired session's field. Read by chat-delivery before it addresses a history answer ([history-answer-addressing](../protocols/history-answer-addressing.md), rule 6; [chat-gateway](../services/chat-gateway.md#presence)).
 
 ### History streams
 

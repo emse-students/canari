@@ -30,6 +30,9 @@ import { svelteFiles, withoutAnyComments } from '$lib/styles/markupSources';
 
 const dir = join(process.cwd(), 'src');
 const code = (body: string) => withoutAnyComments(readFileSync(body, 'utf8'));
+// The tree is read once, here, and not inside a test: a test body is charged against vitest's 5 s
+// timeout, and under the full suite a walk of `src` took seconds on its own.
+const markup = svelteFiles(dir).map((file) => ({ file, body: code(file) }));
 
 /** The overlay itself, and the two full-page surfaces that are deliberately NOT modals. */
 const OVERLAY = join(dir, 'lib/components/shared/ModalOverlay.svelte');
@@ -52,10 +55,10 @@ const centresAPanel = (body: string) =>
 
 describe('one overlay for every modal', () => {
   it('is the only thing that centres a panel on a full-viewport plate', () => {
-    const offenders = svelteFiles(dir)
-      .filter((file) => file !== OVERLAY && !NOT_MODALS.includes(file))
-      .filter((file) => centresAPanel(code(file)))
-      .map((file) => relative(dir, file));
+    const offenders = markup
+      .filter(({ file }) => file !== OVERLAY && !NOT_MODALS.includes(file))
+      .filter(({ body }) => centresAPanel(body))
+      .map(({ file }) => relative(dir, file));
 
     expect(
       offenders,
@@ -108,7 +111,7 @@ describe('one overlay for every modal', () => {
   });
 
   it('gives every modal an accessible name, because an unnamed dialog is announced as "dialog"', () => {
-    const callers = svelteFiles(dir).filter((file) => /<ModalOverlay\b/.test(code(file)));
+    const callers = markup.filter(({ body }) => /<ModalOverlay\b/.test(body));
     // The fusion is the point: if this ever reads a small number again, sites have been written by
     // hand instead.
     expect(callers.length).toBeGreaterThanOrEqual(5);
@@ -123,13 +126,12 @@ describe('one overlay for every modal', () => {
     // GREEN - caught by planting exactly that, which is the only way a vacuous predicate is ever
     // found. `(?<![\w-])` is what makes `aria-label` stop counting.
     const unnamed = callers
-      .filter((file) => {
-        const body = code(file);
+      .filter(({ body }) => {
         const tags = body.match(/<ModalOverlay\b/g)?.length ?? 0;
         const labelled = body.match(/<ModalOverlay\b[\s\S]{0,800}?(?<![\w-])label=/g)?.length ?? 0;
         return labelled < tags;
       })
-      .map((file) => relative(dir, file));
+      .map(({ file }) => relative(dir, file));
     expect(unnamed, `these open a dialog with no accessible name: ${unnamed.join(', ')}`).toEqual(
       []
     );

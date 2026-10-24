@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DOUBLE TAP ON A POST CARD LIKES IT, AND NEVER UNLIKES IT (user, 2026-10-19).
  *
@@ -94,13 +95,17 @@ async function settle(): Promise<void> {
   flushSync();
 }
 
-/** Two taps on `el`, as an engine sends them: two clicks with a pointer behind them. */
+/**
+ * Two taps on `el`, as an engine sends them: two clicks with a pointer behind them, both HAPPENED
+ * before the first is handled - the gesture reads each event's `timeStamp`, so however long the
+ * first click's work takes under suite load, the pair stays a double tap, as on a busy phone.
+ */
 function doubleTap(el: Element) {
-  for (const detail of [1, 2]) {
-    el.dispatchEvent(
+  const clicks = [1, 2].map(
+    (detail) =>
       new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 50, clientY: 50, detail })
-    );
-  }
+  );
+  for (const e of clicks) el.dispatchEvent(e);
   flushSync();
 }
 

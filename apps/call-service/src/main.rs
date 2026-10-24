@@ -141,10 +141,37 @@ fn keepalive_from(raw: Option<String>) -> std::time::Duration {
 const MAX_SIGNAL_MESSAGE_BYTES: usize = 64 * 1024;
 
 /// JWT payload (`sub` = user id).
+///
+/// `kind` is the `type` claim: core-service signs its ACCESS token without one and its REFRESH token
+/// with `"refresh"`, with the same secret, so only [`decode_access_claims`] tells them apart.
 #[derive(Serialize, Deserialize)]
 struct Claims {
     sub: String,
     exp: usize,
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+}
+
+/// Why a WebSocket upgrade token was refused.
+#[derive(Debug)]
+enum TokenRejection {
+    /// Bad signature, wrong algorithm, expired or malformed.
+    Invalid(jsonwebtoken::errors::Error),
+    /// A valid token of another kind (the refresh token), carrying the kind it declared.
+    NotAnAccessToken(String),
+}
+
+/// Verifies an HS256 token and accepts it only as an ACCESS token (no `type` claim, or `"access"`),
+/// the check core-service makes on its own routes - a refresh token never opens a socket.
+fn decode_access_claims(token: &str, secret: &[u8]) -> Result<Claims, TokenRejection> {
+    let validation = Validation::new(Algorithm::HS256);
+    let claims = decode::<Claims>(token, &DecodingKey::from_secret(secret), &validation)
+        .map_err(TokenRejection::Invalid)?
+        .claims;
+    match claims.kind.as_deref() {
+        None | Some("access") => Ok(claims),
+        Some(other) => Err(TokenRejection::NotAnAccessToken(other.to_string())),
+    }
 }
 
 /// Payload for short-lived room access tokens (issued by chat-delivery-service).
@@ -950,19 +977,23 @@ async fn ws_handler(
         return (StatusCode::UNAUTHORIZED, "Missing auth token").into_response();
     };
 
-    let validation = Validation::new(Algorithm::HS256);
-    let key = DecodingKey::from_secret(state.jwt_secret.as_bytes());
-
-    match decode::<Claims>(&token, &key, &validation) {
-        Ok(token_data) => {
-            let user_id = token_data.claims.sub;
+    match decode_access_claims(&token, state.jwt_secret.as_bytes()) {
+        Ok(claims) => {
+            let user_id = claims.sub;
             info!("Authenticated WebSocket upgrade for user {}", user_id);
             ws.max_message_size(MAX_SIGNAL_MESSAGE_BYTES)
                 .max_frame_size(MAX_SIGNAL_MESSAGE_BYTES)
                 .on_upgrade(move |socket| handle_socket(socket, state, user_id))
         }
-        Err(e) => {
-            error!("JWT validation failed: {}", e);
+        Err(TokenRejection::NotAnAccessToken(kind)) => {
+            warn!(
+                "WebSocket upgrade refused: a '{}' token is not an access token",
+                kind
+            );
+            (StatusCode::UNAUTHORIZED, "Invalid token").into_response()
+        }
+        Err(TokenRejection::Invalid(e)) => {
+            warn!("WebSocket upgrade refused: token rejected ({:?})", e.kind());
             (StatusCode::UNAUTHORIZED, "Invalid token").into_response()
         }
     }
@@ -2846,6 +2877,47 @@ async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn user_token(kind: Option<&str>, secret: &[u8], alg: Algorithm) -> String {
+        let claims = Claims {
+            sub: "user-1".into(),
+            exp: 4_000_000_000,
+            kind: kind.map(str::to_string),
+        };
+        encode(
+            &Header::new(alg),
+            &claims,
+            &EncodingKey::from_secret(secret),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn only_an_access_token_opens_a_socket() {
+        let secret = b"test-secret";
+        let ok = decode_access_claims(&user_token(None, secret, Algorithm::HS256), secret).unwrap();
+        assert_eq!(ok.sub, "user-1");
+        assert!(decode_access_claims(
+            &user_token(Some("access"), secret, Algorithm::HS256),
+            secret
+        )
+        .is_ok());
+        match decode_access_claims(
+            &user_token(Some("refresh"), secret, Algorithm::HS256),
+            secret,
+        ) {
+            Err(TokenRejection::NotAnAccessToken(kind)) => assert_eq!(kind, "refresh"),
+            other => panic!("expected NotAnAccessToken, got {:?}", other.map(|c| c.sub)),
+        }
+        assert!(matches!(
+            decode_access_claims(&user_token(None, b"other", Algorithm::HS256), secret),
+            Err(TokenRejection::Invalid(_))
+        ));
+        assert!(matches!(
+            decode_access_claims(&user_token(None, secret, Algorithm::HS512), secret),
+            Err(TokenRejection::Invalid(_))
+        ));
+    }
 
     #[test]
     fn room_secret_is_required() {

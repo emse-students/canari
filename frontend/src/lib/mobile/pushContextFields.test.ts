@@ -154,13 +154,19 @@ describe('push_context.json contract (Rust writer vs 3 native readers)', () => {
     expect(source()).toMatch(pattern);
   });
 
-  // The upgrade path off v0.11.x: without these, an existing install has its key only in the
-  // old JSON, nothing ever promotes it, and background decrypt stays dead forever.
+  // NO NATIVE WRITER OF THE DEVICE KEY OUTSIDE THE GUARDED BRIDGE (2026-10-22). The one-shot
+  // migrations off v0.11.x's JSON (WP-SEC-1, 2026-07-28) wrote the keystore entry with no at-rest
+  // guard, and on a migrated phone that entry is the only copy of the key. They are deleted: every
+  // login since rewrote both the entry and the file, so nothing was left for them to promote.
   it.each([
-    ['canari_ios.mm', () => iosAppSource, /CanariMigrateDeviceKeyFromJson/],
-    ['CanariApplication.kt', () => kotlinAppSource, /migrateDeviceKeyFromJson/],
-  ])('%s still runs the one-shot legacy key migration', (_name, source, pattern) => {
-    expect(source()).toMatch(pattern);
+    ['canari_ios.mm', () => iosAppSource, /MigrateDeviceKeyFromJson/],
+    [
+      'CanariApplication.kt',
+      () => kotlinAppSource,
+      /migrateDeviceKeyFromJson|MlsDeviceKeyStore\.store/,
+    ],
+  ])('%s writes no device key of its own', (_name, source, pattern) => {
+    expect(source()).not.toMatch(pattern);
   });
 
   /**
@@ -229,7 +235,6 @@ describe('device key keystore encoding (raw bytes at rest, base64 on the wire)',
   const keystoreKt = readFileSync(KEYSTORE_PLUGIN_KT, 'utf8');
   const deviceKeyStoreKt = readFileSync(MLS_DEVICE_KEY_STORE_KT, 'utf8');
   const objcSource = readFileSync(CANARI_PUSH_MM, 'utf8');
-  const iosAppSource = readFileSync(CANARI_IOS_MM, 'utf8');
   const swiftSource = readFileSync(NOTIF_SERVICE_SWIFT, 'utf8');
 
   const storeKeyBytes = functionBody(keystoreSwift, /@objc public func storeKeyBytes/, /\n {2}}/);
@@ -243,24 +248,13 @@ describe('device key keystore encoding (raw bytes at rest, base64 on the wire)',
     /private static func retrieveDeviceKey/,
     /\n {2}}/
   );
-  const iosMigration = functionBody(
-    iosAppSource,
-    /static void CanariMigrateDeviceKeyFromJson/,
-    /\n}/
-  );
-  const ktStore = functionBody(deviceKeyStoreKt, /fun store\(/, /\n {4}}/);
-  const ktRetrieve = functionBody(deviceKeyStoreKt, /fun retrieve\(/, /\n {4}}/);
+  const ktStoreForAlias = functionBody(deviceKeyStoreKt, /fun storeForAlias\(/, /\n {4}}/);
+  const ktRetrieve = functionBody(deviceKeyStoreKt, /fun retrieveForAlias\(/, /\n {4}}/);
   const ktPluginStore = functionBody(keystoreKt, /fun storeKeyBytes\(/, /\n {4}}/);
   const ktPluginGet = functionBody(keystoreKt, /fun getKeyBytes\(/, /\n {4}}/);
 
   it.each([
     ['KeystorePlugin.storeKeyBytes (iOS login)', () => storeKeyBytes, /Data\(base64Encoded:/],
-    [
-      'CanariMigrateDeviceKeyFromJson (iOS upgrade)',
-      () => iosMigration,
-      /initWithBase64EncodedString/,
-    ],
-    ['MlsDeviceKeyStore.store (Android)', () => ktStore, /Base64\.decode\(keyB64/],
     [
       'KeystorePlugin.storeKeyBytes (Android login)',
       () => ktPluginStore,
@@ -280,9 +274,26 @@ describe('device key keystore encoding (raw bytes at rest, base64 on the wire)',
   it.each([
     ['CanariRetrieveDeviceKey', () => objcRetrieve, /NSUTF8StringEncoding/],
     ['NotificationService.retrieveDeviceKey', () => swiftRetrieve, /String\(data:/],
-    ['CanariMigrateDeviceKeyFromJson', () => iosMigration, /dataUsingEncoding:/],
   ])('%s does not treat the raw key bytes as UTF-8 text', (_name, body, pattern) => {
     expect(body()).not.toMatch(pattern);
+  });
+
+  it('the iOS unattended read answers "absent" for errSecItemNotFound only, and throws otherwise', () => {
+    // No gate here compiles Swift, so the shape is pinned: a locked keychain or an entitlement
+    // error read as "absent" would revert a migrating marker or overwrite a hardware-held key.
+    const body = functionBody(keystoreSwift, /@objc public func getKeyBytesUnattended/, /\n {2}}/);
+    expect(body.match(/NSNull\(\)/g)).toHaveLength(1);
+    expect(body).toMatch(
+      /if status == errSecItemNotFound \{\s*invoke\.resolve\(\["keyBytes": NSNull\(\)\]\)/
+    );
+    expect(body).toMatch(/throw NSError\(\s*domain: NSOSStatusErrorDomain, code: Int\(status\)/);
+  });
+
+  it("MlsDeviceKeyStore's one writer refuses an MLS device key alias", () => {
+    // It writes the install's native cache key; the device key goes through the guarded bridge.
+    expect(deviceKeyStoreKt).not.toMatch(/fun store\(/);
+    expect(ktStoreForAlias).toMatch(/alias\.startsWith\(MLS_DEVICE_KEY_ALIAS_PREFIX\)/);
+    expect(deviceKeyStoreKt).toMatch(/MLS_DEVICE_KEY_ALIAS_PREFIX = "mls_device_key_"/);
   });
 
   // DEFAULT appends a newline and decode_base64_to_32_bytes does not trim. Both Android readers

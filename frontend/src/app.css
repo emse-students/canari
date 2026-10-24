@@ -75,6 +75,11 @@
   --color-banner-notice: #f59e0b;
   --color-banner-danger: #dc2626;
   --color-banner-info: #2563eb;
+  /* The call screen's answer and hang-up buttons, fixed in BOTH themes like the `cn-scrim` they
+     sit on: green accepts, red declines or ends - the colours every phone dialler uses, so the web
+     screen, the Android full-screen ring and the iPhone CallKit screen read as one. */
+  --color-call-accept: #16a34a;
+  --color-call-decline: #dc2626;
 
   /* ================================= THE BUBBLES =================================
      The outgoing bubble is the most identity-carrying surface in a chat application, and the
@@ -580,6 +585,65 @@ img[src^='/emoji/'] {
   animation: riseIn 260ms ease;
 }
 
+/* THE MOTION SCALE (design-reference, "Motion"): three durations and one easing, all of them
+   transform/opacity only. Reduced motion is NOT handled per class: the global
+   `prefers-reduced-motion` rule at the end of this file takes every CSS animation and transition to
+   0.01ms, so a class below needs no media query of its own. Measure on the Mi 9T before adding a
+   fourth duration. */
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 250ms;
+  --motion-ease-out: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes motionSheetIn {
+  from {
+    transform: translate3d(0, 100%, 0);
+  }
+}
+
+@keyframes motionFadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes motionPopIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+}
+
+/* A bottom sheet rising from its edge. No `to`: it ends where the element's own transform puts it,
+   so a sheet that is dragged keeps owning `transform` once the entrance is over. */
+.motion-sheet-in {
+  animation: motionSheetIn var(--motion-slow) var(--motion-ease-out);
+}
+
+.motion-fade-in {
+  animation: motionFadeIn var(--motion-base) var(--motion-ease-out);
+}
+
+/* One new item arriving in a list that is already on screen. */
+.motion-pop-in {
+  animation: motionPopIn var(--motion-base) var(--motion-ease-out);
+}
+
+/* Press feedback on a control: a shrink on touch, back on release. It restates the colour
+   transitions of `.ui-icon-button` because an unlayered `transition` replaces that layered one. */
+.motion-press {
+  transition:
+    transform var(--motion-fast) var(--motion-ease-out),
+    background-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.motion-press:active {
+  transform: scale(0.9);
+}
+
 /*
  * A long press on a touch screen selects text, and on this app it was selecting
  * the chrome - navigation labels, section headings, the description under a
@@ -780,6 +844,24 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
     opacity: 1;
     transform: translateX(0);
   }
+}
+
+/* The CanaReels heart's reaction drawer: unfolds upward from the heart (the global
+   prefers-reduced-motion rule shortens it to nothing). */
+@keyframes reelReactionDrawerIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scaleY(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+.reel-reaction-drawer {
+  transform-origin: bottom center;
+  animation: reelReactionDrawerIn 180ms ease-out;
 }
 
 @keyframes panelIn {

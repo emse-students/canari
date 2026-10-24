@@ -22,6 +22,8 @@
     type ChannelWritePolicy,
   } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
+  import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import { noteSalonNotificationLevel } from '$lib/utils/chat/salonUnread';
   import Picker from '../ui/Picker.svelte';
   import NotificationLevelControl from './NotificationLevelControl.svelte';
@@ -201,6 +203,15 @@
   }
 
   /**
+   * What a failed access write tells the user - ONE mapping for every control that changes who
+   * reads the salon (visibility, write policy, adding and removing a member). A coded refusal (someone
+   * losing access holds more than the actor, the salon changed meanwhile) is named; anything else is the control's own generic error.
+   */
+  function accessWriteError(e: unknown, generic: string): string {
+    return describeCommunityRefusal(refusalCode(e)) ?? generic;
+  }
+
+  /**
    * Flips visibility ON THE SERVER, at once, behind a confirmation - the same shape as removing a
    * member (below): both change who can read the channel, and both used to be deferred to
    * "Enregistrer", which production went five hours without a single member ever pressing (see
@@ -224,7 +235,7 @@
       if (!next) accessAllowedUserIds = [];
     } catch (e) {
       Log.d('channelSettings.handleTogglePrivacy failed', e);
-      saveError = m.chat_channel_access_save_error();
+      saveError = accessWriteError(e, m.chat_channel_access_save_error());
     } finally {
       privacySaving = false;
     }
@@ -247,7 +258,7 @@
     } catch (e) {
       Log.d('channelSettings.setWritePolicy failed', e);
       writePolicy = previous;
-      saveError = m.chat_channel_access_save_error();
+      saveError = accessWriteError(e, m.chat_channel_access_save_error());
     } finally {
       writePolicySaving = false;
     }
@@ -282,7 +293,7 @@
       if (accessIsPrivate) void admitSalonGrantee(selectedChannelId, uid, appendLog);
     } catch (e) {
       Log.d('channelSettings.addAllowedUser failed', e);
-      membersError = m.chat_channel_add_access_error();
+      membersError = accessWriteError(e, m.chat_channel_add_access_error());
     } finally {
       memberAdding = false;
     }
@@ -302,7 +313,7 @@
       channelMembers = channelMembers.filter((m) => m.userId !== userId);
     } catch (e) {
       Log.d('channelSettings.handleRemoveMemberFromChannel failed', e);
-      membersError = m.chat_channel_remove_access_error();
+      membersError = accessWriteError(e, m.chat_channel_remove_access_error());
     } finally {
       const updated = { ...memberRemoving };
       delete updated[userId];

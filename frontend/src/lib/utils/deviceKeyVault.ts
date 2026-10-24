@@ -25,6 +25,8 @@
  * keystore and call clearDeviceKeyAndWrapKey() after successful biometric enrolment.
  */
 
+import { isHardwareHeldDeviceKey } from '$lib/crypto/hardwareHeldKey';
+
 const VAULT_KEY_KEY = 'canari_device_key_vault_key'; // random wrap key (b64), shared by every slot
 const PERSIST_FLAG_KEY = 'canari_device_key_persist'; // localStorage - user opted into "stay signed in"
 
@@ -122,8 +124,18 @@ async function getOrCreateWrapKey(): Promise<CryptoKey> {
  * handed to a sign-in as anybody else.
  *
  * Another account's slot is left exactly as it was: each account unlocks with its own key.
+ *
+ * A HARDWARE-HELD KEY IS NEVER VAULTED (2026-10-22). On a phone the at-rest key lives in the platform
+ * keystore; a copy here would sit in the WebView's files beside its own wrap key, which is exactly
+ * the copy holding the key in hardware removes. The refusal is the one seam every vault write goes
+ * through - the login, a PIN change, the "stay signed in" switch, a biometric disable - and "stay
+ * signed in" on such a phone reads the keystore instead (`nativeStorageLoginImpl`).
  */
 export async function saveDeviceKey(userId: string, deviceKeyB64: string): Promise<void> {
+  if (isHardwareHeldDeviceKey(deviceKeyB64)) {
+    console.info('[VAULT] the device key is hardware-held - not copied into the vault');
+    return;
+  }
   const key = await getOrCreateWrapKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(deviceKeyB64);

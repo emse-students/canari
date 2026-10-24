@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE GIF PANEL TAKES THE KEYBOARD'S PLACE (user, 2026-10-02: *"un panneau de la taille du clavier
  * qui s'ouvre a sa place"*), and its tiles hold their size before they load.
@@ -8,6 +9,7 @@
  * to the keyboard. What it cannot see - the composer standing still while a real keyboard animates -
  * is `panelSpacerPx`'s arithmetic (`composerSurface.test.ts`) and a reading on the phones.
  */
+import { clearGifPageCache } from '$lib/utils/chat/gifSearchCache';
 import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ChatComposer from './ChatComposer.svelte';
@@ -41,7 +43,8 @@ const gifs = vi.hoisted(() => ({
     hasNext: false,
   })),
 }));
-vi.mock('$lib/utils/chat/gifSearch', () => ({
+vi.mock('$lib/utils/chat/gifSearch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/chat/gifSearch')>()),
   fetchGifPage: gifs.page,
   GifSearchUnavailableError: class extends Error {},
 }));
@@ -58,6 +61,7 @@ const mounted: (() => void)[] = [];
 const originalMatchMedia = window.matchMedia;
 
 beforeEach(() => {
+  clearGifPageCache();
   resetKeyboardHeightMemoryForTests();
   clearHistoryOverlayStack();
   mounted.push(initHistoryOverlayStack());

@@ -7,7 +7,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures::{sink::SinkExt, stream::StreamExt};
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use redis::AsyncCommands;
 use std::sync::{
     Arc,
@@ -15,7 +14,7 @@ use std::sync::{
 };
 use tokio::sync::mpsc;
 
-use crate::models::{AuthParams, Claims};
+use crate::models::{AuthParams, TokenRejection, decode_access_claims};
 use crate::state::AppState;
 
 /// Heartbeat cadence: one WebSocket ping every this many seconds.
@@ -108,8 +107,9 @@ struct ConnectionGuard {
     state: Arc<AppState>,
     /// The `"userId:deviceId"` key used in `connected_users`.
     conn_key: String,
-    /// The Redis key `user:online:{userId}:{deviceId}` to delete on disconnect.
-    redis_key: String,
+    /// This session's field in the device's sessions hash ([`crate::addressing`]), removed on
+    /// every exit - whether or not another session keeps the device online.
+    field: String,
     /// Unique ID assigned to this connection, used for O(1) removal from the map.
     conn_id: u64,
 }
@@ -122,24 +122,21 @@ impl Drop for ConnectionGuard {
         // the explicit-disconnect path asks exactly the same question.
         let still_connected = self.state.remove_session(&self.conn_key, self.conn_id);
 
-        if still_connected {
-            tracing::info!(
-                "[presence] Skipping DEL for {} - another session is still active",
-                self.conn_key
-            );
-            return;
-        }
-
+        // The presence itself is decided by the shared hash inside the script (crate::addressing):
+        // it goes when no session of the device is left on ANY process. `still_connected` is this
+        // process's view only, logged for the reader.
         tracing::info!(
-            "[presence] Cleaning up presence key {} for {}",
-            self.redis_key,
-            self.conn_key
+            "[presence] Retiring session {} of {} (another local session: {})",
+            self.field,
+            self.conn_key,
+            still_connected
         );
         let state = self.state.clone();
-        let redis_key = self.redis_key.clone();
+        let field = self.field.clone();
         let conn_key = self.conn_key.clone();
-        // Retry up to 3 times so a brief Redis blip doesn't leave a stale key
-        // (the presence TTL is the last-resort fallback if all attempts fail).
+        // Retry up to 3 times so a brief Redis blip doesn't leave a stale key. A field left behind
+        // anyway expires with its own TTL; until then an undeclared one only keeps the device
+        // unaddressable (crate::addressing), never the reverse.
         tokio::spawn(async move {
             for attempt in 0u8..3 {
                 if attempt > 0 {
@@ -147,28 +144,36 @@ impl Drop for ConnectionGuard {
                 }
                 match state.redis_client.get_multiplexed_async_connection().await {
                     Ok(mut con) => {
-                        if redis::cmd("DEL")
-                            .arg(&redis_key)
-                            .query_async::<()>(&mut con)
-                            .await
-                            .is_ok()
+                        match crate::addressing::leave_session(
+                            &mut con,
+                            &conn_key,
+                            Some(&field),
+                            PRESENCE_TTL_SECS,
+                        )
+                        .await
                         {
-                            tracing::info!(
-                                "[presence] DEL {} ok (attempt {})",
+                            Ok(()) => {
+                                tracing::info!(
+                                    "[presence] Session {} of {} retired (attempt {})",
+                                    field,
+                                    conn_key,
+                                    attempt + 1
+                                );
+                                return;
+                            }
+                            Err(e) => tracing::warn!(
+                                "[presence] Leaving session {} of {} failed (attempt {}): {}",
+                                field,
                                 conn_key,
-                                attempt + 1
-                            );
-                            return;
+                                attempt + 1,
+                                e
+                            ),
                         }
-                        tracing::warn!(
-                            "[presence] DEL {} failed (attempt {})",
-                            conn_key,
-                            attempt + 1
-                        );
                     }
                     Err(e) => {
                         tracing::warn!(
-                            "[presence] Redis unavailable for DEL of {} (attempt {}): {}",
+                            "[presence] Redis unavailable to leave session {} of {} (attempt {}): {}",
+                            field,
                             conn_key,
                             attempt + 1,
                             e
@@ -176,7 +181,11 @@ impl Drop for ConnectionGuard {
                     }
                 }
             }
-            tracing::warn!("[presence] DEL abandoned after 3 attempts for {}", conn_key);
+            tracing::warn!(
+                "[presence] Leaving session {} of {} abandoned after 3 attempts",
+                field,
+                conn_key
+            );
         });
     }
 }
@@ -210,11 +219,8 @@ pub async fn ws_handler(
         return (StatusCode::UNAUTHORIZED, "Missing auth token").into_response();
     };
 
-    let validation = Validation::new(Algorithm::HS256);
-    let key = DecodingKey::from_secret(state.jwt_secret.as_bytes());
-
-    match decode::<Claims>(&token, &key, &validation) {
-        Ok(token_data) => {
+    match decode_access_claims(&token, state.jwt_secret.as_bytes()) {
+        Ok(claims) => {
             // Enforce a hard cap to prevent resource exhaustion under a connection flood.
             const MAX_CONNECTIONS: usize = 1_000;
             let total: usize = {
@@ -226,7 +232,7 @@ pub async fn ws_handler(
                     "[ws] Connection limit reached ({}/{}) - rejecting upgrade for {}",
                     total,
                     MAX_CONNECTIONS,
-                    token_data.claims.sub
+                    claims.sub
                 );
                 return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response();
             }
@@ -256,11 +262,24 @@ pub async fn ws_handler(
                 .map(|id| id.to_string())
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+            // What the code behind this socket declared (history-answer-addressing, rule 6).
+            let addressed_history =
+                crate::addressing::declares_addressed_history(params.caps.as_deref());
             ws.on_upgrade(move |socket| {
-                handle_socket(socket, state, token_data.claims.sub, device_id)
+                handle_socket(socket, state, claims.sub, device_id, addressed_history)
             })
         }
-        Err(_) => (StatusCode::UNAUTHORIZED, "Invalid parameters").into_response(),
+        Err(TokenRejection::NotAnAccessToken(kind)) => {
+            tracing::warn!(
+                "[ws] upgrade refused: a '{}' token is not an access token",
+                kind
+            );
+            (StatusCode::UNAUTHORIZED, "Invalid parameters").into_response()
+        }
+        Err(TokenRejection::Invalid(e)) => {
+            tracing::debug!("[ws] upgrade refused: {}", e);
+            (StatusCode::UNAUTHORIZED, "Invalid parameters").into_response()
+        }
     }
 }
 
@@ -282,11 +301,13 @@ async fn handle_socket(
     state: Arc<AppState>,
     user_id: String,
     device_id: String,
+    addressed_history: bool,
 ) {
     tracing::info!(
-        "New WebSocket connection: User={}, Device={}",
+        "New WebSocket connection: User={}, Device={}, addressed-history={}",
         user_id,
-        device_id
+        device_id,
+        addressed_history
     );
 
     let (mut ws_sender, mut receiver) = socket.split();
@@ -303,6 +324,9 @@ async fn handle_socket(
         map.entry(conn_key.clone())
             .or_default()
             .insert(conn_id, tx.clone());
+        // Recorded while the map lock is held, so the pub/sub loop never sees this session without
+        // its declaration (the edge filter, `crate::addressing::addressed_recipients`).
+        state.note_session_caps(conn_id, addressed_history);
         tracing::info!(
             "Registered connection key: {} (conn_id={}, {} active)",
             conn_key,
@@ -311,11 +335,11 @@ async fn handle_socket(
         );
     }
 
-    let redis_key = format!("user:online:{}", conn_key);
+    let field = crate::addressing::session_field(&state.instance_id, conn_id);
     let _guard = ConnectionGuard {
         state: state.clone(),
         conn_key: conn_key.clone(),
-        redis_key: redis_key.clone(),
+        field: field.clone(),
         conn_id,
     };
 
@@ -338,12 +362,19 @@ async fn handle_socket(
     {
         Ok(mut con) => {
             // ── Set initial presence key ───────────────────────────────
-            if let Err(e) = con
-                .set_ex::<_, _, ()>(&redis_key, "true", PRESENCE_TTL_SECS)
-                .await
+            // With this session's declaration in the device's sessions hash (crate::addressing);
+            // presence itself is the key's existence.
+            if let Err(e) = crate::addressing::write_session(
+                &mut con,
+                &conn_key,
+                &field,
+                addressed_history,
+                PRESENCE_TTL_SECS,
+            )
+            .await
             {
                 tracing::warn!(
-                    "[presence] set_ex on connect failed for {}: {}",
+                    "[presence] presence write on connect failed for {}: {}",
                     conn_key,
                     e
                 );
@@ -467,6 +498,7 @@ async fn handle_socket(
         let user_id = user_id.clone();
         let device_id = device_id.clone();
         let conn_key_recv = conn_key.clone();
+        let field_recv = field.clone();
         let pong_flag_recv = awaiting_pong.clone();
         let tx_for_dispatch = tx.clone();
 
@@ -483,9 +515,9 @@ async fn handle_socket(
                         refresh_presence(
                             &mut con_opt,
                             &state,
-                            &user_id,
-                            &device_id,
                             &conn_key_recv,
+                            &field_recv,
+                            addressed_history,
                         )
                         .await;
                         continue;
@@ -497,9 +529,9 @@ async fn handle_socket(
                         refresh_presence(
                             &mut con_opt,
                             &state,
-                            &user_id,
-                            &device_id,
                             &conn_key_recv,
+                            &field_recv,
+                            addressed_history,
                         )
                         .await;
 
@@ -624,7 +656,8 @@ async fn handle_socket(
 
 // ── Presence refresh helper ───────────────────────────────────────────────
 
-/// Refresh the `user:online:{userId}:{deviceId}` Redis TTL to [`PRESENCE_TTL_SECS`].
+/// Refresh the `user:online:{userId}:{deviceId}` Redis TTL to [`PRESENCE_TTL_SECS`], with this
+/// session's field in the device's sessions hash ([`crate::addressing::write_session`]).
 ///
 /// Uses the socket-local multiplexed connection to avoid opening a new TCP
 /// connection per frame.  If the connection is missing or has gone stale, it
@@ -633,22 +666,29 @@ async fn handle_socket(
 async fn refresh_presence(
     con_opt: &mut Option<redis::aio::MultiplexedConnection>,
     state: &Arc<AppState>,
-    user_id: &str,
-    device_id: &str,
     conn_key: &str,
+    field: &str,
+    declared: bool,
 ) {
-    let redis_key = format!("user:online:{}:{}", user_id, device_id);
-
     // Try the existing connection first.
     if let Some(con) = con_opt.as_mut() {
-        match con
-            .set_ex::<_, _, ()>(&redis_key, "true", PRESENCE_TTL_SECS)
+        match crate::addressing::write_session(con, conn_key, field, declared, PRESENCE_TTL_SECS)
             .await
         {
-            Ok(_) => return,
+            Ok(true) => return,
+            Ok(false) => {
+                // The session was retired while this refresh was in flight: nothing was written,
+                // which is the point (crate::addressing, the left hash).
+                tracing::info!(
+                    "[presence] Refresh of retired session {} of {} wrote nothing",
+                    field,
+                    conn_key
+                );
+                return;
+            }
             Err(e) => {
                 tracing::warn!(
-                    "[presence] set_ex failed for {} (will reconnect): {}",
+                    "[presence] presence refresh failed for {} (will reconnect): {}",
                     conn_key,
                     e
                 );
@@ -660,12 +700,17 @@ async fn refresh_presence(
     // Connection is dead or was never established - attempt a single reconnect.
     match state.redis_client.get_multiplexed_async_connection().await {
         Ok(mut new_con) => {
-            if let Err(e) = new_con
-                .set_ex::<_, _, ()>(&redis_key, "true", PRESENCE_TTL_SECS)
-                .await
+            if let Err(e) = crate::addressing::write_session(
+                &mut new_con,
+                conn_key,
+                field,
+                declared,
+                PRESENCE_TTL_SECS,
+            )
+            .await
             {
                 tracing::warn!(
-                    "[presence] set_ex after reconnect failed for {}: {}",
+                    "[presence] presence refresh after reconnect failed for {}: {}",
                     conn_key,
                     e
                 );

@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 
+import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService, SendMessageBody } from './messaging.service';
@@ -38,11 +39,40 @@ describe('MessagingService - visibility vs durability', () => {
     xrange: jest.fn().mockResolvedValue([]),
     sadd: jest.fn().mockResolvedValue(1),
     exists: jest.fn().mockResolvedValue(0),
+    // The presence key's VALUE: `sessions-1` when a current gateway wrote it, `true` from an older one.
+    get: jest.fn().mockResolvedValue(null),
+    // The device's per-session declarations, `addressing:sessions:{u}:{d}` (one field per session).
+    hvals: jest.fn().mockResolvedValue([]),
     publish: jest.fn().mockResolvedValue(1),
     smembers: jest.fn().mockResolvedValue([]),
+    // Nobody routed yet, unless a test says otherwise: the reconciliation then re-reads and writes.
+    smismember: jest.fn(async (_key: string, ...members: string[]) => members.map(() => 0)),
     pipeline: jest.fn(() => pipelineDouble()),
     hgetall: jest.fn().mockResolvedValue({}),
     hdel: jest.fn().mockResolvedValue(1),
+    /**
+     * `ADDRESSABLE_PUBLISH_LUA`, replayed over the doubles above: its real atomicity is proven against
+     * a real Redis in `addressing.redis.spec.ts`; here it only has to answer what the keys say.
+     */
+    eval: jest.fn(
+      async (
+        _script: string,
+        _keys: number,
+        presenceKey: string,
+        hashKey: string,
+        channel: string,
+        payload: string,
+        capability: string,
+        marker: string
+      ) => {
+        const presence = await redis.get(presenceKey);
+        const declared = (await redis.hvals(hashKey)) as string[];
+        if (presence !== marker || declared.length === 0) return 0;
+        if (declared.some((d) => d !== capability)) return 0;
+        if (channel) await redis.publish(channel, payload);
+        return 1;
+      }
+    ),
   };
 
   /**
@@ -93,10 +123,15 @@ describe('MessagingService - visibility vs durability', () => {
     manager: {
       transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
         cb({
+          // The shared seat lock the write takes first (`messaging.send-race.spec.ts` asserts it).
+          query: async () => [],
+          // The seats re-read under it are the roster fake's, so nobody is evicted in between.
           getRepository: (entity: { name?: string }) =>
             entity?.name === 'Group'
               ? { find: async () => [{ id: 'g1', deletedAt: null }] }
-              : queuedMessageRepo,
+              : entity?.name === 'DeviceGroupMembership'
+                ? deviceGroupRepo
+                : queuedMessageRepo,
         })
       ),
     },
@@ -123,7 +158,15 @@ describe('MessagingService - visibility vs durability', () => {
    * Groups. An addressed frame is accepted on a key-distribution group only, so the default row is
    * one; a test about a conversation group says so.
    */
-  const groupRepo = emptyRepo();
+  const groupRepo = {
+    ...emptyRepo(),
+    // The seat lock's transaction, which re-reads the roster before a route is written.
+    manager: {
+      transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
+        cb({ query: async () => [], getRepository: () => deviceGroupRepo })
+      ),
+    },
+  };
 
   /**
    * Static KeyPackages - the server-side proof that a device is addressable at all (WP-GHOST-1).
@@ -156,6 +199,9 @@ describe('MessagingService - visibility vs durability', () => {
     deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
     keyPackageRepo.find.mockResolvedValue([]);
     groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'w1' });
+    redis.exists.mockResolvedValue(0);
+    redis.get.mockResolvedValue(null);
+    redis.hvals.mockResolvedValue([]);
     execResult = [
       [null, '1-0'],
       [null, 0],
@@ -630,15 +676,176 @@ describe('MessagingService - visibility vs durability', () => {
       ).rejects.toThrow('refused on a commit or a Welcome');
     });
 
-    it('refuses an addressed frame on a conversation group, where it would let a member equivocate', async () => {
-      groupOfThree();
-      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: null });
+    /**
+     * STEP A (docs/wiki/protocols/history-answer-addressing.md): a history answer on a CONVERSATION
+     * is addressed to the device that asked. Held to rules 3 and 6 - transport only, and only to a
+     * device whose every live session declared that it refuses an addressed frame that is not a
+     * solicited history answer.
+     */
+    describe('on a conversation group', () => {
+      const conversation = () => {
+        groupOfThree();
+        groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: null });
+        // Every device is online - a transport frame reaches nobody else.
+        redis.exists.mockResolvedValue(1);
+      };
+      /**
+       * The gateway's two writes for a device: the presence VALUE (`sessions-1` from a current
+       * gateway, `true` from an older one) and one field per live session on a current gateway.
+       */
+      const sessions = (device: string, presence: string, fields: string[]) => {
+        const get = redis.get.getMockImplementation();
+        const hvals = redis.hvals.getMockImplementation();
+        redis.get.mockImplementation(async (key: string) =>
+          key === `user:online:${device}` ? presence : ((await get?.(key)) ?? null)
+        );
+        redis.hvals.mockImplementation(async (key: string) =>
+          key === `addressing:sessions:${device}` ? fields : ((await hvals?.(key)) ?? [])
+        );
+      };
+      const declares = (...devices: string[]) => {
+        for (const d of devices) sessions(d, 'sessions-1', ['addressed-history-1']);
+      };
 
-      await expect(
-        service.sendMessage(send({ silent: true, durable: true, recipientDevices: ['u2:dB'] }))
-      ).rejects.toThrow('key-distribution group only');
-      expect(queuedMessageRepo.save).not.toHaveBeenCalled();
-      expect(redis.xadd).not.toHaveBeenCalled();
+      it('queues the answer for the asking device ONLY - another device of the group gets no row', async () => {
+        conversation();
+        declares('u2:dB');
+
+        await service.sendMessage(
+          send({ silent: true, durable: false, recipientDevices: ['u2:dB'] })
+        );
+
+        expect(queuedDevices()).toEqual(['dB']);
+        // The newcomer's device and the asker's own sibling device: no row, no realtime frame.
+        const published = redis.publish.mock.calls.map((c) => JSON.parse(String(c[1])));
+        expect(published.map((f) => f.deviceId)).toEqual(['dB']);
+        expect(redis.xadd).not.toHaveBeenCalled();
+      });
+
+      it('marks the row and the live frame `addressed`, the routing fact the receiver needs', async () => {
+        conversation();
+        declares('u2:dB');
+
+        await service.sendMessage(
+          send({ silent: true, durable: false, recipientDevices: ['u2:dB'] })
+        );
+
+        const rows = queuedMessageRepo.save.mock.calls[0][0] as unknown as { addressed: boolean }[];
+        expect(rows.map((r) => r.addressed)).toEqual([true]);
+        expect(JSON.parse(String(redis.publish.mock.calls[0][1])).addressed).toBe(true);
+      });
+
+      it('a frame that is not addressed is never marked', async () => {
+        conversation();
+
+        await service.sendMessage(send({ silent: true, durable: false }));
+
+        const rows = queuedMessageRepo.save.mock.calls[0][0] as unknown as { addressed: boolean }[];
+        expect(rows.every((r) => r.addressed === false)).toBe(true);
+        expect(
+          redis.publish.mock.calls.every((c) => !('addressed' in JSON.parse(String(c[1]))))
+        ).toBe(true);
+      });
+
+      it('refuses a DURABLE addressed frame - an answer may not enter the queue of an offline device', async () => {
+        conversation();
+        declares('u2:dB');
+
+        await expect(
+          service.sendMessage(send({ silent: true, durable: true, recipientDevices: ['u2:dB'] }))
+        ).rejects.toMatchObject({ response: { error: 'addressed_durable' } });
+        expect(queuedMessageRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('refuses a device whose live sessions did not ALL declare the capability, and names it', async () => {
+        conversation();
+        declares('u2:dA');
+
+        await expect(
+          service.sendMessage(send({ silent: true, durable: false, recipientDevices: ['u2:dB'] }))
+        ).rejects.toMatchObject({
+          response: { error: 'addressed_unsupported', devices: ['u2:dB'] },
+        });
+        expect(queuedMessageRepo.save).not.toHaveBeenCalled();
+        expect(redis.publish).not.toHaveBeenCalled();
+      });
+
+      /**
+       * Review of #2270: the check and the publish were two round trips, so a session registering
+       * between them received the frame. The publish now re-checks in the SAME script; the row stays
+       * queued for the declared session to pull.
+       */
+      it('re-checks AT the publish - a session that registered after the check gets no frame', async () => {
+        conversation();
+        declares('u2:dB');
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        redis.eval.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+
+        await service.sendMessage(
+          send({ silent: true, durable: false, recipientDevices: ['u2:dB'] })
+        );
+
+        expect(queuedDevices()).toEqual(['dB']);
+        expect(redis.publish).not.toHaveBeenCalled();
+        expect(
+          error.mock.calls.some(([l]) => String(l).includes('ADDRESSED row NOT published'))
+        ).toBe(true);
+        error.mockRestore();
+      });
+
+      /**
+       * THE CAPABILITY IS A CROSS-PROCESS FACT. Two sessions of one device may sit on two gateway
+       * processes (a deploy overlap): each records its own declaration in the shared hash, and ONE
+       * undeclared session anywhere makes the device unaddressable.
+       */
+      it('refuses a device ONE of whose sessions, on any gateway, did not declare it', async () => {
+        conversation();
+        sessions('u2:dB', 'sessions-1', ['addressed-history-1', '-']);
+
+        await expect(
+          service.sendMessage(send({ silent: true, durable: false, recipientDevices: ['u2:dB'] }))
+        ).rejects.toMatchObject({
+          response: { error: 'addressed_unsupported', devices: ['u2:dB'] },
+        });
+        expect(redis.publish).not.toHaveBeenCalled();
+      });
+
+      it('refuses a device an OLDER gateway also serves - its presence value is `true`', async () => {
+        conversation();
+        // The current gateway's session declared; an older gateway's session writes no field at
+        // all, and the presence value it writes is the only trace of it.
+        sessions('u2:dB', 'true', ['addressed-history-1']);
+
+        await expect(
+          service.sendMessage(send({ silent: true, durable: false, recipientDevices: ['u2:dB'] }))
+        ).rejects.toMatchObject({
+          response: { error: 'addressed_unsupported', devices: ['u2:dB'] },
+        });
+      });
+
+      it('refuses a device with no recorded session, even under a current presence value', async () => {
+        conversation();
+        sessions('u2:dB', 'sessions-1', []);
+
+        await expect(
+          service.sendMessage(send({ silent: true, durable: false, recipientDevices: ['u2:dB'] }))
+        ).rejects.toMatchObject({
+          response: { error: 'addressed_unsupported', devices: ['u2:dB'] },
+        });
+      });
+
+      it('marks a KEY-GROUP answer nothing - the flag is the conversation rule, and the edge filters on it', async () => {
+        groupOfThree();
+        redis.exists.mockResolvedValue(1);
+
+        await service.sendMessage(
+          send({ silent: true, durable: false, recipientDevices: ['u2:dB'] })
+        );
+
+        const rows = queuedMessageRepo.save.mock.calls[0][0] as unknown as { addressed: boolean }[];
+        expect(rows.map((r) => r.addressed)).toEqual([false]);
+        expect('addressed' in JSON.parse(String(redis.publish.mock.calls[0][1]))).toBe(false);
+      });
     });
 
     it('refuses an empty or malformed list rather than reading it as "the whole group"', async () => {
@@ -734,14 +941,17 @@ describe('MessagingService - visibility vs durability', () => {
         ];
         // The fake evaluates the one operator the send path uses, so the RULE is what is tested.
         deviceGroupRepo.find.mockImplementation(
-          async ({ where }: { where: { status: string; admittedAtEpoch?: { value: number } } }) =>
-            where.status === 'active'
-              ? active
-              : pending.filter(
-                  (p) =>
-                    p.admittedAtEpoch !== null &&
-                    p.admittedAtEpoch <= (where.admittedAtEpoch?.value ?? -1)
-                )
+          async ({ where }: { where: { status?: string; admittedAtEpoch?: { value: number } } }) =>
+            // No status is the write's re-read of who holds a seat at all.
+            where.status === undefined
+              ? [...active, ...pending]
+              : where.status === 'active'
+                ? active
+                : pending.filter(
+                    (p) =>
+                      p.admittedAtEpoch !== null &&
+                      p.admittedAtEpoch <= (where.admittedAtEpoch?.value ?? -1)
+                  )
         );
         keyPackageRepo.find.mockResolvedValue([...active, ...pending]);
       };
@@ -799,12 +1009,17 @@ describe('MessagingService - visibility vs durability', () => {
       // noise is what let the old one go unread on 100 % of traffic.
       threeDevices();
       silencePush();
-      redis.sadd.mockResolvedValueOnce(0);
+      redis.smismember.mockImplementationOnce(async (_key: string, ...members: string[]) =>
+        members.map(() => 1)
+      );
       const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => {});
 
       await service.sendMessage(send({ durable: true }));
 
       expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('MEMBERS_CACHE_REPAIRED'));
+      // Nor does it write, or take the seat lock a write needs, on the ordinary send.
+      expect(redis.sadd).not.toHaveBeenCalled();
+      expect(groupRepo.manager.transaction).not.toHaveBeenCalled();
     });
 
     it('accuses when it actually had to repair the routing set', async () => {
@@ -813,7 +1028,6 @@ describe('MessagingService - visibility vs durability', () => {
       // Reaching this line means an owner did not write, and the fix belongs there.
       threeDevices();
       silencePush();
-      redis.sadd.mockResolvedValueOnce(2);
       const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => {});
 
       await service.sendMessage(send({ durable: true }));

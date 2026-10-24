@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE FULL-SCREEN CALL, AS A SCREEN-READER, A KEYBOARD AND THE SYSTEM BACK MEET IT.
  *
@@ -78,6 +79,7 @@ function fakeService(state: CallState) {
     e2eProven: writable(false),
     localMicSuspended: writable(false),
     peerMicSuspended: writable(false),
+    videoSendReduced: writable(false),
     currentGroupId: 'g',
     currentCallId: 'c',
     acceptCall: vi.fn(async () => {}),
@@ -137,6 +139,38 @@ describe('the ring', () => {
   });
 });
 
+describe('the screen every platform shows (call-screen parity)', () => {
+  const text = (id: string) => document.querySelector(`[data-testid="${id}"]`)?.textContent?.trim();
+
+  it('shows the peer name, a photo backdrop and a status on a ring, with decline BEFORE accept', async () => {
+    await render(fakeService('incoming'));
+    expect(screen()?.textContent).toContain('Bob');
+    expect(text('call-status')).toBe(m.call_incoming_label());
+    const backdrop = document.querySelector('[data-testid="call-backdrop"]');
+    expect(backdrop?.getAttribute('aria-hidden')).toBe('true');
+    // Decline left, accept right: the order of Android's CallStyle ring and CallKit.
+    const decline = document.querySelector('[data-testid="call-decline"]')!;
+    const accept = document.querySelector('[data-testid="call-accept"]')!;
+    expect(decline.compareDocumentPosition(accept) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(accept.className).toContain('bg-call-accept');
+    expect(decline.className).toContain('bg-call-decline');
+  });
+
+  it('says "Calling..." on an outgoing call, with mute and hang-up and no accept', async () => {
+    await render(fakeService('calling'));
+    expect(text('call-status')).toBe(m.call_ringing_label());
+    expect(document.querySelector('[data-testid="call-mute"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="call-hang-up"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="call-accept"]')).toBeNull();
+  });
+
+  it('shows the running time in a call, with the same backdrop', async () => {
+    await render(fakeService('incall'));
+    expect(text('call-status')).toMatch(/^\d+:\d{2}(:\d{2})?$/);
+    expect(document.querySelector('[data-testid="call-backdrop"]')).not.toBeNull();
+  });
+});
+
 describe('the live region', () => {
   it('announces the state, and "connected" rather than the running timer', async () => {
     const service = fakeService('incoming');
@@ -168,6 +202,28 @@ describe('the encryption line', () => {
     service.e2eProven.set(true);
     flushSync();
     expect(line()).toBe(m.call_e2e_encrypted_title());
+  });
+});
+
+describe('the reduced-picture notice (quality ladder, 2026-10-21)', () => {
+  const notice = () =>
+    document.querySelector('[data-testid="call-video-reduced"]')?.textContent?.trim() ?? null;
+
+  it('says this side sends a reduced picture only while its camera is on and the call live', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    service.videoSendReduced.set(true);
+    flushSync();
+    // Camera off: there is no picture to call reduced.
+    expect(notice()).toBeNull();
+
+    service.isVideoOff.set(false);
+    flushSync();
+    expect(notice()).toBe(m.call_video_reduced_notice());
+
+    service.videoSendReduced.set(false);
+    flushSync();
+    expect(notice()).toBeNull();
   });
 });
 

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { SvelteMap } from 'svelte/reactivity';
@@ -8,6 +9,7 @@ import { GraineNotReadyError } from '$lib/utils/graine/runtime';
 import { GraineUnknownChannelError } from '$lib/utils/graine/channelSeal';
 import { showToast } from '$lib/stores/toast.svelte';
 import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
+import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import { getChannelReactions } from '$lib/stores/reactionStore.svelte';
@@ -51,6 +53,7 @@ vi.mock('$lib/paraglide/messages', () => ({
     chat_send_error_seal_key_group_unsettled: vi.fn(() => 'seal: key-group-unsettled'),
     chat_send_error_seal_key_group_catching_up: vi.fn(() => 'seal: key-group-catching-up'),
     channel_action_error_conflict: vi.fn(({ action }: { action: string }) => `${action}: conflict`),
+    chat_error_follower_tab: vi.fn(() => 'follower-tab'),
   },
 }));
 
@@ -95,6 +98,12 @@ vi.mock('$lib/utils/users/displayName', () => ({
   resolveDisplayNames: vi.fn().mockResolvedValue((id: string) => id),
 }));
 
+/** The admission this device signs for an invitee (channel-encryption section 25). */
+const signDirectAdmission = vi.fn();
+vi.mock('$lib/utils/graine/admissionIssue', () => ({
+  signDirectAdmission: (...args: unknown[]) => signDirectAdmission(...args),
+}));
+
 const ensureCommunityDistributionGroup = vi.fn().mockResolvedValue(true);
 vi.mock('$lib/utils/graine/distributionGroup', () => ({
   ensureCommunityDistributionGroup: (...args: unknown[]) =>
@@ -103,6 +112,12 @@ vi.mock('$lib/utils/graine/distributionGroup', () => ({
   // that declining is as loud as entering - is driven in `distributionGroup.test.ts`; here it only
   // has to succeed so the walk around it keeps going.
   enterPrivateSalonGroup: vi.fn().mockResolvedValue(true),
+}));
+
+const requestCommunityHistory = vi.fn().mockResolvedValue(undefined);
+vi.mock('$lib/utils/graine/repair', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/graine/repair')>()),
+  requestCommunityHistory: (...args: unknown[]) => requestCommunityHistory(...args),
 }));
 
 import { useChannelWorkspaces, type ChannelWorkspaceContext } from './useChannelWorkspaces.svelte';
@@ -1059,6 +1074,29 @@ describe('useChannelWorkspaces - a salon joined in-session enters the group its 
   });
 
   /**
+   * A FOLLOWER TAB MAY NOT ENTER THE GROUP (`FollowerTabCommitError`, from `createGroup` or
+   * `externalJoin`): the join of the salon still completes, and the member is told the main tab is
+   * where it happens - not a failed join, and not silence.
+   */
+  it('tells the member, and completes the join, when a follower tab may not enter the group', async () => {
+    vi.mocked(showToast).mockClear();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    ensureCommunityDistributionGroup.mockRejectedValueOnce(new FollowerTabCommitError('kg-1'));
+    const api = useChannelWorkspaces();
+
+    await api.registerJoinedChannel(
+      'ch-public',
+      'ws1',
+      false,
+      vi.fn().mockResolvedValue({}),
+      vi.fn()
+    );
+
+    expect(workspaceForChannel('ch-public')).toBe('ws1');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith('follower-tab');
+  });
+
+  /**
    * THE EVENT DRAWS THE SALON BEFORE THE JOINS END. A send typed in that window, after the last
    * listing settled without the salon, used to be refused as `not-listed`: it waits for the entry.
    */
@@ -1480,5 +1518,106 @@ describe('useChannelWorkspaces - the membership notice', () => {
     const [channelId, , , , , options] = sendEncryptedChannelMessage.mock.calls[0];
     expect(channelId).toBe('channel_c1');
     expect(options).toEqual({ silent: true });
+  });
+
+  // A member hands the newcomer the past only on a proof it can check: the admission this device
+  // signs travels WITH the invitation and is stored on the newcomer's membership row.
+  it('sends the admission this device signed with the invitation (channel-encryption section 25)', async () => {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([makeChannelDto('c1', 'general')]);
+    signDirectAdmission.mockResolvedValue('dm91Y2hlcg');
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    await api.loadChannelWorkspacesFromBackend(ctx);
+
+    await api.inviteMemberToChannel('channel_c1', 'Newcomer', 'member', ctx);
+
+    expect(signDirectAdmission).toHaveBeenCalledWith('ws1', 'newcomer');
+    expect(inviteToChannel).toHaveBeenCalledWith(
+      'c1',
+      expect.objectContaining({ targetUserId: 'newcomer', admissionVoucher: 'dm91Y2hlcg' })
+    );
+  });
+
+  it('still invites, and says so, when the admission could not be signed', async () => {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([makeChannelDto('c1', 'general')]);
+    signDirectAdmission.mockRejectedValue(new Error('no messaging layer'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    await api.loadChannelWorkspacesFromBackend(ctx);
+
+    await api.inviteMemberToChannel('channel_c1', 'newcomer', 'member', ctx);
+
+    expect(inviteToChannel).toHaveBeenCalledWith(
+      'c1',
+      expect.not.objectContaining({ admissionVoucher: expect.anything() })
+    );
+    expect(error.mock.calls.flat().join(' ')).toContain('NOT signed');
+    error.mockRestore();
+  });
+
+  // An ordinary invitation names no role: the server grants the community's base role, whatever
+  // that role is called there. A role is named only when the inviter picked one.
+  it('names no role for an ordinary invitation, and the picked one otherwise', async () => {
+    await useChannelWorkspaces().inviteMemberToChannel(
+      'channel_c1',
+      'newcomer',
+      'member',
+      makeContext()
+    );
+    expect(inviteToChannel.mock.calls[0][1]).toEqual({ targetUserId: 'newcomer' });
+
+    await useChannelWorkspaces().inviteMemberToChannel(
+      'channel_c1',
+      'second',
+      'moderator',
+      makeContext()
+    );
+    expect(inviteToChannel.mock.calls[1][1]).toEqual({
+      targetUserId: 'second',
+      roleName: 'Modérateur',
+    });
+  });
+});
+
+describe('useChannelWorkspaces - the history rule moving under an open session', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listUserWorkspaces.mockReset();
+    listChannels.mockReset();
+  });
+
+  async function loadedWith(historyVisibility: 'shared' | 'joined') {
+    listUserWorkspaces.mockResolvedValue([
+      { ...makeWorkspaceDto('ws1', 'Community', 'community'), historyVisibility },
+    ]);
+    listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
+    const store = useChannelWorkspaces();
+    const promise = store.loadChannelWorkspacesFromBackend(makeContext());
+    await tick();
+    await promise;
+    requestCommunityHistory.mockClear();
+    return store;
+  }
+
+  // 2026-10-22: a switch to `shared` never reached the members already in - they held seeds
+  // floored at their arrival, and nothing asked for the past again. The broadcast is the moment.
+  it('asks the seed layer for the history again when the broadcast moves the rule', async () => {
+    const store = await loadedWith('joined');
+
+    store.handleWorkspaceUpdated({ workspaceId: 'ws1', historyVisibility: 'shared' });
+
+    expect(requestCommunityHistory).toHaveBeenCalledWith('ws1');
+  });
+
+  it('asks nothing when the broadcast repeats the rule already held', async () => {
+    const store = await loadedWith('shared');
+
+    store.handleWorkspaceUpdated({ workspaceId: 'ws1', historyVisibility: 'shared' });
+    store.handleWorkspaceUpdated({ workspaceId: 'ws1', imageMediaId: 'img-2' });
+
+    expect(requestCommunityHistory).not.toHaveBeenCalled();
   });
 });

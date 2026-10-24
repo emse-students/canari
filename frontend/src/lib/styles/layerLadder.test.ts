@@ -29,12 +29,21 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { svelteFiles, withoutComments } from './markupSources';
+import { allMarkup } from './markupSources';
 
 const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cssPath = join(src, 'app.css');
+// THE TREE IS READ ONCE, HERE, AND NOT INSIDE A TEST. Six bodies below each walked and re-read every
+// `.svelte` file, and a test body is charged against vitest's 5 s timeout: under the full suite, with
+// every worker reading the disk at once, a walk costs seconds. Module scope is collection time, which
+// no per-test timeout measures. `flat` collapses whitespace so an attribute spanning lines is one value.
+const markup = allMarkup(src).map(({ file, body }) => ({
+  file,
+  body,
+  flat: body.replace(/\s+/g, ' '),
+}));
 
 /** The rungs, in the order they are declared - which must also be their numeric order. */
 function readLadder(): { name: string; value: number }[] {
@@ -103,10 +112,9 @@ describe('the layer ladder', () => {
    */
   function classValues(): { file: string; value: string }[] {
     const out: { file: string; value: string }[] = [];
-    for (const file of svelteFiles(join(src, 'lib')).concat(svelteFiles(join(src, 'routes')))) {
-      const flat = withoutComments(readFileSync(file, 'utf8')).replace(/\s+/g, ' ');
+    for (const { file, flat } of markup) {
       for (const match of flat.matchAll(/class=(?:"([^"]*)"|\{([^}]*)\})/g)) {
-        out.push({ file: relative(src, file), value: match[1] ?? match[2] ?? '' });
+        out.push({ file, value: match[1] ?? match[2] ?? '' });
       }
     }
     return out;
@@ -152,11 +160,10 @@ describe('the layer ladder', () => {
   /** Every opening tag carrying `data-keyboard-aware-overlay`, whitespace collapsed. */
   function keyboardAwareOverlays(): { file: string; tag: string; portalled: boolean }[] {
     const out: { file: string; tag: string; portalled: boolean }[] = [];
-    for (const file of svelteFiles(join(src, 'lib')).concat(svelteFiles(join(src, 'routes')))) {
-      const flat = withoutComments(readFileSync(file, 'utf8')).replace(/\s+/g, ' ');
+    for (const { file, flat } of markup) {
       for (const match of flat.matchAll(/<div\b[^<]*?\bdata-keyboard-aware-overlay\b[^<]*?>/g)) {
         out.push({
-          file: relative(src, file),
+          file,
           tag: match[0],
           portalled: /\buse:portal\b/.test(flat),
         });
@@ -226,11 +233,10 @@ describe('the layer ladder', () => {
 
   it('has no window-scale z-index written as a number anywhere in the markup', () => {
     const offenders: string[] = [];
-    for (const file of svelteFiles(join(src, 'lib')).concat(svelteFiles(join(src, 'routes')))) {
-      const body = withoutComments(readFileSync(file, 'utf8'));
+    for (const { file, body } of markup) {
       // Both spellings Tailwind accepts: the bare `z-160` and the arbitrary `z-[160]`.
       for (const match of body.matchAll(/\bz-\[?(\d+)\]?/g)) {
-        if (Number(match[1]) >= 60) offenders.push(`${relative(src, file)}: ${match[0]}`);
+        if (Number(match[1]) >= 60) offenders.push(`${file}: ${match[0]}`);
       }
     }
 

@@ -1,5 +1,10 @@
 # The cross-client campaign - its shape, its scope and its standing rules
 
+> **PARTLY STALE (2026-10-24):** the target (now dev, not local), the transports table (the
+> server-held `masterSecret` went with Graine) and delegation point 6 (a pre-release deploy now
+> lands under a dev run). What to rewrite and what to move out is in
+> [cross-client-campaign-1-4-1](cross-client-campaign-1-4-1.md#1-the-verdict-on-the-existing-documents).
+
 What the campaign IS. The live state of every check is
 [cross-client-testing](cross-client-testing.md), which carries state and nothing else; how a result
 earns the right to be believed is [testing-methodology](testing-methodology.md); how to operate the

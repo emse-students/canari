@@ -1,8 +1,10 @@
+// @vitest-environment happy-dom
 /**
  * THE DOUBLE TAP THAT LIKES A POST (`doubleTapLike`, user 2026-10-19), driven with the events an
  * engine sends: the taps are `click`s (what the engine already called a tap), the drags and second
- * fingers are pointer events. Timestamps come from `performance.now()`, faked with the timers, so
- * "too late" is a count of milliseconds and never a wall clock.
+ * fingers are pointer events. A tap's time is its event's `timeStamp`, stamped from the faked
+ * `performance` clock when the event is CREATED, so "too late" is a count of milliseconds and never a
+ * wall clock.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { doubleTapLike, type DoubleTapLikeParams } from './doubleTapLike';
@@ -42,15 +44,20 @@ function surface(params: Partial<DoubleTapLikeParams> = {}) {
   return { node, at, action, el };
 }
 
-/** A click as a tap produces it: a pointer behind it (`detail` 1+), at a point. */
-function tap(target: Element, x = 100, y = 100, detail = 1): MouseEvent {
-  const e = new MouseEvent('click', {
+/** A click as a tap produces it: a pointer behind it (`detail` 1+), at a point, stamped NOW. */
+function click(x = 100, y = 100, detail = 1): MouseEvent {
+  return new MouseEvent('click', {
     bubbles: true,
     cancelable: true,
     clientX: x,
     clientY: y,
     detail,
   });
+}
+
+/** A tap handled the instant it happens. */
+function tap(target: Element, x = 100, y = 100, detail = 1): MouseEvent {
+  const e = click(x, y, detail);
   target.dispatchEvent(e);
   return e;
 }
@@ -85,6 +92,27 @@ describe('doubleTapLike', () => {
     tap(el('text'), 105, 104);
     expect(at).toHaveBeenCalledTimes(1);
     expect(at).toHaveBeenCalledWith({ x: 95, y: 84 });
+  });
+
+  it('a second tap QUEUED behind a slow first one is still a double: the gap is when they happened', () => {
+    const { at, el } = surface();
+    const first = click();
+    vi.advanceTimersByTime(100);
+    // The finger lands again 100 ms later, while the first click is still being handled: its event
+    // is stamped now and waits in the queue.
+    const second = click();
+    // The first click's work - a render on a busy phone - takes 300 ms. The clock moves; the
+    // window's timer has not had its turn, because the queued input is dispatched first.
+    const slow = () => {
+      const after = performance.now() + 300;
+      vi.spyOn(performance, 'now').mockReturnValue(after);
+    };
+    el('text').addEventListener('click', slow, { once: true });
+    el('text').dispatchEvent(first);
+    el('text').dispatchEvent(second);
+    vi.restoreAllMocks();
+    // Handled 400 ms apart, tapped 100 ms apart: one double tap.
+    expect(at).toHaveBeenCalledTimes(1);
   });
 
   it('a second tap too late is a new first tap, not a double', () => {

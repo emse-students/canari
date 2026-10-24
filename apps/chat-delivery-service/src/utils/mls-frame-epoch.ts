@@ -1,3 +1,4 @@
+import { readLeafNodeHead } from './key-package-leaf';
 import { readMlsOpaque } from './mls-tls';
 
 /**
@@ -41,13 +42,17 @@ export function mlsFrameEpoch(protoBase64: string): number | null {
  * every member commit was a `PrivateMessage`, every `PublicMessage` a well-formed external commit,
  * and every header named its own group and the request's base epoch.
  *
+ * AN EXTERNAL COMMIT ALSO NAMES ITS NEW LEAF, IN THE CLEAR. Its `Commit` follows the content type -
+ * `proposals<V> || optional<UpdatePath>` - and RFC 9420 section 12.4.3.2 makes the path mandatory
+ * there, so the joiner's `LeafNode`, and the BasicCredential identity in it, is readable without a
+ * key (`leafIdentity`). An external commit with no path, or a non-basic credential, is refused:
+ * no conforming client sends one.
+ *
  * WHAT IT PROVES AND WHAT IT DOES NOT: the bytes CLAIM a shape; this server holds no key to check
- * the signature. The commit gate pairs the claim with who may commit, and the group and epoch with
- * the request's own.
+ * the signature. The commit gate pairs the claim with who may commit, the leaf identity with the
+ * authenticated caller, and the group and epoch with the request's own.
  */
-export function readCommitFrame(
-  protoBase64: string
-): { groupId: string; epoch: number; external: boolean } | null {
+export function readCommitFrame(protoBase64: string): CommitFrame | null {
   const bytes = Buffer.from(protoBase64, 'base64');
   const wireFormat = framedWireFormat(bytes);
   if (wireFormat === null) return null;
@@ -61,8 +66,28 @@ export function readCommitFrame(
   if (!authenticatedData) return null;
   offset = authenticatedData.next;
   if (bytes.length < offset + 1 || bytes.readUInt8(offset) !== 3) return null;
-  return { groupId: header.groupId, epoch: header.epoch, external: true };
+  // Commit: proposals<V>, then optional<UpdatePath> (presence byte 1), whose first field is the
+  // committer's new LeafNode.
+  const proposals = readMlsOpaque(bytes, offset + 1);
+  if (!proposals) return null;
+  if (bytes.length < proposals.next + 1 || bytes.readUInt8(proposals.next) !== 1) return null;
+  const leaf = readLeafNodeHead(bytes, proposals.next + 1);
+  if (!leaf) return null;
+  return {
+    groupId: header.groupId,
+    epoch: header.epoch,
+    external: true,
+    leafIdentity: leaf.identity,
+  };
 }
+
+/**
+ * A commit's clear header, as `readCommitFrame` reads it. Only an external commit carries
+ * `leafIdentity`: a member commit is a `PrivateMessage`, whose content this server cannot read.
+ */
+export type CommitFrame =
+  | { groupId: string; epoch: number; external: false }
+  | { groupId: string; epoch: number; external: true; leafIdentity: string };
 
 /** The wire format of a framed MLS 1.0 message - `PublicMessage` (1) or `PrivateMessage` (2) - or null. */
 function framedWireFormat(bytes: Buffer): 1 | 2 | null {

@@ -74,6 +74,19 @@ export class PushToken {
   @Column({ type: 'varchar', length: 5, nullable: true })
   locale: string | null;
 
+  /**
+   * The core-service session whose access token made this registration (migration 037) - the `sid`
+   * claim, forwarded by nginx as `X-Session-Id`. Ending that session deletes exactly this row
+   * (`DELETE /api/internal/push/users/:userId/sessions/:sessionId`), so a later
+   * registration by a re-sign-in on the same device, which rewrites it, is never removed by the old
+   * session's end.
+   *
+   * Null for a row registered before the column existed, or with an access token minted before the
+   * claim did; such a row is rewritten at the device's next registration, with no backfill.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  sessionId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

@@ -1,9 +1,9 @@
 # ── Runtime: Nginx, point d'entree public ────────────────────────────────────
 # Le build Svelte est effectué en amont par le CI (job build-frontend) avec les
-# secrets injectés (VITE_JWT_SECRET) et BUILD_WEB=1, qui selectionne
-# adapter-node. L'artifact compilé est téléchargé dans frontend/build/ avant que
+# variables VITE_* publiques (URLs des services) et BUILD_WEB=1, qui selectionne
+# adapter-node. Aucun secret n'est embarque dans le bundle. L'artifact compilé est téléchargé dans frontend/build/ avant que
 # cette image soit construite.
-# NE PAS rebuilder ici : le secret ne serait pas disponible dans ce contexte.
+# NE PAS rebuilder ici : les variables VITE_* du build ne seraient pas disponibles dans ce contexte.
 # Et `--build` sur ce service NE RECONSTRUIT RIEN : cette image n'est qu'une COPY
 # de `frontend/build`, donc Docker rend l'image de la derniere fois que quelqu'un
 # a produit l'artefact, sans rien dire. `make local-frontend` est le seul chemin
@@ -50,8 +50,21 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 #   NOT api.klipy.com, since 2026-10-16: the GIF search goes through chat-delivery's
 #   /api/mls/gifs so KLIPY never sees a reader's query, IP or identifier (gifSearch.ts).
 # img-src stays wide (https:) because it renders arbitrary user-posted image URLs;
-# connect-src must not, since it governs what the app can read into memory.
-RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"'; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
+# connect-src must not, since it governs what the app can read into memory. It names
+# no bare ws:/wss: either: both WebSockets are same-origin, and the estate's own wss://
+# names are listed because 'self' matches wss: only under CSP Level 3 (older Safari).
+#
+# NO 'unsafe-inline' FOR SCRIPTS, AND A PAGE IS NOT GOVERNED BY THIS SNIPPET (2026-10-22).
+# These directives are written ONCE MORE, in frontend/src/lib/security/cspPolicy.js, and
+# csp.test.ts holds the two equal: SvelteKit sends that policy on every PAGE, plus the
+# hash of each inline script the page carries, which only the build knows. This snippet
+# covers every OTHER response - a worker script's policy is its own response's, so the
+# MLS worker compiles its WebAssembly under 'wasm-unsafe-eval' from here. A page block
+# (@ssr, @app_shell) must NOT include it: a second policy is intersected with the first,
+# and this one, holding no hash, would refuse the page's own scripts. It includes
+# csp-page.conf instead, which says only what a <meta> policy cannot (frame-ancestors).
+RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss://canari.emse.fr wss://canari-emse.fr wss://www.canari-emse.fr wss://dev.canari-emse.fr https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
+RUN printf 'add_header Content-Security-Policy "frame-ancestors '"'"'none'"'"'" always;\n' > /etc/nginx/snippets/csp-page.conf
 
 # The headers of an error this nginx makes itself on an API route (@api_error_*): JSON, never cached,
 # readable cross-origin by the three WebView origins ($api_error_cors_origin, an allowlist - empty
@@ -138,7 +151,8 @@ limit_req_zone $lives_ingest_key zone=lives_ingest:1m rate=2r/s;\n\
 # that arrive together wait for that first one instead of each reaching media-service. Sizes:\n\
 # 2 min (`inactive`, and `proxy_cache_valid 200` below) is far past the manifest window a viewer reads\n\
 # from (10 segments of a few seconds), and it bounds how long a segment outlives the purge of its live here.\n\
-# 512 MB holds two minutes of ~20 lives at the planned 3 Mb/s; past it the oldest go first, which costs\n\
+# 512 MB holds ~10 lives at the planned 3 Mb/s: a segment stays ~140 s (read for ~20 s, then 2 min\n\
+# inactive), so ~52 MB a live (docs/wiki/frontend/modules/live-scaling.md); past it the oldest go first, which costs\n\
 # a refetch, never an error. `use_temp_path=off` writes a response straight into this directory.\n\
 proxy_cache_path /var/cache/nginx/live levels=1:2 keys_zone=live_segments:1m max_size=512m inactive=2m use_temp_path=off;\n\
 # The segment route is unauthenticated, so it has an edge ceiling of its own, per client address. A\n\
@@ -239,7 +253,7 @@ server {\n\
     set_real_ip_from 10.0.0.0/8;\n\
     real_ip_header X-Real-IP;\n\
     # A CLIENT MAY SEND ANY HEADER IT LIKES, AND nginx FORWARDS THE ONES NOBODY OVERRODE.\n\
-    # These four names are what the services READ to decide who is calling, so they are\n\
+    # These five names are what the services READ to decide who is calling, so they are\n\
     # emptied here and re-set from the auth sub-request in each guarded location. The list\n\
     # must be the app-facing spelling, not the sub-request's: `auth_request_set` reads\n\
     # `X-Logged-In` off /internal/auth/verify and forwards it as `X-User-Logged-In`, and\n\
@@ -250,11 +264,12 @@ server {\n\
     # proxy_set_header set only into a location that declares NONE of its own, and all 24\n\
     # proxying locations declare theirs - so these lines currently reach nothing. They are\n\
     # the net for the NEXT location somebody adds, which is exactly when a half-empty net\n\
-    # is discovered. `auth-request-coverage.test.mjs` asserts the four names are all here.\n\
+    # is discovered. `auth-request-coverage.test.mjs` asserts the five names are all here.\n\
     proxy_set_header X-User-Id "";\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header X-Session-Id "";\n\
     \n\
     include /etc/nginx/snippets/csp.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
@@ -356,6 +371,7 @@ server {\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header X-Session-Id "";\n\
     proxy_read_timeout 300s;\n\
     proxy_send_timeout 300s;\n\
     add_header Cache-Control "no-store" always;\n\
@@ -518,7 +534,10 @@ server {\n\
     proxy_hide_header Cache-Control;\n\
     add_header Cache-Control $ssr_cache_control always;\n\
     add_header Referrer-Policy $public_form_referrer_policy always;\n\
-    include /etc/nginx/snippets/csp.conf;\n\
+    # THE CONTENT-SECURITY-POLICY OF A PAGE IS WRITTEN BY SVELTEKIT (kit.csp, hash mode), passed from the\n\
+    # upstream with the hash of each inline script; csp.conf here would be intersected with it and\n\
+    # refuse those scripts. csp-page.conf adds only frame-ancestors (see the snippet comment above).\n\
+    include /etc/nginx/snippets/csp-page.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\
     error_page 502 503 504 =200 @app_shell;\n\
@@ -540,7 +559,9 @@ server {\n\
     add_header Cache-Control "no-store" always;\n\
     add_header X-Canari-Degraded "ssr-unavailable" always;\n\
     add_header Referrer-Policy $public_form_referrer_policy always;\n\
-    include /etc/nginx/snippets/csp.conf;\n\
+    # The prerendered shell carries its policy as a <meta> (kit.csp, hashes included), which cannot\n\
+    # say frame-ancestors - csp-page.conf says it.\n\
+    include /etc/nginx/snippets/csp-page.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\
     }\n\
@@ -551,10 +572,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
     proxy_http_version 1.1;\n\
@@ -575,10 +598,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
     proxy_set_header Host $host;\n\
@@ -593,10 +618,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
     proxy_set_header Host $host;\n\
@@ -631,10 +658,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_calls chat-delivery-service:3010;\n\
     proxy_pass http://$upstream_calls;\n\
     proxy_set_header Host $host;\n\
@@ -649,10 +678,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_call call-service:3004;\n\
     rewrite ^/api/call(.*) /ws$1 break;\n\
     proxy_pass http://$upstream_call;\n\
@@ -674,10 +705,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_delivery chat-delivery-service:3010;\n\
     proxy_pass http://$upstream_delivery;\n\
     proxy_set_header Host $host;\n\
@@ -710,6 +743,7 @@ server {\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header X-Session-Id "";\n\
     set $upstream_public social-service:3014;\n\
     proxy_pass http://$upstream_public;\n\
     proxy_set_header Host $host;\n\
@@ -723,6 +757,7 @@ server {\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header X-Session-Id "";\n\
     set $upstream_media_public media-service:3011;\n\
     proxy_pass http://$upstream_media_public;\n\
     proxy_set_header Host $host;\n\
@@ -789,6 +824,7 @@ server {\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header X-Session-Id "";\n\
     proxy_set_header Cookie "";\n\
     proxy_set_header Authorization "";\n\
     proxy_set_header Origin "";\n\
@@ -819,10 +855,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_media media-service:3011;\n\
     proxy_pass http://$upstream_media;\n\
     proxy_set_header Host $host;\n\
@@ -837,10 +875,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_post social-service:3014;\n\
     proxy_pass http://$upstream_post;\n\
     proxy_set_header Host $host;\n\
@@ -858,10 +898,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_payment core-service:3012;\n\
     proxy_pass http://$upstream_payment;\n\
     proxy_set_header Host $host;\n\
@@ -876,10 +918,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_payment core-service:3012;\n\
     proxy_pass http://$upstream_payment;\n\
     proxy_set_header Host $host;\n\
@@ -894,10 +938,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_form social-service:3014;\n\
     proxy_pass http://$upstream_form;\n\
     proxy_set_header Host $host;\n\
@@ -912,10 +958,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_booking social-service:3014;\n\
     proxy_pass http://$upstream_booking;\n\
     proxy_set_header Host $host;\n\
@@ -934,10 +982,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_live social-service:3014;\n\
     proxy_pass http://$upstream_live;\n\
     proxy_set_header Host $host;\n\
@@ -952,6 +1002,7 @@ server {\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header X-Session-Id "";\n\
     set $upstream_asso social-service:3014;\n\
     proxy_pass http://$upstream_asso;\n\
     proxy_set_header Host $host;\n\
@@ -966,10 +1017,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_asso social-service:3014;\n\
     proxy_pass http://$upstream_asso;\n\
     proxy_set_header Host $host;\n\
@@ -984,10 +1037,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_moderation social-service:3014;\n\
     proxy_pass http://$upstream_moderation;\n\
     proxy_set_header Host $host;\n\
@@ -1002,6 +1057,7 @@ server {\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header X-Session-Id "";\n\
     set $upstream_auth core-service:3012;\n\
     proxy_pass http://$upstream_auth;\n\
     proxy_set_header Host $host;\n\
@@ -1017,6 +1073,7 @@ server {\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header X-Session-Id "";\n\
     set $upstream_external core-service:3012;\n\
     proxy_pass http://$upstream_external;\n\
     proxy_set_header Host $host;\n\
@@ -1031,10 +1088,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_channel social-service:3014;\n\
     proxy_pass http://$upstream_channel;\n\
     proxy_set_header Host $host;\n\
@@ -1050,10 +1109,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_minesweeper social-service:3014;\n\
     proxy_pass http://$upstream_minesweeper;\n\
     proxy_set_header Host $host;\n\
@@ -1069,10 +1130,12 @@ server {\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
     auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_user core-service:3012;\n\
     proxy_pass http://$upstream_user;\n\
     proxy_set_header Host $host;\n\

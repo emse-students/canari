@@ -1,3 +1,0 @@
-### Fixed - turning payments on platform-wide puts the withheld boutique products on sale
-
-Switching `payment_provider` away from `disabled` now tells social-service to release every product withheld by the payment gate (never one an admin deactivated, never an orphan of a deleted association), for each association whose payment target is ready; a partial release is answered by a typed code, and a global admin can retry it from the platform page. The canonical cotisation is now withheld like any other product. See [cotisations](docs/wiki/cotisations.md#a-product-withheld-for-want-of-a-payment-account-releases-itself).

@@ -33,11 +33,14 @@ un artefact deploye**, et il a derive de celui qui tourne :
 | | Ce dossier | L ancienne VM | L hote cible, depuis le 2026-09-24 |
 | --- | --- | --- | --- |
 | Image | `ghcr.io/goauthentik/server` | `docker.io/authentik/server` | `ghcr.io/...` - **ce fichier** |
-| Version | `2026.8.0` (alignee le 2026-09-24) | `2026.8.0` | `2026.8.0` |
+| Version | `2026.8.5` (2026-10-23, version corrective courante) | `2026.8.0` | `2026.8.0` jusqu a la mise a jour de l operateur |
 | Volume | `database` (nomme `miconnect_database` par le projet) | `miconnect_database`, `external: true` | `database`, cree par ce fichier |
 
 **La derive est fermee : c est ce `compose.yml` qui tourne maintenant**, au `.env`
-pres. Les deux images ne se ressemblent pas, elles sont la MEME - `RepoDigests`
+pres - sauf la version, que ce fichier porte en avance : aucun pipeline ne relance
+la stack, donc l hote prend `2026.8.5` quand l operateur y fait `docker compose pull`
+puis `up -d`, apres le dump `authentik_db` du jour. La CI (`test-blueprints.sh`,
+vierge et mise a niveau) a valide les blueprints sur cette version. Les deux images ne se ressemblent pas, elles sont la MEME - `RepoDigests`
 identiques (`sha256:7421753c...`), verifie le 2026-09-24 apres une fausse alerte
 ou c est le digest de CONFIG local, propre a chaque machine, qui avait ete compare.
 

@@ -1,0 +1,204 @@
+# =================================================================================================
+# THE IMAGE SCAN'S ALLOWLIST - Trivy's own ignore-file format, read by `.github/scripts/image-scan.sh`
+#
+# EVERY ENTRY CARRIES A `statement`: why the advisory does not reach us, or why the fix is not ours
+# to ship today. `image-scan-allowlist.test.mjs` refuses an entry without one, and refuses a date
+# (`expired_at`): an entry is retired by EVIDENCE, never by a clock.
+#
+# AND EVERY ENTRY RETIRES ITSELF. `image-scan.sh` scans each image a second time WITHOUT this file,
+# and an id that scan no longer reports fails the run: the image moved, the reason is gone, delete
+# the entry. So a pull request that moves a pin (an authentik upgrade, a postgres digest) deletes
+# the entries it made unnecessary in the same commit.
+#
+# Measured with Trivy 0.75.0 on 2026-10-23; the reasoning is in docs/wiki/cicd.md
+# ("Container images are scanned").
+# =================================================================================================
+vulnerabilities:
+
+  # --- gosu, in the official postgres images (production's 18, the identity provider's 16) -------
+  # gosu is built by the postgres image's maintainers with Go 1.24.6, and every Go standard-library
+  # advisory since lands on it. It runs ONCE, in the entrypoint, to drop from root to `postgres`,
+  # then exec()s the server - it holds no socket and parses no input, so the net/http, crypto/x509
+  # and archive code these advisories are about never runs. gosu's own SECURITY.md says so. The fix
+  # is a postgres image rebuilt on a newer Go, which is upstream's to ship; the digest moves with it.
+  - id: CVE-2025-61726
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2025-61729
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2025-68121
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-111943
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-25679
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-27145
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-32280
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-32281
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-32283
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-33811
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-33814
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-33818
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-39820
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-39821
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-39822
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-39836
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-42499
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-42504
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-56853
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-56858
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-56859
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-56860
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-56862
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-78667
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-78669
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  - id: CVE-2026-97031
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+
+  # --- npm, bundled in node:24-alpine (the frontend-ssr base) ------------------------------------
+  # The image runs `node index.js` and nothing else: npm is never invoked in it, so its own
+  # dependencies (brace-expansion, undici) are files on disk, not code that runs.
+  - id: CVE-2026-102276
+    paths:
+      - "usr/local/lib/node_modules/npm/**"
+    statement: "A dependency of the npm CLI bundled in node:24-alpine; frontend-ssr runs node index.js and never invokes npm."
+  - id: CVE-2026-102278
+    paths:
+      - "usr/local/lib/node_modules/npm/**"
+    statement: "A dependency of the npm CLI bundled in node:24-alpine; frontend-ssr runs node index.js and never invokes npm."
+  - id: CVE-2026-19534
+    paths:
+      - "usr/local/lib/node_modules/npm/**"
+    statement: "A dependency of the npm CLI bundled in node:24-alpine; frontend-ssr runs node index.js and never invokes npm."
+  # undici 6.28.0 at usr/local/lib/node_modules/npm/node_modules/undici (2026-10-24): npm's own copy.
+  # node:24-alpine is a floating tag already at the newest Node 24 (24.22.1, 2026-10-20, npm 11.19.1),
+  # so there is nothing to move to; the next rebuild retires this. Node's built-in fetch (the
+  # healthcheck's) is compiled into the node binary and is not this file.
+  - id: CVE-2026-109869
+    paths:
+      - "usr/local/lib/node_modules/npm/**"
+    statement: "undici 6.28.0 bundled with the npm CLI in node:24-alpine; frontend-ssr runs node index.js and never invokes npm, and node's own fetch is built into the binary, not this copy."
+
+  # --- brotli-libs 1.2.0-r1, in the Alpine 3.24 images (decided 2026-10-24) ---------------------
+  # Reported in adminer, nginx:1.31.8-alpine (the edge), nginx:stable-alpine (the frontend base) and
+  # postgres:18-alpine. Every one of those pins was already the newest upstream build: Alpine shipped
+  # the fix (1.2.1-r0) on 2026-10-22 and the official images were rebuilt that day still carrying
+  # 1.2.0-r1, so there was no patched digest to move to. Scoped by purl to that one package version,
+  # so a later brotli build is NOT covered and the rescan retires the entry the day the pins move.
+  # What was verified (Trivy's package inventory of each image): the only packages depending on
+  # brotli-libs are libcurl (all four) and freetype (both nginx). Nothing verified which processes
+  # call them at runtime.
+  - id: CVE-2026-111497
+    purls:
+      - "pkg:apk/alpine/brotli-libs@1.2.0-r1"
+    statement: "brotli-libs 1.2.0-r1 in adminer, nginx:1.31.8-alpine, nginx:stable-alpine and postgres:18-alpine, pulled in only by libcurl (all four) and freetype (nginx): it decodes brotli in HTTP responses curl fetches and in WOFF2 fonts, not in request bodies these servers accept - the dependency graph was verified, runtime use was not. No patched upstream image yet (Alpine fixed 2026-10-22; official nginx/postgres/adminer images rebuilt only with 1.2.0); remove when the pins are rebuilt."
+  # The same advisory as Debian's libbrotli1 1.1.0-2+b7, in ghcr.io/goauthentik/server:2026.8.5
+  # (Debian 13), reported 2026-10-24 and fixed in Debian's 1.1.0-2+deb13u1. 2026.8.5 (2026-10-21) is
+  # the newest authentik release, and this repository does not rebuild that image, so there is no pin
+  # to move. Scoped by purl to that one build: the retirement check reads each purl's package, so this
+  # half retires on its own even while the Alpine half above is still reported. Which authentik
+  # processes load libbrotli1 was NOT verified.
+  - id: CVE-2026-111497
+    purls:
+      - "pkg:deb/debian/libbrotli1@1.1.0-2+b7"
+    statement: "Debian libbrotli1 1.1.0-2+b7 in authentik 2026.8.5, the newest authentik release, an upstream image this repository does not build, so the fix is not ours to ship; which processes load it was not verified. Remove when an authentik release ships 1.1.0-2+deb13u1."
+
+  # --- the identity provider, ghcr.io/goauthentik/server:2026.8.5 -------------------------------
+  # An upstream image this repository cannot rebuild, and which one is RUN is the host's `.env`
+  # (`AUTHENTIK_TAG`), not this file. Measured on 2026.8.0, two kinds of entry:
+  #   - FIXED by 2026.8.5: all 30 deleted on 2026-10-24, once the upgrade (#2315) and frontend-ssr's
+  #     return to node:24-alpine left no scanned image reporting them;
+  #   - still in 2026.8.5: no authentik release ships the fix yet. These remain.
+  - id: CVE-2025-47273
+    statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  - id: CVE-2026-111064
+    statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  - id: CVE-2026-111066
+    statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  - id: CVE-2026-114136
+    statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  - id: CVE-2026-114137
+    statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  - id: CVE-2026-114138
+    statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  - id: CVE-2026-84782
+    statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  - id: CVE-2026-97687
+    statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  - id: CVE-2026-97689
+    statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  - id: GHSA-2g87-pp6c-29x5
+    statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  - id: GHSA-6v7p-g79w-8964
+    statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."

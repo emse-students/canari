@@ -3,6 +3,9 @@ import type { MediaType } from '$lib/media';
 /** Default aspect ratio when width/height are unknown (legacy messages). */
 export const DEFAULT_MEDIA_ASPECT = 4 / 3;
 
+/** A reel without recorded dimensions is drawn vertical, 9:16. */
+export const REEL_FALLBACK_ASPECT = 9 / 16;
+
 const MIN_ASPECT = 0.25;
 const MAX_ASPECT = 4;
 

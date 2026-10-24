@@ -414,6 +414,15 @@ function forward(arg: unknown): unknown {
   return typeof arg === 'string' ? (successor.get(arg) ?? arg) : arg;
 }
 
+/**
+ * The key `deviceKeyB64` is now, after every change this realm completed: itself, or the key that
+ * retired it. Read INSIDE the gate ({@link withDeviceKeyHeld}) it is the key the stores are under -
+ * the session adopts a new key only after the gate is released, so the session's copy can lag it.
+ */
+export function liveDeviceKey(deviceKeyB64: string): string {
+  return successor.get(deviceKeyB64) ?? deviceKeyB64;
+}
+
 /** Records `oldKey -> newKey`, keeping the map flat: a key that is current again maps to nothing. */
 function retire(oldKey: string, newKey: string): void {
   successor.delete(newKey);

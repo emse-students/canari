@@ -16,8 +16,10 @@ import adapterNode from '@sveltejs/adapter-node';
 import adapterStatic from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { webDocumentCsp } from './src/lib/security/cspPolicy.js';
 
 const buildsForWeb = !!process.env.BUILD_WEB;
 
@@ -83,6 +85,15 @@ const config = {
     // adapter-node alike. So the polarity follows the adapter, exactly as it does above.
     paths: { relative: !buildsForWeb },
     version: { name: buildVersionName() },
+    // THE WEB PAGE'S CONTENT-SECURITY-POLICY IS WRITTEN HERE, AND ONLY FOR THE WEB BUILD.
+    // SvelteKit knows the one inline script it emits and hashes it; the template's own inline
+    // scripts are hashed from app.html by `webDocumentCsp`. No `'unsafe-inline'` for scripts.
+    // The native build gets NO kit.csp: Tauri states its own policy (src-tauri/tauri.conf.json) and
+    // hashes the inline scripts of the files it embeds, and a second policy here would only narrow it.
+    // The reasoning per directive is in src/lib/security/cspPolicy.js.
+    ...(buildsForWeb
+      ? { csp: webDocumentCsp(readFileSync(new URL('./src/app.html', import.meta.url), 'utf8')) }
+      : {}),
     prerender: {
       // `/sitemap.xml` is NOT here: it is built per request now, because a crawler can only learn
       // an association or post URL from it (see routes/sitemap.xml/+server.ts).

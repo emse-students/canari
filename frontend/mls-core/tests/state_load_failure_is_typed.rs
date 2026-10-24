@@ -119,6 +119,44 @@ fn a_keystore_that_hands_back_no_key_is_its_own_variant_and_never_a_state_verdic
     );
 }
 
+/// A keystore whose entry holds a key that does not open the blob, and whose delete is REFUSED -
+/// the app's at-rest guard keeping the only copy of a hardware-held key.
+struct GuardedStaleEntry {
+    held: [u8; 32],
+    deletes: std::sync::atomic::AtomicU32,
+}
+
+impl mls_core::keystore::DeviceKeyStore for GuardedStaleEntry {
+    fn store_device_key(&self, _key: &[u8; 32], _alias: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn retrieve_device_key(&self, _alias: &str) -> Option<[u8; 32]> {
+        Some(self.held)
+    }
+    fn delete_device_key(&self, _alias: &str) -> Result<(), String> {
+        self.deletes
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err("refused by the at-rest guard".into())
+    }
+}
+
+#[test]
+fn a_stale_keystore_key_whose_delete_is_refused_is_kept_and_the_failure_stays_typed() {
+    let sealed = encrypt_blob(&key(1), b"cbor-mls-snapshot").expect("seal");
+    let store = GuardedStaleEntry {
+        held: key(2),
+        deletes: std::sync::atomic::AtomicU32::new(0),
+    };
+    let err = MlsManager::resolve_at_rest_key(USER, DEVICE, Some(&sealed), None, &store)
+        .expect_err("a key that does not open the blob is not handed back");
+    // The delete was ASKED and refused; the probe neither panics nor claims a deletion.
+    assert_eq!(store.deletes.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(
+        matches!(err, MlsError::KeystoreKeyUnavailable(_)),
+        "expected KeystoreKeyUnavailable, got {err:?}"
+    );
+}
+
 #[test]
 fn no_state_at_all_is_not_a_failure() {
     // The control. A first launch has no blob, and reading "undecryptable" there would send a new
@@ -216,4 +254,55 @@ fn a_framed_state_altered_under_the_key_in_hand_is_named_altered_and_never_a_rot
             "{name}: the code must lead the message, it is what crosses both FFI boundaries: {err}"
         );
     }
+}
+
+/// The web asks THIS reader for a verdict when WebCrypto refused a v2 blob, and it must be able to
+/// tell a verdict from anything else WITHOUT reading the message: `state_verdict_code` is that
+/// classification, on the variant. Each code must also be the exact prefix the variant's `Display`
+/// writes, because the Tauri commands surface `e.to_string()` - the two boundaries name a verdict
+/// with the same word or the frontend's classifier reads them differently.
+#[test]
+fn every_verdict_about_the_bytes_carries_its_code_and_nothing_else_does() {
+    let verdicts = [
+        (MlsError::StateAltered("x".into()), "STATE_ALTERED"),
+        (
+            MlsError::StateSealedUnderAnotherKey("x".into()),
+            "STATE_KEY_MISMATCH",
+        ),
+        (
+            MlsError::StateUndecryptable("x".into()),
+            "STATE_UNDECRYPTABLE",
+        ),
+        (
+            MlsError::StateIdentityMismatch("x".into()),
+            "IDENTITY_MISMATCH",
+        ),
+    ];
+    for (err, code) in verdicts {
+        assert_eq!(err.state_verdict_code(), Some(code), "{err:?}");
+        assert!(
+            err.to_string().starts_with(&format!("{code}: ")),
+            "the code must be the Display prefix the Tauri side surfaces: {err}"
+        );
+    }
+    // Not a verdict about the bytes: an engine or codec failure must stay "unknown" to the caller,
+    // never acquire a recovery.
+    for err in [
+        MlsError::InvalidData,
+        MlsError::KeystoreKeyUnavailable("x".into()),
+        MlsError::OpenMls("x".into()),
+    ] {
+        assert_eq!(err.state_verdict_code(), None, "{err:?}");
+    }
+
+    // And on real bytes: the altered framed state answers its code through the same accessor.
+    let k = key(8);
+    let manager = MlsManager::load_or_create(USER, DEVICE, None).expect("make");
+    let mut framed = manager.save_encrypted_with_key(&k).expect("seal");
+    let last = framed.len() - 1;
+    framed[last] ^= 1;
+    let err = MlsManager::load_with_key(USER, DEVICE, Some(framed), &k)
+        .map(|_| ())
+        .expect_err("an altered state must not load");
+    assert_eq!(err.state_verdict_code(), Some("STATE_ALTERED"));
 }

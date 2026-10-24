@@ -111,6 +111,20 @@ export interface ChannelInviteDto {
   targetUserId: string;
   actorUserId: string;
   roleName?: string;
+  /**
+   * The admission the inviting device signed for the target (channel-encryption section 25),
+   * stored on the target's membership row. Opaque here: members verify it, the server cannot.
+   */
+  admissionVoucher?: string;
+}
+
+/** Body of the accept-invite endpoint (the caller is taken from the auth header). */
+export interface AcceptWorkspaceInviteDto {
+  /**
+   * The admission the joiner built from the link's fragment (channel-encryption section 25),
+   * stored on the joiner's membership row. Absent for a link that carried none.
+   */
+  admissionVoucher?: string;
 }
 
 export interface ChannelUpdateRoleDto {

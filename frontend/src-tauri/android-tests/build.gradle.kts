@@ -11,7 +11,7 @@
 // "Internal compiler error", which names neither the version pair nor the file.
 
 plugins {
-    kotlin("jvm") version "2.2.0"
+    kotlin("jvm") version "2.4.21"
 }
 
 repositories {
@@ -46,7 +46,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     // The JSON reader the app gets from Android, for the shared contracts in `libs/contracts`
     // (`NotificationLevelGateTest` reads `mention-decision.cases.json`).
-    testImplementation("org.json:json:20240303")
+    testImplementation("org.json:json:20260814")
 }
 
 kotlin {

@@ -1,19 +1,29 @@
 pub mod security;
 
+pub mod authorship;
 pub(crate) mod byte_compat;
 pub mod crypto;
+pub mod device_trust;
+pub mod fork_check;
+pub mod graine_run;
 pub mod graine_signature;
 pub mod group;
 pub mod keystore;
 pub mod logging;
 pub mod members;
 pub mod messaging;
+pub mod owed_welcome;
+pub mod pending_submission;
+pub mod self_update;
 pub mod state;
 pub mod state_blob;
 pub mod welcome;
 
 // Re-export MlsManager at crate root so that `mls_core::MlsManager` continues to work.
+pub use device_trust::{DeviceEvent, LeafTrust};
+pub use graine_run::{CommitSummary, GraineRun, GraineRunReading};
 pub use messaging::IncomingApplication;
+pub use self_update::StagedSelfUpdateResult;
 pub use state::DatedKeyPackage;
 pub use state::MlsManager;
 pub use state::PersistedState;
@@ -206,6 +216,26 @@ pub enum DecryptErrorKind {
 }
 
 impl MlsError {
+    /// The CODE of a state-load failure that is a verdict ABOUT THE BYTES - `STATE_ALTERED`,
+    /// `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH` - or `None` for every other
+    /// variant (an engine fault, a codec error, anything this reader cannot vouch for).
+    ///
+    /// Decided HERE, on the variant, so no caller has to recognise a verdict by reading prose: the
+    /// web asks it of this reader when WebCrypto refused a v2 blob (`state_blob_verdict` in
+    /// `mls-wasm`), and an answer that is not one of these four must stay "unreadable right now"
+    /// rather than acquire someone else's recovery. Each code is the exact prefix the variant's
+    /// `Display` writes, which is what the Tauri commands surface (`e.to_string()`), so the two
+    /// boundaries name a verdict with the same word - pinned by `state_load_failure_is_typed.rs`.
+    pub fn state_verdict_code(&self) -> Option<&'static str> {
+        match self {
+            MlsError::StateAltered(_) => Some("STATE_ALTERED"),
+            MlsError::StateSealedUnderAnotherKey(_) => Some("STATE_KEY_MISMATCH"),
+            MlsError::StateUndecryptable(_) => Some("STATE_UNDECRYPTABLE"),
+            MlsError::StateIdentityMismatch(_) => Some("IDENTITY_MISMATCH"),
+            _ => None,
+        }
+    }
+
     /// Classifies an incoming decryption error from its variant / its OpenMLS message.
     /// Centralizes the substring matching previously duplicated in `src-tauri`. [[S5]]
     pub fn decrypt_kind(&self) -> DecryptErrorKind {
@@ -305,6 +335,13 @@ pub enum SkippedKeyPackageReason {
     /// openmls failed internally (`LibraryError`), or the local clock is before the UNIX epoch -
     /// a fault of THIS device, not of the package.
     Internal,
+    /// The package is valid, but its credential does not name the device it was fetched for (or
+    /// names it with more than one ':'). The bytes came from the delivery service, which chose them;
+    /// a package for somebody else, or a malformed identity, is never added under the requested name.
+    IdentityMismatch,
+    /// The package names the right device, under a signature key this device has NOT pinned for it
+    /// (`crate::device_trust`). Nothing today can prove such a change legitimate, so it is refused.
+    SignatureKeyChanged,
 }
 
 impl SkippedKeyPackageReason {
@@ -319,6 +356,8 @@ impl SkippedKeyPackageReason {
             Self::UnsupportedProtocolVersion => "unsupported-protocol-version",
             Self::Malformed => "malformed",
             Self::Internal => "internal",
+            Self::IdentityMismatch => "identity-mismatch",
+            Self::SignatureKeyChanged => "signature-key-changed",
         }
     }
 
@@ -377,6 +416,12 @@ pub type AddMembersWithBaseResult = (AddMembersBulkResult, Vec<u8>);
 /// the staged commit and the external-join base for the epoch it creates, under the same rule as
 /// [`AddMembersWithBaseResult`].
 pub type StagedRemovalResult = (Vec<u8>, Vec<u8>);
+
+/// Result of `replace_device_with_base`: `(commit, welcome, group_info)` - ONE staged commit that
+/// removes a device's leaf and adds it back from a fresh KeyPackage, the Welcome for that device, and
+/// the external-join base for the epoch the commit creates (same rule as
+/// [`AddMembersWithBaseResult`]).
+pub type ReplaceDeviceResult = (Vec<u8>, Vec<u8>, Vec<u8>);
 
 #[cfg(test)]
 mod skipped_key_package_tests {

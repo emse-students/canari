@@ -20,6 +20,7 @@
   import ChatHeader from './ChatHeader.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatTypingBubble from './ChatTypingBubble.svelte';
+  import JoinRequestRow from './JoinRequestRow.svelte';
   import ChatComposer from './ChatComposer.svelte';
   import PollComposerModal from '../channels/PollComposerModal.svelte';
   import type { ChannelPollDraft } from '$lib/utils/chat/channelCrypto';
@@ -672,15 +673,36 @@
    * conversation renders no messages at all (WP-EMPTYVIEW-1). So the read side clamps against the
    * current length; `windowStart` stays the state pagination writes.
    */
+  /** What makes a conversation a new ENTRY for this pane (compared with `lastConversationKey`). */
+  function entryKeyOf(c: Conversation): string {
+    return `${c.id}-${c.contactName}`;
+  }
+
+  /**
+   * The conversation on screen has not been ENTERED yet: the entry effect below has not run for it,
+   * so `windowStart` still belongs to the previous conversation, or is the initial 0. Rendering
+   * from that start mounted the WHOLE thread on a first mount (0 = from the oldest message) and
+   * whatever window the last conversation had on a switch - one synchronous pass over every row,
+   * thrown away by the entry frame a moment later. Until the entry runs, the window IS the entry
+   * frame.
+   */
+  const awaitingEntry = $derived(
+    conversation ? entryKeyOf(conversation) !== lastConversationKey : false
+  );
   let renderWindow = $derived(
-    resolveRenderWindow(
-      windowStart,
-      messageGroups.length,
-      // The 20-group floor belongs to the entry frame alone: any other time a list replaced by a
-      // shorter one (WP-EMPTYVIEW-1) must settle on a full window, not on a first frame that nothing
-      // widens.
-      entering ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
-    )
+    awaitingEntry
+      ? {
+          start: entryWindowStart(messageGroups.length, ENTRY_FIRST_FRAME_GROUPS),
+          end: messageGroups.length,
+        }
+      : resolveRenderWindow(
+          windowStart,
+          messageGroups.length,
+          // The 20-group floor belongs to the entry frame alone: any other time a list replaced by a
+          // shorter one (WP-EMPTYVIEW-1) must settle on a full window, not on a first frame that
+          // nothing widens.
+          entering ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
+        )
   );
   let windowEnd = $derived(renderWindow.end);
   let visibleMessageGroups = $derived(messageGroups.slice(renderWindow.start, renderWindow.end));
@@ -935,7 +957,7 @@
 
   $effect(() => {
     const c = conversation;
-    const convoKey = c ? `${c.id}-${c.contactName}` : '';
+    const convoKey = c ? entryKeyOf(c) : '';
     const messageCount = c?.messages.length ?? 0;
     const catchupActive = isLoadingHistory || isCatchingUpMessages;
 
@@ -1539,6 +1561,12 @@
           />
         {/if}
 
+        <!-- A new person asking to join this group: its ask is drawn at the end of the thread it is
+             about, for any member to answer (`JoinRequestRow`). Empty for every other thread. -->
+        {#if conversationId}
+          <JoinRequestRow groupId={conversationId} />
+        {/if}
+
         <!-- THE TYPING INDICATOR IS A ROW OF THE THREAD, NOT A BAND OVER IT (user, 2026-09-22).
              Above the composer it appeared and vanished UNDER the conversation, hiding the last
              message each time somebody touched their keyboard. Here it grows the scroller like any
@@ -1660,6 +1688,7 @@
           onCancelEdit={editSession.cancel}
           onConfirmEdit={editSession.confirm}
           {onFilesSelected}
+          reelMessages={!isChannel}
           {onSendVoiceNote}
           {pendingFiles}
           {onRemovePendingFile}

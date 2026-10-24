@@ -6,6 +6,7 @@ mod commands;
 mod concurrency;
 mod happy_eyeballs;
 mod keystore_bridge;
+mod native_cache;
 mod state;
 
 // `test` is in the gate so the shared background logic - the outbox batch drain in particular -
@@ -29,38 +30,50 @@ use tauri::{
 use crate::state::{AppState, PendingDb};
 
 // Re-export commands for generate_handler!
+use crate::commands::at_rest_key::{
+    cle_au_repos_lire, cle_au_repos_marquer, cle_au_repos_oublier, cle_au_repos_preparer,
+    cle_au_repos_schema, supprimer_cle_appareil,
+};
 #[cfg(feature = "bench-observables")]
 use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::display_names::store_display_names;
-use crate::commands::handoff::read_and_clear_pending_share;
+use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share};
 use crate::commands::mls::{
-    actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
-    creer_groupe, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
-    exporter_secret, generer_key_packages_et_persister, graine_member_signature_key,
+    actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit,
+    cles_signature_epinglees, confirmer_commit, confirmer_commit_welcome_du,
+    contexte_correspond_base, creer_groupe, date_feuille, envoyer_message_bytes, epoques_departs,
+    exporter_group_info, exporter_ratchet_tree, exporter_secret, feuille_portant_cle,
+    generer_key_packages_et_persister, graine_member_signature_key, graine_run,
     graine_session_keypair, graine_sign_with_device_credential, graine_sign_with_session_key,
-    graine_verify_signature, groupe_actif, initialiser_mls, key_package_a_clef_privee,
-    lister_groupes, lister_identites_membres, obtenir_epoch, oublier_groupe, oublier_key_packages,
-    recenser_key_packages, recevoir_message_bytes, recevoir_messages_batch,
-    recuperer_cle_session_mls, rejoindre_par_commit_externe, retirer_membres,
+    graine_verify_signature, graine_verify_signatures, groupe_actif, groupes_commit_en_attente,
+    initialiser_mls, key_package_a_clef_privee, lister_groupes, lister_identites_membres,
+    obtenir_epoch, oublier_groupe, oublier_key_packages, prendre_constats_fork,
+    prendre_evenements_appareils, rafraichir_feuille, recenser_key_packages,
+    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
+    rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
     retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
-    trailer_welcome,
+    soumission_en_attente, trailer_welcome, verifier_key_package, welcome_remis, welcomes_dus,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
-    ack_fcm_cache, check_push_secret_health, delete_user_push_files, forget_graine_channel,
-    forget_graine_sessions, get_fcm_token, get_push_diagnostic, get_voip_token, load_push_context,
-    read_and_clear_outbox_sent, read_and_clear_pending_call_accept, read_and_clear_read_watermarks,
-    read_outbox_mirror, set_push_context_locale, store_device_identity, store_graine_seed,
-    store_outbox_mirror, store_push_context, store_push_secret, take_fcm_cache,
+    ack_fcm_cache, check_push_secret_health, claim_device_notices, delete_user_push_files,
+    forget_graine_channel, forget_graine_sessions, get_fcm_token, get_push_diagnostic,
+    get_voip_token, load_push_context, read_and_clear_outbox_sent,
+    read_and_clear_pending_call_accept, read_and_clear_read_watermarks, read_outbox_mirror,
+    set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
+    store_push_context, store_push_secret, take_fcm_cache, take_key_group_push_joins,
+};
+use crate::commands::push_registration::{
+    complete_owed_push_token_deletion, end_push_registration,
 };
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, delete_user_database, get_installer_package,
     get_local_storage_usage, get_native_flags, load_mls_state, mls_foreground_heartbeat,
-    mls_state_owner, mls_state_size, pause_mls_foreground, recharger_mls_au_resume,
-    remove_native_flag, save_mls_state, set_native_flag,
+    mls_state_absent, mls_state_owner, mls_state_size, pause_mls_foreground,
+    recharger_mls_au_resume, remove_native_flag, save_mls_state, set_native_flag,
 };
 
 // ─── JNI functions (Android background push) ──────────────────────────────
@@ -212,8 +225,12 @@ pub(crate) fn android_java_vm() -> Option<&'static jni::JavaVM> {
 /// `AppHandle` in a process with no WebView; the merge and its per-channel bound are the
 /// foreground's, shared through `commands::push::merge_graine_seed`.
 ///
-/// Returns -1 if the argument could not be marshalled or parsed at all, which is a different fact
-/// from "zero seeds were usable" and must not read as the same one.
+/// Returns -1 if the argument could not be marshalled or parsed at all, or no cache key was handed
+/// over, which are different facts from "zero seeds were usable" and must not read as the same one.
+///
+/// `cacheKeyB64` is the install's native cache key Kotlin unwrapped from the Android Keystore
+/// (`NativeCacheKey.retrieve`), or `""` when it could not: the mirror is sealed under it
+/// (`native_cache`), and with none nothing is written.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeStoreGraineSeeds<
@@ -222,10 +239,15 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     mut env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
     data_dir: jni::objects::JString<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
     seeds_json: jni::objects::JString<'a>,
 ) -> i32 {
     let Ok(dir) = env.get_string(&data_dir) else {
         log::error!("[GRAINE_PUSH] jni-data-dir");
+        return -1;
+    };
+    let Ok(key) = env.get_string(&cache_key_b64) else {
+        log::error!("[GRAINE_PUSH] jni-cache-key");
         return -1;
     };
     let Ok(json) = env.get_string(&seeds_json) else {
@@ -233,15 +255,117 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         return -1;
     };
     let dir: String = dir.into();
+    let key: String = key.into();
     let json: String = json.into();
 
-    commands::push::store_graine_seeds_json(std::path::Path::new(&dir), &json)
+    commands::push::store_graine_seeds_json(
+        std::path::Path::new(&dir),
+        native_cache::platform_key(&key).as_ref(),
+        &json,
+    )
+}
+
+/// Whether the seed mirror under `dataDir` holds a session: 1 yes, 0 no, -1 it cannot be read.
+/// What the push service asks before choosing between the mirror and the seed frame a message
+/// carries - the seed itself never enters the JVM. `cacheKeyB64` as for `nativeStoreGraineSeeds`.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeGraineSeedHeld<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
+    channel_id: jni::objects::JString<'a>,
+    session_id: jni::objects::JString<'a>,
+) -> i32 {
+    let mut read = |s: &jni::objects::JString<'a>| -> Option<String> {
+        env.get_string(s).ok().map(Into::into)
+    };
+    let (Some(dir), Some(key), Some(channel), Some(session)) = (
+        read(&data_dir),
+        read(&cache_key_b64),
+        read(&channel_id),
+        read(&session_id),
+    ) else {
+        log::error!("[GRAINE_MIRROR] jni-string");
+        return -1;
+    };
+    commands::push::graine_seed_held(
+        std::path::Path::new(&dir),
+        native_cache::platform_key(&key).as_ref(),
+        &channel,
+        &session,
+    )
+}
+
+/// Seals one push-cache line under the install's native cache key (`native_cache`). Returns `null`
+/// when there is no usable key, and the caller then writes NOTHING - never a line in the clear.
+/// A companion-object function, because the notification action receiver writes the cache too.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeSealCacheLine<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _companion: jni::objects::JObject<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
+    line: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let null = || jni::objects::JString::from(jni::objects::JObject::null());
+    let (Ok(key), Ok(line)) = (env.get_string(&cache_key_b64), env.get_string(&line)) else {
+        log::error!("[FCM_CACHE] jni-string");
+        return null();
+    };
+    let key: String = key.into();
+    let line: String = line.into();
+    let Some(key) = native_cache::platform_key(&key) else {
+        return null();
+    };
+    let sealed = native_cache::seal_line(&key, native_cache::Purpose::PushCache, &line);
+    env.new_string(sealed).unwrap_or_else(|e| {
+        log::error!("[FCM_CACHE] sealed line not returned: {e}");
+        null()
+    })
+}
+
+/// Claims the `ownDeviceAdded` keys a push decrypt or a background Add answered in the shared
+/// device-notice ledger under `dataDir` (`MlsContextLoader.tauriDataDir`, the directory the app's
+/// own claim uses) and returns, as a JSON array, the keys nobody announced before - the ones the
+/// service raises its "a new device was added to your account" notification for. `[]` when the
+/// arguments cannot be read. See `mobile::device_notice`.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeClaimDeviceNotices<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    keys_json: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let claimed = (|| -> Option<String> {
+        let dir: String = env.get_string(&data_dir).ok()?.into();
+        let json: String = env.get_string(&keys_json).ok()?.into();
+        Some(mobile::device_notice::claim_device_notices_json(
+            std::path::Path::new(&dir),
+            &json,
+        ))
+    })()
+    .unwrap_or_else(|| {
+        log::error!("[DEVICE_NOTICE] jni arguments unreadable - nothing claimed");
+        "[]".to_string()
+    });
+    env.new_string(&claimed)
+        .unwrap_or_else(|_| env.new_string("[]").unwrap())
 }
 
 /// Opens a salon push against the seed mirror under `dataDir` - every v1 and v2 rule, in the one
 /// implementation both platforms share (`mobile::background::open_graine_push`). `signatureB64` is
 /// empty when the push carried none. Returns the same JSON as `nativeDecryptMessageWithKey`.
 /// `locale` is the app language mirrored in `push_context.json` (`""` when none was).
+/// `cacheKeyB64` opens the sealed mirror, as for `nativeStoreGraineSeeds`.
 #[cfg(target_os = "android")]
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
@@ -251,6 +375,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     mut env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
     data_dir: jni::objects::JString<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
     channel_id: jni::objects::JString<'a>,
     session_id: jni::objects::JString<'a>,
     message_index: jni::sys::jint,
@@ -272,6 +397,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         };
         let (
             Some(dir),
+            Some(cache_key),
             Some(channel),
             Some(session),
             Some(sender),
@@ -281,6 +407,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             Some(locale),
         ) = (
             read(&data_dir),
+            read(&cache_key_b64),
             read(&channel_id),
             read(&session_id),
             read(&sender_id),
@@ -294,6 +421,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         };
         mobile::background::open_graine_push(
             std::path::Path::new(&dir),
+            native_cache::platform_key(&cache_key).as_ref(),
             &mobile::background::GrainePush {
                 channel_id: &channel,
                 session_id: &session,
@@ -558,9 +686,12 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
     }
 }
 
+/// Prepares a background Welcome: builds it and STAGES the Add in `mls.bin`, with its submission
+/// record (see `mobile::background::prepare_welcome_background_with_key` for the answer's shape).
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreateWelcomeBackground<
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepareWelcomeBackground<
     'a,
 >(
     mut env: jni::JNIEnv<'a>,
@@ -571,6 +702,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
+    requester: jni::objects::JString<'a>,
     key_package_b64: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> Result<serde_json::Value, String> {
@@ -588,32 +720,161 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
             .map_err(|e| e.to_string())?
             .into();
         let group_id_str: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
+        let requester_str: String = env
+            .get_string(&requester)
+            .map_err(|e| e.to_string())?
+            .into();
         let kp_b64: String = env
             .get_string(&key_package_b64)
             .map_err(|e| e.to_string())?
             .into();
 
-        mobile::background::create_welcome_background_with_key(
+        Ok(mobile::background::prepare_welcome_background_with_key(
             std::path::Path::new(&files_dir_str),
             &state_vec,
             &key_b64_str,
             &user_id_str,
             &device_id_str,
-            &group_id_str,
-            &kp_b64,
-        )
+            &mobile::background::WelcomeRequest {
+                group_id: &group_id_str,
+                requester: &requester_str,
+                key_package_b64: &kp_b64,
+            },
+        ))
     })();
 
-    let json_str = match result {
-        Ok(v) => v.to_string(),
+    let json = match result {
+        Ok(v) => v,
         Err(e) => {
-            log::error!("[BG_WELCOME] nativeCreateWelcomeBackground failed: {e}");
-            format!("{{\"ok\":false,\"error\":{:?}}}", e)
+            log::error!(
+                "[BG_WELCOME] nativePrepareWelcomeBackground: JNI argument unreadable: {e}"
+            );
+            serde_json::json!({ "ok": false, "reason": "jni-argument" })
         }
     };
-
-    env.new_string(&json_str)
+    env.new_string(json.to_string())
         .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}
+
+/// Settles the Add a prepared Welcome staged in `mls.bin`, on the server's DEFINITIVE answer:
+/// `accepted` merges it; otherwise it is cleared, and `stale_base` / `server_epoch` (both `>= 0` for
+/// an `epoch_mismatch`, recorded for the group, `-1` otherwise) or `refused_target` (`userId:deviceId`,
+/// recorded for that target alone) say what the refusal leaves in the stale ledger. An answer nobody
+/// read is not settled here at all (see `mobile::background::settle_background_welcome`).
+#[cfg(target_os = "android")]
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSettleBackgroundWelcome<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    files_dir: jni::objects::JString<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    key_b64: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+    commit_b64: jni::objects::JString<'a>,
+    base_epoch: jni::sys::jlong,
+    accepted: jni::sys::jboolean,
+    stale_base: jni::sys::jlong,
+    server_epoch: jni::sys::jlong,
+    refused_target: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let text =
+            |env: &mut jni::JNIEnv<'a>, s: &jni::objects::JString<'a>| -> Result<String, String> {
+                Ok(env.get_string(s).map_err(|e| e.to_string())?.into())
+            };
+        let dir = text(&mut env, &files_dir)?;
+        let state = env
+            .convert_byte_array(&state_bytes)
+            .map_err(|e| e.to_string())?;
+        let key = text(&mut env, &key_b64)?;
+        let user = text(&mut env, &user_id)?;
+        let device = text(&mut env, &device_id)?;
+        let gid = text(&mut env, &group_id)?;
+        let commit = text(&mut env, &commit_b64)?;
+        let target = if refused_target.is_null() {
+            None
+        } else {
+            Some(text(&mut env, &refused_target)?)
+        };
+        let base = mobile::background::staged_base_from_jni(base_epoch)?;
+        let answer = mobile::background::welcome_answer_from_jni(
+            accepted != 0,
+            stale_base,
+            server_epoch,
+            target.as_deref(),
+        );
+        Ok(mobile::background::settle_background_welcome(
+            std::path::Path::new(&dir),
+            &state,
+            &key,
+            &user,
+            &device,
+            &mobile::background::StagedWelcome {
+                group_id: &gid,
+                commit_b64: &commit,
+                base_epoch: base,
+            },
+            answer,
+        ))
+    })();
+    let json = match result {
+        Ok(v) => v,
+        Err(e) => {
+            // Nothing was settled: the stage stays in mls.bin, and the foreground settles it.
+            log::error!(
+                "[BG_WELCOME] nativeSettleBackgroundWelcome: JNI argument unreadable ({e}) - left to the foreground"
+            );
+            serde_json::json!({ "ok": false, "reason": "jni-argument" })
+        }
+    };
+    env.new_string(json.to_string())
+        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}
+
+/// Why a Welcome for `target` in `group_id`, built from these `mls.bin` bytes, would be refused
+/// again - `stale-epoch-known` or `target-refused-known` - or an empty string when it is not known.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeWelcomeRequestKnownRefused<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    files_dir: jni::objects::JString<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    group_id: jni::objects::JString<'a>,
+    target: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let token = match (
+        env.get_string(&files_dir),
+        env.get_string(&group_id),
+        env.get_string(&target),
+        env.convert_byte_array(&state_bytes),
+    ) {
+        (Ok(dir), Ok(gid), Ok(target), Ok(state)) => {
+            let dir: String = dir.into();
+            let gid: String = gid.into();
+            let target: String = target.into();
+            mobile::background::welcome_request_known_refused(
+                std::path::Path::new(&dir),
+                &state,
+                &gid,
+                &target,
+            )
+            .unwrap_or("")
+        }
+        _ => {
+            log::error!("[BG_WELCOME] nativeWelcomeRequestKnownRefused: JNI argument unreadable");
+            ""
+        }
+    };
+    env.new_string(token)
+        .unwrap_or_else(|_| env.new_string("").unwrap())
 }
 
 #[cfg(target_os = "android")]
@@ -669,6 +930,228 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
             log::error!("[BG_JOIN] nativeProcessWelcomeBackground failed: {e}");
             0
         }
+    }
+}
+
+// ─── A key group joined from a salon push (channel-encryption section 26) ────────────────────
+// The orchestration (two PushSecret round trips) is Kotlin's; the ledger, the crypto and the
+// compare-and-swap install are `mobile::key_group_join`'s. Every string crosses as a JNI string,
+// and the state bytes as the one byte array the caller already read.
+
+/// The install's native cache key a ledger call was handed, or the error that refuses the call: the
+/// ledger is sealed under it and is never read or written without it.
+#[cfg(target_os = "android")]
+fn key_group_join_ledger_key(
+    env: &mut jni::JNIEnv,
+    cache_key_b64: &jni::objects::JString,
+) -> Result<native_cache::CacheKey, String> {
+    let b64: String = env
+        .get_string(cache_key_b64)
+        .map_err(|e| e.to_string())?
+        .into();
+    native_cache::platform_key(&b64)
+        .ok_or_else(|| "no native cache key - the ledger is never written in the clear".to_string())
+}
+
+/// Claims one push-join attempt at a key group: `granted`, `granted-unless-base:<epoch>`,
+/// `attempted:<state>`, `full`, or `error`. `cacheKeyB64` seals the ledger, as for
+/// `nativeStoreGraineSeeds`; without it the answer is `error` and nothing is attempted.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGroupJoinClaim<'a>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    files_dir: jni::objects::JString<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    use mobile::key_group_join::{claim, Claim};
+    let answer = (|| -> Result<String, String> {
+        let dir: String = env
+            .get_string(&files_dir)
+            .map_err(|e| e.to_string())?
+            .into();
+        let key = key_group_join_ledger_key(&mut env, &cache_key_b64)?;
+        let gid: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
+        Ok(match claim(std::path::Path::new(&dir), &key, &gid)? {
+            Claim::Granted => "granted".to_string(),
+            Claim::GrantedUnlessBaseAt(epoch) => format!("granted-unless-base:{epoch}"),
+            Claim::AlreadyAttempted(state) => format!("attempted:{state}"),
+            Claim::LedgerFull => "full".to_string(),
+        })
+    })()
+    .unwrap_or_else(|e| {
+        log::error!("[KG_PUSH_JOIN] claim failed: {e}");
+        "error".to_string()
+    });
+    env.new_string(&answer)
+        .unwrap_or_else(|_| env.new_string("error").unwrap())
+}
+
+/// Settles a push-join attempt. `state` is `joined` (`a` = scope kind, `b` = scope id), `refused`,
+/// `lost` or `retryable` (`a` = the reason token), or `deferred` (`a` = the reason, `b` = the base
+/// epoch). `cacheKeyB64` seals the ledger, as for the claim. Returns whether the ledger was written.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGroupJoinSettle(
+    mut env: jni::JNIEnv,
+    _service: jni::objects::JObject,
+    files_dir: jni::objects::JString,
+    cache_key_b64: jni::objects::JString,
+    group_id: jni::objects::JString,
+    state: jni::objects::JString,
+    a: jni::objects::JString,
+    b: jni::objects::JString,
+) -> jni::sys::jboolean {
+    use mobile::key_group_join::{settle, Settlement};
+    let result = (|| -> Result<(), String> {
+        let dir: String = env
+            .get_string(&files_dir)
+            .map_err(|e| e.to_string())?
+            .into();
+        let key = key_group_join_ledger_key(&mut env, &cache_key_b64)?;
+        let gid: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
+        let state: String = env.get_string(&state).map_err(|e| e.to_string())?.into();
+        let a: String = env.get_string(&a).map_err(|e| e.to_string())?.into();
+        let b: String = env.get_string(&b).map_err(|e| e.to_string())?.into();
+        let settlement = match state.as_str() {
+            "joined" => Settlement::Joined {
+                scope_kind: a,
+                scope_id: b,
+            },
+            "refused" => Settlement::Refused(a),
+            "lost" => Settlement::Lost(a),
+            "retryable" => Settlement::Retryable(a),
+            "deferred" => Settlement::Deferred {
+                reason: a,
+                base_epoch: b
+                    .parse::<u64>()
+                    .map_err(|e| format!("deferred base epoch '{b}': {e}"))?,
+            },
+            other => return Err(format!("unknown settlement '{other}'")),
+        };
+        settle(std::path::Path::new(&dir), &key, &gid, &settlement)
+    })();
+    match result {
+        Ok(()) => 1,
+        Err(e) => {
+            log::error!("[KG_PUSH_JOIN] settle failed: {e}");
+            0
+        }
+    }
+}
+
+/// Builds the external commit and stages the post-join state - see
+/// `mobile::key_group_join::prepare_key_group_join`. Returns its JSON answer.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepareKeyGroupJoin<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    files_dir: jni::objects::JString<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    key_b64: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+    group_info_b64: jni::objects::JString<'a>,
+    base_epoch: jni::sys::jlong,
+    seed_frame_b64: jni::objects::JString<'a>,
+    frame_sender_id: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let dir: String = env
+            .get_string(&files_dir)
+            .map_err(|e| e.to_string())?
+            .into();
+        let state = env
+            .convert_byte_array(&state_bytes)
+            .map_err(|e| e.to_string())?;
+        let key: String = env.get_string(&key_b64).map_err(|e| e.to_string())?.into();
+        let user: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
+        let device: String = env
+            .get_string(&device_id)
+            .map_err(|e| e.to_string())?
+            .into();
+        let gid: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
+        let gi: String = env
+            .get_string(&group_info_b64)
+            .map_err(|e| e.to_string())?
+            .into();
+        let frame: String = env
+            .get_string(&seed_frame_b64)
+            .map_err(|e| e.to_string())?
+            .into();
+        let sender: String = env
+            .get_string(&frame_sender_id)
+            .map_err(|e| e.to_string())?
+            .into();
+        let base_epoch = u64::try_from(base_epoch).map_err(|_| "negative baseEpoch".to_string())?;
+        Ok(mobile::key_group_join::prepare_key_group_join(
+            std::path::Path::new(&dir),
+            &state,
+            &key,
+            &user,
+            &device,
+            &mobile::key_group_join::JoinInputs {
+                group_id: &gid,
+                group_info_b64: &gi,
+                base_epoch,
+                seed_frame_b64: &frame,
+                frame_sender_id: &sender,
+            },
+        ))
+    })();
+    let json = result
+        .unwrap_or_else(|e| {
+            log::error!("[KG_PUSH_JOIN] prepare marshalling failed: {e}");
+            serde_json::json!({ "ok": false, "reason": "jni-marshalling", "terminal": false })
+        })
+        .to_string();
+    env.new_string(&json)
+        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}
+
+/// Installs the staged post-join state once the server accepted the commit. False = LOST.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeFinishKeyGroupJoin(
+    mut env: jni::JNIEnv,
+    _service: jni::objects::JObject,
+    files_dir: jni::objects::JString,
+) -> jni::sys::jboolean {
+    let result = env
+        .get_string(&files_dir)
+        .map_err(|e| e.to_string())
+        .and_then(|dir| {
+            let dir: String = dir.into();
+            mobile::key_group_join::finish_key_group_join(std::path::Path::new(&dir))
+        });
+    match result {
+        Ok(_) => 1,
+        Err(e) => {
+            log::error!("[KG_PUSH_JOIN] finish FAILED - the server holds a leaf this device has no state for: {e}");
+            0
+        }
+    }
+}
+
+/// Deletes the staged post-join state of a commit the server did not accept.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeAbandonKeyGroupJoin(
+    mut env: jni::JNIEnv,
+    _service: jni::objects::JObject,
+    files_dir: jni::objects::JString,
+) {
+    match env.get_string(&files_dir) {
+        Ok(dir) => {
+            let dir: String = dir.into();
+            mobile::key_group_join::abandon_key_group_join(std::path::Path::new(&dir));
+        }
+        Err(e) => log::error!("[KG_PUSH_JOIN] abandon marshalling failed: {e}"),
     }
 }
 
@@ -741,6 +1224,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
     entries_json: jni::objects::JString<'a>,
+    max_attempts: jni::sys::jint,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> Result<serde_json::Value, String> {
         let files_dir_str: String = env
@@ -769,6 +1253,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
             &user_id_str,
             &device_id_str,
             &entries,
+            usize::try_from(max_attempts).map_err(|_| format!("max attempts {max_attempts}"))?,
         )
     })();
 
@@ -847,7 +1332,9 @@ pub fn run() {
         .plugin(tauri_plugin_keystore::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_customtabs::init())
-        .plugin(tauri_plugin_gallery::init());
+        .plugin(tauri_plugin_gallery::init())
+        // Android's Restore Credentials (WP-RESTORE-1); its commands answer Unsupported on iOS.
+        .plugin(tauri_plugin_restore::init());
 
     // The native tab bar, iOS only: see the dependency's comment in Cargo.toml.
     #[cfg(target_os = "ios")]
@@ -1068,9 +1555,17 @@ pub fn run() {
             graine_session_keypair,
             graine_sign_with_session_key,
             graine_verify_signature,
+            graine_verify_signatures,
             graine_sign_with_device_credential,
             graine_member_signature_key,
+            graine_run,
             recuperer_cle_session_mls,
+            cle_au_repos_schema,
+            cle_au_repos_preparer,
+            cle_au_repos_marquer,
+            cle_au_repos_lire,
+            cle_au_repos_oublier,
+            supprimer_cle_appareil,
             sauvegarder_mls_et_persister,
             creer_groupe,
             lister_groupes,
@@ -1082,9 +1577,23 @@ pub fn run() {
             key_package_a_clef_privee,
             oublier_key_packages,
             ajouter_membres_bulk,
+            verifier_key_package,
+            feuille_portant_cle,
+            cles_signature_epinglees,
+            remplacer_appareil,
+            epoques_departs,
+            prendre_evenements_appareils,
             lister_identites_membres,
             retirer_membres,
             retirer_membres_par_appareil,
+            rafraichir_feuille,
+            date_feuille,
+            contexte_correspond_base,
+            soumission_en_attente,
+            groupes_commit_en_attente,
+            confirmer_commit_welcome_du,
+            welcomes_dus,
+            welcome_remis,
             confirmer_commit,
             annuler_commit,
             exporter_ratchet_tree,
@@ -1092,6 +1601,7 @@ pub fn run() {
             rejoindre_par_commit_externe,
             trailer_welcome,
             envoyer_message_bytes,
+            prendre_constats_fork,
             skip_send_generations,
             recevoir_message_bytes,
             recevoir_messages_batch,
@@ -1110,8 +1620,12 @@ pub fn run() {
             delete_mls_state,
             load_mls_state,
             mls_state_size,
+            mls_state_absent,
             mls_state_owner,
             store_push_secret,
+            claim_device_notices,
+            end_push_registration,
+            complete_owed_push_token_deletion,
             clear_app_data,
             delete_user_database,
             delete_user_push_files,
@@ -1123,11 +1637,13 @@ pub fn run() {
             take_fcm_cache,
             ack_fcm_cache,
             read_and_clear_read_watermarks,
+            take_key_group_push_joins,
             store_outbox_mirror,
             read_outbox_mirror,
             read_and_clear_outbox_sent,
             read_and_clear_pending_call_accept,
             read_and_clear_pending_share,
+            advance_share_epoch,
             get_voip_token,
             store_graine_seed,
             forget_graine_channel,

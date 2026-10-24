@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A CanaReel sent in a conversation is a TILE, and this file MOUNTS the branch that draws it.
  *
@@ -113,6 +114,69 @@ describe('MessageMediaRenderer - a reel message', () => {
     render(video({ intent: 'reel-message', expiresAtMs: Date.now() + 86_400_000 }));
     expect(tile()).not.toBeNull();
     expect(document.querySelector('[data-reel-tombstone]')).toBeNull();
+  });
+});
+
+describe("MessageMediaRenderer - the sender's own reel still in its outbox (RC-5)", () => {
+  const pending = () => document.querySelector<HTMLElement>('[data-reel-tile-pending]');
+
+  it('shows the preparation with its percent and a cancel, and offers NO tap (there is nothing to open)', () => {
+    const onCancelUpload = vi.fn();
+    render(video({ intent: 'reel-message', mediaId: '' }), {
+      upload: { phase: 'preparing', loaded: 0, total: 0, attempt: 1, prepared: 0.37 },
+      onCancelUpload,
+    });
+    expect(tile()).toBeNull();
+    expect(pending()!.textContent).toContain('37');
+    document.querySelector<HTMLButtonElement>(`[aria-label="${m.upload_cancel_label()}"]`)!.click();
+    expect(onCancelUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the bytes sent while uploading, and a retry once it is waiting', () => {
+    const onRetryUpload = vi.fn();
+    render(video({ intent: 'reel-message', mediaId: '' }), {
+      upload: { phase: 'waiting', loaded: 0, total: 0, attempt: 2 },
+      onCancelUpload: vi.fn(),
+      onRetryUpload,
+    });
+    expect(pending()!.textContent).toContain(m.upload_waiting());
+    document.querySelector<HTMLButtonElement>(`[aria-label="${m.upload_retry_label()}"]`)!.click();
+    expect(onRetryUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('says a refused upload failed, with the delete', () => {
+    const onCancelUpload = vi.fn();
+    render(video({ intent: 'reel-message', mediaId: '' }), { uploadFailed: true, onCancelUpload });
+    expect(pending()!.getAttribute('role')).toBe('alert');
+    expect(pending()!.textContent).toContain(m.upload_failed_label());
+    document.querySelector<HTMLButtonElement>(`[aria-label="${m.upload_delete_label()}"]`)!.click();
+    expect(onCancelUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('queued with no transfer running and not failed: the sender can still cancel it', () => {
+    const onCancelUpload = vi.fn();
+    render(video({ intent: 'reel-message', mediaId: '' }), { upload: null, onCancelUpload });
+    expect(pending()!.getAttribute('role')).toBe('status');
+    document.querySelector<HTMLButtonElement>(`[aria-label="${m.upload_cancel_label()}"]`)!.click();
+    expect(onCancelUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws with the theme tokens, never a raw palette class', () => {
+    render(video({ intent: 'reel-message', mediaId: '' }), {
+      uploadFailed: true,
+      onCancelUpload: vi.fn(),
+    });
+    const palette = /\b(text|bg)-(red|amber)-\d{2,3}\b|\bbg-black\b/;
+    expect(pending()!.outerHTML).not.toMatch(palette);
+    expect(pending()!.outerHTML).toContain('text-red-err');
+  });
+
+  it('once sent (a mediaId), it is the ordinary tile again', () => {
+    render(video({ intent: 'reel-message', durationMs: 4200 }), {
+      upload: null,
+    });
+    expect(pending()).toBeNull();
+    expect(tile()).not.toBeNull();
   });
 });
 

@@ -28,14 +28,17 @@ const CASES = [
   [line('D', 'MainActivity', 'IME inset: 899 -> content padding'), 'explained'],
   [line('D', 'MainActivity', 'IME inset: 0 -> content padding'), 'explained'],
   [line('D', 'MlsDeviceKeyStore', 'retrieve: success alias=mls_device_key_0000'), 'explained'],
+  [line('D', 'NativeCacheKey', 'ensure: present'), 'explained'],
+  [line('I', 'NativeCacheKey', 'ensure: created'), 'explained'],
+  [line('D', 'MlsDeviceKeyStore', 'store: success alias=canari_native_cache_key'), 'explained'],
   [line('D', 'CanariApp', 'checkKeystoreHealth: Keystore operational'), 'explained'],
   [line('I', 'CanariApp', 'processPendingPushSecret: secret stored in the Keystore'), 'explained'],
   [line('D', 'CanariApp', 'recordInstallerPackage: installed by (none - sideload)'), 'explained'],
-  [line('I', 'MainActivity', 'FCM token synced (abcd…)'), 'explained'],
+  [line('I', 'MainActivity', 'FCM token synced (163 chars)'), 'explained'],
   [line('D', 'CanariFCM', 'onMessageReceived: type=message action=null groupId=0000'), 'explained'],
   [line('D', 'CanariFCM', 'App in foreground -> MLS handled by the foreground (WS), skip'), 'explained'],
-  [line('D', 'CanariFCM', 'decryptProto: success type=text -> "MARKER"'), 'explained'],
-  [line('D', 'CanariFCM', 'decryptProtoWithCommits: success type=text -> "MARKER"'), 'explained'],
+  [line('D', 'CanariFCM', 'decryptProto: success type=text chars=6'), 'explained'],
+  [line('D', 'CanariFCM', 'decryptProtoWithCommits: success type=text chars=6'), 'explained'],
   // ── the channel-push path, named 2026-09-21 after NOTIF-18 landed PASS-DIRTY on it ──────────
   // The route line's real separator is a U+2192 arrow; it is spelt here so the fixture is the line
   // the phone actually emits, while the RULE matches it as `\S+` and this file's own source stays
@@ -74,7 +77,7 @@ const CASES = [
   // Every other shape of the frame path is a defect on a rig whose clients are all current.
   [line('W', 'CanariFCM', "openSeedFrame: seed frame refused group=2513c207 locality=ABSENT -> this device is not in the salon's key group; no join to wait for"), 'notable'],
   [line('E', 'CanariFCM', "openSeedFrame: the frame opened and holds no seed for this message's session group=2513c207 channel=c0ffee00 session=sess-1"), 'errors'],
-  [line('D', 'CanariFCM', 'handleChannelMessage: notification title=Venue - #salon body=Nouveau message mentionsMe=false'), 'explained'],
+  [line('D', 'CanariFCM', 'handleChannelMessage: notification posted showsMessage=true bodyChars=15 mentionsMe=false'), 'explained'],
   // BOTH HALVES OF THE TWO-PUSH SEQUENCE ARE `notable`, NOT `explained`, AND THE PAIR IS THE POINT.
   // A generic banner is the undecrypted state; it is legitimate only because the seed arrives on a
   // second push and redraws it. A run showing the first without the second has a banner that stayed
@@ -97,7 +100,7 @@ const CASES = [
   // row was measuring. Only the `D` site is claimed: its `W` sibling - "reaction push without
   // groupId - dropped, nothing to attach it to" - is a push that reached the device and was thrown
   // away, a real loss, and it must keep surfacing. The pair below pins both halves of that split.
-  [line('D', 'CanariFCM', 'reaction: group=0000abcd actor=0000ef01 emoji=❤️'), 'explained'],
+  [line('D', 'CanariFCM', 'reaction: group=0000abcd actor=0000ef01'), 'explained'],
   [line('W', 'CanariFCM', 'reaction push without groupId - dropped, nothing to attach it to'), 'notable'],
   // Both shapes of "a silent frame shows nothing": the skip, which is the ordinary path while
   // calls are off and says so once per process, and the calls-enabled path that decrypts and

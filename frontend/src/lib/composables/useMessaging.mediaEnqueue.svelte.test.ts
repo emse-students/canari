@@ -130,6 +130,19 @@ describe('the staging belongs to ONE conversation and ONE account', () => {
     );
   });
 
+  it('a sign-out DURING the preparation stages nothing (a shared file never reaches the next account)', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    let signedIn = true;
+    // The preparation is where the seconds go; the member signs out inside it.
+    const stillWanted = vi.fn(() => signedIn);
+    const staging = messaging.handleFilesSelected([pdf('a.pdf')], ctx, { stillWanted });
+    signedIn = false;
+    await staging;
+    expect(stillWanted).toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO)).toHaveLength(0);
+  });
+
   it('a photo staged in A, Send in B posts nothing of A', async () => {
     const messaging = await freshMessaging();
     const ctx = makeContext();

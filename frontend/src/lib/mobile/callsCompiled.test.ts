@@ -21,7 +21,8 @@ import { describe, expect, it } from 'vitest';
  * | `USE_FULL_SCREEN_INTENT` | `AndroidManifest.xml` | the ring | Android (the locked-screen CallStyle ring) and Play |
  *
  * The Android microphone foreground service follows `CALLS_COMPILED` too, asserted in
- * `androidCallServiceManifest.test.ts`.
+ * `androidCallServiceManifest.test.ts`. The microphone purpose string is written so that a later
+ * lives flip only APPENDS to it (docs/wiki/frontend/modules/live-production.md).
  *
  * Each cuts both ways: declared but unused is a store rejection (App Review refused `voip` under
  * guideline 2.5.4 on 2026-08-31), used but undeclared cannot work (no PushKit token, no full-screen
@@ -46,6 +47,7 @@ const manifest = read(resolve(ANDROID_MAIN, 'AndroidManifest.xml'));
 const pushMm = read(resolve(APPLE, 'Sources/canari/canari_push.mm'));
 const infoPlist = read(resolve(APPLE, 'canari_iOS/Info.plist'));
 const iosWorkflow = read(resolve(here, '../../../../.github/workflows/ios.yml'));
+const androidGradle = read(resolve(SRC_TAURI, 'gen/android/app/build.gradle.kts'));
 
 /** The one capture group of `pattern` in `src`, or fail naming what went missing. */
 function captured(src: string, pattern: RegExp, what: string): string {
@@ -166,23 +168,124 @@ describe(`in-app calls and the background follow CALLS_COMPILED (= ${COMPILED})`
   });
 });
 
-describe('the pre-release builds, which call while CALLS_COMPILED is false', () => {
-  // A pre-release turns in-app calls on (`VITE_DEPLOY_ENVIRONMENT=development` -> `CALLS_ENABLED`),
-  // so its iPhone build needs the `audio` mode the committed plist does not carry (WP-C-BG-I). Both
-  // are written by ONE branch of ios.yml, so a build cannot get one without the other.
-  it('ios.yml adds `audio` in the same branch that turns in-app calls on', () => {
-    // The branch closes at ITS indentation: the `if` nested inside it closes deeper.
-    const match = iosWorkflow.match(
-      /\n( *)if \[ "\$IS_PRERELEASE" = "true" \]; then\n(\s+echo "VITE_DEPLOY_ENVIRONMENT=development" >> \.env[\s\S]*?)\n\1fi\n/
-    );
-    expect(match, 'the pre-release branch that writes VITE_DEPLOY_ENVIRONMENT').not.toBeNull();
-    const branch = match![2];
-    expect(branch).toContain('Add :UIBackgroundModes: string audio');
-    expect(branch).toContain('src-tauri/gen/apple/canari_iOS/Info.plist');
+/** Whether a workflow line WRITES the UIBackgroundModes array (a read-only Print does not). */
+function writesBackgroundModes(line: string): boolean {
+  return (
+    /\b(Add|Set|Delete|Merge|Import|Clear)\s+:UIBackgroundModes/.test(line) ||
+    /plutil\s+-(insert|replace|remove)\s+UIBackgroundModes/.test(line)
+  );
+}
+
+describe('the committed files are the ONLY carriers: no build step patches a call switch in', () => {
+  // Before the flip a pre-release got `audio` from a PlistBuddy branch of ios.yml and the Android
+  // service from a gradle overlay on VITE_DEPLOY_ENVIRONMENT. Both are deleted: a build that
+  // differs from the committed files is a build the tests above did not read.
+  it('ios.yml WRITES no UIBackgroundModes entry (it may print the built ones)', () => {
+    // Write commands only: PlistBuddy Add/Set/Delete/Merge/Import and plutil insert/replace/remove.
+    // A read-only `Print :UIBackgroundModes` is the CI step that shows what the archive declares.
+    const writes = iosWorkflow.split('\n').filter((line) => writesBackgroundModes(line));
+    expect(writes, 'ios.yml writes UIBackgroundModes').toEqual([]);
   });
 
-  it('ios.yml adds `audio` nowhere else', () => {
-    expect(iosWorkflow.split('Add :UIBackgroundModes:').length - 1).toBe(1);
+  it('the write detector bites: synthetic write lines are caught, a Print is not', () => {
+    // Guards the guard: a lost backslash once made the pattern match nothing, and every ios.yml passed.
+    expect(
+      writesBackgroundModes(
+        '/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST"'
+      )
+    ).toBe(true);
+    expect(
+      writesBackgroundModes('/usr/libexec/PlistBuddy -c "Set :UIBackgroundModes:1 audio" "$PLIST"')
+    ).toBe(true);
+    expect(writesBackgroundModes('plutil -insert UIBackgroundModes -array "$PLIST"')).toBe(true);
+    expect(
+      writesBackgroundModes('/usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST"')
+    ).toBe(false);
+  });
+
+  it('ios.yml prints the built background modes and microphone string, read-only', () => {
+    expect(iosWorkflow).toContain('Print :UIBackgroundModes" "$BUILT_PLIST"');
+    expect(iosWorkflow).toContain('Print :NSMicrophoneUsageDescription" "$BUILT_PLIST"');
+  });
+
+  it('build.gradle.kts merges no calls overlay', () => {
+    expect(androidGradle).not.toContain('src/calls/');
+    expect(androidGradle).not.toContain('VITE_DEPLOY_ENVIRONMENT');
+  });
+});
+
+describe('the generic ring alert of an iPhone with no VoIP token is filed, not overwritten', () => {
+  const nse = read(resolve(APPLE, 'canari_NSE/NotificationService.swift'));
+
+  /** The text from `start` up to the next `end` after it, or fail naming what went missing. */
+  function between(src: string, start: string, end: string, what: string): string {
+    const from = src.indexOf(start);
+    expect(from, `${what} was renamed or removed`).toBeGreaterThanOrEqual(0);
+    const to = src.indexOf(end, from + start.length);
+    expect(to, `the end of ${what} was not found`).toBeGreaterThan(from);
+    return src.slice(from, to);
+  }
+
+  it('the extension has a call_ring case that never reaches the MLS ladder', () => {
+    // Without it the type falls to handleMlsMessage, which replaces the server's "Appel entrant"
+    // with the encrypted-message fallback and adds message buttons.
+    const branch = between(nse, 'case "call_ring":', 'case "social"', 'the call_ring case');
+    expect(branch).toContain('applyGenericCallRing');
+    expect(branch).toContain('finish()');
+    expect(branch).not.toContain('handleMlsMessage');
+  });
+
+  it('keeps the server wording, files it under its conversation and opens it without answering', () => {
+    const body = between(
+      nse,
+      'private func applyGenericCallRing(',
+      '/// Writes a server-sent',
+      'applyGenericCallRing'
+    );
+    expect(body).not.toMatch(/content\.(title|body|subtitle) =/);
+    expect(body).toContain('content.threadIdentifier = groupId');
+    expect(body).toContain('"fr.emse.canari://chat/\\(groupId)"');
+    expect(body).not.toContain('acceptCall');
+    expect(body).toContain('.timeSensitive');
+    expect(body).toContain('content.userInfo["canariCallId"] = callId');
+  });
+
+  it('call_ring_end takes the delivered alert off the lock screen', () => {
+    const end = between(
+      pushMm,
+      '@"call_ring_end"]) {',
+      'BOOL isWelcome',
+      'the call_ring_end branch'
+    );
+    expect(end).toContain('removeDeliveredNotificationsWithIdentifiers');
+    expect(end).toContain('canariCallId');
+  });
+
+  it('app activation clears the banner too: its deep link is the chat prefix the sweep matches', () => {
+    expect(pushMm).toContain('[deepLink hasPrefix:@"fr.emse.canari://chat"]');
+    expect(nse).toContain('content.userInfo["deepLink"] = "fr.emse.canari://chat/');
+  });
+});
+
+describe('project.yml repeats the plist declarations, so an xcodegen run cannot drop them', () => {
+  const projectYml = read(resolve(APPLE, 'project.yml'));
+
+  it('the same background modes, in the same order', () => {
+    const list = captured(
+      projectYml,
+      /UIBackgroundModes: \[([^\]]*)\]/,
+      'UIBackgroundModes in project.yml'
+    );
+    expect(list.split(',').map((s) => s.trim())).toEqual(backgroundModes());
+  });
+
+  it('the same microphone purpose string', () => {
+    const text = captured(
+      projectYml,
+      /NSMicrophoneUsageDescription: (.*)\r?\n/,
+      'NSMicrophoneUsageDescription in project.yml'
+    );
+    expect(text.trim()).toBe(microphonePurposes()[0].text);
   });
 });
 

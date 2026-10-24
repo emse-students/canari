@@ -6,6 +6,12 @@
  * - Group-level operations (create, rename, delete, invite, kick)
  * - Storage helpers (save, load history, reload)
  */
+import type { JoinAnswerResult, JoinRequest } from '$lib/utils/chat/joinRequests.svelte';
+import {
+  admitJoinRequest,
+  declineJoinRequest as declineJoinAsk,
+  type JoinAnswerDeps,
+} from '$lib/utils/chat/joinAnswers';
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -76,6 +82,7 @@ import {
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
 import { readLandingPreview } from '$lib/utils/chat/landingPreview';
+import { reportFollowerTabRefusal } from '$lib/utils/chat/conversationRefusalMessage';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
@@ -84,9 +91,11 @@ import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
 import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
 import {
   flushSalonReadMarks,
+  forgetDmReadMark,
   owedSalonReadMarks,
   salonMarksAfterLoad,
 } from '$lib/utils/chat/salonReadMarkQueue';
+import { drainOutboxForExit } from '$lib/utils/chat/outbox';
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -175,9 +184,10 @@ export function useConversations() {
   // keyed by group so a mid-invite conversation switch never leaks pending rows.
   let pendingInvites = $state<{ groupId: string; ids: string[] } | null>(null);
   let isLoadingHistory = $state(false);
-  // True once the initial IndexedDB restore has populated the map, so consumers (e.g. the
+  // True once THIS session's IndexedDB restore has populated the map, so consumers (e.g. the
   // /posts mini-panel) can treat the live map as authoritative and reflect deletions
-  // instead of resurrecting stale rows from their own snapshot.
+  // instead of resurrecting stale rows from their own snapshot. Reset at sign-out
+  // (`invalidateRestores`), when the map is cleared.
   let conversationsRestored = $state(false);
   /**
    * How many startup/resume passes that can still ADD a conversation are running.
@@ -735,7 +745,7 @@ export function useConversations() {
     atTap = false
   ) {
     const { channelService } = await import('$lib/services/ChannelService');
-    const { decodeChannelMessageRow, UnreadableRowTally, V1_SESSION_NOT_HELD } =
+    const { decodeChannelMessagePage, UnreadableRowTally, V1_SESSION_NOT_HELD } =
       await import('$lib/utils/chat/channelCrypto');
     const { olderMessagesNotice, olderMessagesNoticeId, keepNoticeOnTop } =
       await import('$lib/utils/chat/olderMessagesNotice');
@@ -794,7 +804,7 @@ export function useConversations() {
     try {
       // Nothing to hydrate: a Graine seed is already in the local store or it is not, and the
       // server holds none to fetch. A row this device has no seed for is REPORTED unreadable by
-      // `decodeChannelMessageRow` rather than silently skipped, and repaired by WP-33.
+      // `decodeChannelMessagePage` rather than silently skipped, and repaired by WP-33.
       //
       // THE READ MARKS COME WITH EVERY LOAD, beside the page they describe: the live `channel.read`
       // events only carry what moved while this device was connected, so a load is the one moment
@@ -839,8 +849,10 @@ export function useConversations() {
       const tally = new UnreadableRowTally(rawId);
 
       if (Array.isArray(rows)) {
-        for (const msg of rows) {
-          const decoded = await decodeChannelMessageRow(rawId, msg, meLower, tally);
+        // The page's signatures cost ONE engine call, not one per row (F7).
+        const decodedRows = await decodeChannelMessagePage(rawId, rows, meLower, tally);
+        for (const [i, msg] of rows.entries()) {
+          const decoded = decodedRows[i];
           if (!decoded) continue;
           // A reaction is a row of its own now (WP-40): it changes a bubble instead of being one.
           // Merged by the same last-write-wins rule everywhere, so the order the page is read in
@@ -997,7 +1009,7 @@ export function useConversations() {
     if (q.length < 2) return [];
 
     const { channelService } = await import('$lib/services/ChannelService');
-    const { decodeChannelMessageRow, UnreadableRowTally } =
+    const { decodeChannelMessagePage, UnreadableRowTally } =
       await import('$lib/utils/chat/channelCrypto');
     const { getPreviewText, parseEnvelope } = await import('$lib/envelope');
     const { keepNoticeOnTop } = await import('$lib/utils/chat/olderMessagesNotice');
@@ -1012,8 +1024,9 @@ export function useConversations() {
     const decodedPlain: ChatMessage[] = [];
     const searchEdits: DecodedChannelEdit[] = [];
     const tally = new UnreadableRowTally(rawId);
-    for (const row of rows) {
-      const decoded = await decodeChannelMessageRow(rawId, row, meLower, tally);
+    const decodedRows = await decodeChannelMessagePage(rawId, rows, meLower, tally);
+    for (const [i, row] of rows.entries()) {
+      const decoded = decodedRows[i];
       if (!decoded) continue;
       if (decoded.kind === 'reaction') {
         // Searching the whole history is also the widest sweep of reaction frames there is, so it
@@ -1126,6 +1139,10 @@ export function useConversations() {
     const retired = restoreGeneration;
     retired.retired = true;
     restoreGeneration = newRestoreGeneration(retired.id + 1);
+    // The map is cleared beside this call, so it is no longer "restored": the flag is the NEXT
+    // session's to set, and a reader asking before then (the share-sheet suggestions, a deep-link
+    // landing) must wait for that session's restore rather than trust the one that left.
+    conversationsRestored = false;
     Log.i(
       'RESTORE',
       `generation ${retired.id} retired (running=${retired.running !== null}, queued asks=${retired.queuedAsks})`
@@ -1894,6 +1911,14 @@ export function useConversations() {
     ctx: ConversationContext
   ) {
     const mlsService = ctx.ensureMls();
+    // THE OWED READ MARK GOES FIRST, AND SYNCHRONOUSLY. Dropping the selection below ends the open
+    // conversation's read debounce, whose cleanup hands every OWED mark to the outbox - and a mark of
+    // this group, queued there, is a frame the server refuses with 403 once the membership ends
+    // (GRP-6, 2026-10-22). Revoked here, before any await, the ledger no longer names the group when
+    // that cleanup runs, and nothing re-enqueues it at the next sign-in; the outbox's exit drain below
+    // settles what was already queued, and the owed exit makes the outbox refuse any later mark.
+    forgetDmReadMark(ctx.userId, convo.id);
+    if (contactKey !== convo.id) forgetDmReadMark(ctx.userId, contactKey);
     await retireConversation({
       conversations,
       key: contactKey,
@@ -1913,6 +1938,20 @@ export function useConversations() {
     // standing, the MLS state destroyed, and `discoverMissingGroups` handing the group back.
     // See `pendingGroupExits` for the whole reasoning; the drain replays this on reconnect.
     await recordPendingGroupExit(ctx.storage, convo.id, exitKind, ctx.log);
+    // NOTHING OF THIS GROUP MAY STILL BE QUEUED OR ON THE WIRE WHEN THE SERVER ENDS THE MEMBERSHIP:
+    // every such frame is refused 403 by then and parked until the next sign-in, for a group this
+    // device no longer holds. The outbox therefore SETTLES the group first - it awaits a send in
+    // flight, sends what still can go (the membership and the MLS state exist until the server step,
+    // so a text written just before leaving arrives), and withdraws only what cannot, logging it by
+    // kind. The owed exit recorded just above is what makes every later enqueue for the group refuse
+    // itself, and every ordinary flush withdraw the group's rows - so a kill before this drain leaves
+    // nothing that the relaunch's replay of the exit could race into a 403. The leave's own `memberLeft` notice is not in the outbox: it is a direct send whose
+    // acceptance `leaveGroupAndBroadcast` awaits.
+    await drainOutboxForExit(convo.id, exitKind).catch((e: unknown) =>
+      ctx.log(
+        `[${label}] outbox of ${convo.id.slice(0, 8)}… NOT settled before the server step - any entry left will be refused once the membership ends: ${String(e)}`
+      )
+    );
     try {
       const onServer = await isGroupActiveOnServer(mlsService, ctx.userId, convo.id);
       if (onServer !== false) {
@@ -2021,9 +2060,61 @@ export function useConversations() {
         log: ctx.log,
       });
       await loadGroupMembers(convo.id, ctx);
+    } catch (e) {
+      // `processBulkAddition` lets only this refusal through; anything else is its own to report.
+      if (!reportFollowerTabRefusal(e)) throw e;
     } finally {
       pendingInvites = null;
     }
+  }
+
+  /** What a member's answer to a join ask needs, bound to this context (`joinAnswers.ts`). */
+  function joinAnswerDeps(ctx: ConversationContext): JoinAnswerDeps {
+    const mlsService = ctx.ensureMls();
+    return {
+      mlsService,
+      conversations,
+      invite: (userIds, convo) =>
+        inviteMembersToGroup(userIds, convo, {
+          mlsService,
+          storage: ctx.storage,
+          userId: ctx.userId,
+          deviceKeyB64: ctx.deviceKeyB64,
+          historyBaseUrl: ctx.historyBaseUrl,
+          conversations,
+          selectConversation: (name) => selectConversationWithCtx(name, ctx),
+          saveConversation: (name) => saveConversation(name, ctx),
+          log: ctx.log,
+        }),
+      log: ctx.log,
+    };
+  }
+
+  /**
+   * A member ADMITS a new person who asked to join (`joinRequests.svelte.ts`): the same Add as an
+   * invitation from the member list, built and signed by this device (`admitJoinRequest`). Says
+   * whether the person is now in the tree, so the ask stays on screen when the Add did not happen.
+   */
+  async function approveJoinRequest(
+    request: JoinRequest,
+    ctx: ConversationContext
+  ): Promise<JoinAnswerResult> {
+    const result = await admitJoinRequest(request, joinAnswerDeps(ctx));
+    if (result.done && selectedContact === request.groupId) {
+      await loadGroupMembers(request.groupId, ctx);
+    }
+    return result;
+  }
+
+  /**
+   * A member DECLINES a new person who asked to join: their roster row and pending devices leave the
+   * server (`declineJoinRequest` in `joinAnswers.ts`), which is what stops the ask coming back.
+   */
+  async function declineJoinRequest(
+    request: JoinRequest,
+    ctx: ConversationContext
+  ): Promise<JoinAnswerResult> {
+    return declineJoinAsk(request, joinAnswerDeps(ctx));
   }
 
   /**
@@ -2108,6 +2199,7 @@ export function useConversations() {
           groupId: convo.id,
           userId: ctx.userId,
           deviceKeyB64: ctx.deviceKeyB64,
+          log: ctx.log,
         }),
       'DELETE',
       'delete',
@@ -2152,6 +2244,7 @@ export function useConversations() {
           groupId: convo.id,
           userId: ctx.userId,
           deviceKeyB64: ctx.deviceKeyB64,
+          log: ctx.log,
         }),
       'LEAVE',
       'leave',
@@ -2201,6 +2294,7 @@ export function useConversations() {
       ctx.log(`${memberId} retire du groupe.`);
     } catch (e) {
       ctx.log(`Erreur retrait membre: ${String(e)}`);
+      reportFollowerTabRefusal(e);
     }
   }
 
@@ -2357,6 +2451,8 @@ export function useConversations() {
     createNewGroup,
     /** Invites one or more users to the currently selected group. */
     inviteMembersToCurrentGroup,
+    approveJoinRequest,
+    declineJoinRequest,
     /** Opens or creates a direct 1-to-1 conversation with the given user. */
     startNewConversation,
     /** Renames the currently selected group and broadcasts the change. */

@@ -117,6 +117,21 @@ jobs:
         with:
           bun-version-file: ".bun-version"
 
+      # A STABLE DEPLOYS PRODUCTION ONLY AFTER BOTH STORES TOOK THE VERSION (`serve-prod` needs
+      # `android` and `ios`), so a missing or mistyped LYDIA_ENV found by the production render would
+      # surface AFTER the store submission, with the version already out. It is checked here instead,
+      # where nothing has been published yet: production accepts exactly `production`
+      # (infrastructure/deploy/render-env.sh, user 2026-10-23). The value is never printed.
+      - name: Production names the real Lydia
+        if: ${{ !contains(github.event.release.tag_name || inputs.version, '-') }}
+        env:
+          LYDIA_ENV: ${{ secrets.LYDIA_ENV }}
+        run: |
+          if [ "${LYDIA_ENV:-}" != 'production' ]; then
+            echo "::error::The GitHub secret LYDIA_ENV is not exactly 'production' (unset, or another word). A stable deploys production, whose render accepts only 'production'; set the secret before tagging, or the deploy would fail AFTER the stores took the version."
+            exit 1
+          fi
+
       # WHAT IS BEING RELEASED, AND FROM WHICH COMMIT - the only two facts the gates need.
       #
       # `github.event.release.target_commitish` is NOT the answer: it carries a branch NAME (`main`)

@@ -32,7 +32,7 @@ in the comparison below follows from that difference.
 | **Member added** | A commit plus a Welcome. MLS gives the newcomer nothing from before, **but the adding device then pushes its whole local history** (`sendFullHistoryBundle`), so a new member of a group conversation reads the past. That was never decided, and the user reversed it on 2026-10-21: [history-reconciliation](history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21). | The newcomer joins the key group by external commit, with nobody online needed, then receives a bundle of every seed held (`shared`) or none (`joined`). |
 | **New device of a member** | A `welcome_request`, an online device adds it, and a Welcome follows. Its past comes from peers, re-encrypted message by message. | An external join of the key group and the same history bundle: seeds only, with the ciphertexts read from the server. |
 | **Member leaves** | A Remove commit, and the next epoch excludes them. | A Remove commit on the key group, made by whoever reconciles the roster next ([§4.6](channel-encryption.md#46-ordering-rule-remove-then-distribute)). Every sender rotates at its next send. The leaver keeps what it could already read. |
-| **Rotation** | Every commit is a new epoch. No device ever self-updates ([mls-protocol](mls-protocol.md#the-84-day-lifetime-outlives-the-device-and-a-leaf-is-never-updated)). | Per sender, at the next send after ANY key-group epoch change, after 100 messages, or after 7 days ([`shouldRotateGraineSession`](../../../frontend/src/lib/utils/graine/sessionManager.ts)). |
+| **Rotation** | Every commit is a new epoch. Every device refreshes its own leaf at its next send once 7 days have passed since its last commit in that group ([mls-protocol](mls-protocol.md#the-periodic-leaf-refresh)); key groups are excluded. | Per sender, at the next send after a key-group Remove or a new user, after 100 messages, or after 7 days (50 and 24 hours once re-distributed); a new device of a present user re-distributes the session instead ([`graineOutboundVerdict`](../../../frontend/src/lib/utils/graine/sessionManager.ts), [graine-removal-tracker](graine-removal-tracker.md), 2026-10-22, not yet shipped). |
 | **Where the past lives** | On the devices. The server keeps a capped Redis stream and per-device queues, but cannot decrypt either for a later joiner. | On the server, as ciphertext. Devices hold only the keys. |
 
 ## What each system is good at
@@ -40,7 +40,7 @@ in the comparison below follows from that difference.
 | Property | DM | Community |
 | --- | --- | --- |
 | Forward secrecy | **Strong** - an epoch's keys are deleted once used. | **Weak, by decision** - whoever holds a seed opens every index of its session, and old seeds are kept so that newcomers can read the past ([§4.4](channel-encryption.md#44-joining-and-what-a-share-link-is-worth)). |
-| Post-compromise security | **Available but unused** - MLS heals a compromised leaf at its next update, and no device ever updates its leaf. | Bounded by rotation: a stolen seed opens one session. |
+| Post-compromise security | **Available but unused** - MLS heals a compromised leaf at its next update, and no device ever updates its leaf. | Bounded by seed rotation (on a removal or a new user); see the [backlog](../backlog.md) for the policy. |
 | Author authenticity | MLS signature, verified by OpenMLS. | v1: none (any member could forge). v2: Ed25519 per session plus an endorsement, and the server refuses an unsigned v2 row ([§21](channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)). |
 | A newcomer reads the past | Never from MLS. Today the inviter re-sends it all; decided 2026-10-21 that a new member gets nothing from before their arrival (not built). | Yes, from one bundle of seeds (`shared`, decided 2026-08-17). |
 | Tolerance of a device that fell behind | Low: a missed commit is the failure class [mls-desync-prevention](mls-desync-prevention.md) exists for. | High for messages, which stay readable once the seed arrives. The key group is still MLS, so the same class exists there, but it delays seeds rather than losing text. |
@@ -76,7 +76,7 @@ member count, is what an MLS group pays for.
 | Its key-group device joins on its first two days | 69, then 87 |
 | Its key-group commits on those days | 99, then 105 |
 
-**The cause, read from the code.** `shouldRotateGraineSession` rotates when the stored distribution
+**The cause, read from the code (before 2026-10-22; the fix is [graine-removal-tracker](graine-removal-tracker.md)).** `shouldRotateGraineSession` rotated when the stored distribution
 epoch differs from the current one ([sessionManager.ts](../../../frontend/src/lib/utils/graine/sessionManager.ts)).
 Every device that joins the key group commits, and so advances that epoch. Its comment accepts this:
 *"An ADD advances the epoch too, and rotates a session it did not have to [...] the cost is one extra
@@ -102,9 +102,10 @@ measured), the signing key (32 B), the endorsement (64 B) and the varints. That 
 
 At the post-launch rate, the largest community reaches the cap in about two years. Another launch
 like the first one, such as a new year group arriving in September, adds hundreds of seeds in a day.
-The cap is a refusal (`truncated`), never a silent cut, so reaching it is visible. What happens to an
-MLS application message of ~2.6 MB on the way through the gateway and the queue has not been
-measured.
+The cap is a refusal (`truncated`), never a silent cut, so reaching it is visible. **Since
+2026-10-22 an answer is bounded in bytes and paged** (255 KiB a page, about eleven pages at the cap),
+after reading every hop's limit from code and config. The binding hop is the 1 MiB pending-queue page
+([channel-encryption §4.4](channel-encryption.md#44-joining-and-what-a-share-link-is-worth)).
 
 ### "O(1) per seed" is true of the client, not of the server
 
@@ -147,24 +148,29 @@ and this page carries the reasoning.
    revoked devices still would. Expected effect: seeds return to roughly "senders x weeks", the shape
    the bundle cap was sized for. Cost: up to ~200 identities stored per outbound session, which is
    per device and per salon, not per message.
-2. **Bound the bundle in BYTES and page it.** A seed count does not bound a message size once a seed
-   is 330 B and identifiers can grow. Either page the history answer (several bundles, each under a
-   byte budget) or measure what the transport accepts and set the cap from that.
+2. **Bound the bundle in BYTES and page it - DONE 2026-10-22.** Each hop's limit was read and the
+   answer is paged under the smallest one, with a third of it as margin. Pages need no reassembly
+   ([channel-encryption §4.4](channel-encryption.md#44-joining-and-what-a-share-link-is-worth)).
 3. **Store a key-group frame once, not once per seat.** The server writes ~31 copies of each payload,
    and its 883 MB are the largest single cost in the database. A shared per-group log, read with a
    per-device cursor, would bring the DM side's `history:{groupId}` stream shape to the key groups,
    where every recipient receives the same bytes. This is a change to chat-delivery, not to the
-   protocol.
+   protocol. **Built 2026-10-22 (migration 034), not yet applied to an estate; its readers ship
+   first and its writer is switched on in a later release.** It keeps the
+   per-device row as the delivery record and stores the ciphertext once, instead of a log with a
+   cursor, so ACK, pull and push are unchanged for every client
+   ([chat-delivery](../services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)).
 4. **`joined` exists and no community uses it** (16 of 16 are `shared`). The weak forward secrecy
    above is the price of `shared`. Nothing needs building, but no admin can choose `joined` today
    unless it is offered.
 
 ### DMs and group conversations
 
-1. **Leaves never self-update, so MLS's post-compromise security is never exercised.** A periodic
-   update commit (per device, say monthly) would heal a stolen leaf key. Its cost is more commits,
-   which is the failure class this product already fights. So this item waits on the desync work, and
-   it is listed so that the choice is visible.
+1. **Leaves refresh themselves since 2026-10-22, every 7 days of activity per device and group**
+   ([mls-protocol](mls-protocol.md#the-periodic-leaf-refresh), with the commit ceiling on these fleet
+   numbers), and a revoked device's leaf is removed by the stray-leaf collector. Community key groups
+   are excluded: a refresh there is no departure, but it costs every sender a seed redistribution
+   and the tighter reused caps (the cost is on that page).
 2. **The large group conversation is the shape §3 rejected for salons.** 109 device seats carry
    messages over MLS. Two things are worth doing: measure its unreadable-frame rate against the
    communities' (`LOST frame` against `reportUnreadableChannelMessage`), and decide whether a group

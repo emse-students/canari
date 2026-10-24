@@ -7,6 +7,7 @@ import { Log } from '$lib/utils/Log';
 import { getLocale } from '$lib/paraglide/runtime';
 import { m } from '$lib/paraglide/messages';
 import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
+import { escapeHtmlAttribute } from '$lib/utils/escapeHtml';
 import {
   breaksOnDay,
   dayOccupancy,
@@ -357,9 +358,8 @@ export function eventBgCss(ev: AssociationCalendarFeedEvent): string {
 
 /** Monday-first array of day-numbers (null = padding cell) for a given month. */
 
-function safe(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+/** Every value this module interpolates into its markup - text or attribute - goes through this. */
+const safe = escapeHtmlAttribute;
 
 /** Line-height shared by the event-title fit computation and the rendered spans (must match). */
 export const EVENT_TITLE_LINE_HEIGHT = 1.25;
@@ -578,7 +578,7 @@ export function splitLogoWatermark(
       const left = (b.leftPct / 100) * size;
       const width = (b.widthPct / 100) * size;
       const imgLeft = (b.imgLeftPct / 100) * width;
-      return `<div style="position:absolute;top:0;left:${left.toFixed(2)}px;width:${width.toFixed(2)}px;height:${size}px;overflow:hidden;"><img src="${src}" style="position:absolute;top:0;left:${imgLeft.toFixed(2)}px;width:${size}px;height:${size}px;max-width:none;max-height:none;object-fit:cover;" /></div>`;
+      return `<div style="position:absolute;top:0;left:${left.toFixed(2)}px;width:${width.toFixed(2)}px;height:${size}px;overflow:hidden;"><img src="${safe(src)}" style="position:absolute;top:0;left:${imgLeft.toFixed(2)}px;width:${size}px;height:${size}px;max-width:none;max-height:none;object-fit:cover;" /></div>`;
     })
     .join('');
   return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><div style="position:relative;width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;opacity:${opacity.toFixed(2)};">${bands}</div></div>`;
@@ -773,7 +773,7 @@ function buildCalendarHtml(
           const watermark = logoSrcs.every((src) => src === null)
             ? ''
             : owners.length === 1
-              ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrcs[0]}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:${logoAlpha.toFixed(2)};" /></div>`
+              ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${safe(logoSrcs[0] ?? '')}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:${logoAlpha.toFixed(2)};" /></div>`
               : splitLogoWatermark(logoSrcs, logoSize, logoAlpha);
 
           // A dark rule between two stacked events, so two saturated tiles never merge into one band.

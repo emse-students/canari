@@ -1,4 +1,5 @@
 use log::{Level, Metadata, Record};
+use mls_core::pending_submission::PendingSubmissionRead;
 use mls_core::MlsManager;
 use wasm_bindgen::prelude::*;
 
@@ -101,11 +102,46 @@ pub fn encrypt_mls_state_blob_with_key(
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+/// What `mls-core`'s deterministic reader says about a SEALED state blob, as a CODE - never a client.
+///
+/// Answers `"OPENED"` when the blob opens under the key and belongs to `user_id:device_id`, or the
+/// verdict code `MlsError::state_verdict_code` assigns (`STATE_ALTERED`, `STATE_KEY_MISMATCH`,
+/// `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH`). REJECTS with the error's text for anything that is
+/// not a verdict about the bytes (a malformed key, a codec failure): the caller must not read a
+/// recovery into it.
+///
+/// It exists for ONE caller: the web, after WebCrypto refused a v2 blob (`loadAndInitWasm`), needs
+/// to know whether the BYTES are at fault, and WebCrypto's `OperationError` names a failed tag and
+/// an engine fault alike. The verdict used to be read by building a `WasmMlsClient` and matching the
+/// thrown message against a regex; the classification now happens here, on the variant. The loaded
+/// manager is dropped on return - a witness of the verdict, never a second load path.
+#[wasm_bindgen]
+pub fn state_blob_verdict(
+    user_id: &str,
+    device_id: &str,
+    state_bytes: Vec<u8>,
+    device_key_b64: &str,
+) -> Result<String, JsValue> {
+    let key = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64)
+        .map_err(|e| JsValue::from_str(&e))?;
+    match MlsManager::load_with_key(user_id, device_id, Some(state_bytes), &key) {
+        Ok(_) => Ok("OPENED".to_string()),
+        Err(e) => match e.state_verdict_code() {
+            Some(code) => {
+                log::warn!("state_blob_verdict: the deterministic reader answers {code}");
+                Ok(code.to_string())
+            }
+            None => Err(JsValue::from_str(&e.to_string())),
+        },
+    }
+}
+
 // ----------------------------------------------------
 
-/// `{ data: Uint8Array, sender: string | null }` for one decrypted application message - the ONE
-/// shape both the single decrypt and the batch hand to JavaScript, so the two cannot disagree on
-/// what a sender is called.
+/// `{ data: Uint8Array, sender: string | null, author: 'unsigned' | 'verified' | 'refused' }` for
+/// one decrypted application message - the ONE shape both the single decrypt and the batch hand to
+/// JavaScript, so the two cannot disagree on what a sender is called. `author` is the author-proof
+/// verdict (`mls_core::authorship`); a proof is left at the end of `data` only when `verified`.
 fn application_to_js(app: &mls_core::IncomingApplication) -> JsValue {
     let obj = js_sys::Object::new();
     let data = js_sys::Uint8Array::from(app.plaintext.as_slice());
@@ -115,6 +151,11 @@ fn application_to_js(app: &mls_core::IncomingApplication) -> JsValue {
         .as_deref()
         .map_or(JsValue::NULL, JsValue::from_str);
     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("sender"), &sender);
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("author"),
+        &JsValue::from_str(app.author.code()),
+    );
     obj.into()
 }
 
@@ -147,6 +188,17 @@ pub fn graine_verify_signature(public_key: &[u8], message: &[u8], signature: &[u
         Ok(()) => "valid".to_string(),
         Err(e) => e.code().to_string(),
     }
+}
+
+/// Verifies a whole page's signatures in one call: `packed` is `packGraineSignatureChecks`'s
+/// buffer, the answer one verdict per check in order, each exactly what `graine_verify_signature`
+/// would have said. Rejects (with the decoder's sentence, a contract break and never a verdict) only
+/// when the buffer does not parse.
+#[wasm_bindgen]
+pub fn graine_verify_signatures(packed: &[u8]) -> Result<Vec<String>, JsValue> {
+    mls_core::graine_signature::verify_packed_graine_signatures(packed)
+        .map(|verdicts| verdicts.into_iter().map(str::to_string).collect())
+        .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 // Wrapper structure exposed to JavaScript.
@@ -262,6 +314,34 @@ impl WasmMlsClient {
         self.manager
             .member_signature_key(&group_id, &identity)
             .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// `{ runId, epoch, epochFingerprint }` for `group_id`'s CURRENT epoch - the clean run Graine's
+    /// outbound rotation reads before reusing a session across an epoch move (`graine_run.rs`).
+    /// `&mut`: a run that does not cover the current epoch is replaced by one that starts now.
+    #[wasm_bindgen]
+    pub fn graine_run(&mut self, group_id: String) -> Result<JsValue, JsValue> {
+        let reading = self
+            .manager
+            .graine_run(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &JsValue::from_str("runId"),
+            &JsValue::from_str(&reading.run_id),
+        );
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &JsValue::from_str("epoch"),
+            &JsValue::from_f64(reading.epoch as f64),
+        );
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &JsValue::from_str("epochFingerprint"),
+            &JsValue::from_str(&reading.epoch_fingerprint),
+        );
+        Ok(obj.into())
     }
 
     // Create a group
@@ -405,6 +485,29 @@ impl WasmMlsClient {
         Ok(outcome.forgotten)
     }
 
+    /// Stages ONE commit that removes the device `identity`'s leaf and adds it back from
+    /// `key_package`, without merging (C7-A). Returns `[commit, welcome, group_info]` - see
+    /// `MlsManager::replace_device_with_base`. `intent` is recorded with the staged commit in the
+    /// SAME call (`MlsManager::replace_device_recorded`), as every gated stage's is.
+    #[wasm_bindgen]
+    pub fn replace_device(
+        &mut self,
+        group_id: String,
+        identity: String,
+        key_package: Vec<u8>,
+        intent: Vec<u8>,
+    ) -> Result<js_sys::Array, JsValue> {
+        let record = self
+            .manager
+            .replace_device_recorded(&group_id, &identity, &key_package, intent)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let array = js_sys::Array::new();
+        array.push(&js_sys::Uint8Array::from(&record.commit[..]));
+        array.push(&js_sys::Uint8Array::from(&record.welcome[..]));
+        array.push(&js_sys::Uint8Array::from(&record.group_info[..]));
+        Ok(array)
+    }
+
     /// Add multiple members in a single commit (single epoch increment). Stage-only (C7-A): the
     /// commit is NOT merged - the caller validates it server-side then merge/clear, and reads the
     /// post-merge ratchet tree via `export_ratchet_tree`.
@@ -421,11 +524,22 @@ impl WasmMlsClient {
     /// KeyPackage dropped because it was **invalid/undeserializable** (not the already-member
     /// dedup) together with its typed reason (`SkippedKeyPackageReason` wire name), so the caller
     /// can surface a non-silent member loss and say why. [[C5]]
+    ///
+    /// `intent` is the client's description of the commit, recorded with it in the SAME call
+    /// (`MlsManager::add_members_recorded`): no checkpoint can hold this staged commit without the
+    /// bytes it is submitted with.
+    /// `expected_identities[i]` is the `userId:deviceId` `key_packages[i]` was fetched for: a package
+    /// naming another device, or the right one under a key this device never pinned for it, is
+    /// skipped (`identity-mismatch`, `signature-key-changed` - see `mls_core::device_trust`). An
+    /// EMPTY package is kept at its position and skipped as `undecodable`, so every index the caller
+    /// reads back still names the device it passed there.
     #[wasm_bindgen]
     pub fn add_members_bulk(
         &mut self,
         group_id: String,
         key_packages: js_sys::Array,
+        expected_identities: js_sys::Array,
+        intent: Vec<u8>,
     ) -> Result<js_sys::Array, JsValue> {
         log::info!(
             "add_members_bulk to group: {} ({} key packages)",
@@ -433,36 +547,34 @@ impl WasmMlsClient {
             key_packages.length()
         );
 
-        // Convert JS Array<Uint8Array> -> Vec<Vec<u8>>
+        // Convert JS Array<Uint8Array> -> Vec<Vec<u8>>, position for position.
         let kp_vecs: Vec<Vec<u8>> = key_packages
             .iter()
-            .filter_map(|v| {
-                let arr = js_sys::Uint8Array::from(v);
-                if arr.length() == 0 {
-                    None
-                } else {
-                    Some(arr.to_vec())
-                }
-            })
+            .map(|v| js_sys::Uint8Array::from(v).to_vec())
             .collect();
-
         let kp_slices: Vec<&[u8]> = kp_vecs.iter().map(|v| v.as_slice()).collect();
+        // A non-string expectation is an empty one, which names no device and so refuses its package.
+        let expected: Vec<String> = expected_identities
+            .iter()
+            .map(|v| v.as_string().unwrap_or_default())
+            .collect();
+        let expected_refs: Vec<&str> = expected.iter().map(String::as_str).collect();
 
-        let ((commit, welcome, added_indices, skipped), group_info) = self
+        let (record, skipped) = self
             .manager
-            .add_members_bulk_with_base(&group_id, &kp_slices)
+            .add_members_recorded(&group_id, &kp_slices, &expected_refs, intent)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let array = js_sys::Array::new();
-        array.push(&js_sys::Uint8Array::from(&commit[..]));
-        if let Some(w) = welcome {
-            array.push(&js_sys::Uint8Array::from(&w[..]));
-        } else {
+        array.push(&js_sys::Uint8Array::from(&record.commit[..]));
+        if record.welcome.is_empty() {
             array.push(&JsValue::UNDEFINED);
+        } else {
+            array.push(&js_sys::Uint8Array::from(&record.welcome[..]));
         }
         let indices_array = js_sys::Array::new();
-        for idx in added_indices {
-            indices_array.push(&JsValue::from_f64(idx as f64));
+        for idx in &record.added_indices {
+            indices_array.push(&JsValue::from_f64(*idx as f64));
         }
         array.push(&indices_array);
         let skipped_array = js_sys::Array::new();
@@ -483,8 +595,85 @@ impl WasmMlsClient {
             skipped_array.push(&obj);
         }
         array.push(&skipped_array);
-        array.push(&js_sys::Uint8Array::from(&group_info[..]));
+        array.push(&js_sys::Uint8Array::from(&record.group_info[..]));
         Ok(array)
+    }
+
+    /// Whether `key_package` may be added as `expected_identity` (`userId:deviceId`), without
+    /// staging anything: `"first-sight"` / `"pinned"` when it may, otherwise the skip reason's wire
+    /// name an Add would refuse it with. See `MlsManager::vet_key_package`.
+    #[wasm_bindgen]
+    pub fn vet_key_package(&self, key_package: Vec<u8>, expected_identity: String) -> String {
+        self.manager
+            .vet_key_package(&key_package, &expected_identity)
+            .to_string()
+    }
+
+    /// The identity of the leaf of `group_id` carrying `key_package`'s signature key, or
+    /// `undefined` - who holds the key an Add was refused as a duplicate of. See
+    /// `MlsManager::leaf_holding_key_of`.
+    #[wasm_bindgen]
+    pub fn leaf_holding_key_of(
+        &self,
+        group_id: String,
+        key_package: Vec<u8>,
+    ) -> Result<Option<String>, JsValue> {
+        self.manager
+            .leaf_holding_key_of(&group_id, &key_package)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// The pin of `user_id:device_id` as `{ keys: Uint8Array[], anchored, reaffirmations }`, or
+    /// `undefined` for a device never seen - "unverified", never "forged". See
+    /// `MlsManager::pinned_signature_keys`.
+    #[wasm_bindgen]
+    pub fn pinned_signature_keys(
+        &self,
+        user_id: String,
+        device_id: String,
+    ) -> Option<js_sys::Object> {
+        self.manager
+            .pinned_signature_keys(&user_id, &device_id)
+            .map(|pin| {
+                let keys: js_sys::Array = pin
+                    .keys
+                    .iter()
+                    .map(|k| JsValue::from(js_sys::Uint8Array::from(k.as_slice())))
+                    .collect();
+                let obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("keys"), &keys);
+                let _ = js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str("anchored"),
+                    &JsValue::from_bool(pin.anchored),
+                );
+                let _ = js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str("reaffirmations"),
+                    &JsValue::from_f64(pin.reaffirmations as f64),
+                );
+                obj
+            })
+    }
+
+    /// The epochs at which this device saw `user_id` leave `group_id`'s tree, oldest first, as
+    /// numbers (exact below 2^53, as `get_epoch`). See `MlsManager::removal_epochs`.
+    #[wasm_bindgen]
+    pub fn removal_epochs(&self, group_id: String, user_id: String) -> Vec<f64> {
+        self.manager
+            .removal_epochs(&group_id, &user_id)
+            .into_iter()
+            .map(|e| e as f64)
+            .collect()
+    }
+
+    /// Every device event recorded since the last call, as a JSON array of
+    /// `{ groupId, epoch, identity, keyFingerprint, trust, addedBy }`, and forgets them. See
+    /// `mls_core::device_trust::DeviceEvent`.
+    #[wasm_bindgen]
+    pub fn take_device_events(&mut self) -> Result<String, JsValue> {
+        let events = self.manager.take_device_events();
+        mls_core::device_trust::events_json(&events).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     #[wasm_bindgen]
@@ -499,21 +688,49 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Encrypts raw bytes (e.g. a proto-encoded AppMessage) as the MLS application payload.
+    /// Encrypts a proto-encoded AppMessage WITH its author's signature appended
+    /// (`mls_core::authorship`). Returns `{ ciphertext: Uint8Array, authorProof: Uint8Array }`;
+    /// `authorProof` is the encoded proof, which the sender stores on its own copy so a history
+    /// bundle it later writes carries the same proof its peers received.
     #[wasm_bindgen]
-    pub fn send_message_bytes(
+    pub fn send_authored_message_bytes(
         &mut self,
         group_id: String,
         message_bytes: Vec<u8>,
-    ) -> Result<Vec<u8>, JsValue> {
+    ) -> Result<JsValue, JsValue> {
         log::debug!(
-            "send_message_bytes to group: {} ({} bytes)",
+            "send_authored_message_bytes to group: {} ({} bytes)",
             group_id,
             message_bytes.len()
         );
-        self.manager
-            .send_message(&group_id, &message_bytes)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        let frame = self
+            .manager
+            .send_authored_message(&group_id, &message_bytes)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let obj = js_sys::Object::new();
+        let ciphertext = js_sys::Uint8Array::from(frame.ciphertext.as_slice());
+        let proof = js_sys::Uint8Array::from(frame.author_proof.as_slice());
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("ciphertext"), &ciphertext);
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("authorProof"), &proof);
+        Ok(obj.into())
+    }
+
+    /// Hands over the fork findings recorded since the last call (`mls_core::fork_check`), as an
+    /// array of `{ kind, groupId, epoch, peer, detail }`. `kind` is `fork`, `unproven` or
+    /// `contradiction`.
+    #[wasm_bindgen]
+    pub fn take_fork_findings(&self) -> js_sys::Array {
+        let out = js_sys::Array::new();
+        for f in self.manager.take_fork_findings() {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&obj, &"kind".into(), &f.kind.code().into());
+            let _ = js_sys::Reflect::set(&obj, &"groupId".into(), &f.group_id.as_str().into());
+            let _ = js_sys::Reflect::set(&obj, &"epoch".into(), &JsValue::from_f64(f.epoch as f64));
+            let _ = js_sys::Reflect::set(&obj, &"peer".into(), &f.peer.as_str().into());
+            let _ = js_sys::Reflect::set(&obj, &"detail".into(), &f.detail.as_str().into());
+            out.push(&obj);
+        }
+        out
     }
 
     /// Advances the send ratchet by `count` generations without emitting anything, repairing a
@@ -663,30 +880,33 @@ impl WasmMlsClient {
     /// `user_ids` is a JS Array of strings (usernames/identities).
     /// Returns [commit: Uint8Array, group_info: Uint8Array]: the commit to broadcast to remaining
     /// group members, and the external-join base for the epoch it creates (submitted with it).
+    /// Recorded with `intent` in the same call (`MlsManager::remove_members_for_users_recorded`).
     #[wasm_bindgen]
     pub fn remove_members(
         &mut self,
         group_id: String,
         user_ids: js_sys::Array,
+        intent: Vec<u8>,
     ) -> Result<js_sys::Array, JsValue> {
         let ids: Vec<String> = user_ids.iter().filter_map(|v| v.as_string()).collect();
         log::info!("remove_members from group: {} (users: {:?})", group_id, ids);
         let id_slices: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-        let (commit, group_info) = self
+        let record = self
             .manager
-            .remove_members_for_users(&group_id, &id_slices)
+            .remove_members_for_users_recorded(&group_id, &id_slices, intent)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(commit_and_base(&commit, &group_info))
+        Ok(commit_and_base(&record.commit, &record.group_info))
     }
 
     /// Remove specific device leaves by their `userId:deviceId` identity string.
     /// Only removes the targeted leaves, leaving other devices of the same user intact.
-    /// Returns [commit, group_info] like `remove_members`.
+    /// Returns [commit, group_info] like `remove_members`, and is recorded with `intent` the same way.
     #[wasm_bindgen]
     pub fn remove_members_by_device(
         &mut self,
         group_id: String,
         device_identities: js_sys::Array,
+        intent: Vec<u8>,
     ) -> Result<js_sys::Array, JsValue> {
         let ids: Vec<String> = device_identities
             .iter()
@@ -698,11 +918,135 @@ impl WasmMlsClient {
             ids
         );
         let id_slices: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-        let (commit, group_info) = self
+        let record = self
             .manager
-            .remove_members_for_devices(&group_id, &id_slices)
+            .remove_members_for_devices_recorded(&group_id, &id_slices, intent)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(commit_and_base(&commit, &group_info))
+        Ok(commit_and_base(&record.commit, &record.group_info))
+    }
+
+    /// Stages a refresh of this device's own leaf: an empty commit with a path and NO proposal
+    /// (`MlsManager::stage_self_update_recorded`), recorded with `intent` in the same call. Returns
+    /// [commit, group_info] like `remove_members`; merged or cleared by the caller on the server's
+    /// answer.
+    #[wasm_bindgen]
+    pub fn self_update(
+        &mut self,
+        group_id: String,
+        intent: Vec<u8>,
+    ) -> Result<js_sys::Array, JsValue> {
+        log::info!("self_update on group: {}", group_id);
+        let record = self
+            .manager
+            .stage_self_update_recorded(&group_id, intent)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(commit_and_base(&record.commit, &record.group_info))
+    }
+
+    /// When this device's leaf in `group_id` was minted, in Unix seconds, or `undefined` once a
+    /// commit replaced it (`MlsManager::own_leaf_minted_at`). An `f64`, not a `u64`: wasm-bindgen
+    /// would hand a `u64` to JS as a BigInt, and a seconds count fits a double exactly.
+    #[wasm_bindgen]
+    pub fn own_leaf_minted_at(&self, group_id: String) -> Result<Option<f64>, JsValue> {
+        self.manager
+            .own_leaf_minted_at(&group_id)
+            .map(|minted| minted.map(|s| s as f64))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Whether this device's current context in `group_id` is the one the served base
+    /// `group_info` describes - same epoch, tree hash and transcript hash
+    /// (`MlsManager::own_context_matches_base`). Gates the periodic refresh against a fork.
+    #[wasm_bindgen]
+    pub fn own_context_matches_base(
+        &self,
+        group_id: String,
+        group_info: Vec<u8>,
+    ) -> Result<bool, JsValue> {
+        self.manager
+            .own_context_matches_base(&group_id, &group_info)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// The record of `group_id`'s staged commit (`MlsManager::pending_submission`):
+    /// `["none"]`, `["unreadable"]`, or
+    /// `["recorded", intent, baseEpoch, commit, groupInfo, welcome | undefined, addedIndices]`.
+    /// The status is the first element, so the caller branches on a value, never on an error.
+    #[wasm_bindgen]
+    pub fn pending_submission(&self, group_id: String) -> js_sys::Array {
+        let out = js_sys::Array::new();
+        match self.manager.pending_submission(&group_id) {
+            PendingSubmissionRead::None => {
+                out.push(&JsValue::from_str("none"));
+            }
+            PendingSubmissionRead::Unreadable => {
+                out.push(&JsValue::from_str("unreadable"));
+            }
+            PendingSubmissionRead::Recorded(r) => {
+                out.push(&JsValue::from_str("recorded"));
+                out.push(&js_sys::Uint8Array::from(&r.intent[..]));
+                // A double, not a BigInt: an epoch fits one exactly.
+                out.push(&JsValue::from_f64(r.base_epoch as f64));
+                out.push(&js_sys::Uint8Array::from(&r.commit[..]));
+                out.push(&js_sys::Uint8Array::from(&r.group_info[..]));
+                if r.welcome.is_empty() {
+                    out.push(&JsValue::UNDEFINED);
+                } else {
+                    out.push(&js_sys::Uint8Array::from(&r.welcome[..]));
+                }
+                let indices = js_sys::Array::new();
+                for i in r.added_indices {
+                    indices.push(&JsValue::from_f64(i as f64));
+                }
+                out.push(&indices);
+            }
+        }
+        out
+    }
+
+    /// Every group holding a staged commit (`MlsManager::groups_with_pending_commit`).
+    #[wasm_bindgen]
+    pub fn groups_with_pending_commit(&self) -> Vec<String> {
+        self.manager.groups_with_pending_commit()
+    }
+
+    /// Merges `group_id`'s accepted Add and, in the same call, records its Welcome as owed to
+    /// `recipients` (`MlsManager::merge_pending_commit_owing_welcome`).
+    #[wasm_bindgen]
+    pub fn merge_pending_commit_owing_welcome(
+        &mut self,
+        group_id: String,
+        recipients: Vec<String>,
+    ) -> Result<(), JsValue> {
+        self.manager
+            .merge_pending_commit_owing_welcome(&group_id, recipients)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Every Welcome still owed (`MlsManager::owed_welcomes`), each as
+    /// `[groupId, welcome, ratchetTree, recipients]`.
+    #[wasm_bindgen]
+    pub fn owed_welcomes(&self) -> js_sys::Array {
+        let out = js_sys::Array::new();
+        for w in self.manager.owed_welcomes() {
+            let entry = js_sys::Array::new();
+            entry.push(&JsValue::from_str(&w.group_id));
+            entry.push(&js_sys::Uint8Array::from(&w.welcome[..]));
+            entry.push(&js_sys::Uint8Array::from(&w.ratchet_tree[..]));
+            let recipients = js_sys::Array::new();
+            for r in &w.recipients {
+                recipients.push(&JsValue::from_str(r));
+            }
+            entry.push(&recipients);
+            out.push(&entry);
+        }
+        out
+    }
+
+    /// `recipient` was sent `group_id`'s owed Welcome (`MlsManager::welcome_delivered`).
+    #[wasm_bindgen]
+    pub fn welcome_delivered(&mut self, group_id: String, recipient: String) {
+        self.manager.welcome_delivered(&group_id, &recipient);
     }
 
     /// Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).

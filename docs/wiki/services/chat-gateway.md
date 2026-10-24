@@ -60,7 +60,13 @@ Token is extracted in this priority order:
 1. Cookie `canari_ws_token`
 2. Query parameter `token=`
 
-If the JWT is invalid or absent, the connection is rejected with code `4401`.
+If the JWT is invalid or absent, the upgrade is refused with HTTP `401`.
+
+**Only an ACCESS token opens a socket** (`decode_access_claims` in `src/models.rs`). core-service
+signs its access token and its refresh token with the same `JWT_SECRET` and HS256, and tells them
+apart by the `type` claim: none (or `"access"`) on the access token, `"refresh"` on the refresh
+token. The gateway reads that claim the way core-service does, so a refresh token is refused here
+too, with a `warn` naming its kind. [call-service](call-service.md) carries the same check.
 
 ## Connection lifecycle
 
@@ -245,6 +251,22 @@ private community would have gone to every socket on the server.
 ## Presence
 
 Presence keys are stored in Redis as `user:online:{userId}:{deviceId}` with a 90-second TTL (`PRESENCE_TTL_SECS`, a compile-time-asserted margin over the 75 s ping/missed-pong detection window), refreshed on each WebSocket Pong. When delivery fails for a device and all senders are gone, the gateway proactively deletes the presence key so `chat-delivery-service` stops routing via pub/sub.
+
+**Each session's declared capability is kept across processes (step A, 2026-10-22; `addressing.rs`).**
+A socket opened with `caps=addressed-history-1` declares that its code refuses an addressed
+conversation frame that is not a solicited, bounded history answer. Every presence write is one Lua
+script, validated before its first write: the session's field in
+`addressing:sessions:{userId}:{deviceId}` (`{process}:{connection}`, the capability or `-`, written
+with its expiry by `HSETEX`), then the presence value `sessions-1` - unless an older gateway's `true`
+is there, which is neither overwritten nor deleted, because it is the only trace of a session whose
+declaration nobody can read. A session that ends is recorded in `addressing:left:{userId}:{deviceId}`
+for one TTL before its field goes, so a refresh in flight cannot resurrect it, and the presence goes
+in the same script only when the hash holds no field on any process - which is why neither the
+explicit disconnect nor the "every sender dead" path decides it from this process's own map. Every reader that only tests existence is unchanged.
+chat-delivery addresses a history answer only to a device whose value is `sessions-1` and every field
+of whose hash is the capability ([history-answer-addressing](../protocols/history-answer-addressing.md),
+rule 6). The pub/sub loop forwards the row's `addressed` flag, and hands an addressed frame only to the
+local sessions that declared - every one withheld is logged at error.
 
 ### The key is per DEVICE, the event is per CONNECTION
 

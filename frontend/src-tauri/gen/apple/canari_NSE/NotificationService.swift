@@ -2,6 +2,14 @@ import Security
 import UIKit
 import UserNotifications
 
+/// What an `NSLog` line says of an error: its domain and code, never its text - a
+/// `localizedDescription` often quotes the file it failed on, and NSLog redacts nothing. The
+/// Objective-C twin is `CanariErrorReason` (`canari_push.h`); `nativeLogContent.test.ts` holds both.
+private func errorReason(_ error: Error) -> String {
+  let failure = error as NSError
+  return "\(failure.domain) \(failure.code)"
+}
+
 /// Canari Notification Service Extension.
 ///
 /// Runs in its own process for every incoming `mutable-content: 1` push and
@@ -32,8 +40,14 @@ class NotificationService: UNNotificationServiceExtension {
   /// `CanariMirrorPushStateToAppGroup`).
   private static let mlsBinFile = "mls.bin"
   private static let pushContextFile = "push_context.json"
-  private static let graineSeedsFile = "graine_seeds.json"
   private static let pushSecretFile = "push_secret.txt"
+  /// Present while the app is in the foreground (`CanariSetAppGroupForegroundFlag`, canari_ios.mm).
+  static let appInForegroundFile = "app_in_foreground"
+
+  /// The alias of the install's native cache key (Rust `native_cache`, the only copy of the
+  /// design), which seals `graine_seeds.json` and the push cache. Spelled in `native_cache.rs`,
+  /// `NativeCacheKey.kt` and `canari_ios.mm` too; `nativeCacheSeal.test.ts` holds the four together.
+  private static let nativeCacheKeyAlias = "canari_native_cache_key"
 
   /// Cap the decrypted preview length, matching the 200-char clamp the in-app path uses.
   private static let maxPreviewLength = 200
@@ -105,6 +119,13 @@ class NotificationService: UNNotificationServiceExtension {
       // clients; here it is replaced by one in the phone's own language.
       applyReactionContent(userInfo: userInfo, content: content)
       finish()
+    case "call_ring":
+      // The GENERIC ring alert of an iPhone with no VoIP token (calls.service `ringViaFcm`, no native
+      // ring until CALLS_NATIVE_RING_COMPILED). It is NOT an MLS message: falling to the default
+      // branch would overwrite the server's "Appel entrant" with the encrypted-message fallback and
+      // add message buttons. The server's title and body are KEPT; only the filing is set here.
+      applyGenericCallRing(userInfo: userInfo, content: content)
+      finish()
     case "social", "form_reminder":
       // Not encrypted, and since 2026-08-19 not composed by the server either: the payload carries
       // a `contentKey` and the two untranslatable pieces, and the sentence is written here in the
@@ -121,6 +142,31 @@ class NotificationService: UNNotificationServiceExtension {
       finish()
     default:
       handleMlsMessage(userInfo: userInfo, content: content)
+    }
+  }
+
+  /// Files the generic incoming-call alert: stacked under its conversation, opening it on a tap, and
+  /// time-sensitive so it breaks through Focus. The wording is the server's own (localized from the
+  /// device's `push_token.locale`, no caller and no conversation name) and is left untouched. The
+  /// deep link carries NO `acceptCall`: nothing native answers a call yet, the app only opens the
+  /// conversation. `canariCallId` lets a later `call_ring_end` remove this banner.
+  private func applyGenericCallRing(
+    userInfo: [AnyHashable: Any],
+    content: UNMutableNotificationContent
+  ) {
+    let groupId = Self.string(userInfo["groupId"]) ?? ""
+    let callId = Self.string(userInfo["callId"]) ?? ""
+    if #available(iOS 15.0, *) {
+      content.interruptionLevel = .timeSensitive
+    }
+    if groupId.isEmpty {
+      NSLog("[CanariNSE] call_ring with no groupId - banner kept without a deep link")
+    } else {
+      content.threadIdentifier = groupId
+      content.userInfo["deepLink"] = "fr.emse.canari://chat/\(groupId)"
+    }
+    if !callId.isEmpty {
+      content.userInfo["canariCallId"] = callId
     }
   }
 
@@ -666,7 +712,64 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
+    Self.announceOwnDevicesAdded(json, ctx: ctx, source: "decrypt")
     return json
+  }
+
+  /// "A new device was added to your account" (user decision 2026-10-22), from a commit this
+  /// extension merged in memory - never from a server message.
+  ///
+  /// `json` is a native decrypt answer; its `ownDeviceAdded` array holds the keys Rust found to be
+  /// this account's owner alerts (`mobile/device_notice.rs`). They are claimed in the ledger the app
+  /// shares in the App Group (`canari_native_claim_device_notices`), so a push replaying the same
+  /// commit, or the app having shown it already, raises nothing. One local notification for the
+  /// keys this call claimed; the app's in-app alert names the device. Android twin:
+  /// `CanariFirebaseMessagingService.announceOwnDevicesAdded`.
+  private static func announceOwnDevicesAdded(_ json: String?, ctx: PushContext, source: String) {
+    guard let json = json, let data = json.data(using: .utf8),
+      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let keys = dict["ownDeviceAdded"] as? [String], !keys.isEmpty
+    else { return }
+    guard let dir = appGroupDir(),
+      let keysData = try? JSONSerialization.data(withJSONObject: keys),
+      let keysJson = String(data: keysData, encoding: .utf8)
+    else {
+      NSLog("[CanariNSE] \(source): device(s) added to this account - App Group unavailable, not announced")
+      return
+    }
+    // IN THE FOREGROUND THE APP TELLS IT (its in-app alert), as on Android: nothing is posted and
+    // nothing claimed, so the app's own claim stays the first. The app keeps the flag file in the
+    // App Group (`CanariSetAppGroupForegroundFlag`); a flag a crash left behind costs this one
+    // notification, never the in-app alert.
+    if FileManager.default.fileExists(atPath: dir.appendingPathComponent(appInForegroundFile).path) {
+      NSLog("[CanariNSE] \(source): device(s) added to this account - the app is in the foreground, it tells")
+      return
+    }
+    guard let raw = canari_native_claim_device_notices(dir.path, keysJson) else {
+      NSLog("[CanariNSE] \(source): device-notice claim returned nothing - not announced")
+      return
+    }
+    let claimedJson = String(cString: raw)
+    canari_free_string(raw)
+    let claimed = (try? JSONSerialization.jsonObject(with: Data(claimedJson.utf8))) as? [String] ?? []
+    guard !claimed.isEmpty else {
+      NSLog("[CanariNSE] \(source): device(s) added to this account were already announced")
+      return
+    }
+    let content = UNMutableNotificationContent()
+    content.title = localized("notif.device.added.title", locale: ctx.locale)
+    content.body = localized("notif.device.added.body", locale: ctx.locale)
+    content.sound = .default
+    // One identifier: a second announcement replaces the first rather than stacking.
+    let request = UNNotificationRequest(
+      identifier: "canari-new-device", content: content, trigger: nil)
+    UNUserNotificationCenter.current().add(request) { error in
+      if let error = error {
+        NSLog("[CanariNSE] \(source): new-device notification NOT raised: \(error)")
+      } else {
+        NSLog("[CanariNSE] \(source): \(claimed.count) new device(s) on this account - notified")
+      }
+    }
   }
 
   /// Reads the current epoch, fetches the missing ordered commits, and applies them in
@@ -717,6 +820,7 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
+    Self.announceOwnDevicesAdded(json, ctx: ctx, source: "catchup")
     return json
   }
 
@@ -747,6 +851,21 @@ class NotificationService: UNNotificationServiceExtension {
     }
     NSLog("[CanariNSE] groupLocality: epoch=\(epoch) group=\(groupId.prefix(8))")
     return epoch >= 0 ? .local : .absent
+  }
+
+  /// Keeps one native cache file out of iCloud and computer backups. Per FILE, and re-applied
+  /// after every write: an atomic write is a new inode renamed over the old one, and the flag does
+  /// not survive it. Only the caches are excluded - never their directory, which also holds the
+  /// state a restore must bring back. Twin: `CanariExcludeNativeCacheFilesFromBackup`.
+  private static func excludeFromBackup(_ url: URL) {
+    var target = url
+    var values = URLResourceValues()
+    values.isExcludedFromBackup = true
+    do {
+      try target.setResourceValues(values)
+    } catch {
+      NSLog("[CanariNSE] backupExclusion: ERROR \(url.lastPathComponent) not excluded: \(errorReason(error))")
+    }
   }
 
   /// Writes a decrypted message entry to `fcm_message_cache.ndjson` in the host app's
@@ -791,11 +910,21 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     guard let entryData = try? JSONSerialization.data(withJSONObject: entry, options: []),
-      let entryLine = String(data: entryData, encoding: .utf8)
+      let plainLine = String(data: entryData, encoding: .utf8)
     else {
       NSLog("[CanariNSE] writeFcmCache: JSON encoding failed")
       return
     }
+    // SEALED BEFORE IT TOUCHES THE DISK, under the install's native cache key (Rust
+    // `native_cache`). With no key the entry is NOT written - never in the clear: the message is
+    // still on the server, and the app's sync fetches it.
+    guard let sealedRaw = canari_native_seal_cache_line(Self.retrieveNativeCacheKey(), plainLine)
+    else {
+      NSLog("[CanariNSE] writeFcmCache: ERROR no cache key - entry NOT written messageId=\(result.messageId.prefix(8))")
+      return
+    }
+    let entryLine = String(cString: sealedRaw)
+    canari_free_string(sealedRaw)
 
     let fileUrl = dir.appendingPathComponent(Self.fcmCacheFileName)
     Self.fcmCacheLock.lock()
@@ -816,9 +945,10 @@ class NotificationService: UNNotificationServiceExtension {
       // file created with the default class cannot be written at all.
       try Data(body.utf8).write(
         to: fileUrl, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+      Self.excludeFromBackup(fileUrl)
       NSLog("[CanariNSE] writeFcmCache: messageId=\(result.messageId.prefix(8)) groupId=\(groupId.prefix(8))")
     } catch {
-      NSLog("[CanariNSE] writeFcmCache: failed: \(error.localizedDescription)")
+      NSLog("[CanariNSE] writeFcmCache: failed: \(errorReason(error))")
     }
   }
 
@@ -972,24 +1102,24 @@ class NotificationService: UNNotificationServiceExtension {
     // extension has no second chance at a banner - nothing redraws it once `finish()` runs - and a
     // seed that only arrives on its own silent push does not even wake the extension. The frame is
     // how this banner gets one.
-    var seedB64 = openable ? lookupGraineSeed(channelId: channelId, sessionId: sessionId) : nil
+    var seedHeld = openable && graineSeedHeld(channelId: channelId, sessionId: sessionId)
     var seedSource = "mirror"
-    if openable, seedB64 == nil {
-      seedB64 = openSeedFrame(userInfo: userInfo, channelId: channelId, sessionId: sessionId)
+    if openable, !seedHeld {
+      seedHeld = openSeedFrame(userInfo: userInfo, channelId: channelId, sessionId: sessionId)
       seedSource = "frame"
     }
-    if seedB64 != nil {
+    if seedHeld {
       NSLog("[CanariNSE] handleChannelMessage: seed source=\(seedSource) channel=\(channelId) session=\(sessionId)")
     }
     // RUST READS THE SESSION FROM THE MIRROR ITSELF and applies every rule the app applies to a row
     // - the floor, and under a v2 session the author, the signature and the AAD (channel-encryption
-    // section 21.5) - in the one implementation Android shares. `seedB64` above only says whether
+    // section 21.5) - in the one implementation Android shares. `seedHeld` above only says whether
     // the mirror holds the session, which is what decides between the mirror and the frame.
-    if openable, let index = messageIndex, seedB64 != nil, let dir = Self.appGroupDir() {
+    if openable, let index = messageIndex, seedHeld, let dir = Self.appGroupDir() {
       let signature = Self.string(userInfo["signature"]) ?? ""
       if let raw = canari_native_open_graine_push(
-        dir.path, channelId, sessionId, index, senderId, nonce, ciphertext, signature,
-        ctx?.locale ?? "")
+        dir.path, Self.retrieveNativeCacheKey(), channelId, sessionId, index, senderId, nonce,
+        ciphertext, signature, ctx?.locale ?? "")
       {
         let json = String(cString: raw)
         canari_free_string(raw)
@@ -1006,7 +1136,7 @@ class NotificationService: UNNotificationServiceExtension {
 
     // COUNTED, NOT ONLY LOGGED - the Android twin is `reportBlindBanner`. Never `held` here: nothing
     // redraws a banner once `finish()` runs, so a seed absent now is a blind banner for good.
-    if seedB64 == nil, let ctx = ctx {
+    if !seedHeld, let ctx = ctx {
       let missing = [
         "seed",
         ciphertext.isEmpty ? "ciphertext" : nil,
@@ -1076,7 +1206,8 @@ class NotificationService: UNNotificationServiceExtension {
     finish()
   }
 
-  /// Opens the seed frame a salon push carries and returns the seed of THIS message's session, or nil.
+  /// Opens the seed frame a salon push carries and returns whether the mirror now holds THIS
+  /// message's session.
   ///
   /// The frame is the MLS message the sender distributed the seed with on the salon's key group, so
   /// it is decrypted as that push would be - read-only, against the persisted state, through the
@@ -1086,22 +1217,22 @@ class NotificationService: UNNotificationServiceExtension {
   /// through the one writer (`canari_native_store_graine_seeds`), and the answer is read back from
   /// the MIRROR - a frame for another session opens nothing for this message.
   /// Android twin: `CanariFirebaseMessagingService.openSeedFrame`.
-  private func openSeedFrame(userInfo: [AnyHashable: Any], channelId: String, sessionId: String) -> String? {
+  private func openSeedFrame(userInfo: [AnyHashable: Any], channelId: String, sessionId: String) -> Bool {
     guard let frame = Self.nonEmpty(Self.string(userInfo["seedFrame"])),
       let groupId = Self.nonEmpty(Self.string(userInfo["seedGroupId"]))
     else {
       NSLog("[CanariNSE] openSeedFrame: no frame on this push (a sender older than section 19, or not inlined) channel=\(channelId)")
-      return nil
+      return false
     }
     guard let ctx = loadPushContext(), let state = loadMlsState(), let dir = Self.appGroupDir() else {
       NSLog("[CanariNSE] openSeedFrame: push context, MLS state or App Group unavailable group=\(groupId.prefix(8))")
-      return nil
+      return false
     }
     // The frame's MLS sender is the salon message's author, who attached it: Rust refuses the frame
     // when the push names anybody else (WP-G2-1b).
     guard let frameSender = Self.nonEmpty(Self.string(userInfo["senderId"])) else {
       NSLog("[CanariNSE] openSeedFrame: the push names no sender group=\(groupId.prefix(8))")
-      return nil
+      return false
     }
     var json = decryptProtoJson(
       ctx: ctx, groupId: groupId, senderId: frameSender, protoB64: frame, state: state)
@@ -1111,7 +1242,10 @@ class NotificationService: UNNotificationServiceExtension {
         NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=local -> commit catch-up")
         json = catchupJson(ctx: ctx, groupId: groupId, senderId: frameSender, protoB64: frame) ?? json
       case .absent:
-        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=absent -> this device is not in the salon's key group; no join to wait for")
+        // Channel-encryption section 26: Android joins the key group from this push; the extension
+        // reads a MIRROR of the app's MLS state and never writes it, so it cannot. The banner stays
+        // generic and the app joins the group at its next foreground (its community load).
+        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=absent -> this device is not in the salon's key group; the extension does not join, the app joins at its next foreground")
       case .unknown:
         NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=unknown -> nothing established")
       }
@@ -1124,9 +1258,9 @@ class NotificationService: UNNotificationServiceExtension {
     }
     guard let seedsJson = Self.keyMaterialSeeds(json) else {
       NSLog("[CanariNSE] openSeedFrame: frame did not yield key material reason=\(Self.refusalReason(json) ?? "none") group=\(groupId.prefix(8)) channel=\(channelId)")
-      return nil
+      return false
     }
-    let stored = canari_native_store_graine_seeds(dir.path, seedsJson)
+    let stored = canari_native_store_graine_seeds(dir.path, Self.retrieveNativeCacheKey(), seedsJson)
     // How many were handed over, so a writer that kept fewer SAYS so: the native side's own
     // reasons go to no logger in the extension. Android twin: `absorbGraineSeeds`.
     let offered = (try? JSONSerialization.jsonObject(with: Data(seedsJson.utf8)) as? [Any])?.count ?? -1
@@ -1135,11 +1269,11 @@ class NotificationService: UNNotificationServiceExtension {
     } else {
       NSLog("[CanariNSE] openSeedFrame: stored \(stored) seed(s) group=\(groupId.prefix(8))")
     }
-    let seed = lookupGraineSeed(channelId: channelId, sessionId: sessionId)
-    if seed == nil {
+    let held = graineSeedHeld(channelId: channelId, sessionId: sessionId)
+    if !held {
       NSLog("[CanariNSE] openSeedFrame: the frame opened and holds no seed for this message's session group=\(groupId.prefix(8)) channel=\(channelId) session=\(sessionId)")
     }
-    return seed
+    return held
   }
 
   /// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with something readable -
@@ -1281,25 +1415,46 @@ class NotificationService: UNNotificationServiceExtension {
     return String(data: out, encoding: .utf8)
   }
 
-  /// Looks up a Graine session's raw base64 seed in the mirrored graine_seeds.json.
-  /// Shape: { "<channelId>": { "<sessionId>": { "seed": "<b64>", "createdAt": <ms> } } }.
+  /// Whether the mirrored graine_seeds.json holds a Graine session - asked of Rust, which alone
+  /// opens the sealed file (`native_cache`), so the seed never enters Swift.
   ///
   /// The mirror is BOUNDED to the newest sessions per channel, so a miss on an old session is
   /// expected rather than a fault: the banner degrades to the generic body, which is the same
-  /// outcome an oversized ciphertext already produces.
-  private func lookupGraineSeed(channelId: String, sessionId: String) -> String? {
-    guard !sessionId.isEmpty, let dir = Self.appGroupDir() else { return nil }
-    let url = dir.appendingPathComponent(Self.graineSeedsFile)
-    guard let data = try? Data(contentsOf: url),
-      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let byChannel = json[channelId] as? [String: Any],
-      let session = byChannel[sessionId] as? [String: Any],
-      let seed = session["seed"] as? String, !seed.isEmpty
-    else {
-      NSLog("[CanariNSE] lookupGraineSeed: miss channel=\(channelId) session=\(sessionId)")
-      return nil
+  /// outcome an oversized ciphertext already produces. An unreadable mirror reads as a miss, and
+  /// says so.
+  private func graineSeedHeld(channelId: String, sessionId: String) -> Bool {
+    guard !sessionId.isEmpty, let dir = Self.appGroupDir() else { return false }
+    let held = canari_native_graine_seed_held(
+      dir.path, Self.retrieveNativeCacheKey(), channelId, sessionId)
+    if held < 0 {
+      NSLog("[CanariNSE] graineSeedHeld: ERROR the seed mirror is unreadable channel=\(channelId)")
+    } else if held == 0 {
+      NSLog("[CanariNSE] graineSeedHeld: miss channel=\(channelId) session=\(sessionId)")
     }
-    return seed
+    return held == 1
+  }
+
+  /// The install's native cache key (Rust `native_cache`), base64, from the Keychain item the app
+  /// creates at bootstrap (`CanariEnsureNativeCacheKey`) and shares with this extension through
+  /// the App Group access group. `""` when absent or unreadable - which Rust treats as "write
+  /// nothing, read nothing sealed", never as a reason to write in the clear.
+  private static func retrieveNativeCacheKey() -> String {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: "fr.emse.canari",
+      kSecAttrAccount as String: "mls_bg_key_\(nativeCacheKeyAlias)",
+      kSecAttrAccessGroup as String: appGroupId,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    guard status == errSecSuccess, let data = item as? Data, data.count == 32 else {
+      NSLog("[CanariNSE] retrieveNativeCacheKey: ERROR no key (status=\(status))")
+      return ""
+    }
+    // RAW bytes, like the device key's item: re-encoded, never read as UTF-8.
+    return data.base64EncodedString()
   }
 
   // MARK: - Badge (WP-XP-2) ---------------------------------------------------
@@ -1539,7 +1694,7 @@ class NotificationService: UNNotificationServiceExtension {
       content.attachments = [attachment]
       return true
     } catch {
-      NSLog("[CanariNSE] attachImage error: \(error.localizedDescription)")
+      NSLog("[CanariNSE] attachImage error: \(errorReason(error))")
       return false
     }
   }
@@ -1594,7 +1749,7 @@ class NotificationService: UNNotificationServiceExtension {
     do {
       try png.write(to: url, options: .atomic)
     } catch {
-      NSLog("[CanariNSE] initialsImage: write failed: \(error.localizedDescription)")
+      NSLog("[CanariNSE] initialsImage: write failed: \(errorReason(error))")
       return nil
     }
     return url

@@ -40,7 +40,15 @@ export interface GifRendition {
 
 export interface GifResult {
   id: string;
-  /** The small rendition, for the grid. */
+  /**
+   * The smallest rendition, present only when it is strictly smaller than `preview`. The grid draws
+   * the lightest rendition that still covers its tile (`pickGridRendition` in the client), so a
+   * phone showing 180 px tiles is not made to download a 2.9 MB thumbnail when a smaller one is as
+   * wide as it needs. Optional because KLIPY does not send it for every GIF, and for a client that
+   * does not know it: it simply keeps using `preview`.
+   */
+  tiny?: GifRendition;
+  /** The small rendition, for the grid (and for a GIF attached to a comment). */
   preview: GifRendition;
   /** The medium rendition, which is what is sent. */
   full: GifRendition;
@@ -89,7 +97,7 @@ function rendition(raw: RawRendition | undefined): GifRendition | null {
 
 /**
  * Maps KLIPY's items to results, leaving out (and counting) any without a sized https rendition.
- * Only the id, the two URLs and their sizes leave this function: nothing else KLIPY sends reaches
+ * Only the id, the renditions' URLs and their sizes leave this function: nothing else KLIPY sends reaches
  * a client.
  */
 export function mapKlipyItems(items: unknown[]): { gifs: GifResult[]; dropped: number } {
@@ -105,7 +113,13 @@ export function mapKlipyItems(items: unknown[]): { gifs: GifResult[]; dropped: n
       dropped++;
       continue;
     }
-    gifs.push({ id, preview, full });
+    const tiny = rendition(file.xs);
+    gifs.push({
+      id,
+      ...(tiny && tiny.width < preview.width ? { tiny } : {}),
+      preview,
+      full,
+    });
   }
   return { gifs, dropped };
 }

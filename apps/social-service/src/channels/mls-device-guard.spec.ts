@@ -255,5 +255,20 @@ describe('the MLS device guard on an invitation', () => {
       ).resolves.toMatchObject({ success: true, userId: TARGET });
       expect(memberRepo.save).toHaveBeenCalled();
     });
+
+    it("stores the admitter's signed voucher on the new member's row (channel-encryption section 25)", async () => {
+      const { service, memberRepo } = makeService();
+      global.fetch = delivery(200, { count: 1 }) as never;
+
+      await service.inviteToChannel(CHANNEL, {
+        targetUserId: TARGET,
+        actorUserId: ACTOR,
+        admissionVoucher: 'dm91Y2hlcg',
+      });
+
+      expect(memberRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: TARGET, admissionVoucher: 'dm91Y2hlcg' })
+      );
+    });
   });
 });

@@ -41,7 +41,11 @@ export interface TapOptions {
 
 /** A per-surface disambiguator: feed it every tap, cancel it on teardown. */
 export interface TapDisambiguator {
-  /** Records a tap. `tap.t` is any monotonic clock in ms (an event's `timeStamp`, `Date.now()`). */
+  /**
+   * Records a tap. `tap.t` is the event's `timeStamp` - when the tap HAPPENED. A clock read in the
+   * handler counts the previous tap's handling into the gap, so a real double tap on a busy phone
+   * reads as two singles. One surface feeds one clock; never mix two.
+   */
   tap: (tap: Sample) => void;
   /** Drops a pending single tap without running it (teardown, or a gesture that superseded it). */
   cancel: () => void;

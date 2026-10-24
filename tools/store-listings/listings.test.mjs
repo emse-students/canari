@@ -29,6 +29,14 @@ describe('store/listings', () => {
     expect(errors).toContain('appels');
     expect(errors).toContain('play.title is 31 > 30');
   });
+
+  test('rejects a payment or ticketing promise while payments are disabled', () => {
+    const bad = structuredClone(listings.fr);
+    bad.play.fullDescription += ' Billetterie avec paiement integre.';
+    const errors = validateListing('fr', bad).join('\n');
+    expect(errors).toContain('paiement');
+    expect(errors).toContain('billetterie');
+  });
 });
 
 /** Minimal PNG header: signature, IHDR with the given size and color type. */

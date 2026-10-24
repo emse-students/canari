@@ -145,6 +145,16 @@ jobs:
         with:
           xcode-version: '^26.0'
 
+      # THE HAND-MAINTAINED PROJECT IS READ BY XCODE FIRST, IN SECONDS, not at the archive twenty
+      # minutes in: a pbxproj with an unclosed object once got past every check on Windows. `plutil`
+      # parses its old-style plist syntax; `xcodebuild -list` reads it as a project (targets,
+      # configurations). The structure is also pinned by `iosShareExtension.test.ts`'s parser.
+      - name: Lint the Xcode project
+        run: |
+          set -euo pipefail
+          plutil -lint frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj
+          xcodebuild -list -project frontend/src-tauri/gen/apple/canari.xcodeproj
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -219,6 +229,7 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
           APPLE_PROVISIONING_PROFILE_NSE: ${{ secrets.APPLE_PROVISIONING_PROFILE_NSE }}
+          APPLE_PROVISIONING_PROFILE_SHARE: ${{ secrets.APPLE_PROVISIONING_PROFILE_SHARE }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -226,15 +237,17 @@ jobs:
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
         run: |
-          # Two provisioning profiles are required because the project signs two bundles
-          # manually: the app (fr.emse.canari, profile "Canari") and the Notification
-          # Service Extension (fr.emse.canari.notifications, profile "CanariNotifications").
+          # Three provisioning profiles are required because the project signs three bundles
+          # manually: the app (fr.emse.canari, profile "Canari"), the Notification Service
+          # Extension (fr.emse.canari.notifications, profile "CanariNotifications") and the
+          # Share Extension (fr.emse.canari.share, profile "CanariShare").
           required=(
             APPLE_SIGNING_IDENTITY
             APPLE_CERTIFICATE_BASE64
             APPLE_CERTIFICATE_PASSWORD
             APPLE_PROVISIONING_PROFILE
             APPLE_PROVISIONING_PROFILE_NSE
+            APPLE_PROVISIONING_PROFILE_SHARE
             APPLE_TEAM_ID
             GOOGLE_SERVICE_INFO_PLIST
             JWT_SECRET
@@ -282,10 +295,11 @@ jobs:
         env:
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
           APPLE_PROVISIONING_PROFILE_NSE: ${{ secrets.APPLE_PROVISIONING_PROFILE_NSE }}
+          APPLE_PROVISIONING_PROFILE_SHARE: ${{ secrets.APPLE_PROVISIONING_PROFILE_SHARE }}
         run: |
-          # Install BOTH profiles into the runner's profile store. xcodebuild resolves the
-          # PROVISIONING_PROFILE_SPECIFIER names ("Canari", "CanariNotifications") set in
-          # the project by scanning these installed profiles, so both must be present.
+          # Install ALL THREE profiles into the runner's profile store. xcodebuild resolves the
+          # PROVISIONING_PROFILE_SPECIFIER names ("Canari", "CanariNotifications", "CanariShare")
+          # set in the project by scanning these installed profiles, so all three must be present.
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILES_DIR"
 
@@ -304,6 +318,7 @@ jobs:
 
           install_profile "$APPLE_PROVISIONING_PROFILE" "app"
           install_profile "$APPLE_PROVISIONING_PROFILE_NSE" "nse"
+          install_profile "$APPLE_PROVISIONING_PROFILE_SHARE" "share"
 
       - name: Write GoogleService-Info.plist
         env:
@@ -376,7 +391,10 @@ jobs:
           # `local-estate` and every fetch to the workstation would be refused by the plugin. It is
           # written to GITHUB_ENV so it exists for the Rust step ONLY in this mode - an EMPTY
           # TAURI_CONFIG would be parsed and fail every release.
-          echo 'TAURI_CONFIG={"app":{"security":{"capabilities":["default","local-estate","ios-system-components"]}}}' >> "$GITHUB_ENV"
+          # READ FROM tauri.local.conf.json, never retyped (2026-10-22): the file also widens the
+          # WebView's Content-Security-Policy to the workstation (http:, ws:), and a copy written
+          # here would keep the capabilities and lose the policy - every request to it refused.
+          echo "TAURI_CONFIG=$(jq -c . src-tauri/tauri.local.conf.json)" >> "$GITHUB_ENV"
 
       # THE TWO KEYS iOS NEEDS BEFORE A WEBVIEW MAY TALK CLEARTEXT TO A MACHINE ON THE WI-FI, patched
       # into THIS build's Info.plist and never into the committed one: a store build must keep
@@ -457,21 +475,6 @@ jobs:
           echo "VITE_AUTHENTIK_CLIENT_ID=${IDP_CLIENT}" >> .env
           if [ "$IS_PRERELEASE" = "true" ]; then
             echo "VITE_DEPLOY_ENVIRONMENT=development" >> .env
-            # THE `audio` BACKGROUND MODE GOES WITH THE LINE ABOVE, AND ONLY WITH IT (WP-C-BG-I):
-            # that line turns in-app calls on (`CALLS_ENABLED` in features.ts), and WKWebView MUTES
-            # a page's microphone the moment the app is hidden or the screen locks unless
-            # UIBackgroundModes holds `audio` - measured on the iPhone 2026-10-20 (calls.md, "the
-            # call in the background"). Patched into THIS build's Info.plist, never the committed
-            # one: a stable cannot place a call (`CALLS_COMPILED = false`), and a mode declared but
-            # unused is what App Review refused once (2.5.4, 2026-08-31). The committed plist
-            # carries it the day `CALLS_COMPILED` flips (`callsCompiled.test.ts`), which is why the
-            # add is idempotent.
-            PLIST="src-tauri/gen/apple/canari_iOS/Info.plist"
-            if ! /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST" | grep -qxE '[[:space:]]*audio'; then
-              /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes: string audio" "$PLIST"
-            fi
-            echo "UIBackgroundModes of this pre-release build:"
-            /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST"
           fi
 
       - name: Verify frontend env for iOS build
@@ -507,11 +510,11 @@ jobs:
       - name: Prebuild Rust static lib (libapp.a)
         working-directory: frontend/src-tauri
         env:
-          # Match the lowest pbxproj IPHONEOS_DEPLOYMENT_TARGET (14.0). Without it,
+          # Match the lowest pbxproj IPHONEOS_DEPLOYMENT_TARGET (16.0, the app minimum since 2026-10-22). Without it,
           # rustc/cc default the objects' min-iOS to the SDK version, and every link
           # pass floods "object file built for newer iOS version than being linked"
           # (~75 ld warnings per run).
-          IPHONEOS_DEPLOYMENT_TARGET: "14.0"
+          IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         run: |
           # The Xcode "Build Rust Code" phase is disabled in the hand-maintained pbxproj
           # (it shells out to bun, which isn't on Xcode's PATH), and Externals/ is
@@ -592,10 +595,8 @@ jobs:
             echo "::error::the archive holds no .app"
             exit 1
           fi
-          if [ ! -d "$APP/PlugIns/canari_NSE.appex" ] && [ -z "$(find "$APP/PlugIns" -maxdepth 1 -name '*.appex' | head -1)" ]; then
-            echo "::error::the app carries no notification extension - a local build must keep it"
-            exit 1
-          fi
+          # EXACTLY the two extensions (notifications, share): a local build must keep both.
+          bash ../.github/scripts/ios-extensions.sh "$APP"
           # Every bench observable IS in this bundle - which is what makes the store build's
           # "absent" below a measurement rather than a search that cannot find anything.
           bash ../.github/scripts/bench-observables.sh "$APP" present
@@ -642,8 +643,8 @@ jobs:
 
           # Archive directly with xcodebuild, bypassing Tauri's export step which fails
           # with "requires a provisioning profile with the App Groups feature" because
-          # Tauri's generated ExportOptions.plist cannot express a two-target
-          # (app + appex) manual-signing profile map.
+          # Tauri's generated ExportOptions.plist cannot express a three-target
+          # (app + two appex) manual-signing profile map.
           ARCHIVE_DIR="src-tauri/gen/apple/build"
           ARCHIVE_NAME="canari_iOS.xcarchive"
           ARCHIVE_PATH="${ARCHIVE_DIR}/${ARCHIVE_NAME}"
@@ -672,6 +673,11 @@ jobs:
           # that would ship, not on the flags meant to produce them (bench-observables.sh).
           bash ../.github/scripts/bench-observables.sh "$ARCHIVE_PATH/Products/Applications" absent
 
+          # THE STORE APP EMBEDS EXACTLY ITS TWO EXTENSIONS - one missing still archives, uploads and
+          # launches; only a phone would show the share sheet without Canari (ios-extensions.sh).
+          STORE_APP="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name '*.app' | head -1)"
+          bash ../.github/scripts/ios-extensions.sh "$STORE_APP"
+
           # THE ICON IS AN ICON COMPOSER DOCUMENT (gen/apple/AppIcon.icon), written without the Mac app
           # that normally authors it, and nothing but Xcode 26 can say whether it means what it was
           # meant to. `actool` compiles it into Assets.car: list what came out, and FAIL if the icon
@@ -689,6 +695,19 @@ jobs:
             exit 1
           fi
 
+          # WHAT THE STORE BINARY DECLARES, PRINTED AND NEVER WRITTEN: the background modes and the
+          # microphone purpose string of the BUILT app, the iOS twin of the Android built-manifest step.
+          # `callsCompiled.test.ts` asserts the SOURCE plist; this is what App Review will read.
+          BUILT_PLIST="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 2 -name Info.plist -path '*.app/Info.plist' | head -1)"
+          if [ -z "$BUILT_PLIST" ]; then
+            echo "::error::the archive's app carries no Info.plist"
+            exit 1
+          fi
+          echo "UIBackgroundModes of the built app:"
+          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$BUILT_PLIST"
+          echo "NSMicrophoneUsageDescription of the built app:"
+          /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$BUILT_PLIST"
+
       - name: Export signed IPA
         if: env.LOCAL_URL == ''
         id: outputs
@@ -698,7 +717,7 @@ jobs:
         run: |
           # Re-export the archive produced by the previous step with an ExportOptions.plist
           # that pins manual signing and maps EACH bundle id to its named distribution
-          # profile. Both profiles are already installed in the runner store (by name) and
+          # profile. All three profiles are already installed in the runner store (by name) and
           # carry the required entitlements (App Groups, Associated Domains, aps-environment).
           ARCHIVE="build/canari_iOS.xcarchive"
           if [ ! -d "$ARCHIVE" ]; then
@@ -727,6 +746,8 @@ jobs:
               <string>Canari</string>
               <key>fr.emse.canari.notifications</key>
               <string>CanariNotifications</string>
+              <key>fr.emse.canari.share</key>
+              <string>CanariShare</string>
             </dict>
             <key>stripSwiftSymbols</key>
             <true/>

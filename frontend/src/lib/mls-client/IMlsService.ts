@@ -1,6 +1,8 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
@@ -8,7 +10,15 @@ import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
-import type { GroupExclusions, GroupRosterBatch, SentFrame } from './mlsDeliveryApi';
+import type {
+  GroupExclusions,
+  GroupRosterBatch,
+  GroupUserMemberRow,
+  JoinDeclineOutcome,
+  PendingInvitationRow,
+  SentFrame,
+} from './mlsDeliveryApi';
+import type { ForkFinding } from './integrityFindings';
 
 export type { FrameDelivery };
 export type { DistributionScope };
@@ -90,6 +100,12 @@ export type ExternalJoinOutcome =
   | { joined: false; reason: 'own_key_package_unverified' }
   /** The commit gate was never reached. Nothing is claimed about membership. */
   | { joined: false; reason: 'unreachable' }
+  /**
+   * The server's per-user commit limit refused it (`429`), or still holds from an earlier refusal.
+   * Nothing is claimed about membership; nothing else this account commits is accepted for
+   * `retryAfterMs`, so a sweep stops there rather than ask group after group.
+   */
+  | { joined: false; reason: 'rate_limited'; retryAfterMs: number }
   /** The gate refused every bounded attempt; `serverReason` is its own classification. */
   | { joined: false; reason: 'refused'; serverReason: string; serverEpoch?: number };
 
@@ -148,6 +164,19 @@ export type DistributionGroupStore = Pick<
  * - `replay-failed`: the attempt failed for a reason that says nothing about the next one; the group
  *   stays in the epoch-gap registry and the sync watchdog owns it.
  */
+/**
+ * A key group's clean run at its current epoch (`mls-core/src/graine_run.rs`).
+ *
+ * `epochFingerprint` is a domain-separated hash of the epoch authenticator, never the authenticator
+ * itself: it identifies the epoch of THIS group instance, so two instances at the same epoch number
+ * never compare equal.
+ */
+export interface GraineRunReading {
+  runId: string;
+  epoch: number;
+  epochFingerprint: string;
+}
+
 export type DistributionGapVerdict = 'caught-up' | 'replay-exhausted' | 'replay-failed' | 'evicted';
 
 /** Told every {@link DistributionGapVerdict}, for the key group it concerns. */
@@ -163,8 +192,23 @@ export type MlsBatchProcessResult =
        * path carries none (a stub) or the frame had no plaintext.
        */
       sender?: string | null;
+      /**
+       * mls-core's verdict on the frame's author proof, beside a plaintext and only with it: absent
+       * when the path carries none (a stub) or the frame had no plaintext. Only `verified` lets a
+       * proof be recorded (`recordAuthorship`).
+       */
+      author?: AuthorVerdict;
     }
   | { ok: false; error: string };
+
+/**
+ * One decrypted application frame: the plaintext, and mls-core's verdict on the author proof it
+ * may end with. The verdict is the ONLY thing that says a proof was checked - see `recordAuthorship`.
+ */
+export interface DecryptedApplication {
+  plaintext: Uint8Array;
+  author: AuthorVerdict;
+}
 
 /** Options for {@link IMlsService.init}. */
 export interface MlsInitOptions {
@@ -255,6 +299,18 @@ export class LocalStateNotReadyError extends Error {
 }
 
 /**
+ * What a pending {@link IMlsService.whenGroupDrained} rejects with when its service is destroyed
+ * (sign-out): the group will never be drained by THIS client, and a waiter left pending would hold
+ * the account that left in memory until a reload.
+ */
+export class GroupDrainAbandonedError extends Error {
+  constructor(readonly groupId: string) {
+    super(`the MLS service ended before key group ${groupId.slice(0, 8)} drained`);
+    this.name = 'GroupDrainAbandonedError';
+  }
+}
+
+/**
  * Thrown by {@link IMlsService.init} when `noFreshStart` is set and the saved local state did not
  * open under the key in hand for a reason an OLD PIN may still cure. Nothing was written.
  *
@@ -267,10 +323,13 @@ export class LocalStateNotReadyError extends Error {
  * instead ({@link StateLoadFailure}).
  */
 export class SavedStateUnopenedError extends Error {
-  readonly reason: Extract<StateLoadFailure, 'rotated' | 'undecryptable' | 'unknown'>;
+  readonly reason: Extract<
+    StateLoadFailure,
+    'rotated' | 'undecryptable' | 'unreadable_now' | 'unknown'
+  >;
 
   constructor(
-    reason: Extract<StateLoadFailure, 'rotated' | 'undecryptable' | 'unknown'>,
+    reason: Extract<StateLoadFailure, 'rotated' | 'undecryptable' | 'unreadable_now' | 'unknown'>,
     cause: unknown
   ) {
     super(`the saved MLS state did not open under this key (${reason}) - nothing written`, {
@@ -314,8 +373,10 @@ export function isKeystoreKeyUnavailable(error: unknown): boolean {
  * `mismatch` (another device's identity), `rotated` (a framed state whose header names another
  * key: the old PIN opens it), `altered` (a framed state whose header names THE KEY IN HAND and whose
  * tag fails: no PIN opens it), `undecryptable` (a legacy state that did not open - either of the two,
- * and nothing says which), `keystore_unavailable` (biometric mode found no key) and `unknown` (an
- * untyped failure).
+ * and nothing says which), `keystore_unavailable` (biometric mode found no key), `unreadable_now`
+ * (the web's WebCrypto refused a v2 state and the deterministic reader did not prove it altered:
+ * nothing is known about the bytes, so the state is re-read and never replaced -
+ * `MlsStateUnreadableNowError`) and `unknown` (an untyped failure).
  */
 export type StateLoadFailure =
   | 'mismatch'
@@ -323,6 +384,7 @@ export type StateLoadFailure =
   | 'rotated'
   | 'altered'
   | 'keystore_unavailable'
+  | 'unreadable_now'
   | 'unknown';
 
 /**
@@ -427,6 +489,8 @@ export type UserGroupRow = {
     welcomeQueued: boolean;
     addInFlight: boolean;
     admitted: boolean;
+    /** The seat waits for a member's admission (see {@link DeviceMembershipRow}); absent from an older server. */
+    awaitingAdmission?: boolean;
   } | null;
 };
 
@@ -546,6 +610,12 @@ export type DeviceMembershipRow = {
   welcomeQueued?: boolean;
   /** Some member holds this group's add lock right now, so an Add really is in flight. */
   addInFlight?: boolean;
+  /**
+   * The seat came from an invitation link and no member has admitted the person yet: the server
+   * refuses them the external-join base and every commit, so the device WAITS for a member's Add
+   * (`readWelcomeOwedFromRow` -> `awaiting-admission`). Absent from a server older than the field.
+   */
+  awaitingAdmission?: boolean;
 };
 
 export interface IMlsService {
@@ -556,7 +626,10 @@ export interface IMlsService {
     state?: Uint8Array,
     opts?: MlsInitOptions
   ): Promise<void>;
-  /** Creates a new local MLS group with the given ID. */
+  /**
+   * Creates a new local MLS group with the given ID. Refused on a follower tab
+   * (`FollowerTabCommitError`), whose state is a copy the leader never holds.
+   */
   createGroup(groupId: string): Promise<void>;
   /** Creates a new named group on the delivery server and returns its assigned group ID. */
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
@@ -654,12 +727,70 @@ export interface IMlsService {
    * (throws), broadcasts the commit, and returns the Welcome + post-merge ratchet tree for the
    * caller to deliver to the new device. `excludeDeviceIds` are skipped in the commit broadcast
    * (typically the inviter self and the invitee).
+   *
+   * The package is checked against `userId:deviceId`, the device it was fetched for, and against
+   * the signature key pinned for that device on first sight; either refusal throws a
+   * `DeviceTrustRefusedError` before anything is staged (`deviceTrust.ts`).
    */
   addMember(
     groupId: string,
-    keyPackageBytes: Uint8Array,
+    device: { keyPackage: Uint8Array; userId: string; deviceId: string },
     excludeDeviceIds?: string[]
   ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+  /**
+   * {@link addMember} for a device whose leaf is STILL in the tree: removes that leaf and adds the
+   * device back in ONE commit, so no epoch has the user out of the tree (no departure, see
+   * {@link removalEpochs}). Same vetting, same typed refusal, same transaction.
+   */
+  replaceMember(
+    groupId: string,
+    device: { keyPackage: Uint8Array; userId: string; deviceId: string },
+    excludeDeviceIds?: string[]
+  ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+  /**
+   * Whether a package may be added as `userId:deviceId`, staging nothing - the same check the Add
+   * runs in Rust, taken BEFORE a destructive step (the removal of a stale leaf it would replace).
+   */
+  vetKeyPackage(
+    keyPackage: Uint8Array,
+    userId: string,
+    deviceId: string
+  ): Promise<KeyPackageVerdict>;
+  /**
+   * The identity (`userId:deviceId`) of the leaf of `groupId` carrying `keyPackage`'s signature
+   * key, or `null` when no leaf does. Asked after an Add refused as a DUPLICATE SIGNATURE KEY: the
+   * refusal says the key is in the tree, not whose leaf holds it, and assuming it is the identity
+   * the package was fetched for would vouch for, or replace, a device on another device's key.
+   * Throws for a group this device does not hold or a package it cannot read.
+   */
+  leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null>;
+  /**
+   * The new devices (first sight or a changed key) recorded from merged signed commits since the
+   * last call, oldest first; taking them forgets them. The new-device notices take them through
+   * `setDeviceEventConsumer`.
+   */
+  takeDeviceEvents(): Promise<DeviceEvent[]>;
+  /**
+   * Registers who device events are handed to - after each drain, after this device's own Adds,
+   * and once at registration for what the state already holds - or removes it with `null`. The
+   * new-device notices (`deviceNotices.svelte.ts`) are the one consumer.
+   */
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void;
+  /**
+   * The pin of `userId:deviceId` - the signature keys this device has seen for it in a signed tree
+   * it merged or joined (`DevicePin`) - or `null` for a device it never saw: THE SINGLE SOURCE OF
+   * TRUST for "a key this device has seen", for any verifier of a device-key signature, since a key
+   * the server published alone proves nothing against the server. `null`, and a contradiction with
+   * an `anchored: false` pin, mean UNVERIFIED, never FORGED. See `BaseMlsService.pinnedSignatureKeys`.
+   */
+  pinnedSignatureKeys(userId: string, deviceId: string): Promise<DevicePin | null>;
+  /**
+   * The epochs at which this device saw `userId` leave `groupId`'s tree (its last leaf removed by a
+   * merged commit, live or caught up), oldest first. Per USER, and only commits this device merged.
+   * Empty means NOT SEEN, never "never happened". Never user-visible. See
+   * `BaseMlsService.removalEpochs`.
+   */
+  removalEpochs(groupId: string, userId: string): Promise<number[]>;
   /**
    * Adds multiple devices to a group in a single STAGED MLS commit (C7-A unified regime): stages
    * the commit, validates server-side, merges on accept / rolls back on reject (throws), broadcasts
@@ -672,11 +803,13 @@ export interface IMlsService {
    * Devices dropped because their KeyPackage was **invalid/undeserializable** (expired, wrong
    * ciphersuite, lost private key, corrupted bytes) are reported in `skipped` WITH a typed reason
    * (`SkippedKeyPackageReason`, classified in Rust) so the caller can surface a non-silent member
-   * loss and say why instead of letting them disappear. [[C5]]
+   * loss and say why instead of letting them disappear. [[C5]] A package whose credential does
+   * not name `userId:deviceId`, or carries a key other than the one pinned for that device, is one
+   * of those skips (`identity-mismatch`, `signature-key-changed`).
    */
   addMembersBulk(
     groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; deviceId: string }>,
+    devices: Array<{ keyPackage: Uint8Array; deviceId: string; userId: string }>,
     excludeDeviceIds?: string[]
   ): Promise<{
     welcome?: Uint8Array;
@@ -700,7 +833,8 @@ export interface IMlsService {
     delivery?: FrameDelivery
   ): Promise<SentFrame>;
   /**
-   * Decrypts and processes an incoming MLS message for the group, returning the plaintext or null.
+   * Decrypts and processes an incoming MLS message for the group, returning the plaintext with
+   * mls-core's author-proof verdict, or null for a commit or a proposal.
    *
    * `envelope` is the sender the delivery server named for this frame. When given, it is checked
    * against the sender OpenMLS verified, and a disagreement throws a `SenderMismatchError`: the
@@ -711,7 +845,7 @@ export interface IMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     envelope?: EnvelopeSender
-  ): Promise<Uint8Array | null>;
+  ): Promise<DecryptedApplication | null>;
   /**
    * Decrypts a page of ciphertexts in ratchet order with a single WASM crossing when available.
    * Per-message failures are returned in the result vector instead of aborting the batch.
@@ -764,6 +898,8 @@ export interface IMlsService {
     Array<{
       keyPackage: Uint8Array;
       deviceId: string;
+      /** The `userId` asked for, carried so an Add can check each package names this device. */
+      userId: string;
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
@@ -838,6 +974,24 @@ export interface IMlsService {
     belowFloor: boolean;
     gapAt?: number;
   }>;
+  /**
+   * Resubmits every commit of this device whose outcome is unknown (`commitSubmission.ts`) - or
+   * only those of `groupIds` - and merges or clears each on the gate's answer. One with no answer
+   * yet stays kept and pending in the MLS state. Takes the MLS lock itself, so it must never be called holding it.
+   * Called after the gateway connects and before the pending messages are drained.
+   */
+  settleUnresolvedCommits(groupIds?: string[]): Promise<void>;
+  /**
+   * Settles this device's unresolved commit of `groupId` from the server's commit log, as a replay
+   * reads it: `commitAtBase` is the log's row at the commit's base epoch (`null` when it has none,
+   * which decides nothing). Our bytes there -> merged (and an Add's Welcome delivered); another
+   * device's -> cleared; a staged commit that was never submitted -> cleared. No lock: the caller
+   * holds the client, as it does for the replay itself.
+   */
+  settleUnresolvedCommitFromLog(
+    groupId: string,
+    commitAtBase: string | null
+  ): Promise<'none' | 'merged' | 'cleared' | 'undecided'>;
   /**
    * Refreshes the server-stored GroupInfo (external-join base) at the current epoch. Best-effort:
    * called after every commit (a new group's first member-add is itself a commit) so a member lacking
@@ -1021,6 +1175,28 @@ export interface IMlsService {
    */
   waitForGroupQueueIdle(caller: string, groupId: string): Promise<void>;
   /**
+   * Whether this device has merged everything the server holds for `groupId`, as a FACT read now,
+   * never waited for: the last pull listed the whole mailbox, no pull is running, the socket that
+   * pull was trusted with is still open, and the scheduler holds nothing of the group (nothing
+   * queued, parked or being applied). `false` is "not known to be drained", never "behind".
+   *
+   * For a decision that must not be taken on a group state the server may still be holding commits
+   * for - the admission gate's first observation of a voucher (channel-encryption section 25). It
+   * reads the evidence {@link waitForGroupQueueIdle} and {@link waitForMessageQueueIdle} stand on.
+   */
+  isGroupDrained(groupId: string): boolean;
+  /**
+   * Resolves the first time {@link isGroupDrained} holds for `groupId` - at once when it holds now.
+   *
+   * AN EVENT, NEVER A POLL: it is re-checked only where a piece of that evidence can change - the
+   * scheduler finishing a frame of the group, and a pull ending. Never await it inside a frame of
+   * the group itself: that frame is the group's current work, so the group cannot be drained until
+   * it returns. A caller chains on it instead (the admission gate's parked asks, section 25).
+   *
+   * @throws {GroupDrainAbandonedError} (as a rejection) when the service is destroyed first.
+   */
+  whenGroupDrained(groupId: string): Promise<void>;
+  /**
    * Tells the service the local conversation store is now authoritative.
    *
    * A frame that arrived before the restore finished was left in the server queue with nothing to
@@ -1087,9 +1263,18 @@ export interface IMlsService {
   deleteGroupOnServer(groupId: string): Promise<boolean>;
   /** Removes a user from the server-side membership list of a group (no MLS commit). */
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
+  /**
+   * A member's Decline of an invitation-link ask: withdraws the person's seat only while it still
+   * awaits a member, never the seat of someone another member's Add admitted (`JoinDeclineOutcome`).
+   */
+  declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome>;
   /** Performs a real MLS remove commit for all devices of the given user(s) and broadcasts it. */
   removeMember(groupId: string, userIds: string[]): Promise<void>;
-  /** Performs a real MLS remove commit for specific devices by identity ("userId:deviceId") and broadcasts it. */
+  /**
+   * Performs a real MLS remove commit for specific devices by identity ("userId:deviceId") and
+   * broadcasts it. The revoked-leaf collector's commit: staged only when this device's context is
+   * the base the server publishes, else it throws `UnpublishedBranchError` having staged nothing.
+   */
   removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
   /**
    * Every leaf identity (`userId:deviceId`) in the group's MLS ratchet tree, read locally.
@@ -1112,6 +1297,14 @@ export interface IMlsService {
    * {@link getGroupMemberIdentities} does: an absent leaf and an absent group are opposite facts.
    */
   memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
+  /**
+   * The clean run covering `groupId`'s CURRENT epoch (`mls-core/src/graine_run.rs`): what Graine's
+   * outbound rotation reads to decide whether a session may outlive an epoch move. The run ends on
+   * any removal and on a new user, and is kept in the MLS state beside the tree it describes.
+   *
+   * Throws when this device does not hold the group.
+   */
+  graineRun(groupId: string): Promise<GraineRunReading>;
   /** Graine v2's Ed25519 operations, from this platform's engine (`mls-core`, never WebCrypto). */
   graineSignatureEngine(): GraineSignatureEngine;
   /**
@@ -1120,10 +1313,16 @@ export interface IMlsService {
    * against that leaf, so no new key has to be distributed or trusted.
    */
   signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
+  /**
+   * Hands over the fork findings mls-core recorded since the last call, and forgets them
+   * (`mls-core/src/fork_check.rs`): frames whose signed epoch fingerprint was not this device's at
+   * the same epoch. Asked after a same-epoch refusal, where a fork is seen.
+   */
+  takeForkFindings(): Promise<ForkFinding[]>;
   /** Returns the (userId, deviceId) pairs currently in a group. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
-  getGroupUserMembers(groupId: string): Promise<{ userId: string }[]>;
+  getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]>;
   /**
    * The windows during which each current member of `groupId` was out of it, from
    * `GET /api/mls/groups/:groupId/exclusions`. Throws on any failure: a history answer that cannot
@@ -1138,6 +1337,14 @@ export interface IMlsService {
    * "not counted", never "nothing withheld". Same failures as {@link getGroupExclusions}.
    */
   getGroupWithheld(groupId: string, forUserId?: string): Promise<GroupExclusions>;
+  /**
+   * Whether the delivery service routes a history answer ADDRESSED to one device of a conversation
+   * (`addressedAnswers` on the same exclusions read - step A,
+   * docs/wiki/protocols/history-answer-addressing.md). `false` from a server that predates it, which
+   * is an ordinary state while a store build runs ahead of production. Same failures as
+   * {@link getGroupExclusions}, and asked with the same `forUserId` it shares that one request.
+   */
+  getAddressedAnswersSupported(groupId: string, forUserId?: string): Promise<boolean>;
   /**
    * The user-level rosters of many groups in one read (`POST /api/mls/group-rosters`). Never throws:
    * a group it did not answer is absent from both sets, and nothing is decided for it.
@@ -1163,18 +1370,7 @@ export interface IMlsService {
 
   // DeviceGroupMembership tracking
   /** Get all pending device-group invitations in groups where this device is a full member */
-  getPendingInvitations(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{
-      id: string;
-      userId: string;
-      deviceId: string;
-      groupId: string;
-      status: string;
-    }>
-  >;
+  getPendingInvitations(userId: string, deviceId: string): Promise<PendingInvitationRow[]>;
   /**
    * Get all device-group memberships for the current device, each with its status.
    *

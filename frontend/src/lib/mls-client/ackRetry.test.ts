@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * AN ACK ATTEMPT THAT NEVER COMES BACK MUST BE ABANDONED, because a pull now waits behind it.
  *

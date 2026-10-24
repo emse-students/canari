@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /*
  * A LOGO URL IS ABSOLUTIZED BEFORE IT IS DRAWN, and this stub is what proves the sheet asks. The
  * stored value is the app-relative `/api/media/public/<id>`; in the Tauri WebView that resolves
@@ -360,6 +361,48 @@ describe('buildPreviewInnerHtml - what the on-screen sheet points its logos at',
 
     expect(html).toContain('src="https://media.test/api/media/public/m-1"');
     expect(html).not.toContain('src="/api/media/public/m-1"');
+  });
+});
+
+describe('buildPreviewInnerHtml - a logo URL is an attribute value and nothing more', () => {
+  // The mock above passes an absolute URL through untouched, so this proves the sheet ITSELF
+  // escapes what it interpolates, whatever the resolver lets by.
+  const odd = 'https://x.test/a.png" data-extra="1';
+
+  function render(events: AssociationCalendarFeedEvent[]): HTMLElement {
+    const host = document.createElement('div');
+    host.innerHTML = buildPreviewInnerHtml(events, 2026, 4, {
+      ...DEFAULT_EXPORT_OPTIONS,
+      bgDataUrl: null,
+    });
+    return host;
+  }
+
+  it('keeps a quote inside the single-logo src', () => {
+    const host = render([makeEvent({ associationLogoUrl: odd })]);
+    expect(host.querySelector('[data-extra]')).toBeNull();
+    expect(host.querySelector('img')?.getAttribute('src')).toBe(odd);
+  });
+
+  it('keeps a quote inside every band of the split watermark', () => {
+    const host = render([
+      makeEvent({
+        associationLogoUrl: odd,
+        coOwners: [
+          { associationId: 'assoc-2', name: 'Asso 2', slug: 'a2', color: null, logoUrl: odd },
+        ],
+      }),
+    ]);
+    expect(host.querySelector('[data-extra]')).toBeNull();
+    const srcs = Array.from(host.querySelectorAll('img')).map((i) => i.getAttribute('src'));
+    expect(srcs).toEqual([odd, odd]);
+  });
+
+  it('splitLogoWatermark escapes each src it is handed', () => {
+    const host = document.createElement('div');
+    host.innerHTML = splitLogoWatermark([odd, `${odd}<b>`], 40);
+    expect(host.querySelector('[data-extra]')).toBeNull();
+    expect(host.querySelector('b')).toBeNull();
   });
 });
 

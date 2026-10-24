@@ -21,13 +21,17 @@ vi.mock('$lib/mls-client/sendRatchetLedger', () => ({
   noteFrameEmitted: () => {
     ledgerTrace.push('ledger');
   },
-  pendingSendGenerations: () => [],
+  forgetSendRatchetEntries: vi.fn(),
+  sendRatchetDebt: vi.fn(),
+  sendRatchetEntries: () => [],
   resetSendRatchetLedger: vi.fn(),
   snapshotEmitted: () => ({}),
 }));
 
 import { BaseMlsService } from './BaseMlsService';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 
 /**
  * The three rules that must hold around EVERY send, asserted on the seam that now owns them.
@@ -56,10 +60,22 @@ abstract class SendSeamHarness extends BaseMlsService {
     };
   }
 
-  protected async encryptForSend(_groupId: string, _messageBytes: Uint8Array): Promise<Uint8Array> {
+  /** No staged commit is kept in this state: a send asks, and finds nothing to settle. */
+  protected async groupsWithPendingCommit(): Promise<string[]> {
+    return [];
+  }
+  protected async encryptForSend(
+    _groupId: string,
+    _messageBytes: Uint8Array
+  ): Promise<AuthoredFrame> {
     this.encryptCalls++;
     this.trace.push('encrypt');
-    return new Uint8Array([1, 2, 3]);
+    return { sealed: sealedFrame(0), authorProof: new Uint8Array([4]) };
+  }
+
+  /** The leaf refresh a durable send schedules reads this first; no group is held here. */
+  async isGroupActive(): Promise<boolean> {
+    return false;
   }
 
   /** Exposes the protected counter every replacement seam compares against. */

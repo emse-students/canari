@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PDF AND THE PNG ARE ONE SHEET (2026-10-18). Pinned: `exportCalendarMonth` builds the sheet
  * once per call through `withRenderedSheet`, and the PDF writer and the PNG rasteriser receive the

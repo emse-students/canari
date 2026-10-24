@@ -8,6 +8,7 @@
  * Predicates and transition logic: `$lib/utils/chat/groupLifecycle`.
  */
 import type { OutboxEntry } from '$lib/db/types';
+import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 
 export type ConversationLifecycle = 'active' | 'pending' | 'removed';
 
@@ -29,6 +30,11 @@ export interface MessageReaction {
   at?: number;
   /** True when the user took the reaction back. Absent or false = the reaction stands. */
   removed?: boolean;
+  /**
+   * The reactor's signed frame that set this state, kept so a history bundle can prove it
+   * (`$lib/crypto/messageAuthorship`). Absent on entries older than it, or set by this device.
+   */
+  proof?: RecordedAuthorship;
 }
 
 /**
@@ -102,6 +108,17 @@ export interface AddMessageToChatOptions {
    * server's row beside it (WP-OFF-2).
    */
   clientMessageId?: string;
+  /**
+   * The author's signed frame for this message (`$lib/crypto/messageAuthorship`): set by the MLS
+   * receive paths from a proof mls-core verified, and by a history bundle from a proof this device
+   * checked. Persisted in the sealed row so this device can relay it in its own bundles.
+   */
+  authorship?: RecordedAuthorship;
+  /**
+   * A restored message whose author nothing proved: relayed by another member, with no signature
+   * (an older build, or a proof this device could not check). Shown with a marker, never refused.
+   */
+  restoredUnverified?: boolean;
 }
 
 /**
@@ -153,6 +170,8 @@ export interface ChatMessage {
    * pin) is unavailable until `settleSalonEcho` re-keys it. Memory only, never persisted.
    */
   awaitingServerId?: boolean;
+  /** See {@link AddMessageToChatOptions.restoredUnverified}: the row shows its author is unproven. */
+  restoredUnverified?: boolean;
 }
 
 /**

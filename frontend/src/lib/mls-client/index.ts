@@ -21,6 +21,7 @@ export {
   isKeystoreKeyUnavailable,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
+  GroupDrainAbandonedError,
   type VaultRefusal,
 } from './IMlsService';
 export {

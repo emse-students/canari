@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DOUBLE TAP ON A REEL LIKES IT (user, 2026-10-19), and the reel's SINGLE tap is still the
  * player's: it toggles the controls at once, with no wait - the double tap's two taps toggle them

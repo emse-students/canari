@@ -1,8 +1,13 @@
+// @vitest-environment happy-dom
 import protobuf from 'protobufjs';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';
 import { addressedKeyMaterial } from '$lib/mls-client/frameDelivery';
-import { workspaceScope } from '$lib/mls-client/distributionScope';
+import {
+  channelScope,
+  workspaceScope,
+  type DistributionScope,
+} from '$lib/mls-client/distributionScope';
 import {
   decodeAppMessage,
   encodeAppMessage,
@@ -13,12 +18,29 @@ import {
 } from '$lib/proto/codec';
 import { toBase64 } from '$lib/utils/hex';
 import { encodeGraineEndorsementV2, graineSeedCommitment } from '$lib/crypto/graineV2';
+import { GRAINE_BUNDLE_PAGE_MAX_BYTES } from '$lib/crypto/graineConstants';
 import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEngine';
+import {
+  encodeAdmissionVoucher,
+  encodeDirectAdmission,
+  mintInviteLinkGrant,
+  redeemInviteLinkGrant,
+} from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { handleDistributionFrame } from './frameHandler';
+import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
+import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
+import { HISTORY_FLOOR_QUERY_CONCURRENCY } from './historyBoundary';
+import { BaseMlsService } from '$lib/services/BaseMlsService';
+import type { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
+import { incompleteHistoryPages, noteHistoryAsked } from './pagedHistoryAnswer';
 import {
+  announceGraineRepair,
+  forgetWorkspaceGraineState,
   graineRepairHoldObserver,
   holdGraineRepairs,
+  markCommunityListed,
+  registerChannelWorkspace,
   registerCommunityHistoryVisibility,
   releaseGraineRepairs,
   setGraineRepairListener,
@@ -36,10 +58,15 @@ import {
 // The real walk, observed: the id the bundle quotes must reach it, or a decline never advances it.
 const noteSeedUnavailableSpy = vi.fn();
 const noteHistoryHeldNothingSpy = vi.fn();
+const noteHistoryAnsweredSpy = vi.fn();
 vi.mock('./repair', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./repair')>();
   return {
     ...actual,
+    noteHistoryAnswered: (...args: Parameters<typeof actual.noteHistoryAnswered>) => {
+      noteHistoryAnsweredSpy(...args);
+      return actual.noteHistoryAnswered(...args);
+    },
     noteHistoryHeldNothing: (...args: Parameters<typeof actual.noteHistoryHeldNothing>) => {
       noteHistoryHeldNothingSpy(...args);
       return actual.noteHistoryHeldNothing(...args);
@@ -55,13 +82,42 @@ vi.mock('./graineMirror', () => ({ mirrorGraineSeed: vi.fn().mockResolvedValue(u
 
 /** Where each session becomes readable for the asker - computed by the server, never here. */
 const graineHistoryFloor = vi.fn();
+/** The community's roster - arrival dates, creator mark and admission vouchers (section 25). */
+const listWorkspaceMembers = vi.fn();
 vi.mock('$lib/services/ChannelService', () => ({
   ChannelService: class {
     graineHistoryFloor(...args: unknown[]) {
       return graineHistoryFloor(...args);
     }
+    listWorkspaceMembers(...args: unknown[]) {
+      return listWorkspaceMembers(...args);
+    }
   },
 }));
+
+/** An arrival before the admission proof existed: such a member is admitted by their date. */
+const BEFORE_THE_PROOF = '2026-01-01T00:00:00.000Z';
+/** An arrival after it: such a member needs a voucher. */
+const AFTER_THE_PROOF = '2026-12-01T00:00:00.000Z';
+
+/** A roster row as `listWorkspaceMembers` serves it. */
+function member(
+  userId: string,
+  joinedAt = BEFORE_THE_PROOF,
+  extra: { isCreator?: boolean; admissionVoucher?: string | null } = {}
+) {
+  return { id: `m-${userId}`, userId, role: 'member', joinedAt, ...extra };
+}
+
+beforeEach(() => {
+  // Every member admitted before the proof existed, so every row that is not about admission sees
+  // the past handed over exactly as before. The roots a device records are per account, durable.
+  localStorage.clear();
+  listWorkspaceMembers.mockReset();
+  listWorkspaceMembers.mockResolvedValue(
+    ['alice', 'bob', 'carol', 'newcomer'].map((id) => member(id))
+  );
+});
 
 const SEED = new Uint8Array(32).fill(3);
 
@@ -130,10 +186,39 @@ async function v2SeedFor(channelId: string, sessionId: string, firstIndex: numbe
  * a device that has left it. carol:dev-c is in the tree unless a test takes her out.
  */
 const tree = new Map<string, Uint8Array>();
+/**
+ * The leaves of the community's key group, as the admission gate observes them (section 25): every
+ * member of the default roster has a device in it, so each is rooted the first time it is read.
+ */
+let leaves: string[] = [];
+/**
+ * The trees are KEYED BY GROUP, as the MLS layer's are: `leaves` and `tree` are the COMMUNITY's key
+ * group (`communityGroup`), a private salon's own group (`g-private`) holds `salonLeaves` alone.
+ * A gate that read a salon's tree as the community's would see different members here.
+ */
+let communityGroup = 'g-1';
+let salonLeaves: string[] = [];
+/** Departures per group then user (`removalEpochs`), as #2268 records them. */
+const departuresByGroup = new Map<string, Map<string, number[]>>();
 let published: DeviceSignatureKeys = { kind: 'keys', keys: [] };
 function graineMls(extra: Record<string, unknown> = {}) {
+  const leavesOf = (groupId: string) =>
+    groupId === communityGroup ? leaves : groupId === 'g-private' ? salonLeaves : [];
   return {
-    memberSignatureKey: async (_groupId: string, identity: string) => tree.get(identity) ?? null,
+    distributionGroupFor: (scope: DistributionScope) =>
+      scope.kind === 'workspace' ? communityGroup : 'g-private',
+    memberSignatureKey: async (groupId: string, identity: string) =>
+      leavesOf(groupId).includes(identity) || groupId === communityGroup
+        ? (tree.get(identity) ?? null)
+        : null,
+    getGroupMemberIdentities: async (groupId: string) => [...leavesOf(groupId)],
+    getEpoch: () => 5,
+    // Every group drained: a held commit is admissionGate.test.ts's row.
+    isGroupDrained: () => true,
+    whenGroupDrained: async () => undefined,
+    pinnedSignatureKeys: async () => null,
+    removalEpochs: async (groupId: string, userId: string) =>
+      departuresByGroup.get(groupId)?.get(userId) ?? [],
     fetchDeviceSignatureKeys: async () => published,
     graineSignatureEngine: () => webCryptoEngine,
     getDeviceId: () => 'alice-laptop',
@@ -143,6 +228,10 @@ function graineMls(extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   tree.clear();
   tree.set('carol:dev-c', CAROL_DEVICE_PK);
+  leaves = ['alice:alice-laptop', 'bob:dev-b', 'carol:dev-c', 'newcomer:newcomer-web'];
+  communityGroup = 'g-1';
+  salonLeaves = [];
+  departuresByGroup.clear();
   published = { kind: 'keys', keys: [] };
 });
 function fakeStorage(seed: StoredGraineSession[] = []) {
@@ -189,7 +278,34 @@ function wire(storage: IStorage) {
   });
 }
 
-afterEach(() => setGraineRuntime(null));
+/**
+ * Closes every repair hold a test left open. The hold depth is module state that `setGraineRuntime`
+ * deliberately keeps, since in production the MLS service closes what it opened. A test interrupted
+ * between its hold and its release (a timeout under suite load) used to leave the depth at 1, and
+ * every later test expecting an announcement then failed: one timeout became six failures. The probe
+ * is announced through the public path, and releases go on until it is delivered, which is the
+ * moment the depth is back to 0.
+ */
+function closeLeftoverHolds() {
+  let delivered = false;
+  setGraineRepairListener(() => {
+    delivered = true;
+  });
+  announceGraineRepair(['probe']);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  for (let closed = 0; !delivered; closed++) {
+    if (closed === 16) throw new Error('a repair hold could not be closed after 16 releases');
+    releaseGraineRepairs();
+  }
+  warn.mockRestore();
+}
+
+afterEach(() => {
+  closeLeftoverHolds();
+  // Sign-out forgets parked asks next to the runtime; a test that parked one must not hand it on.
+  clearParkedAsks();
+  setGraineRuntime(null);
+});
 
 describe('a seed arriving on the distribution group', () => {
   it('is stored with no counters of ours', async () => {
@@ -417,12 +533,14 @@ describe('a seed arriving on the distribution group', () => {
     const repaired: string[][] = [];
     setGraineRepairListener((ids) => repaired.push(ids));
 
-    holdGraineRepairs();
+    // Signed BEFORE the hold: 26 endorsements are the heaviest work in this file, and a test cut off
+    // by a timeout should not be cut off holding the drain open.
     const salons = ['chan-1', 'chan-2', 'chan-3'];
-    for (let i = 0; i < 26; i++) {
-      const channelId = salons[i % 3];
-      await handleDistributionFrame(frame(await v2SeedFor(channelId, `sess-${i}`, 0)));
-    }
+    const seeds = await Promise.all(
+      Array.from({ length: 26 }, (_, i) => v2SeedFor(salons[i % 3], `sess-${i}`, 0))
+    );
+    holdGraineRepairs();
+    for (const seed of seeds) await handleDistributionFrame(frame(seed));
     // Twenty-six seeds stored, nothing re-read yet: the drain still has frames to read.
     expect(repaired).toEqual([]);
 
@@ -684,6 +802,8 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     // it. Left unregistered it would fail closed, and every one of them would measure the boundary
     // instead of the thing it is named after.
     registerCommunityHistoryVisibility('ws-1', 'shared');
+    // A public salon, listed: its seeds ride the community's group (see 'the salon scope of an answer').
+    registerChannelWorkspace('chan-1', 'ws-1', false);
     graineHistoryFloor.mockReset();
   });
 
@@ -1069,6 +1189,12 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
 });
 
 describe('a history request from a joiner (WP-34)', () => {
+  beforeEach(() => {
+    // Two public salons, listed: their seeds ride the community's group.
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+    registerChannelWorkspace('chan-2', 'ws-1', false);
+  });
+
   function historyFrame() {
     return {
       scope: workspaceScope('ws-1'),
@@ -1142,6 +1268,45 @@ describe('a history request from a joiner (WP-34)', () => {
     expect(bundle?.holdsNothing).toBeFalsy();
   });
 
+  it('pages a history larger than the byte bound, every page to the device that asked', async () => {
+    // A v2 seed is ~330 bytes, so the 8 000-seed cap was ~2.6 MB in ONE message - over the pending
+    // page an offline device catches up in (dm-vs-community-encryption, "the history bundle").
+    const many: StoredGraineSession[] = Array.from({ length: 3000 }, (_, i) => ({
+      workspaceId: 'ws-1',
+      // Only the two salons the describe lists: an answer carries no seed of a salon it cannot place (#2262).
+      channelId: `chan-${(i % 2) + 1}`,
+      sessionId: `s-${String(i).padStart(24, '0')}`,
+      senderId: 'carol'.repeat(12),
+      seedB64: toBase64(SEED),
+      firstIndex: 0,
+      createdAt: i + 1,
+      v2: {
+        minterDeviceId: 'd'.repeat(83),
+        signingPublicKeyB64: toBase64(V2_WIRE.signingPublicKey),
+        endorsementB64: toBase64(V2_WIRE.endorsement),
+      },
+    }));
+    const sendMessage = wireWithSessions(many);
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(historyFrame());
+
+    expect(sendMessage.mock.calls.length).toBeGreaterThan(1);
+    const pages = sendMessage.mock.calls.map(([, payload]) => {
+      expect((payload as Uint8Array).length).toBeLessThanOrEqual(GRAINE_BUNDLE_PAGE_MAX_BYTES);
+      return decodeAppMessage(payload)?.graineBundle;
+    });
+    for (const [, , , delivery] of sendMessage.mock.calls) {
+      expect(delivery).toEqual(addressedKeyMaterial('newcomer:newcomer-web'));
+    }
+    expect(new Set(pages.map((p) => p?.requestId))).toEqual(new Set(['r-h']));
+    expect(pages.map((p) => p?.pageIndex)).toEqual(pages.map((_, i) => i));
+    expect(new Set(pages.flatMap((p) => (p?.seeds ?? []).map((s) => s.sessionId))).size).toBe(3000);
+    expect(info.mock.calls.flat().join(' ')).toContain(`in ${pages.length} page(s)`);
+    info.mockRestore();
+  });
+
   it('SAYS it holds nothing rather than falling silent, addressed to the device that asked (section 24)', async () => {
     const sendMessage = wireWithSessions([]);
     registerCommunityHistoryVisibility('ws-1', 'shared');
@@ -1173,39 +1338,288 @@ describe('a history request from a joiner (WP-34)', () => {
     await handleDistributionFrame(historyFrame());
 
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(warn.mock.calls.flat().join(' ')).toContain('none opens with this device');
+    expect(warn.mock.calls.flat().join(' ')).toContain("3 do not open with this device's key");
     info.mockRestore();
     warn.mockRestore();
   });
 
-  it('sends nothing when the community is set to joined, and says why - an empty hand included', async () => {
-    for (const held of [community, []]) {
-      const sendMessage = wireWithSessions(held);
-      registerCommunityHistoryVisibility('ws-1', 'joined');
+  describe("under 'joined', floored at the asking MEMBER's arrival (2026-10-22)", () => {
+    /** The server's floors, per salon - what `historyFloorsFor` reads for the asker. */
+    function floorsBySalon(bySalon: Record<string, Record<string, number>>) {
+      graineHistoryFloor.mockReset();
+      graineHistoryFloor.mockImplementation(async (channelId: string) => bySalon[channelId] ?? {});
+    }
+
+    beforeEach(() => registerCommunityHistoryVisibility('ws-1', 'joined'));
+
+    it("hands a member's NEW device everything since that member arrived", async () => {
+      // THE DEFECT. The bundle was refused whole under `joined`, whoever asked: a member's new phone
+      // saw nothing of the year it had been in the community. The floor is the member's
+      // (`channel_members.createdAt`), so the server returns the held floors for a long-standing
+      // member and the bundle carries them - raised where ours is higher, never lowered.
+      floorsBySalon({ 'chan-1': { 's-1': 0 }, 'chan-2': { 's-2': 2 } });
+      const sendMessage = wireWithSessions(community);
       const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
       await handleDistributionFrame(historyFrame());
 
-      // The rule is enforced HERE because here is the only place a seed leaves a device - the server
-      // holds no key and could not enforce it. An empty hand does not say "I hold nothing" either:
-      // the requester knows the rule (section 24).
-      expect(sendMessage).not.toHaveBeenCalled();
-      expect(info).toHaveBeenCalled();
+      expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
+      expect(graineHistoryFloor).toHaveBeenCalledWith('chan-2', 'newcomer', ['s-2']);
+      const [, payload, , delivery] = sendMessage.mock.calls[0];
+      const bundle = decodeAppMessage(payload)?.graineBundle;
+      expect(bundle?.seeds?.map((s) => [s.sessionId, Number(s.firstIndex)])).toEqual([
+        ['s-1', 0],
+        ['s-2', 5],
+      ]);
+      expect(bundle?.holdsNothing).toBeFalsy();
+      expect(delivery).toEqual(addressedKeyMaterial('newcomer:newcomer-web'));
       info.mockRestore();
-    }
+    });
+
+    it('hands a newcomer only the sessions spanning its arrival, raised to it', async () => {
+      floorsBySalon({ 'chan-1': { 's-1': 7 } });
+      const sendMessage = wireWithSessions(community);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds?.map((s) => [s.sessionId, Number(s.firstIndex)])).toEqual([['s-1', 7]]);
+      expect(info.mock.calls.flat().join(' ')).toContain('withholding 1 of 2 seed(s)');
+      info.mockRestore();
+    });
+
+    it('SAYS it has nothing for them when every row opened and every one predates the arrival', async () => {
+      // Silence here was the newcomer's ask repeated at every launch: answered "nothing", it is
+      // recorded per roster like any other "nothing" (section 24).
+      floorsBySalon({});
+      const sendMessage = wireWithSessions(community);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds ?? []).toHaveLength(0);
+      expect(bundle?.holdsNothing).toBe(true);
+      info.mockRestore();
+    });
+
+    it('stays silent, as under shared, when rows the key cannot open might hold the answer', async () => {
+      floorsBySalon({});
+      const sendMessage = wireWithSessions(community, 3);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      info.mockRestore();
+      warn.mockRestore();
+    });
+
+    it('hands over nothing, out loud, when the floors cannot be placed', async () => {
+      graineHistoryFloor.mockReset();
+      graineHistoryFloor.mockRejectedValue(new Error('offline'));
+      const sendMessage = wireWithSessions(community);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(warn.mock.calls.flat().join(' ')).toContain('cannot place their history boundary');
+      warn.mockRestore();
+    });
+
+    it('asks the server in slices, so a large community is not one URL the edge refuses', async () => {
+      const many: StoredGraineSession[] = Array.from({ length: 250 }, (_, i) => ({
+        ...community[0],
+        sessionId: `s-${i}`,
+      }));
+      graineHistoryFloor.mockReset();
+      graineHistoryFloor.mockImplementation(async (_c: string, _u: string, ids: string[]) =>
+        Object.fromEntries(ids.map((id) => [id, 0]))
+      );
+      const sendMessage = wireWithSessions(many);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      expect(graineHistoryFloor.mock.calls.map((call) => (call[2] as string[]).length)).toEqual([
+        100, 100, 50,
+      ]);
+      expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds).toHaveLength(250);
+      info.mockRestore();
+    });
+
+    it('keeps the NEWEST sessions under the cap, so a recent arrival is not handed an empty truncated answer', async () => {
+      // The store returns oldest first; only the newest session spans the asker's arrival. Capping
+      // the read as it came would drop exactly that one, at every ask.
+      const many: StoredGraineSession[] = Array.from(
+        { length: GRAINE_HISTORY_BUNDLE_MAX_SEEDS + 1 },
+        (_, i) => ({ ...community[0], sessionId: `s-${i}`, createdAt: i })
+      );
+      const newest = `s-${GRAINE_HISTORY_BUNDLE_MAX_SEEDS}`;
+      graineHistoryFloor.mockReset();
+      let inFlight = 0;
+      let peak = 0;
+      graineHistoryFloor.mockImplementation(async (_c: string, _u: string, ids: string[]) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await Promise.resolve();
+        inFlight--;
+        return ids.includes(newest) ? { [newest]: 3 } : {};
+      });
+      const sendMessage = wireWithSessions(many);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds?.map((s) => [s.sessionId, Number(s.firstIndex)])).toEqual([[newest, 3]]);
+      expect(bundle?.truncated).toBe(true);
+      // 80 floor queries, a few at a time rather than one after another.
+      expect(graineHistoryFloor).toHaveBeenCalledTimes(GRAINE_HISTORY_BUNDLE_MAX_SEEDS / 100);
+      expect(peak).toBe(HISTORY_FLOOR_QUERY_CONCURRENCY);
+      info.mockRestore();
+      debug.mockRestore();
+    });
+
+    it('never says "nothing for you" when the cap cut the list before the floors judged it', async () => {
+      // The floors judged only the first GRAINE_HISTORY_BUNDLE_MAX_SEEDS sessions: the ones past
+      // the cap may be the asker's, and a durable "nothing" would close them for the roster.
+      const many: StoredGraineSession[] = Array.from(
+        { length: GRAINE_HISTORY_BUNDLE_MAX_SEEDS + 1 },
+        (_, i) => ({ ...community[0], sessionId: `s-${i}` })
+      );
+      floorsBySalon({});
+      const sendMessage = wireWithSessions(many);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(info.mock.calls.flat().join(' ')).toContain('in scope - not "I hold nothing"');
+      info.mockRestore();
+    });
   });
 
-  it('refuses to hand the past over when this session never learned the rule', async () => {
+  it('PARKS the ask, never a floor, until this session learns the rule - then answers it', async () => {
+    // A floor drawn under a rule nobody stated is a loss, not a precaution: a `shared` community's
+    // newcomer handed the floored past records the ask answered and never asks again. The ask waits
+    // for the listing that states the rule, and is answered then - no restart on either side.
+    graineHistoryFloor.mockReset();
+    graineHistoryFloor.mockResolvedValue({ 's-1': 0, 's-2': 2 });
     const sendMessage = wireWithSessions(community);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     await handleDistributionFrame(historyFrame());
 
-    // Fail-closed and loudly: refusing costs a newcomer some history, guessing 'shared' costs a
-    // community the privacy it asked for. Those are not symmetrical.
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalled();
+    expect(parkedAskCount()).toBe(1);
+    expect(info.mock.calls.flat().join(' ')).toContain(
+      'until this session learns its history rule'
+    );
+
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(parkedAskCount()).toBe(0);
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds?.map((s) => s.sessionId)).toEqual(['s-1', 's-2']);
+    info.mockRestore();
+  });
+
+  it('keeps the asks waiting for a rule within the parked bound, the oldest dropped out loud', async () => {
+    wireWithSessions(community);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    for (let i = 0; i <= MAX_PARKED_ASKS; i++) {
+      await handleDistributionFrame({ ...historyFrame(), senderDeviceId: `newcomer-${i}` });
+    }
+
+    expect(parkedAskCount()).toBe(MAX_PARKED_ASKS);
+    expect(warn.mock.calls.flat().join(' ')).toContain(
+      'DROPPED the parked ask of newcomer:newcomer-0'
+    );
+    info.mockRestore();
     warn.mockRestore();
+  });
+
+  it('parks a SESSIONS ask too when the rule is unknown - the same chokepoint', async () => {
+    graineHistoryFloor.mockReset();
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async (id: string) => community.find((s) => s.sessionId === id) ?? null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => community,
+        countGraineSessionsForWorkspace: async () => community.length,
+      } as unknown as IStorage,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: graineMls({ sendMessage }),
+    });
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      ...historyFrame(),
+      plaintext: encodeAppMessage(
+        mkGraineRequest({
+          workspaceId: 'ws-1',
+          kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+          answererUserId: 'alice',
+          requestId: 'r-s',
+          sessionIds: ['s-1'],
+        })
+      ),
+    });
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(parkedAskCount()).toBe(1);
+    info.mockRestore();
+  });
+
+  describe("the salon's roster comes BEFORE the floor (2026-10-22)", () => {
+    const unlisted: StoredGraineSession = {
+      ...community[0],
+      channelId: 'chan-3',
+      sessionId: 's-3',
+    };
+
+    beforeEach(() => {
+      registerCommunityHistoryVisibility('ws-1', 'joined');
+      graineHistoryFloor.mockReset();
+      graineHistoryFloor.mockImplementation(async (channelId: string) =>
+        channelId === 'chan-3' ? Promise.reject(new Error('403: not a reader')) : {}
+      );
+    });
+
+    it('never asks a floor for a salon withheld for its roster', async () => {
+      wireWithSessions([...community, unlisted]);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      // A salon refused by the server would fail the whole answer; it never reaches the question.
+      expect(graineHistoryFloor.mock.calls.map((call) => call[0])).not.toContain('chan-3');
+      info.mockRestore();
+    });
+
+    it('does NOT say "nothing for you" when a row was withheld for its roster - silence instead', async () => {
+      // Every in-scope row floored away, and one salon not listed here YET: it may be the asker's,
+      // and a durable "nothing" would close that past for the roster.
+      const sendMessage = wireWithSessions([...community, unlisted]);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(historyFrame());
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(info.mock.calls.flat().join(' ')).toContain("withheld for their salon's roster");
+      info.mockRestore();
+    });
   });
 });
 
@@ -1213,6 +1627,8 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
   beforeEach(() => {
     noteHistoryHeldNothingSpy.mockClear();
     noteSeedUnavailableSpy.mockClear();
+    // About the claim, not the boundary: a community that shares its past re-floors nothing.
+    registerCommunityHistoryVisibility('ws-1', 'shared');
   });
 
   function holdsNothingFrame(seeds: canari.GraineMsg.$Properties[] = []) {
@@ -1320,6 +1736,9 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
 });
 
 describe('a bundle answering our own request (WP-33)', () => {
+  // About what is stored, not the boundary: under `joined` the receiver re-floors (tested below).
+  beforeEach(() => registerCommunityHistoryVisibility('ws-1', 'shared'));
+
   it('stores every seed and tells the UI which salons became readable', async () => {
     const { storage, saved } = fakeStorage();
     wire(storage);
@@ -1343,6 +1762,173 @@ describe('a bundle answering our own request (WP-33)', () => {
     expect(saved.map((s) => s.sessionId)).toEqual(['s-a', 's-b']);
     // Without this the rows stay dropped until the user happens to leave and re-enter the salon.
     expect(repaired).toEqual([['chan-1', 'chan-2']]);
+  });
+
+  describe('a paged answer (one request, several bundles)', () => {
+    function pageFrame(
+      seeds: canari.GraineMsg.$Properties[],
+      pageIndex: number,
+      pageCount: number,
+      extra: Partial<canari.GraineBundleMsg.$Properties> = {}
+    ) {
+      return {
+        scope: workspaceScope('ws-1'),
+        workspaceId: 'ws-1',
+        groupId: 'g-1',
+        sender: 'bob',
+        senderDeviceId: 'bob-phone',
+        plaintext: encodeAppMessage(
+          mkGraineBundle({
+            workspaceId: 'ws-1',
+            requestId: 'r-p',
+            seeds,
+            pageIndex,
+            pageCount,
+            ...extra,
+          })
+        ),
+      };
+    }
+
+    it('stores every seed whatever order the pages arrive in, and names each page in its line', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      const repaired: string[][] = [];
+      setGraineRepairListener((ids) => repaired.push(ids));
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      const pages = [
+        [await v2SeedFor('chan-1', 's-a', 0), await v2SeedFor('chan-1', 's-b', 0)],
+        [await v2SeedFor('chan-2', 's-c', 0)],
+        [await v2SeedFor('chan-3', 's-d', 0)],
+      ];
+
+      for (const index of [2, 0, 1])
+        await handleDistributionFrame(pageFrame(pages[index], index, 3));
+
+      expect(saved.map((s) => s.sessionId).sort()).toEqual(['s-a', 's-b', 's-c', 's-d']);
+      expect(repaired).toEqual([['chan-3'], ['chan-1'], ['chan-2']]);
+      const said = debug.mock.calls.flat().join(' ');
+      // A gap in this sequence is a lost page, visible in the log. It corrupts nothing: its sessions
+      // are asked for one at a time as their rows fail to open, and a history answer missing a page
+      // is asked for once more at the next start (`pagedHistoryAnswer`).
+      for (const n of [1, 2, 3]) expect(said).toContain(`page ${n}/3 of request r-p`);
+      debug.mockRestore();
+    });
+
+    it('records each absorbed page of OUR history ask, so a page that never came is known at the next start', async () => {
+      localStorage.clear();
+      const { storage } = fakeStorage();
+      wire(storage);
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      noteHistoryAsked('alice', 'ws-1', 'r-p', false);
+
+      await handleDistributionFrame(pageFrame([await v2SeedFor('chan-1', 's-a', 0)], 0, 3));
+      await handleDistributionFrame(pageFrame([await v2SeedFor('chan-2', 's-b', 0)], 2, 3));
+
+      expect(incompleteHistoryPages('alice', 'ws-1')).toEqual([1]);
+      debug.mockRestore();
+      localStorage.clear();
+    });
+
+    it('absorbs a page numbered past its count, says so ONCE, and never counts it toward our history ask', async () => {
+      localStorage.clear();
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      noteHistoryAsked('alice', 'ws-1', 'r-p', false);
+
+      await handleDistributionFrame(pageFrame([await v2SeedFor('chan-1', 's-a', 0)], 0, 3));
+      await handleDistributionFrame(pageFrame([await v2SeedFor('chan-2', 's-b', 0)], 5, 3));
+      await handleDistributionFrame(
+        pageFrame([await v2SeedFor('chan-3', 's-c', 0)], 0, 0xffffffff)
+      );
+
+      expect(saved.map((s) => s.sessionId).sort()).toEqual(['s-a', 's-b', 's-c']);
+      expect(incompleteHistoryPages('alice', 'ws-1')).toEqual([1, 2]);
+      const numbering = warn.mock.calls
+        .flat()
+        .filter((l) => String(l).includes('no answerer writes'));
+      expect(numbering).toHaveLength(2);
+      debug.mockRestore();
+      warn.mockRestore();
+      localStorage.clear();
+    });
+
+    it('treats a duplicated page as what it is - nothing new stored, no salon re-read', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      const repaired: string[][] = [];
+      setGraineRepairListener((ids) => repaired.push(ids));
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      const page = pageFrame([await v2SeedFor('chan-1', 's-a', 0)], 0, 2);
+
+      await handleDistributionFrame(page);
+      await handleDistributionFrame(page);
+
+      expect(saved.map((s) => s.sessionId)).toEqual(['s-a']);
+      expect(repaired).toEqual([['chan-1']]);
+      expect(debug.mock.calls.flat().join(' ')).toContain('absorbed 0/1 seed(s) (1 already held');
+      debug.mockRestore();
+    });
+
+    /**
+     * WHAT A READER BEFORE PAGES DOES WITH ONE. It decodes with a schema that has no field 7 or 8,
+     * so a page reads as an ordinary bundle carrying its own seeds - the shape every reader since
+     * 1.0.3 absorbs seed by seed (`absorbSeedBundle`). As in the section 24 row below, this runs no
+     * old code: it proves the new bytes decode to that bundle, seeds and request id intact.
+     */
+    it('reads, to a schema without page numbers, as an ordinary bundle with its seeds', async () => {
+      const oldSchema = protobuf.Root.fromJSON({
+        nested: {
+          GraineMsg: { fields: { sessionId: { type: 'string', id: 2 } } },
+          GraineBundleMsg: {
+            fields: {
+              workspaceId: { type: 'string', id: 1 },
+              requestId: { type: 'string', id: 2 },
+              seeds: { rule: 'repeated', type: 'GraineMsg', id: 3 },
+              truncated: { type: 'bool', id: 4 },
+              missingSessionIds: { rule: 'repeated', type: 'string', id: 5 },
+              holdsNothing: { type: 'bool', id: 6 },
+            },
+          },
+          AppMessage: {
+            oneofs: { kind: { oneof: ['graineBundle'] } },
+            fields: { graineBundle: { type: 'GraineBundleMsg', id: 12 } },
+          },
+        },
+      });
+      const AppMessageV0 = oldSchema.lookupType('AppMessage');
+      const page = pageFrame(
+        [await v2SeedFor('chan-1', 's-a', 0), await v2SeedFor('chan-1', 's-b', 0)],
+        1,
+        3,
+        { truncated: true }
+      );
+      const old = AppMessageV0.toObject(AppMessageV0.decode(page.plaintext), {
+        defaults: true,
+      }) as {
+        graineBundle: { requestId: string; truncated: boolean; seeds: { sessionId: string }[] };
+      };
+
+      expect(old.graineBundle.requestId).toBe('r-p');
+      expect(old.graineBundle.seeds.map((s) => s.sessionId)).toEqual(['s-a', 's-b']);
+      expect(old.graineBundle.truncated).toBe(true);
+      expect('pageIndex' in old.graineBundle).toBe(false);
+      expect('pageCount' in old.graineBundle).toBe(false);
+    });
+
+    it('absorbs a page whose numbering is impossible, and says so - the numbers decide nothing', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(pageFrame([await v2SeedFor('chan-1', 's-a', 0)], 4, 2));
+
+      expect(saved.map((s) => s.sessionId)).toEqual(['s-a']);
+      expect(warn.mock.calls.flat().join(' ')).toContain('page index 4 outside its 2 page(s)');
+      warn.mockRestore();
+    });
   });
 
   it('says out loud what it absorbed, because a repair that worked left no trace at all', async () => {
@@ -1668,6 +2254,8 @@ describe('a seed this device already holds', () => {
   }
 
   afterEach(() => setGraineRepairListener(null));
+  // About what a held copy changes, not the boundary - the `joined` receiver is its own block below.
+  beforeEach(() => registerCommunityHistoryVisibility('ws-1', 'shared'));
 
   it('re-reads no salon when a bundle carries only seeds already held', async () => {
     const { storage, saved } = fakeStorage([held(0)]);
@@ -1719,5 +2307,1351 @@ describe('a seed this device already holds', () => {
 
     expect(saved[0].firstIndex).toBe(0);
     expect(repaired).toEqual([['chan-1']]);
+  });
+});
+
+describe('the past goes only to an admission this device can verify (section 25)', () => {
+  /** dave joined after the proof existed, with no voucher, and his device is in the tree. */
+  const DAVE_DEVICE_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 200 - i);
+  let DAVE_DEVICE_PK: Uint8Array;
+  beforeAll(async () => {
+    DAVE_DEVICE_PK = await ed25519PublicKeyOf(DAVE_DEVICE_SECRET);
+  });
+  beforeEach(() => {
+    tree.set('dave:dev-d', DAVE_DEVICE_PK);
+    leaves.push('dave:dev-d');
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    // A public salon this device listed (#2262): what is withheld here is the admission alone.
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+    graineHistoryFloor.mockReset();
+    // The newcomer arrived after every held session: under `joined` - the community's or the gate's -
+    // the server's floor leaves them nothing of it (#2264: answered floored, never refused whole).
+    graineHistoryFloor.mockResolvedValue({});
+  });
+
+  /**
+   * No PAST was handed to the newcomer, and it was SAID: exactly one answer, carrying no seed and
+   * "nothing here for you". Under #2264 a history ask the gate decides `joined` (not proven) is
+   * floored rather than refused whole, and the server's floor here leaves nothing - so a seed, a
+   * second answer, or a silence are all regressions this fails on.
+   */
+  function expectNothingForYou(sendMessage: ReturnType<typeof vi.fn>) {
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds ?? []).toHaveLength(0);
+    expect(bundle?.holdsNothing).toBe(true);
+  }
+
+  const community: StoredGraineSession[] = [
+    {
+      workspaceId: 'ws-1',
+      channelId: 'chan-1',
+      sessionId: 's-1',
+      senderId: 'alice',
+      seedB64: toBase64(SEED),
+      firstIndex: 0,
+      createdAt: 1,
+    },
+  ];
+
+  function wireAnswerer() {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async (id: string) => community.find((c) => c.sessionId === id) ?? null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => community,
+        countGraineSessionsForWorkspace: async () => community.length,
+      } as unknown as IStorage,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: graineMls({ sendMessage }),
+    });
+    return sendMessage;
+  }
+
+  function ask(kind: 'history' | 'sessions') {
+    return {
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'newcomer',
+      senderDeviceId: 'newcomer-web',
+      plaintext: encodeAppMessage(
+        mkGraineRequest({
+          workspaceId: 'ws-1',
+          kind:
+            kind === 'history'
+              ? canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY
+              : canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+          sessionIds: kind === 'sessions' ? ['s-1'] : [],
+          answererUserId: 'alice',
+          requestId: 'r-a',
+        })
+      ),
+    };
+  }
+
+  /** A direct voucher: `signer` admitted `subject`, signed with `secret`. */
+  async function directVoucher(
+    subject: string,
+    signer: { userId: string; deviceId: string },
+    secret: Uint8Array,
+    workspaceId = 'ws-1'
+  ) {
+    const statement = {
+      workspaceId,
+      subjectUserId: subject,
+      signer,
+      place: { keyGroupId: 'g-1', epoch: 5 },
+      issuedAt: 1_800_000_000_000,
+    };
+    return encodeAdmissionVoucher({
+      kind: 'direct',
+      ...statement,
+      signature: await webCryptoEngine.signWithSessionKey(secret, encodeDirectAdmission(statement)),
+    });
+  }
+
+  /** The roster with `newcomer` arrived after the proof existed, carrying `voucher`. */
+  function newcomerArrives(voucher: string | null) {
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('dave', AFTER_THE_PROOF),
+      member('newcomer', AFTER_THE_PROOF, { admissionVoucher: voucher }),
+    ]);
+  }
+
+  const carolDevice = { userId: 'carol', deviceId: 'dev-c' };
+
+  it('hands no past to a newcomer whose admission carries no proof, and says why', async () => {
+    newcomerArrives(null);
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    // The community SHARES its past - and this member's admission is the server's word alone. So the
+    // answer is the one a `joined` community gives (#2264): floored at the newcomer's arrival, which
+    // leaves nothing of what this device holds - said as "nothing here for you", never as silence.
+    expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
+    expectNothingForYou(sendMessage);
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.holdsNothing).toBe(true);
+    expect(info.mock.calls.flat().join(' ')).toContain('admission is not proven');
+    info.mockRestore();
+  });
+
+  it('hands an unproven newcomer, asking for HISTORY, what spans their arrival - floored, never refused whole', async () => {
+    // #2264 x #2273: the gate says `joined` for an unproven admission, and the history path floors
+    // at the MEMBER's arrival exactly as a repair does.
+    newcomerArrives(null);
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds?.map((x) => [x.sessionId, Number(x.firstIndex)])).toEqual([['s-1', 4]]);
+    expect(info.mock.calls.flat().join(' ')).toContain("floored at that member's arrival");
+    info.mockRestore();
+  });
+
+  it('asks the server no floor for a PROVEN newcomer - the whole past, unfloored', async () => {
+    newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+    const sendMessage = wireAnswerer();
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    const seeds = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds;
+    expect(seeds?.map((x) => Number(x.firstIndex))).toEqual([0]);
+  });
+
+  it("floors a PROVEN newcomer all the same when the community is set to 'joined'", async () => {
+    // The rule outranks the proof: a proven admission lifts the `shared` default's gate, never a
+    // closed past.
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
+    const seeds = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds;
+    expect(seeds?.map((x) => Number(x.firstIndex))).toEqual([4]);
+    info.mockRestore();
+  });
+
+  it('PARKS before the gate when this session has not learned the rule, and gates once it has', async () => {
+    // Unknown rule comes BEFORE the gate: a floor drawn under a guessed `joined` would be a past
+    // lost for good, and the admission check would be work for an answer not sent yet. Once the
+    // listing states `shared`, the ask is decided by the gate like any other: unproven -> floored.
+    forgetWorkspaceGraineState('ws-1', [], []);
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+    newcomerArrives(null);
+    const sendMessage = wireAnswerer();
+    listWorkspaceMembers.mockClear();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(listWorkspaceMembers).not.toHaveBeenCalled();
+    expect(parkedAskCount()).toBe(1);
+    expect(info.mock.calls.flat().join(' ')).toContain('has not learned its history rule');
+
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(listWorkspaceMembers).toHaveBeenCalled();
+    expectNothingForYou(sendMessage);
+    info.mockRestore();
+  });
+
+  it('RE-ADMISSION: a newcomer told "nothing for you" gets the past by the repair path once proven', async () => {
+    // "Nothing for you" is recorded by the requester for its roster version (section 24), and a
+    // voucher written onto an existing row does not move that epoch: the HISTORY ask is not asked
+    // again. What recovers the past is the REPAIR path - each row the member renders names its
+    // session and asks for it, and that ask goes through the same gate, which now proves them.
+    newcomerArrives(null);
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await handleDistributionFrame(ask('history'));
+    expectNothingForYou(sendMessage);
+
+    // Re-admitted: a rooted member's voucher is written onto the newcomer's row.
+    newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+    const repaired = wireAnswerer();
+    graineHistoryFloor.mockClear();
+    await handleDistributionFrame(ask('sessions'));
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    const seeds = decodeAppMessage(repaired.mock.calls[0][1])?.graineBundle?.seeds;
+    expect(seeds?.map((x) => [x.sessionId, Number(x.firstIndex)])).toEqual([['s-1', 0]]);
+    info.mockRestore();
+  });
+
+  it('answers a SESSIONS repair the gate cannot check with SILENCE - no floored seed, nothing recorded', async () => {
+    // `unverifiable` on the repair path, for a session SPANNING the member's arrival. A floored
+    // seed would be lasting at the requester (the rows below its floor are asked of nobody), so a
+    // passing read failure would cost a member who may be proven part of that session for good.
+    // Nothing leaves - neither the seed nor a decline - and the requester asks again next start.
+    listWorkspaceMembers.mockRejectedValue(new Error('offline'));
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+    const sendMessage = wireAnswerer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('sessions'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(parkedAskCount()).toBe(0);
+    expect(warn.mock.calls.flat().join(' ')).toContain('cannot verify');
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
+  it('answers "I hold nothing" at once, ungated, when nothing it holds is in scope and no row exists', async () => {
+    newcomerArrives(null);
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async () => null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => [],
+        countGraineSessionsForWorkspace: async () => 0,
+      } as unknown as IStorage,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: graineMls({ sendMessage }),
+    });
+    listWorkspaceMembers.mockClear();
+
+    await handleDistributionFrame(ask('history'));
+
+    // Nothing to hand, nothing to gate: the roster is never read for it.
+    expect(listWorkspaceMembers).not.toHaveBeenCalled();
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.holdsNothing).toBe(true);
+  });
+
+  it('declines a SESSIONS ask for seeds it does not hold at once, even with the rule unknown', async () => {
+    // `missing` depends neither on the rule nor on the asker, and it sends the requester to the
+    // next member: withholding it behind an unknown rule would strand the session.
+    forgetWorkspaceGraineState('ws-1', [], []);
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+    newcomerArrives(null);
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async () => null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => [],
+        countGraineSessionsForWorkspace: async () => 0,
+      } as unknown as IStorage,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: graineMls({ sendMessage }),
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('sessions'));
+
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.missingSessionIds).toEqual(
+      ['s-1']
+    );
+    warn.mockRestore();
+  });
+
+  it('answers a HISTORY ask the gate cannot check with SILENCE - neither a floored seed nor "nothing"', async () => {
+    listWorkspaceMembers.mockRejectedValue(new Error('offline'));
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+    const sendMessage = wireAnswerer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
+  it('hands the past to a newcomer a rooted member admitted directly', async () => {
+    newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+    const sendMessage = wireAnswerer();
+
+    await handleDistributionFrame(ask('history'));
+
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds?.map((x) => x.sessionId)).toEqual(['s-1']);
+  });
+
+  it('hands the past to a newcomer who followed a link a rooted member stood behind', async () => {
+    const grant = await mintInviteLinkGrant(
+      'ws-1',
+      carolDevice,
+      { keyGroupId: 'g-1', epoch: 5 },
+      1_800_000_000_000,
+      // An expiry no run of this suite reaches - the expiry itself is admissionGate.test.ts's row.
+      4_000_000_000_000,
+      webCryptoEngine,
+      (m) => webCryptoEngine.signWithSessionKey(CAROL_DEVICE_SECRET, m)
+    );
+    newcomerArrives(
+      encodeAdmissionVoucher(await redeemInviteLinkGrant(grant, 'newcomer', webCryptoEngine))
+    );
+    const sendMessage = wireAnswerer();
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds).toHaveLength(1);
+  });
+
+  it('refuses a voucher signed by a member whose own admission is not proven', async () => {
+    // dave is in the tree with a real key and signs a real voucher: the chain still has no root.
+    newcomerArrives(
+      await directVoucher('newcomer', { userId: 'dave', deviceId: 'dev-d' }, DAVE_DEVICE_SECRET)
+    );
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expectNothingForYou(sendMessage);
+    info.mockRestore();
+  });
+
+  it('accepts a chain: a voucher signed by a member who was admitted by a rooted one', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('dave', AFTER_THE_PROOF, {
+        admissionVoucher: await directVoucher('dave', carolDevice, CAROL_DEVICE_SECRET),
+      }),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await directVoucher(
+          'newcomer',
+          { userId: 'dave', deviceId: 'dev-d' },
+          DAVE_DEVICE_SECRET
+        ),
+      }),
+    ]);
+    const sendMessage = wireAnswerer();
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a voucher that admits somebody else, copied onto the newcomer row', async () => {
+    newcomerArrives(await directVoucher('dave', carolDevice, CAROL_DEVICE_SECRET));
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expectNothingForYou(sendMessage);
+    info.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('refuses a voucher for another community, or one whose signature does not hold', async () => {
+    for (const voucher of [
+      await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET, 'ws-other'),
+      await directVoucher('newcomer', carolDevice, DAVE_DEVICE_SECRET),
+    ]) {
+      localStorage.clear();
+      newcomerArrives(voucher);
+      const sendMessage = wireAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+
+      expectNothingForYou(sendMessage);
+      expect(warn.mock.calls.flat().join(' ')).toContain('REFUSED admission voucher');
+      info.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it('answers an unproven repair as joined: the seed floored at the newcomer arrival', async () => {
+    newcomerArrives(null);
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('sessions'));
+
+    // They still read everything from their arrival on: the server places that floor.
+    expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
+    const seeds = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds;
+    expect(Number(seeds?.[0].firstIndex)).toBe(4);
+    info.mockRestore();
+  });
+
+  it('keeps the roots it recorded first: a later backdated arrival does not make a member rooted', async () => {
+    newcomerArrives(null);
+    wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await handleDistributionFrame(ask('history'));
+
+    // The server now claims the newcomer arrived before the proof existed.
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', BEFORE_THE_PROOF),
+    ]);
+    const sendMessage = wireAnswerer();
+    await handleDistributionFrame(ask('history'));
+
+    expectNothingForYou(sendMessage);
+    info.mockRestore();
+  });
+
+  it('roots the creator of the community, the one member nobody else admitted', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice', AFTER_THE_PROOF),
+      member('newcomer', AFTER_THE_PROOF, { isCreator: true }),
+    ]);
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    info.mockRestore();
+  });
+
+  /**
+   * THE ASK ARRIVES ON THE KEY GROUP, SO IT IS THAT GROUP'S CURRENT WORK: the gate run inside it never
+   * sees the group drained, and a voucher not observed before the ask would stay unobserved until a
+   * restart. The ask is parked instead and decided again by the drain that follows it.
+   */
+  describe('an ask that arrives before its voucher could be observed', () => {
+    let drained = false;
+    let drainWaiters: Array<() => void> = [];
+    beforeEach(() => {
+      drained = false;
+      drainWaiters = [];
+    });
+    afterEach(() => {
+      clearParkedAsks();
+      vi.restoreAllMocks();
+    });
+
+    /** The answerer, with its key group not drained until {@link drainNow}. */
+    function wireUndrainedAnswerer() {
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      setGraineRuntime({
+        storage: {
+          getGraineSession: async (id: string) => community.find((c) => c.sessionId === id) ?? null,
+          saveGraineSession: async () => undefined,
+          getGraineSessionsForWorkspace: async () => community,
+          countGraineSessionsForWorkspace: async () => community.length,
+        } as unknown as IStorage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({
+          sendMessage,
+          isGroupDrained: () => drained,
+          whenGroupDrained: () =>
+            drained ? Promise.resolve() : new Promise<void>((wake) => drainWaiters.push(wake)),
+        }),
+      });
+      return sendMessage;
+    }
+    function drainNow() {
+      drained = true;
+      const woken = drainWaiters;
+      drainWaiters = [];
+      for (const wake of woken) wake();
+    }
+
+    it('answers a newcomer who asked at once, after the drain, with no restart', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      // Inside the ask's own frame: nothing observed, nothing answered, nothing refused.
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(parkedAskCount()).toBe(1);
+
+      drainNow();
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds?.map((x) => x.sessionId)).toEqual(['s-1']);
+      expect(parkedAskCount()).toBe(0);
+      info.mockRestore();
+    });
+
+    it('keeps refusing after the drain a voucher whose signer was removed before the observation', async () => {
+      // carol was removed at epoch 4; this device observes at epoch 5.
+      departuresByGroup.set('g-1', new Map([['carol', [4]]]));
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      expect(parkedAskCount()).toBe(1);
+
+      drainNow();
+      // Decided after the drain as `joined`, and so floored at the newcomer's arrival (#2264): what
+      // this device holds predates it, so the answer is "nothing here for you", never a seed.
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      const said = info.mock.calls.flat().join(' ');
+      expect(said).toContain('deciding 1 parked ask(s) again');
+      expect(said).toContain(
+        'its signer carol was not admitted here when this device first saw it'
+      );
+      expectNothingForYou(sendMessage);
+      expect(parkedAskCount()).toBe(0);
+      info.mockRestore();
+    });
+
+    it('parks, then FLOORS at the member arrival, an unproven ask decided after the drain', async () => {
+      // unobserved -> parked -> drained -> `joined` -> the member's floor: the three compose.
+      departuresByGroup.set('g-1', new Map([['carol', [4]]]));
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      // Parked BEFORE any floor is asked: the gate decides first.
+      expect(graineHistoryFloor).not.toHaveBeenCalled();
+      expect(parkedAskCount()).toBe(1);
+
+      drainNow();
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
+      const seeds = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds;
+      expect(seeds?.map((x) => Number(x.firstIndex))).toEqual([4]);
+      info.mockRestore();
+    });
+
+    it('keeps one ask per asking device, and drops the oldest past the bound, out loud', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      await handleDistributionFrame(ask('history'));
+      expect(parkedAskCount()).toBe(1);
+
+      for (let i = 0; i < MAX_PARKED_ASKS; i += 1) {
+        await handleDistributionFrame({ ...ask('history'), senderDeviceId: `newcomer-${i}` });
+      }
+      expect(parkedAskCount()).toBe(MAX_PARKED_ASKS);
+      expect(warn.mock.calls.flat().join(' ')).toContain(
+        'DROPPED the parked ask of newcomer:newcomer-web'
+      );
+      info.mockRestore();
+      warn.mockRestore();
+    });
+
+    it('parks a HISTORY ask and a SESSIONS repair of one device side by side, and answers both', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      await handleDistributionFrame(ask('sessions'));
+      expect(parkedAskCount()).toBe(2);
+
+      drainNow();
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+      info.mockRestore();
+    });
+
+    it('answers at once a repair naming only sessions it does not hold - "missing" needs no gate', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const repair = ask('sessions');
+      repair.plaintext = encodeAppMessage(
+        mkGraineRequest({
+          workspaceId: 'ws-1',
+          kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+          sessionIds: ['s-unknown'],
+          answererUserId: 'alice',
+          requestId: 'r-b',
+        })
+      );
+
+      await handleDistributionFrame(repair);
+
+      expect(parkedAskCount()).toBe(0);
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.missingSessionIds).toEqual(['s-unknown']);
+      warn.mockRestore();
+    });
+
+    it('forgets every parked ask at sign-out: the drain that follows answers nothing', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      await handleDistributionFrame(ask('history'));
+      expect(parkedAskCount()).toBe(1);
+
+      clearParkedAsks();
+      setGraineRuntime(null);
+      expect(parkedAskCount()).toBe(0);
+
+      drainNow();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(sendMessage).not.toHaveBeenCalled();
+      info.mockRestore();
+    });
+
+    /**
+     * THE JUNCTION, with no hand-fired drain: the ask is applied by the REAL scheduler of a real
+     * service, parks inside its own frame, and the scheduler finishing that frame is what answers it.
+     */
+    it('answers through the real scheduler: the ask parks in its frame, the frame ending answers it', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      abstract class Harness extends BaseMlsService {}
+      const svc = new (Harness as unknown as new (platform: 'web' | 'tauri') => BaseMlsService)(
+        'web'
+      );
+      // The last pull emptied the mailbox and the socket is open: only the scheduler decides.
+      Object.assign(svc, { mailboxEmptiedByAPull: true, isWsOpen: () => true });
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      setGraineRuntime({
+        storage: {
+          getGraineSession: async (id: string) => community.find((c) => c.sessionId === id) ?? null,
+          saveGraineSession: async () => undefined,
+          getGraineSessionsForWorkspace: async () => community,
+          countGraineSessionsForWorkspace: async () => community.length,
+        } as unknown as IStorage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({
+          sendMessage,
+          isGroupDrained: (g: string) => svc.isGroupDrained(g),
+          whenGroupDrained: (g: string) => svc.whenGroupDrained(g),
+        }),
+      });
+      const scheduler = (svc as unknown as { messageScheduler: MlsPerGroupScheduler })
+        .messageScheduler;
+      scheduler.enqueue({
+        senderId: 'newcomer',
+        ciphertext: new Uint8Array(1),
+        groupId: 'g-1',
+        isWelcome: false,
+        isCommit: false,
+      });
+
+      await scheduler.drain(async () => {
+        await handleDistributionFrame(ask('history'));
+        // Inside the frame: parked, unanswered.
+        expect(parkedAskCount()).toBe(1);
+        expect(sendMessage).not.toHaveBeenCalled();
+      });
+
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+      expect(bundle?.seeds?.map((x) => x.sessionId)).toEqual(['s-1']);
+      expect(parkedAskCount()).toBe(0);
+    });
+  });
+
+  it('hands nothing over, out loud, when the roster cannot be read', async () => {
+    listWorkspaceMembers.mockRejectedValue(new Error('offline'));
+    const sendMessage = wireAnswerer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(' ')).toContain('cannot verify');
+    warn.mockRestore();
+    info.mockRestore();
+  });
+});
+
+/**
+ * AN ANSWER CARRIES ONLY THE SEEDS OF THE SALONS ITS KEY GROUP MAY READ.
+ *
+ * Every seed is stored under its COMMUNITY, whichever key group it arrived on, so the store does not
+ * say on its own which roster a seed was sealed to. A private salon has its own key group so that a
+ * member outside it is never sent its seed - and an answer gathered from the community store and
+ * sent on the COMMUNITY's group would hand that seed to whoever asked there. The scope the frame
+ * arrived on is the roster the answer goes back to, so it filters the answer, on both answer paths;
+ * and the receiver refuses a seed whose salon belongs to another roster than the group it arrived on.
+ */
+describe('the salon scope of an answer', () => {
+  const PUBLIC = 'chan-pub';
+  const PRIVATE = 'chan-priv';
+
+  const sessionIn = (channelId: string, sessionId: string): StoredGraineSession => ({
+    workspaceId: 'ws-1',
+    channelId,
+    sessionId,
+    senderId: 'carol',
+    seedB64: toBase64(SEED),
+    firstIndex: 0,
+    createdAt: 1,
+  });
+  const held = [sessionIn(PUBLIC, 's-pub'), sessionIn(PRIVATE, 's-priv')];
+
+  beforeEach(() => {
+    // The asker is a member admitted before the proof (a root, section 25): what these rows test
+    // is the salon scope of the answer, never the admission. A community that shares its past: the
+    // `joined` receiver's own scope check is its own block below.
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    communityGroup = 'g-community';
+    leaves.push('mallory:mallory-web');
+    // The private salon's own key group: alice and mallory only.
+    salonLeaves = ['alice:alice-laptop', 'mallory:mallory-web'];
+    listWorkspaceMembers.mockResolvedValue(
+      ['alice', 'bob', 'carol', 'mallory'].map((id) => member(id))
+    );
+  });
+
+  it("judges admission on the COMMUNITY's key group, even when the first ask arrives on a salon's", async () => {
+    // The first ledger write on this device comes from a SESSIONS ask on the private salon's own
+    // group. The roots are the community's members, never that salon's: bob, in the community and
+    // not in the salon, still gets the past when he asks on the community's group.
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await handleDistributionFrame(
+      askOn(channelScope('ws-1', PRIVATE), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['s-priv'],
+      })
+    );
+    sendMessage.mockClear();
+
+    await handleDistributionFrame({
+      ...askOn(workspaceScope('ws-1'), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
+      }),
+      sender: 'bob',
+      senderDeviceId: 'dev-b',
+    });
+
+    expect(answered(sendMessage)).toEqual(['s-pub']);
+    info.mockRestore();
+  });
+
+  it("a removal from a salon's own key group is no removal from the community", async () => {
+    // mallory once left the salon's own group (epoch 3) and is back in it; the community never
+    // removed her. Her ask on the salon's group is judged by the community's removals.
+    departuresByGroup.set('g-private', new Map([['mallory', [3]]]));
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(channelScope('ws-1', PRIVATE), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
+      })
+    );
+
+    expect(answered(sendMessage)).toEqual(['s-priv']);
+    expect(info.mock.calls.flat().join(' ')).not.toContain('not proven');
+    info.mockRestore();
+  });
+
+  /** alice holds a seed of each salon; `listed` is what her community listing registered. */
+  function wireAnswerer(listed: { channelId: string; isPrivate: boolean }[]) {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const rows = new Map(held.map((s) => [s.sessionId, s]));
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async (id: string) => rows.get(id) ?? null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => held,
+        countGraineSessionsForWorkspace: async () => held.length,
+      } as unknown as IStorage,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: graineMls({ sendMessage }),
+    });
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    for (const { channelId, isPrivate } of listed)
+      registerChannelWorkspace(channelId, 'ws-1', isPrivate);
+    return sendMessage;
+  }
+  const BOTH_LISTED = [
+    { channelId: PUBLIC, isPrivate: false },
+    { channelId: PRIVATE, isPrivate: true },
+  ];
+
+  function askOn(
+    scope: DistributionScope,
+    request: Partial<Parameters<typeof mkGraineRequest>[0]>
+  ) {
+    return {
+      scope,
+      workspaceId: 'ws-1',
+      groupId: scope.kind === 'workspace' ? 'g-community' : 'g-private',
+      sender: 'mallory',
+      senderDeviceId: 'mallory-web',
+      plaintext: encodeAppMessage(
+        mkGraineRequest({
+          workspaceId: 'ws-1',
+          answererUserId: 'alice',
+          requestId: 'r-s',
+          ...request,
+        })
+      ),
+    };
+  }
+
+  const bundleSent = (sendMessage: ReturnType<typeof vi.fn>) =>
+    decodeAppMessage(sendMessage.mock.calls[0]?.[1])?.graineBundle;
+  const answered = (sendMessage: ReturnType<typeof vi.fn>) =>
+    (bundleSent(sendMessage)?.seeds ?? []).map((s) => String(s.sessionId));
+
+  it("a HISTORY answer on the community's group carries no seed of a private salon", async () => {
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(workspaceScope('ws-1'), { kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY })
+    );
+
+    expect(answered(sendMessage)).toEqual(['s-pub']);
+    expect(info.mock.calls.flat().join(' ')).toContain('withholding 1 seed(s)');
+    info.mockRestore();
+  });
+
+  it("a SESSIONS answer on the community's group withholds a private salon's session, without calling it missing", async () => {
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(workspaceScope('ws-1'), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['s-pub', 's-priv'],
+      })
+    );
+
+    expect(answered(sendMessage)).toEqual(['s-pub']);
+    // "Missing" means "ask somebody else", and every honest member applies the same filter.
+    expect(bundleSent(sendMessage)?.missingSessionIds ?? []).toEqual([]);
+    info.mockRestore();
+  });
+
+  it("an answer on a private salon's own group carries that salon's seeds and no other", async () => {
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(channelScope('ws-1', PRIVATE), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['s-pub', 's-priv'],
+      })
+    );
+
+    expect(answered(sendMessage)).toEqual(['s-priv']);
+    info.mockRestore();
+  });
+
+  it('withholds a seed whose salon this device has not listed - its roster is not known', async () => {
+    const sendMessage = wireAnswerer([{ channelId: PUBLIC, isPrivate: false }]);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(workspaceScope('ws-1'), { kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY })
+    );
+
+    expect(answered(sendMessage)).toEqual(['s-pub']);
+    expect(info.mock.calls.flat().join(' ')).toContain('1 not listed on this device');
+    info.mockRestore();
+  });
+
+  it('stays silent when every seed it holds belongs to another roster - never "I hold nothing"', async () => {
+    const sendMessage = wireAnswerer([{ channelId: PRIVATE, isPrivate: true }]);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(workspaceScope('ws-1'), { kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY })
+    );
+
+    // The public seed is unlisted and the private one is another roster's: nothing may travel, and
+    // "I hold nothing" would be false - this device holds rows of the community.
+    expect(sendMessage).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  /** A bundle on the community's group, carrying the seeds named. */
+  async function oldAnswerersBundle(sessions: [string, string][]) {
+    return {
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-community',
+      sender: 'bob',
+      senderDeviceId: 'bob-web',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({
+          workspaceId: 'ws-1',
+          requestId: 'r-1',
+          seeds: await Promise.all(sessions.map(([c, s]) => v2SeedFor(c, s, 0))),
+        })
+      ),
+    };
+  }
+
+  it("an ADMIN's device, whose listing names the private salon, refuses its seed on the community's group", async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    // The listing shows an administrator the private salons they have not joined.
+    registerChannelWorkspace(PUBLIC, 'ws-1', false);
+    registerChannelWorkspace(PRIVATE, 'ws-1', true);
+    markCommunityListed('ws-1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      await oldAnswerersBundle([
+        [PUBLIC, 's-pub'],
+        [PRIVATE, 's-priv'],
+      ])
+    );
+
+    expect(saved.map((s) => s.sessionId)).toEqual(['s-pub']);
+    // One warn per bundle, however many seeds it carries.
+    const said = warn.mock.calls.flat().join(' ');
+    expect(said).toContain('not storing 1 seed(s) relayed by bob');
+    expect(said).toContain('(s-priv)');
+    warn.mockRestore();
+  });
+
+  it("an ORDINARY non-member's device, whose listing never names the private salon, does not store its seed", async () => {
+    // What social-service lists to a member who is not in a private salon: the public salons only.
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    registerChannelWorkspace(PUBLIC, 'ws-1', false);
+    markCommunityListed('ws-1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      await oldAnswerersBundle([
+        [PUBLIC, 's-pub'],
+        [PRIVATE, 's-priv'],
+      ])
+    );
+
+    expect(saved.map((s) => s.sessionId)).toEqual(['s-pub']);
+    expect(warn.mock.calls.flat().join(' ')).toContain(
+      "1 waiting unstored for a salon the community's listing did not name"
+    );
+
+    // Nothing ever registers it as public, and an event naming it private drops it for good.
+    registerChannelWorkspace(PRIVATE, 'ws-1', true);
+    await Promise.resolve();
+    expect(saved.map((s) => s.sessionId)).toEqual(['s-pub']);
+    expect(info.mock.calls.flat().join(' ')).toContain('it is a private salon');
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
+  it("admits a seed that beat its salon's channel-created event, once the event registers it public", async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    registerChannelWorkspace(PUBLIC, 'ws-1', false);
+    markCommunityListed('ws-1');
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-community',
+      sender: 'bob',
+      plaintext: encodeAppMessage({ ...mkGraine(await v2SeedFor('chan-new', 's-new', 0)) }),
+    });
+    expect(saved).toHaveLength(0);
+
+    registerChannelWorkspace('chan-new', 'ws-1', false);
+    await vi.waitFor(() => expect(saved.map((s) => s.sessionId)).toEqual(['s-new']));
+    await vi.waitFor(() => expect(repaired).toEqual([['chan-new']]));
+    setGraineRepairListener(null);
+    info.mockRestore();
+  });
+
+  it('says a distributed seed of a salon now private is not stored, without accusing its sender', async () => {
+    // A salon made private keeps, in the community group's log, the seeds minted while it was public.
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    registerChannelWorkspace(PRIVATE, 'ws-1', true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-community',
+      sender: 'bob',
+      plaintext: encodeAppMessage({ ...mkGraine(await v2SeedFor(PRIVATE, 's-old', 0)) }),
+    });
+
+    expect(saved).toHaveLength(0);
+    expect(error).not.toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(' ')).toContain('before it became private');
+    warn.mockRestore();
+    error.mockRestore();
+  });
+
+  it('keeps a seed whose salon is not listed yet on the community group - the answerer filtered it', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-community',
+      sender: 'bob',
+      plaintext: encodeAppMessage({ ...mkGraine(await v2SeedFor('chan-new', 's-new', 0)) }),
+    });
+
+    // BEFORE the community's listing has answered: a public salon's seeds arrive with the key group,
+    // ahead of the listing that names it; refusing them would leave the salon unreadable.
+    expect(saved.map((s) => s.sessionId)).toEqual(['s-new']);
+  });
+
+  it("refuses a seed of another salon arriving on a private salon's own group, listed or not", async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      scope: channelScope('ws-1', PRIVATE),
+      workspaceId: 'ws-1',
+      groupId: 'g-private',
+      sender: 'bob',
+      plaintext: encodeAppMessage({ ...mkGraine(await v2SeedFor('chan-elsewhere', 's-x', 0)) }),
+    });
+
+    expect(saved).toHaveLength(0);
+    expect(error.mock.calls.flat().join(' ')).toContain('REFUSED seed s-x');
+    error.mockRestore();
+  });
+});
+
+/**
+ * THE RECEIVER'S HALF OF `joined` (2026-10-22). A bundle is floored for the member who ASKED, and
+ * answerers before 1.2.6 addressed it to the whole key group (section 23). A floor drawn for
+ * somebody else is not this member's, so each bundle is re-floored at THIS member's arrival before
+ * anything is stored.
+ */
+describe('a bundle absorbed while the community is set to joined', () => {
+  beforeEach(() => {
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    // A listed public salon: under `joined` an unlisted one is set aside before any floor is asked.
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+    graineHistoryFloor.mockReset();
+  });
+
+  const heldAt = (firstIndex: number): StoredGraineSession => ({
+    workspaceId: 'ws-1',
+    channelId: 'chan-1',
+    sessionId: 'sess-1',
+    senderId: 'bob',
+    seedB64: toBase64(SEED),
+    firstIndex,
+    createdAt: 1_700_000_000_000,
+  });
+
+  const heldCopy = {
+    channelId: 'chan-1',
+    sessionId: 'sess-1',
+    seed: SEED,
+    firstIndex: 0,
+    createdAt: 1_700_000_000_000,
+  };
+
+  function bundleFrame(seeds: canari.GraineMsg.$Properties[]) {
+    return {
+      ...frame(),
+      sender: 'carol',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-of-an-earlier-newcomer', seeds })
+      ),
+    };
+  }
+
+  it('lowers a held floor no further than OUR arrival, whatever floor the bundle carries', async () => {
+    graineHistoryFloor.mockResolvedValue({ 'sess-1': 30 });
+    const { storage, saved } = fakeStorage([heldAt(40)]);
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([heldCopy]));
+
+    // The floor is OURS, asked of the server - never the bundle's, which was drawn for the asker.
+    expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'alice', ['sess-1']);
+    expect(saved.map((s) => s.firstIndex)).toEqual([30]);
+    expect(info.mock.calls.flat().join(' ')).toContain('1 below it');
+    info.mockRestore();
+  });
+
+  it('stores no seed whose every message predates our arrival', async () => {
+    graineHistoryFloor.mockResolvedValue({});
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-1', 's-a', 0)]));
+
+    expect(saved).toHaveLength(0);
+    expect(info.mock.calls.flat().join(' ')).toContain('1 seed(s) entirely before our arrival');
+    info.mockRestore();
+  });
+
+  it('keeps a seed the bundle already floored at or above our arrival, untouched', async () => {
+    graineHistoryFloor.mockResolvedValue({ 's-a': 2 });
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-1', 's-a', 5)]));
+
+    expect(saved.map((s) => [s.sessionId, s.firstIndex])).toEqual([['s-a', 5]]);
+  });
+
+  it('absorbs nothing, out loud, when our own boundary cannot be placed', async () => {
+    graineHistoryFloor.mockRejectedValue(new Error('offline'));
+    const { storage, saved } = fakeStorage([heldAt(40)]);
+    wire(storage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([heldCopy]));
+
+    expect(saved).toHaveLength(0);
+    expect(warn.mock.calls.flat().join(' ')).toContain('NOT absorbing 1 seed(s)');
+    warn.mockRestore();
+  });
+
+  it('asks the server nothing when the community shares its past', async () => {
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    const { storage, saved } = fakeStorage([heldAt(40)]);
+    wire(storage);
+
+    await handleDistributionFrame(bundleFrame([heldCopy]));
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(saved.map((s) => s.firstIndex)).toEqual([0]);
+  });
+
+  it("refuses a private salon's seed BEFORE asking any floor, so the public seeds still land", async () => {
+    // The server refuses a floor for a salon we do not read; asked first, that refusal failed the
+    // whole bundle and the public seeds with it.
+    registerChannelWorkspace('chan-priv', 'ws-1', true);
+    graineHistoryFloor.mockImplementation(async (channelId: string, _u: string, ids: string[]) =>
+      channelId === 'chan-1'
+        ? Object.fromEntries(ids.map((id) => [id, 0]))
+        : Promise.reject(new Error('403: not a reader'))
+    );
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      bundleFrame([
+        await v2SeedFor('chan-1', 's-pub', 0),
+        await v2SeedFor('chan-priv', 's-priv', 0),
+      ])
+    );
+
+    expect(graineHistoryFloor.mock.calls.map((call) => call[0])).toEqual(['chan-1']);
+    expect(saved.map((s) => s.sessionId)).toEqual(['s-pub']);
+    expect(warn.mock.calls.flat().join(' ')).toContain(
+      'not storing 1 seed(s) relayed by carol on community ws-1: 1 REFUSED, their salon rides another key group (s-priv)'
+    );
+    warn.mockRestore();
+  });
+
+  it('sets aside a seed of a salon not listed here, rather than ask its floor', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-unlisted', 's-u', 0)]));
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(saved).toHaveLength(0);
+    expect(info.mock.calls.flat().join(' ')).toContain('setting aside 1 seed(s)');
+    info.mockRestore();
+  });
+
+  it('sets aside, rather than holds for its registration, a seed of a salon the ANSWERED listing did not name', async () => {
+    // Under `shared` such a seed waits for the salon's registration (#2262, `awaitSalonListing`) and
+    // is then stored as it came - unfloored. Under `joined` that would be a past this member may not
+    // read, so it is set aside; the repair path asks for it, floored at the answerer, once rendered.
+    markCommunityListed('ws-1');
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-new', 's-n', 0)]));
+    registerChannelWorkspace('chan-new', 'ws-1', false);
+    await Promise.resolve();
+
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(saved).toHaveLength(0);
+    expect(info.mock.calls.flat().join(' ')).toContain('setting aside 1 seed(s)');
+    info.mockRestore();
+  });
+});
+
+/**
+ * A BUNDLE THAT ARRIVES BEFORE THE COMMUNITY'S RULE WAITS FOR IT (2026-10-22). Kept whole it could
+ * be a past the community closed; floored it could be a past lost for good - a floored seed of a
+ * `shared` community classes the rows below it as "before this device", and nothing asks for them.
+ */
+describe('a bundle arriving before its history rule is known', () => {
+  beforeEach(() => {
+    graineHistoryFloor.mockReset();
+    noteHistoryAnsweredSpy.mockClear();
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+  });
+
+  function bundleFrame(seeds: canari.GraineMsg.$Properties[]) {
+    return {
+      ...frame(),
+      sender: 'carol',
+      plaintext: encodeAppMessage(mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-1', seeds })),
+    };
+  }
+
+  it('stores nothing and asks no floor until the rule arrives - then absorbs it under that rule', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-1', 's-a', 0)]));
+
+    expect(saved).toHaveLength(0);
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    expect(info.mock.calls.flat().join(' ')).toContain('until its history rule is known');
+
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    await vi.waitFor(() =>
+      expect(saved.map((s) => [s.sessionId, s.firstIndex])).toEqual([['s-a', 0]])
+    );
+    // Under `shared`, the whole past: no floor was ever drawn.
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('drops what waited when the session ends, out loud', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleFrame([await v2SeedFor('chan-1', 's-a', 0)]));
+    setGraineRuntime(null);
+
+    expect(info.mock.calls.flat().join(' ')).toContain('dropping 1 step(s)');
+    expect(saved).toHaveLength(0);
+    info.mockRestore();
+  });
+});
+
+/** A widened history ask is settled by a seed STORED, never by one merely carried (2026-10-22). */
+describe('what settles a widened history ask', () => {
+  beforeEach(() => {
+    noteHistoryAnsweredSpy.mockClear();
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+  });
+
+  const bundleOf = async (sessionId: string) => ({
+    ...frame(),
+    sender: 'carol',
+    plaintext: encodeAppMessage(
+      mkGraineBundle({
+        workspaceId: 'ws-1',
+        requestId: 'r-h',
+        seeds: [await v2SeedFor('chan-1', sessionId, 0)],
+      })
+    ),
+  });
+
+  it('a bundle that stored a seed settles it', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+
+    await handleDistributionFrame(await bundleOf('s-new'));
+
+    expect(noteHistoryAnsweredSpy).toHaveBeenCalledWith('ws-1', 'r-h');
+  });
+
+  it('a bundle of seeds already held settles nothing - the answerer gave the floored past again', async () => {
+    const { storage } = fakeStorage([
+      {
+        workspaceId: 'ws-1',
+        channelId: 'chan-1',
+        sessionId: 's-held',
+        senderId: 'carol',
+        seedB64: toBase64(SEED),
+        firstIndex: 0,
+        createdAt: 1,
+      },
+    ]);
+    wire(storage);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(await bundleOf('s-held'));
+
+    expect(noteHistoryAnsweredSpy).not.toHaveBeenCalled();
+    debug.mockRestore();
   });
 });

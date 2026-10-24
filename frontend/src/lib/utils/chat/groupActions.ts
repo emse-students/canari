@@ -1,5 +1,5 @@
-import { DELIVERY } from '$lib/mls-client/frameDelivery';
-import { classifyRemoveError } from '$lib/mls-client/mlsRemoveError';
+import { DELIVERY, addressedHistoryAnswer } from '$lib/mls-client/frameDelivery';
+import { AddressedUnsupportedError } from '$lib/mls-client/mlsDeliveryApi';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -12,7 +12,8 @@ import { dropGroupState } from './dropGroupState';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
-import { entitledHistorySelection } from './historyEntitlement';
+import { readerHistorySelection } from './historyEntitlement';
+import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
 import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import {
   buildHistoryDigest,
@@ -22,6 +23,18 @@ import {
 } from './historyManifest';
 import { holdsGroupState } from './groupUsability';
 import { groupSkippedByReason, type SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
+import { isDeviceTrustRefusal } from '$lib/mls-client/deviceTrust';
+
+/**
+ * The trust refusals this session already reported, as `deviceId|reason` - a sweep re-derives the
+ * same refusal at every pass, and an error repeated at each one is a line its reader learns to skip.
+ */
+const reportedSkippedRefusals = new Set<string>();
+
+/** Test seam: forgets which skipped-package refusals were already reported. */
+export function resetReportedSkippedRefusals(): void {
+  reportedSkippedRefusals.clear();
+}
 
 /**
  * Reports (log + `console.warn`) devices skipped by `addMembersBulk` because their KeyPackage
@@ -43,6 +56,27 @@ export function warnSkippedKeyPackages(
   // ONE LINE PER CAUSE: an expired package (wait for its owner to reconnect) and a bad signature
   // (a defect) want opposite fixes, and a count collapsed them.
   for (const { reason, deviceIds } of groupSkippedByReason(skipped)) {
+    // A REFUSED IDENTITY OR KEY IS NOT A STALE PACKAGE: republishing cannot lift it, because the
+    // package named another device or a key this device never pinned for it (`deviceTrust.ts`).
+    if (isDeviceTrustRefusal(reason)) {
+      // Said once per device and reason per session; a repeat goes to `debug`.
+      const fresh = deviceIds.filter((id) => !reportedSkippedRefusals.has(`${id}|${reason}`));
+      if (fresh.length === 0) {
+        console.debug(
+          `${tag}[TRUST] KeyPackage ${reason} again for ${deviceIds.join(', ')} on ${groupId} (already reported)`
+        );
+        continue;
+      }
+      for (const id of fresh) reportedSkippedRefusals.add(`${id}|${reason}`);
+      log(
+        `${tag} ${fresh.length} device(s) REFUSED (${reason}): ${fresh.join(', ')} - not invited; nothing proves the package is that device's.`
+      );
+      console.error(
+        `${tag}[TRUST] KeyPackage ${reason} for ${fresh.length} device(s) on ${groupId}:`,
+        fresh
+      );
+      continue;
+    }
     log(
       `${tag} ${deviceIds.length} device(s) skipped (KeyPackage ${reason}): ${deviceIds.join(', ')} - not invited, republish a fresh KeyPackage.`
     );
@@ -141,17 +175,21 @@ export async function deleteGroupAndBroadcast(params: {
 }): Promise<void> {
   const { mlsService, groupId, userId, log } = params;
 
-  // 1. Notify peers via MLS BEFORE server deletion.
-  // Encryption requires WASM state (group must be local),
-  // and routing requires dm_group_members (group must be on server).
+  // 1. Notify peers via MLS BEFORE server deletion, and AWAIT ITS ACCEPTANCE (`sendMessage` resolves
+  // on the delivery service's answer, not on a queue write). Encryption requires WASM state (group
+  // must be local), and routing requires dm_group_members (group must be on server). A failure is
+  // lost rather than sent later, for the reason `leaveGroupAndBroadcast` gives: the peers then learn
+  // the deletion from the server (a 410 on their next send, the group gone from their next pull).
   if (holdsGroupState(mlsService, groupId)) {
     try {
       const controlMsg = encodeAppMessage(
         mkVisibleSystem('groupDeleted', JSON.stringify({ deletedBy: userId }))
       );
       await mlsService.sendMessage(groupId, controlMsg);
-    } catch {
-      // Non-blocking: peers will discover the deletion on their next pull
+    } catch (e) {
+      const line = `[DELETE] groupDeleted notice for ${groupId.slice(0, 8)}… NOT delivered - deleting without it: ${String(e).slice(0, 120)}`;
+      console.warn(line);
+      log?.(line);
     }
   }
 
@@ -236,24 +274,30 @@ export async function setGroupImageAndBroadcast(params: {
 }
 
 /**
- * Sends an MLS system message to notify a membership change.
+ * Sends an MLS system message to notify a membership change, and resolves once the delivery service
+ * has ACCEPTED it - `sendMessage` awaits the `POST /api/mls/send` answer itself, it is not the
+ * durable outbox. That is what lets a leave end the membership right after it: the notice is on the
+ * server, routed to the members, before the server step that would refuse it.
  *
- * Always best-effort: if the send fails peers will discover the change on their next
- * `getUserGroups` call. Never call after `forgetGroup`.
+ * Best-effort, and never silent: a failure is logged and the caller goes on, because a membership
+ * change the user asked for must not wait on a notice. Never call after `forgetGroup`.
  */
 async function notifyMembershipChange(
   mlsService: IMlsService,
   groupId: string,
   event: 'memberLeft' | 'memberRemoved',
-  payload: Record<string, string>
+  payload: Record<string, string>,
+  log?: (msg: string) => void
 ): Promise<void> {
   try {
     await mlsService.sendMessage(
       groupId,
       encodeAppMessage(mkVisibleSystem(event, JSON.stringify(payload)))
     );
-  } catch {
-    /* non-blocking */
+  } catch (e) {
+    const line = `[GROUP] ${event} notice for ${groupId.slice(0, 8)}… NOT delivered, and not sent later - the members see the roster change without it: ${String(e).slice(0, 120)}`;
+    console.warn(line);
+    log?.(line);
   }
 }
 
@@ -323,17 +367,34 @@ export async function removeMemberAndBroadcast(params: {
  * carries the reasoning. The local exit is unconditional and completes first; whether the server
  * performed its half is `exitGroupAndCleanup`'s to classify, and only it can decide whether the
  * device still owes one.
+ *
+ * **STEP 2 WAITS FOR THE NOTICE'S DELIVERY, NOT ITS WRITE** - `notifyMembershipChange` resolves on
+ * the delivery service's acceptance, so the notice is routed before the membership ends. The 403 the
+ * GRP-6 row recorded on 2026-10-22 was NOT this notice: it was another entry of the same group in
+ * the durable outbox (a read watermark queued as the leaver closed the conversation), which
+ * `exitGroupAndCleanup` now settles (sends, or withdraws what cannot go) before calling this.
+ *
+ * **A NOTICE THAT FAILS IS LOST, NOT SENT LATER, AND THE LEAVE GOES ON.** It cannot be queued: a
+ * frame needs this device's MLS state and its membership, and step 3 and step 2 remove exactly those -
+ * the outbox would hold a frame no flush can ever send. Holding the leave until the notice goes would
+ * keep a user in a group they asked to leave for as long as the network is down, which the exit
+ * forbids (see `deleteGroupAndBroadcast`). What the others lose is the visible "X left" line only:
+ * the roster stops naming the leaver at once (the server half, replayed by the owed exit when it
+ * failed too), and `removeStrayLeaves` collects the leaf on a remaining member's next connection.
  */
 export async function leaveGroupAndBroadcast(params: {
   mlsService: IMlsService;
   groupId: string;
   userId: string;
   deviceKeyB64: string;
+  log?: (msg: string) => void;
 }): Promise<void> {
-  const { mlsService, groupId, userId } = params;
+  const { mlsService, groupId, userId, log } = params;
 
-  // 1. Notify BEFORE server deletion (WASM must be intact to encrypt).
-  await notifyMembershipChange(mlsService, groupId, 'memberLeft', { userId });
+  // 1. Notify BEFORE server deletion (WASM must be intact to encrypt), and AWAIT ITS ACCEPTANCE:
+  // the server step below ends the membership, and a frame posted after it is refused.
+  // A failure is logged there and the leave goes on - see this function's doc for why it is lost.
+  await notifyMembershipChange(mlsService, groupId, 'memberLeft', { userId }, log);
 
   // 2. Clean the server registry. HELD AND RETHROWN BELOW, for the reason
   // `deleteGroupAndBroadcast` documents at length: this bare catch was the same defect with no log
@@ -347,7 +408,7 @@ export async function leaveGroupAndBroadcast(params: {
 
   // 3. Drop the local state. Awaited, for the reason `deleteGroupAndBroadcast` gives: the user has
   // been told they left, and a reload must not put them back in a group they can no longer read.
-  await dropGroupState(mlsService, groupId, { reason: 'left by us', checkpoint: 'awaited' });
+  await dropGroupState(mlsService, groupId, { reason: 'left by us', checkpoint: 'awaited', log });
 
   // The local exit is complete either way; whether the SERVER performed its half is the caller's
   // to classify, and a 403/404 is one of the answers it reads as done.
@@ -462,121 +523,6 @@ export async function isGroupActiveOnServer(
 }
 
 /**
- * Unified handler for a `DuplicateSignature` error raised by `addMember`:
- * the device's old KeyPackage is still in the MLS tree (local state lost).
- * Kicks the stale leaf and resets the status to pending so the device can
- * resend a `welcome_request` with a fresh KeyPackage.
- *
- * Do not check status='active' to decide whether to skip: `sendWelcome` marks
- * the device active optimistically before it processes the Welcome. A device
- * that has lost its state will always be 'active' server-side.
- */
-export async function handleDuplicateLeafError(params: {
-  mlsService: IMlsService;
-  groupId: string;
-  targetUserId: string;
-  targetDeviceId: string;
-  userId: string;
-  deviceKeyB64: string;
-  log: (msg: string) => void;
-}): Promise<void> {
-  const { mlsService, groupId, targetUserId, targetDeviceId, userId, deviceKeyB64, log } = params;
-
-  log(`[MLS] DuplicateSignature: kicking stale leaf for ${targetDeviceId.slice(0, 12)}...`);
-  await kickStaleLeaf(groupId, targetUserId, targetDeviceId, mlsService, log);
-  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
-}
-
-/**
- * Removes the stale leaf of a device from the MLS tree AND its routing row (best-effort, never throws).
- *
- * Wraps removeMemberDevice + kickStaleDevice to avoid duplication.
- *
- * **BEST-EFFORT IS NOT THE SAME AS SILENT, AND THIS USED TO BE BOTH.** Neither call could throw, so
- * a kick that removed nothing left no trace of its own: the only evidence was the
- * `DuplicateSignature` produced later by whatever the caller did next, under a different tag - one
- * symptom standing in for two unrelated causes. And the closing line asserted the removal
- * unconditionally, so a reader following `[KICK] ... removed` had no way to learn the leaf was still
- * sitting in the tree. Both failures are reported now; neither is promoted to a throw, because the
- * callers' fall-through is deliberate (see below).
- *
- * **THE TWO HALVES ARE REPORTED SEPARATELY BECAUSE THEY ARE DIFFERENT FACTS.** The tree decides who
- * can read the group, the routing row decides who the delivery service ships to, and they fail
- * independently: a tree cleaned while the routing row survives, or the reverse, are different
- * estates needing different repairs. One line saying "partially" without naming which half would
- * leave the reader exactly where the silence did.
- *
- * **AND THEY ARE ORDERED, WHICH THEY WERE NOT UNTIL 2026-09-04.** The routing row is cleared ONLY
- * when the tree is genuinely without the leaf. Both calls used to run unconditionally, so a refused
- * Remove still wrote `pending` - a destructive write made before its own prerequisite was known to
- * hold, which is the invariant `f46e7660` established for the function next door, needed here for
- * the third time in this area.
- *
- * That was tolerable while `pending` meant "wait for a member" and cost only a delay. It is not any
- * more: since the same day, a `pending` row with no queued Welcome and no add lock tells the device
- * to STOP waiting and join by external commit. So clearing the row over a leaf that is still in the
- * tree now asks that device to add a SECOND leaf beside the first, which is the duplicate-leaf race
- * of 2026-08-26 arrived at from the other side - **the repair would manufacture the fault it exists
- * to clean up.** Fixing the requester's half is what made this half load-bearing, which is why the
- * two are one entry in `docs/wiki/backlog.md` and not two.
- *
- * "Nothing to remove" is NOT a refusal and must not be read as one - a tree that never held the leaf
- * is the outcome this function wants. `MlsError::NoSuchMember` carries that as a TYPE and
- * `classifyRemoveError` is the only thing that reads it; before it existed both outcomes were one
- * OpenMLS string, and telling them apart meant matching prose.
- */
-export async function kickStaleLeaf(
-  groupId: string,
-  targetUserId: string,
-  targetDeviceId: string,
-  mlsService: IMlsService,
-  log: (msg: string) => void
-): Promise<void> {
-  const deviceIdentity = `${targetUserId}:${targetDeviceId}`;
-  // The remove is staged then validated server-side (runCommitTransaction): a server rejection
-  // clears the staged commit without advancing the local epoch, so there is no fork to surface -
-  // the remove is genuinely best-effort. Rung-1 replay heals any lag on the next sync. Other
-  // errors (leaf already absent, etc.) are equally best-effort.
-  let treeCleared = true;
-  try {
-    await mlsService.removeMemberDevice(groupId, [deviceIdentity]);
-  } catch (e) {
-    // A leaf that was never there is the state this function wants, so it counts as cleared. Every
-    // other failure leaves the leaf in the tree, and forbids the write below.
-    treeCleared = classifyRemoveError(e) === 'already-absent';
-    log(
-      treeCleared
-        ? `[KICK] Leaf ${deviceIdentity} was already absent from ${groupId}'s tree - nothing to remove`
-        : `[KICK] Leaf ${deviceIdentity} still in ${groupId}'s tree - remove refused: ${String(e).slice(0, 120)}`
-    );
-  }
-
-  // THE ORDER IS THE FIX: see this function's docblock. A pending row over a live leaf is an
-  // invitation to add a second one.
-  let routingCleared = false;
-  if (treeCleared) {
-    routingCleared = true;
-    await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch((e: unknown) => {
-      routingCleared = false;
-      log(
-        `[KICK] Routing row for ${deviceIdentity} still listed on ${groupId} - clear refused: ${String(e).slice(0, 120)}`
-      );
-    });
-  } else {
-    log(
-      `[KICK] Routing row for ${deviceIdentity} on ${groupId} left ALONE on purpose - the leaf is` +
-        ` still in the tree, and clearing the row would ask that device to add a second one`
-    );
-  }
-
-  log(
-    treeCleared && routingCleared
-      ? `[KICK] Stale leaf ${deviceIdentity} removed from ${groupId}`
-      : `[KICK] Stale leaf ${deviceIdentity} only PARTIALLY removed from ${groupId} - tree=${treeCleared ? 'cleared' : 'still present'}, routing=${routingCleared ? 'cleared' : 'still listed'}`
-  );
-}
-
-/**
  * Serialises a `StoredMessage` for transport in a `history_bundle`.
  *
  * Includes all metadata (reactions, isDeleted, isEdited, secondary timestamp) so the recipient gets
@@ -598,21 +544,36 @@ function serializeForBundle(m: StoredMessage) {
     ...(m.editedAt ? { editedAt: m.editedAt } : {}),
     // Secondary timestamp: needed for stable post-migration sorting.
     ...(m.serverTimestamp ? { serverTimestamp: m.serverTimestamp } : {}),
+    // The authors' own signatures, so the reader takes the message, the edit and the deletion from
+    // their authors rather than from this relayer (history-reconciliation, authorship). A deleted
+    // message relays its signed tombstone and never its original bytes.
+    ...(m.authorship && !m.isDeleted ? { authorship: m.authorship } : {}),
+    ...(m.editProof && !m.isDeleted ? { editProof: m.editProof } : {}),
+    ...(m.deleteProof ? { deleteProof: m.deleteProof } : {}),
+    // A row this device holds only as unverified is relayed as such. Without it the reader would
+    // take the row on THIS device's word - as its author's own, when it names this device's user -
+    // and one relay hop would erase the mark (`relayerVouches` in restoredAuthorship.ts). Not the
+    // bundle-level `vouched` flag retired below: this one is per row and says less, not more.
+    ...(m.restoredUnverified ? { authorUnproven: true } : {}),
   };
 }
 
 /**
  * Builds one `history_bundle` frame.
  *
- * **WHY EVERY BUNDLE CARRIES A `to`.** The frame is an MLS group broadcast - there is no such thing
- * as a private send here - so every member of the conversation receives an answer meant for ONE
- * device. `to` is the requester's `digestIdentity` - user AND device, because a user with three
- * devices must be able to solicit from one of them and be answered on that one. Addressing is the
- * ONLY thing it does: it is not a secrecy boundary and must never be read as one.
+ * **WHY EVERY BUNDLE CARRIES A `to`.** `to` is the requester's `digestIdentity` - user AND device,
+ * because a user with three devices must be able to solicit from one of them and be answered on that
+ * one. Since step A the frame is also ROUTED to that device alone (`recipientDevices`, see
+ * {@link sendBundleChunks}); `to` stays in the payload because MLS still encrypts it for the whole
+ * group, and an older server still broadcasts it. Neither is a secrecy boundary.
  *
- * It is deliberately not the `recipients` field of `POST /send`: MLS re-encrypts per recipient set,
- * and narrowing the set on an application message burns the sender ratchet budget
- * (`sender_ratchet_config` is (2000, 2000)) into a generation gap the other members can never close.
+ * **`requestId`, `last` and `join` are what the receiver checks an ADDRESSED answer against**
+ * (`historyAddressing.ts`): the ask it answers (absent on the inviter's push, which `join` names),
+ * and the chunk that closes that ask.
+ *
+ * The ratchet cost of addressing - a non-recipient skips the sender's generations - is bounded by
+ * `maximum_forward_distance` (2 000) over CONSECUTIVE addressed frames, i.e. one answer of 400 000
+ * messages (docs/wiki/protocols/history-answer-addressing.md).
  *
  * There is no `vouched` flag any more, and its absence is the point. It existed to tell a durable
  * marker whether it might be discharged - "I compared my whole store and you are complete" as
@@ -622,15 +583,18 @@ function serializeForBundle(m: StoredMessage) {
 function bundleFrame(
   messages: unknown[],
   to: string,
-  opts: { state?: ConversationHistoryState } = {}
+  opts: { state?: ConversationHistoryState; answer?: BundleAnswer; last?: boolean } = {}
 ): Uint8Array {
-  const { state } = opts;
+  const { state, answer, last } = opts;
   return encodeAppMessage(
     mkSystem(
       'history_bundle',
       JSON.stringify({
         messages,
         to,
+        ...(answer?.requestId ? { requestId: answer.requestId } : {}),
+        ...(answer?.join ? { join: true } : {}),
+        ...(last ? { last: true } : {}),
         // The conversation's own state - read watermarks and the shared history floor. A handful of
         // numbers, sent whole with every frame because both merges are `max` and therefore free to
         // repeat. Sending them once would make their delivery depend on which chunk survived.
@@ -644,6 +608,12 @@ function bundleFrame(
     )
   );
 }
+
+/**
+ * Which ask a bundle answers: the asker's `requestId`, or `join` for the inviter's push, which nobody
+ * asked an id for - the receiver's own admission solicited it (`historyAddressing.ts`).
+ */
+type BundleAnswer = { requestId?: string; join?: boolean };
 
 /** What a conversation carries beyond its messages, and what every bundle restates. */
 type ConversationHistoryState = {
@@ -765,36 +735,61 @@ export async function sendFullHistoryBundle(
   // A group with no messages can still have read state, a floor and pins worth handing over - and
   // so can one whose every message was withheld, or whose exclusion windows could not be read: the
   // invitee has no conversation row yet, and this frame is what gives it one. It carries no message.
-  const sendStateOnly = async (why: string): Promise<void> => {
-    const bytes = bundleFrame([], to, { state });
+  // ADDRESSED like the rest of the push when the server routes it (step A), and closing the `join`
+  // ask; broadcast when the windows could not be read, since nothing then says which - exactly the
+  // frame this was before step A, and it carries no message.
+  const sendStateOnly = async (why: string, addressed: boolean): Promise<void> => {
+    const bytes = bundleFrame([], to, { state, answer: { join: true }, last: true });
     try {
-      await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
-      log(`[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (${why})`);
+      await mlsService.sendMessage(
+        groupId,
+        bytes,
+        undefined,
+        addressed ? addressedHistoryAnswer(to) : DELIVERY.transport
+      );
+      log(
+        `[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (${why})${addressed ? `, addressed to ${to}` : ''}`
+      );
     } catch (e) {
+      if (e instanceof AddressedUnsupportedError) {
+        log(
+          `[HISTORY_BUNDLE] ${to} cannot be addressed in ${groupId.slice(0, 8)}… (offline, or a session of it predates addressed answers) - pushing it nothing`
+        );
+        return;
+      }
       log(`[HISTORY_BUNDLE] Empty bundle send error: ${String(e).slice(0, 120)}`);
     }
   };
   if (messages.length === 0) {
-    await sendStateOnly('group has no history');
+    // No chunk will read the windows, so the one read that decides how this frame is routed is here.
+    const mode = await readerHistorySelection(
+      groupId,
+      [],
+      { mlsService, log },
+      userIdOfLeaf(to),
+      true
+    );
+    await sendStateOnly('group has no history', mode?.mode === 'addressed');
     return;
   }
 
-  // THE INVITEE'S OWN SPAN JOINS THE FILTER (user, 2026-10-21: a new member of a group conversation
-  // reads nothing from before their arrival). Safe as a broadcast: every other member is entitled to
-  // a superset of what the invitee is. For a new device of a continuous member the span ends at that
-  // member's own arrival, so their restore is untouched; a 1:1 has no such span (the server's rule).
+  // ADDRESSED TO THE INVITEE AND FILTERED ON THEIR OWN WINDOWS (step A; user, 2026-10-21: a new
+  // member of a group conversation reads nothing from before their arrival). The push is sent
+  // to the invitee's device alone and carries that reader's own span. A 1:1 has no span (the server's
+  // rule).
   const outcome = await sendBundleChunks(
     groupId,
     messages,
     { mlsService, log },
-    { chunkSize, to, state, invitee: userIdOfLeaf(to) }
+    { chunkSize, to, state, answer: { join: true }, push: true }
   );
+  if (outcome.kind === 'refused') return;
   if (outcome.kind === 'unreadable') {
-    await sendStateOnly('exclusion windows unreadable - no message carried');
+    await sendStateOnly('exclusion windows unreadable - no message carried', false);
     return;
   }
   if (outcome.kind === 'withheld-all') {
-    await sendStateOnly('every message withheld');
+    await sendStateOnly('every message withheld', outcome.addressed);
     return;
   }
   log(`[HISTORY_BUNDLE] Full history sent: ${outcome.count} of ${messages.length} message(s)`);
@@ -815,9 +810,16 @@ export type HistoryStoreDeps = HistorySendDeps & {
  * Shared by the full bundle and the id-filtered one so a change to the wire shape cannot reach one
  * path and miss the other - the two differ only in WHICH messages they were handed.
  *
- * **AND IT IS WHERE A REMOVE IS MADE TO HOLD** (user, 2026-10-14): every selection passes through
- * {@link entitledHistorySelection} before a frame is built, so no answer path - full, diff or
- * scrollback - can carry a message sent while a current member was out of the group.
+ * **AND IT IS WHERE ENTITLEMENT IS APPLIED** (user, 2026-10-14 and 2026-10-21): every selection passes
+ * through {@link readerHistorySelection} before a frame is built, so no answer path - full, diff or
+ * scrollback - can carry a message sent while its reader was out of the group, or before they arrived.
+ *
+ * **AND WHERE IT IS ADDRESSED** (step A, docs/wiki/protocols/history-answer-addressing.md): when the
+ * server routes addressed answers, every chunk goes to `to` alone (`recipientDevices`) and is filtered
+ * on that reader's windows. An addressed answer that names no ask (`requestId`, or `join` on the
+ * push) is not sent - the receiver would refuse it, and the sender's ratchet would have spent a
+ * generation every other member skips for nothing. A device the server cannot address (a session of
+ * it predates the capability) is sent nothing: an addressed answer is never turned into a broadcast.
  *
  * @returns the {@link BundleOutcome} - whether anything could be sent, and how much was.
  */
@@ -829,31 +831,37 @@ async function sendBundleChunks(
     chunkSize,
     to,
     state,
-    invitee,
+    answer,
+    push = false,
   }: {
     chunkSize: number;
     to: string;
     state?: ConversationHistoryState;
-    /** Set on the inviter's push only - see {@link entitledHistorySelection}. */
-    invitee?: string;
+    /** The ask this answers - see {@link BundleAnswer}. */
+    answer?: BundleAnswer;
+    /** The inviter's push - its legacy broadcast form adds the reader's span to the union. */
+    push?: boolean;
   }
 ): Promise<BundleOutcome> {
   // THE WINDOWS ARE READ AGAIN FOR EVERY CHUNK. A long answer spans seconds of network, and a
   // member re-added in the meantime decrypts every chunk sealed after their add commit - so the
   // windows that filter a chunk are the ones in force when THAT chunk leaves, never the ones read
   // when the answer began. Concurrent reads of one group share one request (`joinInFlight`).
+  const reader = userIdOfLeaf(to);
   const totalChunks = Math.ceil(selection.length / chunkSize);
   let sent = 0;
   let read = false;
+  let addressed = false;
   for (let i = 0; i < selection.length; i += chunkSize) {
     const chunkNo = Math.floor(i / chunkSize) + 1;
-    const kept = await entitledHistorySelection(
+    const chosen = await readerHistorySelection(
       groupId,
       selection.slice(i, i + chunkSize),
       { mlsService, log },
-      invitee
+      reader,
+      push
     );
-    if (kept === null) {
+    if (chosen === null) {
       if (!read) return { kind: 'unreadable' };
       log(
         `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} not sent - exclusion windows unreadable; stopping after ${sent} message(s)`
@@ -861,16 +869,35 @@ async function sendBundleChunks(
       return { kind: 'sent', count: sent };
     }
     read = true;
-    if (kept.length === 0) continue;
-    const payload = kept.map(serializeForBundle);
-    const bytes = bundleFrame(payload, to, { state });
+    addressed = chosen.mode === 'addressed';
+    if (addressed && !answer?.requestId && !answer?.join) {
+      log(
+        `[HISTORY_BUNDLE] Not answering ${to} in ${groupId.slice(0, 8)}… - its ask carries no request id (an older client), and an addressed answer to no ask is refused`
+      );
+      return { kind: 'refused' };
+    }
+    if (chosen.kept.length === 0) continue;
+    const payload = chosen.kept.map(serializeForBundle);
+    const last = i + chunkSize >= selection.length;
+    const bytes = bundleFrame(payload, to, { state, answer, last });
     try {
-      await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
+      await mlsService.sendMessage(
+        groupId,
+        bytes,
+        undefined,
+        addressed ? addressedHistoryAnswer(to) : DELIVERY.transport
+      );
       sent += payload.length;
       log(
-        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…`
+        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…${addressed ? ` (addressed to ${to})` : ' (broadcast)'}`
       );
     } catch (e) {
+      if (e instanceof AddressedUnsupportedError) {
+        log(
+          `[HISTORY_BUNDLE] ${to} cannot be addressed in ${groupId.slice(0, 8)}… (offline, or a session of it predates addressed answers) - answering nothing rather than broadcasting`
+        );
+        return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
+      }
       log(`[HISTORY_BUNDLE] Chunk send error ${chunkNo}: ${String(e)}`);
       return { kind: 'sent', count: sent };
     }
@@ -879,18 +906,21 @@ async function sendBundleChunks(
     log(
       `[HISTORY_BUNDLE] Every message selected for ${groupId.slice(0, 8)}… was withheld - no message sent`
     );
-    return { kind: 'withheld-all' };
+    return { kind: 'withheld-all', addressed };
   }
   return { kind: 'sent', count: sent };
 }
 
 /**
  * What {@link sendBundleChunks} did: no window could be read (nothing sent), every message was
- * withheld (nothing sent), or `count` messages went out before the end or the first failed chunk.
+ * withheld (nothing sent; `addressed` says how the last read said to route), the reader could not be answered at all (an addressed answer to no ask,
+ * or a device the server cannot address - nothing sent, and nothing must be sent in its place), or
+ * `count` messages went out before the end or the first failed chunk.
  */
 type BundleOutcome =
   | { kind: 'unreadable' }
-  | { kind: 'withheld-all' }
+  | { kind: 'withheld-all'; addressed: boolean }
+  | { kind: 'refused' }
   | { kind: 'sent'; count: number };
 
 /**
@@ -1114,7 +1144,18 @@ export async function sendHistoryRangeRequest(
   request: { from: string; before: number; limit: number; since: number },
   { mlsService, log }: HistorySendDeps
 ): Promise<boolean> {
-  const bytes = encodeAppMessage(mkSystem('history_range', JSON.stringify({ ...request })));
+  // The ask is recorded BEFORE it leaves, under the id the frame carries: an addressed answer is
+  // accepted only against it (`historyAddressing.ts`), and it can arrive before the send resolves.
+  const requestId = mintHistoryRequestId();
+  noteHistoryAsk(groupId, requestId, {
+    kind: 'range',
+    since: request.since,
+    before: request.before,
+    askedAt: Date.now(),
+  });
+  const bytes = encodeAppMessage(
+    mkSystem('history_range', JSON.stringify({ ...request, requestId }))
+  );
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
     log(
@@ -1163,8 +1204,12 @@ export async function sendHistoryDigest(
     digest.mode === 'ids'
       ? `${digest.ids.length} id(s)`
       : `${digest.ranges.length} slice(s) at depth ${digest.depth}`;
+  // Recorded before it leaves - see `sendHistoryRangeRequest`. The answer to a digest is the diff
+  // the responder computes, bounded by the `since` stated here.
+  const requestId = mintHistoryRequestId();
+  noteHistoryAsk(groupId, requestId, { kind: 'digest', since, askedAt: Date.now() });
   const bytes = encodeAppMessage(
-    mkSystem('history_digest', JSON.stringify({ from, digest, since }))
+    mkSystem('history_digest', JSON.stringify({ from, digest, since, requestId }))
   );
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
@@ -1218,7 +1263,19 @@ export async function sendHistoryPull(
   if (frames.length === 0) return;
 
   for (const payload of frames) {
-    const bytes = encodeAppMessage(mkSystem('history_pull', JSON.stringify(payload)));
+    // One ask per frame, each bounded by exactly what it names - see `sendHistoryRangeRequest`.
+    const requestId = mintHistoryRequestId();
+    noteHistoryAsk(groupId, requestId, {
+      kind: 'pull',
+      since,
+      ids: (payload.ids as string[] | undefined) ?? [],
+      prefixes: (payload.prefixes as string[] | undefined) ?? [],
+      depth: payload.depth as number | undefined,
+      askedAt: Date.now(),
+    });
+    const bytes = encodeAppMessage(
+      mkSystem('history_pull', JSON.stringify({ ...payload, requestId }))
+    );
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
     } catch (e) {
@@ -1259,10 +1316,16 @@ export async function sendHistoryBundleForIds(
   groupId: string,
   ids: readonly string[],
   deps: HistoryStoreDeps,
-  opts: { to: string; chunkSize?: number; since: number }
+  opts: {
+    to: string;
+    chunkSize?: number;
+    since: number;
+    /** The `requestId` of the ask this answers - echoed so the asker can accept it addressed. */
+    requestId?: string;
+  }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, chunkSize = 200, since } = opts;
+  const { to, chunkSize = 200, since, requestId } = opts;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
@@ -1298,7 +1361,7 @@ export async function sendHistoryBundleForIds(
     groupId,
     selected,
     { mlsService, log },
-    { chunkSize, to, state }
+    { chunkSize, to, state, answer: { requestId } }
   );
   if (outcome.kind !== 'sent') return;
   log(
@@ -1321,10 +1384,17 @@ export async function sendHistoryBundleForIds(
 export async function sendHistoryRangeBundle(
   groupId: string,
   deps: HistoryStoreDeps,
-  opts: { to: string; before: number; limit: number; since?: number }
+  opts: {
+    to: string;
+    before: number;
+    limit: number;
+    since?: number;
+    /** The `requestId` of the range ask this answers. */
+    requestId?: string;
+  }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, before, limit, since = 0 } = opts;
+  const { to, before, limit, since = 0, requestId } = opts;
   if (!storage) {
     log(`[HISTORY_RANGE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
@@ -1353,7 +1423,7 @@ export async function sendHistoryRangeBundle(
     groupId,
     page,
     { mlsService, log },
-    { chunkSize: 200, to, state }
+    { chunkSize: 200, to, state, answer: { requestId } }
   );
   if (outcome.kind !== 'sent') return;
   log(

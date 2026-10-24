@@ -31,9 +31,10 @@ vi.mock('$lib/utils/associationLogoCache', () => ({
 }));
 // The second logo's URL is spelled in ONE place. A mark only that derivation produces is how the
 // rendered card proves it went through it, rather than through a second spelling of the same path.
+// The mark is PATH-shaped because the avatar draws only a path or an http(s) URL (`imageSrcOrNull`).
 vi.mock('$lib/associations/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/associations/api')>()),
-  associationSecondLogoSrc: (id: string | null | undefined) => (id ? `derived:${id}` : null),
+  associationSecondLogoSrc: (id: string | null | undefined) => (id ? `/derived/${id}` : null),
 }));
 // The accent has ONE derivation (`associations/accent.ts`); a colour only it returns proves the tile
 // asked it rather than seeding a hue of its own.
@@ -127,7 +128,7 @@ describe('a list card shows its second theme beneath the main one', () => {
     const [main, second] = [...root.querySelectorAll('img')];
     expect(main.className).toContain('w-12'); // `lg`, 48px
     expect(second.className).toContain('w-6'); // `sm`, 24px
-    expect(second.getAttribute('src')).toBe('derived:m-2');
+    expect(second.getAttribute('src')).toMatch(/\/derived\/m-2$/);
   });
 
   it('never labels the second theme with the main name', async () => {

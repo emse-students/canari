@@ -13,6 +13,12 @@ import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope'
  * just as important - every case in which it must NOT.
  */
 
+/** The admission ledger's observation (section 25) - its rules are `admissionGate.test.ts`'s. */
+const observeAdmissionState = vi.fn();
+vi.mock('./admissionGate', () => ({
+  observeAdmissionState: (...args: unknown[]) => observeAdmissionState(...args),
+}));
+
 let getGroupMemberIdentities: ReturnType<typeof vi.fn>;
 let removeMember: ReturnType<typeof vi.fn>;
 let getLocalGroups: ReturnType<typeof vi.fn>;
@@ -35,6 +41,8 @@ beforeEach(() => {
   listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
   listMembers.mockReset();
   listMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
+  observeAdmissionState.mockReset();
+  observeAdmissionState.mockResolvedValue(undefined);
   persisted = 0;
 
   setGraineRuntime({
@@ -59,9 +67,12 @@ afterEach(() => {
 });
 
 describe('userIdOfLeaf', () => {
-  it('splits on the first colon, because a device id may contain one and a user id may not', () => {
+  it('splits on the one colon an identity may carry, and refuses one with more', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(userIdOfLeaf('alice:web-alice-abcd-1234')).toBe('alice');
-    expect(userIdOfLeaf('alice:tauri:weird')).toBe('alice');
+    // Matches Rust's binding check: a second colon names nobody (`leafIdentity.ts`).
+    expect(userIdOfLeaf('alice:tauri:weird')).toBe('');
+    error.mockRestore();
   });
 
   it('answers the whole string when there is no colon at all', () => {
@@ -148,6 +159,29 @@ describe('reconcileDistributionGroupRoster', () => {
     // A pass whose success is indistinguishable from its absence can only be verified against the
     // database - which is how this mechanism had to be checked on prod the first time.
     expect(lines.some((l) => /agrees with its roster/.test(l))).toBe(true);
+  });
+
+  it('records the admission state at every community sync, with the roster it read', async () => {
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+
+    // The roots are fixed HERE, at the first sync - never at a moment an ask chooses.
+    expect(observeAdmissionState).toHaveBeenCalledWith('ws-1', 'dist-group', [
+      { userId: 'alice' },
+      { userId: 'bob' },
+    ]);
+  });
+
+  it('still reconciles when the admission state cannot be recorded, and says so', async () => {
+    observeAdmissionState.mockRejectedValue(new Error('tree unreadable'));
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+    const lines: string[] = [];
+
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) =>
+      lines.push(m)
+    );
+
+    expect(removeMember).toHaveBeenCalledTimes(1);
+    expect(lines.some((l) => /admission state .* not recorded/.test(l))).toBe(true);
   });
 
   it('REMOVES NOBODY when the roster could not be read', async () => {

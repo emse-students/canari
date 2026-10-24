@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE INFO PANEL NAMES ITS READERS ONLY WHEN IT IS SHOWN, AND ONCE PER READER. Every bubble mounts
  * this tooltip, hidden; its effect used to resolve every reader anyway and to re-run once per name

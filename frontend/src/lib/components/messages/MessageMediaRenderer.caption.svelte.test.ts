@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A PHOTO'S CAPTION SHOWED THE WIRE TOKEN OF A MENTION, AND NOTHING WAS EVER GOING TO FIX IT.
  *

@@ -1,5 +1,11 @@
 import { GraineInputError, newGraineSeed, newGraineSessionId } from '$lib/crypto/graine';
-import { GRAINE_ROTATE_AFTER_MESSAGES, GRAINE_ROTATE_AFTER_MS } from '$lib/crypto/graineConstants';
+import {
+  GRAINE_REUSED_ROTATE_AFTER_MESSAGES,
+  GRAINE_REUSED_ROTATE_AFTER_MS,
+  GRAINE_ROTATE_AFTER_MESSAGES,
+  GRAINE_ROTATE_AFTER_MS,
+} from '$lib/crypto/graineConstants';
+import type { GraineRunReading } from '$lib/mls-client/IMlsService';
 import type {
   GraineDistributionFrame,
   IStorage,
@@ -40,6 +46,11 @@ export interface GraineOutboundDeps {
    */
   distributionEpoch: number;
   /**
+   * The key group's departure tracker at its current epoch (`IMlsService.graineRun`). Read inside
+   * the per-channel chain, from the same MLS instance whose next send seals the distribution frame.
+   */
+  readRun: () => Promise<GraineRunReading>;
+  /**
    * Hands a freshly minted session to the community over the distribution group.
    *
    * MUST throw when the seed did not go out. It is awaited BEFORE the session is persisted, so a
@@ -64,55 +75,72 @@ export interface GraineOutboundSlot {
   index: number;
   /** True when this call minted the session, and therefore when a seed has just been distributed. */
   minted: boolean;
+  /** True when this call sent the session's existing seed again at a new epoch. */
+  redistributed: boolean;
 }
 
 /**
- * Whether the session in hand may no longer seal another message.
+ * What to do with the session in hand before sealing the next message:
  *
- * Pure, exported and named rather than inlined: three different causes decide it, and every caller
- * answering the question for itself would be a caller free to answer it differently - the two
- * answers differ by exactly how long a departed member keeps reading.
- *
- * **The stale roster is the structural cause and the reason the epoch is stored at all.** Every
- * membership change commits to the community's distribution group and advances its epoch, so an
- * epoch that no longer matches means the set of people holding this seed is no longer the set of
- * people entitled to it. Compared with `!==` rather than `<`: any disagreement is a disagreement,
- * and the safe response to one we cannot explain is still to rotate.
- *
- * A session predating the column carries no epoch and is rotated for the same reason - "minted
- * under a roster nobody recorded" is not evidence of a roster that still holds.
- *
- * **And one with no distribution frame is rotated too**, since 2026-09-27: every message sealed
- * under a session carries the frame that distributed its seed (channel-encryption section 19), and
- * a session minted before that was kept has nothing to carry. One rotation per (channel, sender) at
- * upgrade, and never again.
- *
- * An ADD advances the epoch too, and rotates a session it did not have to. That is deliberate: the
- * cost is one extra O(1) seed distribution, and the alternative - a durable "somebody LEFT" marker -
- * is state that has to be written by every device, kept until every session has cycled past it, and
- * is silently wrong the once it is missed. **Measured 2026-10-21, adds are the dominant trigger**:
- * one session per two messages on production, because every device joining the key group commits.
- * A local check needing no marker is in `docs/wiki/protocols/dm-vs-community-encryption.md`.
- *
- * **This answers yes or no, and that is the whole question anything here asks.** It returned WHICH
- * of the three fired until 2026-09-14; nothing branched on it, no durable log carried it and no
- * report counted it, so the distinction existed only in the type. What each trigger buys is in
- * `docs/wiki/protocols/channel-encryption.md` section 4.2, where a reader can act on it.
+ * - `reuse` - seal under it as it is;
+ * - `redistribute` - the key group's epoch moved and nobody left: seal under it, after sending its
+ *   SAME seed again at the current epoch, so a device added since can open it;
+ * - `rotate` - mint a new session.
  */
-export function shouldRotateGraineSession(
+export type GraineOutboundVerdict = 'reuse' | 'redistribute' | 'rotate';
+
+/**
+ * The one decision of the outbound half, pure and exported so no caller answers it differently -
+ * two answers would differ by exactly how long a departed member keeps reading.
+ *
+ * **Rotate on a departure, not on every epoch** (`docs/wiki/protocols/graine-removal-tracker.md`).
+ * Until 2026-10-22 any epoch change rotated, and every device joining the key group commits, so
+ * production minted one session per two messages (2026-10-21). The epoch move is now judged by the
+ * key group's departure tracker, read from the MLS state (`run`):
+ *
+ * - **Same epoch as the last distribution** (the fingerprint, never the number - a re-bootstrapped
+ *   group reaches the same number with other secrets): `reuse`.
+ * - **Same clean run as the mint**: every commit since was merged here, none removed a leaf and
+ *   none brought a new user, so whoever holds the seed is still a member: `redistribute`.
+ * - **Anything else** - a removal (an external rejoin's removal of its own old leaf included), a new
+ *   user, a gap the tracker did not see, a session minted before the tracker: `rotate`.
+ *
+ * And the unconditional causes, unchanged: no distribution frame to carry (channel-encryption
+ * section 19), no v2 secret to sign with (WP-G2-5), and the caps - 100 messages or 7 days, or 50 and
+ * 24 hours once the session has been re-distributed (the named residual of the design page).
+ *
+ * The history setting is deliberately NOT an input: the new-user rule keeps a newcomer from a seed
+ * minted before it arrived under either setting, and the setting is the server's word.
+ */
+export function graineOutboundVerdict(
   session: StoredGraineSession | null,
-  at: { distributionEpoch: number; now: number }
-): boolean {
-  if (!session) return true;
-  return (
-    session.distributionEpoch !== at.distributionEpoch ||
+  at: { run: GraineRunReading; now: number }
+): GraineOutboundVerdict {
+  if (!session) return 'rotate';
+  const anchor = session.rotationAnchor;
+  const capMessages = anchor?.redistributed
+    ? GRAINE_REUSED_ROTATE_AFTER_MESSAGES
+    : GRAINE_ROTATE_AFTER_MESSAGES;
+  const capMs = anchor?.redistributed ? GRAINE_REUSED_ROTATE_AFTER_MS : GRAINE_ROTATE_AFTER_MS;
+  if (
+    !anchor ||
     !session.distributionFrame ||
     // EVERY SESSION THIS DEVICE SEALS UNDER IS V2 (WP-G2-5), so a v1 one rotates, once, and so
     // does a v2 one whose secret is not here to sign with - a session restored from a backup.
     !session.v2?.signingSecretKeyB64 ||
-    (session.sentCount ?? 0) >= GRAINE_ROTATE_AFTER_MESSAGES ||
-    at.now - session.createdAt >= GRAINE_ROTATE_AFTER_MS
-  );
+    (session.sentCount ?? 0) >= capMessages ||
+    at.now - session.createdAt >= capMs
+  ) {
+    return 'rotate';
+  }
+  if (anchor.epochFingerprint === at.run.epochFingerprint) return 'reuse';
+  if (anchor.runId !== at.run.runId) return 'rotate';
+  // A re-distribution makes it a REUSED session, whose tighter caps must already hold: one that
+  // would be past them the moment it was re-distributed rotates instead.
+  const reusedCapsHit =
+    (session.sentCount ?? 0) >= GRAINE_REUSED_ROTATE_AFTER_MESSAGES ||
+    at.now - session.createdAt >= GRAINE_REUSED_ROTATE_AFTER_MS;
+  return reusedCapsHit ? 'rotate' : 'redistribute';
 }
 
 /**
@@ -171,16 +199,42 @@ async function reserve(
   //    its indices from a count this device never kept is two messages under one key.
   const current =
     sessions.find((s) => s.senderId === scope.senderId && s.sentCount !== undefined) ?? null;
-  const rotate = shouldRotateGraineSession(current, {
-    distributionEpoch: deps.distributionEpoch,
-    now,
-  });
+  // Read BEFORE anything is sealed: a commit landing between this read and the seal can only make
+  // the anchor older than the frame, which the next send reads as a move and judges again.
+  const run = await deps.readRun();
+  const verdict = graineOutboundVerdict(current, { run, now });
 
-  if (!rotate && current) {
+  if (verdict === 'reuse' && current) {
     const index = current.firstIndex + (current.sentCount ?? 0);
     const updated: StoredGraineSession = { ...current, sentCount: (current.sentCount ?? 0) + 1 };
     await deps.storage.saveGraineSession(updated, deps.deviceKeyB64);
-    return { session: updated, index, minted: false };
+    return { session: updated, index, minted: false, redistributed: false };
+  }
+
+  if (verdict === 'redistribute' && current?.rotationAnchor) {
+    // The SAME seed, the same id, floor and endorsement - only the frame is new, sealed at the
+    // current epoch so a device added since can open it. Distributed BEFORE it is persisted, for
+    // the reason the mint below gives: a failure leaves the stored session as it was.
+    const distributionFrame = await deps.distribute(current);
+    const index = current.firstIndex + (current.sentCount ?? 0);
+    const updated: StoredGraineSession = {
+      ...current,
+      sentCount: (current.sentCount ?? 0) + 1,
+      distributionEpoch: run.epoch,
+      distributionFrame,
+      rotationAnchor: {
+        ...current.rotationAnchor,
+        epochFingerprint: run.epochFingerprint,
+        redistributed: true,
+      },
+    };
+    await deps.storage.saveGraineSession(updated, deps.deviceKeyB64);
+    console.info(
+      `[GRAINE] reused session ${current.sessionId} for channel ${scope.channelId.slice(0, 8)} ` +
+        `across epoch ${current.distributionEpoch}->${run.epoch} run ${run.runId.slice(0, 8)}, ` +
+        `re-distributed (${updated.sentCount} sent)`
+    );
+    return { session: updated, index, minted: false, redistributed: true };
   }
 
   const draft: StoredGraineSession = {
@@ -193,7 +247,12 @@ async function reserve(
     firstIndex: 0,
     createdAt: now,
     sentCount: 0,
-    distributionEpoch: deps.distributionEpoch,
+    distributionEpoch: run.epoch,
+    rotationAnchor: {
+      runId: run.runId,
+      epochFingerprint: run.epochFingerprint,
+      redistributed: false,
+    },
   };
   // Endorsed, then distributed, then persisted: each step needs the one before it, and a failure
   // at any of them leaves nothing behind for the reason the distribution comment above gives.
@@ -201,16 +260,16 @@ async function reserve(
   const distributionFrame = await deps.distribute(minted);
   const stored: StoredGraineSession = { ...minted, sentCount: 1, distributionFrame };
   await deps.storage.saveGraineSession(stored, deps.deviceKeyB64);
-  // Meant to be rare - once per 100 messages, per week, or per membership change - but every device
-  // joining the key group moves the epoch too, so a growing community prints one of these for most
-  // sends (measured 2026-10-21, see `shouldRotateGraineSession`). It does NOT say which
-  // of the three fired: that reached no durable log and no report, and a distinction nothing can
-  // read is a distinction nothing can act on.
+  // Meant to be rare since 2026-10-22: once per removal or new user in the key group, or per cap.
+  // The run id is printed so a reading can tell a reset (`[GRAINE] run reset reason=...`, from the
+  // MLS layer) apart from a cap: a new session under the SAME run as the previous one was a cap.
   console.info(
     `[GRAINE] new outbound session ${minted.sessionId} for channel ${scope.channelId.slice(0, 8)} ` +
-      `at distribution epoch ${deps.distributionEpoch}, frame ${distributionFrame.protoB64.length} chars`
+      `at distribution epoch ${run.epoch} run ${run.runId.slice(0, 8)}` +
+      `${current ? ` replacing ${current.sessionId}` : ''}, ` +
+      `frame ${distributionFrame.protoB64.length} chars`
   );
-  return { session: stored, index: 0, minted: true };
+  return { session: stored, index: 0, minted: true, redistributed: false };
 }
 
 /**

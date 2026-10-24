@@ -1,6 +1,6 @@
 import { getAssociationBySlug, associationLogoSrc } from '$lib/associations/api';
 import { getForm } from '$lib/forms/api';
-import { getPost } from '$lib/posts/api';
+import { getPost, isReel } from '$lib/posts/api';
 import { getGroupInvitePreview } from '$lib/mls/groupInvites';
 import { channelService } from '$lib/services/ChannelService';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
@@ -52,6 +52,7 @@ async function fetchPostPreview(postId: string): Promise<CanariLinkPreview> {
     // never a stand-in for the logo slot.
     imageUrl: post.association?.logoUrl ? associationLogoSrc(post.association.logoUrl) : null,
     postImage: post.media?.find((item) => item.type === 'image') ?? null,
+    reelPost: isReel(post) ? post : null,
   };
 }
 

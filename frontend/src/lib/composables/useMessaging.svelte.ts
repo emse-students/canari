@@ -71,6 +71,8 @@ import {
 import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import { MediaService, refusedBeforePreparation } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
+import { chatReelPendingDeclaration, isChatReelTake } from '$lib/reels/chatReelWriter';
+import { capturePosterOf } from '$lib/reels/capturePoster';
 import {
   applyEditToBody,
   envelopeBodyText,
@@ -98,6 +100,8 @@ import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/outbox';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
+import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
+import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
 import {
   clearControlRefusal,
   clearMessageControlRefusals,
@@ -225,6 +229,10 @@ export function useMessaging() {
     forgetSalonSendsOfEndedSession();
     // The refused control actions shown are the leaving account's; its persisted list stays its own.
     forgetControlRefusals();
+    // So are the new-device alerts on screen; its unseen ones stay persisted for its next session.
+    unregisterDeviceNotices();
+    // And the join asks on screen: a member of the NEXT account must not answer them.
+    resetJoinRequests();
   }
 
   /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */
@@ -851,6 +859,13 @@ export function useMessaging() {
       isFcmPreview: options.isFcmPreview,
       serverTimestamp: options.serverTimestamp,
       ...(options.salonEcho ? { awaitingServerId: true } : {}),
+      ...(options.restoredUnverified ? { restoredUnverified: true } : {}),
+    };
+    // The author's signature and the unverified marker live in the STORED row only (sealed), so
+    // every write of this message below carries them.
+    const proofFields = {
+      ...(options.authorship ? { authorship: options.authorship } : {}),
+      ...(options.restoredUnverified ? { restoredUnverified: true } : {}),
     };
 
     const dupIdx = convo.messages.findIndex((m) => m.id === newMsg.id);
@@ -885,6 +900,7 @@ export function useMessaging() {
                 isEdited: upgraded.isEdited,
                 ...(upgraded.editedAt ? { editedAt: upgraded.editedAt.getTime() } : {}),
                 isFcmPreview: false,
+                ...proofFields,
               },
               ctx.deviceKeyB64
             );
@@ -1017,6 +1033,7 @@ export function useMessaging() {
           timestamp: newMsg.timestamp.getTime(),
           serverTimestamp: options.serverTimestamp,
           ...(options.isFcmPreview ? { isFcmPreview: true } : {}),
+          ...proofFields,
         };
         // AN OWN MESSAGE AND THE ENTRY THAT SENDS IT ARE ONE FACT, so they are one write. Persisting
         // the echo and then queuing it was two awaits, and a document torn down between them left a
@@ -1105,6 +1122,8 @@ export function useMessaging() {
             timestamp: upgraded.timestamp.getTime(),
             serverTimestamp: pm.serverTimestamp,
             isFcmPreview: false,
+            ...(pm.authorship ? { authorship: pm.authorship } : {}),
+            ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
           });
         }
         continue;
@@ -1122,6 +1141,7 @@ export function useMessaging() {
         replyTo: pm.replyTo,
         isSystem,
         ingestSequence: pm.ingestSequence,
+        ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
       };
       brandNew.push(newMsg);
       // The index is also the dedup set: a batch carrying the same id twice must add it once.
@@ -1139,6 +1159,8 @@ export function useMessaging() {
           ).getTime(),
           serverTimestamp: pm.serverTimestamp,
           ...(isSystem ? { readBy: [] } : {}),
+          ...(pm.authorship ? { authorship: pm.authorship } : {}),
+          ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
         });
       }
     }
@@ -1460,6 +1482,11 @@ export function useMessaging() {
             // MLS: queue the media. The flusher uploads then sends once the group is ready
             // (the optimistic message shows a skeleton + pending clock until then).
             const type = mediaTypeFromMime(entry.file.type);
+            // A chat reel's declaration, made at the send so its 30 days count from it. Empty for
+            // anything else: an ordinary attachment is encoded exactly as before. The take is RAW
+            // (RC-5): its intent and expiry are declared now, its LENGTH once the outbox has
+            // prepared it - the encoder is what measures it.
+            const reelDeclaration = entry.prepareRaw ? chatReelPendingDeclaration(sentAt) : {};
             const placeholder = serializeEnvelope(
               mkMediaEnvelope(
                 {
@@ -1474,6 +1501,7 @@ export function useMessaging() {
                   height: entry.height,
                   ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                   ...(entry.voiceNote ? { voiceNote: true } : {}),
+                  ...reelDeclaration,
                 },
                 captionForFile
               )
@@ -1506,6 +1534,8 @@ export function useMessaging() {
                   ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                   caption: captionForFile,
                   ...(entry.voiceNote ? { voiceNote: true } : {}),
+                  ...reelDeclaration,
+                  ...(entry.prepareRaw ? { prepare: entry.prepareRaw } : {}),
                   fileBytes,
                 },
                 status: 'pending',
@@ -1772,7 +1802,11 @@ export function useMessaging() {
   }
 
   /** Stages picked files in the pending queue, to be sent with the next message. */
-  async function handleFilesSelected(files: File[], ctx: MessagingContext) {
+  async function handleFilesSelected(
+    files: File[],
+    ctx: MessagingContext,
+    opts?: { stillWanted?: () => boolean }
+  ) {
     // The conversation the files were picked IN, read before the preparation (a video re-encode)
     // gives the member time to open another one.
     const stagedIn = ctx.selectedContact;
@@ -1780,8 +1814,21 @@ export function useMessaging() {
       ctx.log(`[MEDIA] ${files.length} file(s) not staged: no conversation is open`);
       return;
     }
-    const readyFiles = await prepareMediaFiles(files, ctx);
+    // A CANAREEL FILMED IN A DM OR A GROUP IS SENT AT ONCE, RAW (RC-5): the review's "Send" was the
+    // send, and the take is safer in the outbox - durable, encrypted, prepared there and resumed
+    // after a kill - than in a staging list a reload empties. A salon never takes one (RC-8).
+    const takes = isChannelConversationId(stagedIn) ? [] : files.filter(isChatReelTake);
+    for (const take of takes) await sendChatReelTake(take, ctx);
+    const others = files.filter((f) => !takes.includes(f));
+    if (others.length === 0) return;
+    const readyFiles = await prepareMediaFiles(others, ctx);
     if (readyFiles.length === 0) return;
+    // ASKED AFTER THE PREPARATION, which can take seconds: a sign-out during it has already emptied
+    // the queues (`forgetAccount`), and staging now would hand this account's file to the next one.
+    if (opts?.stillWanted && !opts.stillWanted()) {
+      ctx.log(`[MEDIA] ${readyFiles.length} file(s) not staged: no longer wanted (signed out)`);
+      return;
+    }
     ctx.log(`[MEDIA] ${readyFiles.length} file(s) staged in ${stagedIn}`);
     setPendingMediaFiles(stagedIn, [...pendingMediaFilesFor(stagedIn), ...readyFiles]);
   }
@@ -1808,6 +1855,29 @@ export function useMessaging() {
     // file name the recorder chose - which is a distinction carried in prose. So the gesture is
     // declared here and travels with the message; see `MediaRef.voiceNote`.
     await handleSendChat(ctx, '', { files: ready.map((f) => ({ ...f, voiceNote: true })) });
+  }
+
+  /**
+   * Queues the chat camera's RAW take as its own message, at once (reels-in-chat RC-5). Nothing is
+   * prepared here: the outbox prepares it inside the upload task, where a kill, a cancel and a weak
+   * link are already handled, and the bubble shows the preparation's progress. Only the ThumbHash
+   * of the camera's first picture is computed now, so the tile has its picture from the first frame.
+   */
+  async function sendChatReelTake(file: File, ctx: MessagingContext) {
+    let placeholder: string | undefined;
+    const poster = capturePosterOf(file);
+    if (poster) {
+      const { placeholderForImageFile } = await import('$lib/utils/mediaPlaceholder');
+      placeholder =
+        (await placeholderForImageFile(new File([poster], 'poster.jpg', { type: poster.type }))) ??
+        undefined;
+    }
+    ctx.log(
+      `[MEDIA] a chat reel take of ${file.size} bytes sent raw - the outbox prepares it${placeholder ? '' : ' (no poster)'}`
+    );
+    await handleSendChat(ctx, '', {
+      files: [{ file, prepareRaw: 'chat-reel', ...(placeholder ? { placeholder } : {}) }],
+    });
   }
 
   /** Removes a staged (not yet sent) file from the pending media queue by its index. */

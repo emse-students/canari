@@ -65,7 +65,8 @@ dev_env() {
     DEV_CALL_ROOM_SECRET=d7 \
     DEV_AGENDA_SIGNING_KEY=d8-0123456789abcdef0123456789abcdef \
     DEV_LIVE_REPORT_SIGNING_KEY=d9-0123456789abcdef0123456789abcdef \
-    DEV_LYDIA_KEY_ENCRYPTION_SECRET=d10-0123456789abcdef0123456789abcde
+    DEV_LYDIA_KEY_ENCRYPTION_SECRET=d10-0123456789abcdef0123456789abcde \
+    DEV_LIVE_KEY_ENCRYPTION_SECRET=d11-0123456789abcdef0123456789abcde
 }
 
 prod_env() {
@@ -86,7 +87,9 @@ prod_env() {
     CALL_ROOM_SECRET=p7 \
     AGENDA_SIGNING_KEY=p8-0123456789abcdef0123456789abcdef \
     LIVE_REPORT_SIGNING_KEY=p9-0123456789abcdef0123456789abcdef \
-    LYDIA_KEY_ENCRYPTION_SECRET=p10-0123456789abcdef0123456789abcde
+    LYDIA_KEY_ENCRYPTION_SECRET=p10-0123456789abcdef0123456789abcde \
+    LIVE_KEY_ENCRYPTION_SECRET=p11-0123456789abcdef0123456789abcde \
+    LYDIA_ENV=production
 }
 
 # Run the renderer with an explicit environment built from the lines on stdin.
@@ -390,6 +393,14 @@ else
     fail "CALL_E2E_ENCRYPTION is not false"
   fi
 
+  # The key-group shared-payload WRITER ships OFF, behind its readers (chat-delivery.md, migration
+  # 034): turning it on is a deliberate edit of this expectation in a LATER release, never a default.
+  if grep -q '^QUEUED_PAYLOAD_SHARED_WRITES=false$' "$out"; then
+    pass "QUEUED_PAYLOAD_SHARED_WRITES is the literal false - the readers ship before the writer"
+  else
+    fail "QUEUED_PAYLOAD_SHARED_WRITES is not false"
+  fi
+
   # DEPLOY_BUILD must never be written in production: /api/version reports `build`, and production's
   # version already names its content because it is built from a tag.
   if grep -qE '^DEPLOY_BUILD=.+' "$out"; then
@@ -540,6 +551,86 @@ elif grep -q 'LYDIA_KEY_ENCRYPTION_SECRET is not set for the dev environment' "$
   pass "a missing LYDIA_KEY_ENCRYPTION_SECRET fails the dev render, naming the secret"
 else
   fail "dev refused a missing LYDIA_KEY_ENCRYPTION_SECRET without naming it"
+fi
+
+out="$TMP/prod-nolivekey.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env | grep -v '^LIVE_KEY_ENCRYPTION_SECRET=') >"$TMP/prod-nolivekey.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with no LIVE_KEY_ENCRYPTION_SECRET"
+elif grep -q 'LIVE_KEY_ENCRYPTION_SECRET is not set for the prod environment' "$TMP/prod-nolivekey.log"; then
+  pass "a missing LIVE_KEY_ENCRYPTION_SECRET fails the production render, naming the secret"
+else
+  fail "production refused a missing LIVE_KEY_ENCRYPTION_SECRET without naming it"
+fi
+
+out="$TMP/dev-shortlivekey.env"
+# shellcheck disable=SC2046
+render dev "$out" $(dev_env | grep -v '^DEV_LIVE_KEY_ENCRYPTION_SECRET=') DEV_LIVE_KEY_ENCRYPTION_SECRET=0123456789abcdef0123456789abcde >"$TMP/dev-shortlivekey.log" || true
+if [ -f "$out" ]; then
+  fail "dev rendered with a 31-character LIVE_KEY_ENCRYPTION_SECRET"
+elif grep -q 'LIVE_KEY_ENCRYPTION_SECRET is set for the dev environment but is only 31 characters' "$TMP/dev-shortlivekey.log"; then
+  pass "a 31-character LIVE_KEY_ENCRYPTION_SECRET fails the dev render, naming the secret"
+else
+  fail "dev refused a short LIVE_KEY_ENCRYPTION_SECRET without naming it"
+fi
+
+# PRODUCTION'S LYDIA_ENV IS EXPLICIT (2026-10-23). The template says `homologation`, so a production
+# render that merely forgot the secret used to send production's Provider pair to Lydia's sandbox.
+# Each refusal below is paired with its control: the same render, with the value it needs, writes.
+out="$TMP/prod-lydiaenv.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env) >/dev/null
+if [ -f "$out" ] && grep -q '^LYDIA_ENV=production$' "$out" && [ "$(grep -c '^LYDIA_ENV=' "$out")" -eq 1 ]; then
+  pass "production writes LYDIA_ENV=production from the secret, once, over the template's homologation"
+else
+  fail "production did not write LYDIA_ENV=production from the secret exactly once"
+fi
+
+out="$TMP/prod-lydiaenv-homologation.env"
+# PRODUCTION ACCEPTS ONLY `production` (user, 2026-10-23): the sandbox is reachable from production by
+# an edit of allowed_values() in a pull request, never by a secret typed by hand.
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env | grep -v "^LYDIA_ENV=") LYDIA_ENV=homologation >"$TMP/prod-lydiaenv-homologation.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with LYDIA_ENV=homologation, which the user decided it never accepts"
+elif grep -q "LYDIA_ENV is set for the prod environment to \"homologation\", which is not one of: production" "$TMP/prod-lydiaenv-homologation.log"; then
+  pass "production refuses LYDIA_ENV=homologation, naming the key and the only word it accepts"
+else
+  fail "production refused LYDIA_ENV=homologation without naming it"
+fi
+
+out="$TMP/prod-nolydiaenv.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env | grep -v '^LYDIA_ENV=') >"$TMP/prod-nolydiaenv.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with no LYDIA_ENV, so the template's homologation would have applied"
+elif grep -q 'LYDIA_ENV is not set for the prod environment' "$TMP/prod-nolydiaenv.log"; then
+  pass "a missing LYDIA_ENV fails the production render, naming the secret"
+else
+  fail "production refused a missing LYDIA_ENV without naming it"
+fi
+
+out="$TMP/prod-badlydiaenv.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env | grep -v '^LYDIA_ENV=') LYDIA_ENV=prod >"$TMP/prod-badlydiaenv.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with LYDIA_ENV=prod, which core-service reads as the sandbox"
+elif grep -q 'LYDIA_ENV is set for the prod environment to "prod", which is not one of: production' "$TMP/prod-badlydiaenv.log"; then
+  pass "a LYDIA_ENV that is other than production fails the production render, naming the key"
+else
+  fail "production refused a bogus LYDIA_ENV without naming it"
+fi
+
+# Dev never reads it: even a DEV_LYDIA_ENV=production lying around renders nothing, the template's
+# homologation line stands, and the compose literal (asserted below) is what core-service receives.
+out="$TMP/dev-lydiaenv.env"
+# shellcheck disable=SC2046
+render dev "$out" $(dev_env) DEV_LYDIA_ENV=production LYDIA_ENV=production >/dev/null
+if [ -f "$out" ] && grep -q '^LYDIA_ENV=homologation$' "$out" && ! grep -q '^LYDIA_ENV=production$' "$out"; then
+  pass "dev writes no LYDIA_ENV of its own, whatever secret is set, and keeps homologation"
+else
+  fail "dev rendered a LYDIA_ENV from a secret"
 fi
 
 out="$TMP/dev-build.env"

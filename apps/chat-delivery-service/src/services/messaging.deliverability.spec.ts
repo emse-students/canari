@@ -5,6 +5,7 @@ import type { FindOperator } from 'typeorm';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { QueuedPayload } from '../entities/queued-payload.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
@@ -16,6 +17,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { SeatEviction } from '../entities/seat-eviction.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 
 /**
@@ -62,14 +64,18 @@ describe('MessagingService - a tombstone is not a destination', () => {
   const queryBuilder = () => {
     const state = { skip: 0, take: 0 };
     const qb = {
+      leftJoinAndSelect: () => qb,
       where: () => qb,
       andWhere: () => qb,
       orderBy: () => qb,
-      skip: (n: number) => {
+      addOrderBy: () => qb,
+      // `offset`/`limit`, the SQL ones: the payload join is many-to-one, so it cannot multiply rows
+      // and TypeORM's two-query `skip`/`take` pagination would only double the read.
+      offset: (n: number) => {
         state.skip = n;
         return qb;
       },
-      take: (n: number) => {
+      limit: (n: number) => {
         state.take = n;
         return qb;
       },
@@ -128,7 +134,11 @@ describe('MessagingService - a tombstone is not a destination', () => {
         MessagingService,
         {
           provide: getRepositoryToken(QueuedMessage),
-          useValue: { ...emptyRepo(), createQueryBuilder: jest.fn(() => queryBuilder()) },
+          useValue: {
+            ...emptyRepo(),
+            createQueryBuilder: jest.fn(() => queryBuilder()),
+            count: jest.fn().mockResolvedValue(0),
+          },
         },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
         { provide: getRepositoryToken(Group), useValue: groupRepo },
@@ -220,13 +230,15 @@ describe('MessagingService - a tombstone is not a destination', () => {
 
     expect(page).toEqual([]);
     expect(purged).toEqual([
-      QueuedMessage,
       GroupMember,
+      QueuedMessage,
+      QueuedPayload,
       DeviceGroupMembership,
       MlsCommitLog,
       MlsGroupInfo,
       GroupInvite,
       GroupMembershipInterval,
+      SeatEviction,
       UserDismissedGroup,
     ]);
     expect(warnings.some((w) => w.includes('absent from dm_groups'))).toBe(true);

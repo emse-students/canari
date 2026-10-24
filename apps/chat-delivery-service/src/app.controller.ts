@@ -2,6 +2,8 @@ import { Controller, Inject, OnModuleInit, OnModuleDestroy, Logger } from '@nest
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan, MoreThanOrEqual } from 'typeorm';
 import { QueuedMessage } from './entities/queued-message.entity';
+import { QueuedPayload } from './entities/queued-payload.entity';
+import { collectUnreferencedPayloads } from './utils/queued-payload';
 import {
   KeyPackage,
   KEY_PACKAGE_LIFETIME_DAYS,
@@ -40,6 +42,7 @@ import {
   totalGroupOwnedRows,
 } from './utils/group-purge';
 import { MessagingService } from './services/messaging.service';
+import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -135,10 +138,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     // Detect stale devices: devices whose membership hasn't been updated
     // within MESSAGE_RETENTION_MS are reset to pending for re-invite.
+    // The same hourly membership pass settles the key-group departures whose post-roster eviction
+    // never arrived (`dm_seat_evictions.owedDeparture`) - see MessagingService.drainOwedSeatEvictions.
     this.staleDeviceInterval = setInterval(() => {
       void this.detectStaleDevices().catch((e) =>
         this.logger.error('[CRON] detectStaleDevices failed', e)
       );
+      void this.messagingService
+        .drainOwedSeatEvictions()
+        .catch((e) => this.logger.error('[CRON] drainOwedSeatEvictions failed', e));
     }, ONE_HOUR);
 
     // Cleanup expired queued messages older than MESSAGE_RETENTION_MS
@@ -288,6 +296,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     this.logger.log('[CRON] initial sweep: running every GC job once');
     const jobs: [string, () => Promise<unknown>][] = [
       ['detectStaleDevices', () => this.detectStaleDevices()],
+      ['drainOwedSeatEvictions', () => this.messagingService.drainOwedSeatEvictions()],
       ['cleanupExpiredQueuedMessages', () => this.cleanupExpiredQueuedMessages()],
       ['cleanupStaleDevices', () => this.cleanupStaleDevices()],
       ['cleanupOrphanGroups', () => this.cleanupOrphanGroups()],
@@ -438,7 +447,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Delete queued messages older than MESSAGE_RETENTION_MS.
+   * Delete queued messages older than MESSAGE_RETENTION_MS, then every shared payload no delivery
+   * record references any more.
+   *
+   * THE COLLECTOR RUNS HERE, AFTER the retention delete, and it is the only collector: an ACK, a
+   * device purge, an account erasure and this retention all delete RECORDS and never a payload, so
+   * whichever of them took a payload's last record, the next pass takes the payload. Hourly is the
+   * cost of that - a payload outlives its last record by at most an hour - and it buys one
+   * predicate instead of one per deleting path (`collectUnreferencedPayloads`).
    */
   private async cleanupExpiredQueuedMessages() {
     const expiry = new Date(Date.now() - AppController.MESSAGE_RETENTION_MS);
@@ -447,6 +463,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     });
     if (result.affected && result.affected > 0) {
       this.logger.log(`[CRON] cleanupExpiredQueuedMessages: deleted ${result.affected} message(s)`);
+    }
+    const payloads = await collectUnreferencedPayloads(this.queuedMessageRepo.manager);
+    if (payloads > 0) {
+      this.logger.log(
+        `[CRON] cleanupExpiredQueuedMessages: collected ${payloads} shared payload(s) no record references`
+      );
     }
   }
 
@@ -486,14 +508,19 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // row threshold, so this report stayed at LOG level for weeks - carrying 36 MB, because a
     // quarter of them held media at up to 89 kB each. Ranking by depth put a harmless 189-frame
     // device above it. The predicate that named the retransmission storm could not name this.
+    //
+    // A record pointing at a shared payload stores no bytes of its own, and still costs its device
+    // the whole payload to drain - so the size is the payload's, joined, not the row's NULL.
+    const bytes = 'COALESCE(SUM(LENGTH(COALESCE(q.proto, p.proto))), 0)';
     const deepest = await this.queuedMessageRepo
       .createQueryBuilder('q')
+      .leftJoin(QueuedPayload, 'p', 'p.id = q.payloadId')
       .select('q.deviceId', 'deviceId')
       .addSelect('COUNT(*)', 'depth')
-      .addSelect('COALESCE(SUM(LENGTH(q.proto)), 0)', 'bytes')
+      .addSelect(bytes, 'bytes')
       .addSelect('MIN(q.createdAt)', 'oldest')
       .groupBy('q.deviceId')
-      .orderBy('COALESCE(SUM(LENGTH(q.proto)), 0)', 'DESC')
+      .orderBy(bytes, 'DESC')
       .limit(QUEUE_DEPTH_REPORT_TOP_N)
       .getRawMany<{ deviceId: string; depth: string; bytes: string; oldest: Date }>();
 
@@ -583,7 +610,25 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // `\0` cannot occur in either identifier, so the pair key is unambiguous - a plain `:` or
     // `-` join would be, since a deviceId already contains both.
     const owedAWelcome = new Set(welcomed.map((w) => `${w.deviceId}\0${w.groupId}`));
-    const stranded = pending.filter((p) => !owedAWelcome.has(`${p.deviceId}\0${p.groupId}`));
+    const unwelcomed = pending.filter((p) => !owedAWelcome.has(`${p.deviceId}\0${p.groupId}`));
+
+    // A SEAT AN INVITATION LINK WROTE WAITS FOR A MEMBER'S ANSWER (`GroupMember.awaitingAdmission`),
+    // and nothing follows it until a member answers by design: it is not stranded, and counting it
+    // here would name a decision nobody took yet as a defect. Counted apart, so a link nobody
+    // answers for weeks is still visible.
+    const awaitingRows = unwelcomed.length
+      ? await this.groupMemberRepo.find({
+          where: unwelcomed.map((p) => ({
+            groupId: p.groupId,
+            userId: p.userId,
+            awaitingAdmission: true,
+          })),
+          select: { groupId: true, userId: true },
+        })
+      : [];
+    const awaitingSeats = new Set(awaitingRows.map((r) => `${r.userId}\0${r.groupId}`));
+    const stranded = unwelcomed.filter((p) => !awaitingSeats.has(`${p.userId}\0${p.groupId}`));
+    const awaitingAnswer = unwelcomed.length - stranded.length;
 
     // THE SECOND PARTITION, AND IT IS THE ONE THAT NAMES A DEFECT NOTHING ELSE REPORTS. Every row
     // above holds a seat with no Welcome, and two opposite causes wear that: a device
@@ -600,7 +645,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     this.logger.log(
       `[CRON] reportStrandedDeviceMemberships: ${pending.length} pending membership(s) past the ` +
-        `window - ${pending.length - stranded.length} awaiting a queued Welcome, ` +
+        `window - ${pending.length - unwelcomed.length} awaiting a queued Welcome, ` +
+        `${awaitingAnswer} awaiting a member's answer to an invitation link, ` +
         `${neverAdded.length} never added, ${kicked.length} kicked with no re-add`
     );
     if (stranded.length === 0) return;
@@ -1176,8 +1222,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * either through its Welcome still queued (separate table, 90d retention - without a new
    * commit), or through `welcome_request`, which triggers a re-add at the current epoch. The
    * threshold is therefore deliberately much shorter than the Welcome retention: it only bounds
-   * how long the durable trigger/fallback is kept on the inviter side. `active` rows and
-   * `dm_group_members` are never touched.
+   * how long the durable trigger/fallback is kept on the inviter side. `active` rows are never
+   * touched, and `dm_group_members` only in the case below.
+   *
+   * **AN INVITATION LINK'S ASK THAT NOBODY ANSWERED EXPIRES WHOLE** (`GroupMember.awaitingAdmission`).
+   * Its device rows alone cannot go: the joiner would then read no `awaiting-admission` row, try the
+   * external join, meet the 409 its seat still earns, and raise a fresh ask on every cadence. So when
+   * none of the person's device rows in the group is `active` or younger than the expiry, the seat is
+   * withdrawn the way a member's Decline withdraws it ({@link expireUnansweredAsks}, under the seat
+   * lock and guarded on the flag): roster row, device rows, Welcomes, the interval the link opened.
+   * The joiner's next look then finds no seat - a 403, the conversation retired - and following the
+   * link again is a new ask.
    *
    * **FILTERS ON `pendingSince`, AND FOR TWELVE DAYS IT FILTERED ON `updatedAt` INSTEAD.** The
    * intent was right and is unchanged - a device once `active` and then put back to `pending` by
@@ -1198,7 +1253,19 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     if (stale.length === 0) return;
 
+    const { awaiting, outcomes } = await expireUnansweredAsks(
+      this.groupMemberRepo.manager,
+      stale,
+      expiry
+    );
+    if (awaiting.size > 0) {
+      this.logger.log(
+        `[CRON] cleanupStalePendingInvitations: ${awaiting.size} invitation-link ask(s) awaiting a member - ${JSON.stringify(outcomes)}`
+      );
+    }
+
     for (const m of stale) {
+      if (awaiting.has(seatKey(m.groupId, m.userId))) continue;
       await this.deviceGroupRepo.delete({
         userId: m.userId,
         deviceId: m.deviceId,
@@ -1238,6 +1305,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const ids = deadGroups.map((g) => g.id);
 
     const counts = await this.groupRepo.manager.transaction(async (tx) => {
+      // The `dm_groups` rows FIRST, before any row they own: the one order of
+      // `utils/seat-eviction.ts`, which an eviction also takes (it moves the group's seat generation
+      // before it deletes seats). Deleting the owned rows first would wait on it in a cycle.
+      await tx.getRepository(Group).find({
+        where: { id: In(ids) },
+        select: { id: true },
+        lock: { mode: 'pessimistic_write' },
+      });
       const removed = await deleteGroupOwnedRows(tx, ids);
       await tx.getRepository(Group).delete(ids);
       return removed;

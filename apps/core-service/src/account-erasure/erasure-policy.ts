@@ -26,6 +26,12 @@ export const ERASURE_TARGETS = [
   {
     service: 'chat-delivery',
     kind: 'http',
+    // Social's part removes the person from every community, and each removal evicts their seats
+    // here, which records the eviction under their id (`dm_seat_evictions`). Run after social's part
+    // has completed, this part - its final pass included - erases those records, whatever order the
+    // two services happened to answer in. The cost: an account's MLS data waits for social's final
+    // pass, while the account itself is already deactivated.
+    after: 'social',
     url: (subjectId: string) => chatDeliveryUrl(`internal/users/${encodeURIComponent(subjectId)}`),
   },
   {
@@ -101,8 +107,19 @@ export const CORE_ERASURE_STATEMENTS: readonly {
     sql: `UPDATE platform_announcements SET created_by = $2::uuid WHERE created_by::text = $1`,
     replacement: NIL_UUID,
   },
+  // The restore keys (WP-RESTORE-1), by their own account column rather than by the cascade from
+  // `auth_sessions` below, so this list names every table holding the id (docs/wiki/account-restore.md).
+  { label: 'restore_credentials', sql: `DELETE FROM restore_credentials WHERE "userId" = $1` },
   // The refresh tokens die here, so no session can be renewed from this moment.
   { label: 'auth_sessions', sql: `DELETE FROM auth_sessions WHERE "userId" = $1` },
+  // A push ending still owed names the account; chat-delivery's own part of the erasure deletes
+  // every push registration the account holds, so nothing is left for it to end. AFTER the
+  // sessions: a logout racing this transaction waits on the session row, then finds it gone and
+  // records nothing, so no ending can be written behind this delete.
+  {
+    label: 'session_push_endings',
+    sql: `DELETE FROM session_push_endings WHERE "userId" = $1`,
+  },
   // Last, and in the job as well as in the request: nothing nominative is left in `users`.
   { label: 'users', sql: `DELETE FROM users WHERE id = $1` },
 ];

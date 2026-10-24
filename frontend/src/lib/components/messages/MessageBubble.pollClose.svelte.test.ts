@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * "Clore le sondage" is offered to the poll's author AND to a salon moderator - the same pair the
  * server's `closePoll` accepts. The bubble offered it to the author only, so a moderator could

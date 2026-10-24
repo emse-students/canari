@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ACCOUNT_KEY, accountLocalStorageKeysIn } from '../accountLocalKeys';
 import {

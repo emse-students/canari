@@ -44,7 +44,13 @@ export type SolicitedProbe =
       key: string;
       since: number;
     }
-  | { kind: 'digest'; digest: HistoryDigest; since: number }
+  | {
+      kind: 'digest';
+      digest: HistoryDigest;
+      since: number;
+      /** The asker's id for this ask, echoed on the answer (absent from an older asker). */
+      requestId?: string;
+    }
   | {
       kind: 'range';
       /** The asker holds nothing older than this and wants what precedes it. */
@@ -52,6 +58,8 @@ export type SolicitedProbe =
       /** How many messages it is willing to receive in one answer. */
       limit: number;
       since: number;
+      /** The asker's id for this ask, echoed on the answer (absent from an older asker). */
+      requestId?: string;
     };
 
 type StoredProbe = { probe: SolicitedProbe; at: number };

@@ -52,7 +52,7 @@ services:
 
   server:
     logging: *logging
-    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.0}
+    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.5}
     restart: unless-stopped
     command: server
     env_file:
@@ -90,7 +90,7 @@ services:
 
   worker:
     logging: *logging
-    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.0}
+    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.5}
     restart: unless-stopped
     command: worker
     # STILL root, and no longer for the reason it was: the Docker socket below is gone. What is

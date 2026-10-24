@@ -78,3 +78,54 @@ describe('inviteMembersToGroup - register before deliver', () => {
     expect(d.order).not.toContain('welcome:carol');
   });
 });
+
+/**
+ * The invite NEVER THROWS, so its caller reads what it did: the answer to a join ask keeps the ask
+ * on screen unless this says the person was added (`joinAnswers.ts`).
+ */
+describe('inviteMembersToGroup - says what it did', () => {
+  it('answers `added` with the users whose devices the merged commit put in the tree', async () => {
+    const d = inviteDeps();
+
+    const outcome = await inviteMembersToGroup(['Bob', 'carol'], convo, d.deps as never);
+
+    expect(outcome.kind).toBe('added');
+    expect(outcome.kind === 'added' && [...outcome.addedUsers].sort()).toEqual(['bob', 'carol']);
+  });
+
+  it('answers `add-lock-busy` when another device holds the add lock, and stages nothing', async () => {
+    const d = inviteDeps();
+    d.mlsService.acquireAddLock = vi.fn(async () => false);
+
+    const outcome = await inviteMembersToGroup(['bob'], convo, d.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-added', reason: 'add-lock-busy' });
+    expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('answers `no-device-added` when every key package was skipped', async () => {
+    const d = inviteDeps();
+    d.mlsService.addMembersBulk = vi.fn(async () => ({
+      addedDeviceIds: [],
+      skipped: [],
+      welcome: new Uint8Array([1]),
+    }));
+
+    expect(await inviteMembersToGroup(['bob'], convo, d.deps as never)).toEqual({
+      kind: 'not-added',
+      reason: 'no-device-added',
+    });
+  });
+
+  it('answers `failed` when the commit threw before it merged', async () => {
+    const d = inviteDeps();
+    d.mlsService.addMembersBulk = vi.fn(async () => {
+      throw new Error('commit gate refused');
+    });
+
+    expect(await inviteMembersToGroup(['bob'], convo, d.deps as never)).toEqual({
+      kind: 'not-added',
+      reason: 'failed',
+    });
+  });
+});

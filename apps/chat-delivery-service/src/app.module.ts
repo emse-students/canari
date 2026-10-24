@@ -22,6 +22,7 @@ import { PushController } from './controllers/push.controller';
 import { InternalController } from './controllers/internal.controller';
 import { AdminStorageController } from './controllers/admin-storage.controller';
 import { QueuedMessage } from './entities/queued-message.entity';
+import { QueuedPayload } from './entities/queued-payload.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
 import { GroupMember } from './entities/group-member.entity';
@@ -38,6 +39,7 @@ import { RevokedDevice } from './entities/revoked-device.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { GroupMembershipInterval } from './entities/group-membership-interval.entity';
+import { SeatEviction } from './entities/seat-eviction.entity';
 import Redis from 'ioredis';
 
 const RedisProvider: Provider = {
@@ -84,6 +86,7 @@ class RedisShutdown implements OnModuleDestroy {
       })(),
       entities: [
         QueuedMessage,
+        QueuedPayload,
         KeyPackage,
         OneTimeKeyPackage,
         GroupMember,
@@ -99,11 +102,13 @@ class RedisShutdown implements OnModuleDestroy {
         DeviceSignatureKey,
         NotificationPreference,
         GroupMembershipInterval,
+        SeatEviction,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
     }),
     TypeOrmModule.forFeature([
       QueuedMessage,
+      QueuedPayload,
       KeyPackage,
       OneTimeKeyPackage,
       GroupMember,

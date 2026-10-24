@@ -31,6 +31,10 @@
     <!-- The outbox nudge: sends are still queued and the app is closed. -->
     <string name="notif_outbox_pending_body">Vous avez peut-être des messages en attente, ouvrez l\'application pour les envoyer.</string>
 
+    <!-- A device was added to the user's own account, read from a signed MLS commit (2026-10-22). -->
+    <string name="notif_new_device_title">Nouvel appareil</string>
+    <string name="notif_new_device_body">Un nouvel appareil a été ajouté à votre compte. Si ce n\'est pas vous, ouvrez Canari.</string>
+
     <!-- MessagingStyle names the user's own messages with this. Since 2026-10-01 every message of a
          conversation carries its author's name - the other person's above theirs, this above ours -
          so it reads as a NAME beside a name, "Vous" the way Messages and WhatsApp write it. -->

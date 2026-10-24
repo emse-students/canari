@@ -13,7 +13,9 @@ MiGallery's and the Cercle's.
 
 Canari is the one variant, deliberately: its 1 h access token stays STATELESS, because six services
 and nginx verify it without touching a database. The row backs the REFRESH token instead, and carries
-`sid` + `jti` (`apps/core-service/src/auth/auth-sessions.service.ts`).
+`sid` + `jti` (`apps/core-service/src/auth/auth-sessions.service.ts`). On Android a session may also
+own ONE restore key, which dies with the row and moves the session to a new phone rather than adding
+one ([account-restore](account-restore.md)).
 
 ## What a cookie is, and is not
 
@@ -356,6 +358,93 @@ and 2 pairs sharing one user agent.
 can name a device, and a holder who never unlocks MLS never names one at all - which is the shape a
 stolen cookie takes. The settings panel gives such a row its own entry instead of hiding it under a
 device it cannot claim.
+
+## A session that ends takes its device's push registration with it (2026-10-22)
+
+**After any sign-out, the device stops being a push destination for the account that left - on
+both sides, and neither depends on the other.**
+
+**Server.** Every path in `AuthSessionsService` that deletes a session deliberately ends the push
+registrations it leaves behind: `revoke` (the logout), `revokeOwned` (the owner revoking a device),
+`revokeOthers`, and the replay that revokes in `rotate` - and so does the one deletion OUTSIDE it, a
+restore consuming its key (`RestoreCredentialsService.consume`, cause `restored`), which ends the old
+phone's session in its own transaction and enqueues through the same `SessionPushEndService.enqueue`
+([account-restore](account-restore.md)). A new deletion of `auth_sessions` that skips the enqueue
+leaves a sold or lost phone receiving the account's notifications. Three facts make it exact and
+durable by construction:
+
+- **The registration names its session.** An access token carries `sid`, the session it was minted
+  for (`signAccessToken`); `/api/auth/verify` answers it as `X-Session-Id`, nginx forwards it on every
+  authenticated location (and empties a client's own), and `POST /mls/push/register` stores it in
+  `push_token."sessionId"` (chat-delivery migration 037) on every registration, null included. A row
+  written before the column, or with an access token minted before the claim, holds NULL; there is
+  no backfill.
+- **The ending is part of the session's deletion.** The same transaction that deletes the session
+  writes one `session_push_endings` row (core-service migration 016) for EVERY deliberately ended
+  session, with the device it named or NULL (`DELETE ... RETURNING` for `revokeOthers`). A failure
+  rolls both back.
+- **One pass deletes exactly what the session left.** `DELETE /api/internal/push/users/:userId/
+  sessions/:sessionId` deletes the row that session registered, on whatever device - a session that
+  registered before `bindDevice` named its device is covered. When the session named a device, the
+  pass first READS that device's binding (`GET /api/internal/push/users/:userId/devices/:deviceId`),
+  then judges it in core-service: NULL, or a session absent from the live `auth_sessions`, is stale;
+  the ending session itself, or a live session, is left. A stale binding is sent back as
+  `?device=&ifBoundTo=<session|none>` and deleted only if the row still names it - so a re-sign-in
+  that registers between the read and the delete changed the binding, and is never reached. A
+  device whose earlier session died without an ending therefore loses that stale row with its
+  current session's sign-out.
+
+**A final pass, because an access token outlives its session.** An access token minted before the
+session ended stays valid for up to one `ACCESS_TOKEN_TTL_SECONDS` and can still register under the
+ended session's id. So a pass that succeeded before `endedAt + ACCESS_TOKEN_TTL_SECONDS +
+CREDENTIAL_SKEW_SECONDS` keeps the row, due at that instant, and the row is deleted only after a pass
+that STARTED after it - the account erasure's `afterSuccess` rule, a termination proved by the
+token's own expiry. `SessionPushEndService` drains the outbox exactly as `AccountErasureService`
+drains `account_erasure_jobs` ([account-erasure](account-erasure.md)): right after the commit,
+unawaited - a slow chat-delivery never turns a logout into a refusal - and every 60 s, a claim under
+`FOR UPDATE SKIP LOCKED` with a lease, `INTERNAL_SECRET` on each call. A 2xx (`removed: 0` included:
+the second call of an idempotent end) advances the row as above; a 5xx or a transport failure keeps
+it with its attempts and last error, retried with backoff (30 s doubling, 6 h cap) and logged at
+ERROR with `[PUSH_SESSION_END]`, its attempts and its age; a 400 - an address chat-delivery refuses,
+which no retry can change - is accused once at ERROR and the row dropped. `bindDevice` refuses any
+device id outside `libs/contracts/device-id.json`, the pattern chat-delivery accepts, so a session
+cannot name a device whose ending would be refused.
+
+Deleting the `push_token` row removes the destination AND the push secret on it, so every
+PushSecret-authenticated background path is refused from then on, and `refresh-token` only ever
+updates a row, so nothing on the device can bring it back. `bindDevice`'s strays never record an
+ending: they name the very device being bound, whose registration is the live session's.
+
+**Device.** `clearAuth` - which every sign-out calls - runs `endPushRegistration`
+(`PushNotificationService.ts`) whatever happened before: a dead credential, a refused network, no
+registration marker in the tab, no app shell. Through `end_push_registration`
+(`src-tauri/src/commands/push_registration.rs`) the OS token is deleted natively, the push secret
+erased, `push_context.json` reduced to the device's identity (`userId`, `deviceId`, `locale` - an
+allowlist), and the iOS extension's copies removed; a push still in flight is then dropped by the
+native handlers instead of shown. The mechanism, and the two durable marks it leaves, are on
+[mobile](frontend/mobile.md#a-sign-out-ends-this-devices-push-registration-2026-10-22).
+
+**What each side guarantees on its own.** The device's deletion of its OS token makes FCM refuse
+that token, and the dispatcher drops the row at the next send (`registration-token-not-registered`).
+The server's deletion needs nothing from the device, and is recorded with the session's own
+deletion: a chat-delivery that is down delays it, and a registration made with a still-valid access
+token after the first pass is taken by the final one.
+
+**Scope.** Every delete is keyed on the account, and then on the ending session or on a binding read
+and judged stale, so it cannot reach another account's registration nor a live session's. A session
+that EXPIRES (7 idle days, `deleteExpired`) is not a revocation and leaves the push registration as
+it is - **decided by the user, 2026-10-23: only an explicit sign-out (or a revocation) ends it, never
+an expiry alone**, so an idle phone keeps its notifications, as WhatsApp's does.
+
+**The rolling deploy, and the order accepted (2026-10-23).** The release that brings this rolls
+nginx, core-service and chat-delivery-service one at a time, with no shim between the old and new
+shapes (a compatibility path would be a fallback). For the minutes the three disagree: an OLD
+core-service calls the removed `devices/:deviceId` delete, chat-delivery answers 404, and that
+session's server-side ending is lost (the device still deletes its own token); a NEW core-service
+calling an OLD chat-delivery reaches routes that do not exist yet, so its rows stay queued and are
+retried until it is deployed; an OLD nginx does not yet empty a client's own `X-Session-Id`, so a
+registration in that window can carry a session id the client chose - for its own account only,
+since the account comes from the verified token. That window is the order accepted.
 
 ## A dead session sends the user to `/login` carrying where they were going (2026-10-09)
 

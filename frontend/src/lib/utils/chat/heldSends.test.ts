@@ -38,4 +38,22 @@ describe('the held-send queue', () => {
     expect(run).not.toHaveBeenCalled();
     expect(q.size).toBe(0);
   });
+
+  it('releases what a send owns when it is NOT run - dropped or misdirected - and only then', () => {
+    const q = createHeldSendQueue();
+    const discarded: string[] = [];
+    const held = (what: string, target: string) => ({
+      what,
+      target,
+      run: () => {},
+      discard: () => discarded.push(what),
+    });
+    q.hold(held('sent', 'g1'));
+    q.hold(held('elsewhere', 'g2'));
+    q.release('g1');
+    expect(discarded).toEqual(['elsewhere']);
+    q.hold(held('dropped', 'g1'));
+    q.drop();
+    expect(discarded).toEqual(['elsewhere', 'dropped']);
+  });
 });

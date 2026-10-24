@@ -3,6 +3,11 @@ import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from 
 import { applyReplaySystemEvent, type HistoryRow } from './historySystemEvents';
 import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
 import { envelopeBodyText, mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
+import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
+import { keySource } from '$lib/crypto/messageAuthorship.testKit';
+
+/** A signature as mls-core left it on a replayed frame - opaque here, only carried. */
+const SIGNED: RecordedAuthorship = { body: 'Ym9keQ==', proof: 'cHJvb2Y=', group: 'group-1' };
 
 /**
  * The replay handlers for mutations, exercised for the first time.
@@ -57,11 +62,16 @@ async function replay(
   // The pin store caches one set per conversation for the life of the module, so a test that wants
   // a device with no pin state has to ask under a name no earlier test has written.
   groupId: string = GROUP,
-  dropOwnExcluded: Parameters<typeof applyReplaySystemEvent>[0]['dropOwnExcluded'] = async (m) => m
+  dropOwnExcluded: Parameters<typeof applyReplaySystemEvent>[0]['dropOwnExcluded'] = async (m) => m,
+  authorship?: RecordedAuthorship,
+  me: string = OWNER
 ): Promise<{
   convo: Conversation;
-  deletedMessages: Map<string, { by: string }>;
-  editedMessages: Map<string, { content: string; editedAt: Date; by: string }>;
+  deletedMessages: Map<string, { by: string; proof?: RecordedAuthorship }>;
+  editedMessages: Map<
+    string,
+    { content: string; editedAt: Date; by: string; proof?: RecordedAuthorship }
+  >;
   reactionUpdates: Map<string, MessageReaction[]>;
   readWatermarkUpdates: ReadWatermarks;
   historyFloorUpdate: { at: number };
@@ -69,8 +79,11 @@ async function replay(
 }> {
   let convo = conversation(messages);
   const sinks = {
-    deletedMessages: new Map<string, { by: string }>(),
-    editedMessages: new Map<string, { content: string; editedAt: Date; by: string }>(),
+    deletedMessages: new Map<string, { by: string; proof?: RecordedAuthorship }>(),
+    editedMessages: new Map<
+      string,
+      { content: string; editedAt: Date; by: string; proof?: RecordedAuthorship }
+    >(),
     reactionUpdates: new Map<string, MessageReaction[]>(),
     readWatermarkUpdates: {} as ReadWatermarks,
     historyFloorUpdate: { at: 0 },
@@ -80,7 +93,7 @@ async function replay(
     parsed,
     msg: row(sender),
     contactName: CONVO,
-    userId: OWNER,
+    userId: me,
     conversationId: groupId,
     getConversation: () => convo,
     setConversation: (_name, next) => {
@@ -88,12 +101,16 @@ async function replay(
     },
     messageReactions: new Map(),
     reactionUpdates: sinks.reactionUpdates,
+    authorKeys: keySource({}),
+    rowPatches: new Map(),
+    pendingById: new Map(),
     deletedMessages: sinks.deletedMessages,
     editedMessages: sinks.editedMessages,
     readWatermarkUpdates: sinks.readWatermarkUpdates,
     historyFloorUpdate: sinks.historyFloorUpdate,
     pushPendingMessage: (entry) => sinks.pushed.push(entry),
     dropOwnExcluded,
+    ...(authorship ? { authorship } : {}),
   });
   return { convo, ...sinks };
 }
@@ -181,6 +198,50 @@ describe('replaying a deletion', () => {
   });
 });
 
+describe('one canonical user id (leafIdentity.ts): a non-ASCII case variant is another user', () => {
+  // `canonicalUserId` lowercases ASCII letters only, as Rust does: 'Élise' and 'élise' differ.
+  it('refuses a deletion and an edit sent under a case variant of the author', async () => {
+    const deleted = await replay(systemEvent('delete_message', { messageId: 'm1' }), 'élise', [
+      message('m1', 'Élise'),
+    ]);
+    expect(deleted.deletedMessages.size).toBe(0);
+    const edited = await replay(
+      systemEvent('edit_message', { messageId: 'm1', newContent: 'x', editedAt: 5 }),
+      'élise',
+      [message('m1', 'Élise')]
+    );
+    expect(edited.editedMessages.size).toBe(0);
+  });
+
+  it('still takes an ASCII case variant as the author', async () => {
+    const deleted = await replay(systemEvent('delete_message', { messageId: 'm1' }), 'USER-A', [
+      message('m1', OWNER),
+    ]);
+    expect(deleted.deletedMessages.size).toBe(1);
+  });
+
+  it('renders no departure a member announced for a case variant of itself', async () => {
+    const result = await replay(systemEvent('memberLeft', { userId: 'Élise' }), 'élise', []);
+    expect(result.pushed).toEqual([]);
+  });
+
+  it('reads an invitation from a case variant of me as received, not as one I sent', async () => {
+    const result = await replay(
+      systemEvent('channel_invitation', { channelId: 'c1', channelName: 'C', inviteeId: 'x' }),
+      'élise',
+      [],
+      GROUP,
+      undefined,
+      undefined,
+      'Élise'
+    );
+    const entry = result.pushed[0] as { content: string };
+    expect(parseEnvelope(entry.content)).toMatchObject({
+      channelInvite: { channelId: 'c1', invitedName: undefined },
+    });
+  });
+});
+
 describe('replaying an edit', () => {
   it("applies the author's own edit, with its time", async () => {
     const result = await replay(
@@ -216,6 +277,31 @@ describe('replaying an edit', () => {
     const applied = parseEnvelope(result.convo.messages[0].content);
     expect(applied.kind === 'text' && applied.text).toBe('Done');
     expect(applied.kind === 'text' && applied.replyTo).toEqual(quote);
+  });
+
+  it("keeps the author's signature with a replayed edit and deletion, so a later bundle proves them", async () => {
+    const edit = await replay(
+      systemEvent('edit_message', {
+        messageId: 'm1',
+        newContent: 'x',
+        editedAt: 1_700_000_042_000,
+      }),
+      OWNER,
+      [message('m1', OWNER)],
+      GROUP,
+      async (m) => m,
+      SIGNED
+    );
+    expect(edit.editedMessages.get('m1')?.proof).toEqual(SIGNED);
+    const del = await replay(
+      systemEvent('delete_message', { messageId: 'm1' }),
+      OWNER,
+      [message('m1', OWNER)],
+      GROUP,
+      async (m) => m,
+      SIGNED
+    );
+    expect(del.deletedMessages.get('m1')?.proof).toEqual(SIGNED);
   });
 
   it("refuses somebody else's edit, and records nothing from it", async () => {

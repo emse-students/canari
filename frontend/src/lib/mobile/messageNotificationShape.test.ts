@@ -91,7 +91,8 @@ describe('the avatar cache remembers "no picture", and only that', () => {
 describe('a conversation notification shows one identity (user, 2026-10-05)', () => {
   it('hands a group-shaped post to the platform as a conversation, through a shortcut', () => {
     expect(kotlin).toContain('if (!isReactionNotif && (isGroup || namesEachSender))');
-    expect(kotlin).toContain('ShortcutManagerCompat.pushDynamicShortcut(context, info)');
+    // Through the recorder, so the sign-out can erase it (sharing lot S5).
+    expect(kotlin).toContain('ConversationShortcuts.push(context, info)');
     expect(kotlin).toContain('.setLongLived(true)');
     expect(kotlin).toContain('setShortcutId(conversationShortcutId)');
   });

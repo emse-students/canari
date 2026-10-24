@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * ON A PHONE WHOSE `mls.bin` IS PROVEN TO BE ANOTHER ACCOUNT'S, THE GATE OFFERS NO RESET.
  *
@@ -91,12 +92,25 @@ describe('PinModal - the reset withheld for another account', () => {
     expect(document.body.textContent).not.toContain(m.auth_pin_reset_blocked_other_account());
   });
 
-  it('is wired by the shell: the reset is withheld exactly while the state is proven foreign', () => {
+  it('is wired by the shell: the reset is withheld while the state is proven foreign, or its key unread', () => {
     expect(shell).toContain(
-      'onForgotPinReset={deviceHoldsOtherAccount ? undefined : handlePinReset}'
+      'onForgotPinReset={deviceHoldsOtherAccount || keyReadRefused ? undefined : handlePinReset}'
     );
-    expect(shell).toContain(
-      "resetWithheldNotice={deviceHoldsOtherAccount ? m.auth_pin_reset_blocked_other_account() : ''}"
+    expect(shell).toMatch(
+      /resetWithheldNotice=\{deviceHoldsOtherAccount\s+\? m\.auth_pin_reset_blocked_other_account\(\)\s+: keyReadRefused\s+\? m\.auth_pin_reset_withheld_key_unreadable\(\)\s+: ''\}/
     );
+  });
+
+  it('withholds it, and says why, when the hardware-held key could not be read (2026-10-23)', () => {
+    // A keychain error or a read before the phone's first unlock proves nothing gone: a reset there
+    // would erase data a retry opens. The shell sets the flag from the typed code of every failure,
+    // and `handlePinReset` refuses on it too (the second lock).
+    expect(shell).toContain('keyReadRefused = withholdsResetForUnreadKey(code);');
+    expect(shell).toContain('if (keyReadRefused) {');
+    const notice = m.auth_pin_reset_withheld_key_unreadable();
+    raiseGate({ onForgotPinReset: undefined, resetWithheldNotice: notice });
+    expect(document.body.textContent).toContain(notice);
+    walkTheResetRoute();
+    expect(buttonLabelled(m.auth_pin_reset_confirm()), 'a reset is reachable').toBeUndefined();
   });
 });

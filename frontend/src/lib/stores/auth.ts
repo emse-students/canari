@@ -22,6 +22,8 @@ import {
   getIdentitySplit,
 } from '$lib/stores/tokenIdentity.svelte';
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
+import { createPkcePair } from '$lib/utils/pkce';
+import { getAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -32,8 +34,16 @@ import {
 } from '$lib/mobile/appSiteAssociation';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { discardSharedOut } from '$lib/sharing/shareOutCleanup';
+import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
+import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
+import { endPushRegistration } from '$lib/services/PushNotificationService';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { customTabsCommand } from '$lib/services/customTabsCommands';
+import {
+  clearRestoreKey,
+  forgetRestoreKeyRegistrations,
+  markRestoreAttempted,
+} from '$lib/services/restoreKey';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -52,6 +62,23 @@ import {
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
+/**
+ * The PKCE verifier of the sign-in under way, redeemed with its code - see `$lib/utils/pkce`. On the
+ * web it lives in `sessionStorage`, not `localStorage`: the redirect to MiConnect and back happens in
+ * the SAME tab, which is all `sessionStorage` has to survive, and the secret then dies with the tab
+ * instead of staying readable by every tab of the origin. A native app keeps it in the store file
+ * with the state, for the reason {@link setOidcEntry} gives.
+ */
+const OIDC_VERIFIER_KEY = 'canari_oidc_verifier';
+/**
+ * Says that the sign-in under way sent a challenge, stored WITH the state (`localStorage` on the web,
+ * the store file in an app) and holding no secret. It exists because the web keeps the state and the
+ * verifier in two storages: a callback that lands in another browsing context - a link reopened in a
+ * new tab, an installed PWA handing off to the browser - finds the state and not the verifier. Without
+ * this marker that callback would post a challenged code with no verifier and get a bare refusal;
+ * with it, the client knows before posting that the proof is gone (see {@link OidcSignInError}).
+ */
+const OIDC_CHALLENGED_KEY = 'canari_oidc_challenged';
 /** MiConnect's id_token for the session this device signed in with - see {@link leaveSignedOut}. */
 const OIDC_ID_TOKEN_KEY = 'canari_oidc_id_token';
 const OIDC_STORE_FILE = 'oidc-state.json';
@@ -59,36 +86,43 @@ const OIDC_STORE_FILE = 'oidc-state.json';
 /**
  * Writes an OIDC state entry.
  * On Tauri desktop uses `tauri-plugin-store` (survives WebKitGTK navigation
- * which clears `localStorage`). Falls back to `localStorage` on web.
+ * which clears `localStorage`). On web, `webStorage` - `localStorage` unless the entry says otherwise.
  */
-async function setOidcEntry(key: string, value: string): Promise<void> {
+async function setOidcEntry(
+  key: string,
+  value: string,
+  webStorage: Storage = localStorage
+): Promise<void> {
   if (isTauriRuntime()) {
     const { load } = await import('@tauri-apps/plugin-store');
     const store = await load(OIDC_STORE_FILE, { autoSave: true, defaults: {} });
     await store.set(key, value);
   } else {
-    localStorage.setItem(key, value);
+    webStorage.setItem(key, value);
   }
 }
 
-/** Reads an OIDC state entry (Tauri Store on desktop, localStorage on web). */
-async function getOidcEntry(key: string): Promise<string | null> {
+/** Reads an OIDC state entry (Tauri Store on desktop, `webStorage` on web). */
+async function getOidcEntry(
+  key: string,
+  webStorage: Storage = localStorage
+): Promise<string | null> {
   if (isTauriRuntime()) {
     const { load } = await import('@tauri-apps/plugin-store');
     const store = await load(OIDC_STORE_FILE, { autoSave: true, defaults: {} });
     return (await store.get<string>(key)) ?? null;
   }
-  return localStorage.getItem(key);
+  return webStorage.getItem(key);
 }
 
-/** Removes an OIDC state entry (Tauri Store on desktop, localStorage on web). */
-async function removeOidcEntry(key: string): Promise<void> {
+/** Removes an OIDC state entry (Tauri Store on desktop, `webStorage` on web). */
+async function removeOidcEntry(key: string, webStorage: Storage = localStorage): Promise<void> {
   if (isTauriRuntime()) {
     const { load } = await import('@tauri-apps/plugin-store');
     const store = await load(OIDC_STORE_FILE, { autoSave: true, defaults: {} });
     await store.delete(key);
   } else {
-    localStorage.removeItem(key);
+    webStorage.removeItem(key);
   }
 }
 
@@ -298,7 +332,8 @@ let _signOutHandler: (() => void) | null = null;
  * this is the one function every sign-out already calls, so no exit can forget it.
  *
  * Called FIRST in {@link clearAuth}, synchronously, while the access token still exists: the
- * teardown deregisters the push token with it.
+ * teardown deregisters a live session's push token with it. The DEVICE's half of ending the push
+ * registration is not the handler's - `clearAuth` runs it itself, so it holds with no handler.
  */
 export function setSignOutHandler(fn: (() => void) | null): void {
   _signOutHandler = fn;
@@ -427,6 +462,22 @@ export async function startOidcLogin(
   await setOidcEntry(OIDC_STATE_KEY, state);
   await setOidcEntry(OIDC_RETURN_KEY, returnTo);
 
+  // PKCE binds the code MiConnect hands back to the verifier kept here until the redemption, so a
+  // code captured on its way back is refused without it. Sent only to a core-service that says it
+  // forwards the verifier (`oidcPkce`, read by the login preamble's `refreshAppVersionCheck()`): an
+  // older one drops it, and MiConnect refuses a challenged code redeemed without it. A CAPABILITY
+  // read before the request, not a fallback - no failed attempt sits behind it.
+  const pkce = getAppVersionCheck()?.oidcPkce === true ? await createPkcePair() : null;
+  if (pkce) {
+    await setOidcEntry(OIDC_VERIFIER_KEY, pkce.verifier, sessionStorage);
+    await setOidcEntry(OIDC_CHALLENGED_KEY, 'S256');
+  } else {
+    // A verifier left by a sign-in that never came back must not ride this unchallenged code:
+    // MiConnect refuses a verifier sent for a code issued without a challenge. Its marker goes too.
+    await removeOidcEntry(OIDC_VERIFIER_KEY, sessionStorage);
+    await removeOidcEntry(OIDC_CHALLENGED_KEY);
+  }
+
   const redirectUri = oidcRedirectUri();
   const params = new URLSearchParams({
     client_id: clientId,
@@ -435,12 +486,18 @@ export async function startOidcLogin(
     scope: 'openid profile promo name formation',
     state,
   });
+  if (pkce) {
+    params.set('code_challenge', pkce.challenge);
+    params.set('code_challenge_method', 'S256');
+  }
 
   const authorizePath = `/application/o/authorize/?${params}`;
   const authUrl = options?.flowSlug
     ? `${baseUrl}/if/flow/${options.flowSlug}/?next=${encodeURIComponent(authorizePath)}`
     : `${baseUrl}${authorizePath}`;
-  alog(`login returnTo=${returnTo} uri=${redirectUri} flow=${options?.flowSlug ?? 'default'}`);
+  alog(
+    `login returnTo=${returnTo} uri=${redirectUri} flow=${options?.flowSlug ?? 'default'} pkce=${pkce ? 'S256' : 'none (server has no oidcPkce)'}`
+  );
 
   // On Tauri mobile (Android + iOS), open in a dedicated in-app browser session so the main
   // WebView is never navigated away and the Tauri IPC bridge stays intact. The callback returns
@@ -462,8 +519,27 @@ export async function startOidcLogin(
 }
 
 /**
+ * Why a MiConnect sign-in failed, when the reason is one the user can act on by starting again.
+ * - `verifier-lost`: the code came back to a browsing context that does not hold the PKCE verifier
+ *   of the request that produced it (a new tab, a PWA handing off), so it was never posted.
+ * - `code-refused`: core-service answered `OIDC_PKCE_REFUSED` or `OIDC_CODE_REFUSED` - MiConnect
+ *   would not redeem the code (spent, expired, or a verifier that does not match).
+ * The message is already localized; the callback page renders it on `instanceof`, never on its text.
+ */
+export type OidcSignInFailure = 'verifier-lost' | 'code-refused';
+
+/** A sign-in failure classified where it is known - see {@link OidcSignInFailure}. */
+export class OidcSignInError extends Error {
+  constructor(readonly failure: OidcSignInFailure) {
+    super(failure === 'verifier-lost' ? m.auth_oidc_verifier_lost() : m.auth_oidc_code_refused());
+    this.name = 'OidcSignInError';
+  }
+}
+
+/**
  * Exchange the authorization code received from Authentik for internal tokens.
- * Called from the `/auth/callback` page.
+ * Called from the `/auth/callback` page. Throws {@link OidcSignInError} for a failure the user
+ * resolves by signing in again from the start.
  */
 export async function handleOidcCallback(
   code: string,
@@ -532,6 +608,22 @@ async function handleOidcCallbackUnderway(
     throw new Error('Invalid OIDC state - possible CSRF attack');
   }
   await removeOidcEntry(OIDC_STATE_KEY);
+  // Read once and spent: a code can be redeemed once, and so can the proof that goes with it. None is
+  // held when the sign-in sent no challenge (a server without `oidcPkce`, or a build before PKCE), and
+  // then its code carries no challenge either.
+  const challenged = (await getOidcEntry(OIDC_CHALLENGED_KEY)) !== null;
+  const codeVerifier = await getOidcEntry(OIDC_VERIFIER_KEY, sessionStorage);
+  await removeOidcEntry(OIDC_CHALLENGED_KEY);
+  await removeOidcEntry(OIDC_VERIFIER_KEY, sessionStorage);
+  alog(
+    `callback pkce=${codeVerifier ? 'verifier' : 'none'} challenged=${challenged ? 'yes' : 'no'}`
+  );
+  if (challenged && !codeVerifier) {
+    // The code was issued against a challenge and the verifier stayed in the browsing context that
+    // started the sign-in. MiConnect would refuse it whatever core-service does, so it is not posted.
+    console.warn('[auth] OIDC callback in a context without the PKCE verifier - not redeemed');
+    throw new OidcSignInError('verifier-lost');
+  }
 
   const redirectUri = oidcRedirectUri();
   console.debug('[auth] redirectUri:', redirectUri, 'coreUrl:', coreUrl());
@@ -541,13 +633,18 @@ async function handleOidcCallbackUnderway(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include', // receive HttpOnly cookie
-    body: JSON.stringify({ code, redirect_uri: redirectUri }),
+    body: JSON.stringify({
+      code,
+      redirect_uri: redirectUri,
+      ...(codeVerifier ? { code_verifier: codeVerifier } : {}),
+    }),
   });
   console.debug('[auth] core-service response status:', res.status);
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     let message = text || `Authentication failed (${res.status})`;
+    let refusal: OidcSignInError | null = null;
     try {
       const parsed = JSON.parse(text) as {
         message?: string | { message?: string; code?: string };
@@ -564,36 +661,66 @@ async function handleOidcCallbackUnderway(
         // would recreate it under the same identity (docs/wiki/account-erasure.md).
         console.warn('[auth] sign-in refused: account erasure pending');
         message = m.auth_account_erasure_pending();
+      } else if (code === 'USER_ID_INVALID') {
+        // The identity provider's subject is not a mintable user id (visible ASCII, no whitespace, no ':' -
+        // core-service `users/user-id.ts`): nothing on this device can fix it, only a human can.
+        console.error('[auth] sign-in refused: the subject is not a valid user id');
+        message = m.auth_user_id_invalid();
       } else if (code === 'ACCOUNT_ERASURE_BLOCKED') {
         // A permanent failure the server could not fix by retrying: only a human finishes it.
         console.warn('[auth] sign-in refused: account erasure blocked');
         message = m.auth_account_erasure_blocked();
+      } else if (code === 'OIDC_PKCE_REFUSED' || code === 'OIDC_CODE_REFUSED') {
+        // MiConnect would not redeem this code: spent, expired, or its verifier did not match.
+        console.warn(`[auth] sign-in refused by MiConnect: ${code}`);
+        refusal = new OidcSignInError('code-refused');
       } else if (nested) {
         message = nested;
       }
     } catch {
-      /* keep raw text */
+      console.debug(`[auth] OIDC callback refusal is not JSON (${res.status}), raw text kept`);
     }
+    if (refusal) throw refusal;
     throw new Error(message);
   }
 
-  const data = (await res.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    /** MiConnect's id_token, kept for ONE use: the `id_token_hint` of the sign-out. */
-    id_token?: string;
-    user: {
-      id: string;
-      email: string;
-      displayName: string;
-      firstYearOfSchool: number | null;
-      avatarMediaId: string | null;
-      bio: string | null;
-      admin: boolean;
-    };
-  };
+  const data = (await res.json()) as SignedInSession;
+  await adoptSignedInSession(data, 'miconnect');
+  console.debug('[auth] handleOidcCallback complete');
+  return data.user;
+}
 
-  console.debug('[auth] got access_token, saving user:', data.user?.id);
+/** What a session-minting route answers: core-service's `issueSession` body. */
+export interface SignedInSession {
+  access_token: string;
+  refresh_token?: string;
+  /** MiConnect's id_token, kept for ONE use: the `id_token_hint` of the sign-out. */
+  id_token?: string;
+  user: {
+    id: string;
+    email: string;
+    displayName: string;
+    firstYearOfSchool: number | null;
+    avatarMediaId: string | null;
+    bio: string | null;
+    admin: boolean;
+  };
+}
+
+/**
+ * Adopts a session the server has just MINTED, whichever way the account was proven: a MiConnect
+ * callback, or a restore key on a new Android phone (WP-RESTORE-1, docs/wiki/account-restore.md).
+ * ONE implementation, so a restored session can never be missing a step a signed-in one takes.
+ *
+ * `via` decides the one difference: a restore has no MiConnect id_token, by construction (MiConnect
+ * was not asked), so the stale one of a previous sign-in is removed WITHOUT the warning that says a
+ * server forgot to send it.
+ */
+async function adoptSignedInSession(
+  data: SignedInSession,
+  via: 'miconnect' | 'restore'
+): Promise<void> {
+  console.debug(`[auth] got access_token (${via}), saving user:`, data.user?.id);
   // THE SERVER LET THIS SUBJECT IN, so any erasure of it has completed and this is a new account: a
   // wipe still owed on this device for the deleted one must never reach it (WP-DEL-LOCAL). First,
   // before this session's token or identity exists anywhere another tab's resume could miss.
@@ -624,10 +751,33 @@ async function handleOidcCallbackUnderway(
   saveUserLocally(data.user);
   // After the save, so the account it names is already the signed-in one when a reader compares.
   noteSessionAnswered(data.user.id);
-  await rememberMiconnectIdToken(data.id_token);
-  console.debug('[auth] handleOidcCallback complete');
+  // A NEW SESSION HAS NO RESTORE KEY YET: the marker that says "registered" spoke of the previous
+  // session's, so the next start registers one for this one. And this install is past its first
+  // start, so it never attempts a restore again.
+  forgetRestoreKeyRegistrations();
+  markRestoreAttempted();
+  if (via === 'miconnect') {
+    await rememberMiconnectIdToken(data.id_token);
+  } else {
+    await removeOidcEntry(OIDC_ID_TOKEN_KEY);
+    alog(
+      'restored session: no MiConnect id_token, by construction - the sign-out will not end one'
+    );
+  }
+}
 
-  return data.user;
+/**
+ * Adopts the session `POST /api/auth/restore/assertion` minted, counted as a sign-in in flight
+ * while it lands (as {@link handleOidcCallback} is), so a resumed deletion wipe waits for it.
+ */
+export async function adoptRestoredSession(data: SignedInSession): Promise<void> {
+  const run = adoptSignedInSession(data, 'restore');
+  _signInsInFlight.add(run);
+  try {
+    await run;
+  } finally {
+    _signInsInFlight.delete(run);
+  }
 }
 
 /**
@@ -1132,6 +1282,12 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   } else {
     alog('clear with no sign-out handler registered - no live session to end');
   }
+  // THE DEVICE STOPS BEING A PUSH DESTINATION FOR THE ACCOUNT THAT LEFT, at EVERY sign-out: with a
+  // live session or none, a dead credential, no network, or no registration marker in this tab. Not
+  // awaited - it never rejects and logs its own failures, and a deletion it cannot finish stays owed
+  // on disk until it does. AFTER the handler, which reads the registration marker synchronously for
+  // the server-side deregistration of a live session.
+  void endPushRegistration();
   // THE LOCAL IDENTITY GOES NOW, BEFORE THE FIRST AWAIT - never after the revocation below. The
   // handler has just set `isLoggedIn` false, and every unlock trigger in the app shell (the user-id
   // effect, `afterNavigate`) starts the unlock on "a saved user, nobody logged in". Left until the
@@ -1153,10 +1309,23 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   forgetPinSaltAhead('signed out', alog);
   // And the decrypted file the last share out of Canari left in the cache (phone apps).
   void discardSharedOut('signed out');
+  // And a share INTO Canari still waiting: it must never land in the account signed in next.
+  void eraseIncomingShare('signed out');
+  // And the shortcuts Android holds for THIS account - the share sheet's suggestions and the
+  // notifications' conversation shortcuts, names and faces the next account must never see.
+  void eraseAccountShortcuts('signed out');
   if (!options.revokeServerSession) {
     alog('clear✓ local only - the shared cookie and credential are left to the tab that owns them');
     return;
   }
+  // THE RESTORE KEY GOES WITH THE SESSION (WP-RESTORE-1). The server's copy dies with the session
+  // row the logout below revokes; this is the platform's copy, so no later backup carries it. And
+  // the install is past its first start: a key that a sign-out could not reach the server about
+  // must never sign this user straight back in from `/login`. Not in the local-only branch above:
+  // the key, like the cookie, is one per app, and that branch touches nothing shared.
+  forgetRestoreKeyRegistrations();
+  markRestoreAttempted();
+  void clearRestoreKey('signed out');
   // Tell the backend to REVOKE the session row - the cookie is the least of it. The credential has
   // to travel the same way it does on a refresh, or the server cannot name the row to delete and a
   // logout on iOS would clear the local copy while leaving the session alive for seven more days.

@@ -11,6 +11,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import type { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
+import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
 
 /** Dependencies required to insert or update call system messages in a conversation. */
 export interface CallSystemMessageContext {
@@ -195,7 +196,9 @@ export async function handleCallSignalForChat(
     // too, which therefore does not ring): the call is written as MISSED at once, so it is visible
     // in the timeline instead of the ring. Missed is final (`endedAt` set), so the caller's later
     // hangup leaves it as it is.
-    if (!notificationPreferences.callsAllowed(groupId)) {
+    // The same predicate as `CallService` (the server's kill switch, awaited until answered): an
+    // invite that will not ring is a MISSED call, never a "call started" line with no ring.
+    if (!notificationPreferences.callsAllowed(groupId) || !(await callsAvailableAnswered())) {
       await recordCallMissed(ctx, groupId, callMsg.callId, senderId);
       return;
     }

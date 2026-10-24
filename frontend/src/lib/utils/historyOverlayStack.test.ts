@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import {
   abandonHistoryOverlay,
   armHistoryOverlayGesture,
@@ -9,6 +10,7 @@ import {
   initHistoryOverlayStack,
   historyOverlayStackDepth,
   releaseHistoryOverlay,
+  dropAddressFragment,
 } from './historyOverlayStack';
 
 describe('historyOverlayStack', () => {
@@ -537,5 +539,19 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     expect(close).toHaveBeenCalledTimes(2);
     expect(historyOverlayStackDepth()).toBe(0);
     expect(history.back).not.toHaveBeenCalled();
+  });
+});
+
+describe('dropAddressFragment', () => {
+  it('removes the fragment from the address and keeps the entry and its state', () => {
+    window.history.replaceState({ kept: 1 }, '', '/c/join/tok?x=1#grant-bytes');
+    const length = window.history.length;
+
+    dropAddressFragment();
+
+    expect(window.location.hash).toBe('');
+    expect(window.location.pathname + window.location.search).toBe('/c/join/tok?x=1');
+    expect(window.history.state).toEqual({ kept: 1 });
+    expect(window.history.length).toBe(length);
   });
 });

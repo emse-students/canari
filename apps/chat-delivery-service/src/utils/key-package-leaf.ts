@@ -37,7 +37,19 @@ export function readKeyPackageLeaf(keyPackageBase64: string): KeyPackageLeaf | n
 
   const initKey = readMlsOpaque(bytes, 4);
   if (!initKey) return null;
-  const encryptionKey = readMlsOpaque(bytes, initKey.next);
+  return readLeafNodeHead(bytes, initKey.next);
+}
+
+/**
+ * The signature key and BasicCredential identity at the head of a serialized `LeafNode` starting at
+ * `offset` - `encryption_key<V> || signature_key<V> || credential` (RFC 9420 section 7.2). ONE
+ * reader for every leaf this server looks into: a published KeyPackage's, and the path leaf of an
+ * external commit (`readCommitFrame`), so the two can never disagree on where the identity is.
+ *
+ * @returns the leaf, or null when the bytes run out or the credential is not a basic one.
+ */
+export function readLeafNodeHead(bytes: Buffer, offset: number): KeyPackageLeaf | null {
+  const encryptionKey = readMlsOpaque(bytes, offset);
   if (!encryptionKey) return null;
   const signatureKey = readMlsOpaque(bytes, encryptionKey.next);
   if (!signatureKey || signatureKey.bytes.length === 0) return null;

@@ -40,6 +40,18 @@ entries:
       slug: "alumni"
     attrs:
       name: "Mines Saint-Etienne Alumni"
+      # The source stays DISABLED until its verification certificate exists. A SAML source without a
+      # verification key pair verifies no signature at all, so it may only be enabled once the IdP's
+      # certificate is imported and attached as `verification_kp` (a production write). The
+      # test-blueprints.sh gate refuses any ENABLED SAML source that has no verification key pair, and
+      # refuses an unsigned or weakly-signed configuration on ANY source - so re-enabling means, in
+      # one step: import the certificate, attach it, and keep the two `signed_*` flags below true.
+      enabled: false
+      # Signed on both levels - an unsigned response or assertion is refused once the source verifies.
+      signed_response: true
+      signed_assertion: true
+      # IdP-initiated SSO skips request-ID validation; it stays off.
+      allow_idp_initiated: false
       promoted: true
       authentication_flow: !Find [authentik_flows.flow, [slug, "default-source-authentication"]]
       enrollment_flow: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]

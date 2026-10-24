@@ -158,6 +158,13 @@ export async function openGatewayConnection(
     // Register the disconnect handler BEFORE fetching pending messages
     // to avoid missing a WebSocket close that happens during the fetch.
     mlsService.onDisconnect(scheduleReconnect);
+    // A COMMIT WHOSE OUTCOME IS UNKNOWN IS ANSWERED BEFORE ANYTHING IS READ: the pending frames may
+    // be sealed at the epoch it creates, readable only once it is merged (`commitSubmission.ts`).
+    try {
+      await mlsService.settleUnresolvedCommits();
+    } catch (e) {
+      log(`[WARN] Failed to settle unresolved commits: ${String(e)}`);
+    }
     try {
       await mlsService.fetchPendingMessages();
     } catch (e) {

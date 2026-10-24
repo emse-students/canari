@@ -5,7 +5,7 @@
  * Ed25519 is deterministic, so this and the Rust engine produce the SAME bytes, which the shared
  * vectors in `graineV2.test.ts` and `mobile/graine.rs` assert.
  */
-import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import type { GraineSignatureEngine, GraineSignatureVerdict } from '$lib/crypto/graineV2';
 
 const PKCS8_ED25519_PREFIX = Uint8Array.from([
   0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
@@ -48,6 +48,13 @@ export const webCryptoEngine: GraineSignatureEngine = {
       message as BufferSource
     );
     return ok ? 'valid' : 'invalid';
+  },
+  async verifySignatures(checks) {
+    const verdicts: GraineSignatureVerdict[] = [];
+    for (const c of checks) {
+      verdicts.push(await webCryptoEngine.verifySignature(c.publicKey, c.message, c.signature));
+    }
+    return verdicts;
   },
 };
 

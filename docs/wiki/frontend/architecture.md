@@ -530,7 +530,7 @@ Rules, each written after the thing it prevents:
 
 **Source**: `src/lib/db.ts`, `src/lib/db/indexeddb.ts`, `src/lib/db/storageFaults.test.ts`
 
-Both retention windows are TIME bounds - five years on a device, ninety days on the web - so nothing
+Both retention windows are TIME bounds - five years on a device INTENDED, ninety days on the web (the garbage collector in `ChatBackgroundService.svelte:1790` applies 90 days on every platform, see [history-reconciliation](../protocols/history-reconciliation.md#two-boundaries-not-one)) - so nothing
 caps the store by SIZE, and what a full disk or an evicted store actually DOES was unknown rather
 than designed. It was settled on 2026-08-19 by INJECTION, never on a real device: the campaign phone
 is an appliance the campaign depends on, not a place to find out. `storageFaults.test.ts` is the

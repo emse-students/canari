@@ -5,32 +5,20 @@
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * THE HEAD OF A FORM BEING FILLED IN: its title, its banner when it has one, what it costs and what
-   * it says about itself.
+   * THE HEAD OF A FORM BEING FILLED IN: its title, its banner when it has one, and what it says about
+   * itself.
    *
-   * The price badge was written twice inline - once over the banner, once beside the icon - so the
-   * two layouts could say different things about one price. It is a snippet here, drawn in both.
+   * It carries no price: the footer's "Total a payer" is the one place a form states what it costs
+   * (user, 2026-10-23 - a "From 0,50 EUR" badge here only repeated it).
    */
   interface Props {
     form: Pick<Form, 'title' | 'imageUrl' | 'description' | 'anonymous'>;
-    /** The badge text, e.g. "A partir de 12 EUR (Cotisant)". Null when nothing is charged. */
-    priceLabel: string | null;
     /** Draws the "already sent" tick beside the title. */
     submitted: boolean;
   }
 
-  let { form, priceLabel, submitted }: Props = $props();
+  let { form, submitted }: Props = $props();
 </script>
-
-{#snippet priceBadge()}
-  {#if priceLabel}
-    <span
-      class="bg-cn-yellow text-cn-ink mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-bold"
-    >
-      {priceLabel}
-    </span>
-  {/if}
-{/snippet}
 
 <div class="border-cn-border mb-5 overflow-hidden rounded-3xl border bg-(--cn-surface) shadow-sm">
   {#if form.imageUrl}
@@ -42,7 +30,6 @@
       <div class="absolute inset-x-0 bottom-0 flex items-end gap-3 p-5">
         <div class="min-w-0 flex-1">
           <h1 class="text-2xl leading-tight font-bold text-white">{form.title}</h1>
-          {@render priceBadge()}
         </div>
         {#if submitted}
           <div class="shrink-0 rounded-xl bg-green-500 p-2 text-white">
@@ -60,7 +47,6 @@
       </div>
       <div class="min-w-0 flex-1">
         <h1 class="text-text-main text-2xl leading-tight font-bold">{form.title}</h1>
-        {@render priceBadge()}
       </div>
       {#if submitted}
         <div class="bg-green-ok/15 text-green-ok shrink-0 rounded-xl p-2">

@@ -1,7 +1,7 @@
 import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
 import { fetchJsonUnderProgressDeadline } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
-import { DELIVERY, type FrameDelivery } from './frameDelivery';
+import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
 import type { DatedKeyPackage } from './keyPackages';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
@@ -11,6 +11,50 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+
+/**
+ * What the server did with a member's Decline of an invitation-link ask
+ * (`POST mls/groups/:groupId/join-requests/:userId/decline`):
+ *
+ * - `withdrawn`: the seat still awaited a member; it is gone, the ask with it.
+ * - `already-admitted`: a member's Add came first - the person is in, and nothing was touched (the
+ *   generic removal used to delete that admitted person's seat and leave their leaf with none).
+ * - `not-awaiting`: the seat never awaited a member and the server holds no trace of an Add of
+ *   theirs - not an invitation-link ask at all (a seat older than the rule, a member's invite between
+ *   its roster write and its Add, a member whose leaves were removed). Nothing was touched.
+ * - `gone`: no seat - answered or expired before.
+ */
+export const JOIN_DECLINE_OUTCOMES = [
+  'withdrawn',
+  'already-admitted',
+  'not-awaiting',
+  'gone',
+] as const;
+export type JoinDeclineOutcome = (typeof JOIN_DECLINE_OUTCOMES)[number];
+
+/**
+ * A device still to be Added into a group this device is a member of
+ * (`GET mls/invitations/pending/:userId/:deviceId`).
+ */
+export type PendingInvitationRow = {
+  id: string;
+  userId: string;
+  deviceId: string;
+  groupId: string;
+  status: string;
+  /**
+   * The person's seat is an invitation link's ask no member has answered: the one row a member is
+   * asked about ("X asks to join"). Absent from a server older than the field.
+   */
+  awaitingAdmission?: boolean;
+};
+
+/** One user of a group's roster (`GET mls/groups/:groupId/user-members`). */
+export type GroupUserMemberRow = {
+  userId: string;
+  /** As {@link PendingInvitationRow.awaitingAdmission}, for the roster read. */
+  awaitingAdmission?: boolean;
+};
 
 export type MlsDeliveryFetch = typeof fetch;
 
@@ -52,6 +96,12 @@ export interface GroupRosterBatch {
   rosters: Map<string, string[]>;
   /** Groups the server refused because the caller is not in them (the single read's 403). */
   refused: Set<string>;
+  /**
+   * The `userId:deviceId` of every REVOKED device of an answered group's roster, by group - the
+   * allowlist `removeStrayLeaves` collects revoked leaves from. Absent for a group with none, and
+   * empty against a server that predates the field: nothing known revoked is nothing removed.
+   */
+  revoked: Map<string, string[]>;
 }
 
 /**
@@ -59,9 +109,18 @@ export interface GroupRosterBatch {
  * for it - the `serverTimestamp` the sender's own copy is stored with, since a sender never receives
  * its frame back. `null` when the server's answer carried none (a server predating the field).
  */
-export interface SentFrame {
-  sealed: Uint8Array;
+export interface SentFrame extends AuthoredFrame {
   receivedAt: number | null;
+}
+
+/**
+ * One application frame as the platform engine sealed it: the ciphertext, and the encoded author
+ * proof mls-core appended inside it (`$lib/crypto/messageAuthorship`) - which the sender keeps on its
+ * own copy, so its history bundles carry the same proof its peers received.
+ */
+export interface AuthoredFrame {
+  sealed: Uint8Array;
+  authorProof: Uint8Array;
 }
 
 /**
@@ -98,6 +157,24 @@ export class WithheldUnsupportedError extends Error {
   constructor(readonly groupId: string) {
     super(`the delivery service predates the withheld windows (group ${groupId.slice(0, 8)})`);
     this.name = 'WithheldUnsupportedError';
+  }
+}
+
+/**
+ * The delivery service refused to ADDRESS a history answer on a conversation to the named devices:
+ * not every live session of theirs declared that it refuses an addressed frame that is not a
+ * solicited history answer (`400 { error: 'addressed_unsupported' }`, step A rule 6). Typed so the
+ * answerer answers nobody - an older device is served by an older peer, never by a broadcast here.
+ */
+export class AddressedUnsupportedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly devices: readonly string[]
+  ) {
+    super(
+      `the addressed device(s) cannot receive an addressed answer in ${groupId.slice(0, 8)}: ${devices.join(',')}`
+    );
+    this.name = 'AddressedUnsupportedError';
   }
 }
 
@@ -185,6 +262,54 @@ export class NotAGroupMemberError extends Error {
     super(`Caller is not a member of group ${groupId}`);
     this.name = 'NotAGroupMemberError';
   }
+}
+
+/**
+ * The delivery service ANSWERED 409 `awaiting_admission`: this account holds a seat in `groupId`
+ * that an invitation link wrote and no member has admitted yet - a pending member who WAITS, never
+ * {@link NotAGroupMemberError}'s "not a member", on which a caller retires the conversation.
+ *
+ * Every membership-gated read refuses such a seat this way (`callerSeatStanding` on the server,
+ * review of #2358). Typed at the throw so a caller reads `instanceof` rather than a status beside a
+ * body field; an {@link ApiRefusalError} still, so a reader of the status alone keeps working.
+ */
+export class AwaitingAdmissionError extends ApiRefusalError {
+  constructor(readonly groupId: string) {
+    super(
+      409,
+      'awaiting_admission',
+      `group ${groupId}: this account's seat awaits a member's admission (409 awaiting_admission)`
+    );
+    this.name = 'AwaitingAdmissionError';
+  }
+}
+
+/**
+ * {@link AwaitingAdmissionError} when `res` is the server's 409 `awaiting_admission`, else null. The
+ * body is read from a CLONE, so a caller that classifies the response further is not starved; a 409
+ * with any other body (another conflict) is not this answer.
+ */
+export async function awaitingAdmissionFrom(
+  res: Response,
+  groupId: string
+): Promise<AwaitingAdmissionError | null> {
+  if (res.status !== 409) return null;
+  try {
+    const body: unknown = await res.clone().json();
+    if (
+      body &&
+      typeof body === 'object' &&
+      (body as { error?: unknown }).error === 'awaiting_admission'
+    ) {
+      return new AwaitingAdmissionError(groupId);
+    }
+  } catch {
+    // Not JSON: an edge page, not the delivery service's answer - the caller's own branch reads it.
+    console.debug(
+      `[AWAITING_ADMISSION] group ${groupId}: a 409 whose body is not JSON - not this answer`
+    );
+  }
+  return null;
 }
 
 /**
@@ -612,6 +737,9 @@ export class MlsDeliveryApi {
       const url = new URL(`${this.historyUrl}/api/mls/messages/${this.userId}/${this.deviceId}`);
       url.searchParams.set('limit', String(pageLimit));
       if (afterCreatedAt) url.searchParams.set('after', afterCreatedAt);
+      // The same declaration the socket makes: the server hands an ADDRESSED row only to a session
+      // that applies rule 5 (history-answer-addressing, rule 6), and withholds it from any other.
+      url.searchParams.set('caps', ADDRESSED_HISTORY_CAPABILITY);
 
       let batch: Array<{ createdAt?: string }>;
       // OUTSIDE the try below: a token that cannot be had is not a page asked for too big. It used to
@@ -734,11 +862,31 @@ export class MlsDeliveryApi {
     }
     if (!res.ok) return { kind: 'unanswered', detail: `HTTP ${res.status}` };
     try {
-      const d = (await res.json()) as { keys?: unknown };
+      const d = (await res.json()) as { keys?: unknown; firstSeen?: unknown };
       if (!Array.isArray(d.keys) || !d.keys.every((k) => typeof k === 'string')) {
         return { kind: 'unanswered', detail: 'a 200 with no key list in it' };
       }
-      return { kind: 'keys', keys: (d.keys as string[]).map((k) => fromBase64(k)) };
+      const keys = (d.keys as string[]).map((k) => fromBase64(k));
+      if (!Array.isArray(d.firstSeen)) return { kind: 'keys', keys };
+      // A malformed entry is dropped, never given a date: an undated key reads as OLD, the side
+      // that announces nothing.
+      const firstSeen: Array<{ key: Uint8Array; firstSeenAt: number }> = [];
+      let dropped = 0;
+      for (const entry of d.firstSeen as unknown[]) {
+        const e = entry as { signatureKey?: unknown; firstSeenAt?: unknown };
+        const at = typeof e?.firstSeenAt === 'string' ? Date.parse(e.firstSeenAt) : NaN;
+        if (typeof e?.signatureKey !== 'string' || Number.isNaN(at)) {
+          dropped++;
+          continue;
+        }
+        firstSeen.push({ key: fromBase64(e.signatureKey), firstSeenAt: at });
+      }
+      if (dropped > 0) {
+        console.error(
+          `[MLS] ${dropped} malformed key age(s) for ${deviceId.slice(0, 12)}... dropped`
+        );
+      }
+      return { kind: 'keys', keys, firstSeen };
     } catch (e) {
       return { kind: 'unanswered', detail: `unreadable body: ${String(e).slice(0, 120)}` };
     }
@@ -849,6 +997,8 @@ export class MlsDeliveryApi {
     Array<{
       keyPackage: Uint8Array;
       deviceId: string;
+      /** The `userId` asked for, carried so an Add can check each package names this device. */
+      userId: string;
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
@@ -876,6 +1026,7 @@ export class MlsDeliveryApi {
       return devices.map((d) => ({
         keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
         deviceId: d.deviceId,
+        userId,
         deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
         deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
         deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
@@ -1101,22 +1252,43 @@ export class MlsDeliveryApi {
     groupInfoBase64?: string,
     admits?: Array<{ userId: string; deviceId: string }>,
     removes?: CommitRemoval[]
-  ): Promise<{ accepted: boolean; reason?: string; currentEpoch?: number; newEpoch?: number }> {
-    const res = await this.f(`${this.historyUrl}/api/mls/commit`, {
-      method: 'POST',
-      headers: await this.auth({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        groupId,
-        deviceId: this.deviceId,
-        baseEpoch,
-        proto: protoBase64,
-        senderId: this.userId,
-        ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
-        ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
-        ...(admits?.length ? { admits } : {}),
-        ...(removes?.length ? { removes } : {}),
-      }),
-    });
+  ): Promise<{
+    accepted: boolean;
+    reason?: string;
+    currentEpoch?: number;
+    newEpoch?: number;
+    /** True when the gate had ALREADY accepted these exact bytes: a resubmission, answered again. */
+    duplicate?: boolean;
+  }> {
+    // UNDER THE `write` HEAD DEADLINE (`requestDeadline.ts`: 30 s plus the time the body needs to
+    // leave), because every caller awaits this INSIDE THE GLOBAL MLS LOCK, which also guards the
+    // incoming processing of every group: a POST hung on a half-open connection or a captive portal
+    // froze decryption in every conversation for as long as the engine tolerated - and the periodic
+    // leaf refresh makes an unasked commit ordinary. The expiry is a `RequestDeadlineError`, a
+    // transport failure: NO ANSWER, never a refusal, because the gate may have accepted. The callers
+    // already read it that way - `runCommitTransaction` resubmits the same bytes and KEEPS the stage
+    // as unknown while no answer comes (`CommitOutcomeUnknownError`), and the next resubmission
+    // decides, an accepted commit being answered as a duplicate.
+    const res = await trackedFetch(
+      this.f,
+      `${this.historyUrl}/api/mls/commit`,
+      {
+        method: 'POST',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          groupId,
+          deviceId: this.deviceId,
+          baseEpoch,
+          proto: protoBase64,
+          senderId: this.userId,
+          ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
+          ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
+          ...(admits?.length ? { admits } : {}),
+          ...(removes?.length ? { removes } : {}),
+        }),
+      },
+      { requestClass: 'write' }
+    );
     if (!res.ok) {
       throw await refusalFromResponse(res, 'Commit submission HTTP error');
     }
@@ -1174,6 +1346,8 @@ export class MlsDeliveryApi {
       { headers: await this.auth() }
     );
     if (res.status === 403) throw new NotAGroupMemberError(groupId);
+    const awaiting = await awaitingAdmissionFrom(res, groupId);
+    if (awaiting) throw awaiting;
     if (!res.ok) {
       throw await refusalFromResponse(res, 'GroupInfo fetch HTTP error');
     }
@@ -1464,6 +1638,17 @@ export class MlsDeliveryApi {
           parseRetryAfterMs(res.headers.get('retry-after'), Date.now())
         );
       }
+      // STEP A's refusal to address a device that does not apply rule 5 - typed at the throw by the
+      // `error` code the server sets, never by its sentence.
+      if (res.status === 400 && delivery.recipients) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string; devices?: unknown };
+        if (body.error === 'addressed_unsupported') {
+          throw new AddressedUnsupportedError(
+            groupId,
+            Array.isArray(body.devices) ? body.devices.map(String) : []
+          );
+        }
+      }
       // ANY OTHER REFUSAL carries its status as a type too: an answer, which the outbox reads as
       // breaking a run of 5xx - a sentence could not be read back.
       throw new ApiRefusalError(res.status, null, `Message send HTTP error: ${res.status}`);
@@ -1663,6 +1848,25 @@ export class MlsDeliveryApi {
   }
 
   /**
+   * A member's Decline of a person who asked to join by invitation link: the server withdraws their
+   * seat ONLY while it still awaits a member's admission, under the group's seat lock. Every outcome
+   * is an answer (200) - see {@link JoinDeclineOutcome}; a non-2xx (not an admitted member) throws.
+   */
+  async declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/groups/${groupId}/join-requests/${userId}/decline`,
+      { method: 'POST', headers: await this.auth() }
+    );
+    if (!res.ok) throw await refusalFromResponse(res, 'declineJoinRequest failed');
+    const body = (await res.json()) as { outcome?: unknown };
+    const outcome = JOIN_DECLINE_OUTCOMES.find((o) => o === body.outcome);
+    if (!outcome) {
+      throw new Error(`declineJoinRequest: unknown outcome ${JSON.stringify(body.outcome)}`);
+    }
+    return outcome;
+  }
+
+  /**
    * Returns the current device-level member list (dm_device_group_memberships) for `groupId`.
    * THROWS on transport/HTTP failure: a `[]` must not mask a network failure (audit S2).
    * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
@@ -1676,6 +1880,8 @@ export class MlsDeliveryApi {
       headers: await this.auth(),
     });
     if (res.status === 403) throw new NotAGroupMemberError(groupId);
+    const awaiting = await awaitingAdmissionFrom(res, groupId);
+    if (awaiting) throw awaiting;
     if (!res.ok) throw await refusalFromResponse(res, 'getGroupMembers failed');
     return await res.json();
   }
@@ -1684,14 +1890,17 @@ export class MlsDeliveryApi {
    * Returns user-level members from dm_group_members for `groupId`.
    * THROWS on transport/HTTP failure: a `[]` must not mask a network failure (audit S2).
    * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
+   * A seat still awaiting a member's admission is answered {@link AwaitingAdmissionError}.
    */
-  getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
+  getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]> {
     // Simultaneous askers share ONE request (membership guards, stray sweeps and peer resolution all
     // ask per conversation). Never held past the answer: callers decide security and repairs on it.
     return this.joinInFlight(`user-members:${groupId}`, async () => {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
         headers: await this.auth(),
       });
+      const awaiting = await awaitingAdmissionFrom(res, groupId);
+      if (awaiting) throw awaiting;
       if (!res.ok) throw await refusalFromResponse(res, 'getGroupUserMembers failed');
       return await res.json();
     });
@@ -1707,7 +1916,8 @@ export class MlsDeliveryApi {
    *
    * CLASSIFIED AT THE THROW: a gateway 403 is {@link ExclusionsRefusedError} (this account is not on
    * the roster - never on its own a reason to repair this device), an edge 403 a {@link SendEdgeRefusedError} (the
-   * network path), any other status an {@link ApiRefusalError} carrying it; a transport failure is
+   * network path), a seat still awaiting a member's admission an {@link AwaitingAdmissionError}, any
+   * other status an {@link ApiRefusalError} carrying it; a transport failure is
    * whatever `f` raised, untouched.
    */
   async getGroupExclusions(groupId: string, forUserId?: string): Promise<GroupExclusions> {
@@ -1735,13 +1945,23 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * The one read behind {@link getGroupExclusions} and {@link getGroupWithheld}, failures classified
-   * at the throw. `withheld` is handed on UNPARSED - see {@link getGroupWithheld}.
+   * Whether this server routes an addressed history answer on a conversation (step A,
+   * docs/wiki/protocols/history-answer-addressing.md): `addressedAnswers: true` on the same read.
+   * A server that predates it answers without the field, which is `false` here, never a failure.
+   */
+  async getAddressedAnswersSupported(groupId: string, forUserId?: string): Promise<boolean> {
+    return (await this.readGroupWindows(groupId, forUserId)).addressedAnswers;
+  }
+
+  /**
+   * The one read behind {@link getGroupExclusions}, {@link getGroupWithheld} and
+   * {@link getAddressedAnswersSupported}, failures classified at the throw. `withheld` is handed on
+   * UNPARSED - see {@link getGroupWithheld}.
    */
   private readGroupWindows(
     groupId: string,
     forUserId?: string
-  ): Promise<{ exclusions: GroupExclusions; withheld: unknown }> {
+  ): Promise<{ exclusions: GroupExclusions; withheld: unknown; addressedAnswers: boolean }> {
     const forQuery = forUserId ? `?for=${encodeURIComponent(forUserId)}` : '';
     return this.joinInFlight(`exclusions:${groupId}${forQuery}`, async () => {
       const res = await this.f(
@@ -1755,6 +1975,8 @@ export class MlsDeliveryApi {
         if (responseOrigin(res) === 'edge') throw new SendEdgeRefusedError(groupId, res.status);
         throw new ExclusionsRefusedError(groupId);
       }
+      const awaiting = await awaitingAdmissionFrom(res, groupId);
+      if (awaiting) throw awaiting;
       if (!res.ok) {
         throw new ApiRefusalError(
           res.status,
@@ -1762,8 +1984,16 @@ export class MlsDeliveryApi {
           `getGroupExclusions refused with ${res.status} for group ${groupId}`
         );
       }
-      const body = (await res.json()) as { exclusions?: unknown; withheld?: unknown };
-      return { exclusions: parseGroupExclusions(body?.exclusions), withheld: body?.withheld };
+      const body = (await res.json()) as {
+        exclusions?: unknown;
+        withheld?: unknown;
+        addressedAnswers?: unknown;
+      };
+      return {
+        exclusions: parseGroupExclusions(body?.exclusions),
+        withheld: body?.withheld,
+        addressedAnswers: body?.addressedAnswers === true,
+      };
     });
   }
 
@@ -1779,7 +2009,7 @@ export class MlsDeliveryApi {
    * per group - so the caller knows it without asking again.
    */
   async fetchGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {
-    const out: GroupRosterBatch = { rosters: new Map(), refused: new Set() };
+    const out: GroupRosterBatch = { rosters: new Map(), refused: new Set(), revoked: new Map() };
     for (let i = 0; i < groupIds.length; i += GROUP_ROSTERS_MAX_GROUPS) {
       const chunk = groupIds.slice(i, i + GROUP_ROSTERS_MAX_GROUPS);
       try {
@@ -1798,6 +2028,7 @@ export class MlsDeliveryApi {
         const data = (await res.json()) as {
           rosters?: Record<string, string[]>;
           refused?: string[];
+          revoked?: Record<string, unknown>;
         };
         for (const [groupId, userIds] of Object.entries(data.rosters ?? {})) {
           // A roster that is not a list is not an empty roster: an empty one names every leaf as a
@@ -1805,6 +2036,15 @@ export class MlsDeliveryApi {
           if (Array.isArray(userIds)) out.rosters.set(groupId, userIds);
         }
         for (const groupId of data.refused ?? []) out.refused.add(groupId);
+        // AN ALLOWLIST FOR A DESTRUCTIVE COLLECTOR: only a non-empty string, only for a group whose
+        // roster was answered. A malformed entry names nobody - never "everybody".
+        for (const [groupId, identities] of Object.entries(data.revoked ?? {})) {
+          if (!out.rosters.has(groupId) || !Array.isArray(identities)) continue;
+          const named = identities.filter(
+            (id): id is string => typeof id === 'string' && id.length > 0
+          );
+          if (named.length > 0) out.revoked.set(groupId, named);
+        }
       } catch (e) {
         console.warn(
           `[ROSTER] batch of ${chunk.length} group(s) could not be sent - nothing is decided for these groups:`,
@@ -2028,12 +2268,7 @@ export class MlsDeliveryApi {
   }
 
   /** Returns outstanding Welcome invitations for a device (used by multi-device sync). */
-  async getPendingInvitations(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{ id: string; userId: string; deviceId: string; groupId: string; status: string }>
-  > {
+  async getPendingInvitations(userId: string, deviceId: string): Promise<PendingInvitationRow[]> {
     try {
       const res = await this.f(
         `${this.historyUrl}/api/mls/invitations/pending/${userId}/${deviceId}`,
@@ -2069,7 +2304,14 @@ export class MlsDeliveryApi {
     return await res.json();
   }
 
-  /** Marks a device's group invitation as `pending` or `active`. Best-effort, non-throwing. */
+  /**
+   * Marks a device's group invitation as `pending` or `active`. Best-effort, non-throwing.
+   *
+   * A REFUSAL IS SAID HERE, because no caller reads it. A report of `active` promotes an existing
+   * seat only, and the server refuses it (`403 NOT_A_MEMBER`, `reason` `no_seat`, `kicked` or
+   * `not_on_roster`) otherwise - a device whose pending row was purged before it processed its
+   * Welcome then stays unrouted, and without this line its own log never said so.
+   */
   async updateInvitationStatus(
     deviceId: string,
     userId: string,
@@ -2077,11 +2319,18 @@ export class MlsDeliveryApi {
     status: 'pending' | 'active'
   ): Promise<void> {
     try {
-      await this.f(`${this.historyUrl}/api/mls/invitations/status`, {
+      const res = await this.f(`${this.historyUrl}/api/mls/invitations/status`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ deviceId, userId, groupId, status }),
       });
+      if (!res.ok) {
+        const refusal = await refusalFromResponse(res, 'invitation status report');
+        console.warn(
+          `[MEMBERSHIP] report of ${status} REFUSED for group ${groupId.slice(0, 8)}... device ${deviceId}: ` +
+            `status=${refusal.status} code=${refusal.code ?? 'none'} reason=${refusal.reason ?? 'none'}`
+        );
+      }
     } catch (e) {
       console.error('Failed to update invitation status', e);
     }

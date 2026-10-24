@@ -6,7 +6,7 @@ import { degradedHeaders } from '$lib/seo/upstream';
 // Lives in its own module so a test can import it WITHOUT pulling `$env/dynamic/private` in
 // through the SEO chain above - the same reason `handleError` is not written here either.
 import { preloadableAsset } from '$lib/server/preload';
-import { WASM_PRELOAD_MARKER, renderWasmPreloadScript } from '$lib/server/wasmPreload';
+import { WASM_PRELOAD_MARKER, renderWasmPreloadMeta } from '$lib/server/wasmPreload';
 // The content-hashed URL of the MLS engine, as the bundler resolved it: the same string the client
 // loader's own `?url` import yields, so the preload and the later fetch share one cache entry.
 import wasmUrl from '$lib/wasm/mls_wasm_bg.wasm?url';
@@ -91,7 +91,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     transformPageChunk: ({ html }) => {
       // Starts the WASM download beside the JS (WASM_PRELOAD_MARKER, wasmPreload.ts). Independent of
       // the SEO lookup, so a failed lookup does not cost the cold start its parallelism.
-      const withPreload = html.replace(WASM_PRELOAD_MARKER, renderWasmPreloadScript(wasmUrl));
+      const withPreload = html.replace(WASM_PRELOAD_MARKER, renderWasmPreloadMeta(wasmUrl));
       if (!seoBlock || !seoTitle) return withPreload;
       return withPreload.replace(STATIC_TITLE, seoTitle).replace(SEO_MARKER, seoBlock);
     },

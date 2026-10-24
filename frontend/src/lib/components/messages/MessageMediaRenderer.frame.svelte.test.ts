@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE ROW DOES NOT MOVE WHEN ITS MEDIA LANDS (user, 2026-10-02: "le LAYOUT SHIFTING c'est tres
  * mauvais").

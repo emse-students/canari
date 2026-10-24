@@ -227,6 +227,21 @@ built.
   providers), and authentik's user API cannot filter on it (`UsersFilter` has `uuid`, `username`,
   `attributes`... and no `uid`). So Canari must also receive the Authentik `uuid` to address a user
   it edits.
+- **A user id is visible ASCII (0x21-0x7E, no whitespace) with no `:`, BY CONSTRUCTION (2026-10-22).** 64-hex in practice
+  (the `sub` above), but nothing required it: `users.id` is a raw `varchar(255)`
+  (`users/entities/user.entity.ts:7-9`). One validator, `userIdRuleBroken` / `assertMintableUserId`
+  in `apps/core-service/src/users/user-id.ts`, runs at the two places an id is made - the sign-in
+  callback (`auth/auth.controller.ts`, right after the `sub` check) and the administrator's
+  `UsersService.create` - and refuses with a typed 400 `USER_ID_INVALID` naming the broken rule,
+  logged at ERROR without the id (worded by `auth_user_id_invalid` on the sign-in screen). WHY:
+  every comparison of a user id lowercases ASCII letters only (`canonicalUserId` in
+  `frontend/src/lib/mls-client/leafIdentity.ts`, `canonical_identity` in mls-core), while stored
+  rows were lowercased with full Unicode - the two agree on ASCII alone; and the MLS device identity
+  `userId:deviceId` is split on its one colon; and the client stores a sender trimmed
+  (`frontend/src/lib/db/messagePayload.ts`), so whitespace would make two ids one. The exact 64-hex
+  shape is deliberately NOT required: a plain ASCII id made earlier keeps signing in. Counted
+  read-only on 2026-10-23 before the rule merged: no existing id on either estate breaks it (every
+  one is 64-hex).
 - **A client chooses its scopes, and old APKs request `openid profile promo name formation`.** New
   claims under a NEW scope would never reach an old client's login, so they are attached to the
   `profile` scope, which every client but the Cercle already requests (a scope may carry several

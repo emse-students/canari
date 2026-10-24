@@ -772,16 +772,12 @@
 </div>
 
 <!--
-  THE THREAD, in a sheet (`PostCommentsSheet`): full screen on a phone, with the box pinned above the
+  THE THREAD (`PostCommentsSheet`): the shared bottom drawer on a phone, a dialog above, the box pinned above the
   keyboard. It is hosted HERE, on this card's own write path - the ledger, the pending rows, the
   report dialog and the draft all stay the card's - and `PostComments` is its body. Mounted only
   while open, so the box takes its draft back on every opening.
 -->
-<PostCommentsSheet
-  open={commentsSheetOpen}
-  post={localPost}
-  onClose={() => (commentsSheetOpen = false)}
->
+<PostCommentsSheet open={commentsSheetOpen} onClose={() => (commentsSheetOpen = false)}>
   <PostComments
     {postId}
     {comments}

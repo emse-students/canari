@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { wipeDeviceToFactory } from './deviceReset';
 
 // Mutable, because the two runtimes are exactly what the branch below is about.

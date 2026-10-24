@@ -52,4 +52,20 @@ describe('secret-box', () => {
     delete process.env[SECRET_BOX_ENV];
     expect(isSecretBoxConfigured()).toBe(false);
   });
+
+  it('keeps each named secret to its own rows: another env neither seals with nor opens the default', () => {
+    const OTHER = 'SECRET_BOX_SPEC_OTHER_SECRET';
+    try {
+      delete process.env[OTHER];
+      expect(isSecretBoxConfigured(OTHER)).toBe(false);
+      expect(() => sealSecret('p', 'c', 'x', OTHER)).toThrow(new SecretBoxUnavailableError(OTHER));
+      process.env[OTHER] = 'a-second-throwaway-secret-0123456789abcdef';
+      const sealed = sealSecret('p', 'c', 'x', OTHER);
+      expect(openSecret('p', 'c', sealed, OTHER)).toBe('x');
+      // Same purpose and context, the default secret: it does not open.
+      expect(() => openSecret('p', 'c', sealed)).toThrow(SecretBoxOpenError);
+    } finally {
+      delete process.env[OTHER];
+    }
+  });
 });

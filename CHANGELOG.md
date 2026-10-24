@@ -14,6 +14,353 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-22
+
+### Documented - `v1.4.0-alpha.1`: the gestures read on the Mi 9T, the iPhone updated but blocked at its PIN
+
+Seven swipe variants behave as designed; the iPhone holds the 1.4.0 TestFlight build behind a PIN gate no bench account PIN has opened, and the dev DM reading waits on that mapping. See [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+
+### Documented - `v1.4.0-alpha.1` read on the Mi 9T (sideloaded)
+
+Sign-in on dev, the main pages and the comments sheet read with no console error and no native crash; a DM and a community open were not readable on that account. See [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+
+### Changed - docs: the deleted-account mention left the backlog
+
+WP-MENTION-DELETED shipped in #2022, so the backlog no longer lists it.
+
+### Documented - the background Welcome reading on the Mi 9T was attempted and not exercised
+
+A new device asks for a Welcome only when its own external join fails, so a plain new login never reaches the native path. The trigger and what is owed are in [backlog](docs/wiki/backlog.md#hardware-reading-owed-user-one-background-welcome-on-the-mi-9t-2026-10-22).
+
+### Changed - calls: video stays dev-only when calls reach production, and the call log no longer prints key bytes
+
+The first production calls are audio 1:1 only (owner, 2026-10-21), so the video switch no longer follows `CALLS_COMPILED` and the call service itself never opens a camera or shows a peer's video on a build without it; the `fp=` log line is now a SHA-256 fingerprint of the call key. The blockers and the order for turning calls on are on [calls](docs/wiki/frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21).
+
+### Added - calls: one `[CALL_REPORT]` line every 10 s and at the end of a call
+
+Port of #2011 onto `main`, dev builds only ([calls-revival-plan](docs/wiki/frontend/modules/calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence)).
+
+### Security - calls: one media key per direction, every frame bound to its kind, a visible key mismatch
+
+Port of #2013 onto `main` (dev builds only; its register rows are owed the owner's review, and its
+`/legal/privacy` paragraphs are held in a separate draft) ([calls](docs/wiki/frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
+
+### Changed - calls: the native ring is its own build switch, apart from in-app calls
+
+`CALLS_NATIVE_RING_COMPILED` now carries `voip`, `USE_FULL_SCREEN_INTENT` and the two native ring constants, so `CALLS_COMPILED` can ship audio calls without the ring (owner, 2026-10-21); nothing flipped ([calls](docs/wiki/frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
+
+### Documentation - the read-only production preflight and the store drafts for turning calls on
+
+B13 is now a checklist of ten read-only lines, each with its command, and B14 drafts the App Review notes, the microphone string and the privacy-form candidates; the review build needs `calls_mode` open on production ([calls](docs/wiki/frontend/modules/calls.md#the-production-server-preflight-b13---what-must-be-checked-read-only)).
+
+### Added - calls: a server kill switch, `off` by default in production
+
+`platform_config.calls_mode` (`off` / `audio` / `audio_video`, migration 014) is set at `/admin/platform`, refused by chat-delivery-service on every call request and published by `/api/version` so the app hides what it would refuse ([calls](docs/wiki/frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
+
+### Fixed - calls: the TURN budget counts what Cloudflare relayed, not every call at 3000 kbps
+
+`ice-servers` now compares the month's egress metered by Cloudflare (GraphQL analytics, two new secrets) to the budget, and a spent budget or an unreadable meter withholds TURN (STUN only, typed) instead of refusing the call; the duration estimate is deleted ([calls](docs/wiki/frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
+
+### Changed - calls: a TURN budget of 0 means STUN only
+
+`CLOUDFLARE_TURN_MONTHLY_BUDGET_GB=0` now keeps calls open without ever relaying them (`TURN_DISABLED`; it used to read as 950); unset stays 950, and an unreadable value is refused by the deploy, or read as 0 and logged at error ([calls](docs/wiki/frontend/modules/calls.md#the-turn-budget-reads-cloudflares-meter-b7)).
+
+### Fixed - the dependency audit is green again (rustls-webpki 0.103.16, webpki-roots 1.0.10)
+
+RUSTSEC-2026-0381/0382/0383 landed after the last green run; three lockfiles move to the patched versions, and the one `webpki-roots` 0.26 copy that sqlx and tokio-tungstenite pin is a dated, reasoned ignore ([cicd](docs/wiki/cicd.md)).
+
+### Added - an inert switch to measure skipping the checkpoint after a receive-only drain
+
+Off by default and unreachable on production; it only lets a development build be used for the Mi 9T crash measurement ([open-questions](docs/wiki/open-questions.md)).
+
+### Documented - the Mi 9T crash measurement of the checkpoint-skip switch is read
+
+No frame was lost over six switch-ON kill-and-resume trials of up to 60 skipped frames; what it does not cover is named in [open-questions](docs/wiki/open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13).
+
+### Fixed - ci: the compose-wiring self-test no longer reports a present key as missing
+
+Under `pipefail`, `grep -q` closed its pipe on the first match and the writer's SIGPIPE failed the pipeline; its pipes now let grep read to the end.
+
+### Changed - chat-delivery: client sends and commits are checked against their caller
+
+`POST /mls/send` accepts the fields a client sends, a `proto`, and the caller as its sender, from a
+device of its own that is a member of the group. The pre-MLS content path is removed
+([legacy-compatibility](docs/wiki/legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration)).
+A commit, foreground or background, is bound to its authenticated committer and that committer's
+device, must come from a member (or, for an external commit, a person on the roster), and must name
+its own group and base epoch; its fan-out skips only devices new to the group. A conversation's
+Welcome reaches only a device of someone on its roster, and never ends a kick. A device id belongs
+to one account ([backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service---built-owed-its-503-rate-2026-10-22)).
+
+### Changed - chat-delivery: a key group's external join is asked of social-service
+
+An external commit into a community's key group, and a Welcome addressed to a key group, are
+accepted only for a person social-service entitles to that workspace or channel; when social-service
+does not answer, the commit is refused with `503` and retried, never accepted
+([channel-encryption](docs/wiki/protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live),
+[backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service---built-owed-its-503-rate-2026-10-22)).
+
+### Changed - chat-delivery: reporting a device `active` promotes an existing seat only
+
+The one writer of an `active` membership now takes the authority each caller acts on. A REPORT
+(`POST /mls/invitations/status`, `POST /mls/push/membership-active`) needs the device's own row in
+that group, free of an unanswered kick, and in a conversation its owner on the roster; otherwise it
+is refused as `NOT_A_MEMBER` and logged
+([backlog](docs/wiki/backlog.md#note---a-kicked-devices-membership-report-2026-10-22)).
+
+### Documentation - DMs and communities compared, re-measured on production
+
+The two encryption systems side by side, with the 2026-08-17 sizing premises re-measured: adds rotate Graine sessions (one seed per two messages), a v2 seed is ~330 bytes, and the key groups hold most of the server queue ([dm-vs-community-encryption](docs/wiki/protocols/dm-vs-community-encryption.md)).
+
+### Changed - docs: the user's decisions of 2026-10-22 (48-hour autonomy window)
+
+Recorded in [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-22---a-48-hour-autonomy-window-and-what-it-covers).
+
+### Changed - the double tap that likes now logs what reached the card
+
+Each press, each click and each ended sequence of `doubleTapLike` logs one line, so a re-reading on a
+WebView nobody can inspect tells a swallowed click from a lost touch ([device-verification](docs/wiki/device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones)).
+
+### Fixed - the swipe from the feed to the camera is no longer taken as Back on Android
+
+A swipe started in the feed's left 30 CSS px went Back instead of opening the camera; the feed now excludes that edge band, as conversations exclude the right one ([mobile](docs/wiki/frontend/mobile.md#the-left-edge-back-gesture-is-excluded-over-every-tab-root-with-a-section-to-its-left-2026-10-21-widened-2026-10-24)).
+
+### Fixed - chat: a link to `archives.canari-emse.fr` (or any sibling subdomain) is no longer rewritten to the Canari app
+
+Only the exact app hosts count as the app, not every `*.canari-emse.fr` ([chat-delivery](docs/wiki/services/chat-delivery.md#what-counts-as-the-app-an-exact-host-never-a-suffix)).
+
+### Fixed - a form already holding two questions with one id stays editable
+
+The duplicate-id refusal applies at create and to an edit that changes the questions' ids, names both questions, and never blocks a title, deadline or closing edit of a form stored that way ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Changed - the organiser alert's decisions recorded, one system actor name
+
+The user's two decisions on the switched-off organiser alert (no BDE super-admin, the exact flip precondition) and its residual P3 are written down, `SYSTEM_ACTOR_NAME` is one shared constant, and the responses link logs through the project logger ([forms](docs/wiki/frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
+
+### Added - the organiser alert for a payment on a full form, built and switched off
+
+A payment that lands `paid_over_capacity` tells the form's owner and `MANAGE_FORMS` holders once (migration 102, `organiserNotifiedAt`), and the tap opens that form's responses. It stays off until `minClientVersion` reaches the release carrying it on both estates and both stores ([forms](docs/wiki/frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
+
+### Fixed - a priced form answer names one of its question's options
+
+A form answer that decides a price is refused unless it names the question's declared options (only choice questions charge for an option), two questions cannot share an id, a hidden question's answer is no longer stored, and a public form that charges cannot leave its reachable "everyone else" price at 0 ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Fixed - a single-answer form no longer takes a second paid answer
+
+A submit after a paid (or still pending, free or cash) answer is refused server-side with 409
+`ALREADY_ANSWERED` before any payment request is issued ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Fixed - a group's creator no longer drops undated history from the group's first hour
+
+The span before a member's arrival is no longer given to the person who arrived with the group, so the creator keeps every message of the first hour ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)).
+
+### Security - a new member of a group conversation is no longer pushed the history from before their arrival
+
+The inviter's history push now withholds everything before the invitee arrived, and a device drops what precedes its own arrival from any bundle. This applies to group conversations only. Answers to requests are addressed in a later step ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)).
+
+### Fixed - role grants and removals are bounded by the actor's own permissions, and invite use counting is atomic
+
+An invitation, a role assignment, a permission edit, a new role and a removal each reach only as far as their author's own permissions (administrators keep everything); accepting a link claims a use in one conditional statement, so `maxUses` holds under concurrency ([social-service](docs/wiki/services/social-service.md#an-invitation-grants-only-a-role-the-inviter-may-grant-2026-10-22)).
+
+### Added - docs: the App Review checklist, video shot list and notes for lives
+
+A draft page mapping guideline 1.2 to the screens that show it ([store-review-live-checklist](docs/wiki/store-review-live-checklist.md)).
+
+### Added - lives: a push when moderators cut a live, suspend or withdraw the right to broadcast
+
+The three notices of the strike ladder are pushed, worded on the device in French or English, and their tap opens the notifications list, where the suspension and withdrawal now have their own rows ([lives](docs/wiki/services/lives.md#the-three-pushes-a-broadcaster-gets-wp-l8b)).
+
+### Added - lives: a strike ladder for broadcasters and a reportable chat line (server, dev only)
+
+A cut is a warning, a second within 90 days suspends broadcasting for 30 days, staff may withdraw it from the third; a reported live chat line is checked against its ciphertext and kept signed until handled, 90 days at most ([lives](docs/wiki/services/lives.md#the-strike-ladder-wp-l8b)).
+
+### Changed - lives (dev builds): five new reactions, the posts' rules, and a flag on a chat line
+
+The live reactions are heart, laugh, bravo, fire and the canary chick; the first-live rules sheet shows the posts' rules; a viewer can report one chat line ([live](docs/wiki/frontend/modules/live.md#decisions-of-2026-10-21-reactions-rules-and-the-chat-line-report-client-half)).
+
+### Added - lives: an hourly alarm on the age of the oldest pending live report (server)
+
+`[LIVE_REPORT_AGE]` logs at error once a pending live or live-chat report is past 24 working hours, the response commitment to the stores ([lives](docs/wiki/services/lives.md#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e)).
+
+### Added - lives: staff see a broadcaster's strikes and can withdraw the right to broadcast
+
+The admin moderation queue shows a reported live's broadcaster standing (cuts on record, suspension end, withdrawal due) and a withdraw button once the server says it is due; dev builds only ([live](docs/wiki/frontend/modules/live.md)).
+
+### Added - a live shows how many watch it, to its viewers and its broadcaster (dev only)
+
+An eye and the exact number (confirmed by the owner 2026-10-21), read from the seats the viewer cap already counts and carried by the manifest poll both sides already make; a count only, never a name ([lives](docs/wiki/services/lives.md#the-viewer-count-2026-10-21)).
+
+### Added - the plan for turning lives on in production
+
+The gate list, the order of the switch, a read-only production preflight, the steps from a 24-viewer cap to none, and the privacy-policy wording for lives, HELD for the owner: [live-production](docs/wiki/frontend/modules/live-production.md). Nothing flips.
+
+### Added - lives: a runtime server kill switch, `off` by default on every estate
+
+`platform_config.lives_mode` (`off` / `on`, core migration 015) is set at `/admin/platform`, ANDed with `LIVE_ENABLED` on every live route and both media segment routes, and published by `/api/version` so the app hides the live card and chip ([lives](docs/wiki/services/lives.md#the-two-switches-live_enabled-and-lives_mode)).
+
+### Added - the Lydia API reference
+
+One page for every Lydia call, state and callback, each fact with its source ([lydia-api](docs/wiki/lydia-api.md)).
+
+### Changed - Lydia callbacks are verified with the association's own Business key, and only trigger a read of the row's request - a cancel or an expiry included
+
+The key is entered write-only by the payout manager and encrypted at rest (migration 100, new REQUIRED secret `LYDIA_KEY_ENCRYPTION_SECRET`); an association without one has its callbacks refused and its form payments confirmed on the payer's return. A boutique purchase is no longer fulfilled from a callback until its checkout is a stored row. A cancel or expiry releases a seat only once Lydia reads the request closed, and the public callback route is rate-limited at nginx. The dev-only observation of #1928 is removed ([payments](docs/wiki/frontend/modules/payments.md#what-confirms-a-payment-2026-10-16)).
+
+### Fixed - a declined Lydia payment no longer leaves the form answer pending with no retry
+
+Lydia's state `5` (the payer declined) is now a typed `declined`, like `cancelled-or-expired`: the
+answer is released and the form page and the return page offer the retry, where it used to read
+"pending" and refuse a retry for up to 30 minutes ([forms](docs/wiki/frontend/modules/forms.md#a-declined-payment-releases-the-answer-2026-10-21)).
+
+### Changed - docs: migrations 100 and 101 may ride the next stable, payments stay off in production
+
+The user cleared them on 2026-10-22 ([payments](docs/wiki/frontend/modules/payments.md)).
+
+### Fixed - an out-of-range checkout amount is logged and says its bounds
+
+The refusal (provider range 0.50-1000 EUR, or a product's own bounds) is now a typed `AMOUNT_OUT_OF_RANGE` carrying `minCents` / `maxCents`, logged where it is decided, and the shop and form payment pages word the range in the reader's language instead of "Erreur lors du paiement" or the server's English. See [payments](docs/wiki/frontend/modules/payments.md).
+
+### Fixed - Lydia's `signature` is no longer logged, and an unbounded free amount reads "Libre"
+
+core-service redacts `signature` in the Lydia call log like the two token fields; the shop card no longer prints "Libre (0-inf EUR)" for a product with no bounds. See [cotisations](docs/wiki/cotisations.md).
+
+### Fixed - turning payments on platform-wide puts the withheld boutique products on sale
+
+Switching `payment_provider` away from `disabled` now tells social-service to release every product withheld by the payment gate (never one an admin deactivated, never an orphan of a deleted association), for each association whose payment target is ready; a partial release is answered by a typed code, and a global admin can retry it from the platform page. The canonical cotisation is now withheld like any other product. See [cotisations](docs/wiki/cotisations.md#a-product-withheld-for-want-of-a-payment-account-releases-itself).
+
+### Changed - commenting: a bigger box, identity choice, folded replies, errors beside the box
+
+The comment box grows to several lines, takes the caret when you tap Reply, keeps a draft per post and lets you write as yourself, anonymously or as an association you speak for; replies fold from two, a delete asks first, and a failed send is said under the box ([posts](docs/wiki/frontend/modules/posts.md#comment-sheet-rework-2026-10-21)).
+
+### Added - comments can be written anonymously or as an association (server)
+
+Anonymous comments hide the account from every reader but the writer, moderators and platform admins; association comments belong to the association (any holder of `POST_AS_ASSO` may edit or delete them). Per-reader `canEdit`/`canDelete`, masked notices, block-exempt, report writer read server-side. The client offers it in a later pull request ([posts](docs/wiki/frontend/modules/posts.md#comment-sheet-rework-2026-10-21)).
+
+### Changed - comments: a softer bubble and one heart under it
+
+The comment bubble loses its border and shadow, the like becomes a single heart with its count at the right end of the row under the bubble, and the box's text, GIF label and buttons are centred on its line ([posts](docs/wiki/frontend/modules/posts.md#comment-sheet-rework-2026-10-21)).
+
+### Added - comments: a 2000-character limit, "edited" on an edited comment, and a paged `GET /posts/:id/comments`
+
+The server refuses a longer comment, stamps `editedAt` on an edit, and serves comments as whole threads by cursor; the client gets `fetchComments` and a per-post draft store. First of the comment-sheet rework ([posts](docs/wiki/frontend/modules/posts.md#comment-sheet-rework-2026-10-21)).
+
+### Changed - comments open in a full-screen sheet, read page by page
+
+The card shows its newest comment and a line to write one; every tap opens the thread in a sheet with the box pinned above the keyboard, older comments come page by page, and a notification opens the sheet at its comment ([posts](docs/wiki/frontend/modules/posts.md#comment-sheet-rework-2026-10-21)).
+
+### Fixed - editing a post shows the form it carries even when you do not manage that form
+
+The edit picker listed only the forms its reader owns or manages, so a post carrying someone else's form read "Aucun formulaire pour l'instant"; the attached form is now read by id and added. See [posts](docs/wiki/frontend/modules/posts.md#the-edit-picker-always-lists-the-attached-form-2026-10-21).
+
+### Fixed - a boutique product can be bought again after a declined or expired payment
+
+Every checkout reused one Lydia order_ref, which Lydia refuses the second time; each attempt is now a stored row (migration 101) with its own order_ref, the purchase is settled from that row on the payer's return or Lydia's verified callback, and "already purchased" is decided by Canari before any payment request ([payments](docs/wiki/frontend/modules/payments.md#a-product-checkout-is-a-row-one-per-attempt-2026-10-21)).
+
+### Added - one visitor can leave at most three paid answers waiting on a public form
+
+Counted from the rows under the form's seat lock, keyed on an HMAC of the visitor's address that is cleared once the answer stops waiting (migration 105) ([forms](docs/wiki/frontend/modules/forms.md#at-most-three-answers-waiting-per-visitor-wp-p3-decision-pp5)).
+
+### Documentation - a French guide to paid public forms
+
+How an organiser charges guests without an account, what a guest sees, and the limits ([guide](docs/user-guide/formulaires-publics.md)).
+
+### Added - a public form can charge a guest
+
+A guest on a shared link pays a base price, an answer grid, supplements or cash, without an account; the purchase is recorded with no user (migration 103) ([forms](docs/wiki/frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)).
+
+### Added - a guest who paid comes back to a receipt page with a reference
+
+The Lydia return of a paid public form shows the payment's state and a reference, authorised by a random receipt stored hashed (migration 104), never by an id ([forms](docs/wiki/frontend/modules/forms.md#the-guests-return-from-lydia-a-receipt-not-an-id-wp-p2---a-security-surface)).
+
+### Fixed - a public form's visitor is an IPv6 network, and its cash answers have a deadline
+
+The per-visitor throttle and ceiling count an IPv6 address as its /64, and a public form that accepts cash needs a cash deadline ([forms](docs/wiki/frontend/modules/forms.md#at-most-three-answers-waiting-per-visitor-wp-p3-decision-pp5)).
+
+### Changed - the alpha.5 stable-gate reading on both bench phones
+
+Double tap to like, the camera theme and form and association delete pass. DT-IOS is not reproduced with a real
+double tap. The smoke is partial: the Mi 9T was driven by another session at the same time, and the iPhone push
+banner was not observed. A stable shows neither calls nor lives
+([readings](docs/wiki/device-readings-2026-10.md#2026-10-21---v131-alpha5---the-stable-gate)).
+
+### Changed - the call reading across networks: relayed calls are clean, CALL-GATHER-0 is a false alarm, a P1 found
+
+Forced relay (UDP, TCP, TLS 443) carries clean E2E audio on desktops and both phones; the callee's "no TURN relay candidate" warning fires whenever the direct pair wins first; and on a Wi-Fi with broken IPv6 the Android chat socket never connects, so no call rings (CALL-WS-V6) ([readings](docs/wiki/device-readings-2026-10.md#2026-10-20-afternoon---v131-alpha4-across-networks-forced-relay-tcp-and-tls-turn-a-nated-hotspot)).
+
+### Changed - one reading runbook for the next calls alpha, grouped by phone
+
+Every calls reading owed on the Mi 9T and the iPhone 12, in the order one driver per phone can run it, with the gaps the repo could not fill ([runbook](docs/wiki/device-readings-2026-10.md#reading-runbook-for-the-next-calls-alpha---one-driver-per-phone-in-this-order-written-2026-10-21-not-a-reading)).
+
+### Fixed - a history replay's progress markers no longer land before the checkpoint they claim to follow
+
+A replay's stream cursor now waits for a checkpoint that started after the replay and holds its state, and the seen-ciphertext set is written by the checkpoint alone, so a live commit marked mid-seal can no longer become durable ahead of its epoch ([mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md#a-history-replays-markers-wait-for-the-checkpoint-that-holds-it-2026-10-21)).
+
+### Changed - the rig forgives a reloaded page's own startup decisions, and nothing wider
+
+Nine startup lines join `PAGE_BOOT_NARRATION`, two composer and overlay lines join `BENIGN`, each pinned with a control. The 2026-10-22 GRAINE and GRP passes also left a P1, a P2 and five P3s in the [backlog](docs/wiki/backlog.md#the-harness-itself).
+
+### Fixed - a blind salon notification no longer shows an author or a mention
+
+A salon banner that could not open its message shows the salon's initials and the generic line, never the face or the "mentioned you" line of an author nobody proved ([channel-encryption](docs/wiki/protocols/channel-encryption.md#215-the-native-readers-wp-g2-4b)).
+
+### Fixed - a salon row the server no longer serves no longer stays on screen after two overlapping loads
+
+The rows a salon draws from its stored copy now belong to the salon, so the load that merges withdraws them even when an older load drew them ([community-open-budget](docs/wiki/frontend/community-open-budget.md#f4-built-2026-10-15)).
+
+### Fixed - a live salon frame without a ciphertext is refused, never rendered
+
+A salon message's author is proven only by opening it, so a frame with no ciphertext is refused at error level rather than shown under the author it names ([backlog](docs/wiki/backlog.md#the-harness-itself)).
+
+### Added - Canari in the Android share sheet
+
+Another app's "Partager" offers Canari: pick a conversation or a salon, and the text and files wait in its composer ([sharing](docs/wiki/frontend/sharing.md)).
+
+### Added - share out of Canari from the phone apps
+
+"Partager" on a message (its text or its decrypted attachment), a post or a reel opens the system
+share sheet; the post menu keeps "Copier le lien". See [share-out](docs/wiki/frontend/share-out.md).
+
+### Fixed - a shop free amount must be whole cents
+
+The checkout's `customAmountCents` was never validated: `5000.5` passed the bounds and was charged rounded while recorded as sent, and a string compared as NaN and passed both. It is now refused at the controller with a typed, logged `AMOUNT_INVALID`, and the manual cash grant's bounds check answers the typed `AMOUNT_OUT_OF_RANGE` its screen words. See [payments](docs/wiki/frontend/modules/payments.md).
+
+### Removed - an unused channels-MVP route in social-service
+
+A route left from the channels MVP that no client called is removed, with its frontend wrapper,
+DTOs and wiki rows ([social-service](docs/wiki/services/social-service.md#channels-and-workspaces-apichannels)).
+
+### Fixed - a slow swipe between tabs (and to the camera) no longer does nothing
+
+The tab swipe locked its direction at 12 px, past Chrome's 8 dp touch slop, so a slow thumb's first move went unclaimed and Chrome took the touch. It now locks at 8 px ([design-reference](docs/wiki/frontend/design-reference.md#38-the-page-a-swipe-was-going-to-never-appeared-and-a-taps-drift-went-to-a-different-one)).
+
+### Changed - tests: the keystore and customtabs contract tests are one `describe.each`, two hollow-looking tests assert their reason
+
+Same 12 cases in one file ([test-suite-reform](docs/wiki/test-suite-reform.md#73-the-frontend-desk-items-2026-10-21)); `features.test.ts` stays as it is, with its reason.
+
+### Changed - ten byte-identical spec copies deleted from the NestJS services (WP-TEST-TOOLING-REFORM)
+
+A module pinned byte-identical across services now has ONE spec; the copies beside the other services asserted nothing more (-10 files, -81 jest cases, no class lost). `http-error-log.spec.ts` keeps both copies because each builds its input with its own service's `axios` ([test-suite-reform](docs/wiki/test-suite-reform.md#72-the-declared-copies-deleted-2026-10-21)).
+
+### Documentation - the legacy-name upload limit, re-measured
+
+Dev's relay now takes a 7 MB upload; the production relay of the legacy name still answers 413 ([backlog](docs/wiki/backlog.md)).
+
+### Documented - the French user guides describe Lydia, not Stripe
+
+The manager guide shop and payments section, the member guide, the permissions guide and the index now match the Lydia panel and its labels. See [payments](docs/wiki/frontend/modules/payments.md).
+
+### Added - CI: a weekly watch for an upstream release past the vendored `tauri-plugin-websocket` fork
+
+Job `vendored-upstream` of `scheduled.yml` turns red, naming the rebase, when crates.io's latest stable release passes the fork; an unreachable crates.io exits 75 ([cicd](docs/wiki/cicd.md#a-vendored-fork-is-watched-for-upstream-releases-2026-10-21)).
+
+### Fixed - a web checkpoint the version guard dropped is no longer reported as durable
+
+A checkpoint refused behind another tab's state now fails, typed and in one log line, while one superseded by this tab's own later write still counts. A device rotation whose checkpoint is refused moves nothing shared and deletes no device another tab may serve; the login says to close the other tabs, and a revoked tab writes no state again and reloads, at most twice before it tells the member to close the other tabs ([mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md#a-web-checkpoint-resolves-only-when-its-state-is-on-disk-2026-10-21)).
+
+### Changed - the store text of 1.4.0
+
+The one text for the App Store, Play and the GitHub release body, written from the changelog fragments; checked with `--check-notes` ([workflow](docs/user-guide/workflow-developpement.md)).
+
 ## [1.3.1] - 2026-10-21
 
 ### Changed - "Mes institutions" and "Mes listes" sit in their own tab

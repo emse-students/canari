@@ -136,7 +136,7 @@ jobs:
       # string that merely looks like one. That cannot be a warning: the step fails, and the
       # credential is rotated before anything else happens.
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@v3.99.2
+        uses: trufflesecurity/trufflehog@v3.99.3
         with:
           path: ./
           extra_args: --debug --only-verified
@@ -251,9 +251,16 @@ jobs:
         include:
           # The frontend installs its scripts (Tauri and the WASM glue need them) and is audited at
           # bun's default level; every service skips scripts and is audited at `moderate`.
+          #
+          # TWO SUPPRESSIONS, 2026-10-24, and they wait on a decision rather than a reachability
+          # argument: GHSA-pfhg-q3qv-9q6r and GHSA-27mw-82g8-phjj are LOW SvelteKit advisories fixed
+          # only in `@sveltejs/kit` 3.x, and the user put the kit 3 major after the stable, as its
+          # own chantier (Dependabot's #2154). They are deleted WITH that upgrade - and the step
+          # `Every ignored advisory is still reported` below fails the day kit 3 lands and the audit
+          # stops naming them, so they cannot outlive it.
           - tree: frontend
             install: --frozen-lockfile
-            audit: ""
+            audit: --ignore=GHSA-pfhg-q3qv-9q6r --ignore=GHSA-27mw-82g8-phjj
           - tree: apps/core-service
             install: --frozen-lockfile --ignore-scripts
             audit: --audit-level=moderate
@@ -373,8 +380,6 @@ jobs:
       # premise does not grant the ignore.
       - name: The premises behind media-service's ignores
         if: ${{ !cancelled() && matrix.tree == 'apps/media-service' }}
-        env:
-          AUDIT_FLAGS: ${{ matrix.audit }}
         run: |
           set -uo pipefail
           failed=""
@@ -424,27 +429,92 @@ jobs:
             fi
           fi
 
-          # THE RETIREMENT, ASSERTED INSTEAD OF POLLED. The audit run WITHOUT the ignores must still
-          # report every id the matrix suppresses (read from `matrix.audit`, so the list is never
-          # copied here); one that it does not report has retired itself - minio moved - and the
-          # ignore is dead weight to delete. It replaces a dated hand re-check of the registry.
-          echo "--- every ignored advisory is still reported"
-          ignored=$(printf '%s\n' "$AUDIT_FLAGS" | grep -oE -- '--ignore=GHSA-[a-z0-9-]+' | sed 's/^--ignore=//' || true)
-          unignored=$(mktemp)
-          # Through the same script as the audit above, so a registry that did not answer is told
-          # apart from one that answered "nothing": only the second can retire an ignore.
-          .github/scripts/audit-dependencies.sh apps/media-service --audit-level=moderate >"$unignored" 2>&1 || true
-          if grep -q 'was NOT audited' "$unignored"; then
-            echo "    the advisory endpoint did not answer; the audit step above carries that verdict, and nothing is concluded about the ignores."
-          # shellcheck disable=SC2086
-          elif ! bash .github/scripts/ignored-advisories-still-reported.sh "$unignored" $ignored; then
-            failed="$failed media-service(ignores-retired)"
-          fi
-
           if [ -n "$failed" ]; then
             echo "::error::a premise behind an ignore no longer holds:$failed"
             exit 1
           fi
+
+      # THE RETIREMENT, ASSERTED INSTEAD OF POLLED, for EVERY tree that suppresses something (the
+      # media-service premises above, the frontend's kit 3 wait). The audit run WITHOUT the ignores
+      # must still report every id the matrix suppresses (read from `matrix.audit`, so the list is
+      # never copied here); one that it does not report has retired itself - the dependency moved -
+      # and the ignore is dead weight to delete. It replaces a dated hand re-check of the registry.
+      - name: Every ignored advisory is still reported
+        if: ${{ !cancelled() && contains(matrix.audit, '--ignore=') }}
+        env:
+          TREE: ${{ matrix.tree }}
+          AUDIT_FLAGS: ${{ matrix.audit }}
+        run: |
+          set -uo pipefail
+          ignored=$(printf '%s\n' "$AUDIT_FLAGS" | grep -oE -- '--ignore=GHSA-[a-z0-9-]+' | sed 's/^--ignore=//' || true)
+          # The tree's own flags minus its ignores, so the level is the one the audit step used.
+          kept=$(printf '%s\n' "$AUDIT_FLAGS" | tr ' ' '\n' | grep -v -- '^--ignore=' | tr '\n' ' ' || true)
+          unignored=$(mktemp)
+          # Through the same script as the audit above, so a registry that did not answer is told
+          # apart from one that answered "nothing": only the second can retire an ignore.
+          # shellcheck disable=SC2086
+          .github/scripts/audit-dependencies.sh "$TREE" $kept >"$unignored" 2>&1 || true
+          if grep -q 'was NOT audited' "$unignored"; then
+            echo "    the advisory endpoint did not answer; the audit step above carries that verdict, and nothing is concluded about the ignores."
+            exit 0
+          fi
+          # shellcheck disable=SC2086
+          bash .github/scripts/ignored-advisories-still-reported.sh "$unignored" $ignored
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE CONTAINER IMAGES, WHICH NO AUDIT ABOVE READS (2026-10-23)
+  #
+  # `bun audit` and `cargo audit` read lockfiles. What an estate RUNS is images - an Alpine
+  # `libssl`, the Go runtime inside `gosu`, the identity provider's Python - and nothing scanned
+  # them. `image-scan.sh` scans every image the estates run (the list is DERIVED from the
+  # Dockerfiles and compose files by `image-scan-targets.sh`) for HIGH/CRITICAL advisories WITH A
+  # FIX PUBLISHED, against `.github/image-scan-allowlist.yaml`, and fails when an allowlist entry is
+  # no longer reported - the same retirement media-service's ignores have.
+  #
+  # IN THE `dependencies` HALF, with the audits: like them it reads an advisory database that moves
+  # without a commit, and like them its outage (the database mirror or a registry not answering) is
+  # exit 2, which `registry_outage_is_failure` prices - a warning on a pull request, a failure on
+  # the nightly pass.
+  #
+  # TRIVY IS PINNED BY VERSION AND SHA-256 and fetched from its release, not through
+  # `aquasecurity/trivy-action`: an action tag can be moved to another commit, and a checksum of
+  # the binary is what a moved tag cannot fake. Nothing watches the pin (it is neither an action
+  # nor a manifest); docs/wiki/cicd.md says how it moves.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  image-scan:
+    name: Container image scan
+    if: inputs.scope == 'all' || inputs.scope == 'dependencies'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      TRIVY_VERSION: "0.75.0"
+      TRIVY_SHA256: "c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Trivy ${{ env.TRIVY_VERSION }}, checked against its SHA-256
+        run: |
+          set -euo pipefail
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${tarball}"
+          echo "${TRIVY_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/trivy"
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/trivy" trivy
+          echo "$RUNNER_TEMP/trivy" >> "$GITHUB_PATH"
+
+      # `rc=0` then `|| rc=$?`, for the reason the npm audit step above gives: GitHub runs this
+      # block as `bash -e`, and a bare call would kill the step before its exit code is read.
+      - name: Scan every image an estate runs
+        env:
+          REGISTRY_OUTAGE_IS_FAILURE: ${{ inputs.registry_outage_is_failure }}
+        run: |
+          set -uo pipefail
+          rc=0
+          bash .github/scripts/image-scan.sh || rc=$?
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE RUST HALF, AND WHY IT IS NOT CACHED
@@ -481,5 +551,37 @@ jobs:
           done
           if [ -n "$failed" ]; then
             echo "::error::cargo audit failed for:$failed"
+            exit 1
+          fi
+
+      # THE RETIREMENT of each `.cargo/audit.toml` ignore, the same check the bun trees have
+      # (`ignored-advisories-still-reported.sh`). Each lockfile is audited again from a directory
+      # that holds no audit.toml, so nothing is ignored, against the database the step above just
+      # fetched (`--no-fetch`); an id it no longer reports has retired itself and the entry is dead
+      # weight. RUSTSEC-2026-0381 outlived its reason by days (the advisory was amended to call
+      # webpki-roots 0.26.11 unaffected) with nothing saying so - that is what this step is for.
+      - name: Every ignored Rust advisory is still reported
+        if: ${{ !cancelled() }}
+        run: |
+          set -uo pipefail
+          failed=""
+          bare=$(mktemp -d)
+          for crate in apps/call-service apps/chat-gateway frontend/mls-wasm frontend/src-tauri; do
+            ids=$(grep -oE '^[[:space:]]*"RUSTSEC-[0-9]{4}-[0-9]{4}"' "$crate/.cargo/audit.toml" | tr -d ' "' || true)
+            [ -n "$ids" ] || continue
+            echo "--- $crate"
+            out=$(mktemp)
+            ( cd "$bare" && cargo audit --no-fetch --file "$GITHUB_WORKSPACE/$crate/Cargo.lock" ) >"$out" 2>&1 || true
+            if ! grep -q 'Scanning .* for vulnerabilities' "$out"; then
+              cat "$out"
+              echo "::error::$crate: the un-ignored audit did not scan, so nothing is concluded about its ignores"
+              failed="$failed $crate"
+              continue
+            fi
+            # shellcheck disable=SC2086
+            bash .github/scripts/ignored-advisories-still-reported.sh "$out" $ids || failed="$failed $crate"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::a Rust ignore outlived its advisory, or could not be checked, in:$failed"
             exit 1
           fi

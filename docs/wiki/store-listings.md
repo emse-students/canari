@@ -1,7 +1,7 @@
 # Store listings: texts, screenshots and the pipeline that refreshes them
 
-Status: DESIGN (2026-10-09). Nothing here has been created or uploaded yet; the measured parts
-(API reach, current texts, sizes) are facts, the pipeline is a plan. Release notes live in
+Status: DESIGN (2026-10-09), texts redrafted 2026-10-22 (section 8). Nothing here has been uploaded;
+the measured parts (API reach, current texts, sizes) are facts, the pipeline is a plan. Release notes live in
 [store/README.md](../../store/README.md); this page owns the REST of what the two stores show.
 
 ## 1. What the credentials can do (measured 2026-10-09, read-only)
@@ -40,8 +40,12 @@ description named no platform.
 
 Stale against `store/whats-new.txt` (v1.1.2) and `CHANGELOG`:
 
-1. **"Stripe" is false.** Stripe was removed (#1589); payments go through Lydia. The bullet should
-   say "integrated payment" and name no provider, so it cannot go stale again.
+1. **"Stripe" is false, and so is any payment promise (2026-10-22).** Stripe was removed (#1589)
+   and Lydia, the only provider left, is NOT live in production (`payment_provider` is `disabled`,
+   [backlog WP-LYDIA-1](backlog.md)). A listing may therefore name no provider AND promise no
+   payment, shop or ticketing flow that rests on one: `FORBIDDEN` in `tools/store-listings/listings.mjs`
+   now refuses "paiement", "payment", "billetterie" and "ticketing". The shop bullet is OUT of
+   both texts until payments are live; it comes back in the same week as that stable.
 2. **"audio calls" is false.** Calling is held off (`CALLS_ENABLED = false`). It becomes true with
    the stable that flips `CALLS_COMPILED`, AUDIO 1:1 only (owner, 2026-10-21): the bullet then says
    audio calls and never video, and changes in the same week as that stable, with the store answers
@@ -154,10 +158,65 @@ Each step idempotent and logged:
 * A test failing if a listing text names a removed feature (Stripe, calls) or an image breaks the
   size table above.
 
-## 8. Next steps
+## 8. The redo of the whole listing (decided by the user 2026-10-22: texts AND screenshots)
 
-1. User: provide `ASC_ISSUER_ID` locally; decide estate A or B; create the fictional Authentik users.
-2. Agent: read the ASC listings, write `store/listings/*.json` with corrected texts, user reviews.
-3. Agent: build the seed script, run it on dev, script the chat through the harness.
-4. Capture on the Mi 9T, then the iPhone; the user views every frame against section 4.
-5. Add the upload scripts, dry-run, apply Play; the App Store texts ride the next stable.
+**Status: DRAFT. Nothing is uploaded and nothing here changes a store data declaration.**
+
+### 8.1 Texts - done as a draft in `store/listings/`
+
+True today, in both languages: encrypted messaging (MLS), communities, associations (directory,
+news, the carte de la vie asso for officers), agenda (audiences, ICS subscription, PDF export),
+news/polls/forms, Canareels, institutions, encrypted media. **Removed as false or unprovable:** Stripe,
+audio calls (come back with the stable that flips `CALLS_COMPILED`), the shop and ticketing bullet and
+the word "billetterie" (payments are disabled in production), "adhesions" (a membership flow
+the user cannot complete without payment) and "rappels" (no reminder feature is documented in
+[calendar](frontend/modules/calendar.md); re-add only after someone reads one on a phone).
+Nothing about live features. The disclaimer "not published by the school administration" stays.
+
+### 8.2 Screenshot shot list - to be taken on a BENCH PHONE, real chrome, never browser emulation
+
+Why not emulation: it has no real status bar, no Liquid Glass chrome on iOS, and renders only what
+Chromium draws. Devices: the Android bench phone (native 1080x2340, valid for Play as is) and the
+iPhone when it is usable (1170x2532 is accepted, the mandatory class is 1179x2556, section 3).
+Account: a dev account on FICTIONAL data only (sections 4 and 5); language fr first, en second from
+the same data with the app in English. Order, same story on both stores, at most 8:
+
+Where each screen lives in `v1.4.0-alpha.4` (read from `places.ts`, 2026-10-22): the phone's bottom bar has
+FOUR icon-only tabs, in order Posts (`/posts`), Communities (`/communities`), Chats (`/chat`) and
+Dashboard (`/dashboard`). The agenda (`/calendar`), notifications, forms, bookings and shop are NOT
+tabs: they are reached from the dashboard (the sections hub). An association page is
+`/associations/<slug>`, and the Canareels camera is the tab LEFT of the feed (swipe right). Shot 4 is
+therefore taken from the dashboard, not from a tab, and the entry point of the Canareels viewer and of
+the carte de la vie asso is still to be confirmed on the device before shooting. The shop route exists
+but no shot or text shows it while payments are disabled.
+
+1. Conversation list, then one open conversation (encrypted messaging, the lock shown).
+2. A community with its channels and a few messages.
+3. The news feed with a poll that has votes.
+4. The agenda, three events across two associations.
+5. An association page.
+6. A Canareels viewer.
+7. The sections hub (shows how much is in one app).
+8. The carte de la vie asso (officers' screen) - only if a fictional officer account exists.
+
+**Hidden or absent in every frame:** the "Environnement de test" banner, the URL bar (native app
+only), notifications, a real status bar clock/battery (use the demo-mode settings of section 6),
+any real name, photo, e-mail, phone, id, association, QR code or payment identifier. A person looks at
+every PNG against the checklist of section 4 before it leaves the scratchpad. No device frame, no
+"best/CTA/badge" overlays, any text overlay under 20 % of the area and localized.
+
+### 8.3 Only the user can do or decide
+
+* Which screens to show (the list above is a proposal), and the fictional officer account of item 8.
+* The fictional accounts on dev: the identity provider is ONE instance for dev and prod, so
+  creating a user there is a production-adjacent gesture ([backlog](backlog.md)).
+* Any upload to Play Console or App Store Connect (`play.mjs` is dry-run by default; `--apply` is the
+  user's), and App Store texts, which ride a release.
+* **Any store data declaration** (Data safety, App Privacy, content rating, ads): never changed by an agent.
+* Whether the shop and payments return to the listing, and when.
+
+### 8.4 Next steps
+
+1. User reviews the two drafts and answers 8.3.
+2. A fictional dev dataset exists (section 5), then capture on the bench phone, user views every frame.
+3. `tools/store-listings/play.mjs` dry-run; apply only on the user's word.

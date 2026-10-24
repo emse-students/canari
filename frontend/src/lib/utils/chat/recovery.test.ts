@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
 }));
@@ -91,7 +92,7 @@ function makeMls(overrides: Record<string, unknown> = {}) {
 function membership(
   groupId: string,
   status: 'pending' | 'active',
-  facts?: { welcomeQueued?: boolean; addInFlight?: boolean }
+  facts?: { welcomeQueued?: boolean; addInFlight?: boolean; awaitingAdmission?: boolean }
 ) {
   return {
     id: `m-${groupId}`,
@@ -208,6 +209,29 @@ describe('requestReAdd', () => {
 
     expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+  });
+
+  it("never serves itself on an invitation link's seat a member has not answered - it asks a member and waits", async () => {
+    // THE BYPASS OF THE ADD / DECLINE BANNER (review of #2358). The link's seat carries no Welcome
+    // and no add in flight - exactly the unhonoured seat above - so the joiner used to join by
+    // itself within one cadence, around the member it was waiting for. The server says which seat
+    // it is, and the device is told before it tries rather than learning it from a refusal.
+    const deps = makeDeps();
+    deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([
+      membership('g1', 'pending', {
+        welcomeQueued: false,
+        addInFlight: false,
+        awaitingAdmission: true,
+      }),
+    ]);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    // The welcome_request is what reaches a member's `handleWelcomeRequest`, which raises the ask.
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining("awaiting a member's admission"));
   });
 
   it('clears the roster seat it joined on, so no member re-adds a leaf already in the tree', async () => {
@@ -646,6 +670,18 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
       expect(deps.mlsService.sendBaseRefreshRequest).not.toHaveBeenCalled();
     }
   );
+
+  it('asks NOBODY when the server rate-limited the join - a wait is not a missing seat', async () => {
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = vi
+      .fn()
+      .mockResolvedValue({ joined: false, reason: 'rate_limited', retryAfterMs: 30_000 });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendBaseRefreshRequest).not.toHaveBeenCalled();
+  });
 
   it('still asks for a Welcome when NO base is published - that one a member CAN answer', async () => {
     // The two refusals are not the same question: nothing published means nothing to republish, and

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * What is saved is what the preview showed: the crop rectangle, the saved size, the constraints asked
  * of the camera and the bitrate that follows the pixels. All pure - no camera, no canvas.
@@ -8,7 +9,10 @@ import {
   REEL_RECORD_BITRATE_MAX,
   cameraVideoConstraints,
   coverCropRect,
+  cropFor,
   draw,
+  FramedStream,
+  type FrameSource,
   framedOutputSize,
   shouldMirrorCapture,
   takeFramedPhoto,
@@ -219,6 +223,95 @@ describe('takeFramedPhoto', () => {
     expect(blob?.size).toBe(4);
     expect(toDataURL).toHaveBeenCalledWith('image/jpeg', 0.92);
     expect(toBlob).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+});
+
+describe('the digital zoom in every capture (user, 2026-10-22)', () => {
+  const video = { videoWidth: 720, videoHeight: 1280 } as HTMLVideoElement;
+  const box = { width: 360, height: 640, dpr: 2, mirror: false };
+
+  it("draws the centred part the preview's scale shows, at the SAME saved size", () => {
+    const plain = cropFor(video, box);
+    const zoomed = cropFor(video, { ...box, zoom: 2 });
+    expect(zoomed.crop).toEqual({ sx: 180, sy: 320, sw: 360, sh: 640 });
+    // A zoom changes what is drawn, never the file's dimensions (a take's canvas is fixed).
+    expect(zoomed.out).toEqual(plain.out);
+  });
+});
+
+describe('FramedStream across a lens flip (user, 2026-10-22)', () => {
+  function setup() {
+    let frame: FrameRequestCallback | null = null;
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      frame = cb;
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    const drawn: unknown[] = [];
+    const context = {
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn(),
+      drawImage: vi.fn((source: unknown, ...args: number[]) => drawn.push([source, ...args])),
+    };
+    const canvasTrack = { kind: 'video', stop: vi.fn() };
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => context,
+      captureStream: () => new MediaStream([canvasTrack] as unknown as MediaStreamTrack[]),
+    };
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(canvas as unknown as HTMLElement);
+    const next = () => (frame as FrameRequestCallback | null)?.(0);
+    return { canvas, canvasTrack, drawn, next };
+  }
+
+  it('records ONE canvas track for the whole take: draws the new lens, holds the last picture in between', () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const { canvas, canvasTrack, drawn, next } = setup();
+    const front = { videoWidth: 720, videoHeight: 1280 } as HTMLVideoElement;
+    const back = { videoWidth: 1080, videoHeight: 1920 } as HTMLVideoElement;
+    const mic = { kind: 'audio', stop: vi.fn() };
+    let now: ReturnType<FrameSource> = {
+      video: front,
+      box: { width: 360, height: 640, dpr: 2, mirror: true },
+    };
+    const take = FramedStream.start(() => now, [mic as unknown as MediaStreamTrack])!;
+    expect(take.stream.getVideoTracks()).toEqual([canvasTrack]);
+    expect(take.stream.getAudioTracks()).toEqual([mic]);
+    expect(drawn.at(-1)).toEqual([front, 0, 0, 720, 1280, 0, 0, 720, 1280]);
+
+    // The flip: no frame of the new lens yet - the canvas paints itself again, three frames.
+    now = null;
+    next();
+    next();
+    next();
+    expect(drawn.slice(-3)).toEqual([
+      [canvas, 0, 0],
+      [canvas, 0, 0],
+      [canvas, 0, 0],
+    ]);
+    expect(take.heldFrames).toBe(3);
+
+    // The new lens draws, unmirrored, zoomed, into the same canvas and the same track.
+    now = { video: back, box: { width: 360, height: 640, dpr: 2, mirror: false, zoom: 2 } };
+    next();
+    expect(drawn.at(-1)).toEqual([back, 270, 480, 540, 960, 0, 0, 720, 1280]);
+    expect(take.stream.getVideoTracks()).toEqual([canvasTrack]);
+    expect(take.heldFrames).toBe(3);
+
+    take.stop();
+    expect(canvasTrack.stop).toHaveBeenCalled();
+    expect(mic.stop).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('does not start with no decoded frame', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(FramedStream.start(() => null, [])).toBeNull();
     vi.restoreAllMocks();
   });
 });

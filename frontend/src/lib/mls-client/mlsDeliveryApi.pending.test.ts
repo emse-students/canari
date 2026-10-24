@@ -1,5 +1,6 @@
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { MlsDeliveryApi } from './mlsDeliveryApi';
+import { ADDRESSED_HISTORY_CAPABILITY } from './frameDelivery';
 
 /**
  * The pending pull is the catch-up path of a device that fell behind, so what these tests pin is
@@ -42,6 +43,24 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
     expect(String(fetchFn.mock.calls[1][0])).toContain(
       `after=${encodeURIComponent('2026-01-01T00:00:00.000Z')}`
     );
+  });
+
+  /**
+   * Review of #2270: the server hands an ADDRESSED row only to a fetch that declares it applies rule
+   * 5 (history-answer-addressing, rule 6), with the same capability the socket declares. A page that
+   * forgot it would leave every history answer queued forever.
+   */
+  it('declares the addressed-history capability on every page', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(json(page(2, '2026-01-01T00:00:00.000Z')))
+      .mockResolvedValueOnce(json([]));
+
+    await api(fetchFn).pullPendingMessagesJson();
+
+    for (const [url] of fetchFn.mock.calls) {
+      expect(new URL(String(url)).searchParams.get('caps')).toBe(ADDRESSED_HISTORY_CAPABILITY);
+    }
   });
 
   it('does not read a SHORT page as the end of the queue - only an empty one proves that', async () => {

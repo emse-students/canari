@@ -1,0 +1,21 @@
+-- Migration 107: the signed admission a community member was given, kept on their membership row.
+--
+-- See docs/wiki/protocols/channel-encryption.md, section 25 ("A community's past goes only to an
+-- admission a member can verify").
+--
+-- A member hands a community's past (its Graine seeds) only to a newcomer whose admission it can
+-- verify. The proof is a VOUCHER signed by a member's device - the admin who added them, or the member
+-- whose invite link they followed - and the server stores it as an opaque string it cannot forge: it
+-- holds no device key. It is served back with the roster (`GET /workspaces/:id/members`) so any
+-- member's device, including a new one, can check it.
+--
+-- On the membership row, so it goes when the membership goes: a member who leaves and comes back
+-- needs a new admission, exactly as their new row needs a new arrival date.
+--
+-- Schema only: one new NULLABLE column. No row is changed, nothing is backfilled, nothing is
+-- dropped. Members admitted before the proof existed hold none and are recognised by their arrival
+-- date instead (`ADMISSION_PROOF_SINCE` in frontend/src/lib/utils/graine/admissionGate.ts).
+--
+-- Idempotent for CD: IF NOT EXISTS.
+
+ALTER TABLE channel_members ADD COLUMN IF NOT EXISTS "admissionVoucher" text;

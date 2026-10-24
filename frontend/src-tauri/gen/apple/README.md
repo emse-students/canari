@@ -15,6 +15,7 @@
     - canari_iOS/canari_iOS.entitlements (Associated Domains, push, App Group)
     - canari_iOS/{fr,en}.lproj/InfoPlist.strings (WP-iOS-10: localized privacy usage prompts). Cables dans le pbxproj comme PBXVariantGroup InfoPlist.strings (phase Resources de l'app, fr/en dans knownRegions). Sans ce wiring, iOS retombe sur les valeurs FR de base de Info.plist.
     - canari_NSE/                    (Notification Service Extension: source + Info.plist + entitlements + bridging header + FFI header). Cible CanariNotifications ajoutee A LA MAIN dans canari.xcodeproj/project.pbxproj (pas via project.yml). La CI (runner macOS) la build/signe.
+    - canari_Share/                  (Share Extension, S4: Swift sources + Info.plist + entitlements App Group seul + {fr,en}.lproj/Localizable.strings). Cible CanariShare ajoutee A LA MAIN dans le pbxproj, embarquee comme la NSE ; gardee par src/lib/mobile/iosShareExtension.test.ts et .github/scripts/ios-extensions.sh.
     - Podfile                        (Firebase/Messaging)
     - canari.xcodeproj/project.pbxproj (SOURCE DE VERITE du build : sources + frameworks + targets ajoutes a la main dans Xcode. project.yml n'est PAS lu par le build / la CI)
 
@@ -50,7 +51,6 @@ Copier `GoogleService-Info.plist` dans `canari_iOS/` (non committe, voir `.gitig
 
 `canari_push.mm` implemente en plus de la phase 2 :
 
-- `welcome_request_pending` : verrou Redis, key package, create welcome (FFI), send-welcome-and-commit
 - `isWelcome=true` : fetch-proto bundle, process welcome (FFI), membership-active
 - `process_queue` : nettoyage `mls_pending.db` via FFI (equivalent worker Android)
 - Drain `outbox_pending.ndjson` : chiffre (FFI), POST `/api/mls/push/send`, journal `outbox_sent.ndjson`
@@ -69,7 +69,6 @@ FFI exposes :
 - `canari_native_group_epoch`
 - `canari_native_decrypt_message_with_commits`
 - `canari_native_decrypt_channel_message` (AES-256-GCM channel/communaute, hors MLS)
-- `canari_native_create_welcome_background`
 - `canari_native_process_welcome_background`
 - `canari_native_send_messages_background` (batch : un seul chargement de `mls.bin` par vidage)
 - `canari_native_cleanup_pending_db`

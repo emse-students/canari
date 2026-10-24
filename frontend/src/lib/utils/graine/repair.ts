@@ -8,11 +8,22 @@ import {
 } from '$lib/mls-client/distributionScope';
 import { type ChannelMemberDto, ChannelService } from '$lib/services/ChannelService';
 import { whenAnyComesOnline } from '$lib/stores/presenceStore';
-import { isGraineReady, requireGraineRuntime, scopeForChannel } from './runtime';
+import {
+  isGraineReady,
+  knownHistoryVisibility,
+  requireGraineRuntime,
+  scopeForChannel,
+} from './runtime';
+import {
+  beginHistoryWidening,
+  forgetHistoryClosedSeen,
+  noteHistoryClosed,
+  settleHistoryWidening,
+} from './historyClosedSeen';
 import { historyFloorFor, withinHistoryFloor } from './historyBoundary';
 import { distributionEpochFor, GraineDistributionUnavailableError } from './seedDistribution';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
-import { deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { canonicalUserId, deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { describeKeyGroupFrameLosses } from '$lib/mls-client/keyGroupFrameLosses';
 import {
   forgetHistoryHeldNothing,
@@ -22,6 +33,11 @@ import {
   markHistoryHeldNothingFinal,
   recordHistoryHeldNothing,
 } from './historyAnswered';
+import {
+  forgetPagedHistoryAnswer,
+  incompleteHistoryPages,
+  noteHistoryAsked,
+} from './pagedHistoryAnswer';
 
 /**
  * Asking for a seed this device does not hold (WP-33).
@@ -176,10 +192,11 @@ const historyParked = new Map<string, () => void>();
  *   answered. `null` when the tree could not be read: then nothing proves a member answered, so
  *   nothing moves the walk and the ask stays open - one ask at the next start, the cost before.
  *
- * The device an answer names is SELF-ASSERTED on the distribution path (`senderDeviceId`: the user is
- * checked against the MLS credential, the device is not - backlog, "the distribution path's device
- * check"). What bounds a wrong one: only a device the request named, or on the tree when it named
- * none, is counted, and each once.
+ * The device an answer names is VERIFIED against the MLS credential whenever the envelope carries one
+ * (`senderDeviceId`, compared on the distribution path since #2090), so a frame naming another device
+ * never reaches here. The bound below is for the legacy device-less row, where only the user is
+ * compared: only a device the request named, or on the tree when it named none, is counted, and each
+ * once.
  */
 const historyRequest = new Map<
   string,
@@ -522,7 +539,7 @@ function heldNothingView(
     unansweredOnline,
     /** The tree devices of `id` not yet recorded, or `null` when the tree is unknown. */
     unansweredOnTree: (id: string): Set<string> | null =>
-      tree ? new Set(unansweredOf(id, tree.get(id.toLowerCase()) ?? [])) : null,
+      tree ? new Set(unansweredOf(id, tree.get(canonicalUserId(id)) ?? [])) : null,
     /** The members the election skips: answered from every device, or from every one online. */
     skipped: new Set([...roster].filter((id) => done(id) || spent(id))),
     /** Every other member done, and our own other devices on the tree too, if any. */
@@ -944,6 +961,61 @@ function parkUntilOnline(channelId: string, sessions: Map<string, string[]>): vo
 }
 
 /**
+ * Whether this device owes `workspaceId` a WIDENED history ask: its past was closed (`joined`) when
+ * this device last heard, and the server now says `shared` ({@link beginHistoryWidening}).
+ *
+ * Also where a closed past is RECORDED, because every start passes through here for every community
+ * (`ensureCommunityDistributionGroup`) - so a member who learns `joined` from a listing is recorded
+ * without a second hook. Only a rule the server STATED counts (`knownHistoryVisibility`): the
+ * fail-closed `joined` of a rule never learned would record a closed past that never was.
+ *
+ * @returns `first` on the first sight of a widening, `continuing` while it is unanswered, `none`
+ *   otherwise - and `none` with no session wired, which the caller then refuses on its own.
+ */
+function historyWidening(workspaceId: string): 'first' | 'continuing' | 'none' {
+  if (!isGraineReady()) return 'none';
+  const { userId } = requireGraineRuntime('cannot read the community history rule');
+  const rule = knownHistoryVisibility(workspaceId);
+  if (rule === 'joined') {
+    noteHistoryClosed(userId, workspaceId);
+    return 'none';
+  }
+  if (rule !== 'shared') return 'none';
+  const widening = beginHistoryWidening(userId, workspaceId);
+  if (widening === 'first') {
+    console.info(
+      `[GRAINE] community ${workspaceId.slice(0, 8)} now shares its past, which was closed to this ` +
+        `device - asking for it again`
+    );
+  }
+  return widening;
+}
+
+/** Drops a widening that has its answer, saying why - and nothing when there was none. */
+function settleWidening(userId: string, workspaceId: string, why: string): void {
+  if (settleHistoryWidening(userId, workspaceId)) {
+    console.info(
+      `[GRAINE] the widened history ask of community ${workspaceId.slice(0, 8)} is settled: ${why}`
+    );
+  }
+}
+
+/**
+ * A bundle CARRYING SEEDS answered `requestId` in `workspaceId`: if that is the history ask in
+ * flight, a widened ask has its answer and is not asked again (the seeds themselves are stored by
+ * the frame handler, whatever this says). Any other request id is not this ask's answer.
+ */
+export function noteHistoryAnswered(workspaceId: string, requestId: string): void {
+  const inFlight = historyRequest.get(workspaceId);
+  if (!inFlight || inFlight.requestId !== requestId || !isGraineReady()) return;
+  settleWidening(
+    requireGraineRuntime('cannot record a history answer').userId,
+    workspaceId,
+    `${inFlight.answerer} answered with seeds`
+  );
+}
+
+/**
  * Asks the community for the history a joiner is entitled to, once per session and only when this
  * device holds nothing.
  *
@@ -961,6 +1033,13 @@ function parkUntilOnline(channelId: string, sessions: Map<string, string[]>): vo
  * durable, keyed on the same roster version, so a community whose answerer holds nothing is asked
  * ONCE per roster rather than once per launch - see {@link noteHistoryHeldNothing}.
  *
+ * **Asked under BOTH rules** (2026-10-22). Under `joined` the answerer hands over what the member
+ * may read, floored at the member's arrival, or says it has nothing for them - so the ask is
+ * answered either way and recorded like any other, where it used to be refused by silence at every
+ * launch. And **a past that WIDENED is asked for again even though seeds are held**
+ * ({@link historyWidening}): a member who arrived under `joined` holds only what was floored for
+ * them, and a switch to `shared` would otherwise never reach them.
+ *
  * Best-effort by construction: it is called from the join path and must never fail it. Every branch
  * says what it did, because the alternative symptom is a joiner staring at an empty salon.
  */
@@ -973,15 +1052,25 @@ export async function requestCommunityHistory(
    */
   { evenIfSeedsHeld = false }: { evenIfSeedsHeld?: boolean } = {}
 ): Promise<void> {
-  if (historyAsked.has(workspaceId) && !evenIfSeedsHeld) return;
+  // A WIDENED PAST IS ASKED FOR AGAIN TOO, whatever is held (see {@link historyWidening}): what
+  // this device holds was handed over floored at its member's arrival, so it is no evidence that it
+  // holds the past it may now read. The FIRST sight of the widening re-arms the ask even if this
+  // session already asked (under the floor); later passes follow the ordinary once-per-session rule.
+  const widening = historyWidening(workspaceId);
+  if (historyAsked.has(workspaceId) && !evenIfSeedsHeld && widening !== 'first') return;
   const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
     'cannot ask for community history'
   );
-  if (evenIfSeedsHeld) {
+  if (evenIfSeedsHeld || widening === 'first') {
     historyAsked.delete(workspaceId);
     // A RE-JOINED key group skipped epochs it acknowledged unreadable: an earlier "I hold nothing"
-    // is no more evidence about the past than the seeds this device holds (section 24).
+    // is no more evidence about the past than the seeds this device holds (section 24). Nor is one
+    // given while the past was closed: it said "nothing here FOR YOU", under the floor. Forgotten
+    // ONCE per widening - the walk re-enters here after each answer. The in-memory "nobody could
+    // answer at this epoch" goes with it, for the same reason: it was reached under the floor, and
+    // a widening that arrives live (`workspace.updated`) does not move the epoch.
     forgetHistoryHeldNothing(userId, workspaceId);
+    historyUnanswerableAt.delete(workspaceId);
   }
 
   // HOLDING SOME SEEDS IS NOT HOLDING THE PAST - a member back in a community holds exactly the
@@ -992,7 +1081,18 @@ export async function requestCommunityHistory(
   // here at every start, of one member, for seeds this device mostly holds, would buy nothing that
   // path does not already deliver session by session.
   const held = await storage.getGraineSessionsForWorkspace(workspaceId, deviceKey());
-  if (held.length > 0 && !evenIfSeedsHeld) return;
+  // A WIDENING (above) IS ONE EXCEPTION. AN ANSWER THAT ARRIVED IN PART IS THE OTHER (section 4.4): its first page is what made
+  // `held` non-empty, so without this a page lost after it is never asked for as a whole - only
+  // session by session, as rows under it fail to open and stay hidden until each repair lands. Asked
+  // ONCE more, at a start after the loss; `pagedHistoryAnswer` spends that once only when it is sent.
+  const missingPages = held.length > 0 ? incompleteHistoryPages(userId, workspaceId) : null;
+  if (held.length > 0 && !evenIfSeedsHeld && widening === 'none' && !missingPages) return;
+  if (missingPages && !evenIfSeedsHeld) {
+    console.info(
+      `[GRAINE] the history answer of community ${workspaceId.slice(0, 8)} arrived incomplete - ` +
+        `page(s) ${missingPages.map((i) => i + 1).join(', ')} never came; asking once more`
+    );
+  }
 
   const scope = workspaceScope(workspaceId);
   const groupId = mlsService.distributionGroupFor(scope);
@@ -1116,6 +1216,8 @@ export async function requestCommunityHistory(
     // change without moving the epoch, which is what asks again.
     markHistoryHeldNothingFinal(userId, workspaceId, version);
     historyUnanswerableAt.set(workspaceId, version.epoch);
+    // A widened ask that every device answered with "nothing" has its answer too.
+    settleWidening(userId, workspaceId, 'every device on the key group holds nothing');
     console.info(
       `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is final at distribution epoch ` +
         `${version.epoch}: all ${recorded.size} device(s) on its key group hold nothing - asked again when the tree moves`
@@ -1127,6 +1229,8 @@ export async function requestCommunityHistory(
     // once per roster rather than retried on every load - and it is a roster this device does not
     // control, so the next epoch gets its own answer.
     if (epoch !== null) historyUnanswerableAt.set(workspaceId, epoch);
+    // Nobody else, and no other device of ours: there is no past held anywhere this device lacks.
+    settleWidening(userId, workspaceId, 'nobody else holds the community');
     console.info(
       `[GRAINE] community ${workspaceId.slice(0, 8)} has no other member and no other device of ours to ask for history` +
         (epoch === null
@@ -1162,11 +1266,20 @@ export async function requestCommunityHistory(
     groupId,
     epoch,
   });
+  // DURABLE beside it, so a page of the answer absorbed after a restart is still known as ours.
+  const undoHistoryAsked = noteHistoryAsked(
+    userId,
+    workspaceId,
+    requestId,
+    missingPages !== null && !evenIfSeedsHeld
+  );
   try {
     await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
   } catch (e) {
-    // Nothing went out, so nothing can answer it; the caller says why the ask failed.
+    // Nothing went out, so nothing can answer it; the caller says why the ask failed. Nor is the
+    // one re-ask of an incomplete answer spent on it.
     historyRequest.delete(workspaceId);
+    undoHistoryAsked();
     throw e;
   }
   historyAsked.add(workspaceId);
@@ -1178,7 +1291,7 @@ export async function requestCommunityHistory(
   console.info(
     `[GRAINE] asked ${answerer} (${describeNamedDevices(answererDevices)}) for the history of community ` +
       `${workspaceId.slice(0, 8)} at epoch ${mlsService.getEpoch(groupId)} - reason ` +
-      `${evenIfSeedsHeld ? 'key-group-rejoined' : 'no-seed-held'}, key group lost ` +
+      `${evenIfSeedsHeld ? 'key-group-rejoined' : widening !== 'none' ? 'visibility-widened' : 'no-seed-held'}, key group lost ` +
       `${describeKeyGroupFrameLosses(groupId)} this session`
   );
 }
@@ -1225,9 +1338,10 @@ function parkHistoryUntilOnline(workspaceId: string, offline: string[]): void {
  *
  * @param answerer Who answered, any case - checked against the MLS credential that sealed the frame.
  * @param requestId The request the bundle echoes.
- * @param answererDevice The device the delivery envelope names. SELF-ASSERTED on this path: only the
- *   user is checked against the credential, so it counts only as one device the request named or the
- *   tree holds, and once (see `historyRequest`).
+ * @param answererDevice The device the delivery envelope names, verified against the credential that
+ *   sealed the frame whenever the envelope carries one (#2090). It still counts only as one device the
+ *   request named or the tree holds, and once - the bound for a legacy device-less row (see
+ *   `historyRequest`).
  */
 export function noteHistoryHeldNothing(
   workspaceId: string,
@@ -1433,10 +1547,10 @@ export function forgetWorkspaceRepairState(
   historyUnanswerableAt.delete(workspaceId);
   historyRequest.delete(workspaceId);
   if (isGraineReady()) {
-    forgetHistoryHeldNothing(
-      requireGraineRuntime('cannot forget a history answer').userId,
-      workspaceId
-    );
+    const { userId } = requireGraineRuntime('cannot forget a history answer');
+    forgetHistoryHeldNothing(userId, workspaceId);
+    forgetHistoryClosedSeen(userId, workspaceId);
+    forgetPagedHistoryAnswer(userId, workspaceId);
   } else {
     // Left in place: it names this community's key group and epoch, which a re-join replaces, so it
     // answers nothing then - but a leave with no runtime is worth naming.

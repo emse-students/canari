@@ -83,6 +83,18 @@ describe('the shared inbox is the directory take_picked_file allows', () => {
     expect(copiedInto).toBeDefined();
     expect(allowed).toBe(copiedInto);
     expect(kotlin).toMatch(/File\(context\.cacheDir, INBOX_DIR\)/);
-    expect(rust).toMatch(/app_cache_dir\(\)\.map\(\|d\| d\.join\(SHARED_INBOX\)\)/);
+    expect(rust).toMatch(/app_cache_dir\(\)\.ok\(\)\?\.join\(SHARED_INBOX\)/);
+  });
+
+  it('reads the share epoch from the file the sign-out advances', () => {
+    const handoff = readFileSync(
+      resolve(here, '../../../src-tauri/src/commands/handoff.rs'),
+      'utf8'
+    );
+    const read = /EPOCH_FILE = "([^"]+)"/.exec(kotlin)?.[1];
+    const advanced = /const SHARE_EPOCH_FILE: &str = "([^"]+)";/.exec(handoff)?.[1];
+    expect(read).toBeDefined();
+    expect(advanced).toBe(read);
+    expect(kotlin).toMatch(/File\(MlsContextLoader\.tauriDataDir\(context\), EPOCH_FILE\)/);
   });
 });

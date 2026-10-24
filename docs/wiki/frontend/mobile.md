@@ -1049,8 +1049,10 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
   device key comes from the shared keychain item `mls_bg_key_<alias>` (see
   [auth](modules/auth.md) "Where the key lives")
 - `mls.bin` — read-only mirror of the persisted MLS state; the NSE never writes it
-- `channel_keys.json` — read-only mirror for community/channel message decryption
+- `graine_seeds.json` — the salon seed mirror, SEALED at rest; only Rust opens it (see "The native caches are sealed at rest")
 - `push_secret.txt` — read-only mirror of the PushSecret for backend fetch paths
+
+(`channel_keys.json`, the epoch-key mirror Graine replaced, had no reader left; the first run of a 2026-10-22 build deletes it.)
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
 
@@ -1090,9 +1092,10 @@ Now (`canari_push.mm`):
   decrypting nothing; `call_ring_end` ends a CallKit ring. Every other kind - a Welcome, a
   `welcome_request_pending`, a peer's receipt, a commit - is logged `NOT acted on`: the two Welcome
   kinds would be the first background MLS write an iPhone has ever run, and wait for the
-  background-join row fix ([backlog](../backlog.md)). The `welcome_request_pending`, `isWelcome` and
-  `process_queue` branches of `CanariHandleFcmData`, which only a silent frame carries, are
-  therefore reached by nothing on iOS.
+  background-join row fix ([backlog](../backlog.md)). The `isWelcome` and `process_queue` branches
+  of `CanariHandleFcmData`, which only a silent frame carries, are therefore reached by nothing on
+  iOS; its `welcome_request_pending` branch was the same and was deleted on 2026-10-22 (it wrote the
+  add before the server answered - [chat-delivery](../services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)).
 - **The completion handler is called once**, after the removal has been issued and any chained
   implementation has answered: early lets iOS suspend the process with the removal queued, never
   makes iOS throttle later wakes.
@@ -1414,12 +1417,19 @@ the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multi
 ### iOS project
 
 `canari.xcodeproj/project.pbxproj` is **hand-maintained** (not xcodegen). Key details:
-- Two targets: `Canari` (app) + `CanariNotifications` (NSE)
+- Three targets: `Canari` (app) + `CanariNotifications` (NSE) + `CanariShare` (the Share Extension, `canari_Share/`, [sharing](sharing.md#share-in-ios---the-path)); both extensions are embedded by the app's "Embed Foundation Extensions" phase, and `.github/scripts/ios-extensions.sh` FAILS both `ios.yml` builds unless `PlugIns/` holds exactly the two
 - Custom URL scheme, `NS*UsageDescription` keys
 - `FirebaseAppDelegateProxyEnabled` — must stay enabled
 - Localized `InfoPlist.strings` (fr/en `PBXVariantGroup`)
 - `aps-environment: production` for TestFlight/App Store
-- Provisioning profiles: two named profiles matching `PROVISIONING_PROFILE_SPECIFIER`, team "Les Rootz" `4CLNB8SR6L`
+- Provisioning profiles: three named profiles matching `PROVISIONING_PROFILE_SPECIFIER` - `Canari`, `CanariNotifications`, `CanariShare` (secrets `APPLE_PROVISIONING_PROFILE`, `_NSE`, `_SHARE`) - team "Les Rootz" `4CLNB8SR6L`. The share extension's carries the App Group only
+- **The app needs iOS 16** (owner decision 2026-10-22). The WebView carries a Content-Security-Policy
+  with `'wasm-unsafe-eval'`, which WebKit before 16 does not know - it refuses WebAssembly, so the MLS
+  engine would not load. Stated in four places that must agree: `IPHONEOS_DEPLOYMENT_TARGET` (the
+  project and the app target, both configurations; the NSE keeps its own higher value), `project.yml`,
+  the `Podfile`, and `bundle.iOS.minimumSystemVersion` in `tauri.conf.json` - plus the Rust prebuild's
+  `IPHONEOS_DEPLOYMENT_TARGET` in `ios.yml`. `csp.test.ts` asserts them
+  ([cloudflare-edge](../infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)).
 
 ### A build for the phone on the bench
 
@@ -1470,14 +1480,15 @@ Uninstall then reinstall clears the local data and leaves the server's PIN alone
 
 **Signing stays on the workstation, and that is the design**: the key of a certificate that installs
 on a real phone is not handed to a CI secret store to save one command. The team's development
-certificate, the phone's UDID and two development profiles (`fr.emse.canari`, `.notifications`) were
-created through the App Store Connect API, and `rcodesign` signs the appex first and the app second.
+certificate, the phone's UDID and three development profiles (`fr.emse.canari`, `.notifications`,
+`.share` - the last as `share.mobileprovision`) were created through the App Store Connect API, and
+`rcodesign` signs each appex first, by its bundle id, and the app last.
 
 **The iPhone counterpart of `adb` is `tools/ios-device/`**, and needs no Mac:
 
 | Script | What it is |
 | --- | --- |
-| `sign-install.mjs <unsigned.ipa>` | signs (appex, then app), stops the running app, installs |
+| `sign-install.mjs <unsigned.ipa>` | signs (both appex, then app), stops the running app, installs |
 | `install.py <signed.ipa>` | AFC push to `/PublicStaging`, then the installation proxy. `pymobiledevice3 apps install` hung 25 minutes on the 45 MB archive |
 | `wda-daemon.py` | keeps the WebDriverAgent runner alive and forwards its port 8100 to `localhost` over usbmux; the runner lives exactly as long as the process that started it |
 | `ios.mjs` | `launch`, `shot`, `tree`, `find`, `tap <text or x,y>`, `type` (`type -` reads stdin, for a secret), `swipe`, `button`, `size`, `long`, `gesture`, `webview`, `url` - plain W3C WebDriver, **coordinates in POINTS** (390x844 on an iPhone 12, a screenshot pixel is 3 of them). The campaign rig drives the WebView's input and the system screens through it ([cross-client-ios](../cross-client-ios.md)) |
@@ -1690,7 +1701,9 @@ User decision 2026-10-14: declare exclusion rects.
 - **Owed:** a reading on the Mi 9T through the next pre-release (own bubble, x >= 406.5 CSS px,
   keyboard closed and open; then the right-edge back swipe on the list screen must still work).
 
-### The left-edge back gesture is excluded over the feed, and only there (2026-10-21)
+### The left-edge back gesture is excluded over every tab root with a section to its left (2026-10-21, widened 2026-10-24)
+
+**Widened 2026-10-24 (owner): the exclusion first covered the feed alone; it now covers every tab root whose swipe has a `prev` (`/posts`, `/communities`, `/chat`, `/dashboard`), so the section swipe wins the left edge on all of them. The scope paragraph below is the rule as now written; the rest of the section was measured on the feed and holds unchanged.** Same defect, same cost: Android takes a left-edge start as Back, and the page only ever sees a `touchcancel`.
 
 A swipe from the feed to the camera (the tab swipe's `prev` from `/posts`) started in the left
 74 physical px (30 CSS px, `EdgeBackGestureHandler mEdgeWidthLeft=74` on the Mi 9T) was taken by the
@@ -1708,14 +1721,7 @@ exclude the left edge over the feed, with the mechanism of the right edge above.
   generalised, not a copy. Below API 29 nothing is applied and the log line says `API < 29: not
   applied`. The page side is `excludeEdgeOver` in `lib/mobile/edgeGestureExclusion.ts`,
   with `excludeRightEdgeOver` (ChatArea) and `excludeLeftEdgeOver` (root layout) as its two callers.
-- **Scope:** `wantsFeedLeftEdgeExclusion` (pure, tested) - exactly `/posts`, the swipe armed on this
-  layout, the camera being the feed's `prev`, the keyboard down, and NOTHING COVERING THE SCREEN
-  (`screenCover.covered`: the reel viewer, a full-screen media viewer, a modal, the composer's
-  camera) - each of those is closed by Back, so a band left under it would make a left-edge Back
-  do nothing. A post page (`/posts/<id>`), the
-  camera, a conversation and every other route keep the left-edge Back. The root layout's `$effect`
-  reports `.page-scroll-wrap` (the page area, the bottom bar's `padding-bottom` removed) and its
-  cleanup clears the band on every route change, keyboard rise or viewport change.
+- **Scope:** `wantsTabLeftEdgeExclusion` (pure, tested) - the pathname is EXACTLY a place of the swipe's own list (`MOBILE_SWIPE_PLACES`), a place lies to its left (`swipeNavTargetHref(.., 'prev')`: the camera, first of the list, keeps Back), the swipe is armed on this layout, no phone conversation is open (`isMobileConvoOpen`: `swipeBack` owns that edge), the keyboard is down, and NOTHING COVERING THE SCREEN (`screenCover.covered`: the reel viewer, a full-screen media viewer, a modal, the composer's camera) - each of those is closed by Back, so a band left under it would make a left-edge Back do nothing. A nested route (`/posts/<id>`, a conversation), the camera and every other route keep the left-edge Back. **The cost of widening:** on a tab root the left-edge Back swipe (leave the app, or step history) is gone over the central 200 dp; the Back button and 3-button Back are untouched. The root layout's `$effect` reports `.page-scroll-wrap` (the page area, the bottom bar's `padding-bottom` removed) and its cleanup clears the band on every route change, keyboard rise or viewport change.
 - **Width:** the REAL left `systemGestures` inset + 8 dp, as on the right - 74 + 22 = 96 px on the
   Mi 9T, which covers the measured 30 CSS px band and widens with the user's back-sensitivity
   setting. A 0 inset (3-button navigation) declares nothing. **A dead zone remains inside the
@@ -2509,6 +2515,8 @@ Both Android and the iOS NSE run the same ladder when an encrypted MLS message p
 5. `ABSENT` — **nothing is waited for**, and the push falls through to the fallback below. On Android a frame whose Welcome is QUEUED on the push lane never reaches this step: it is queued again behind that Welcome (`WELCOMES_ON_LANE`, [channel-encryption §20](../protocols/channel-encryption.md#how-it-is-built)). What this step was until 2026-09-28 - three decrypts 1.8 s apart on both platforms, betting that another engine joined the group meanwhile - was a clock nobody had seen win, and on Android it sat in front of the very Welcome it waited for (NOTIF-21). Deleted on both at the user's word (*"Supprime ce délai"*).
 6. If everything fails, Android enqueues `MlsBackgroundWorker` and shows the generic fallback notification (unless the push is silent, in which case it returns quietly). The iOS NSE cannot enqueue work from the extension, so it shows the fallback directly.
 
+**Every answer of this ladder may carry `ownDeviceAdded`** - the keys of the "a new device was added to your account" alerts the commits it merged in memory produced. Both platforms claim them in a shared marker ledger and raise one local notification for the keys they claimed (`announceOwnDevicesAdded` in Kotlin and in the NSE); see [mls-protocol](../protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day).
+
 This order matters because a silent commit push advances the epoch but cannot persist state while the app is closed; the next message push therefore looks like an epoch gap on a group that is already joined. Running catch-up first for local groups avoids the old ~9.6 s retry loop.
 
 ##### The Android half of it is ONE FUNCTION, COMPILED TWICE (2026-09-22)
@@ -2581,9 +2589,99 @@ The web has no bridge to cross: the bytes go from IndexedDB to WASM in one proce
 `hasMlsState` still loads them there. That split is not a fallback, it is the same question asked
 the way each store can answer it.
 
+### The native caches are sealed at rest, and kept out of backups (2026-10-22)
+
+Two files exist so a phone can act with the app shut, and each holds what the app's own stores
+seal: `graine_seeds.json` (salon seeds, for the push service to derive a message key) and
+`fcm_message_cache*.ndjson` (messages the push service decrypted, for the next start). Both are
+sealed at rest by `src-tauri/src/native_cache.rs`, the only copy of the design:
+
+- **The key is the INSTALL's, not the device key.** A random 32 bytes, created once by the native
+  side at process start (Android `NativeCacheKey.ensure` from `CanariApplication`; iOS
+  `CanariEnsureNativeCacheKey` at bootstrap and activation), kept exactly where the device key's
+  background copy is kept: wrapped by a non-exportable Android Keystore key (`keystore_aliases`
+  prefs), or a Keychain item `mls_bg_key_canari_native_cache_key` in the App Group access group,
+  `AfterFirstUnlockThisDeviceOnly`. Not the device key, deliberately: that one changes with the
+  PIN, and two background processes would have to re-seal both files across a change neither
+  holds. A key that never rotates has no such window, and nothing the server holds derives it.
+- **One creator.** Rust never creates it - the app process reads it through the keystore plugin's
+  unattended read; the push service and the NSE read it themselves and hand it over (JNI / FFI).
+- **Two envelopes**: the mirror is `CNSEAL1\n || nonce || AES-256-GCM`; a cache LINE is
+  `cs1:<base64>`, so the append, the take and the size-checked ack still work line by line. Each
+  purpose has its own HKDF subkey.
+- **No key, nothing written**: a writer with no key writes nothing (the message is still on the
+  server), a sealed file with no key is an error and never "empty", and a take with no key does not
+  hand over (so never acks) a file holding sealed lines.
+- **Only Rust opens the mirror.** The Kotlin service, the NSE and `canari_push.mm` ask
+  `graineSeedHeld` (1 / 0 / -1) and pass the key to `open_graine_push`; the seed never enters the
+  JVM or Swift.
+- **The upgrade**: a mirror without the marker is in the older unsealed format, read as such and
+  sealed by the first write and by `migrate_legacy_files` (run once per process from
+  `take_fcm_cache`, for the data dir and the iOS App Group copy; the file's marker is the durable
+  record, so it is idempotent). `channel_keys.json` has no reader and is deleted. Unsealed cache
+  lines are taken beside sealed ones and leave with the ack. The reader for the older format has a
+  removal condition, in [legacy-compatibility](../legacy-compatibility.md#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal).
+- **Any question about the mirror's contents goes through `read_graine_mirror` with the key.** A
+  second reader that parses the raw file still compiles, and against a sealed file it answers
+  "holds nothing" for every salon. `nativeCacheSeal.test.ts` allows exactly one raw read.
+- **One key read per push, and absence said once.** A salon push on Android unwraps the key once
+  and hands it down. `take_fcm_cache` runs on a poll, so `app_cache_key` logs a missing key when it
+  goes missing and again when it comes back, never once per poll.
+- **Backups**: Android already excludes its whole data domain (`data_extraction_rules.xml`, see
+  below). iOS sets `NSURLIsExcludedFromBackupKey` on the two CACHE FILES only, in the data
+  directory and in the App Group container - **never on a directory**. Those directories also hold
+  `mls.bin`, `push_context.json` and the identity files. The device key that opens `mls.bin` is
+  derived from the PIN, so a restored `mls.bin` can be opened, and a restore that brought back
+  WebKit's IndexedDB without it would look like a damaged MLS state. The flag is per file, and an
+  atomic write is a new inode that does not carry it, so EVERY writer re-applies it after its write:
+  - Rust `with_graine_mirror_inner` (`native_cache::exclude_from_backup`, through the Objective-C
+    runtime because `libapp.a` is linked into the NSE too);
+  - `CanariAppendFcmCacheEntry`, `CanariDrainAppGroupFcmCache` and `CanariMirrorPushStateToAppGroup`
+    (`CanariExcludeNativeCacheFilesFromBackup`);
+  - the NSE's `writeFcmCache` (`excludeFromBackup`).
+
+  A pass at bootstrap and on each activation covers a file an older build wrote.
+- **Desktop has no reader**, so it writes no mirror and deletes one an older build left.
+- **A third sealed file: the push key-group join ledger** (`key_group_push_joins.json`, Android
+  only, [channel-encryption](../protocols/channel-encryption.md) section 26). It names key groups,
+  their join state and the salon scope the server answered - metadata, not key material, but what
+  the app's own stores seal - so it is sealed whole (`CNSEAL1`, its own purpose subkey) by
+  `mobile/key_group_join.rs`, the ledger's one reader and writer. It never existed in the clear in
+  a shipped build, so it has NO plaintext reader: a file without the marker reads as empty. The
+  push service hands the key to `nativeKeyGroupJoinClaim` / `Settle`; with no key it attempts no
+  join, and `take_key_group_push_joins` leaves the ledger for a start that can read it. Its staged
+  post-join state, `mls.bin.keygroup-join`, is sealed under the DEVICE key like `mls.bin`. The
+  sign-out sweep (`delete_mls_state`) removes both with `mls.bin`: the stage holds epoch secrets,
+  and the ledger's `joined` entries would otherwise be adopted by the next account's start.
+
+`nativeCacheSeal.test.ts` pins the alias across the five files, that every cache writer seals,
+that no native reader opens the mirror, that the join ledger is written sealed with the key handed
+over, and the iOS exclusion. A rotation of the key, a key lost
+with the Keystore entry (Android re-creates it only when the wrapping entry is GONE), or a sealed
+line under another key costs a cache entry or a richer banner, never a message: the durable stores
+are the truth.
+
+### What a native log line may carry (2026-10-22)
+
+Native log lines - logcat, os_log and the Rust log - carry ids (truncated) and counts only
+(`chars=${text.length}`, `named=true`), never message text, a name or a key.
+`nativeLogContent.test.ts` scans every Kotlin, Swift, Objective-C++ and Rust log call for an
+interpolated content-bearing name (`text`, `body`, `senderName`, `seed`, `token` ...) and fails on
+one; a measure (`.length`, `isEmpty`) is allowed, and a name that is not content is allowlisted
+by `file|expression` with its reason. The harness rules reading those lines (`watch.mjs`) match
+these shapes.
+
+**An Apple error's TEXT is content (2026-10-24)**: a `localizedDescription` (or
+`localizedFailureReason`, `localizedRecoverySuggestion`) often quotes the file it failed on - a
+shared file's name, a path. Only a Swift `Logger` call redacts it (an interpolation is private
+unless marked `.public`), so the scan exempts it THERE alone, unmarked; `NSLog`, Swift `print` and
+`os_log` write it whole, and there a line says the error's domain and code instead -
+`CanariErrorReason(error)` (`canari_push.h`) in Objective-C, `errorReason(error)` in the NSE. A file
+NAME is content for the same reason: `take_picked_file` says a copy's share id, never its path.
+
 ### FCM message cache
 
-Both platforms write decrypted message previews to `fcm_message_cache.ndjson` after a successful decrypt:
+Both platforms write decrypted message previews to `fcm_message_cache.ndjson` after a successful decrypt, each line SEALED (previous section):
 
 - Android: `CanariFirebaseMessagingService.writeFcmCache` → `{app_data_dir}` directly. The FCM service runs in the app's own process, so it shares that directory.
 - iOS NSE: `NotificationService.writeFcmCache` → the **App Group container**, then `CanariDrainAppGroupFcmCache` (called from `canari_ios_bootstrap` and on `didBecomeActive`) moves the entries into `{app_data_dir}`.
@@ -2689,15 +2787,13 @@ An undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_o
 - **BootReceiver** (`CanariBootReceiver`): re-registers FCM token + drains outbox on boot
 - **Foreground guard**: retry is deferred when the TS outbox flusher is active
 - **The ongoing-call foreground service** (`CallForegroundService`, type `microphone`, WP-C-BG-A,
-  2026-10-20): the ONLY foreground service this app declares, and only in builds that place calls
-  (`src/calls/AndroidManifest.xml`, merged by `app/build.gradle.kts` when `VITE_DEPLOY_ENVIRONMENT`
-  is `development`). A backgrounded or locked app lost its call socket and its microphone 5 s in
+  2026-10-20): the ONLY foreground service this app declares, declared in the main manifest since the flip of `CALLS_COMPILED` (2026-10-22; it was a gradle-merged overlay on pre-releases before). A backgrounded or locked app lost its call socket and its microphone 5 s in
   while its JavaScript kept running; the service keeps both for the call's life, draws the
   `CallStyle` notification and owns the audio OUTPUT (the mode is Chromium's when Chromium set it).
   Started by the page through `window.canariCall` (`CallBridge.kt`) with a plain `startService`
   while the activity is resumed, never from the background; every end path (hang-up, page reload,
-  Recents, activity destroyed) releases it without waiting on the page. `android.yml` fails a stable
-  whose built manifest carries it. Design, Play declaration and the readings owed:
+  Recents, activity destroyed) releases it without waiting on the page. `android.yml` fails a build whose manifest
+  disagrees with `CALLS_COMPILED`. Design, Play declaration and the readings owed:
   [calls](modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20).
 
 **THE WORKER LOOKS AT THE QUEUE FIRST, AND ONLY A DRAIN THAT RAN IS AN ATTEMPT (2026-10-01).** It
@@ -3051,7 +3147,7 @@ by anything here, so what follows is where this app STANDS, and the one place it
 | Dynamic memory | anon RSS + swap, 28-day P90, 2 GB foreground on a 4 GB device | Feb 2027 | **readable, still empty**: `anonRssAndSwapMemoryUsageMetricSet` carries P50-P99 with an `appState` dimension, and [the vitals watch](../../../tools/play-vitals/README.md) queries it. No rows yet - too few installs for Play to report a distribution |
 | Bitmap memory | > 200 MB backgrounded, > 400 MB cached | Feb 2027 | **bounded by construction**, see below - and now also *observable*, via `bitmapMemoryUsageMetricSet` in [the vitals watch](../../../tools/play-vitals/README.md) |
 | Code optimization | >= 25% across obfuscation, optimization and shrinking, for apps over 10 MB of DEX | Feb 2027 | **out of scope by size**: the release DEX is 2.83 MB. Minified and shrunk anyway |
-| Zero-Tap Sign-In restoration | Restore Credentials API, apps with any sign-in | Apr 2027 | **NOT IMPLEMENTED** - a work package, see [backlog](../backlog.md) |
+| Zero-Tap Sign-In restoration | Restore Credentials API, apps with any sign-in | Apr 2027 | **BUILT 2026-10-18, owed a device reading before any stable** - [account-restore](../account-restore.md) |
 
 **The bitmap threshold is answered by the shape of the code, not by a measurement.** Every
 `Bitmap` in the Android app is allocated in `CanariFirebaseMessagingService`, and there are exactly
@@ -3546,21 +3642,20 @@ owed.**
 **0.14.15 also carries `48d31eaa` itself**, which is owed regardless of calls: it is why an iPad
 could not obtain an FCM token either, and therefore received no message notification of any kind.
 
-**The `audio` background mode follows the same rule as `voip`, and is in PRE-RELEASE builds only
-(2026-10-20, WP-C-BG-I).** WKWebView mutes a page's microphone the moment the app is hidden or the
+**The `audio` background mode follows the calls switch, not the native ring's: it was in PRE-RELEASE
+builds only (2026-10-20, WP-C-BG-I) and is in the COMMITTED plist since the flip PR (2026-10-22).** WKWebView mutes a page's microphone the moment the app is hidden or the
 screen locks unless `UIBackgroundModes` holds `audio` (measured on the iPhone: the process and its
 WebRTC stack kept running, only the capture stopped -
-[calls](modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)). A
-pre-release can call, so `ios.yml` patches `audio` into that build's `Info.plist`, in the branch
-that writes `VITE_DEPLOY_ENVIRONMENT=development`; a stable cannot, so the committed plist does not
-declare it until `CALLS_COMPILED` flips (`callsCompiled.test.ts`). **A TestFlight build for EXTERNAL
+[calls](modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)). The
+flip made every build able to call, so the committed `Info.plist` declares it and the `ios.yml` patch is
+deleted; the iOS job prints the built app's `UIBackgroundModes` and microphone string, read-only
+(`callsCompiled.test.ts` asserts no build step writes them). **A TestFlight build for EXTERNAL
 testers goes through Beta App Review, and that is the same risk as the 2.5.4 `voip` refusal.** A
 reviewer probably cannot place a call on it: calling needs two accounts on the DEV estate and a
 direct conversation between them, so the reviewer may again find a declared mode whose feature it
 cannot locate. Internal testers are not reviewed. If an external group is ever added, the answer
 must be ready before submission: a demo pair of dev accounts in the review notes, or the mode left
-out of that group's build. Such a build also carries the stable's microphone purpose string, which
-does not name calls; the stable's notes and string are drafted in
+out of that group's build. The microphone purpose string names calls since the flip; the stable's review notes are drafted in
 [calls, B14](modules/calls.md#the-drafts-still-owed-2026-10-21).
 
 ### Where the three channels actually are - READ THEM, NEVER READ THIS
@@ -3670,15 +3765,76 @@ See [`cicd.md`](../cicd.md) for the full pipeline.
 
 The 2026-09-06 measurement (a notification posted by the WebView carried no actions, so check K's backgrounded case could not be performed) described a world with TWO builders. Since 2026-09-18 the WebSocket frame is a second TRIGGER for the ONE Kotlin builder ([nativeNotification.ts](../../../frontend/src/lib/utils/nativeNotification.ts) -> `notifier_message_natif` -> `showMessageNotification`, `quickActions = true` by default), so a backgrounded message carries Reply and Mark as read like a pushed one. The only conversations without them are reactions (`quickActions = false`) and salons (a \`channel_\` id), whose send is server-authoritative. What is still owed is the HAND: answering a backgrounded shade (NOTIF-6c).
 
-## WP-RESTORE-1 - Zero-Tap Sign-In restoration (accepted 2026-08-26, planned now, built on draft #2065)
+## WP-RESTORE-1 - Zero-Tap Sign-In restoration (accepted 2026-08-26, built 2026-10-18)
+
+**BUILT 2026-10-18, out of any stable until the user has read it on a phone. The design, the threat model, the routes, the plugin and what verifies each claim are on [account-restore](../account-restore.md), the only copy;** this section keeps the requirement and the principle.
 
 **Play's requirement:** an app with sign-in must support Zero-Tap Sign-In restoration on a new Android device (mobile and tablet; enforcement from **April 2027**). The exemptions (Block Store integration by 30 September 2026 - that date has PASSED - enterprise or permanently-private apps, regulatory) do not describe a student messaging app. The mechanism is the Restore Credentials API (`androidx.credentials`, Android 9+, our minSdk is 28; GMS core 24220000+): a system-managed WebAuthn credential tied to the package, created silently after sign-in, backed up with the device. It works regardless of `android:allowBackup`, so it does not reopen the device-transfer exclusion of 2026-08-26.
 
 **The cost is a server we do not have:** `core-service` has no WebAuthn registration or assertion endpoint, and a restore key needs both plus a store keeping restore keys distinguishable from passkeys; a successful assertion must mint the usual pair of an opaque refresh row and a 1 h access token ([sessions](../sessions.md)).
 
-**The principle is decided, not to be re-opened** (the user accepted it 2026-08-26): zero-tap signs the new device in with no second factor, Google says the API "does not handle multi-factor authentication", and Canari has 2FA. Accepted because a restored session authenticates, it does not decrypt: Keystore material is non-exportable, the MLS device key does not travel, and the new device still enrols as a new MLS client ([backup](backup.md)).
+**The principle is decided, not to be re-opened** (the user accepted it 2026-08-26): zero-tap signs the new device in with no second factor, Google says the API "does not handle multi-factor authentication", so a restore never asks MiConnect for anything its sign-in would. Accepted because a restored session authenticates, it does not decrypt: Keystore material is non-exportable, the MLS device key does not travel, and the new device still enrols as a new MLS client ([backup](backup.md)).
 
 **Three traps for the build:** (1) the logout half is a requirement - Play requires deleting the restore key on sign-out, so a Tauri command down to `ClearCredentialStateRequest(TYPE_CLEAR_RESTORE_CREDENTIAL)`, run on the paths that log out WITHOUT a gesture too (401/403, revoked session); (2) the library was `1.7.0-alpha03` - check for a stable line before starting; (3) `E2eeUnavailableException` is expected (no screen lock or no Google backup), handled by retrying with `isCloudBackupEnabled = false`, a second path that is logged at a level that accuses with its rate measured.
+
+## A sign-out ends this device's push registration (2026-10-22)
+
+The device half of the guarantee on
+[sessions](../sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22). It runs
+at EVERY sign-out from `clearAuth` (`endPushRegistration`), independent of the session, the
+network, the tab's registration marker and the app shell.
+
+**What the native side kept per account, and what a sign-out now does with it:**
+
+| Material | Where | At sign-out |
+|---|---|---|
+| FCM token | FCM / `fcm_token.txt` + prefs | deleted natively (`FirebaseMessaging.deleteToken`, `-[FIRMessaging deleteTokenWithCompletion:]`), mirror removed, a fresh token fetched for the next sign-in |
+| PushKit (VoIP) token | `voip_token.txt` | removed; PushKit hands a fresh one at the next launch |
+| push secret | `pending_push_secret.txt`, Android Keystore-wrapped prefs, iOS Keychain, App Group `push_secret.txt` | all four erased |
+| `push_context.json` (`baseUrl`, bearer `pushToken`) | data dir, App Group copy | reduced to `userId`, `deviceId`, `locale` (allowlist); App Group copy removed |
+| `mls.bin`, device key, `graine_seeds.json`, FCM cache | data dir / Keystore / App Group | kept - a sign-out keeps the local state; without a `baseUrl` no background reader loads a context, so nothing decrypts with them |
+
+**Two durable marks** (`push_registration.rs` writes both; names shared with
+`PushRegistrationEnd.kt` and `canari_push.mm`):
+
+- `push_signed_out` - no account owns this install's pushes. `onMessageReceived` (Android) and
+  `CanariHandleFcmData` (iOS app) drop every push while it exists; `write_push_secret` - the
+  server answering a registration - removes it.
+- `push_token_deletion_owed` - the OS token has not been deleted yet (offline sign-out). Removed by
+  the native side once FCM confirmed the deletion. While it exists, `MainActivity.onCreate`, the
+  boot receiver and `CanariSyncFcmTokenIfApnsReady` complete the deletion instead of mirroring the
+  old token, and `startPushService` calls `complete_owed_push_token_deletion` and registers NOTHING
+  until it answers true - the token of the account that left is never registered for the next.
+
+Both marks survive the factory wipe of a revoked device (`KEPT_AT_TOP_LEVEL` in `storage.rs`),
+which runs right after that device's sign-out wrote them.
+
+**One deletion at a time.** The sign-out, `startPushService`'s check and an activation can owe the
+deletion at once. Each platform runs it under one process-wide lock - `OwedTokenDeletion`
+(`push/OwedTokenDeletion.kt`, tested in `android-tests`) on Android, `@synchronized` on iOS - reads
+the mark again inside it, and fetches and mirrors the fresh token inside it too, so the mirror always
+names the live token. On iOS the fresh token is fetched only once APNs has answered (the APNs callback
+fetches it otherwise), and `CanariSyncFcmTokenIfApnsReady` completes an owed deletion only after its
+APNs guard, so a cold start never waits on APNs; `startPushService` completes it on its own before
+any registration either way. On Android, the sign-out's erasure of the push secret and every adoption
+of `pending_push_secret.txt` into the Keystore hold `PushSecretKeystore.handoffLock`, so an adoption
+cannot store a secret after the sign-out cleared it.
+
+`push_signed_out` is lifted only once EVERY copy of a new secret is written (`write_push_secret`), and
+a secret the app could not store fails the registration (`secret-not-stored`): it is not counted, and
+the next attempt registers again. While signed out, the iOS PushKit handler reports any VoIP push to
+CallKit - Apple requires it - as a placeholder with no caller and ends it at once.
+
+The native background paths that could re-register a token (`onNewToken`, the boot receiver,
+`CanariPersistFcmToken`) need a push context and a secret, so after a sign-out they do nothing; they
+now look for the secret only once a context exists, so a signed-out device does not log a Keystore
+fault it does not have.
+
+**What no code here can do.** The iOS Notification Service Extension cannot suppress an alert
+without the filtering entitlement: a push already in flight is drawn with the server's fallback
+text, never decrypted (its context and secret are gone). Proven by compiling on Android
+(`compileArm64DebugKotlin`) and by Rust tests of the file half; the iOS half compiles only in CI, and
+both halves run only on hardware.
 
 ## One row arriving through the push, the pull and the socket (measured 2026-09-08 to 2026-10-06)
 

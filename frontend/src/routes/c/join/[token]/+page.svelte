@@ -4,6 +4,7 @@
   import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
+  import { dropAddressFragment } from '$lib/utils/historyOverlayStack';
   import { channelService } from '$lib/services/ChannelService';
   import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
   import { refusalCode } from '$lib/utils/apiRefusal';
@@ -13,6 +14,8 @@
   import { Users, LoaderCircle, CircleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import { takeInviteFragment, keepInviteFragment } from '$lib/utils/chat/inviteFragment';
+  import { voucherFromInviteFragment } from '$lib/utils/graine/admissionIssue';
 
   const token = $derived((page.params as Record<string, string>).token);
 
@@ -26,9 +29,21 @@
     imageMediaId: string | null;
   } | null>(null);
 
+  /**
+   * The link's fragment - the proof that lets a member hand this newcomer the community's past
+   * (channel-encryption section 25). Read once, here: a sign-in in between would lose it, so it is
+   * kept in this tab's session storage across that redirect and never sent anywhere.
+   */
+  let inviteFragment = '';
+
   onMount(async () => {
+    inviteFragment = takeInviteFragment(token, window.location.hash);
+    // The fragment is a secret: cleared from the address at once, so a copied or bookmarked
+    // address does not carry it along.
+    dropAddressFragment();
     // Not authenticated yet: send to login, returning here afterwards (token is in the path).
     if (!currentUserId()) {
+      keepInviteFragment(token, inviteFragment);
       await goto(resolve(`/login?returnTo=${encodeURIComponent(`/c/join/${token}`)}`), {
         replaceState: true,
       });
@@ -48,7 +63,7 @@
     joining = true;
     error = '';
     try {
-      const { workspaceSlug } = await channelService.acceptInvite(token);
+      const { workspaceSlug } = await channelService.acceptInvite(token, await admissionVoucher());
       // Land IN the community that was just joined, not on a bare /communities where the sidebar
       // falls back to whichever community sorts first. Resolving the slug gives its first channel,
       // which is the deep-link target the notification machinery already knows how to open.
@@ -65,6 +80,26 @@
       Log.d('community invite accept failed', e);
       error = coded ?? m.community_join_error_fallback();
       joining = false;
+    }
+  }
+
+  /**
+   * The voucher built from the link's fragment, or `undefined` for a link that carried none. A
+   * fragment that cannot be redeemed is said at error and the join goes on: it still admits, it
+   * gives no past, and the user can follow a newer link to get one.
+   */
+  async function admissionVoucher(): Promise<string | undefined> {
+    if (!inviteFragment) {
+      console.info('[INVITE] this link carries no admission proof - joining with no past');
+      return undefined;
+    }
+    try {
+      return await voucherFromInviteFragment(inviteFragment, currentUserId() ?? '');
+    } catch (e) {
+      console.error(
+        `[INVITE] the link's admission proof could not be redeemed - joining with no past: ${String(e)}`
+      );
+      return undefined;
     }
   }
 

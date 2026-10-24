@@ -15,6 +15,7 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 | `X-User-Id` | OIDC sub | Authenticated user ID |
 | `X-Logged-In` | `true` / `false` | **`false` for an anonymous caller, and the request is still proxied** |
 | `X-Global-Admin` | `true` / `false` | Global admin flag |
+| `X-Session-Id` | session UUID or empty | The `sid` of the access token: the login it was minted for. chat-delivery binds a push registration to it ([sessions](../sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)); empty for a token minted before the claim |
 
 ## Route table
 

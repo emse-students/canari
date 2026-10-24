@@ -14,7 +14,6 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { biometricPrompt } from '$lib/stores/biometricPrompt.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { SessionContext } from './sessionTypes';
-import { keystoreAlias } from '$lib/utils/accountLocalKeys';
 
 const BIOMETRIC_DISMISSED_KEY = 'canari_biometric_prompt_dismissed';
 
@@ -103,50 +102,27 @@ export async function enrollBiometricImpl(): Promise<void> {
 }
 
 /**
- * Turns biometric unlock off (Settings toggle).  Deletes the device key from the platform
- * keystore and clears the configured flag, then re-seeds both the session device key vault
- * and the keystore so the next launch falls back to the normal PIN path with background push
- * still working.  Re-arms the enrolment banner.
+ * Turns biometric unlock off (Settings toggle): confirms the owner, clears the configured flags,
+ * re-seeds the session device key vault, and re-arms the enrolment banner.
+ *
+ * THE KEYSTORE ENTRY IS LEFT AS IT IS (2026-10-22). It used to be deleted, then re-stored from the
+ * session key with every failure swallowed - and on a phone whose at-rest key is hardware-held that
+ * entry is the only copy of the key, so a kill between the two lost every local message. The entry
+ * is what the background push reads with or without biometrics, so nothing needs re-seeding: with
+ * the flags cleared the next launch asks for the PIN, and the entry keeps serving the push.
  */
 export async function disableBiometricImpl(ctx: SessionContext): Promise<void> {
   appendLog('[BIOMETRIC] Disabling biometric unlock…');
+  await BiometricService.disable();
 
-  // Build the alias so we can delete the exact keystore entry.
   const userId = ctx.getUserId();
-  const deviceId = ctx.getMyDeviceId();
-  const alias = userId && deviceId ? keystoreAlias(userId, deviceId) : undefined;
-  await BiometricService.disable(alias);
-
   const deviceKeyB64 = ctx.getDeviceKey();
   if (deviceKeyB64 && userId) {
+    // A hardware-held key is never vaulted (`saveDeviceKey` refuses it): that phone asks for the
+    // PIN, or reads the keystore when "stay signed in" is on.
     await saveDeviceKey(userId, deviceKeyB64).catch((e: unknown) =>
       appendLog(`[BIOMETRIC] Re-seeding the device key vault failed: ${String(e)}`)
     );
-  }
-
-  // Re-seed the keystore and push_context.json with the session device key so background
-  // push decryption keeps working without biometrics. BiometricService.disable() emptied
-  // the keystore entry, and the device key is the only thing that can decrypt mls.bin.
-  if (isTauriRuntime() && userId && deviceId && deviceKeyB64) {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('actualiser_cle_keystore_avec_devicekey', {
-      deviceKeyB64,
-      userId,
-      deviceId,
-    }).catch(() => {});
-    const { getToken } = await import('$lib/stores/auth');
-    const pushToken = await getToken().catch(() => undefined);
-    const { getLocale } = await import('$lib/i18n');
-    await invoke('store_push_context', {
-      deviceKeyB64,
-      userId,
-      deviceId,
-      baseUrl: ctx.getHistoryBaseUrl(),
-      pushToken,
-      // This call REPLACES push_context.json, so the language the native side writes its
-      // notifications in has to be restated here or it reverts to the default.
-      locale: getLocale(),
-    }).catch(() => {});
   }
   localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);
   appendLog('[BIOMETRIC] Biometric unlock disabled - PIN restored to session vault.');

@@ -128,6 +128,29 @@ describe('history_coverage', () => {
     expect(noteCoverageShortfall).not.toHaveBeenCalled();
   });
 
+  // `from` is read by the ONE identity parser (`leafIdentity.ts`): it must name a DEVICE of the
+  // sender. A bare user id names no device, and a second colon names nobody.
+  it.each([[PEER], [`${PEER}:device-peer:x`], [`:device-peer`]])(
+    'refuses a `from` that names no device of the sender (%s)',
+    async (from) => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await handleSystemEvent('history_coverage', frame({ from }), makeCtx() as any);
+
+      expect(noteCoverageShortfall).not.toHaveBeenCalled();
+      error.mockRestore();
+    }
+  );
+
+  it('accepts the sender under any spelling of its user half', async () => {
+    await handleSystemEvent(
+      'history_coverage',
+      frame({ from: 'PEER:device-peer' }),
+      makeCtx() as any
+    );
+
+    expect(noteCoverageShortfall).toHaveBeenCalled();
+  });
+
   it.each([['not a number'], [0], [-1], [undefined]])(
     'reports rather than acts on an unusable coveredFrom (%s)',
     async (coveredFrom) => {

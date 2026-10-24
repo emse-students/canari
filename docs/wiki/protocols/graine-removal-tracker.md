@@ -1,319 +1,253 @@
-# Graine rotates on a departure, not on every epoch - design (2026-10-22)
+# Graine rotates on a removal or a new user, not on every epoch (2026-10-22)
 
-**Status: DESIGN ONLY, nothing is built. Revised 2026-10-22 after its opus review (REVISE; the core held: a clean run keyed on the epoch authenticator, rotation on any gap). It is reviewed (opus) before any native code, and each
-platform's code then goes to its own opus agent.** It answers the P2
+**Status: BUILT (draft pull request, 2026-10-22), not shipped.** The first draft of this page
+(#2242: a TypeScript tracker in Graine storage fed by a commit summary at seven call sites) was
+reviewed adversarially before any code, and two of its findings changed the design: the tracker
+moved INTO `mls-core`, persisted in the MLS state, and the departure is "any removal" rather than "a
+pair that did not come back". A third change came from the lead's threat-model review the same day:
+a new USER still rotates. What was built is what this page describes; the review is
+[below](#the-adversarial-review-of-the-first-draft-and-what-it-changed).
+
+It answers the P2
 [Graine rotates on every key-group epoch](../backlog.md#p2---graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed-per-message-measured-2026-10-21).
 The measurement and the comparison with DMs are in
 [dm-vs-community-encryption](dm-vs-community-encryption.md#communities).
 
 ## The problem, and why the identity-set check is not enough
 
-`shouldRotateGraineSession` (`frontend/src/lib/utils/graine/sessionManager.ts:102-116`) mints a new
-seed whenever the key group's epoch differs from the session's mint epoch. Every device that joins a
-key group commits, so on production most rotations are Adds: one session per two messages
-(2026-10-21). A rotation exists to keep a device that LEFT from reading what is sent after it left.
-An Add does not need one.
+Until this change the outbound rotation minted a new seed whenever the key group's epoch differed
+from the session's mint epoch. Every device that joins a key group commits, so on production most
+rotations were Adds: one session per two messages (2026-10-21). A rotation exists to keep a device
+that LEFT from reading what is sent after it left. An Add of a device of somebody already present
+does not need one.
 
 The first proposal compared the leaf identity set recorded at mint with the current tree. Master
-refused it on 2026-10-22, because it has a soundness gap in a key-rotation rule. A leaf that is added
-and then removed between two sends is in neither set. That leaf held the seed, through the history
-bundle or a repair. This is the realistic lost-phone case: the phone is added, used, lost, then
-revoked. **A rotation rule has to see every commit between the mint and the send, or it must rotate.**
+refused it on 2026-10-22: a leaf that is added and then removed between two sends is in neither set,
+and that leaf held the seed, through the history bundle or a repair. This is the realistic lost-phone
+case: the phone is added, used, lost, then revoked. **A rotation rule has to see every commit between
+the mint and the send, or it must rotate.**
 
-## The design
+## The design, as built
 
-### 1. A summary of every processed commit, from `mls-core`
+### 1. A clean run per group, kept by `mls-core` in the MLS state
 
-Today nothing surfaces what a commit contained, at any layer:
-
-- `process_incoming_on_group` merges a `StagedCommitMessage` and returns `Ok(None)`
-  (`frontend/mls-core/src/messaging.rs:386-407`);
-- `merge_pending_commit_for` returns `()` (`members.rs:209-219`);
-- the TS pipeline learns only that the epoch moved.
-
-`mls-core` gains a summary built from the `StagedCommit` before it is merged:
+`frontend/mls-core/src/graine_run.rs`. Each group has at most one **run**:
 
 ```text
-CommitSummary {
-  epoch_before, epoch_after,
-  authenticator_before, authenticator_after,     // openmls epoch authenticators
-  removed: [{ identity: "userId:deviceId", signature_key }],
-  added:   [{ identity, signature_key }],        // Add proposals + an external committer's own leaf
-}
+GraineRun { run_id (random 128 bits, hex), epoch_fingerprint }
 ```
 
-- **It is returned by NEW functions, and the existing signatures stay.**
-  `process_incoming_message` is compiled against by `mls-cross-version` (`messaging.rs:117-120`), so
-  it does not change.
-- **One summary is produced per merge path:**
-  - a received commit (single and batch);
-  - our own commit (`merge_pending_commit_for`);
-  - an external join (`join_by_external_commit`);
-  - a Welcome install (`process_welcome`). A Welcome yields an install event (`epoch_after` and
-    `authenticator_after` only), because the device saw nothing before it.
-- **Why the authenticator.** An epoch number does not identify a group instance: a re-bootstrapped
-  group restarts at 0. The epoch authenticator does identify it. It is what lets the tracker tell
-  "the next epoch of the chain I saw" apart from "an epoch I did not see that has the same number".
+A run names a chain of epochs of ONE group instance, every transition of which this manager merged
+itself, none of which removed a leaf or brought in a new user. It is the durable, LOCAL record "no
+removal was applied since": written by each device for itself, at its own merge, never shared.
 
-### 2. A departure, defined
+- **Where it is written.** Every epoch transition of a group instance goes through one of two
+  functions of this crate: a received commit (`process_incoming_on_group`, used by the single and the
+  batch path) and our own commit (`merge_pending_commit_for`, which is now
+  `merge_pending_commit_with_summary` with the summary dropped). Both read the tree and the staged
+  commit BEFORE the merge, merge, and apply the summary to the run. This holds on every platform and
+  in every process, the native background paths included, because they all run this crate.
+- **Where it is kept.** `PersistedState.graine_runs`, `#[serde(default)]`, serialised in the same
+  `mls.bin` by the same checkpoint as the tree it describes. "Tracker written, MLS state not" and its
+  reverse cannot exist, so the kill-point readings of the first draft are gone with it.
+- **What is compared.** An `epoch_fingerprint`: SHA-256 over a domain label, the group id, the epoch
+  number and the epoch authenticator. The authenticator itself never leaves the crate; it is a secret
+  meant for out-of-band comparison (RFC 9420 section 8.7). Two instances of one group at the same
+  epoch NUMBER (a re-bootstrapped key group) have different fingerprints.
+- **How it is read.** `MlsManager::graine_run(group_id)` (WASM `graine_run`, Tauri command
+  `graine_run`, `IMlsService.graineRun`) returns `{ runId, epoch, epochFingerprint }` for the CURRENT
+  epoch. A run whose fingerprint is not the current one (the group was moved by something that is
+  not a merge here: a Welcome, an external join, a reload) is replaced on the spot by a new run that
+  starts now. That is sound: a run claims nothing about what happened before it started, and a
+  session minted under the old run carries the old id, so it cannot match.
+- `forget_group` drops the group's run.
 
-A commit is a **departure** when it removes a leaf whose `(identity, signature_key)` pair is not
-re-added by the same commit.
+### 2. What ends a run
 
-- **An external rejoin is not a departure.** An external join removes every leaf that carries the
-  joiner's signature key ([state machine](mls-graine-state-machine.md),
-  [§22.2](channel-encryption.md#222-a-key-group-held-with-its-own-leaf-removed-is-not-held---fixed-2026-09-29)),
-  so a device rejoining by external commit both removes and re-adds its own `(identity, key)`. The
-  key material that held the seed is the same, and it is still a member.
-- **A removal always rotates unless BOTH halves of the pair come back.** The same signature key
-  re-added under a different identity is a departure, as is the same identity re-added under a
-  different key.
-- **A reinstalled device is a departure.** It keeps its device id but has a new signature key, so the
-  pair differs.
-- **A lost phone replaced by a new one is a departure.** It has a new device id.
-- **An update that keeps the pair is not a departure. An update that changes it is.** A path update
-  or an Update proposal that keeps the leaf's `(identity, signature_key)` changes only encryption
-  keys. One that changes the identity or the signature key removes the old pair from the tree, so the
-  summary reports it as `removed`, unless WP1 proves that Canari's validation refuses such an update
-  before it is merged.
-- **An external commit's Remove of somebody else's leaf is a departure.** The self-replacement rule
-  covers only leaves that carry the JOINER's own pair. Any other leaf an external commit removes is
-  reported as removed. WP1 either proves that such a commit is refused, or shows that it resets the
-  run.
+The summary of one merge (`CommitSummary`) is built from the staged commit and from the tree on both
+sides of the merge. The run continues only when the commit started exactly where the run ended AND
+none of these holds:
 
-WP1's tests cover every shape:
-- a Remove by reference proposed by a non-committer;
-- a SelfRemove;
-- ReInit;
-- GroupContextExtensions;
-- an Add and a Remove of different leaves in one commit;
-- an external commit's own Remove, and an external commit that removes another leaf;
-- an Update or path update that keeps the pair, and one that changes it;
-- several Removes in one commit;
-- a batch with a departure in the middle, applied in order.
+| Cause | Read from | Log |
+| --- | --- | --- |
+| The commit carried any Remove proposal - an external commit's removal of the joiner's OWN old leaf included | `StagedCommit::remove_proposals()`, before the merge | `run reset reason=departure` |
+| A `(credential, signature key)` pair is in the tree before the merge and not after it - whatever removed it (an update that swaps a key or a credential needs no Remove proposal) | a counted diff of the two trees | `reason=departure` |
+| An ADDED leaf of a NEW USER - the user its own credential names, read by device trust's `canonical_user_of` (ASCII-lowercased; a `user:device` or a legacy bare `user` credential names its user), had no leaf before the commit; a credential naming no user counts as new. The same for an Add and an external commit | the same diff | `reason=new-user` |
+| The commit started from another epoch than the run's last one | `fingerprint_before` | `reason=gap` |
+| No run existed | - | `reason=none` |
 
-**The batch API returns EVERY summary, in order, never only the last one.** A batch that returned
-only its last summary would hide a departure in its middle.
+**A device that leaves and comes back ends the run, whatever it comes back as** (lead amendment (a),
+2026-10-22). A same-key external rejoin removes the old leaf and adds a leaf with the same pair, so
+the trees before and after look the same at that seat; the Remove proposal is what the run reads.
+`mls-core/tests/graine_run.rs::an_external_rejoin_with_the_same_key_still_ends_the_run` pins it. The
+price: external re-joins of known identities still rotate.
 
-### 3. The tracker: one clean run per key group
+**A new USER rotates; a new DEVICE of a user already present does not** (lead amendment (b),
+**decided by the user on 2026-10-22, D5**). ONE rule in ONE place:
+`ROTATE_ON_NEW_USER` in `graine_run.rs`. The reason: each message key is derived from the seed, not
+ratcheted, so a newcomer handed a seed minted before it arrived can derive every earlier index, and
+the floor that hides them is enforced only by an honest client. Rotating on a new user keeps what a
+newcomer can open to what was sealed after it arrived, under EITHER history setting. A new device of
+a present user opens nothing that user's other devices could not already open, and device joins are
+the measured bulk of the rotations. Turning the constant to `false` makes every Add continue the
+run; nothing else reads it.
 
-The tracker is held in Graine storage, not in the MLS state, one row per key group:
+**The same rule holds for an external commit (decided under D5, 2026-10-22).** Key groups are joined
+by external commit: a leaf naming a user who already has a leaf continues the run, a leaf naming a
+user with none - or naming no user at all - ends it. The user is read from the leaf's own
+credential by device trust's one reader, `canonical_user_of`: a `user:device` or a legacy bare
+`user` credential ([legacy-compatibility](../legacy-compatibility.md)) names its user, anything else
+names nobody. It is never read from server input; the server separately checks that the leaf names the caller
+(`readCommitFrame` + `validateCommit`, `commit_identity_mismatch`).
 
-```text
-GraineRemovalRun { groupId, runId, observedEpoch, observedAuthenticator }
-```
+**A batch applies every commit in order**, one merge at a time, so a departure in its middle ends
+the run even when Adds follow it (`a_batch_with_a_departure_in_its_middle_...`).
 
-The authenticators, both the tracker's and the session's below, are stored in the SEALED half of
-the Graine row (`graineCodec.ts`), never in its clear columns.
+**A summary that cannot be built never fails the merge.** The epoch has already moved; the run is
+DROPPED instead (`observe_merge`, an ERROR line), which is the fail-safe direction. The JOINER of an
+external commit never reaches that line: openmls 0.9 merges the commit inside `finalize`, so its
+`merge_pending_commit_for` finds nothing pending and logs at debug, and its run starts at its first
+read (`the_joiners_merge_of_its_own_external_commit_is_a_no_op_not_a_dropped_run`).
 
-`runId` names the current **clean run**: a chain of epochs, every transition of which was observed
-through a summary and none of which was a departure. The tracker applies each summary in order:
+### 3. The outbound verdict
 
-| Event | Effect |
+`graineOutboundVerdict(session, { run, now })` in `sessionManager.ts` replaces
+`shouldRotateGraineSession`. Every session this device mints carries a sealed
+`rotationAnchor = { runId, epochFingerprint, redistributed }` (`graineCodec.ts`, never a clear column):
+
+| Verdict | When |
 | --- | --- |
-| A summary whose `authenticator_before` equals `observedAuthenticator`, with no departure | the run continues: `observedEpoch` and `observedAuthenticator` take the `_after` values |
-| A summary with a departure | a NEW `runId`, with the `_after` values |
-| A summary whose `authenticator_before` is not `observedAuthenticator` (a gap: some path moved the epoch without a summary) | a NEW `runId`, with the `_after` values |
-| An install (a Welcome, an external join, or the creation of the group) | a NEW `runId` |
-| A first summary when there is no row | a NEW `runId`, with the `_after` values |
-| No row, and no summary yet | no run: every session rotates exactly as today |
+| `rotate` | no session; no anchor (minted before this change: one rotation per channel and sender, once); no frame; no v2 secret; a cap reached |
+| `reuse` | `anchor.epochFingerprint === run.epochFingerprint`: the epoch it was last distributed at |
+| `redistribute` | the epoch moved and `anchor.runId === run.runId`, and the session is within the REUSED caps |
+| `rotate` | anything else: the run changed (removal, new user, gap) |
 
-Two new optional fields go on `StoredGraineSession` (`frontend/src/lib/db/types.ts:275-329`):
+**The history setting is NOT an input.** The first draft reused only in `shared` communities and kept
+rotate-on-add in `joined`. With the new-user rule a newcomer never receives a pre-arrival seed in
+either setting, and the setting is the server's word: dropping it removes a server input from a
+key-rotation decision.
 
-- **`mintAuthenticator`**, the epoch authenticator at the mint. Every session stores it.
-- **`runId`**, the tracker's run at the mint. A session gets it only when the tracker is CURRENT at
-  the mint, that is when the current authenticator equals `observedAuthenticator`. A session minted
-  while the tracker is stale gets no `runId`, so it can never be reused across an epoch move.
+**The caps.** A session never re-distributed keeps 100 messages and 7 days. A re-distributed one
+(`anchor.redistributed`) has 50 messages and 24 hours FROM ITS MINT, and a session already past those
+rotates instead of being re-distributed.
 
-The predicate compares AUTHENTICATORS in both branches, never epoch numbers alone:
+### 4. A reused session re-distributes the same seed
 
-- **Same epoch as the mint:** reuse only if the current authenticator equals
-  `session.mintAuthenticator`. This closes an aliasing that today's rule has
-  (`sessionManager.ts:108`, `distributionEpoch !==`). A group re-bootstrapped without a departed
-  device can reach the session's epoch NUMBER again, and an equality on numbers then reuses the seed
-  that the excluded leaf holds. A re-bootstrapped instance has a different authenticator at the same
-  number.
-- **Epoch moved:** reuse only if ALL of these hold:
-  - `session.runId === tracker.runId`;
-  - the current epoch and authenticator equal the tracker's observed ones;
-  - the community's history visibility is `shared`.
-- **Otherwise:** rotate.
-- **The size and age caps:**
-  - A session that has never been reused across an epoch move keeps today's caps: 100 messages and
-    7 days.
-  - A REUSED session, one re-distributed at least once, has tighter caps: 50 messages and 24 hours
-    from its mint. See the residual below.
-- The other two triggers are unchanged: no frame, and no v2 secret.
+**This is what an Add still costs, and it is not optional.** A newcomer device reads its first
+message because the seed's distribution frame travels on the message
+([§19](channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)),
+and that frame is an MLS message sealed at an epoch the device was not in. So `redistribute` sends
+the SAME session again at the current epoch - same `sessionId`, seed, `firstIndex` and v2
+endorsement, a new `distributionFrame`, `distributionEpoch` set to the current epoch - distributed
+BEFORE it is persisted, like a mint. Receivers that hold it answer `already-held`
+(`frameHandler.ts`); the format and every receiver are unchanged. The log is
+`[GRAINE] reused session <id> ... across epoch a->b run r, re-distributed`.
 
-A run id is used instead of an epoch range (`cleanFrom..observedTo`) because a range compares epoch
-NUMBERS, which alias across group instances. A run id cannot alias: any reset mints a new one.
+What this saves is the SEED count, which the history bundle and the 8 000-seed cap grow with. It does
+not save the frame per Add. Addressing the re-distribution to the added devices only is a later
+option ([§23](channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)).
 
-**`joined` keeps rotate-on-add.** In a `joined` community, a newcomer must not open what was sent
-before it arrived. Section 4 hands it the seed of the current session, and a seed opens EVERY index of
-its session (`deriveMessageKey`: each index is derived from the seed, not ratcheted,
-`crypto/graine.ts:49-65`). So `joined` keeps rotating on any epoch change. No production community
-uses `joined` today (16 of 16 are `shared`).
+### 5. Against a compromised server: neutral
 
-**The visibility comes from the server, and so does the trust it carries.** A server that flips a
-`joined` community to `shared` turns reuse on. A newcomer then opens the pre-arrival messages of the
-current session, since `firstIndex` is 0 and every key is derived from the seed. This is the same
-trust the history bundle already places in the server, which also decides from that setting whether
-a whole history is sent.
+The change neither helps nor hurts against a server that controls the tree's membership: a device it
+injects is a leaf, so it receives every future seed either way (a rotation on its join HANDS it a
+fresh seed), and its access to the past comes from the history paths, not from rotation. An injected
+NEW USER still rotates (new-user rule), and a removal it cannot hide from this device's own merges
+still ends the run.
 
-The rule "a newcomer reads nothing from before it arrived" (the P1 decided on 2026-10-21) applies to
-GROUP CONVERSATIONS, not to communities. **If it is ever extended to communities, reuse across an
-Add must stop**, because that reuse is exactly a newcomer receiving a seed whose earlier indices it
-can open.
+Seeds rotate on a removal or a new user; see the [backlog](../backlog.md) for the rotation policy.
 
-### 4. Reuse across an Add re-distributes the same seed
+## The adversarial review of the first draft, and what it changed
 
-**This is what an Add still costs, and it is not optional.** A newcomer reads its first message
-because the Add rotated the sender's session, and the new seed's distribution frame travels on the
-message itself ([§19](channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27),
-[§20](channel-encryption.md#20-whoever-admits-a-newcomer-welcomes-them---decided-by-the-user-2026-09-27)).
-That frame is an MLS message sealed at the MINT epoch, so a device added later cannot open it. A
-reused session therefore distributes its existing seed again, at the current epoch:
+Each finding names what was wrong with the draft, or what still holds and why.
 
-- the same `sessionId`, seed, `firstIndex` and v2 endorsement;
-- a new `distributionFrame`, and `distributionEpoch` set to the current epoch.
-
-Receivers that already hold the session answer `already-held` (`frameHandler.ts:95-123`). The format
-and every receiver are unchanged.
-
-What this saves is the SEED count, which is what the history bundle and the 8000-seed cap grow with.
-It does not save the distribution frame per Add. Addressing the re-distribution to the added devices
-only is a later option: Graine's addressed answers already exist
-([§23](channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)).
-It is left out of this design so that the first step changes no routing.
-
-## The named residual: a stolen seed lives longer (accepted 2026-10-22)
-
-**Rotate-on-add bounded a stolen copy of the Graine store without anyone intending it.** On
-production a session lived about two messages, because the next Add replaced it. A copy of a device's
-seeds, taken without removing its leaf (a backup, a debug dump, a briefly borrowed unlocked phone),
-was therefore worth almost nothing a few messages later. Reuse removes that accident. A seed now
-lives until a departure or a cap. Key-group leaves never self-update (see the backlog P3 on the
-109-seat group conversation), so nothing else shortens its life.
-
-**Accepted by Master on 2026-10-22, under the user's mandate on MLS robustness, with the caps as the
-stated bound.** The caps of a reused session are tightened so that the bound is a day and not a week.
-The measurement behind them was taken on production, read-only, on 2026-10-22: 1,667 salon messages
-in the last 30 days, counted per (salon, sender).
-
-| Per (salon, sender) | p50 | p90 | p99 | max |
-| --- | --- | --- | --- | --- |
-| messages in one week | 3 | 13 | 55 | 79 |
-| messages in one day | 2 | 10 | 38 | 58 |
-
-- **24 hours.** With it, a sender uses about one session per salon per active DAY. That is about
-  387 sender-days in the 30 days, against about 830 sessions under rotate-on-add (one per two
-  messages), so most of the saving survives. The exposure of a stolen copy drops from a week to a day.
-- **50 messages.** This is above the p99 day (38), so the message cap almost never forces a rotation
-  before the 24 hours do. It bounds a burst all the same.
-- **A session that was never re-distributed keeps 100 messages and 7 days.** It has been live through
-  no Add, so it carries no new exposure.
-
-These numbers are re-measured with the same query after the stable (verification reading 6). If the
-seed count does not come down, the 24 hours are the first thing to revisit, not the residual.
-
-## The fail-safe argument
-
-The new rule can only be WRONG in one direction: reusing a seed that a departed leaf holds. That
-requires a departure between the mint and the send that the tracker did not see. Every way of not
-seeing one ends the run:
-
-- **A path that merges without a summary.** This covers the native background paths, which persist
-  `mls.bin` outside TS:
-  - the Add merge of the background Welcome (`mobile/background.rs:348-402`, the Kotlin
-    `processWelcomeRequestBackground`, the iOS `canari_native_create_welcome_background`);
-  - the background Welcome install (`background.rs:406-446`, `canari_native_process_welcome_background`).
-
-  The next summary's `authenticator_before` will not match, so the next send rotates. That is
-  today's behaviour.
-
-  **The invariant this rests on: a native background path is fail-safe only while it never processes
-  a Remove without telling the tracker.** The paths that persist today process an Add (the Welcome a
-  backgrounded phone creates) or an install. Either one moves the epoch unobserved, which ends the
-  run. A future background path that processes a Remove would have to do one of two things:
-  - feed its summaries to the tracker, in order;
-  - leave the epoch moved unobserved, which is what ends the run today.
-
-  Anything else is a change to this design. The Mi 9T reading includes a Remove that arrives while
-  the app is killed (reading 4).
-- **Which MLS instance, and which writer.** The predicate reads the epoch and the authenticator from
-  the SAME MLS instance that then seals the re-distributed frame, in one step of the per-sender chain.
-  A reload between the read and the seal is therefore impossible to miss. On the web, only the tab
-  leader (`tabLeader.ts`) processes commits, so only the leader writes the tracker. A follower reads
-  it and never writes it.
-- **A tracker written but an MLS state not checkpointed, or the reverse.** After a reload, the
-  authenticators disagree, which is a gap, so the next send rotates.
-- **A re-bootstrapped or reinstalled group.** Its install event, or its first summary, does not
-  continue the chain.
-- **A lost tracker row.** No row means no run, so the next send rotates.
-
-The only way left to reuse wrongly is a summary that misreports a commit. The summary is built in
-Rust from the `StagedCommit` openmls is about to merge, so it is tested there (WP1) against every
-proposal shape:
-
-- a Remove by reference;
-- an external commit's own Remove;
-- a self-update;
-- several Removes in one commit.
-
-**No wire change, no protocol change, no server change.** The summary and the tracker are local. The
-re-distribution is an existing frame carrying an existing session. A client without this work rotates
-exactly as today, and both kinds of client read each other's frames.
-
-## Work packages
-
-Each work package is a DRAFT pull request with an opus review before it is marked ready. The native
-ones go to an opus agent each.
-
-| WP | Where | What | Size |
-| --- | --- | --- | --- |
-| WP1 | `mls-core` (Rust) | `CommitSummary`, the departure predicate (section 2), the new summary-returning functions beside the existing ones (a batch returns every summary, in order), the epoch authenticator accessor; tests per shape | M |
-| WP2 | `mls-wasm` + `WebMlsService` | export the summary-returning process, batch and merge; surface the summary to TS | S |
-| WP3 | Tauri (`commands/mls.rs`, `state.rs`) + `TauriMlsService` | the same for `recevoir_message_bytes`, `decrypt_messages_batch` and `confirmer_commit`. This covers desktop, the Android foreground and the iOS foreground; the background paths stay untouched (fail-safe) | S-M |
-| WP4 | TS: the tracker + Graine storage (`sqlite.ts`, `indexeddb.ts`, `graineCodec.ts`, `types.ts`) | `GraineRemovalRun` persisted; the summary fed in at the key-group choke points (`routeDistributionFrame`, `stepDistributionGroup`, `catchUpDistributionGroup`, `attemptCommitReplay`, `runCommitTransaction`, `externalJoin`, Welcome install); `runId` on minted sessions | M |
-| WP5 | TS: `sessionManager.ts` | the new predicate (shared only) and the re-distribution of a reused session after an epoch move | S |
-
-WP1 comes first. WP2 and WP3 follow it, independently of each other. WP4 needs WP2 and WP3, and WP5
-needs WP4. **WP4 touches storage files of the MLS persistence work owned by another session, so it
-says which files before it starts.** Graine sessions gain one optional field, `runId`, and storage
-gains one new table/store. A reader that predates the field ignores it, and rotates.
+1. **The tracker belonged in the MLS state, not in Graine storage (DESIGN CHANGED).** The draft fed a
+   TypeScript tracker from seven call sites and stored it in a second durable slot. Every missed call
+   site was a gap (fail-safe, but a lost saving), and two durable slots needed the two kill-point
+   readings. Every merge already goes through two functions of `mls-core`, on every platform and in
+   the native background paths; the run is now written there and persisted in the same blob as the
+   tree. The draft's WP2/WP3/WP4 summary plumbing is not needed; the summary exists in Rust only.
+2. **The authenticator was to be stored outside MLS (CHANGED).** It is an MLS secret meant for
+   out-of-band comparison. Only a domain-separated hash of it leaves the crate, and the session keeps
+   it in the sealed half of its row.
+3. **"A pair that comes back is no departure" was blind to a leave-and-return (CHANGED, lead amendment
+   (a)).** Any Remove proposal now ends the run, whatever came back in the same commit.
+4. **A newcomer under `joined` would have been handed a pre-arrival seed (CHANGED, lead amendment
+   (b)).** The draft relied on `joined` keeping rotate-on-add and on the server's word for the
+   setting. A new user now rotates in every community, and the setting is no longer read.
+5. **A leaf added and removed between two sends (HOLDS).** Both commits are merged here, the Remove
+   ends the run (`a_device_added_then_removed_between_two_reads_ends_the_run`).
+6. **A removal applied while offline (HOLDS).** The catch-up applies the missed commits one by one
+   through the same functions, single or batch; a device too far behind re-joins, which is a new
+   group instance, hence a new run.
+7. **A commit received out of order (HOLDS).** MLS refuses it (the epoch-gap fast-fail or a past
+   epoch); nothing is merged, so nothing is observed.
+8. **A returning device and multiple devices of one user (HOLDS).** A leaf is a device
+   (`userId:deviceId`): removing one device of a user who keeps another is a departure
+   (`removing_one_device_of_a_user_who_keeps_another_is_a_departure`); a reinstall comes back under
+   a new key and its old leaf's removal is a departure (`a_rejoin_under_a_new_key_is_a_departure`).
+9. **A restore or a downgrade (depends on queue item 9a).** A restored `mls.bin` carries the run as
+   of that state, consistent with its tree; the commits it then catches up on are observed
+   (`a_state_saved_before_a_departure_and_caught_up_afterwards_ends_the_run`). This item relies on
+   the replay cursor and the checkpoint agreeing, which is what 9a ([backlog](../backlog.md)) makes
+   true. A build that predates the field drops it on its next write: no run, so it rotates.
+10. **A joiner still gets what the history policy grants (HOLDS).** A new device of a present user
+    gets the re-distributed seed from index 0, which its user's other devices already opened. A new
+    user never sees a reused seed. The history bundle is untouched.
+11. **A commit processed between the run read and the seal (HOLDS, same as before).** The run is read
+    before anything is sealed, so a commit landing in between can only make the anchor OLDER than the
+    frame; the next send judges the move again. A message sealed while a Remove is in flight is the
+    same race the epoch rule had.
+12. **External-commit joins (DECIDED under D5, review of #2263).** Judged by the same new-user rule
+    as an Add, on the leaf's own credential with the canonical user half (`an_external_join_*` in
+    `tests/graine_run.rs`: a present user's new device continues, a new user and a malformed
+    identity end the run, `BOB` is `bob`). The server checks that the leaf names the caller
+    (`mls-frame-epoch.spec.ts`, `messaging.commit-log.spec.ts`, checked against two external commits
+    openmls itself produced).
 
 ## Verification - what a compile does not prove
 
-Every native WP is verified by compiling, which proves nothing about running. The readings owed:
+Done in the pull request: `cargo test` in `mls-core` (`tests/graine_run.rs`, 19 cases: a device add
+continues, a new user ends, the four external-join cases of item 12, the joiner's own merge is
+a no-op, a Remove ends on both committer and receiver, the add-then-remove case,
+a batch with a departure in its middle, a same-key rejoin, a new-key rejoin, persistence across a
+reload, a restored older state catching up, a replaced instance, same-number aliasing, the summary
+fields); `sessionManager.test.ts` (the verdict table, re-distribution, the failure that persists
+nothing, the add-then-remove case at the send layer); `graineStore.test.ts` (the anchor is sealed and
+all-or-nothing); chat-delivery `mls-frame-epoch.spec.ts` and `messaging.commit-log.spec.ts` (the
+external commit's path leaf is read, and one naming another user or device is refused before the
+membership gate).
 
-1. **WP1:** `cargo test` in `mls-core`. It covers:
-   - one case per shape in section 2, including the batch with a departure in its middle;
-   - a cross-version case: the existing `process_incoming_message` output is unchanged.
-2. **WP4, TS kill points:**
-   - a kill after the tracker write and before the MLS checkpoint;
-   - a kill after the checkpoint and before the tracker write.
+**Owed before the server half is believed on production:** the path-leaf parse was checked against
+two external commits openmls 0.9.1 produced, not against stored rows. One read-only pass over the
+`PublicMessage` rows of the commit log - every one should parse to a leaf naming its committer's
+`userId:deviceId` - settles that no shipped client trips `commit_identity_mismatch`.
 
-   Each must rotate at the next send, never reuse.
-3. **Web (local rig, W1, W2 and W3):**
-   - **Join.** In a community, W2 joins between two sends of W1. W1 logs a reuse
-     (`[GRAINE] reused session ... across epoch a->b run r`) and a re-distribution, never a new
-     session. W2 opens W1's next message from the re-distributed frame.
-   - **Revocation.** W2's device is then revoked. W1's next send logs
-     `[GRAINE] run reset reason=departure` and a new session.
-   - **The lost-phone case, exactly.** Between two sends of W1, W3 is added, used (it receives the
-     seed), and then revoked. W1's second send must log a reset and a new session.
-4. **Mi 9T and iPhone:**
-   - the join and revocation readings in the foreground;
-   - a background Welcome while the app is killed, then a send after it reopens. It must log
-     `run reset reason=gap`, then a new session;
-   - a Remove that arrives while the app is killed, then a send after it reopens. It must rotate.
-5. **A re-bootstrap to the same epoch (local estate).** A key group is reset and rebuilt without one
-   device until it reaches the epoch number of a session minted before the reset. That session must
-   NOT be reused: its `mintAuthenticator` differs.
-6. **Production, after a stable:** the seeds-per-message ratio, re-run with the query of 2026-10-21,
-   and the per-sender rates of the residual section, re-run with their query. The ratio should
-   return toward "senders x days". If it does not, a summary path is missing; the gap resets would
-   show it.
+**Owed, rig rows (local estate, W1, W2, W3; GRAINE rows of
+[cross-client-testing](../cross-client-testing.md)):**
 
-The tracker's log lines are part of WP4. Each reset names its reason (`departure`, `gap`, `install`,
-`none`), and each reuse names its run, so that a reading can tell the causes apart.
+- **GRAINE-ROT-1, a device join.** W2's user adds a second device between two sends of W1. W1 logs
+  `[GRAINE] reused session ... re-distributed`, never `new outbound session`, whether the device came
+  in by an Add or by the key group's external commit. The new device opens W1's next message.
+- **GRAINE-ROT-2, a new user.** W3 (a user not yet in the community) joins between two sends of W1.
+  W1 logs `run reset reason=new-user` and a new session.
+- **GRAINE-ROT-3, a revocation.** A device of W2 is revoked. W1's next send logs
+  `run reset reason=departure` and a new session.
+- **GRAINE-ROT-4, the lost-phone case, exactly.** Between two sends of W1, a second device of W2's
+  user is added, used (it receives the seed), then revoked. W1's second send logs a reset and a new
+  session.
+- **GRAINE-ROT-5, offline catch-up.** W1 is offline while a device of W2 is added and then removed;
+  W1 reconnects and sends. It must mint.
+- **GRAINE-ROT-6, a re-bootstrap to the same epoch.** A key group reset and rebuilt without one device
+  until it reaches the epoch number of a session minted before the reset. That session is not reused.
+
+**Owed, devices (Mi 9T and iPhone):** the join and revocation readings in the foreground; a
+background Welcome while the app is killed, then a send after it reopens (the background merge runs
+`mls-core` too, so the run should CONTINUE across a device join - a `reason=gap` there means a path
+outside these two functions moved the epoch, worth a line in the report); a Remove that arrives while
+the app is killed, then a send after it reopens: it must rotate.
+
+**Owed, production, after a stable:** the seeds-per-message ratio, re-run with the query of
+2026-10-21 (845 sessions for 1 698 messages), and the per-(salon, sender) message rates. The ratio should fall toward "senders x active days". If it does not, the reset
+reasons say why: many `reason=gap` means an epoch is moved outside the two merge functions; many
+`reason=departure` means external rejoins dominate (the reset line names `external=`).

@@ -1,5 +1,10 @@
 # Cross-client testing - the board
 
+> **STALE AS A GATE (2026-10-24).** `bun rows.mjs` finds 24 cells the ledger contradicts or never
+> recorded, and the floor rows date from `0.16.3` on the local estate. The `1.4.1` campaign on dev
+> is planned in [cross-client-campaign-1-4-1](cross-client-campaign-1-4-1.md#1-the-verdict-on-the-existing-documents),
+> which proposes archiving this board as it stands.
+
 **STATE ONLY, AND IN AS FEW WORDS AS THE STATE ALLOWS.** A cell is a verdict, a date and the build
 it ran on. **A `PASS` cell says nothing else** - not the numbers, not how the row was fixed, not what
 it read PASS-DIRTY on first. They were here for 117 cells and made the file a third longer than the
@@ -210,6 +215,11 @@ fleet member rather than by either driven browser. That finding outlives its led
 statement about the system, not a verdict - and it is why the fleet has to be enumerated before this
 rung is believed.
 
+**Owed, not yet a row: GRP-ADDR-1** (step A, [history-answer-addressing](protocols/history-answer-addressing.md#what-proves-it)),
+three devices on one group conversation: member A's NEW device asks while newcomer C, added after
+messages M1..Mn, is online. A's new device must restore M1..Mn; C must log no
+`[HISTORY_BUNDLE] ... received` for that answer and hold nothing from before its arrival.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | **`PASS`** 2026-09-07 19:00 on `04552e79`, clean |
@@ -246,7 +256,7 @@ and COMM-18's four defects: [cross-client-campaign](cross-client-campaign.md).
 | COMM-9 | Removed from a salon: routing rows dropped (`evicted=true`), the next message sealed under a session they do not hold | `W1 W2` | `PASS` 2026-09-05 03:22 on 0.16.3, clean (recorded jointly with COMM-10 by `comm910.mjs`) |
 | COMM-10 | Removed from a salon: what they ALREADY hold stays readable - Graine retains seeds on purpose | `W1 W2` | `PASS` 2026-09-05 03:22 on 0.16.3, clean (joint with COMM-9) |
 | COMM-11 | Kicked from the COMMUNITY: the workspace purged and every private salon group left | `W1 W2` | `PASS` 2026-09-05 03:24 on 0.16.3, clean |
-| COMM-12 | Re-invited after a removal: sessions minted from now on, and the past only as `history_visibility` allows | `W1 W2` | `PASS` 2026-09-05 03:27 on 0.16.3, clean |
+| COMM-12 | Re-invited after a removal: sessions minted from now on, and the past only as `history_visibility` allows; two arms added 2026-10-22 and owed a first run - a new device under `joined` (W3), and the rule widened under a member already in | `W1 W2 W3` | `PASS` 2026-09-05 03:27 on 0.16.3, clean |
 | COMM-13 | An admin JOINS a salon: 403 before and 200 after, the member list gains them, the transcript gains NOTHING | `W1 W2` | `PASS` 2026-09-05 03:30 on 0.16.3, clean |
 | COMM-14 | Channel notification levels enforced server-side | `+push` | `PASS` 2026-09-05 04:07 on 0.16.3 + APK `2eb116c3`, clean |
 | COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `PASS` 2026-09-05 04:11 on 0.16.3, clean |
@@ -580,3 +590,19 @@ Read [channel-encryption section 21](protocols/channel-encryption.md#21-graine-v
 | GRAINE-AUTH-7 | 21.8, THE DOOR (`--only 7`): W1 POSTs the unsigned row under a fresh session. Answer 400 `CHANNEL_SIGNATURE_REQUIRED`, `[CHANNEL_SIGNATURE] REFUSED ... session=<8 chars>` at ERROR in social-service, no row stored (count unchanged; a stored row is deleted so a FAIL leaves no debris) | `W1` | `pending` - needs an estate carrying #1802 (on `main`, and on dev since `v1.2.7-alpha.1`) |
 
 **NOTIF-19 and NOTIF-20 on a v2 session are `PASS` since 2026-10-05** (the phone pass below: APK `7ab8f1780`, which carries the G2-5 writer, seed rows read `signature IS NOT NULL` while NOTIF-20 ran; ledger 23:27 and 23:29). Their State cells above still quote the v1 runs. What G2-5b adds natively, the Kotlin `REFUSED N v1 seed(s)` and the NSE line, has no rig row: an honest client no longer sends a v1 seed, so only a replay of a pre-floor frame reaches that path, and the readings are owed on a device ([channel-encryption 21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11), last paragraph).
+
+## 21 - LEAF - the periodic leaf refresh and the revoked leaf
+
+Read [mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh) first. **Owed by the
+leaf-refresh pull request (#2269) before any stable carries it, and no runner exists yet.** Each row
+is run on a pre-release build, the phone half on a RELEASE build, with the commit's stage-checkpoint
+duration read from the device log ([backlog](backlog.md#owed-a-verification-and-nothing-else)). A
+refresh is made due by the bench ledger (`mls_leaf_refresh:<userId>:<deviceId>`, an observation one
+interval old), never by moving a clock.
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| LEAF-REFRESH-1 | The network is CUT while a due refresh is being submitted, then W1 sends: the commit is kept unresolved, no send leaves into the group until a resubmission answers, and after the link returns the resubmission is answered (`DUPLICATE` or a refusal) and the queued message arrives on W2 - nothing sealed at an epoch the peer cannot open | `W1` `W2` | `pending` - no runner |
+| LEAF-REFRESH-2 | A RELOAD while a refresh is unresolved: the stage and its record come back from disk (`checkpointStageBeforeSend`), the settle at the next connection merges or clears it, and the ledger names the epoch the server holds | `W1` `W2` | `pending` - no runner |
+| LEAF-REFRESH-3 | A refresh while a member is OFFLINE, then that member catches up: it applies the refresh commit from the log (rung 1) and decrypts every frame sealed after it, with no re-Welcome | `W1` `W2` `+A1` | `pending` - no runner |
+| LEAF-REFRESH-4 | A device of the peer is REVOKED: at W1's next connection its leaf leaves every conversation W1 holds (one `[STRAY] ... revoked device(s) still hold a leaf - removing` per group), and a commit attempted from the revoked device is refused `DEVICE_REVOKED` | `W1` `W2` `+user` | `pending` - no runner |

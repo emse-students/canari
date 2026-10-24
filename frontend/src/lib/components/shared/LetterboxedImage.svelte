@@ -1,4 +1,6 @@
 <script lang="ts">
+  import BlurredBackdrop from './BlurredBackdrop.svelte';
+
   interface Props {
     /** The picture, and also what paints the remainder. One URL, drawn twice. */
     src: string;
@@ -36,11 +38,6 @@
   positioned one would collapse the second case to nothing.
 -->
 <div class="relative overflow-hidden {boxClass}">
-  <div
-    class="absolute inset-0 scale-125 bg-cover bg-center blur-2xl saturate-150"
-    style="background-image: url({src})"
-    aria-hidden="true"
-  ></div>
-  <div class="bg-cn-surface/35 absolute inset-0" aria-hidden="true"></div>
+  <BlurredBackdrop {src} />
   <img {src} {alt} {loading} decoding="async" class="relative w-full object-contain {imgClass}" />
 </div>

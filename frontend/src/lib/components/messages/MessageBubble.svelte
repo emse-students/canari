@@ -107,6 +107,8 @@
     isReadReceiptAnchor?: boolean;
     /** When true, shows an "(modifié)" label. */
     isEdited?: boolean;
+    /** When true, marks a restored message nothing proves the author of (see `MessageMetadata`). */
+    restoredUnverified?: boolean;
     /** When true, renders the content as struck-through italic and hides action buttons. */
     isDeleted?: boolean;
     /** Controls which corners of the bubble are rounded based on adjacent messages. */
@@ -179,6 +181,7 @@
     isLastOwn = false,
     isReadReceiptAnchor = false,
     isEdited = false,
+    restoredUnverified = false,
     isDeleted = false,
     groupPosition = 'single',
     onJoinChannel,
@@ -465,7 +468,8 @@
       return;
     }
     e.stopPropagation();
-    bubbleTaps.tap({ x: e.clientX, y: e.clientY, t: Date.now() });
+    // When the tap happened, not when it was handled: see `doubleTapLike`'s click handler.
+    bubbleTaps.tap({ x: e.clientX, y: e.clientY, t: e.timeStamp });
   }
 
   function confirmDelete() {
@@ -1009,6 +1013,7 @@
 
             <MessageMetadata
               {isEdited}
+              {restoredUnverified}
               {isOwn}
               {isLastOwn}
               isReadReceiptAnchor={false}

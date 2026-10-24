@@ -24,6 +24,8 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/i18n';
+import { CALLS_NATIVE_RING_COMPILED } from '$lib/features';
+import { voipRegistrationField } from '$lib/mobile/voipRegistration';
 
 /** Push gateway platform tag sent to the backend (mirrors the server's PushPlatform). */
 type PushPlatform = 'android' | 'ios';
@@ -34,10 +36,26 @@ type PushPlatform = 'android' | 'ios';
  * A TYPE rather than a boolean, because the two failures need different reactions and the caller can
  * only tell them apart if the callee states which one it was. `no-token` means the OS never handed
  * this app a push token, so there is nothing to send and no server involved; `rejected` means the
- * token existed and the backend refused it. Reported to the server as-is, and the server prints
+ * token existed and the backend refused it; `secret-not-stored` means the backend answered and the
+ * push secret it returned could not be stored here. Reported to the server as-is, and the server prints
  * whatever it is given rather than guessing.
  */
-export type PushRegistrationOutcome = { ok: true } | { ok: false; reason: 'no-token' | 'rejected' };
+export type PushRegistrationFailure = 'no-token' | 'rejected' | 'secret-not-stored';
+
+/** The answer of one registration attempt; see {@link PushRegistrationFailure}. */
+export type PushRegistrationOutcome = { ok: true } | { ok: false; reason: PushRegistrationFailure };
+
+/**
+ * The server answered the registration and its push secret could not be stored on the device.
+ * Thrown by the registration itself so the caller classifies by TYPE: the registration does not
+ * count (no skip key), and the next attempt re-registers and stores a fresh secret.
+ */
+export class PushSecretNotStoredError extends Error {
+  constructor(cause: unknown) {
+    super('the push secret the server returned was not stored', { cause });
+    this.name = 'PushSecretNotStoredError';
+  }
+}
 
 /**
  * Asks the native layer WHY there is no token, and falls back to the symptom when it has no answer.
@@ -157,6 +175,10 @@ async function registerPushTokenOnce(
     console.info('[Push] FCM token registered successfully');
     return { ok: true };
   } catch (err) {
+    if (err instanceof PushSecretNotStoredError) {
+      console.error('[Push] registration answered but its push secret was not stored', err.cause);
+      return { ok: false, reason: 'secret-not-stored' };
+    }
     console.error('[Push] FCM token registration failed', err);
     return { ok: false, reason: 'rejected' };
   }
@@ -189,11 +211,9 @@ export async function startPushService(
   // against an iPad WKWebView that calls itself "Macintosh", so an iPad fell through to `null` and
   // this whole service returned as "desktop" - no token, and no report either, because the return is
   // above the reporting path. That is the same defect the login took, at a site its fix did not reach.
-  const deviceOs = detectRuntimeDeviceOs('desktop');
-  const platform: PushPlatform | null =
-    deviceOs === 'android' ? 'android' : deviceOs === 'ios' ? 'ios' : null;
+  const platform = pushPlatform();
   if (!platform) {
-    console.info(`[Push] startPushService noop (${deviceOs} - no FCM)`);
+    console.info(`[Push] startPushService noop (${detectRuntimeDeviceOs('desktop')} - no FCM)`);
     return;
   }
 
@@ -203,13 +223,23 @@ export async function startPushService(
     return;
   }
 
+  // THE TOKEN A SIGN-OUT STILL OWES THE DELETION OF IS NEVER REGISTERED FOR THE NEXT SESSION: the
+  // deletion completes first, or nothing registers (see `endPushRegistration`).
+  if (!(await completeOwedPushTokenDeletion())) return;
+
   const registerOnce = async (): Promise<PushRegistrationOutcome> => {
     return await registerPushToken(async (pushToken) => {
-      // PushKit VoIP token (iOS only, WP-XP-5): written by the native PKPushRegistry callback.
-      // Included at registration so CallKit rings work from the very first login; later
-      // rotations are pushed by the native refresh-token path.
+      // PushKit VoIP token (iOS only, WP-C6): written by the native PKPushRegistry callback, which
+      // exists only in a binary with the native ring. Sent at registration so CallKit rings from the
+      // very first login (later rotations go over the native refresh-token path), and an explicit
+      // null from a binary WITHOUT the ring clears a stale one - see `voipRegistrationField`.
       const voipToken =
-        platform === 'ios' ? await invoke<string | null>('get_voip_token').catch(() => null) : null;
+        platform === 'ios' && CALLS_NATIVE_RING_COMPILED
+          ? await invoke<string | null>('get_voip_token').catch((err) => {
+              console.warn('[Push] get_voip_token failed - registering without a VoIP token', err);
+              return null;
+            })
+          : null;
       const response = await fetch(`${apiBaseUrl}/api/mls/push/register`, {
         method: 'POST',
         headers: {
@@ -225,7 +255,7 @@ export async function startPushService(
           // The one thing the server cannot know and must not guess: `APNS_FALLBACK_BODY` is the
           // single sentence it still composes, shown when the iOS extension cannot run.
           locale: getLocale(),
-          ...(voipToken ? { voipToken } : {}),
+          ...voipRegistrationField(platform, CALLS_NATIVE_RING_COMPILED, voipToken),
         }),
       });
       if (!response.ok) {
@@ -235,11 +265,15 @@ export async function startPushService(
       const data = await response.json().catch(() => null);
       const pushSecret: string | undefined = data?.pushSecret;
       // AWAITED, so the secret is stored before this registration counts as finished and the next
-      // one may start: two stores in flight could land in either order.
+      // one may start: two stores in flight could land in either order. A store that failed makes
+      // the registration fail too, so it is not counted and the next attempt registers again: the
+      // device stays signed out of pushes until a secret is stored (`write_push_secret`).
       if (pushSecret) {
-        await invoke('store_push_secret', { secret: pushSecret }).catch((err) =>
-          console.warn('[Push] Failed to store push secret', err)
-        );
+        try {
+          await invoke('store_push_secret', { secret: pushSecret });
+        } catch (err) {
+          throw new PushSecretNotStoredError(err);
+        }
       }
     });
   };
@@ -353,7 +387,7 @@ async function reportGaveUp(
   bearerToken: string,
   deviceId: string,
   platform: PushPlatform,
-  reason: 'no-token' | 'rejected'
+  reason: PushRegistrationFailure
 ): Promise<void> {
   if (pushUnavailableReported) {
     console.info('[Push] still unavailable, already reported once this process');
@@ -402,6 +436,80 @@ async function reportPushUnavailable(
   } catch (err) {
     console.warn('[Push] could not report the missing push token', err);
   }
+}
+
+/**
+ * Ends THIS DEVICE's push registration at a sign-out - every sign-out, whatever the server said.
+ *
+ * The server half (`/api/auth/logout` and every revocation end the device's `push_token` row) and
+ * this half each stand alone, so neither depends on the other being reached: here the OS push token
+ * is deleted natively, the push secret erased, and the native push context reduced to the device's
+ * identity, so a push still in flight is dropped rather than shown as the account that left
+ * (`src-tauri/src/commands/push_registration.rs`). Runs with the session already dead, with the
+ * network refusing, and with no registration marker in this tab - none of those is a reason to stay
+ * a destination.
+ *
+ * A deletion that cannot complete now (offline) stays OWED in a durable mark on disk, and is
+ * completed before anything registers again ({@link startPushService}). That is logged as an error,
+ * since until then FCM may still hold this install's token.
+ *
+ * Never rejects: a sign-out does not wait on it to go on, and every failure is logged here.
+ */
+export async function endPushRegistration(): Promise<void> {
+  // The skip key describes the registration that just ended; left, the next sign-in in this tab
+  // would compare a fresh token against it instead of registering.
+  try {
+    sessionStorage.removeItem(FCM_TOKEN_STORAGE_KEY);
+  } catch (err) {
+    console.error('[Push] could not forget the registration skip key at sign-out', err);
+  }
+  const platform = pushPlatform();
+  if (!platform) {
+    console.info('[Push] endPushRegistration noop (no push registration on this platform)');
+    return;
+  }
+  try {
+    const deleted = await invoke<boolean>('end_push_registration');
+    if (deleted) {
+      console.info(`[Push] sign-out ended this device's push registration (${platform})`);
+    } else {
+      console.error(
+        `[Push] sign-out could not delete the ${platform} push token now - the deletion is OWED and completes before the next registration`
+      );
+    }
+  } catch (err) {
+    console.error(
+      '[Push] sign-out did not end every part of the push registration - see the native log',
+      err
+    );
+  }
+}
+
+/**
+ * Completes a token deletion a previous sign-out left owed, and answers whether registering is
+ * allowed now. `false` means the deletion is still owed (logged natively and here): registering
+ * would publish the token of the account that left for the next one.
+ */
+async function completeOwedPushTokenDeletion(): Promise<boolean> {
+  try {
+    const done = await invoke<boolean>('complete_owed_push_token_deletion');
+    if (!done) {
+      console.error(
+        '[Push] registration deferred - the token deletion a sign-out owes did not complete'
+      );
+    }
+    return done;
+  } catch (err) {
+    console.error('[Push] registration deferred - the owed token deletion could not run', err);
+    return false;
+  }
+}
+
+/** The push platform this runtime registers on, or null where there is no push registration. */
+function pushPlatform(): PushPlatform | null {
+  if (!isTauriRuntime()) return null;
+  const deviceOs = detectRuntimeDeviceOs('desktop');
+  return deviceOs === 'android' ? 'android' : deviceOs === 'ios' ? 'ios' : null;
 }
 
 export async function stopPushService(

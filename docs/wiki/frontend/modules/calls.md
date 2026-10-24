@@ -4,9 +4,12 @@
 **Components**: `src/lib/components/calls/`, `src/lib/composables/useCallSession.svelte.ts`  
 **Service**: `src/lib/services/CallService.ts`
 
-> **SINCE 2026-10-17 (LOT 1): IN-APP 1:1 AUDIO IS ON FOR DEV BUILDS ONLY, PEER TO PEER** - see
-> [lot 1](#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only) below. Everything else in this
-> banner still holds for production and for the native ring: `CALLS_COMPILED = false`.
+> **SINCE THE FLIP PR (2026-10-22): IN-APP 1:1 AUDIO IS COMPILED INTO EVERY BUILD, PEER TO PEER** -
+> `CALLS_COMPILED = true`; production is held shut by the server's `calls_mode` (`off` at deploy), and
+> video stays dev-only. See [lot 1](#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only) and
+> [the flip](#turning-calls-on-in-production---audio-11-only-owner-2026-10-21). What this banner says
+> of the whole surface being held off still holds for **the native ring** (`CALLS_NATIVE_RING_COMPILED
+> = false`) and for the history it records.
 >
 > **THE WHOLE SURFACE WAS HELD OFF SINCE 0.14.15 - `CALLS_ENABLED = false`
 > (`frontend/src/lib/features.ts`).** Everything below still describes the code exactly, and none of
@@ -68,7 +71,7 @@
 
 **The decision.** The first public build with calls enabled in production is **AUDIO 1:1 ONLY**,
 with the call kept alive in the background on Android and on the iPhone; video follows later.
-Calls stay held off (`CALLS_COMPILED = false`) until every blocker below is lifted. This section is
+The flip PR (2026-10-22) compiled in-app audio calls in (an invite, the per-conversation permission control and the sibling-status request also honour `calls_mode` client-side through `callsAvailable(serverCallsMode())`) (`CALLS_COMPILED = true`); what keeps production shut is the server's `calls_mode` (`off` at deploy), and the flip is merged and shipped only when every blocker below is lifted. This section is
 the only copy of the blocker list and of the order; [revival plan](calls-revival-plan.md) keeps the
 2026-10-15 design and the test matrix (section 7), the [backlog](../../backlog.md#p1-blocks-calls_compiled-not-dev---four-things-owed-before-production-calls-review-of-1997-2026-10-17)
 row points here. Investigated 2026-10-21 against `main` at `1.3.1-alpha.5`.
@@ -93,15 +96,15 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
 | --- | --- | --- | --- |
 | B0 | **No video in production.** `CALLS_VIDEO_ENABLED` was `CALLS_ENABLED`, so the flip would have shipped it; and the flag only hid the buttons - an invite with `hasVideo: true` (a modified client, or a later build) made `acceptCall` open the camera with no control on screen to close it | **built in #2171**: `CALLS_VIDEO_ENABLED = deployEnvironment() === 'development'` (`features.test.ts`), and `CallService` holds it at every boundary - the invite rings as audio (`incomingHasVideo`), `startCall` and `acceptCall` never ask for video, `cameraOn` (every camera open) refuses, and a peer's video m-line is answered `recvonly`, decrypted (so the E2E path check still judges it) and never shown. `inactive` would be possible (either side may renegotiate after the first remote description) and would spare the peer's video bandwidth and CPU; it is not taken because the path check's treatment of a negotiated m-line carrying nothing is unmeasured on a phone, and until video ships only a modified client sends one - when video ships, the floor rises past the audio-only stable or `inactive` is built. Pinned by `CallService.p2p.test.ts` ("an audio-only build", and "judges the peer's HIDDEN video": frames -> conclusive, packets with no frame -> ended) | code done; **owed on a phone**: that a receiver transform whose track has NO SINK is still fed frames (unproven on WebKit) - CALL-L1 row 13, no false `CallE2eBypassedError` on the iPhone and the Mi 9T |
 | B1 | The scope of the native ring | **decided** (Q1): not in the first release | B2' |
-| B2 | The native ring: WP-C5 (Android: names from the phone's local copy, out of the `call_ring` payload; `canUseFullScreenIntent`; decision 7 natively) and WP-C6 (iOS: no PushKit token was ever registered; every VoIP push must report a CallKit call; the answer with MLS behind the PIN). **Also to gate in the SAME commit as the native-ring switches**: both rings still ANNOUNCE a video call for a `hasVideo` invite (Android `CanariFirebaseMessagingService.kt` `setIsVideo` / `notif_incoming_video_call`, iOS `canari_push.mm` CallKit `update.hasVideo`) - on an audio-only build they must announce audio | **later - not the first release** | its own chantier, with video or after |
-| B2' | **Two facts instead of one**: `CALLS_COMPILED` for in-app calls and background continuation (`audio`, the microphone foreground service, the microphone purpose strings), a second constant for the native ring (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`), each set asserted by `callsCompiled.test.ts`. **And the iOS FCM ALERT**: no iPhone has a `voipToken`, so `CallsService.ringViaFcm` would send EVERY iPhone callee a visible alert titled with the caller's name in clear (against decision 6), opening an app that may not answer in time - removed, or decided. That branch IS reachable in the first release (unlike the native ring), and its body says "Appel entrant" whatever `hasVideo` is - if kept, it must never announce video | **owed** | a draft |
+| B2 | The native ring: WP-C5 (Android: names from the phone's local copy, out of the `call_ring` payload; `canUseFullScreenIntent`; decision 7 natively) and WP-C6 (iOS: no PushKit token was ever registered; every VoIP push must report a CallKit call; the answer with MLS behind the PIN). **Also to gate in the SAME commit as the native-ring switches**: both rings still ANNOUNCE a video call for a `hasVideo` invite (Android `CanariFirebaseMessagingService.kt` `setIsVideo` / `notif_incoming_video_call`, iOS `canari_push.mm` CallKit `update.hasVideo`) - on an audio-only build they must announce audio | **later - not the first release**; **Latent for this work package:** once `kCanariCallsEnabled` flips, tapping the generic FCM alert while the app is not in the foreground goes through `CanariHandleFcmData` (`canari_push.mm`, the `call_ring` branch) and raises a CallKit ring with EMPTY names - gate that branch then; the iPhone half (WP-C6) is designed and partly built behind the switch, [below](#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22) | its own chantier, with video or after |
+| B2' | **Two facts instead of one**: `CALLS_COMPILED` for in-app calls and background continuation (`audio`, the microphone foreground service, the microphone purpose strings), a second constant for the native ring (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`), each set asserted by `callsCompiled.test.ts`. **And the iOS FCM ALERT**: no iPhone has a `voipToken`, so `CallsService.ringViaFcm` would send EVERY iPhone callee a visible alert titled with the caller's name in clear (against decision 6), opening an app that may not answer in time - removed, or decided. That branch IS reachable in the first release (unlike the native ring), and its body says "Appel entrant" whatever `hasVideo` is - if kept, it must never announce video | **built in the flip PR (2026-10-22)**: the two facts exist (`CALLS_NATIVE_RING_COMPILED`); the iPhone FCM alert is GENERIC - title "Canari", body "Appel entrant" / "Incoming call" from `push_token.locale` (`incomingCallAlertBody`), and the caller and conversation names are removed from the iOS data and APNs keys too (FCM merges `data` into the payload); pinned in `calls.service.spec.ts`. The iPhone's notification extension has a `call_ring` case that KEEPS the server's wording and only files it (thread, deep link without `acceptCall`, `canariCallId`, time-sensitive) - without it the type fell to the MLS ladder and the alert was overwritten; the APNs request carries `apns-expiration` (+60 s, which only bounds APNs STORE-AND-FORWARD for a phone that was off - a delivered banner stays until removed) and `apns-collapse-id` (the callId); `call_ring_end` removes the delivered banner by `canariCallId` (best effort) and so does app activation (the banner's `deepLink` is a chat link, cleared with the message banners). Android keeps its names | a draft |
 | B3 | **The review of #1997, crypto half**: one key per direction + AAD on every frame, the key-mismatch toast (F5) | **built (#2176)**: #2013 ported onto `main` (per-direction keys, AAD on every frame, the mismatch notice), adversarially reviewed | CALL-L1 rows 1-4 re-read on it |
 | B4 | **The `fp=` log line printed 4 bytes of the call key** | **built (#2176)**: a SHA-256 fingerprint per direction (`send_fp`/`recv_fp`, `utils/callKeys.ts`), first in #2171 | done |
-| B5 | **F4 - say who sees what**: each party learns the other's IP; Cloudflare TURN relays some calls (IPs, time, volume, never audio). Into `compliance/register-of-processing.md` and `/legal/privacy`, together | register rows C21 + TURN processor in #2176, marked owed review; the `/legal/privacy` paragraphs HELD in a separate draft pull request for the owner (Q5) | the owner's yes on the wording, merged BEFORE the flip ships |
+| B5 | **F4 - say who sees what**: each party learns the other's IP, only after the callee answers; Cloudflare sees every ANSWERED call (IPs, time) and its TURN relays some (IPs, time, volume, never audio). Into `compliance/register-of-processing.md` and `/legal/privacy`, together | register rows C21 + TURN processor in #2176, marked owed review; the `/legal/privacy` paragraphs HELD in a separate draft pull request for the owner (Q5) | the owner's yes on the wording, merged BEFORE the flip ships |
 | B6 | **A call report** (`[CALL_REPORT]`, WP-C2): without it a failing production call is found by hand, and B7 cannot tell relayed from direct | **built (#2176)**: #2011 ported onto `main` | one reading from a phone's exported log |
 | B7 | **The TURN budget counts every call as relayed at 3000 kbps per device** (`accumulateTurnUsage`): 950 GB is ~700 device-hours, ~350 call-hours a month, after which `ice-servers` answers 503 to EVERY call. Only `relayed=yes` costs in P2P, and CALL-PATH-LINE (P3) showed `relayed=` can be wrong | **being built** (another agent); the production variable stays alone (Q6) | relayed calls only, at what they cost |
-| B8 | **Background, Android (WP-C-BG-A)** | **built** (#2162, in `1.3.1-alpha.5`), pre-releases only; Play FGS declaration FILLED by the owner 2026-10-21; **twelve readings owed** on the Mi 9T ([below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20)) | the readings; at the flip the declaration moves into `src/main/AndroidManifest.xml` |
-| B9 | **Background, iPhone (WP-C-BG-I)**: the `audio` mode, pre-release only today | **built** (#2164, in `1.3.1-alpha.5`); the failure was read before the fix; **after-fix reading owed** (CALL-L1 row 12); the app-wide side effect ACCEPTED (Q4) | row 12 `PASS` |
+| B8 | **Background, Android (WP-C-BG-A)** | **built** (#2162, in `1.3.1-alpha.5`); the declaration is in `src/main/AndroidManifest.xml` since the flip PR (2026-10-22); Play FGS declaration FILLED by the owner 2026-10-21; **twelve readings owed** on the Mi 9T ([below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20)) | the readings |
+| B9 | **Background, iPhone (WP-C-BG-I)**: the `audio` mode, in the committed plist since the flip PR (2026-10-22) | **built** (#2164, in `1.3.1-alpha.5`); the failure was read before the fix; **after-fix reading owed** (CALL-L1 row 12); the app-wide side effect ACCEPTED (Q4) | row 12 `PASS` |
 | B10 | **The hardware readings of the audio path**: CALL-L1 rows 0-12 on the current build; the Tier B audio cells (K1, K9, K12 on Mi 9T / iPhone / desktop; K6 both phones) of [the matrix](calls-revival-plan.md#7-the-test-matrix) | **partly read**: audio clean both ways and both transforms fed on `1.3.1-alpha.4` (#2161); forced TURN relay over UDP, TCP and TLS 443 clean on all three engines (#2165, readings PR open on 2026-10-21); row 8 `PASS` on alpha.2. **Owed**: row 0, rows 9-12 on the build carrying their fixes, cellular and campus Wi-Fi (no SIM on the bench), CALL-WS-V6's fix (#2167) on an IPv6-broken Wi-Fi | the board rows `PASS`, never `PASS-DIRTY` |
 | B11 | **Two P2 defects met on the bench**: CALL-PAIR-STALL and CALL-LATE-RING ([backlog](../../backlog.md#p2---a-call-that-never-paired-and-a-ring-for-a-call-already-hung-up-2026-10-20)) | **owed**: the dev `call-service` log of that minute and the iPhone's exported log, before any cause is named | diagnosis, then a fix or a refutation |
 | B12 | **A kill that is not two store releases** (WP-C13, `platform_config.calls_mode` = `off/testers/on`, enforced at `initiate`/`ring`/`room-token`) | **decided yes (Q2), a HARD PRE-FLIP BLOCKER; being built** (another agent) | merged and its `off` read refusing a ring, before the first alpha with the flip |
@@ -117,7 +120,7 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
    (dev + testers); B8, B9, B10, B11 are read there. **The App Review video and the Play video are
    recorded FROM these runs**, never staged afterwards (revival plan section 8).
 4. **The production preflight** (B13), read-only, from a signed-in production session and the host.
-5. **THE FLIP, ONE COMMIT, ONE PR** (draft #2039 is the 2026-10-18 rehearsal of a flip WITH the
+5. **THE FLIP, ONE COMMIT, ONE PR** - BUILT (owner, 2026-10-22: calls reach production fast), as a draft pull request off `main`; the table below is what it moved. It merges only when the blockers above say so, and the server's `calls_mode` stays `off` at deploy. (Draft #2039 is the 2026-10-18 rehearsal of a flip WITH the
    ring: rebuild it on `main` after B2', do not rebase it). With Q1 = no, it moves:
 
    | Moves | File | Asserted by |
@@ -213,7 +216,7 @@ below), and every hardware reading (B8-B10) - each is its own blocker.
   invites to it, and it answers them as audio.
 - **A callee on an older stable cannot answer, and sees this**: the in-app invite is dropped and
   logged (`calls disabled - ignoring signal`); an older Android logs `calls disabled` and rings
-  nothing; an older iPhone gets the FCM ALERT of B2' unless B2' removes it. The caller sees the call
+  nothing; an older iPhone gets the FCM ALERT of B2' - generic since the flip, but a build before the flip has NO `call_ring` case in its notification extension, so there the alert goes down the MESSAGE ladder (the encrypted-message fallback and message buttons replace "Appel entrant") until `minClientVersion` rises past it. The caller sees the call
   go unanswered, then the missed-call line. The push token row carries no app version, so the server
   cannot ring "only the devices that can answer".
 - **Decided (Q3)**: `minClientVersion` is raised to the first calls stable once BOTH stores serve it.
@@ -222,7 +225,7 @@ below), and every hardware reading (B8-B10) - each is its own blocker.
 
 **Apple, for the stable** (the pre-release half is on [mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on)):
 
-- The committed `Info.plist` carries `audio`, NOT `voip` (Q1); the pre-release patch goes (step 5).
+- The committed `Info.plist` carries `audio`, NOT `voip` (Q1); the pre-release patch is gone (the flip PR deleted it from `ios.yml`).
   `audio` is the mode Apple names for a call's audio in the background; 2.5.4 asks that the reviewer
   can SEE it used - the refusal of 2026-08-31 was a `voip` mode it could not locate.
 - `NSMicrophoneUsageDescription` names calls (base, `fr`, `en`), asserted by `callsCompiled.test.ts`.
@@ -255,11 +258,10 @@ repository on 2026-10-21. **Convention, as on [store-ugc-answers](../../store-ug
 store's definition restated here is _(unverified against today's text)_** - re-read the form itself
 before filling it. The forms are the owner's one-off clicks (App Store Connect, Play Console).
 
-**1. The microphone purpose string - today's text does NOT name calls, as `callsCompiled.test.ts`
-requires while `CALLS_COMPILED` is false.** The base `Info.plist` and both `InfoPlist.strings` hold
-the same sentence (voice messages, the sound of videos for posts and CanaReels). The flip commit
-(step 5) replaces it in all three, and the test's whole-word match (`appels?` / `calls?`) is what
-holds it:
+**1. The microphone purpose string - the plist names calls since the flip PR (2026-10-22), as
+`callsCompiled.test.ts` requires once `CALLS_COMPILED` is true.** The base `Info.plist` and both
+`InfoPlist.strings` hold the text below (written before the flip as the proposal), and the test's
+whole-word match (`appels?` / `calls?`) is what holds it:
 
 | Where | Proposed text |
 | --- | --- |
@@ -315,13 +317,111 @@ neither form is in this repository - and decide together with B5's wording, so t
 | --- | --- | --- |
 | Call audio, end-to-end encrypted, never stored or readable by the server | not collected, if Apple's "collect" (data you or a partner can access beyond servicing the request in real time) reads E2E media as outside it | not collected, if Play's exemption for end-to-end encrypted data still reads as it is remembered |
 | Call metadata in clear on the server (room binding, presence, ring fan-out; logs per C13) | Usage Data > Product Interaction, linked to the user, App Functionality - only if the current label does not already cover messaging metadata | App activity > Other actions, collected, App functionality - same proviso |
-| The peer and Cloudflare see each device's public IP, on EVERY call (relay candidates are always gathered) | Apple counts an IP as an identifier only for tracking or as derived location; neither applies, so probably no new row | no new data type if no location is derived from it; Cloudflare is a service provider (the form's sharing exemption) |
+| The peer and Cloudflare see each device's public IP, on every ANSWERED call (an unanswered call sends it to neither) | Apple counts an IP as an identifier only for tracking or as derived location; neither applies, so probably no new row | no new data type if no location is derived from it; Cloudflare is a service provider (the form's sharing exemption) |
 | The `[CALL_REPORT]` lines in the in-app log | not collected: the log leaves the device only when the member exports it | same |
 | The ring push carries caller and conversation names (C7, C21) | already covered by the messaging rows, if they name push content | same |
 
 **What remains after these drafts**: the owner's answers to the table, the demo pair, the video
 (recorded during the Tier B runs, never staged), and the listing texts
 ([store-listings](../../store-listings.md#2-the-current-play-texts-and-what-is-stale-2026-10-09)).
+
+## The native ring on the iPhone - PushKit and CallKit (WP-C6, owner 2026-10-22)
+
+**The decision.** The iPhone gets a NATIVE ring like Messenger: a call rings a closed or locked
+iPhone on the full-screen CallKit screen, through an APNs VoIP push. It is built behind its own
+switch, `CALLS_NATIVE_RING_COMPILED` (`features.ts`, off), in parallel with the audio enablement
+(draft #2299 flips `CALLS_COMPILED` and makes the iPhone's FCM ring alert generic meanwhile). The
+design-first pull request built everything below that a text test or a unit test can hold, and
+flips nothing: `kCanariCallsEnabled` stays `NO`, `voip` stays out of `Info.plist`.
+
+**One fact for "this phone takes VoIP pushes": a `voipToken` on its `push_token` row.** The column
+exists since WP-XP-5 (migration `010_push_token_voip.sql`), so **no migration and no number is
+taken** (chat-delivery's next free one stays where the open pull requests leave it). The token
+reaches the server two ways: at `POST /api/mls/push/register` from the TS bridge
+(`voipRegistrationField`, `mobile/voipRegistration.ts`), and at `POST /api/mls/push/refresh-token`
+from the native `PKPushRegistry` callback (`CanariPersistVoipToken`) when PushKit rotates it. The
+field has THREE meanings (`parseVoipTokenField`, `utils/voip-token.ts`): a token; an explicit `null`,
+sent by every iPhone binary WITHOUT the ring, which CLEARS the column - so a phone back on a build
+without the ring is never sent a push it cannot honour; and absent (an old client, or a ring build
+whose PushKit has not answered yet), which leaves it alone. APNs `410` clears it too
+(`ringIosVoip`). Not covered: PushKit's `didInvalidatePushToken` deletes the local file but tells
+the server nothing - the stale token is cleared by the next `410`; a `refresh-token` that accepts
+`null` would close it (owed with the flip).
+
+**How the server sends it: APNs directly, not FCM.** FCM cannot carry `apns-push-type: voip`, so
+`ApnsVoipService` (chat-delivery) is the one direct-APNs sender: HTTP/2, an ES256 provider JWT from
+an APNs AUTH KEY (`.p8`), topic `fr.emse.canari.voip`, priority 10, `apns-expiration` = the ring's
+answer deadline. **What exists**: the sender, its five variables (`APNS_VOIP_KEY_P8`, `_KEY_ID`,
+`_TEAM_ID`, `_TOPIC`, `_SANDBOX`) in `docker-compose.prod.yml` and both serve workflows, and the
+three production secrets (repository secrets, set 2026-07-23 - names read, never values). **What is
+missing**: the three `DEV_APNS_VOIP_*` secrets `serve-dev.yml` reads (absent on 2026-10-22, so dev
+cannot ring a VoIP device), and any proof that the production key still signs (no VoIP push was ever
+sent). A key is team-wide: no VoIP certificate is needed with token auth. **`APNS_VOIP_SANDBOX`
+stays unset on dev too**: a TestFlight build is signed `aps-environment production` and its tokens
+belong to the production gateway; only an Xcode debug build needs the sandbox.
+
+**Apple's hard rule, and what it decides.** Since iOS 13 EVERY VoIP push must report a CallKit call
+before its completion handler returns; an app that does not is killed, and repeated misses stop
+VoIP delivery to it. So the rule is split in two:
+
+| Case | The server (never sends the push) | The phone (reports whatever arrives) |
+| --- | --- | --- |
+| `calls_mode` `off` (or video asked under `audio`) | `ring` refused before any fan-out (`assertCallsOpen`) | - |
+| A block between caller and callee | `ring` refused (`refuseIfBlocked`) | - |
+| The callee refused calls here, or the conversation is at `none` with no choice made | not in the fan-out (`membersWhoTakeCalls`, `callsAllowedFor`) | - |
+| The ring ended (`ring-end`: answered, cancelled, ended) | withheld: `ring-end` writes `call:room:<id>:ring_ended` for a room of ITS group, read before each device (`liveRingDeadline`) | a push that crossed it rings until `call_ring_end` or the deadline |
+| The answer window closed | withheld (`answer_by` in the past) | a push held by APNs and delivered late: reported and ENDED at once (`ringUntil` past) |
+| A binary without the ring | no token (cleared by its explicit `null`) | - |
+| The APNs key missing | the device is NOT rung, ERROR once per fan-out - no FCM alert in its place | - |
+| A malformed or unknown payload | - | reported and ended at once |
+
+The phone's half is `CanariReportVoipCall` (`canari_push.mm`): synchronous on the registry's main
+queue, before `completion()`; a call already rung by the MLS invite is reported again under the same
+UUID (CallKit refuses the duplicate, which still honours the contract, and nothing new rings).
+
+**The name: never in the push.** The VoIP payload is `{type, groupId, callId, callerId, hasVideo,
+ringUntil}` (`voipRingPayload`, `call-ring-payload.ts`, its key set pinned by a test) - ids and the
+server's deadline, never `callerName`/`groupName` (decision 6). The phone writes the caller on the
+CallKit screen from ITS copy of names (`display_names.json`, under the owner rule a mention uses -
+`CanariCallerDisplayName`), and "Appel Canari" / "Canari call" (`notif.call.unknown_caller`) for a
+caller it never named. APNs still sees the two ids and the timing: pseudonymous metadata, the same
+level as every message push. The Android payload is untouched here (WP-C5).
+
+**Ring timeout and ring-end.** The ring ends at the earliest of: the server's answer deadline
+(`ringUntil`, capped at the native 60 s) - so the phone never rings past the window `room-token`
+enforces; `call_ring_end` (FCM, `content-available`, priority 5, `CanariHandleBackgroundFrame`);
+the MLS `call_hangup` once the app runs; the user's decline (local only, as on Android). **Named
+limitation**: Apple throttles priority-5 background pushes, so a CANCELLED call may ring on a closed
+iPhone until its deadline. To measure on the bench (K7) before anything is built; if it is bad, the
+remedy is a `PushSecret`-authenticated ring-state read by the ringing call, never a VoIP push for
+the end (each one would have to report a new call).
+
+**Answering from the lock screen, and the audio hand-off.** CallKit's answer cannot start audio:
+the MLS keys are behind the app's PIN in the web view. The answer writes `pending_call_accept.json`
+and fires the `acceptCall` deep link; from the lock screen the user unlocks (Face ID), opens Canari
+from CallKit's button, enters the PIN; the web view drains the accept and joins when the MLS invite
+arrives over the socket. On `didBecomeActive` the CallKit call is ended (`AnsweredElsewhere`), so
+WebKit owns the audio session from then on, and the `audio` background mode (`CALLS_COMPILED`)
+keeps the call alive when the phone locks again (WP-C-BG-I). Cost, accepted by this design: the
+caller hears it ring until the callee has unlocked, inside the 60 s window; Messenger connects at
+once because its keys are not behind a PIN. Keeping the CallKit call for the whole call (the green
+pill, the system in-call screen) means handing CallKit's `didActivateAudioSession` to WebKit, which
+nothing here has measured - a later lot.
+
+**Declarations.** `voip` in `UIBackgroundModes` (the flip; `audio` comes with `CALLS_COMPILED`,
+`remote-notification` is there). **No new entitlement**: PushKit and CallKit need none; the App ID
+keeps its Push Notifications capability (`aps-environment production`). App Review: the 2.5.4
+refusal of 2026-08-31 is answered by a build that rings - the review notes and video show a locked
+iPhone ringing. CallKit is not allowed on the China mainland storefront.
+
+**The flip, ONE commit (described, not made):** `CALLS_NATIVE_RING_COMPILED = true`;
+`kCanariCallsEnabled = YES`; `voip` in `Info.plist`; and - the constant is SHARED with Android -
+the Kotlin `CALLS_ENABLED` and `USE_FULL_SCREEN_INTENT`, so either WP-C5 lands first or the
+constant is split per platform (the owner's call). `callsCompiled.test.ts` asserts all of it agrees.
+Preconditions: `CALLS_COMPILED` on (asserted), the `DEV_APNS_VOIP_*` secrets, K6/K7/K8 on the iPhone.
+
+**Uncompiled**: the Objective-C of this lot was written on Windows and is held only by
+`nativeRingVoip.test.ts` (text) until the iOS CI job compiles it and K6/K7/K8 run it.
 
 ## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
 
@@ -331,11 +431,19 @@ two clients, with Cloudflare TURN as the last resort, and the host carries only 
 connect from production ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md#8-what-works-with-no-port-opened-by-the-dsi-measured-2026-10-16)).
 Nothing in this lot needs the DSI.
 
+**The call keys and the group's epoch (2026-10-22).** Each end derives the media keys from the
+conversation's CURRENT MLS epoch (`setupEncryption`), the caller before the ring and the callee after
+the answer, so an epoch move in between gives the two ends different keys. `CallService` holds the
+periodic leaf refresh of its call's group from leaving `idle` until the call is over
+([mls-protocol](../../protocols/mls-protocol.md#the-periodic-leaf-refresh)). It holds only THIS
+device: another device or another member can still move the epoch while a call is being set up - the
+class `onUndecryptable` reports. Calls are dev builds only, and that is accepted for now.
+
 **The switches** (`frontend/src/lib/features.ts`, pinned by `features.test.ts`):
 
 | Constant | Value | Holds |
 |---|---|---|
-| `CALLS_COMPILED` | `false` | the store binaries' calling WITHOUT the native ring (since 2026-10-21, B2'): in-app calls, `audio` (since 2026-10-20), the microphone purpose strings, the Android microphone foreground service. Once it flips, the committed plist carries `audio` and `ios.yml`'s pre-release patch finds it there and adds nothing (it is idempotent; it can then be deleted). `callsCompiled.test.ts` asserts its switches agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)) |
+| `CALLS_COMPILED` | `true` (since the flip PR, 2026-10-22) | the store binaries' calling WITHOUT the native ring (since 2026-10-21, B2'): in-app calls, `audio` (since 2026-10-20), the microphone purpose strings, the Android microphone foreground service. The committed plist carries `audio` since the flip and `ios.yml`'s pre-release patch is deleted. `callsCompiled.test.ts` asserts its switches agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)) |
 | `CALLS_NATIVE_RING_COMPILED` | `false` | the NATIVE RING of an app closed or in the background (since 2026-10-21, B2'): `voip`, `USE_FULL_SCREEN_INTENT`, the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`. The owner's decision of 2026-10-21 ships the first production calls WITHOUT it; it turns on with WP-C5 + WP-C6 and their K6/K7/K8 readings, and never while `CALLS_COMPILED` is off (asserted) |
 | `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
 | `CALLS_VIDEO_ENABLED` | `deployEnvironment() === 'development'` (since 2026-10-21; `CALLS_ENABLED` from 2026-10-20) | the video-call button and the camera controls; dev builds only, and it does NOT follow `CALLS_COMPILED`: the first production calls are audio only ([the audio enablement](#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) |
@@ -502,7 +610,7 @@ anything: production's switch defaults to `off`, and `CALLS_COMPILED` is untouch
   the audio button needs `CALLS_ENABLED` and a mode other than `off`; the video button and the
   in-call camera control need `CALLS_VIDEO_ENABLED` and `audio_video` - to turn the camera ON: the
   control stays while the camera runs, so a mode dropped to `audio` mid-call never leaves a camera
-  nothing on screen can stop. The session cache of `/api/version` stores the WIRE shape
+  nothing on screen can stop. **Three more readers act on it once an answer exists** (`callsAvailableAnswered()`: when no answer came yet it awaits `refreshAppVersionCheck`, so an invite that beats `/api/version` is judged on the answer, never on the default `off`): the incoming-invite gate in `CallService.handleCallSignal` (an ANSWERED `off` does not ring, logged), `handleCallSignalForChat` (the same predicate writes a MISSED call instead of "call started"), and the session-start `/api/calls/sibling-status` check. The per-conversation 'calls allowed' control in `ChatGroupPanel` uses `callsAvailable(serverCallsMode())` and is simply hidden while off. The session cache of `/api/version` stores the WIRE shape
   (`serverVersionInfoToWire`), the one it parses back; it stored the parsed shape and read every
   cached mode back as `off`. A refusal at any setup step
   carries its code (`CallInitiateError`, now also for `ring` and `ice-servers`) and
@@ -788,7 +896,7 @@ The rule is ONE function on each side - `callsAllowedFor` in
 |---|---|---|
 | The ring PUSH (`POST /api/calls/ring`: FCM `call_ring`, APNs VoIP) - the only thing that rings a killed or backgrounded phone | **the server**, `CallsService.ringGroup` -> `membersWhoTakeCalls`, read at each ring, never cached | no push at all, whatever build the phone runs; logged `[ring] call=... withheld from N member(s) - calls not allowed in this conversation` (ids cut). The caller is told nothing - the call goes unanswered like any other |
 | The in-app invite (MLS `call_invite` over the chat socket - ciphertext the server cannot read) | **the client**, from its copy in `notificationPreferences` | `CallService.handleCallSignal` does not ring (logged); `handleCallSignalForChat` writes the call as **MISSED at once** (`recordCallMissed`, final - the caller's later hangup leaves it), so the line is in the conversation instead of the ring. One predicate, one timeline writer |
-| A native handler that decrypts a `call_invite` push (Android `CanariFirebaseMessagingService`, iOS) | **owed at revival** (WP-C5 / WP-C6), from the device's local copy - today `CALLS_COMPILED = false` and no native ring runs | - |
+| A native handler that decrypts a `call_invite` push (Android `CanariFirebaseMessagingService`, iOS) | **owed at revival** (WP-C5 / WP-C6), from the device's local copy - today `CALLS_NATIVE_RING_COMPILED = false` and no native ring runs | - |
 
 **Stored and synced like the level.** On the member's own membership row: per ACCOUNT, every device,
 survives a reinstall, ends with the membership (leaving and account erasure hard-delete the row -
@@ -895,7 +1003,7 @@ call with the audio enablement. The paragraph below is the 2026-10-18 shape.
 `CALLS_COMPILED` from `features.ts` and asserts that the other switches of the table at the top
 of this page AGREE with it - the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`, the `voip`
 and (since 2026-10-20) `audio` entries of `UIBackgroundModes`, the `USE_FULL_SCREEN_INTENT` tag -
-that `ios.yml` adds `audio` to a pre-release build in the branch that turns in-app calls on, and that the microphone purpose
+that no build step (`ios.yml`, gradle) writes a call switch in, and that the microphone purpose
 string (base `Info.plist`, `fr.lproj`, `en.lproj`) names calls exactly when calls are compiled. It
 replaced three tests that each asserted "off" (`iosCallDeclarations.test.ts`, two cases of
 `androidFcmManifest.test.ts`, one of `pushSilentDecrypt.test.ts`): a hard-coded "off" fails the
@@ -1404,8 +1512,9 @@ experiment rows of the rig (below) settle it on Chrome 155:
 - **The background turns the camera OFF for real** (the same `cameraOff`: capture stopped, peer
   sees the avatar) and the return turns it ON again; never `track.enabled = false`, which kept the
   capture open and sent black frames. A button tap meanwhile cancels the automatic resume.
-- **640x480 at 30 fps, capped at 700 kb/s** (`CALL_VIDEO_MAX_BITRATE`); the cap is on the SENDER's
-  encodings, so it survives a switch.
+- **720p at 30 fps at most, moved by a quality ladder** since 2026-10-21 (it was a fixed 640x480,
+  700 kb/s): [the quality ladder](#the-quality-ladder-2026-10-21---720p-and-an-automatic-drop).
+  The rung is on the SENDER's encodings, so it survives a switch.
 - **The screen**: the peer's picture full screen only while its track is live AND unmuted (else the
   avatar); the self view full screen until there is a peer picture, then a corner (landscape-aware);
   mirrored for the front camera only; `cover` when the peer's picture is held the way this screen
@@ -1415,7 +1524,8 @@ experiment rows of the rig (below) settle it on Chrome 155:
 - **The report**: the worker line adds `video frames in sender=.. receiver=.. encrypted=..
   decrypted=.. decrypt-failed=.. keyframes-in=.. not-vp8=..` on a call that carried video (an audio
   call's line is unchanged), and a conclusive path check adds the decoder's own numbers
-  (`describeVideoStats`: size, fps, frames decoded, key frames, freezes, PLI, the send limit).
+  (`describeVideoStats`: size, fps, frames decoded, key frames, freezes, PLI, the send limit, and
+  since 2026-10-21 the encoder `enc=` and its mean encode time per frame `encode_ms=`).
 
 **Measured in the rig, 2026-10-20** (Chrome 155 to Chrome 155, fake camera at 30 fps, 34 s a row,
 the app's own worker, constraints, cap and `preferVp8`):
@@ -1447,6 +1557,208 @@ Audio stays clean on every row (match 0.96-0.98, LSD 3.92-4.02 dB on the gated r
 - **An old client cannot decrypt the new video** (a `<=1.3.1-alpha.4` dev build framed video whole).
   Those builds had `CALLS_VIDEO_ENABLED = false` and only dev builds call at all, so no shipped
   build is affected; audio between the two is unchanged.
+
+## The quality ladder (2026-10-21) - 720p, and an automatic drop
+
+**What was there.** A fixed 640x480 capture, the sender capped at 700 kb/s and 30 fps. libwebrtc
+adapts INSIDE a ceiling (GCC lowers its target, VP8's quality scaler shrinks the picture on a high
+QP), but nothing chose a larger picture on a good link, nor a smaller frame rate on a bad one. The
+owner asked (2026-10-21, _"oui, lance"_) for 720p/30 at 1.5-2.5 Mb/s and a drop the way WhatsApp
+and FaceTime do it.
+
+**What it is** (`utils/callVideoQuality.ts`: the pure step, and `CallVideoQualityLoop`, the ONE
+sample -> step -> apply loop that `CallService.startVideoQuality` AND the rig's page both run;
+`utils/callVideo.ts` `applyCallVideoRung` applies a rung). The camera is asked for 1280x720 as an
+IDEAL, never a `max` - both bench phones capture portrait (720x1280), and a landscape `max` can make
+the engine refuse or fall to a smaller preset; the size captured is logged
+(`[Call] camera captures WxH at F fps`). The SENDER's single encoding is set to one rung:
+
+| Rung     | `scaleResolutionDownBy` | Picture (720p capture) | fps | `maxBitrate` | Needs (estimate) |
+| -------- | ----------------------- | ---------------------- | --- | ------------ | ---------------- |
+| `720p30` | 1                       | 1280x720               | 30  | 2.5 Mb/s     | 1.2 Mb/s         |
+| `480p30` | 1.5                     | 853x480                | 30  | 1.2 Mb/s     | 600 kb/s         |
+| `360p30` | 2                       | 640x360                | 30  | 700 kb/s     | 350 kb/s         |
+| `360p15` | 2                       | 640x360                | 15  | 400 kb/s     | 180 kb/s         |
+| `180p15` | 4                       | 320x180                | 15  | 200 kb/s     | -                |
+
+A camera STARTS on `480p30`: libwebrtc's estimate starts near 300 kb/s and ramps, so a call opened
+at 720p would read "bandwidth" in its first seconds and drop; a clean link climbs to 720p after
+three clean samples. Every rung is the same capture scaled down by the sender, so a change never
+reopens the camera and survives a switch or an off/on (the encodings belong to the sender).
+
+**How it moves.** One `getStats()` every 2 s (`CALL_VIDEO_QUALITY_SAMPLE_MS`); each sample is read
+against the previous one (`videoEvidence`): the loss the peer reports for the packets sent between
+the two (`remote-inbound-rtp`), the round trip, the congestion controller's estimate
+(`candidate-pair.availableOutgoingBitrate`), the encoder's `qualityLimitationReason`, and the share
+of the interval the encoder spent encoding (delta `totalEncodeTime` / delta time).
+
+- **Only a FRESH receiver report is evidence of loss or round trip.** The peer's RTCP report is
+  cumulative and stays in `getStats` when reports stop coming (an outage, a peer that stalled): read
+  naively it is "0 % loss" forever. A loss and a round trip are read only when `reportsReceived` (or,
+  where an engine does not count them, the report's `timestamp`) moved since the previous sample;
+  otherwise both are UNKNOWN, and unknown never counts as clean. The pair's round trip stands in only
+  when the peer sends no report at all.
+- **Bad** (`judgeVideoEvidence`): loss >= 10 %, round trip >= 800 ms, a CPU-starved encoder, or one
+  limited by `bandwidth` while a KNOWN estimate is under the rung's need (a missing estimate is not
+  bad). **Two consecutive bad samples drop**; a SEVERE one (loss >= 25 %, round trip >= 1.5 s, an
+  estimate under half the need) drops at once. A bandwidth drop lands on the highest rung the
+  estimate carries, not one rung down.
+- **CPU is judged on the encoder's LOAD, not on its state.** `qualityLimitationReason=cpu` is a
+  sticky state: libwebrtc keeps reporting it after a drop has relieved the encoder, and judged alone
+  it walked a call from 720p to 180p one pair of samples at a time (review of #2173). So a sample is
+  CPU-bad only when the state says `cpu` AND the encoder was busy half the interval or more
+  (`CPU_ENCODE_SHARE_BAD`); a lingering `cpu` after a drop costs exactly one rung, a unit case.
+  `qualityLimitationDurations` was rejected for the same reason: it accrues while the state HOLDS,
+  so its delta says the state lingered, not that the encoder is still saturated.
+- **Clean**: a FRESH loss < 3 %, a KNOWN round trip < 350 ms, an encoder that is not limited (a
+  lingering `cpu` counts as not limited once the encoder is under 30 % busy, `CPU_ENCODE_SHARE_CLEAR`),
+  and an estimate that is absent or either carries the rung above OR stands 1.3 times above the
+  bitrate actually sent (`HEADROOM_CLIMB`). **Three consecutive clean samples climb ONE rung.** The headroom clause is
+  measured, not argued: the rig's cheap synthetic scene sent ~670 kb/s at 480p, the estimate
+  followed what was sent, and the call never reached 720p's 1.2 Mb/s need. A full link reads an
+  estimate close to what is sent (ratio ~1), so it never qualifies on headroom.
+- **A stale `bandwidth` does not pin a call.** After a camera switch (and an off/on), Chrome went on
+  reporting `qualityLimitationReason=bandwidth` for the whole call at ~700 kb/s sent against a
+  2.97 Mb/s estimate: libwebrtc's start-up adaptation, not the link (rig trace, 2026-10-21). So
+  `bandwidth` blocks a climb only while the estimate does not show BOTH the rung above's need and
+  headroom over what is sent; it still drops a rung whenever the estimate is under the current
+  rung's need.
+- **A failed probe doubles the price of the next one**: a drop within 15 samples (~30 s,
+  `PROBE_WATCH`) of a climb doubles the clean samples needed to climb into that rung again (up to 48,
+  ~96 s). The watch was five samples in the first draft, and a link that held 720p for ~16 s cycled
+  every ~20 s at an unchanged price (review of #2173); a simulation test now runs that link for 300
+  samples and asserts a handful of climbs, each further apart than the last.
+- **A RELAYED call is capped at `480p30`** (`CALL_VIDEO_RELAY_TOP_RUNG`): when the selected pair's
+  local or remote candidate is `relay`, the media crosses our TURN server, whose traffic is billed;
+  a ladder above the cap is brought down at once (`cause: relay` on the line) and never climbs past
+  it while the pair stays relayed.
+- **Counted, never timed.** A camera that is off sends nothing and is no evidence: both streaks
+  break and nothing moves, and the 2 s timer is NOT re-armed while the sender has no track - turning
+  the camera back on resumes it from a new baseline. The sample read across a change is never judged
+  (it mixes two encodings).
+- **`degradationPreference` is left unset, deliberately.** Two controllers would then move the same
+  picture: libwebrtc's own adaptation (inside the ceiling the rung sets) and this ladder (the
+  ceiling). Setting `maintain-resolution` or `maintain-framerate` would change what libwebrtc does
+  inside a rung and is a separate decision; the ladder's start line logs the value the sender
+  carries (`degradationPreference=unset` expected), and reading VQ checks it on each phone.
+- **Why the estimate alone never drops a rung.** A still scene encodes far under its ceiling, and
+  libwebrtc's estimate seldom grows much past what is sent: a low estimate is then the SCENE. Only
+  the encoder saying it had to shrink for want of bandwidth, or the peer reporting loss, or a round
+  trip that says the path is queueing, is evidence about the link. The same fact sets the needs: each
+  rung's need is at most the ceiling of the rung below, so a link that fills a ceiling qualifies for
+  the next rung up.
+- **Every change costs a key frame** (VP8 restarts on a new resolution) - one more reason the
+  climb is slow and the probe price doubles.
+- **The log** (`[Call]`): `video quality ladder starts on 480p30 (degradationPreference=unset)`
+  once, then one line per change, naming its evidence -
+  `video quality up 480p30 -> 720p30 after 3 clean samples (loss=0% rtt=40ms limit=none avail=2600kbps sent=900kbps enc=6%)`,
+  `video quality down 720p30 -> 360p15 after a severe sample, the climb into 720p30 failed - the next one needs 6 clean samples (...)`;
+  then `video sender on <rung> (...)`. Nothing per sample. A WARN, ONCE per ladder, if the peer sends
+  no fresh loss figure for five samples (the ladder then holds and cannot climb); a WARN, once, if
+  `getStats` fails; an ERROR and the ladder STOPS if the engine refuses `setParameters` - there is no
+  other way to set a rung, so nothing else is tried. Refused at the START (before negotiation), the
+  line is `video quality ladder not started: the sender refused 480p30`, and reading VQ looks for
+  it. A refusal leaves the reduced-picture flag as the sender still is: the encodings did not change.
+- **The screen** says _"Votre vidéo est envoyée en qualité réduite (connexion ou appareil saturé)"_
+  under the status line while this side's camera is on and the ladder stands at `360p15` or below
+  (`CallService.videoSendReduced`, `CALL_VIDEO_REDUCED_FROM_RUNG`). It speaks of THIS side's
+  picture only: the peer's ladder is the peer's.
+- **E2E unchanged.** VP8 only, the 10-byte key-frame / 3-byte interframe clear header bound as AAD:
+  the header layout does not depend on the size (a VP8 key frame carries a 14-bit width and height,
+  1280x720 fits), and the worker encrypts any length - a 720p key frame is only a larger
+  ciphertext. The `video` rig row decrypts every frame at 720p with 0 failures.
+
+**Measured in the rig, 2026-10-21** (Chrome 155 to Chrome 155 on the bench desktop, Chrome's fake
+camera at 30 fps - a synthetic pattern that compresses far better than a face, so the BITRATES are
+low and only the shape and the encode cost carry over; 34 s a row; `encode ms/frame` is libwebrtc's
+`totalEncodeTime / framesEncoded`, the encoder's wall time, which can understate CPU when libvpx
+threads):
+
+| Row                       | Verdict           | Sent (ladder)                          | Decoded             | Key frames | Encode ms/frame (% of a core)                          |
+| ------------------------- | ----------------- | -------------------------------------- | ------------------- | ---------- | ------------------------------------------------------ |
+| `video`                   | PASS              | 1280x720, 914 kb/s (480p30 -> 720p30)  | 29.8 fps, 0 freezes | 5          | 1.71 (5.1)                                             |
+| `video-camera-late`       | PASS              | 1280x720, 885 kb/s (480p30 -> 720p30)  | 28.7 fps, 0 freezes | 3          | 10.46 (30.0) - host noise, 1.43-1.48 in two other runs |
+| `video-switch`            | PASS              | 1280x720, 1031 kb/s (480p30 -> 720p30) | 29.8 fps, 0 freezes | 3          | 3.26 (9.7)                                             |
+| `video-off-on`            | PASS              | 1280x720, 985 kb/s (480p30 -> 720p30)  | 29.8 fps, 0 freezes | 3          | 1.89 (5.7)                                             |
+| `video-rung-720p` (held)  | experiment        | 1280x720, 977 kb/s                     | 29.9 fps            | 4          | 1.58 (4.7); 1.71 in run 1                              |
+| `video-rung-480p` (held)  | experiment        | 853x480, 610 kb/s                      | 29.9 fps            | 4          | 1.17 (3.5); 1.74 in run 1                              |
+| `video-rung-360p` (held)  | experiment        | 640x360, 476 kb/s                      | 30 fps              | 3          | 0.96 (2.9); 1.03 in run 1                              |
+| `video-whole-frame`       | experiment        | 1280x720                               | 29.9 fps            | **537**    | -                                                      |
+| `fault-video-bare-sender` | fails, as it must | -                                      | 0 frames, 112 PLI   | 0          | -                                                      |
+
+Every row decrypts every frame it receives (decrypt-failed 0 on the gated rows); audio unchanged
+(match 0.97-0.98, LSD 3.92-3.95 dB). **Read of the cost:** on a desktop CPU, 720p costs ~1.3-1.5x
+the encode time of 480p and stays near 5 % of one core; the run-to-run spread (two Chromes encoding
+on one host) is as large as the difference between rungs, so the rig says "no cliff", not a number
+to carry to a phone. **The phone cost is owed** (below): libvpx is software on the iPhone, and the
+Mi 9T may or may not get a hardware VP8 encoder in its WebView (`enc=` on the log line says which).
+**Two things the first run found, both fixed before this table:** the switch and off/on rows never
+climbed (the headroom clause and the stale-`bandwidth` clause above), and the `video` row's key
+frames reached the old bound of 5, since each rung change costs one: `video-keyframes` is now 8, still
+two orders of magnitude under the 537 of a header that is not readable.
+**Re-run after the review fixes (2026-10-21, same rows):** the ladder's shape held on every row -
+each climbed `480p30 -> 720p30` once, key frames 3-5, decrypt-failed 0 - but the host sat at 100 %
+CPU from parallel jobs (measured with no rig running), and `video-switch` / `video-off-on` fell
+under the 27 fps bound together with the HELD `video-rung-480p` control, which runs no ladder at all,
+and an audio concealment bound. That is the host, not the change; the table above is the quiet-host
+run.
+
+**What the rig cannot show.** The DROP: the rig impairs at the receiver TRANSFORM (frames), not on
+the wire, so libwebrtc's congestion controller and the peer's loss report never see it. The downward
+path is proven by the unit tests (`callVideoQuality.test.ts`: every threshold, the streaks, the
+severe drop, the probe price, the cap) and by the service tests on fake stats
+(`CallService.p2p.test.ts`, "the quality ladder") - and it is owed on the phones, below.
+
+### Measuring it on the phones (owed: device-verification VQ)
+
+The reading agent runs this on both bench phones against a desktop Chrome
+(`bun tools/cross-client-harness/callpeer.mjs --browser w3 --launch --dial --video --seconds 300 --hangup`),
+records the numbers in [device-readings-2026-10](../../device-readings-2026-10.md), and the verdict
+in [device-verification VQ](../../device-verification.md#vq-call-video-at-720p-and-its-quality-ladder---owed-on-both-phones-mi-9t-iphone-12).
+
+1. **The climb.** Good Wi-Fi, phone screen on, the call screen up. First record three lines: the
+   size the camera really captures (`[Call] camera captures WxH at F fps (user)` - 720x1280 or
+   1280x720 expected; anything smaller means the constraints did not reach 720p), the
+   `video quality ladder starts on 480p30 (degradationPreference=unset)` line (any other value means
+   a second controller is set), and the ABSENCE of `video quality ladder not started`. Expect `video quality up 480p30 -> 720p30`
+   within ~10 s of `connected`, then `callpeer`'s received picture at 1280x720 (or 720x1280), ~30 fps,
+   freezes 0. Each conclusive path check logs `video ... send=... enc=<encoder> encode_ms=<mean>`:
+   record `enc` (software `libvpx`, or a hardware encoder) on each phone.
+2. **The cost, per rung, 5 minutes each, the same scene** (the phone propped, the front camera on a
+   face or a busy room, never a blank wall). Four runs per phone: an AUDIO call (the baseline), a
+   video call at 720p, at 480p, at 360p. Read every 10 s:
+   - **Mi 9T** (adb): `adb shell top -b -n 1 -m 15` - the app process AND the WebView renderer
+     (`com.google.android.webview:sandboxed_process*`), where WebRTC encodes; `adb shell dumpsys
+     thermalservice` (the throttling status and the skin / CPU temperatures); `adb shell dumpsys battery`
+     (`temperature` in tenths of a degree, `level`).
+   - **iPhone 12** (no adb): the app's own `encode_ms` and `limit=` lines from the in-app log, and the
+     process CPU from `pymobiledevice3 developer dvt sysmon process single` (filter the Canari process
+     AND `com.apple.WebKit.GPU` / `com.apple.WebKit.WebContent`, where WebKit runs WebRTC - read
+     `--help` first, the flags move between versions) and the battery temperature from
+     `pymobiledevice3 diagnostics battery single` (`Temperature`, hundredths of a degree). The thermal
+     STATE is not readable from outside; a "the iPhone is hot" banner or the screen dimming is
+     recorded as seen.
+   - **Holding a rung**: the ladder holds 720p on a clean link by itself. For 480p and 360p, throttle
+     the PHONE's uplink so the ladder settles there (step 3): ~1 Mb/s holds `480p30`, ~500 kb/s holds
+     `360p30`. On the Mi 9T, a rung can also be held over CDP (dev builds are inspectable): track
+     the page's peer connections as `callpeer.mjs` does, then `setParameters` on the video sender
+     with that rung's values - the ladder re-applies only on a CHANGE, and a clean link at the top
+     makes none.
+   - **The verdict per rung**: CPU (% of the app's processes), the temperature after 5 minutes, the
+     battery % spent, and whether `limit=cpu` or a `video quality down ... limit=cpu` line appeared.
+     720p is acceptable on a phone if it holds 30 fps with no `cpu` limit for 5 minutes and its
+     temperature rise stays within a few degrees of the 480p run; otherwise the reading says so and
+     the start rung or the top rung is revisited (a constant here, not a redesign).
+3. **The drop and the return.** Throttle the phone during a call:
+   - **iPhone**: Settings > Developer > Network Link Conditioner (present while the developer image
+     is mounted, as it is for WebDriverAgent): "3G", then "Very Bad Network", then a custom profile
+     (uplink 500 kb/s, 5 % loss, 300 ms delay).
+   - **Mi 9T**: Wi-Fi through the bench PC's mobile hotspot, shaped there (Windows `clumsy`: drop
+     10 % / lag 400 ms; a bandwidth cap if the shaper has one).
+   - Expect a `video quality down` line within ~4 s (two 2 s samples, or one severe), naming its
+     evidence; the reduced-picture notice at `360p15` and below; no freeze longer than the drop
+     itself (`callpeer`'s `freezes`). Lift the throttle: one rung climbed per ~8 s, and a climb that
+     fails at once doubles the next one's price (the line says so).
 
 ## The call UI: the whole screen, or a bar at the top (2026-10-19)
 
@@ -1542,6 +1854,24 @@ posted if the app leaves the screen while the call still rings, dropped when the
 If a banner still shows in the foreground on the next reading, it is not this path - see
 [backlog](../../backlog.md#p3---an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix-2026-10-19).
 
+### One call screen on every platform (2026-10-23)
+
+**The request** (user): *"la parite, au moins en apparence, sur toutes les plateformes pour les appels. Un affichage plein ecran avec le nom, la photo et les boutons pour decrocher/decliner ... comme une application d'appel (Messenger, WhatsApp)."*
+
+**The audit found the structure already there** (`CallOverlay` is full screen with safe-area padding, name, avatar, decline/accept, mute, hang-up, timer, on web and in both apps, because the apps embed the same frontend). What was missing was the LOOK, and the three surfaces speaking one language:
+
+| Moment | In-app screen (web, Android, iPhone) | Android native ring (CallStyle + full-screen intent) | iPhone native ring |
+|---|---|---|---|
+| Incoming | name, photo, "Appel entrant", **Refuser (red, left) - Accepter (green, right)** | the system CallStyle: Decline left, Answer right | generic alert until the native ring (another work package) ships; CallKit's own screen, once it does, is decline left, accept right |
+| Outgoing | name, photo, **"Appel..." / "Calling..."** (was "Sonnerie..." / "Ringing..."), mute, hang-up | - | - |
+| In call | name, photo, `mm:ss`, mute, camera, speaker (apps only), hang-up | the ongoing CallStyle with the same "Calling..." text while dialling (it reads the same `call_ringing_label`) | - |
+
+What changed: the other person's photo, blown up, blurred and dimmed, is the backdrop of an audio screen (the SAME `Avatar` component, so one cache and one fallback; with no photo it is the dark initials tile; hidden from assistive tech; absent over a video picture). The avatar is larger (128 px, 176 px from `md`), the name is `text-3xl`, and the accept and decline buttons take two tokens, `--color-call-accept` and `--color-call-decline`, fixed in both themes like `cn-scrim`. An incoming ring after a notification tap is the same screen: every call opens full screen, on any route. Calls are 1:1 (a group has no call), so there is no group screen to draw. No control depends on the keyboard, and `motion-safe` gates the ringing halo.
+
+`CallOverlay.svelte.test.ts` ("the screen every platform shows") pins the name, the backdrop, decline-before-accept DOM order, the tokens, "Calling..." and the absence of Accept on an outgoing call.
+
+**Rendered in Chromium** with a stand-in `CallService` on a public route (no estate, no account, so the photo is the initials tile): [incoming at 390x844](assets/call-screen-incoming-390.png), [in call at 390x844](assets/call-screen-live-390.png), [calling at 1280x800](assets/call-screen-calling-1280.png) (the desktop screen is the whole window, as on Messenger web). **Owed to a phone:** a REAL photo behind the blur on the Mi 9T and the iPhone (WebKit's `blur-3xl` on a scaled element is the cost to read), the safe-area on the notch, and the Android speaker button in the screenshot's place.
+
 ### Ringing, announcing, hearing
 
 - **The ring is an `alertdialog` with focus on Accept** (`preventScroll`); once answered it is a
@@ -1611,11 +1941,10 @@ none was shown to be missing.
 
 **What was built:**
 
-- **The `audio` mode on every PRE-RELEASE iPhone build**, patched by `ios.yml` in the SAME branch that
-  writes `VITE_DEPLOY_ENVIRONMENT=development` (the line that turns in-app calls on), never into the
-  committed `Info.plist`. A stable cannot call (`CALLS_COMPILED = false`), and a mode declared and
-  unused is what App Review refused once (2.5.4). It becomes the SIXTH switch: `callsCompiled.test.ts`
-  asserts the committed mode follows `CALLS_COMPILED` and that `ios.yml` adds it only in that branch.
+- **The `audio` mode**, first patched into every PRE-RELEASE iPhone build by `ios.yml`, and **in the
+  committed `Info.plist` since the flip (2026-10-22)**: the patch is deleted. A mode declared and
+  unused is what App Review refused once (2.5.4), so `callsCompiled.test.ts` asserts the committed
+  mode follows `CALLS_COMPILED` and that no build step writes it.
 - **CallKit is NOT the fix for this.** The process was never suspended, so a CallKit report would buy
   nothing the measurement shows missing; reporting every call to CallKit stays with the `voip` revival
   (it is mandatory for a VoIP push, which the in-app call does not use).
@@ -1636,7 +1965,7 @@ none was shown to be missing.
 
 **Owed on hardware** (a pre-release carrying this, both phones; the steps are
 [CALL-L1](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)
-row 12): the `UIBackgroundModes of this pre-release build:` line of the iOS job lists `audio`; the
+row 12): the `UIBackgroundModes of the built app:` line of the iOS job lists `audio`; the
 iPhone locked 60 s and backgrounded 60 s mid-call - the Mi 9T's inbound audio packets keep rising,
 the iPhone logs NO `the system took the microphone`, and the Mi 9T's voice is heard on the locked
 iPhone. Three more, because the mode is APP-WIDE and the signal is new: whether a reel and a voice
@@ -1713,15 +2042,13 @@ phone while it rings would be refused at `incall`.
 list of `microphone` uses names "communication apps". Moving to `phoneCall` means a self-managed
 `ConnectionService`, a larger piece of work with its own Play declaration.
 
-**Only in builds that place calls.** `src/calls/AndroidManifest.xml` (the service,
-`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`) is merged by `app/build.gradle.kts` into the
-debug and release build types when `VITE_DEPLOY_ENVIRONMENT` is `development` - read from the process
-environment, then `frontend/.env`, the order Vite reads them, and printed by Gradle
-(`Canari ongoing-call service: IN this build ...`). That is every pre-release and a local build that
-sets it; a stable merges nothing. `androidCallServiceManifest.test.ts` asserts the main manifest
-declares it exactly when `CALLS_COMPILED` is true - so the revival commit moves it into
-`src/main/AndroidManifest.xml` with the other `CALLS_COMPILED` switches, or fails there (not with
-the native ring's `CALLS_NATIVE_RING_COMPILED`: an in-app call needs it). `CALLS_COMPILED` stays false.
+**In the main manifest since the flip (2026-10-22).** The service, `FOREGROUND_SERVICE` and
+`FOREGROUND_SERVICE_MICROPHONE` were a `src/calls/AndroidManifest.xml` overlay merged by gradle on
+`VITE_DEPLOY_ENVIRONMENT=development`; the overlay and that gradle code are deleted and every build
+carries the declaration. `androidCallServiceManifest.test.ts` asserts the main manifest
+declares it exactly when `CALLS_COMPILED` is true (not with the native ring's
+`CALLS_NATIVE_RING_COMPILED`: an in-app call needs it); `android.yml` reads the BUILT manifests
+against the same constant. `CALLS_COMPILED` is true since the flip.
 
 **Google Play.** Since API 34 every foreground service declares a type, and Play asks the developer
 to declare each foreground-service permission in the Play Console (App content, "Foreground service
@@ -1737,13 +2064,10 @@ still built.
 **What was BUILT is checked too.** `android.yml` reads the merged manifest of BOTH artifacts after
 the build (the AAB's protobuf manifest through `unzip | grep -a`, its strings are plain UTF-8; the
 APK's binary XML through `aapt2 dump xmltree`) and FAILS when `FOREGROUND_SERVICE_MICROPHONE` or
-`CallForegroundService` is present in a stable while `CALLS_COMPILED` is false - or absent from a
-pre-release. `RECORD_AUDIO` is the anchor: a dump that lost it is reported unread, never a pass,
-and `CALLS_COMPILED` is parsed as the one exported boolean - anything else fails the step. **When
-`CALLS_COMPILED` flips to true, a stable FAILS this step by design**: gradle still merges the
-service only on `VITE_DEPLOY_ENVIRONMENT=development`, so the revival commit must move the
-declaration into `src/main/AndroidManifest.xml` (the manifest test holds it to that) before a stable
-can pass.
+`CallForegroundService` is present while `CALLS_COMPILED` is false - or absent while it is true. `RECORD_AUDIO` is the anchor: a dump that lost it is reported unread, never a pass,
+and `CALLS_COMPILED` is parsed as the one exported boolean - anything else fails the step. Since the
+flip the declaration is in `src/main/AndroidManifest.xml` and gradle merges nothing, so a stable and a
+pre-release carry it alike.
 
 **Pinned by** `androidCallService.test.ts` (start/update/stop with the call id, the one
 `foreground`-driven second ask after an `off-screen` refusal and nothing after a second, no stop
@@ -1852,8 +2176,8 @@ The separate `POST /api/calls/ring` and `POST /api/calls/ring-end` endpoints han
 When the app is killed, CallKit is the only way to show an incoming call UI. The flow:
 
 1. Caller's client → `POST /api/calls/ring`
-2. Backend sends **direct APNs VoIP push** to iOS devices with a `voipToken` (ES256 JWT, topic `<bundle>.voip`).
-3. `PKPushRegistry` delivers the VoIP push → `CanariReportIncomingCall` reports a CallKit call.
+2. Backend sends **direct APNs VoIP push** to iOS devices with a `voipToken` (ES256 JWT, topic `<bundle>.voip`), ids only, while the ring is live.
+3. `PKPushRegistry` delivers the VoIP push → `CanariReportVoipCall` reports a CallKit call. The design, the rules and what is owed: [the native ring on the iPhone](#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22).
 4. User answers → writes `pending_call_accept.json` → fires accept deep link.
 5. App unlocks → TS store drains `pendingCallAccept` → `CallService` auto-accepts when the matching MLS invite arrives over WS.
 6. CallKit session ended on `didBecomeActive` (handed over to in-app WebRTC).
@@ -1873,7 +2197,7 @@ VoIP push tokens are persisted to `voip_token.txt` and registered via `/api/mls/
 
 ## Ring-end (stop ringing)
 
-`POST /api/calls/ring-end` with reason (`answered` / `cancelled` / `ended`) is sent to **all** members including the caller's own devices. Both platforms also arm a local 60 s timeout.
+`POST /api/calls/ring-end` with reason (`answered` / `cancelled` / `ended`) is sent to **all** members including the caller's own devices. Both platforms also arm a local 60 s timeout for the NATIVE ring; **the iOS generic FCM alert has none** - a delivered banner stays until it is removed, which `call_ring_end` does best effort (by `canariCallId`) and app activation does (`CanariPushCancelMessageNotifications` clears every chat-deep-linked banner).
 
 Ordering: `call_ring_end` must be processed **before** the foreground guard — a stale ring must clear even if the user opened the app.
 

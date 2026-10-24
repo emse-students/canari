@@ -1,8 +1,9 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, LessThan, Repository } from 'typeorm';
+import { EntityManager, In, LessThan, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { AuthSession } from './entities/auth-session.entity';
+import { EndedSession, SessionEndCause, SessionPushEndService } from './session-push-end.service';
 
 /** Idle lifetime of a session. Every successful refresh pushes the deadline forward. */
 export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -16,6 +17,24 @@ export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
  * user is signed out. A minute is far shorter than the 7-day token it protects.
  */
 export const ROTATION_GRACE_SECONDS = 60;
+
+/**
+ * Whether `presented` is the `jti` the session's last rotation replaced, still inside
+ * {@link ROTATION_GRACE_SECONDS}. ONE predicate for every caller that accepts that token: the
+ * refresh itself, and a restore-key registration racing it (docs/wiki/account-restore.md).
+ */
+export function isPreviousTokenInGrace(
+  row: Pick<AuthSession, 'previousTokenId' | 'rotatedAt'>,
+  presented: string,
+  now: Date
+): boolean {
+  return (
+    row.previousTokenId === presented &&
+    row.rotatedAt !== null &&
+    row.rotatedAt !== undefined &&
+    now.getTime() - row.rotatedAt.getTime() <= ROTATION_GRACE_SECONDS * 1000
+  );
+}
 
 /**
  * How often expired rows are swept. An expired row is already refused, so for AUTHENTICATION this is
@@ -56,8 +75,12 @@ export interface SessionSummary {
   deviceId: string | null;
 }
 
-/** Longest device identifier the column accepts. Anything longer is a client bug, not a device. */
-const MAX_DEVICE_ID_LENGTH = 128;
+/**
+ * The device ids a session may name: what chat-delivery-service accepts on every route that names a
+ * device (`libs/contracts/device-id.json`, asserted by both sides' specs), within the column's 128
+ * characters. A session naming anything else would record push endings no retry could deliver.
+ */
+export const DEVICE_ID_PATTERN = /^[a-zA-Z0-9_.:@-]{1,128}$/;
 
 /**
  * Server-side store backing the refresh cookie.
@@ -73,8 +96,34 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     @InjectRepository(AuthSession)
-    private readonly sessions: Repository<AuthSession>
+    private readonly sessions: Repository<AuthSession>,
+    private readonly pushEnd: SessionPushEndService
   ) {}
+
+  /**
+   * Deletes sessions and records the push ending each one owes IN ONE TRANSACTION - so a session's
+   * end and its push ending are one durable fact (`docs/wiki/sessions.md`, "A session that ends
+   * takes its device's push registration with it"). `remove` deletes inside the transaction and
+   * answers the rows it deleted; a failure anywhere rolls both back, and the caller's error is the
+   * user's to retry.
+   *
+   * The call to chat-delivery-service is NOT made here: `SessionPushEndService` drains the outbox
+   * right after the commit and on its own interval until chat-delivery answers 2xx, so a slow or
+   * absent chat-delivery never turns a logout into a refusal, and never loses the ending.
+   */
+  private async endSessions<T>(
+    cause: SessionEndCause,
+    remove: (repo: Repository<AuthSession>) => Promise<{ ended: EndedSession[]; result: T }>
+  ): Promise<T> {
+    let queued = 0;
+    const result = await this.sessions.manager.transaction(async (manager: EntityManager) => {
+      const { ended, result } = await remove(manager.getRepository(AuthSession));
+      queued = await this.pushEnd.enqueue(manager, ended, cause);
+      return result;
+    });
+    if (queued > 0) void this.pushEnd.drain();
+    return result;
+  }
 
   onModuleInit(): void {
     void this.deleteExpired();
@@ -166,12 +215,7 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
       return { status: 'unknown' };
     }
 
-    if (
-      row.previousTokenId === presentedTokenId &&
-      row.rotatedAt !== null &&
-      row.rotatedAt !== undefined &&
-      now.getTime() - row.rotatedAt.getTime() <= ROTATION_GRACE_SECONDS * 1000
-    ) {
+    if (isPreviousTokenInGrace(row, presentedTokenId, now)) {
       this.logger.debug(`Concurrent refresh accepted sid=${sessionId} (grace window)`);
       return {
         status: 'reissued',
@@ -183,7 +227,11 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
     // A `jti` that is neither current nor freshly rotated was already consumed:
     // the cookie exists in two places. Only revoking makes the theft useless -
     // logging it, as Le Cercle does, lets the rotation succeed for whoever asked.
-    await this.sessions.delete({ id: sessionId });
+    await this.endSessions('replay', async (repo) => {
+      const res = await repo.delete({ id: sessionId });
+      // A concurrent revocation that won the delete has recorded the ending itself.
+      return { ended: (res.affected ?? 0) > 0 ? [row] : [], result: undefined };
+    });
     // Two causes end here and look identical from outside: the previous token presented AFTER the
     // window (a client that lost the response of its last rotation, e.g. a suspended phone) and a
     // token spent two or more rotations ago (the credential genuinely forked). Say which, and how
@@ -198,15 +246,34 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
     return { status: 'replayed' };
   }
 
-  /** Destroys one session. Used by logout and by the owner revoking a device. */
+  /**
+   * Destroys one session - the logout - and records, in the same transaction, the ending of the push
+   * registration it made.
+   *
+   * The device is read before the row goes because the row is the only record of it; a session that
+   * never named one (a web tab, or a holder that never unlocked) has no push registration to end.
+   */
   async revoke(sessionId: string): Promise<void> {
-    await this.sessions.delete({ id: sessionId });
+    await this.endSessions('logout', async (repo) => {
+      const row = await repo.findOne({ where: { id: sessionId } });
+      if (!row) return { ended: [], result: undefined };
+      const res = await repo.delete({ id: sessionId });
+      return { ended: (res.affected ?? 0) > 0 ? [row] : [], result: undefined };
+    });
   }
 
-  /** Destroys a session only if it belongs to `userId`. Returns false when it does not exist. */
+  /**
+   * Destroys a session only if it belongs to `userId`, ending its device's push registration with
+   * it. Returns false when it does not exist.
+   */
   async revokeOwned(userId: string, sessionId: string): Promise<boolean> {
-    const res = await this.sessions.delete({ id: sessionId, userId });
-    return (res.affected ?? 0) > 0;
+    return this.endSessions('revoked-by-owner', async (repo) => {
+      const row = await repo.findOne({ where: { id: sessionId, userId } });
+      if (!row) return { ended: [], result: false };
+      const res = await repo.delete({ id: sessionId, userId });
+      const revoked = (res.affected ?? 0) > 0;
+      return { ended: revoked ? [row] : [], result: revoked };
+    });
   }
 
   /**
@@ -237,9 +304,10 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
    */
   async bindDevice(userId: string, sessionId: string, deviceId: string): Promise<boolean> {
     const trimmed = deviceId.trim();
-    if (!trimmed || trimmed.length > MAX_DEVICE_ID_LENGTH) {
+    if (!DEVICE_ID_PATTERN.test(trimmed)) {
       this.logger.warn(
-        `Device binding refused sid=${sessionId} user=${userId}: unusable device id (${trimmed.length} chars)`
+        `Device binding refused sid=${sessionId} user=${userId}: unusable device id ` +
+          `(${trimmed.length} chars, outside libs/contracts/device-id.json)`
       );
       return false;
     }
@@ -259,6 +327,8 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
 
     // Deleted by explicit id rather than by `deviceId`, so the statement cannot
     // reach the session we are about to stamp with that very value.
+    // The ONE revocation that does not end a push registration: every stray names the device this
+    // very session is being bound to, so the device's registration is the live session's.
     const strays = rows.filter((row) => row.id !== sessionId).map((row) => row.id);
     if (strays.length > 0) {
       await this.sessions.delete({ id: In(strays) });
@@ -274,18 +344,28 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
     return true;
   }
 
-  /** Destroys every session of `userId` except `keepSessionId`. Returns how many died. */
+  /**
+   * Destroys every session of `userId` except `keepSessionId`, and records the push ending each one
+   * owes - by session, so the kept session's own registration is never reached. Returns how many
+   * died.
+   */
   async revokeOthers(userId: string, keepSessionId: string | null): Promise<number> {
-    const qb = this.sessions
-      .createQueryBuilder()
-      .delete()
-      .from(AuthSession)
-      .where('"userId" = :userId', {
-        userId,
-      });
-    if (keepSessionId) qb.andWhere('id != :keep', { keep: keepSessionId });
-    const res = await qb.execute();
-    return res.affected ?? 0;
+    // RETURNING, so the sessions whose push registration ends are exactly the rows THIS delete
+    // removed - not a read taken before it, which a concurrent sign-in or revocation could change.
+    return this.endSessions('revoked-others', async (repo) => {
+      const qb = repo
+        .createQueryBuilder()
+        .delete()
+        .from(AuthSession)
+        .where('"userId" = :userId', {
+          userId,
+        })
+        .returning(['id', 'userId', 'deviceId']);
+      if (keepSessionId) qb.andWhere('id != :keep', { keep: keepSessionId });
+      const res = await qb.execute();
+      // Each ending is by session, so the kept session's registration is never reached.
+      return { ended: (res.raw ?? []) as EndedSession[], result: res.affected ?? 0 };
+    });
   }
 
   /** Live sessions of a user, most recently used first. Expired rows are filtered out, not waited on. */
