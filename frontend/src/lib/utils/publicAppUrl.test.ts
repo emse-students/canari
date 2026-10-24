@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import {
+  DEFAULT_PUBLIC_APP_ORIGIN,
+  canonicalPublicAppOrigin,
   inAppPathFromHref,
   inAppPathFromPublicUrl,
   isPublicAppUrl,
@@ -7,6 +9,8 @@ import {
   publicAppUrl,
 } from './publicAppUrl';
 import { setLocale } from '$lib/paraglide/runtime';
+import { siteOrigin } from '$lib/seo/site';
+import { sourceFiles } from '../../test/sourceTree';
 
 describe('publicAppUrl', () => {
   // Expected labels are French, so the locale is PINNED rather than inherited: the resolution
@@ -128,5 +132,42 @@ describe('publicAppUrl', () => {
     for (const path of ['/', '/chat', '/calendar', '/posts/abc', '/unknown']) {
       expect(publicAppLinkLabel(`https://canari-emse.fr${path}`)).not.toContain('Canari');
     }
+  });
+});
+
+describe('the canonical origin a build advertises', () => {
+  beforeEach(() => vi.stubEnv('VITE_FRONTEND_URL', ''));
+
+  it('is the baked origin, the canonical name in place of the legacy apex, the canonical name when nothing is baked', () => {
+    vi.stubEnv('VITE_FRONTEND_URL', 'https://dev.canari-emse.fr/');
+    expect(canonicalPublicAppOrigin()).toBe('https://dev.canari-emse.fr');
+    vi.stubEnv('VITE_FRONTEND_URL', 'https://canari-emse.fr');
+    expect(canonicalPublicAppOrigin()).toBe(DEFAULT_PUBLIC_APP_ORIGIN);
+    vi.stubEnv('VITE_FRONTEND_URL', '');
+    expect(canonicalPublicAppOrigin()).toBe(DEFAULT_PUBLIC_APP_ORIGIN);
+  });
+
+  it('is the one rule behind share links and canonical tags', () => {
+    for (const baked of [
+      'https://dev.canari-emse.fr',
+      'https://canari-emse.fr',
+      'https://canari.emse.fr',
+    ]) {
+      vi.stubEnv('VITE_FRONTEND_URL', baked);
+      expect(siteOrigin()).toBe(canonicalPublicAppOrigin());
+      expect(publicAppUrl('/x')).toBe(`${canonicalPublicAppOrigin()}/x`);
+    }
+  });
+
+  it('keeps the production names in this module: no other source reads the two constants', () => {
+    // A bundler inlines an imported string constant into its consumer's chunk, so a constant read
+    // elsewhere puts a production origin in a chunk the test rig cannot tell from a request target.
+    const files = sourceFiles({ under: ['src'], extensions: ['ts', 'svelte'], tests: 'exclude' });
+    expect(files.length).toBeGreaterThan(100);
+    const readers = files
+      .filter(({ path }) => !path.endsWith('lib/utils/publicAppUrl.ts'))
+      .filter(({ text }) => /\b(DEFAULT|LEGACY)_PUBLIC_APP_ORIGIN\b/.test(text))
+      .map(({ path }) => path);
+    expect(readers).toEqual([]);
   });
 });
