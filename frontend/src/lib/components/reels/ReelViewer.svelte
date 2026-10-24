@@ -24,7 +24,7 @@
   import ReelSlide from './ReelSlide.svelte';
   import ReelCommentsSheet from './ReelCommentsSheet.svelte';
   import { markViewerLayer } from '$lib/utils/viewerLayer';
-  import { railHeartToggle, type ReelRailActions } from '$lib/reels/reelRail';
+  import { pickedReactionToggle, railHeartToggle, type ReelRailActions } from '$lib/reels/reelRail';
   import { WheelPageLock, wheelOverScrollable, wheelStep } from '$lib/reels/reelWheel';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
@@ -227,6 +227,27 @@
     sendReaction(post, me, type, wasReacted);
   }
 
+  /**
+   * A PICK IN THE HEART'S DRAWER (long press): the card's picker - a kind the reader does not hold
+   * replaces theirs, the one they hold is taken back. Same guards as the heart.
+   */
+  function pickReaction(post: PostEntity, type: string) {
+    const me = likerId;
+    if (!me) return;
+    if (reactionInFlight.has(post.id)) {
+      console.debug(`[reel-viewer] drawer pick on ${post.id}: a reaction is in flight, ignored`);
+      return;
+    }
+    if (reactionRefusedLocally()) {
+      console.debug(`[reel-viewer] drawer pick on ${post.id}: refused, the reader is muted`);
+      showToast(m.post_action_not_allowed(), 'error');
+      return;
+    }
+    const pick = pickedReactionToggle(post.reactions ?? {}, me, type);
+    console.debug(`[reel-viewer] drawer pick ${type} on ${post.id}`);
+    sendReaction(post, me, pick.type, pick.wasReacted);
+  }
+
   /** The post whose comments sheet is open, by id - the sheet follows the row, not an index. */
   let commentsFor = $state<string | null>(null);
   /** The sheet has begun to slide out: the reel grows back to the screen with it. */
@@ -269,6 +290,7 @@
     return {
       readerId: me,
       onHeart: () => toggleHeart(post),
+      onReact: (type) => pickReaction(post, type),
       onComments: () => {
         console.debug(`[reel-viewer] comments opened on ${post.id}`);
         commentsLeaving = false;
