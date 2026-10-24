@@ -110,7 +110,7 @@ static void CanariRequestNotificationPermission(void) {
                         completionHandler:^(BOOL granted, NSError *_Nullable error) {
                           if (error != nil) {
                             NSLog(@"[CanariIOS] notification permission error: %@",
-                                  error.localizedDescription);
+                                  CanariErrorReason(error));
                             return;
                           }
                           NSLog(@"[CanariIOS] notification permission granted=%d", granted);
@@ -568,6 +568,111 @@ static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {
   }
 }
 
+/// The Share Extension's banner (`canari_Share/ShareViewController.swift`), removed once its share is
+/// in the app: it has done its one job.
+static NSString *const kCanariShareNotificationId = @"canari.share.ready";
+
+/// The Darwin notification the Share Extension posts when a share waits in the App Group.
+static CFStringRef const kCanariShareReadyNotification = CFSTR("fr.emse.canari.share-ready");
+
+/// Carries a share another app made INTO Canari out of the App Group, where the Share Extension left
+/// it, into the app's own handoff (`canari_ios_import_app_group_share`, commands/app_group_share.rs),
+/// then tells a live page - `canari:incoming-share`, the event Android's MainActivity dispatches. A
+/// page not loaded yet drains the file at mount instead. `why` names the call site in the log.
+static void CanariImportAppGroupShare(NSString *why) {
+  NSString *dataDir = CanariTauriDataDir();
+  NSString *cacheDir = CanariTauriCacheDir();
+  if (dataDir == nil || cacheDir == nil) {
+    NSLog(@"[CanariShare] import (%@) NOT run: the app data or cache directory is unresolved", why);
+    return;
+  }
+  int code = canari_ios_import_app_group_share(dataDir.UTF8String, cacheDir.UTF8String);
+  // The CODE is the log: the launch call runs before the Rust logger exists.
+  switch (code) {
+    case CANARI_SHARE_IMPORT_IMPORTED:
+      break;
+    case CANARI_SHARE_IMPORT_NOTHING:
+      return;
+    case CANARI_SHARE_IMPORT_BUSY:
+      NSLog(@"[CanariShare] import (%@): the Share Extension is copying - imported at the next activation", why);
+      return;
+    case CANARI_SHARE_IMPORT_DROPPED:
+      NSLog(@"[CanariShare] import (%@) ERROR: the App Group manifest was unreadable and was dropped", why);
+      return;
+    case CANARI_SHARE_IMPORT_NO_DIRS:
+      NSLog(@"[CanariShare] import (%@) ERROR: the directories did not reach Rust", why);
+      return;
+    case CANARI_SHARE_IMPORT_NO_GROUP:
+      NSLog(@"[CanariShare] import (%@) ERROR: the App Group container is unavailable", why);
+      return;
+    case CANARI_SHARE_IMPORT_FAILED:
+      NSLog(@"[CanariShare] import (%@) ERROR: the share could not be moved or handed over", why);
+      return;
+    default:
+      NSLog(@"[CanariShare] import (%@) ERROR: unknown code %d", why, code);
+      return;
+  }
+  [[UNUserNotificationCenter currentNotificationCenter]
+      removeDeliveredNotificationsWithIdentifiers:@[ kCanariShareNotificationId ]];
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariShare] share imported (%@) before the WebView: the page drains it at mount", why);
+    return;
+  }
+  [webView evaluateJavaScript:@"window.dispatchEvent(new CustomEvent('canari:incoming-share'));"
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                NSLog(@"[CanariShare] the page was not told of the share (%@): it drains at its next mount",
+                      CanariErrorReason(error));
+              }
+            }];
+  NSLog(@"[CanariShare] share imported (%@), the page was told", why);
+}
+
+/// Says what the launch sweep did: it runs before the Rust logger exists, so its report is the
+/// only trace (commands/app_group_share.rs, `CanariShareSweep`). Every failure bit is an ERROR line.
+static void CanariLogShareSweep(CanariShareSweep sweep) {
+  NSLog(@"[CanariShare] launch sweep: %d orphan share(s), %d leftover file(s) deleted, flags 0x%x",
+        sweep.deleted, sweep.leftovers, sweep.flags);
+  const uint32_t bits[] = {
+      CANARI_SHARE_SWEEP_ALREADY_RAN,
+      CANARI_SHARE_SWEEP_NO_DIRS,
+      CANARI_SHARE_SWEEP_NO_GROUP,
+      CANARI_SHARE_SWEEP_GROUP_BUSY,
+      CANARI_SHARE_SWEEP_GROUP_LOCK_FAILED,
+      CANARI_SHARE_SWEEP_EPOCH_UNREADABLE,
+      CANARI_SHARE_SWEEP_EPOCH_REPAIRED,
+      CANARI_SHARE_SWEEP_EPOCH_REPAIR_FAILED,
+      CANARI_SHARE_SWEEP_LEFTOVER_FAILED,
+  };
+  NSArray<NSString *> *whats = @[
+    @"already ran in this process - nothing done",
+    @"ERROR: the directories did not reach Rust - nothing done",
+    @"ERROR: the App Group is unavailable - only the app cache was swept",
+    @"a capture is running - the App Group is swept next process",
+    @"ERROR: the App Group lock failed - not swept",
+    @"ERROR: the share epoch is unreadable - every waiting share treated as stale",
+    @"ERROR: the App Group epoch was behind the app's (a sign-out's copy had failed) - rewritten",
+    @"ERROR: the App Group epoch is behind the app's and could NOT be rewritten",
+    @"ERROR: a leftover file in the App Group could not be deleted",
+  ];
+  for (NSUInteger i = 0; i < whats.count; i++) {
+    if (sweep.flags & bits[i]) {
+      NSLog(@"[CanariShare] launch sweep: %@", whats[i]);
+    }
+  }
+}
+
+/// The extension's "share ready" signal, for an app that is running when the share finishes (an
+/// iPad beside the sending app). Darwin notifications arrive on an arbitrary thread.
+static void CanariOnShareReady(__unused CFNotificationCenterRef center, __unused void *observer,
+                               __unused CFNotificationName name, __unused const void *object,
+                               __unused CFDictionaryRef userInfo) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    CanariImportAppGroupShare(@"share ready");
+  });
+}
+
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
   CanariSetAppGroupForegroundFlag(YES);
@@ -591,6 +696,8 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   // puts those entries where take_fcm_cache will find them, and it must happen before
   // the frontend asks for the cache at login.
   CanariDrainAppGroupFcmCache();
+  // A share the Share Extension made while Canari was away - the banner's tap lands here.
+  CanariImportAppGroupShare(@"activation");
   // Refresh the App Group mirror so the NSE decrypts against the state as of the app's last
   // active moment (the foreground advances mls.bin; there is no Rust write hook to mirror on).
   CanariMirrorPushStateToAppGroup();
@@ -752,6 +859,21 @@ void canari_ios_bootstrap(void) {
   // Cold start: drain before the WebView exists, so the very first take_fcm_cache of
   // this launch already sees the pushes handled while the app was killed.
   CanariDrainAppGroupFcmCache();
+  // A share into Canari: first the sweep, once per process and before any page exists to be staging
+  // a copy (Android sweeps at its first onCreate for the same reason), then the import, so the
+  // page's first drain finds it.
+  NSString *shareDataDir = CanariTauriDataDir();
+  NSString *shareCacheDir = CanariTauriCacheDir();
+  if (shareDataDir != nil && shareCacheDir != nil) {
+    CanariShareSweep sweep = canari_ios_sweep_shared_inboxes(shareDataDir.UTF8String, shareCacheDir.UTF8String);
+    CanariLogShareSweep(sweep);
+  } else {
+    NSLog(@"[CanariShare] launch sweep NOT run: the app data or cache directory is unresolved");
+  }
+  CanariImportAppGroupShare(@"launch");
+  CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, CanariOnShareReady,
+                                  kCanariShareReadyNotification, NULL,
+                                  CFNotificationSuspensionBehaviorDeliverImmediately);
   // Start the keyboard media bridge (WP-XP-6). The WKWebView is not yet created at this point
   // (Tauri/wry creates it inside ffi::start_app() which runs after us), so we pass nil and the
   // bridge will find the WebView lazily on the first UIApplicationDidBecomeActiveNotification.

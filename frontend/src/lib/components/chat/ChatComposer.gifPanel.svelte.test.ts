@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE GIF PANEL TAKES THE KEYBOARD'S PLACE (user, 2026-10-02: *"un panneau de la taille du clavier
  * qui s'ouvre a sa place"*), and its tiles hold their size before they load.

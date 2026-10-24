@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A POST MEDIA THAT CANNOT BE SHOWN SAYS WHY, AND OFFERS A RETRY WHEN ONE CAN HELP (2026-10-01).
  *

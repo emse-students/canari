@@ -85,13 +85,16 @@ REST: those rows need a count, then a migration.
 | `LEGACY_PERMISSION_MAPPING` (`channel-role.entity.ts`; no entry here) | no `channel_roles` row holds an old key | not a version question | `channel_roles.permissions` | 1 map + 1 hook | owed: count |
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
 | State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
-| `MLS_STATE_SEAL_V2_WRITER_ENABLED` | a stable with the reader served the web AND floor >= it | YES (`v1.2.7`) | it CHANGES device data at rest | 1 line, then the encrypt worker | NOT done here, same reason |
+| `MLS_STATE_SEAL_V2_WRITER_ENABLED` | `minClientVersion` AND the web rollback floor >= the tag carrying the HARDENED v2 reader (#2074) - a v2 reader alone (`v1.2.7`) is not enough: `v1.2.7` and `v1.4.0` misread a refused v2 blob, the second as `STATE_ALTERED` | NO (floor `1.2.7`; the hardened reader is in no tag yet) | it CHANGES device data at rest | 1 line in its own PR, then the encrypt worker | NOT done: #2074 ships the reader with the writer OFF ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)) |
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
 | Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
 | `canari_post_feed_kind` drop (`posts/retiredFeedKind.ts`, run by the feed's `load`) | every device that ran a `1.2.9-alpha.2`/`.3` has opened the feed once on a later build | not a version question (alphas only) | one device-global `localStorage` key | 1 module + 1 call | remove with the first stable after `1.2.9` ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)) |
 | Plaintext native cache reader (`native_cache::open_file`/`open_line`, the `Plaintext` arm, and the one-pass migration) | floor >= the release carrying the at-rest seal | NO (unreleased) | `graine_seeds.json`, `fcm_message_cache*.ndjson` on devices not yet updated | 2 match arms + 3 migration functions | waits for the floor ([diary](#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal)) |
 | OIDC callback with no PKCE `code_verifier` (`auth.controller.ts`, `oidcCallback`) | floor >= the first stable carrying the client half, AND the `without a PKCE verifier` warning silent for a week on production | NO (unreleased) | none | 1 branch: refuse instead of warn | waits for the floor ([diary](#no-date-yet---an-oidc-callback-with-no-pkce-verifier)) |
 | `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
+| Send-ledger entry with no epoch (`sendRatchetLedger.ts`, `parseKey`) | floor past the first stable carrying #2269 | NO (unreleased) | `mls_send_ledger_<user>` in `localStorage` on devices not yet updated | 1 parse branch + 1 debt arm | waits for the floor ([diary](#no-date-yet---a-send-ledger-entry-with-no-epoch-written-by-a-client-older-than-2026-10-23)) |
+| Plaintext live key: the `"liveKey"` column, `openLiveKey`'s plaintext arm, `LivesService.sealPlaintextKeys` (migration 110) | 0 rows with `"liveKey" IS NOT NULL` on both estates, read AFTER the first deploy carrying 110 has fully replaced the previous replica | not a version question (server only) | `lives."liveKey"` | 1 arm + 1 sweep step + a migration dropping the column, the index and `lives_key_one_form` | owed: the count below, then that migration ([lives](services/lives.md#the-live-key-at-rest)) |
+| A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -103,11 +106,59 @@ SELECT count(*) FROM queued_message WHERE content IS NOT NULL;
 SELECT count(*) FROM channel_roles WHERE permissions ~ '(MANAGE_WORKSPACE|MANAGE_CHANNELS|MANAGE_ROLES|MODERATE_MESSAGES|INVITE_USERS|SEND_MESSAGES)';
 SELECT count(*) FROM forms WHERE items::text LIKE '%"dependsOn": "%';
 SELECT count(*) FROM channel_messages WHERE "signature" IS NULL AND "senderSessionId" IS NOT NULL;
+SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 ```
 
 ---
 
 ## The diary
+
+### No date yet - a member client older than the admission rule still adds a new person automatically
+
+**Site:** `automaticAdmission` in `frontend/src/lib/utils/chat/actions.ts` (the rule), and the server's
+`GroupMember.awaitingAdmission` with its lift (`liftAwaitingAdmission` in `messaging.service.ts`).
+**What holds before the floor:** "a new person joins only through a member's decision" is a CLIENT
+rule - a member's device refuses to Add a user absent from its tree - so it holds only for members
+running a build that carries it. A member on an older build still Adds from the `pending` row the
+link wrote, with no human asked: that is the behaviour this rule replaces, and nothing on the server
+can tell it from a member's Add. The server honours it as one: the Welcome that older client stores
+lifts the joiner's `awaitingAdmission` (a commit older than `admits` declares nobody, so the Welcome
+is the one door that sees its Add), and without that lift the joiner would sit `active` under a flag
+refusing every commit of theirs.
+**When the floor is raised (user, 2026-10-24):** once BOTH stores serve the version carrying #2358 -
+never at the deploy, never on a date. Until then an older client gets the tolerated 409
+`awaiting_admission` path (the external-join base refused as a wait, not a 403, so it asks a member
+instead of retiring the conversation), and an older member's automatic Add is honoured through the
+Welcome lift. That tolerance is the shim; its removal condition is that floor, and there is no
+calendar date.
+**The rule becomes TRUE when** `minClientVersion` reaches the first stable carrying #2358, both stores
+serving it - AND migration 038 is deployed with that build: the column is what holds a link joiner
+outside (the base, the commit gate, the joiner's own membership read), and the server reads it on
+every one of those paths, so the build does not run without it.
+**Removal:** nothing - this entry closes when the floor passes; the lift by Welcome stays, since it
+is also how every current Add's Welcome lands.
+**A one-off population, not a shim: link seats written BEFORE migration 038.** The column defaults
+every existing row to `false`, so a person who accepted a link before the deploy and had not entered
+yet holds an ORDINARY seat, not an ask. Nobody is asked in their name and a Decline answers
+`not-awaiting`. Neither the base nor the commit gate refuses them, so they may still enter by their
+own external commit exactly as before the rule, and the members then report it:
+`[UNINVITED_ENTRY] kind=new-person` in the delivery log, the count the rollout is read on. The
+population cannot grow (only `acceptGroupInvite` writes the flag from then on). It is LISTED
+read-only on production, once, right after the deploy - each seat with no trace of an admission:
+
+```sql
+SELECT m."groupId", m."userId" FROM dm_group_members m
+WHERE NOT m."awaitingAdmission"
+  AND NOT EXISTS (SELECT 1 FROM dm_device_group_memberships d
+                  WHERE d."groupId" = m."groupId" AND d."userId" = m."userId"
+                    AND (d.status = 'active' OR d."admittedAtEpoch" IS NOT NULL));
+```
+
+**How the rollout count subtracts it:** an `[UNINVITED_ENTRY] kind=new-person` line whose `group`
+and entrant user (the `entrant` up to its `:`) are a pair of that list is this population entering
+the way it always could - not a bypass of the rule - and is counted apart. Every other `new-person`
+line after the floor is the rule failing. The list stays in the private operations notes with the
+deploy date; only this query and the rule live here.
 
 ### No date yet - a notification TYPE the client does not know, from any new server type
 
@@ -142,6 +193,18 @@ version that CARRIES #2228 (not merely `1.2.9`: that build also declares the `fo
 knows the type), on BOTH estates, once BOTH Play AND the App Store serve that version. The switch stays
 ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
 pins it, run by someone else.
+
+### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
+
+**Site:** `parseKey` and `sendRatchetDebt` in `frontend/src/lib/mls-client/sendRatchetLedger.ts`.
+**Shim (2026-10-23):** the send ledger is keyed `<groupId>@<epoch>` since #2269
+([mls-desync-prevention](protocols/mls-desync-prevention.md#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)).
+A device updated with frames counted but not checkpointed still holds entries keyed by the group
+alone, in `localStorage`. They are read as their writer counted them, against the epoch the state is
+restored at, and forgotten once settled at a load (the burn's checkpoint commits them).
+**Removal condition:** a CLIENT FLOOR - `minClientVersion` past the first stable carrying #2269. An
+install below it keeps writing epoch-less entries; above it, each one is settled at its first load
+and gone. Then `parseKey`'s `null` epoch and its arm in `sendRatchetDebt` go.
 
 ### No date yet - a bare `userId` MLS credential, written by builds before 2026-07-24
 

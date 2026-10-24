@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE FULL-SCREEN CALL, AS A SCREEN-READER, A KEYBOARD AND THE SYSTEM BACK MEET IT.
  *
@@ -78,6 +79,7 @@ function fakeService(state: CallState) {
     e2eProven: writable(false),
     localMicSuspended: writable(false),
     peerMicSuspended: writable(false),
+    videoSendReduced: writable(false),
     currentGroupId: 'g',
     currentCallId: 'c',
     acceptCall: vi.fn(async () => {}),
@@ -200,6 +202,28 @@ describe('the encryption line', () => {
     service.e2eProven.set(true);
     flushSync();
     expect(line()).toBe(m.call_e2e_encrypted_title());
+  });
+});
+
+describe('the reduced-picture notice (quality ladder, 2026-10-21)', () => {
+  const notice = () =>
+    document.querySelector('[data-testid="call-video-reduced"]')?.textContent?.trim() ?? null;
+
+  it('says this side sends a reduced picture only while its camera is on and the call live', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    service.videoSendReduced.set(true);
+    flushSync();
+    // Camera off: there is no picture to call reduced.
+    expect(notice()).toBeNull();
+
+    service.isVideoOff.set(false);
+    flushSync();
+    expect(notice()).toBe(m.call_video_reduced_notice());
+
+    service.videoSendReduced.set(false);
+    flushSync();
+    expect(notice()).toBeNull();
   });
 });
 

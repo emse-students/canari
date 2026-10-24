@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE TEST-ENVIRONMENT BANNER CLOSES FOR THE SESSION, AND ONLY THE SESSION (user, 2026-09-30).
  * It was permanent because dev held a copy of production; it became closable because on a phone it

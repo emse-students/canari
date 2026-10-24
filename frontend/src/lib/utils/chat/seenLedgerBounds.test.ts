@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The two bounds on the durable seen-ciphertext ledger: one cap per namespace, and a cap on the
  * number of ledgers. Eviction order is asserted, because "the oldest goes first" is the whole

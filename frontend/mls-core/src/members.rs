@@ -67,7 +67,10 @@ fn vet_validated(
 ///
 /// `None` therefore means a group built without the extension - a broken invariant, not a state to
 /// degrade around: a commit submitted without its base strands every stateless joiner (COMM-22).
-fn successor_base(group_info: Option<GroupInfo>, group_id: &str) -> Result<Vec<u8>, MlsError> {
+pub(crate) fn successor_base(
+    group_info: Option<GroupInfo>,
+    group_id: &str,
+) -> Result<Vec<u8>, MlsError> {
     let group_info = group_info.ok_or_else(|| {
         log::error!(
             "[BASE] {group_id}: OpenMLS built no GroupInfo for the staged commit - the group lacks the ratchet-tree extension"
@@ -136,6 +139,24 @@ impl MlsManager {
             .get(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
         group.members().map(|m| leaf_identity(&m)).collect()
+    }
+
+    /// Whether `group_id`'s tree holds ANY leaf of the user `identity` names (`userId:deviceId`, or a
+    /// bare user id), read under the one canonical user of [`crate::device_trust::canonical_user_of`].
+    ///
+    /// The question an AUTOMATIC Add asks before it brings a device in: a device of a user already
+    /// in the tree is a member's, one of a user absent from it is a new person, and a new person is
+    /// brought in by a member's own gesture - never by a server row or a relayed request, which is
+    /// all an automatic Add acts on. The TypeScript twin is `treeHoldsUser` (`leafIdentity.ts`).
+    /// An identity naming nobody holds nothing.
+    pub fn user_holds_leaf(&self, group_id: &str, identity: &str) -> Result<bool, MlsError> {
+        let Some(wanted) = crate::device_trust::canonical_user_of(identity) else {
+            return Ok(false);
+        };
+        Ok(self
+            .member_identities(group_id)?
+            .iter()
+            .any(|leaf| crate::device_trust::canonical_user_of(leaf).as_deref() == Some(&wanted)))
     }
 
     /// The signature public key of the leaf whose identity is `identity` (`userId:deviceId`) in
@@ -250,6 +271,9 @@ impl MlsManager {
         // C7-A: do NOT merge here. The commit is only *staged*. The caller validates it
         // server-side THEN calls merge_pending_commit_for (accepted) or clear_pending_commit_for
         // (rejected) - never merge-before-validation again, hence no local fork on rejection.
+        // A NEW STAGED COMMIT HAS NO SUBMISSION YET: one left from an earlier commit must never be
+        // read as this one's (`pending_submission.rs`).
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         let commit = commit_msg_out
             .tls_serialize_detached()
@@ -294,6 +318,9 @@ impl MlsManager {
 
         // C7-A : stage uniquement (cf. remove_members_for_users) - merge/clear par l'appelant
         // apres validation serveur.
+        // A NEW STAGED COMMIT HAS NO SUBMISSION YET: one left from an earlier commit must never be
+        // read as this one's (`pending_submission.rs`).
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         let commit = commit_msg_out
             .tls_serialize_detached()
@@ -385,6 +412,7 @@ impl MlsManager {
             "[TRUST] {group_id}: {identity} replaced in one commit ({} leaf/leaves out, one in)",
             leaf_indices.len()
         );
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         let commit = commit_msg_out
             .tls_serialize_detached()
@@ -558,6 +586,7 @@ impl MlsManager {
             );
             self.device_trust.seed_from_tree(&leaf_keys(group));
         }
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         Ok(())
     }
@@ -768,6 +797,9 @@ impl MlsManager {
 
         let base = successor_base(group_info, group_id)?;
 
+        // A NEW STAGED COMMIT HAS NO SUBMISSION YET: one left from an earlier commit must never be
+        // read as this one's (`pending_submission.rs`).
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         Ok((
             (commit_bytes, Some(welcome_bytes), added_indices, skipped),

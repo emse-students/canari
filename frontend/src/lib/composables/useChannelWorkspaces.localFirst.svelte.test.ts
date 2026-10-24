@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE COMMUNITY LIST IS DRAWN BEFORE THE NETWORK, AND THE NETWORK ONLY REFRESHES IT
  * (community-open-budget F1-F3, 2026-10-14).

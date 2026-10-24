@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A PIN change asked from a FOLLOWER tab, across two realms of one account.
  *

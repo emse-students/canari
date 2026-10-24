@@ -67,6 +67,17 @@ export function treeHoldsDevice(
 }
 
 /**
+ * Whether `leafIdentities` (a tree, `getGroupMemberIdentities`) holds ANY leaf of `userId` - the
+ * question an automatic Add asks before it brings a device in: a device of a user already in the
+ * tree is a member's device, one of a user absent from it is a new person, whom only a member's own
+ * gesture admits. A legacy bare leaf names its user ({@link canonicalUserOf}), so it counts.
+ */
+export function treeHoldsUser(leafIdentities: readonly string[], userId: string): boolean {
+  const wanted = canonicalUserId(userId);
+  return wanted !== '' && leafIdentities.some((leaf) => canonicalUserOf(leaf) === wanted);
+}
+
+/**
  * The user a leaf identity names, canonical ({@link canonicalUserId}), or `null` when it names
  * nobody - the twin of Rust's `device_trust::canonical_user_of`.
  *

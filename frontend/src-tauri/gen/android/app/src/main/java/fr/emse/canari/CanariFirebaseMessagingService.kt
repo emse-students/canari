@@ -1224,12 +1224,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "drainOutboxBackground: pushSecret absent -> ${entries.size} message(s) remain queued")
                 return entries.size
             }
-            // Only this slice is encrypted, and only it can burn a generation. `deferred` is never
-            // touched by this drain.
-            val batch = entries.take(DRAIN_MAX_BATCH)
-            val deferred = entries.drop(DRAIN_MAX_BATCH)
-            Log.d(TAG, "drainOutboxBackground: ${entries.size} message(s) queued, taking ${batch.size}")
-            val ciphertexts = encryptQueuedMessages(context, service, ctx, batch)
+            // The native side ATTEMPTS at most DRAIN_MAX_BATCH entries, and only those can burn a
+            // generation. It sees the whole queue so that a group held behind an unsettled staged
+            // commit takes none of those slots: its entries stay queued and the others fill the batch.
+            Log.d(TAG, "drainOutboxBackground: ${entries.size} message(s) queued, at most $DRAIN_MAX_BATCH attempted")
+            val ciphertexts = encryptQueuedMessages(context, service, ctx, entries)
             if (ciphertexts == null) {
                 Log.w(TAG, "drainOutboxBackground: batch encrypt failed -> ${entries.size} message(s) stay queued")
                 return entries.size
@@ -1239,7 +1238,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val remaining = mutableListOf<OutboxMirrorEntry>()
             var checkpointed = 0
             var index = 0
-            for (entry in batch) {
+            for (entry in entries) {
                 index++
                 if (System.currentTimeMillis() >= deadline) {
                     // Out of budget: everything not yet attempted goes back. The next drain
@@ -1265,11 +1264,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (sentIds.size - checkpointed >= DRAIN_CHECKPOINT_EVERY) {
                     appendOutboxSent(context, sentIds.subList(checkpointed, sentIds.size))
                     checkpointed = sentIds.size
-                    rewriteOutboxMirror(context, remaining + batch.drop(index) + deferred)
+                    rewriteOutboxMirror(context, remaining + entries.drop(index))
                 }
             }
             if (sentIds.size > checkpointed) appendOutboxSent(context, sentIds.subList(checkpointed, sentIds.size))
-            val stillQueued = remaining + deferred
+            val stillQueued: List<OutboxMirrorEntry> = remaining
             rewriteOutboxMirror(context, stillQueued)
             Log.d(TAG, "drainOutboxBackground: ${sentIds.size} sent, ${stillQueued.size} remaining")
             return stillQueued.size
@@ -1320,6 +1319,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 val jsonStr = service.nativeSendMessagesBackground(
                     filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, payload.toString(),
+                    DRAIN_MAX_BATCH,
                 )
                 val json = JSONObject(jsonStr)
                 if (!json.optBoolean("ok", false)) {
@@ -1333,7 +1333,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val id = r.optString("id")
                     if (id.isEmpty()) continue
                     if (!r.optBoolean("ok", false)) {
-                        Log.d(TAG, "encryptQueuedMessages: skipped id=${id.take(8)} (${r.optString("error").take(60)}) - group not joined yet?")
+                        Log.d(TAG, "encryptQueuedMessages: kept queued id=${id.take(8)} (${r.optString("error").take(80)})")
                         continue
                     }
                     r.optString("ciphertext").takeIf { it.isNotEmpty() }?.let { out[id] = it }
@@ -2386,8 +2386,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     ): ByteArray
 
     /**
-     * Builds an MLS Welcome for [keyPackageB64] in group [groupId] and STAGES the post-add state
-     * beside mls.bin - mls.bin itself is untouched until [nativeInstallStagedWelcome].
+     * Builds an MLS Welcome for [keyPackageB64] in group [groupId] and writes mls.bin with the Add
+     * STAGED, its submission recorded beside it - settled by [nativeSettleBackgroundWelcome] on a
+     * definitive answer, or by the foreground's next load otherwise.
      * [requester] (`userId:deviceId`) is the device the request was made for: a package whose
      * credential names another device, or that device under an unpinned key, is refused
      * (`identity-mismatch`, `signature-key-changed`) and nothing is staged.
@@ -2454,24 +2455,27 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     external fun nativeAbandonKeyGroupJoin(filesDir: String)
 
     /**
-     * Installs the state staged for [groupId] - ONLY after the server answered `accepted` - over the
-     * very mls.bin it was built from. Returns {"ok":true} or {"ok":false,"reason","error"?}.
+     * Settles the Add staged in [stateBytes] (the mls.bin just loaded) for [groupId] on a DEFINITIVE
+     * answer: [accepted] merges it, otherwise it is cleared - [staleBase] and [serverEpoch] both >= 0
+     * for an `epoch_mismatch` (recorded for the group), -1 otherwise; [refusedTarget]
+     * (`userId:deviceId`) non-null for a refused target (recorded for that target alone). Written by
+     * compare-and-swap over [stateBytes]. Returns {"ok":true,"settled"} or {"ok":false,"reason"}
+     * (`mobile/background.rs`, `settle_background_welcome`).
      */
-    external fun nativeInstallStagedWelcome(filesDir: String, groupId: String): String
-
-    /**
-     * Discards the state staged for [groupId]. [staleBase] and [serverEpoch] are both >= 0 for an
-     * `epoch_mismatch` refusal, recorded for the group; -1 otherwise. [refusedTarget]
-     * (`userId:deviceId`) is non-null for a refused target, recorded for that target alone. Both
-     * are recorded against the bytes the commit was built from, so they are not offered again.
-     */
-    external fun nativeDiscardStagedWelcome(
+    external fun nativeSettleBackgroundWelcome(
         filesDir: String,
+        stateBytes: ByteArray,
+        keyB64: String,
+        userId: String,
+        deviceId: String,
         groupId: String,
+        commitB64: String,
+        baseEpoch: Long,
+        accepted: Boolean,
         staleBase: Long,
         serverEpoch: Long,
         refusedTarget: String?,
-    )
+    ): String
 
     /**
      * Why a Welcome for [target] (`userId:deviceId`) in [groupId], built from [stateBytes], would be
@@ -2506,7 +2510,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * is a batch (WP-ANR-1).
      *
      * `entriesJson` is `[{"id":"..","groupId":"..","proto":"<b64>"}, ..]`, each `proto` being the
-     * cleartext AppMessage proto built on the TS side at compose time. Returns JSON:
+     * cleartext AppMessage proto built on the TS side at compose time. At most `maxAttempts` entries
+     * are encrypted; an entry of a group holding an unsettled staged commit is answered `ok:false`
+     * without taking one of them, and an entry past the cap gets no result. Returns JSON:
      * {"ok":true,"results":[{"id":..,"ok":true,"ciphertext":"<b64>"}|{"id":..,"ok":false,"error":..}]}
      * or {"ok":false,...} when the whole batch failed (state absent, save failed).
      */
@@ -2517,6 +2523,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         userId: String,
         deviceId: String,
         entriesJson: String,
+        maxAttempts: Int,
     ): String
 
     /**
@@ -3233,20 +3240,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /**
      * Handles a `welcome_request_pending` received via FCM when the app is killed.
      * Sequence: known-stale check -> acquire the Redis lock -> fetch the key package -> STAGE the
-     * Welcome via JNI -> send Welcome+commit to the backend -> install or discard the staged state
-     * by the answer's TYPE ([BackgroundWelcomeAnswer]) -> release the lock.
+     * Add in mls.bin via JNI, its submission recorded beside it -> send Welcome+commit to the
+     * backend -> merge or clear the stage by the answer's TYPE ([BackgroundWelcomeAnswer]) ->
+     * release the lock.
      *
-     * **mls.bin IS WRITTEN ONLY AFTER THE SERVER ACCEPTS.** It used to be written before the answer:
-     * a phone killed while its group moved on answered from its old epoch, the gate refused the
-     * commit (`epoch_mismatch`), the phone logged "Welcome sent" off the 201, and its mls.bin kept an
-     * add nobody else applied - an epoch of its own (Mi 9T, 2026-10-22, docs/wiki/backlog.md).
+     * **THE ADD IS MERGED ONLY ONCE THE SERVER ACCEPTS, AND IT IS STAGED IN mls.bin BEFORE IT LEAVES.**
+     * Merged before the answer, a refused add left mls.bin on an epoch of its own (Mi 9T,
+     * 2026-10-22). Staged in mls.bin, an answer this engine cannot apply - none was read, the lock
+     * was busy, the foreground started - is settled by the foreground's next load, which resubmits
+     * the recorded commit and merges or clears it on the gate's answer. Nothing here waits for that,
+     * and NOTHING HERE DISCARDS A STAGE WHOSE OUTCOME IS UNKNOWN: only a definitive refusal of the
+     * commit clears it (a typed `rejected` body, or an untyped 400 or 413 -
+     * [BackgroundWelcomeAnswer.BYTES_REFUSALS]); any other 4xx leaves it, like no answer at all.
      *
      * Nothing here retries. A refusal leaves the request to the foreground (which replays the group's
      * commits at its next start) or to another member; an `epoch_mismatch` is recorded so the same
      * mls.bin bytes are not offered again on the newcomer's next ask.
      *
      * [MlsStateLock] is held ONLY during the JNI calls, never across HTTP, so as not to block the FCM
-     * decrypt threads; the install is a compare-and-swap against the bytes the stage was built from.
+     * decrypt threads; each write is a compare-and-swap against the bytes loaded under that lock.
      */
     private fun processWelcomeRequestBackground(
         groupId: String,
@@ -3301,7 +3313,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             Log.d(TAG, "processWelcomeRequestBackground: keyPackage fetched (${keyPackage.length} chars)")
 
-            // 3. Stage the Welcome via Rust JNI - MlsStateLock only here. mls.bin is NOT written.
+            // 3. Stage the Add in mls.bin via Rust JNI (compare-and-swap) - MlsStateLock only here.
             // tryLock may throw InterruptedException if the FCM thread is interrupted by Android.
             val result = withMlsStateLock(10) {
                 val stateBytes = MlsContextLoader.loadMlsState(this)
@@ -3341,27 +3353,34 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val line = "processWelcomeRequestBackground: group=$groupId target=$requesterUserId:$requesterDeviceId " +
                 BackgroundWelcomeAnswer.describe(outcome, baseEpoch)
 
-            // 5. Install or discard the staged state, by the answer's TYPE. The decision - including
-            //    deleting the staged file when the install finds the lock busy - is
+            // 5. Merge or clear the stage, by the answer's TYPE. The decision - including leaving the
+            //    stage to the foreground when no answer was read or the lock is busy - is
             //    [BackgroundWelcomeAnswer.apply], tested on the JVM; this only wires the JNI to it.
-            val staged = object : BackgroundWelcomeAnswer.StagedWelcome {
-                override fun install(): BackgroundWelcomeAnswer.InstallReport? =
-                    withMlsStateLock(10) { JSONObject(nativeInstallStagedWelcome(filesDir, groupId)) }?.let {
-                        BackgroundWelcomeAnswer.InstallReport(
-                            ok = it.optBoolean("ok", false),
-                            reason = it.optString("reason").takeIf { r -> r.isNotEmpty() },
-                            error = it.optString("error").takeIf { e -> e.isNotEmpty() },
-                        )
-                    }
-
-                override fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean) =
-                    nativeDiscardStagedWelcome(
-                        filesDir, groupId, staleBase ?: -1L, serverEpoch ?: -1L,
+            //    The state is loaded under the lock at THIS moment, so a foreground that ran inside
+            //    the round trip (and loaded the stage) is settled from what it wrote.
+            fun settleNative(accepted: Boolean, staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean) =
+                withMlsStateLock(10) {
+                    val stateBytes = MlsContextLoader.loadMlsState(this)
+                        ?: return@withMlsStateLock BackgroundWelcomeAnswer.SettleReport(false, "state-absent")
+                    val json = JSONObject(nativeSettleBackgroundWelcome(
+                        filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId,
+                        groupId, commitPayload, baseEpoch, accepted,
+                        staleBase ?: -1L, serverEpoch ?: -1L,
                         if (targetRefused) "$requesterUserId:$requesterDeviceId" else null,
+                    ))
+                    BackgroundWelcomeAnswer.SettleReport(
+                        ok = json.optBoolean("ok", false),
+                        reason = json.optString("reason").takeIf { it.isNotEmpty() },
                     )
+                }
+            val staged = object : BackgroundWelcomeAnswer.StagedWelcome {
+                override fun merge() = settleNative(true, null, null, false)
+
+                override fun clear(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean) =
+                    settleNative(false, staleBase, serverEpoch, targetRefused)
             }
             val applied = BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(outcome, baseEpoch), staged)
-            val (level, suffix) = BackgroundWelcomeAnswer.report(applied, outcome)
+            val (level, suffix) = BackgroundWelcomeAnswer.report(applied)
             when (level) {
                 BackgroundWelcomeAnswer.Level.DEBUG -> Log.d(TAG, "$line - $suffix")
                 BackgroundWelcomeAnswer.Level.WARN -> Log.w(TAG, "$line - $suffix")

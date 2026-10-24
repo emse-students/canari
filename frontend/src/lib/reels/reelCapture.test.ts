@@ -10,6 +10,7 @@ import {
   destinationRules,
   handsBackTake,
   classifyLimitsFault,
+  lensFlipAllowed,
   formatTakeTime,
   pickReelRecorderMime,
   ringFraction,
@@ -145,6 +146,24 @@ describe('shutterRingFraction', () => {
   it('is EMPTY in every other state, whatever the clock still holds (a cancelled take)', () => {
     for (const state of [ready, pressing, { kind: 'photo' }, { kind: 'review', clip }] as const) {
       expect(shutterRingFraction(state, 60_000, 90_000)).toBe(0);
+    }
+  });
+});
+
+describe('lensFlipAllowed', () => {
+  it('lets the lens flip only before a take and while one records', () => {
+    expect(lensFlipAllowed(ready)).toBe(true);
+    expect(lensFlipAllowed(recording)).toBe(true);
+  });
+
+  it('refuses it while the press is being decided, a photo is read, a take finishes or is reviewed', () => {
+    for (const state of [
+      pressing,
+      { kind: 'photo' },
+      { kind: 'finishing' },
+      { kind: 'review', clip },
+    ] as const) {
+      expect(lensFlipAllowed(state)).toBe(false);
     }
   });
 });

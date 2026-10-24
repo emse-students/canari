@@ -2,6 +2,14 @@ import Security
 import UIKit
 import UserNotifications
 
+/// What an `NSLog` line says of an error: its domain and code, never its text - a
+/// `localizedDescription` often quotes the file it failed on, and NSLog redacts nothing. The
+/// Objective-C twin is `CanariErrorReason` (`canari_push.h`); `nativeLogContent.test.ts` holds both.
+private func errorReason(_ error: Error) -> String {
+  let failure = error as NSError
+  return "\(failure.domain) \(failure.code)"
+}
+
 /// Canari Notification Service Extension.
 ///
 /// Runs in its own process for every incoming `mutable-content: 1` push and
@@ -856,7 +864,7 @@ class NotificationService: UNNotificationServiceExtension {
     do {
       try target.setResourceValues(values)
     } catch {
-      NSLog("[CanariNSE] backupExclusion: ERROR \(url.lastPathComponent) not excluded: \(error.localizedDescription)")
+      NSLog("[CanariNSE] backupExclusion: ERROR \(url.lastPathComponent) not excluded: \(errorReason(error))")
     }
   }
 
@@ -940,7 +948,7 @@ class NotificationService: UNNotificationServiceExtension {
       Self.excludeFromBackup(fileUrl)
       NSLog("[CanariNSE] writeFcmCache: messageId=\(result.messageId.prefix(8)) groupId=\(groupId.prefix(8))")
     } catch {
-      NSLog("[CanariNSE] writeFcmCache: failed: \(error.localizedDescription)")
+      NSLog("[CanariNSE] writeFcmCache: failed: \(errorReason(error))")
     }
   }
 
@@ -1686,7 +1694,7 @@ class NotificationService: UNNotificationServiceExtension {
       content.attachments = [attachment]
       return true
     } catch {
-      NSLog("[CanariNSE] attachImage error: \(error.localizedDescription)")
+      NSLog("[CanariNSE] attachImage error: \(errorReason(error))")
       return false
     }
   }
@@ -1741,7 +1749,7 @@ class NotificationService: UNNotificationServiceExtension {
     do {
       try png.write(to: url, options: .atomic)
     } catch {
-      NSLog("[CanariNSE] initialsImage: write failed: \(error.localizedDescription)")
+      NSLog("[CanariNSE] initialsImage: write failed: \(errorReason(error))")
       return nil
     }
     return url

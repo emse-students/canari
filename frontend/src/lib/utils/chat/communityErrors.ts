@@ -14,6 +14,11 @@ import { m } from '$lib/paraglide/messages';
 const COMMUNITY_REFUSALS: Record<string, () => string> = {
   /** Leaving, being kicked or being demoted would leave the community with members and no admin. */
   WORKSPACE_WOULD_HAVE_NO_ADMIN: () => m.chat_community_no_admin_left_error(),
+  /**
+   * A departure (leaving, a removal, an access change) that could not be completed this time: the
+   * person is still a member and the same action may simply be retried.
+   */
+  DEPARTURE_SUPERSEDED: () => m.chat_community_departure_retry_error(),
   /** An invite link outliving its community: everyone who belonged to it is gone. */
   WORKSPACE_HAS_NO_MEMBERS: () => m.chat_community_gone_error(),
   /**
@@ -26,6 +31,17 @@ const COMMUNITY_REFUSALS: Record<string, () => string> = {
   USER_HAS_NO_DEVICE: () => m.chat_invite_user_has_no_device_error(),
   /** The key service could not be asked. About us, not about them, and worth retrying. */
   KEY_DISTRIBUTION_UNAVAILABLE: () => m.chat_key_distribution_unavailable_error(),
+  /**
+   * Someone the action would take access from (a kick, a salon removal, a salon made or created
+   * private) holds a permission the actor does not: removals reach only so far.
+   */
+  REMOVAL_EXCEEDS_ACTOR: () => m.chat_community_removal_exceeds_actor_error(),
+  /** A role assignment, permission edit or new role reaching past the actor's own permissions. */
+  ROLE_CHANGE_EXCEEDS_ACTOR: () => m.chat_community_role_change_exceeds_actor_error(),
+  /** An invitation naming a role its sender may not grant. */
+  INVITE_ROLE_NOT_GRANTABLE: () => m.chat_invite_role_not_grantable_error(),
+  /** A salon access edit computed from a row another edit changed since: nothing saved, retryable. */
+  CHANNEL_ACCESS_CHANGED: () => m.chat_channel_access_changed_error(),
 };
 
 /**

@@ -1,0 +1,7 @@
+[default]
+description = "Default permissions for the plugin"
+permissions = [
+  "allow-create-restore-credential",
+  "allow-get-restore-credential",
+  "allow-clear-restore-credential",
+]

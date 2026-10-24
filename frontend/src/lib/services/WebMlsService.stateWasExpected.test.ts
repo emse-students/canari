@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * WHO SAYS WHETHER A MISSING MLS STATE IS A LOSS.
  *
@@ -104,6 +105,10 @@ describe('what the WASM is told about a missing state', () => {
     const ctx = makeCtx({
       persistCheckpoint: vi.fn().mockResolvedValue(undefined),
       deleteDevice: vi.fn().mockResolvedValue(undefined),
+      // A rotation drops the burns owed to epochs ahead of the state, with the ledger.
+      owedSendBurns: new Map(),
+      unprovenSendRatchets: new Set(),
+      owedBurnInFlight: new Map(),
       // The REAL load, placed on the context because `rotateDeviceIdentity` calls it through
       // `this` and a plain object has no prototype chain to find it on.
       loadStateWithKey: (WebMlsService.prototype as unknown as Record<string, unknown>)

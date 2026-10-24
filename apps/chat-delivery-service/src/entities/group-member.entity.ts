@@ -115,6 +115,20 @@ export class GroupMember {
   callsAllowed: boolean | null;
 
   /**
+   * Whether this seat still WAITS FOR A MEMBER'S ADMISSION: written `true` by the invitation-link
+   * acceptance, whose seat no member chose, and cleared by the first accepted commit that admits one
+   * of the person's devices - a member's Add. Every other writer leaves `false`.
+   *
+   * While it holds, the seat is a request, not a membership: the person may not read the
+   * external-join base nor commit (`MessagingService.mayJoinByExternalCommit`), and their device is
+   * told to wait for a member (`GET mls/device-memberships`). Without it the joiner served itself an
+   * external commit around the member's Add / Decline (docs/wiki/protocols/mls-protocol.md, "Who
+   * admits a new person"). Migration 038.
+   */
+  @Column({ type: 'boolean', default: false })
+  awaitingAdmission: boolean;
+
+  /**
    * When this membership was CREATED, and never anything else.
    *
    * It is not refreshed. Both writers go through `ensureGroupMember`, which says nothing on

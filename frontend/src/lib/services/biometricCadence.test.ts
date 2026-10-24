@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

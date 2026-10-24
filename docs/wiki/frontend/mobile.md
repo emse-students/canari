@@ -1095,7 +1095,7 @@ Now (`canari_push.mm`):
   background-join row fix ([backlog](../backlog.md)). The `isWelcome` and `process_queue` branches
   of `CanariHandleFcmData`, which only a silent frame carries, are therefore reached by nothing on
   iOS; its `welcome_request_pending` branch was the same and was deleted on 2026-10-22 (it wrote the
-  add before the server answered - [chat-delivery](../services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)).
+  add before the server answered - [chat-delivery](../services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)).
 - **The completion handler is called once**, after the removal has been issued and any chained
   implementation has answered: early lets iOS suspend the process with the removal queued, never
   makes iOS throttle later wakes.
@@ -1417,12 +1417,12 @@ the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multi
 ### iOS project
 
 `canari.xcodeproj/project.pbxproj` is **hand-maintained** (not xcodegen). Key details:
-- Two targets: `Canari` (app) + `CanariNotifications` (NSE)
+- Three targets: `Canari` (app) + `CanariNotifications` (NSE) + `CanariShare` (the Share Extension, `canari_Share/`, [sharing](sharing.md#share-in-ios---the-path)); both extensions are embedded by the app's "Embed Foundation Extensions" phase, and `.github/scripts/ios-extensions.sh` FAILS both `ios.yml` builds unless `PlugIns/` holds exactly the two
 - Custom URL scheme, `NS*UsageDescription` keys
 - `FirebaseAppDelegateProxyEnabled` — must stay enabled
 - Localized `InfoPlist.strings` (fr/en `PBXVariantGroup`)
 - `aps-environment: production` for TestFlight/App Store
-- Provisioning profiles: two named profiles matching `PROVISIONING_PROFILE_SPECIFIER`, team "Les Rootz" `4CLNB8SR6L`
+- Provisioning profiles: three named profiles matching `PROVISIONING_PROFILE_SPECIFIER` - `Canari`, `CanariNotifications`, `CanariShare` (secrets `APPLE_PROVISIONING_PROFILE`, `_NSE`, `_SHARE`) - team "Les Rootz" `4CLNB8SR6L`. The share extension's carries the App Group only
 - **The app needs iOS 16** (owner decision 2026-10-22). The WebView carries a Content-Security-Policy
   with `'wasm-unsafe-eval'`, which WebKit before 16 does not know - it refuses WebAssembly, so the MLS
   engine would not load. Stated in four places that must agree: `IPHONEOS_DEPLOYMENT_TARGET` (the
@@ -1480,14 +1480,15 @@ Uninstall then reinstall clears the local data and leaves the server's PIN alone
 
 **Signing stays on the workstation, and that is the design**: the key of a certificate that installs
 on a real phone is not handed to a CI secret store to save one command. The team's development
-certificate, the phone's UDID and two development profiles (`fr.emse.canari`, `.notifications`) were
-created through the App Store Connect API, and `rcodesign` signs the appex first and the app second.
+certificate, the phone's UDID and three development profiles (`fr.emse.canari`, `.notifications`,
+`.share` - the last as `share.mobileprovision`) were created through the App Store Connect API, and
+`rcodesign` signs each appex first, by its bundle id, and the app last.
 
 **The iPhone counterpart of `adb` is `tools/ios-device/`**, and needs no Mac:
 
 | Script | What it is |
 | --- | --- |
-| `sign-install.mjs <unsigned.ipa>` | signs (appex, then app), stops the running app, installs |
+| `sign-install.mjs <unsigned.ipa>` | signs (both appex, then app), stops the running app, installs |
 | `install.py <signed.ipa>` | AFC push to `/PublicStaging`, then the installation proxy. `pymobiledevice3 apps install` hung 25 minutes on the 45 MB archive |
 | `wda-daemon.py` | keeps the WebDriverAgent runner alive and forwards its port 8100 to `localhost` over usbmux; the runner lives exactly as long as the process that started it |
 | `ios.mjs` | `launch`, `shot`, `tree`, `find`, `tap <text or x,y>`, `type` (`type -` reads stdin, for a secret), `swipe`, `button`, `size`, `long`, `gesture`, `webview`, `url` - plain W3C WebDriver, **coordinates in POINTS** (390x844 on an iPhone 12, a screenshot pixel is 3 of them). The campaign rig drives the WebView's input and the system screens through it ([cross-client-ios](../cross-client-ios.md)) |
@@ -2675,6 +2676,14 @@ one; a measure (`.length`, `isEmpty`) is allowed, and a name that is not content
 by `file|expression` with its reason. The harness rules reading those lines (`watch.mjs`) match
 these shapes.
 
+**An Apple error's TEXT is content (2026-10-24)**: a `localizedDescription` (or
+`localizedFailureReason`, `localizedRecoverySuggestion`) often quotes the file it failed on - a
+shared file's name, a path. Only a Swift `Logger` call redacts it (an interpolation is private
+unless marked `.public`), so the scan exempts it THERE alone, unmarked; `NSLog`, Swift `print` and
+`os_log` write it whole, and there a line says the error's domain and code instead -
+`CanariErrorReason(error)` (`canari_push.h`) in Objective-C, `errorReason(error)` in the NSE. A file
+NAME is content for the same reason: `take_picked_file` says a copy's share id, never its path.
+
 ### FCM message cache
 
 Both platforms write decrypted message previews to `fcm_message_cache.ndjson` after a successful decrypt, each line SEALED (previous section):
@@ -3143,7 +3152,7 @@ by anything here, so what follows is where this app STANDS, and the one place it
 | Dynamic memory | anon RSS + swap, 28-day P90, 2 GB foreground on a 4 GB device | Feb 2027 | **readable, still empty**: `anonRssAndSwapMemoryUsageMetricSet` carries P50-P99 with an `appState` dimension, and [the vitals watch](../../../tools/play-vitals/README.md) queries it. No rows yet - too few installs for Play to report a distribution |
 | Bitmap memory | > 200 MB backgrounded, > 400 MB cached | Feb 2027 | **bounded by construction**, see below - and now also *observable*, via `bitmapMemoryUsageMetricSet` in [the vitals watch](../../../tools/play-vitals/README.md) |
 | Code optimization | >= 25% across obfuscation, optimization and shrinking, for apps over 10 MB of DEX | Feb 2027 | **out of scope by size**: the release DEX is 2.83 MB. Minified and shrunk anyway |
-| Zero-Tap Sign-In restoration | Restore Credentials API, apps with any sign-in | Apr 2027 | **NOT IMPLEMENTED** - a work package, see [backlog](../backlog.md) |
+| Zero-Tap Sign-In restoration | Restore Credentials API, apps with any sign-in | Apr 2027 | **BUILT 2026-10-18, owed a device reading before any stable** - [account-restore](../account-restore.md) |
 
 **The bitmap threshold is answered by the shape of the code, not by a measurement.** Every
 `Bitmap` in the Android app is allocated in `CanariFirebaseMessagingService`, and there are exactly
@@ -3761,13 +3770,15 @@ See [`cicd.md`](../cicd.md) for the full pipeline.
 
 The 2026-09-06 measurement (a notification posted by the WebView carried no actions, so check K's backgrounded case could not be performed) described a world with TWO builders. Since 2026-09-18 the WebSocket frame is a second TRIGGER for the ONE Kotlin builder ([nativeNotification.ts](../../../frontend/src/lib/utils/nativeNotification.ts) -> `notifier_message_natif` -> `showMessageNotification`, `quickActions = true` by default), so a backgrounded message carries Reply and Mark as read like a pushed one. The only conversations without them are reactions (`quickActions = false`) and salons (a \`channel_\` id), whose send is server-authoritative. What is still owed is the HAND: answering a backgrounded shade (NOTIF-6c).
 
-## WP-RESTORE-1 - Zero-Tap Sign-In restoration (accepted 2026-08-26, planned now, built on draft #2065)
+## WP-RESTORE-1 - Zero-Tap Sign-In restoration (accepted 2026-08-26, built 2026-10-18)
+
+**BUILT 2026-10-18, out of any stable until the user has read it on a phone. The design, the threat model, the routes, the plugin and what verifies each claim are on [account-restore](../account-restore.md), the only copy;** this section keeps the requirement and the principle.
 
 **Play's requirement:** an app with sign-in must support Zero-Tap Sign-In restoration on a new Android device (mobile and tablet; enforcement from **April 2027**). The exemptions (Block Store integration by 30 September 2026 - that date has PASSED - enterprise or permanently-private apps, regulatory) do not describe a student messaging app. The mechanism is the Restore Credentials API (`androidx.credentials`, Android 9+, our minSdk is 28; GMS core 24220000+): a system-managed WebAuthn credential tied to the package, created silently after sign-in, backed up with the device. It works regardless of `android:allowBackup`, so it does not reopen the device-transfer exclusion of 2026-08-26.
 
 **The cost is a server we do not have:** `core-service` has no WebAuthn registration or assertion endpoint, and a restore key needs both plus a store keeping restore keys distinguishable from passkeys; a successful assertion must mint the usual pair of an opaque refresh row and a 1 h access token ([sessions](../sessions.md)).
 
-**The principle is decided, not to be re-opened** (the user accepted it 2026-08-26): zero-tap signs the new device in with no second factor, Google says the API "does not handle multi-factor authentication", and Canari has 2FA. Accepted because a restored session authenticates, it does not decrypt: Keystore material is non-exportable, the MLS device key does not travel, and the new device still enrols as a new MLS client ([backup](backup.md)).
+**The principle is decided, not to be re-opened** (the user accepted it 2026-08-26): zero-tap signs the new device in with no second factor, Google says the API "does not handle multi-factor authentication", so a restore never asks MiConnect for anything its sign-in would. Accepted because a restored session authenticates, it does not decrypt: Keystore material is non-exportable, the MLS device key does not travel, and the new device still enrols as a new MLS client ([backup](backup.md)).
 
 **Three traps for the build:** (1) the logout half is a requirement - Play requires deleting the restore key on sign-out, so a Tauri command down to `ClearCredentialStateRequest(TYPE_CLEAR_RESTORE_CREDENTIAL)`, run on the paths that log out WITHOUT a gesture too (401/403, revoked session); (2) the library was `1.7.0-alpha03` - check for a stable line before starting; (3) `E2eeUnavailableException` is expected (no screen lock or no Google backup), handled by retrying with `isCloudBackupEnabled = false`, a second path that is logged at a level that accuses with its rate measured.
 

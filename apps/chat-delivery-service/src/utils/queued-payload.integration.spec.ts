@@ -31,6 +31,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { SeatEviction } from '../entities/seat-eviction.entity';
 import { MessagingService } from '../services/messaging.service';
 import { AppController } from '../app.controller';
 import { tombstoneGroups } from './group-purge';
@@ -102,6 +103,7 @@ const ENTITIES = [
   DeviceSignatureKey,
   NotificationPreference,
   GroupMembershipInterval,
+  SeatEviction,
 ];
 
 /** A throwaway schema on the test database, dropped afterwards. */
@@ -225,6 +227,8 @@ maybe('a key-group frame stored once, against PostgreSQL', () => {
   const redis = {
     exists: jest.fn(async () => 0),
     sadd: jest.fn(async () => 0),
+    // Every live seat is already in the routing set: the send's route repair has nothing to add.
+    smismember: jest.fn(async (_key: string, ...members: string[]) => members.map(() => 1)),
     srem: jest.fn(async () => 0),
     hdel: jest.fn(async () => 0),
     publish: jest.fn(async () => 0),

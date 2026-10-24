@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DIRECT CONVERSATION HAS ITS OWN CALL PERMISSION, BESIDE THE LEVEL.
  *

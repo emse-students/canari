@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PAYMENT PROVIDER IS SAVED AND THE RELEASE BEHIND IT FAILED. core-service answers that 502
  * with a typed code and the saved config; the screen must say the provider WAS saved (not "could

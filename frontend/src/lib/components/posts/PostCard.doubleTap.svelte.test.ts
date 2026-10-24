@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DOUBLE TAP ON A POST CARD LIKES IT, AND NEVER UNLIKES IT (user, 2026-10-19).
  *

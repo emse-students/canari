@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import type { StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';
 import { decodeAppMessage } from '$lib/proto/codec';

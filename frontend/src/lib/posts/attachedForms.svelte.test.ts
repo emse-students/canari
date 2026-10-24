@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A post's attached forms are each read ONCE, and drawn ONCE, whatever re-runs the card.
  *

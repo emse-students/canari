@@ -18,7 +18,7 @@ split in half. The order, which the file's own header states:
 | #   | job                  | what                                                                                                                                                                                       |
 | --- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1   | `changes`            | reads the modified paths and decides which of the jobs below run at all                                                                                                                    |
-| 2   | the test jobs        | Rust, the four NestJS apps' real AppModule, TS, social-service's integration specs on a real PostgreSQL, frontend, the two self-test suites - in parallel, each behind its own path filter |
+| 2   | the test jobs        | Rust, the four NestJS apps' real AppModule, TS, social-service's and chat-delivery's integration specs on a real PostgreSQL, frontend, the two self-test suites - in parallel, each behind its own path filter |
 | 2b  | `dependency-ceiling` | ONLY on a Dependabot pull request: does a gate HERE exist that would see this update fail? A human's pull request carries no `updated-dependencies` block to decide on, so it skips        |
 | 3   | `ci-passed`          | aggregates them. `success` AND `skipped` both pass. The ONE check the ruleset requires                                                                                                     |
 | 4   | `arm-auto-merge`     | in **parallel** with 1-3, not after                                                                                                                                                        |
@@ -31,6 +31,11 @@ was written, the migration 082 spec turned out to have failed on EVERY run since
 The job runs them in band against production's PostgreSQL, pinned by the digest the compose files
 carry, and its last step FAILS unless jest ran as many suites as there are files on disk and skipped
 none: a jest run that selects nothing is no longer a pass (the `test` scripts lost `--passWithNoTests` in WP-T2), but a gate that selects by name still needs its own count of what ran.
+**Every integration spec has a 60 s budget per test and hook, set once** by
+`apps/social-service/jest-integration-budget.cjs` (selected by the same file name), not jest's 5 s:
+a spec builds its schema in `beforeAll` on a server that may have just started, and on a fresh
+container that took 0.17 s to 4.5 s (45 cold starts, 2026-10-22) - past 5 s every test of the file
+fails as a hook timeout. A test needing more still names its own budget.
 **Since 2026-10-21 the same job runs a REDIS too** (production's digest; `SOCIAL_IT_REDIS_URL`), for
 `lives/live-seats.spec.ts`, selected by name and counted by the same check: its real-Redis half (the
 viewer cap's atomicity, a live's viewer count, a seat's expiry) had been skipped on every run before.
@@ -38,8 +43,11 @@ viewer cap's atomicity, a live's viewer count, a seat's expiry) had been skipped
 `ci.yml` runs is production's.
 **CHAT-DELIVERY-SERVICE GOT THE SAME JOB ON 2026-10-22** (`test-chat-delivery-integration`,
 `CHAT_DELIVERY_IT_DATABASE_URL`, same digest, same no-skip count), written with migration 034
-([chat-delivery](services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22));
-the gate test asserts its image and variable too.
+([chat-delivery](services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)).
+It also runs `seat-lock.integration.spec.ts`, the seat lock's orderings - a claim, an eviction, a
+route and a send's queued rows against one per-group advisory lock - which no fake can judge
+([channel-encryption](protocols/channel-encryption.md)). The gate test asserts its image, its
+variable and its skip check.
 **ONE spec is excluded from it, by name in both steps: `internal/account-erasure.integration.spec.ts`**,
 which copies every social table out of `public` and so needs the schema `synchronize` builds; it runs
 in `boot-nest-apps` right after the boot built that schema (2026-10-17, found by rebasing on the

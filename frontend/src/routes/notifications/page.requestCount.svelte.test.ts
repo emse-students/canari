@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE WAY TO THE REQUESTS INBOX IS DRAWN FROM ONE COUNT (D38b, review of #2116). `/notifications`
  * only needs to know whether requests wait, so it asks the count route alone - never the inbox,

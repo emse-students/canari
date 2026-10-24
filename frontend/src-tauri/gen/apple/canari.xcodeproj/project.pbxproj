@@ -44,6 +44,12 @@
 		DA10CA11E0000000000005C1 /* canari_gazouillis_message.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F1 /* canari_gazouillis_message.wav */; };
 		DA10CA11E0000000000005C2 /* canari_gazouillis_mention.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F2 /* canari_gazouillis_mention.wav */; };
 		DA10CA11E0000000000005C3 /* canari_gazouillis_reaction.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F3 /* canari_gazouillis_reaction.wav */; };
+		5AE1A2B3C4D5E6F700000002 /* CanariShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F700000001 /* CanariShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5AE1A2B3C4D5E6F700000015 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F70000000D /* ShareViewController.swift */; };
+		5AE1A2B3C4D5E6F700000016 /* ShareCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F70000000E /* ShareCapture.swift */; };
+		5AE1A2B3C4D5E6F700000017 /* ShareRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F70000000F /* ShareRules.swift */; };
+		5AE1A2B3C4D5E6F700000018 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F700000012 /* Localizable.strings */; };
+		5AE1A2B3C4D5E6F700000019 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF01 /* UserNotifications.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -53,6 +59,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = BD49C849300FABF7000960D5;
 			remoteInfo = CanariNotifications;
+		};
+		5AE1A2B3C4D5E6F700000003 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 91261965DA5D41FC84B6EA3B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5AE1A2B3C4D5E6F700000005;
+			remoteInfo = CanariShare;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -64,6 +77,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				BD49C851300FABF7000960D5 /* CanariNotifications.appex in Embed Foundation Extensions */,
+				5AE1A2B3C4D5E6F700000002 /* CanariShare.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -118,6 +132,14 @@
 		DA10CA11E0000000000005F1 /* canari_gazouillis_message.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_message.wav; sourceTree = "<group>"; };
 		DA10CA11E0000000000005F2 /* canari_gazouillis_mention.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_mention.wav; sourceTree = "<group>"; };
 		DA10CA11E0000000000005F3 /* canari_gazouillis_reaction.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_reaction.wav; sourceTree = "<group>"; };
+		5AE1A2B3C4D5E6F700000001 /* CanariShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CanariShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		5AE1A2B3C4D5E6F70000000D /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		5AE1A2B3C4D5E6F70000000E /* ShareCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareCapture.swift; sourceTree = "<group>"; };
+		5AE1A2B3C4D5E6F70000000F /* ShareRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareRules.swift; sourceTree = "<group>"; };
+		5AE1A2B3C4D5E6F700000010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		5AE1A2B3C4D5E6F700000011 /* canari_Share.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = canari_Share.entitlements; sourceTree = "<group>"; };
+		5AE1A2B3C4D5E6F700000013 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/Localizable.strings; sourceTree = "<group>"; };
+		5AE1A2B3C4D5E6F700000014 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -149,6 +171,14 @@
 				BD49C869300FAFFF000960D5 /* libapp.a in Frameworks */,
 				BD49C867300FAFC5000960D5 /* UserNotifications.framework in Frameworks */,
 				BD49C866300FAFB7000960D5 /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5AE1A2B3C4D5E6F70000000A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5AE1A2B3C4D5E6F700000019 /* UserNotifications.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -222,6 +252,7 @@
 			children = (
 				890F35B30BCCC580EE21CE39 /* Canari.app */,
 				BD49C84A300FABF7000960D5 /* CanariNotifications.appex */,
+				5AE1A2B3C4D5E6F700000001 /* CanariShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -230,6 +261,7 @@
 			isa = PBXGroup;
 			children = (
 				BD49C863300FADEB000960D5 /* canari_NSE */,
+				5AE1A2B3C4D5E6F70000000C /* canari_Share */,
 				686315A99C66DB3616192FD2 /* assets */,
 				FC45C8DC231D096C520FA226 /* Assets.xcassets */,
 				DA10CA11E0000000000000D1 /* AppIcon.icon */,
@@ -276,6 +308,19 @@
 			path = canari_NSE;
 			sourceTree = "<group>";
 		};
+		5AE1A2B3C4D5E6F70000000C /* canari_Share */ = {
+			isa = PBXGroup;
+			children = (
+				5AE1A2B3C4D5E6F700000011 /* canari_Share.entitlements */,
+				5AE1A2B3C4D5E6F700000010 /* Info.plist */,
+				5AE1A2B3C4D5E6F70000000E /* ShareCapture.swift */,
+				5AE1A2B3C4D5E6F70000000F /* ShareRules.swift */,
+				5AE1A2B3C4D5E6F70000000D /* ShareViewController.swift */,
+				5AE1A2B3C4D5E6F700000012 /* Localizable.strings */,
+			);
+			path = canari_Share;
+			sourceTree = "<group>";
+		};
 		E188CF9BB1D4023319234954 /* canari_iOS */ = {
 			isa = PBXGroup;
 			children = (
@@ -317,6 +362,15 @@
 			name = Localizable.strings;
 			sourceTree = "<group>";
 		};
+		5AE1A2B3C4D5E6F700000012 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				5AE1A2B3C4D5E6F700000013 /* fr */,
+				5AE1A2B3C4D5E6F700000014 /* en */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
 /* End PBXVariantGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -334,6 +388,7 @@
 			);
 			dependencies = (
 				BD49C850300FABF7000960D5 /* PBXTargetDependency */,
+				5AE1A2B3C4D5E6F700000004 /* PBXTargetDependency */,
 			);
 			name = canari_iOS;
 			packageProductDependencies = (
@@ -363,6 +418,25 @@
 			productReference = BD49C84A300FABF7000960D5 /* CanariNotifications.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		5AE1A2B3C4D5E6F700000005 /* CanariShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5AE1A2B3C4D5E6F700000006 /* Build configuration list for PBXNativeTarget "CanariShare" */;
+			buildPhases = (
+				5AE1A2B3C4D5E6F700000009 /* Sources */,
+				5AE1A2B3C4D5E6F70000000A /* Frameworks */,
+				5AE1A2B3C4D5E6F70000000B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CanariShare;
+			packageProductDependencies = (
+			);
+			productName = CanariShare;
+			productReference = 5AE1A2B3C4D5E6F700000001 /* CanariShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -375,6 +449,9 @@
 				TargetAttributes = {
 					BD49C849300FABF7000960D5 = {
 						CreatedOnToolsVersion = 16.2;
+					};
+					5AE1A2B3C4D5E6F700000005 = {
+						CreatedOnToolsVersion = 26.0;
 					};
 				};
 			};
@@ -398,6 +475,7 @@
 			targets = (
 				52E9488D364186C2915636FA /* canari_iOS */,
 				BD49C849300FABF7000960D5 /* CanariNotifications */,
+				5AE1A2B3C4D5E6F700000005 /* CanariShare */,
 			);
 		};
 /* End PBXProject section */
@@ -428,6 +506,14 @@
 				DA10CA11E0000000000005C1 /* canari_gazouillis_message.wav in Resources */,
 				DA10CA11E0000000000005C2 /* canari_gazouillis_mention.wav in Resources */,
 				DA10CA11E0000000000005C3 /* canari_gazouillis_reaction.wav in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5AE1A2B3C4D5E6F70000000B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5AE1A2B3C4D5E6F700000018 /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -477,6 +563,16 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5AE1A2B3C4D5E6F700000009 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5AE1A2B3C4D5E6F700000017 /* ShareRules.swift in Sources */,
+				5AE1A2B3C4D5E6F700000016 /* ShareCapture.swift in Sources */,
+				5AE1A2B3C4D5E6F700000015 /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -484,6 +580,11 @@
 			isa = PBXTargetDependency;
 			target = BD49C849300FABF7000960D5 /* CanariNotifications */;
 			targetProxy = BD49C84F300FABF7000960D5 /* PBXContainerItemProxy */;
+		};
+		5AE1A2B3C4D5E6F700000004 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5AE1A2B3C4D5E6F700000005 /* CanariShare */;
+			targetProxy = 5AE1A2B3C4D5E6F700000003 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -894,6 +995,177 @@
 			};
 			name = release;
 		};
+		5AE1A2B3C4D5E6F700000007 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_ENTITLEMENTS = canari_Share/canari_Share.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 100400101;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = canari_Share/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Canari;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.4.1;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = CanariShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = debug;
+		};
+		5AE1A2B3C4D5E6F700000008 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_ENTITLEMENTS = canari_Share/canari_Share.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 100400101;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = canari_Share/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Canari;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.4.1;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = CanariShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -920,6 +1192,15 @@
 			buildConfigurations = (
 				CC7B07204AC8D10BCD1DD37E /* debug */,
 				7A0187E63D7563BAA19528DB /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		5AE1A2B3C4D5E6F700000006 /* Build configuration list for PBXNativeTarget "CanariShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5AE1A2B3C4D5E6F700000007 /* debug */,
+				5AE1A2B3C4D5E6F700000008 /* release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = debug;

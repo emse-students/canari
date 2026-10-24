@@ -704,6 +704,49 @@ fn a_device_joining_its_users_conversation_is_announced_and_a_new_member_is_not(
     );
 }
 
+/// AN ENTRY NO MEMBER MADE, as the record shows it - the contract `entersUninvited` (TypeScript)
+/// reads: an external commit is signed by the very leaf it admits (`added_by == identity`), and a
+/// new user's arrives with `member_already_present == false`. A member's Add of a new user is signed
+/// by the member, so the two never look alike.
+#[test]
+fn an_external_commit_by_a_new_user_is_recorded_as_signed_by_the_device_it_admits() {
+    let gid = "g-uninvited-1";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    alice.take_device_events();
+
+    let mut carol = device("carol", "dev1");
+    let info = alice.export_group_info(gid).expect("group info");
+    let (_gid, commit) = carol
+        .join_by_external_commit(&info)
+        .expect("external commit");
+    assert_eq!(alice.process_incoming_message(gid, &commit).unwrap(), None);
+    assert_eq!(bob.process_incoming_message(gid, &commit).unwrap(), None);
+    bob.take_device_events();
+
+    let events = alice.take_device_events();
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].identity, "carol:dev1");
+    assert_eq!(events[0].added_by.as_deref(), Some("carol:dev1"));
+    assert!(!events[0].member_already_present, "{events:?}");
+
+    // The control: a member adding a new user signs the commit themselves.
+    let mut dave = device("dave", "dev1");
+    let kp = dave.generate_key_package().unwrap();
+    let commit = add_and_join(&mut alice, &mut dave, gid, &kp, "dave:dev1");
+    assert_eq!(bob.process_incoming_message(gid, &commit).unwrap(), None);
+    let added = bob
+        .take_device_events()
+        .into_iter()
+        .find(|e| e.identity == "dave:dev1")
+        .expect("dave recorded");
+    assert_eq!(added.added_by.as_deref(), Some("alice:dev1"));
+    assert!(!added.member_already_present);
+}
+
 /// A device re-added under the key it was pinned with through the bulk replace path is not a new
 /// device either, and no notice can be built from it.
 #[test]

@@ -52,18 +52,31 @@ describe('InternalController - the presence audience (shared conversations)', ()
   let memberRepo: ReturnType<typeof fakeRepo>;
 
   beforeEach(async () => {
+    const seat = (groupId: string, userId: string, awaitingAdmission = false) => ({
+      groupId,
+      userId,
+      awaitingAdmission,
+    });
     memberRepo = fakeRepo([
-      { groupId: 'dm-ab', userId: 'alice' },
-      { groupId: 'dm-ab', userId: 'bob' },
-      { groupId: 'grp-dead', userId: 'alice' },
-      { groupId: 'grp-dead', userId: 'dora' },
-      { groupId: 'grp-other', userId: 'carol' },
-      { groupId: 'grp-other', userId: 'erin' },
+      seat('dm-ab', 'alice'),
+      seat('dm-ab', 'bob'),
+      seat('grp-dead', 'alice'),
+      seat('grp-dead', 'dora'),
+      seat('grp-other', 'carol'),
+      seat('grp-other', 'erin'),
+      // An invitation link's ask in each direction: frank waits in a group alice is in, and alice
+      // waits in a group gina is in.
+      seat('grp-ask', 'alice'),
+      seat('grp-ask', 'frank', true),
+      seat('grp-asked', 'alice', true),
+      seat('grp-asked', 'gina'),
     ]);
     const groupRepo = fakeRepo([
       { id: 'dm-ab', deletedAt: null },
       { id: 'grp-dead', deletedAt: new Date(0) },
       { id: 'grp-other', deletedAt: null },
+      { id: 'grp-ask', deletedAt: null },
+      { id: 'grp-asked', deletedAt: null },
     ]);
     const module: TestingModule = await Test.createTestingModule({
       controllers: [InternalController],
@@ -97,6 +110,18 @@ describe('InternalController - the presence audience (shared conversations)', ()
         userIds: ['bob', 'carol', 'dora'],
       })
     ).resolves.toEqual({ userIds: ['bob'] });
+  });
+
+  it('counts no seat awaiting a member as sharing the conversation, in either direction', async () => {
+    await expect(
+      controller.presenceSharedConversations(SECRET, {
+        viewerId: 'alice',
+        userIds: ['frank', 'gina'],
+      })
+    ).resolves.toEqual({ userIds: [] });
+    await expect(
+      controller.presenceSharedConversations(SECRET, { viewerId: 'frank', userIds: ['alice'] })
+    ).resolves.toEqual({ userIds: [] });
   });
 
   it('compares ids in the lowercase spelling every stored id has', async () => {

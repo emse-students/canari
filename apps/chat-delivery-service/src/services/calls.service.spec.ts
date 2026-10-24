@@ -591,8 +591,87 @@ describe('CallsService', () => {
       expect(fcmSend.mock.calls[0][0].data.hasVideo).toBe('true');
       expect(apnsVoip.sendVoipPush).toHaveBeenCalledWith(
         'voip-b',
-        expect.objectContaining({ type: 'call_ring', callId: 'call-1', groupId: 'group-1' })
+        expect.objectContaining({ type: 'call_ring', callId: 'call-1', groupId: 'group-1' }),
+        expect.any(Number)
       );
+    });
+
+    /** WP-C6: Apple requires every VoIP push to raise a CallKit call, so what it carries and when. */
+    describe('the VoIP push of the native ring', () => {
+      const voipDevice = {
+        id: '2',
+        userId: 'callee-ios-voip',
+        deviceId: 'd2',
+        token: 'fcm-b',
+        platform: 'ios',
+        voipToken: 'voip-b',
+      };
+
+      beforeEach(() => {
+        pushTokenRepo.find.mockResolvedValue([voipDevice]);
+      });
+
+      it('names nobody, and carries the server answer deadline as its expiry', async () => {
+        groupMemberRepo.manager.query.mockImplementation((sql: string) =>
+          sql.includes('dm_groups')
+            ? Promise.resolve([{ name: 'Secret group', isGroup: true }])
+            : baseQuery(sql)
+        );
+
+        expect(await ringAndSettle(service, 'caller', 'group-1', 'call-1', false)).toEqual({
+          rang: 1,
+        });
+
+        const [, payload, expiresAtSec] = apnsVoip.sendVoipPush.mock.calls[0];
+        expect(Object.keys(payload).sort()).toEqual(
+          ['callId', 'callerId', 'groupId', 'hasVideo', 'ringUntil', 'type'].sort()
+        );
+        expect(JSON.stringify(payload)).not.toContain('Secret group');
+        const answerBy = Number(redisStore.get('call:room:call-1:answer_by'));
+        expect(payload.ringUntil).toBe(String(answerBy));
+        expect(expiresAtSec).toBe(Math.floor(answerBy / 1000));
+      });
+
+      it('is withheld once the ring has ended', async () => {
+        await service.endRing('caller', 'group-1', 'call-1', 'cancelled');
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+        expect(await ringAndSettle(service, 'caller', 'group-1', 'call-1', false)).toEqual({
+          rang: 0,
+        });
+        expect(apnsVoip.sendVoipPush).not.toHaveBeenCalled();
+        expect(captured(log)).toContain('VoIP push withheld - the ring ended (cancelled)');
+        log.mockRestore();
+      });
+
+      it('is withheld once the answer window has closed', async () => {
+        redisStore.set('call:room:call-1:answer_by', String(Date.now() - 1));
+
+        expect(await ringAndSettle(service, 'caller', 'group-1', 'call-1', false)).toEqual({
+          rang: 0,
+        });
+        expect(apnsVoip.sendVoipPush).not.toHaveBeenCalled();
+      });
+
+      it('lets no member of ANOTHER conversation end this ring', async () => {
+        await service.endRing('caller', 'group-other', 'call-1', 'cancelled');
+
+        expect(redisStore.has('call:room:call-1:ring_ended')).toBe(false);
+      });
+
+      it('rings no VoIP device, and says why once, without the APNs key - no FCM alert instead', async () => {
+        apnsVoip.isConfigured.mockReturnValue(false);
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+        expect(await ringAndSettle(service, 'caller', 'group-1', 'call-1', false)).toEqual({
+          rang: 0,
+        });
+        expect(apnsVoip.sendVoipPush).not.toHaveBeenCalled();
+        expect(fcmSend).not.toHaveBeenCalled();
+        expect(captured(error)).toContain('APNS_VOIP_* is not configured');
+        apnsVoip.isConfigured.mockReturnValue(true);
+        error.mockRestore();
+      });
     });
 
     it('rings an iPhone without a VoIP token with a GENERIC alert: no caller, no conversation name', async () => {

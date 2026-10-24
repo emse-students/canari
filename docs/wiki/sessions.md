@@ -13,7 +13,9 @@ MiGallery's and the Cercle's.
 
 Canari is the one variant, deliberately: its 1 h access token stays STATELESS, because six services
 and nginx verify it without touching a database. The row backs the REFRESH token instead, and carries
-`sid` + `jti` (`apps/core-service/src/auth/auth-sessions.service.ts`).
+`sid` + `jti` (`apps/core-service/src/auth/auth-sessions.service.ts`). On Android a session may also
+own ONE restore key, which dies with the row and moves the session to a new phone rather than adding
+one ([account-restore](account-restore.md)).
 
 ## What a cookie is, and is not
 
@@ -364,8 +366,12 @@ both sides, and neither depends on the other.**
 
 **Server.** Every path in `AuthSessionsService` that deletes a session deliberately ends the push
 registrations it leaves behind: `revoke` (the logout), `revokeOwned` (the owner revoking a device),
-`revokeOthers`, and the replay that revokes in `rotate`. Three facts make it exact and durable by
-construction:
+`revokeOthers`, and the replay that revokes in `rotate` - and so does the one deletion OUTSIDE it, a
+restore consuming its key (`RestoreCredentialsService.consume`, cause `restored`), which ends the old
+phone's session in its own transaction and enqueues through the same `SessionPushEndService.enqueue`
+([account-restore](account-restore.md)). A new deletion of `auth_sessions` that skips the enqueue
+leaves a sold or lost phone receiving the account's notifications. Three facts make it exact and
+durable by construction:
 
 - **The registration names its session.** An access token carries `sid`, the session it was minted
   for (`signAccessToken`); `/api/auth/verify` answers it as `X-Session-Id`, nginx forwards it on every

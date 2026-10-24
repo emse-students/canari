@@ -29,6 +29,36 @@ describe('readWelcomeOwedFromRow', () => {
   it('a server that does not say is not a server saying no', () => {
     expect(readWelcomeOwedFromRow(row({ status: 'pending' }))).toBe('owed');
   });
+
+  it("a seat awaiting a member's admission is never a door the device serves itself", () => {
+    // The link joiner's row looks exactly like an unhonoured seat on the two older facts - that is
+    // how it admitted itself around the member it was waiting for.
+    expect(
+      readWelcomeOwedFromRow(
+        row({
+          status: 'pending',
+          welcomeQueued: false,
+          addInFlight: false,
+          awaitingAdmission: true,
+        })
+      )
+    ).toBe('awaiting-admission');
+    // An ACTIVE row is in the tree - a Welcome admitted it - so the flag says nothing there: read
+    // as awaiting, a member whose flag outlived its admission could never rejoin by itself.
+    expect(readWelcomeOwedFromRow(row({ status: 'active', awaitingAdmission: true }))).toBe(
+      'not-pending'
+    );
+    expect(
+      readWelcomeOwedFromRow(
+        row({
+          status: 'pending',
+          welcomeQueued: false,
+          addInFlight: false,
+          awaitingAdmission: false,
+        })
+      )
+    ).toBe('unhonoured-seat');
+  });
 });
 
 describe('isStrandedSeat', () => {

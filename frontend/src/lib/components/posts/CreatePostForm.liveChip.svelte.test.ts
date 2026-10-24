@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE COMPOSER'S LIVE CHIP FOLLOWS THE SERVER'S LIVES KILL SWITCH (`platform_config.lives_mode`,
  * published by `/api/version`): in a build that carries lives, the chip is offered only while the

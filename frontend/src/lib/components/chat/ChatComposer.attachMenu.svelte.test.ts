@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * ONE ATTACHMENT MENU, AND EACH ENTRY GOES STRAIGHT TO ITS PICKER (user, 2026-10-02, iPhone: *"deux
  * menus similaires, n'en faire qu'un"*, and *"le menu ne se ferme pas"*).

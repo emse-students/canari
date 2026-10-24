@@ -369,6 +369,15 @@ function summariseVideo(tx, rx, ops) {
   const d = (k) => (last[k] ?? 0) - (first[k] ?? 0);
   const dt = (last.t ?? 0) - (first.t ?? 0) || 1;
   const vout = tx.stats.filter((s) => s.vout_packetsSent !== undefined).at(-1) ?? {};
+  // The SENDER's side over the same window: what it encoded, at what cost, at what rate.
+  const vo = tx.stats.filter((s) => s.vout_framesEncoded !== undefined);
+  const o0 = vo[Math.min(3, vo.length - 1)] ?? {};
+  const o1 = vo.at(-1) ?? {};
+  const od = (k) => (o1[k] ?? 0) - (o0[k] ?? 0);
+  const odt = (o1.t ?? 0) - (o0.t ?? 0) || 1;
+  const encoded = od('vout_framesEncoded');
+  const encodeMsPerFrame = encoded > 0 ? (od('vout_totalEncodeTime') * 1000) / encoded : null;
+  const encodeFps = encoded / odt;
   const framesIn = (rep, side) => rep?.framesInBy?.[`0|${side}|video`] ?? 0;
   return {
     senderFrames: framesIn(tx.report, 'sender'),
@@ -391,6 +400,16 @@ function summariseVideo(tx, rx, ops) {
     packetsSent: vout.vout_packetsSent ?? 0,
     packetsReceived: last.vin_packetsReceived ?? 0,
     sendLimit: vout.vout_limit ?? '-',
+    sendSize: o1.vout_w ? `${o1.vout_w}x${o1.vout_h}` : '-',
+    sendKbps: Math.round((od('vout_bytes') * 8) / odt / 1000),
+    encoder: o1.vout_encoder ?? null,
+    encodeFps: Math.round(encodeFps * 10) / 10,
+    encodeMsPerFrame: encodeMsPerFrame === null ? null : Math.round(encodeMsPerFrame * 100) / 100,
+    // Share of one core the encoder's wall time takes (libvpx may thread above 640x480, so the CPU
+    // cost can be higher than this reads - the phone reading measures the process instead).
+    encodeCorePct:
+      encodeMsPerFrame === null ? null : Math.round(encodeMsPerFrame * encodeFps * 10) / 100,
+    ladder: tx.ladder ?? null,
     pictures: { local: tx.pictures?.local ?? null, remote: rx.pictures?.remote ?? null },
     afterOp: ops?.atOp
       ? { senderFrames: framesIn(tx.report, 'sender') - framesIn(ops.atOp, 'sender') }
@@ -512,12 +531,15 @@ function videoTable(results) {
   const rows = results.filter((r) => r.videoPath);
   if (!rows.length) return '';
   const head =
-    '| row | codec (decoder) | size | decoded fps | freezes (s) | key frames | PLI | rx kbps | worker frames in tx / rx | encrypted / decrypted / failed | not-VP8 | picture rgb local / remote | after op | muted when off |';
-  const sep = `|${'---|'.repeat(14)}`;
+    '| row | codec (decoder) | size | decoded fps | freezes (s) | key frames | PLI | rx kbps | sent (encoder) | encode ms/frame (core %) | ladder | worker frames in tx / rx | encrypted / decrypted / failed | not-VP8 | picture rgb local / remote | after op | muted when off |';
+  const sep = `|${'---|'.repeat(17)}`;
   const lines = rows.map((r) => {
     const v = r.videoPath;
     const rgb = (p) => (p ? p.rgb.join(',') : '-');
-    return `| ${r.row} | ${v.codec ?? '-'} (${v.decoder ?? '-'}) | ${v.size} | ${v.fps} | ${v.freezes} (${v.freezeSec}) | ${v.keyFramesDecoded} | ${v.pli} | ${v.rxKbps} | ${v.senderFrames} / ${v.receiverFrames} | ${v.encrypted} / ${v.decrypted} / ${v.decryptFailed} | ${v.notVp8} | ${rgb(v.pictures.local)} / ${rgb(v.pictures.remote)} | ${v.afterOp ? v.afterOp.senderFrames : '-'} | ${v.offState ? `${v.offState.muted} (${v.remoteEvents.join(',')})` : '-'} |`;
+    const ladder = v.ladder
+      ? `${v.ladder.rung}${v.ladder.changes.length ? ` (${v.ladder.changes.map((c) => `${c.from}->${c.to}`).join(', ')})` : ''}`
+      : '-';
+    return `| ${r.row} | ${v.codec ?? '-'} (${v.decoder ?? '-'}) | ${v.size} | ${v.fps} | ${v.freezes} (${v.freezeSec}) | ${v.keyFramesDecoded} | ${v.pli} | ${v.rxKbps} | ${v.sendSize} ${v.sendKbps} kbps (${v.encoder ?? '-'}) | ${v.encodeMsPerFrame ?? '-'} (${v.encodeCorePct ?? '-'}) | ${ladder} | ${v.senderFrames} / ${v.receiverFrames} | ${v.encrypted} / ${v.decrypted} / ${v.decryptFailed} | ${v.notVp8} | ${rgb(v.pictures.local)} / ${rgb(v.pictures.remote)} | ${v.afterOp ? v.afterOp.senderFrames : '-'} | ${v.offState ? `${v.offState.muted} (${v.remoteEvents.join(',')})` : '-'} |`;
   });
   return `\n\nVideo (the measured direction):\n\n${[head, sep, ...lines].join('\n')}`;
 }
@@ -560,7 +582,7 @@ ${e?.stack ?? ''}`);
       if (r.videoPath) {
         const v = r.videoPath;
         say(
-          `  ${r.row} video: ${v.codec} ${v.size} ${v.fps} fps, ${v.freezes} freeze(s), worker video frames tx=${v.senderFrames} rx=${v.receiverFrames}, decrypted ${v.decrypted} (failed ${v.decryptFailed})`
+          `  ${r.row} video: ${v.codec} ${v.size} ${v.fps} fps, ${v.freezes} freeze(s), sent ${v.sendSize} ${v.sendKbps} kbps, encode ${v.encodeMsPerFrame} ms/frame (${v.encodeCorePct} % of a core), ladder ${v.ladder?.rung ?? '-'}, worker video frames tx=${v.senderFrames} rx=${v.receiverFrames}, decrypted ${v.decrypted} (failed ${v.decryptFailed})`
         );
       }
       say(

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The CanaReels entry as a reader meets it (user, 2026-10-16): ONE row - the three tabs, then a
  * named clap icon at its right end - and a tap on the icon goes STRAIGHT INTO the reel viewer at the

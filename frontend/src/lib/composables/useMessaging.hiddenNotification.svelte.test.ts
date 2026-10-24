@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * TAB-1: A HIDDEN TAB WAS TOLD ABOUT NOTHING, because only one of the two inbound paths could speak.
  *

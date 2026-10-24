@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The viewer's report control, mounted: visible to a viewer and never to the broadcaster, the posts'
  * reason dialog opened over the viewer's layer, each typed refusal told apart (already reported, live

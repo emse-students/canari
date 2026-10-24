@@ -36,6 +36,7 @@
     destinationRules,
     handsBackTake,
     formatTakeTime,
+    lensFlipAllowed,
     shutterRingFraction,
     SHUTTER_HOLD_THRESHOLD_MS,
     type CaptureDestination,
@@ -45,6 +46,7 @@
     type LimitsFault,
   } from '$lib/reels/reelCapture';
   import { ReelRecorder, ReelRecorderError } from '$lib/reels/reelRecorder';
+  import { zoomFromDrag } from '$lib/reels/cameraZoom';
   import type { CameraCapture, FramedStream } from '$lib/reels/framedCapture';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { readVideoDurationMs } from '$lib/reels/videoDuration';
@@ -146,6 +148,11 @@
   let recorder: ReelRecorder | null = null;
   /** The preview's crop being drawn for the take in progress (framedCapture.ts). */
   let framed: FramedStream | null = null;
+  /**
+   * Where the held finger's zoom slide is measured from: its travel and the zoom when the take began
+   * zooming on this lens. Re-taken after a lens flip (whose zoom is back at 1x) and on every take.
+   */
+  let zoomBase: { upPx: number; level: number; facing: string } | null = null;
   /** The take in progress's first picture (`ReelClip.poster`), taken before the recorder starts. */
   let takePoster: Blob | null = null;
   /** Armed by a press; its firing makes the press a video (reelCapture.ts). */
@@ -224,6 +231,8 @@
     }
     if (after.kind === 'ready') {
       elapsedMs = 0;
+      zoomBase = null;
+      session.resetZoom();
       publishOpen = false;
       releaseTakeEntry();
     }
@@ -396,6 +405,9 @@
       return;
     }
     buzz(15);
+    // EVERY TAKE STARTS AT 1x (user, 2026-10-22); the held finger's slide zooms it from there.
+    zoomBase = null;
+    session.resetZoom();
     holdTakeEntry();
     elapsedMs = 0;
     // THE CAP IS THE PRODUCT'S RULE (C4), so it is a deadline by definition: the ring is full when
@@ -515,6 +527,29 @@
     send({ type: 'picked', clip: { blob: file, source: 'gallery' } });
   }
 
+  /**
+   * The held finger slid (`ReelShutter.onmove`): while a take is filmed, UP zooms in and DOWN zooms
+   * out, from the level and the travel of the first slide on this lens (`zoomFromDrag`). Outside a
+   * take a press is still deciding between a photo and a video, and nothing zooms.
+   */
+  function onShutterMove(upPx: number) {
+    // Mid-flip there is no lens to zoom; the new one rests at 1x and the next slide re-bases on it.
+    if (capture.kind !== 'recording' || session.flipping) return;
+    if (!zoomBase || zoomBase.facing !== session.facing) {
+      zoomBase = { upPx, level: session.zoom, facing: session.facing };
+    }
+    session.setZoom(zoomFromDrag(zoomBase.level, upPx - zoomBase.upPx, session.zoomRange));
+  }
+
+  // A LENS THAT CANNOT BE REOPENED DURING A TAKE (a flip refused, the OS taking the camera) leaves the
+  // take with no picture: it is ended and KEPT, as the cap or a release would end it.
+  $effect(() => {
+    if (session.phase === 'error' && capture.kind === 'recording') {
+      console.warn('[reel-capture] the camera failed during a take: the take is ended and kept');
+      send({ type: 'limit' });
+    }
+  });
+
   /** The take is about to lose its camera (the app is going to the background): end it, keep it. */
   function onBeforeRelease() {
     if (capture.kind === 'recording') send({ type: 'limit' });
@@ -545,7 +580,8 @@
   <CameraScreen
     {session}
     bind:capture={camera}
-    lensLocked={recording}
+    {recording}
+    flipAllowed={lensFlipAllowed(capture)}
     paused={capture.kind === 'review'}
     {onBeforeRelease}
     {onclose}
@@ -590,12 +626,15 @@
             {fraction}
             timeLabel={formatTakeTime(elapsedMs)}
             disabled={(!rules.photoHandsBack && !limits) ||
-              !camera?.ready ||
+              // A take in progress keeps its shutter through a lens flip (no frame for a moment):
+              // a disabled button under the held finger could swallow the release that ends it.
+              (!recording && !camera?.ready) ||
               capture.kind === 'finishing' ||
               capture.kind === 'photo'}
             onpress={(at) => send({ type: 'press', at })}
             onrelease={(at) => send({ type: 'release', at })}
             oncancel={() => send({ type: 'cancel' })}
+            onmove={onShutterMove}
           />
         </div>
         <div></div>

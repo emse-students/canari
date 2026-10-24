@@ -83,7 +83,7 @@ describe('the shared inbox is the directory take_picked_file allows', () => {
     expect(copiedInto).toBeDefined();
     expect(allowed).toBe(copiedInto);
     expect(kotlin).toMatch(/File\(context\.cacheDir, INBOX_DIR\)/);
-    expect(rust).toMatch(/app_cache_dir\(\)\.map\(\|d\| d\.join\(SHARED_INBOX\)\)/);
+    expect(rust).toMatch(/app_cache_dir\(\)\.ok\(\)\?\.join\(SHARED_INBOX\)/);
   });
 
   it('reads the share epoch from the file the sign-out advances', () => {

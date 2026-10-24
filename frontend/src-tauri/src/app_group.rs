@@ -1,9 +1,12 @@
 //! The `group.fr.emse.canari` App Group container: the only storage the iOS app shares with its
-//! Notification Service Extension, which has a data container of its own and can read neither the
-//! app's `app_data_dir` nor its app-only Keychain items.
+//! two extensions - the Notification Service Extension and the Share Extension - each of which has
+//! a data container of its own and can read neither the app's `app_data_dir` nor its app-only
+//! Keychain items.
 //!
-//! iOS only. Two callers: `store_push_secret`, which writes the extension's copy of the push secret
-//! at the moment the server rotates it, and the bench command (`commands::bench`).
+//! iOS only. Its callers: `store_push_secret`, which writes the NSE's copy of the push secret at the
+//! moment the server rotates it; the bench command (`commands::bench`); and the share import
+//! (`commands::app_group_share`, and `advance_share_epoch` for the group's copy of the epoch), which
+//! carries what the Share Extension left there into the app's own directories.
 
 use std::path::PathBuf;
 

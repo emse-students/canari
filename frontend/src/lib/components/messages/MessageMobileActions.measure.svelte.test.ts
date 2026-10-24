@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * WHERE IS THE SHEET'S OVERLAY WHEN THE SHEET MEASURES IT?
  *

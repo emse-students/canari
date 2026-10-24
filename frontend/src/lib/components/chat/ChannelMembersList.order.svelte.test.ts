@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE RENDERED MEMBER LIST READS BY FAMILY NAME, IN EACH SECTION (user, 2026-10-05).
  *

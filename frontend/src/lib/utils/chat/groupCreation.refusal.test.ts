@@ -26,6 +26,7 @@ vi.mock('$lib/users/blocks', () => ({ isBlockedWith: vi.fn(async () => false) })
 import { isBlockedWith } from '$lib/users/blocks';
 import { createNewGroup, startNewConversation, type ConversationRefusal } from './groupCreation';
 import { conversationRefusalMessage } from './conversationRefusalMessage';
+import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 
 /** Deps for the named-group path. Everything succeeds unless a case replaces one mock. */
 function groupDeps(conversations = new SvelteMap<string, { name?: string }>()) {
@@ -130,6 +131,27 @@ describe('createNewGroup names its refusal', () => {
     expect(d.mlsService.deleteGroupOnServer).toHaveBeenCalledWith('g-new');
   });
 
+  /**
+   * A follower tab commits nothing, so the group cannot be completed there: answered by TYPE, as the
+   * one refusal the member can act on, instead of the generic failure.
+   */
+  it('answers `follower-tab` when this tab may not commit the add of its own devices', async () => {
+    const d = groupDeps();
+    Object.assign(d.mlsService, {
+      fetchUserDevices: vi.fn(async () => [{ deviceId: 'dev-2' }]),
+      acquireAddLock: vi.fn(async () => true),
+      releaseAddLock: vi.fn(async () => {}),
+      addMembersBulk: vi.fn(async () => {
+        throw new FollowerTabCommitError('g-new');
+      }),
+    });
+
+    const outcome = await createNewGroup('Equipe', d.args as never);
+
+    expect(outcome).toEqual({ ok: false, reason: 'follower-tab' });
+    expect(d.mlsService.deleteGroupOnServer).toHaveBeenCalledWith('g-new');
+  });
+
   it('answers with the key of the group it created', async () => {
     const d = groupDeps();
 
@@ -185,6 +207,17 @@ describe('startNewConversation names its refusal', () => {
     expect(d.mlsService.deleteGroupOnServer).toHaveBeenCalledWith('g-dm');
   });
 
+  it('answers `follower-tab` when this tab may not commit the add', async () => {
+    const d = dmDeps();
+    d.mlsService.addMembersBulk = vi.fn(async () => {
+      throw new FollowerTabCommitError('g-dm');
+    });
+
+    const outcome = await startNewConversation('peer', d.args as never);
+
+    expect(outcome).toEqual({ ok: false, reason: 'follower-tab' });
+  });
+
   it('answers with the key of the conversation it opened', async () => {
     const d = dmDeps();
 
@@ -205,13 +238,14 @@ describe('every refusal has a sentence', () => {
     'blocked',
     'block-check-unavailable',
     'peer-has-no-device',
+    'follower-tab',
     'creation-failed',
   ];
 
   it('renders a distinct, non-empty line for each', () => {
     const lines = ALL.map(conversationRefusalMessage);
 
-    expect(lines).toHaveLength(5);
+    expect(lines).toHaveLength(6);
     for (const line of lines) expect(line.trim().length).toBeGreaterThan(0);
     // Two refusals sharing a sentence would tell the member the same thing about different causes.
     expect(new Set(lines).size).toBe(ALL.length);

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { SEO_DATA_ELEMENT_ID } from './renderHead';
 import { injectedSeoForPath, readInjectedSeo, resetInjectedSeoCache } from './injectedSeo';
 

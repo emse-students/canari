@@ -12,7 +12,7 @@ import { ensureConversationForServerGroup } from './serverGroupConversation';
 import { retireConversation } from './conversations';
 import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
-import { readWelcomeOwedFromRow } from './welcomeOwed';
+import { readWelcomeOwedFromRow, type WelcomeOwedReading } from './welcomeOwed';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).
@@ -489,8 +489,13 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
   // on 2026-08-26 (GRP-4): the invitation link and this seam raced on every join by link, and the
   // joiner lost about half of them. The overlap is deleted here rather than reconciled afterwards,
   // because a ledger repairing two parties that wrote the same leaf is a witness, not a fix.
-  const owed = await readWelcomeOwed(groupId, deps);
-  if (owed === null) {
+  //
+  // AND A LINK'S SEAT IS AN ASK (`awaiting-admission`): a new person enters by a member's Add, so
+  // the self-service door is shut for them - the server refuses the base and the commit. Told here,
+  // before anything is tried, the device asks a member and waits, as for `owed`; the member it
+  // reaches is shown "X asks to join" (`handleWelcomeRequest`).
+  const reading = await readWelcomeOwed(groupId, deps);
+  if (reading === null) {
     // The discriminator could not be read, so neither path is known to be ours. The watchdog owns
     // the cadence and re-invokes; guessing here is the exact move this block exists to stop.
     deps.log(
@@ -498,7 +503,11 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     );
     return;
   }
-  if (owed) {
+  if (reading === 'awaiting-admission') {
+    await askAMemberToReAddUs(groupId, deps, "invited by a link, awaiting a member's admission");
+    return;
+  }
+  if (reading === 'owed') {
     await askAMemberToReAddUs(groupId, deps, 'invited, Welcome owed by a member');
     return;
   }
@@ -709,6 +718,16 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     return;
   }
 
+  // THE SERVER REFUSED THIS ACCOUNT'S COMMITS FOR A WHILE (`429`, `commitRateLimit.ts`): the base is
+  // fine and nobody needs to re-add us, so asking a member for a Welcome would mutate the tree to
+  // work around a wait. The watchdog's next pass joins again once the wait has passed.
+  if (outcome.reason === 'rate_limited') {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... not asking a member to re-add us: the commit rate limit holds for ${Math.round(outcome.retryAfterMs / 1000)} s more`
+    );
+    return;
+  }
+
   // WHAT REACHES HERE IS THEREFORE BOUNDED BY SOMETHING: a group whose base is unpublished has a
   // member who will publish one, or a peer who can send a Welcome. Nothing that reaches this line
   // any longer has a server-side answer proving the request is hopeless.
@@ -752,8 +771,14 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
  * ships its own frontend (`frontendDist`), so an APK older than this change talks to a server that
  * has it and vice versa; treating a missing field as `false` would hand the whole invited population
  * the external join, which is the race, not the fix.
+ *
+ * @returns the reading ({@link WelcomeOwedReading}) - `awaiting-admission` included, the invitation
+ *   link's seat that only a member's Add answers - or `null` when the memberships could not be read.
  */
-async function readWelcomeOwed(groupId: string, deps: RecoveryDeps): Promise<boolean | null> {
+async function readWelcomeOwed(
+  groupId: string,
+  deps: RecoveryDeps
+): Promise<WelcomeOwedReading | null> {
   try {
     const rows = await deps.mlsService.getDeviceMemberships(
       deps.userId,
@@ -763,9 +788,13 @@ async function readWelcomeOwed(groupId: string, deps: RecoveryDeps): Promise<boo
     // 2026-09-27 has the same two doors - an admitter's Welcome, or the device's own external
     // commit. A server that carries neither field reads `owed`: the row's status is all there is.
     const reading = readWelcomeOwedFromRow(rows.find((r) => r.groupId === groupId));
-    if (reading === 'not-pending') return false;
-    const owed = reading === 'owed';
-    if (!owed) {
+    if (reading === 'awaiting-admission') {
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... invitation-link seat awaiting a member's admission - ` +
+          `a member is asked, no self-service join`
+      );
+    }
+    if (reading === 'unhonoured-seat') {
       // THIS LINE IS THE DEFECT'S NAME, and it accuses. A roster seat with no Welcome and no Add in
       // flight is the population `reportStrandedDeviceMemberships` names hourly; reaching it here
       // means this device was given a seat nobody ever honoured, and the next lines are the
@@ -776,7 +805,7 @@ async function readWelcomeOwed(groupId: string, deps: RecoveryDeps): Promise<boo
           ` - nobody owes us anything; serving ourselves`
       );
     }
-    return owed;
+    return reading;
   } catch (e) {
     deps.log(
       `[READD] ${groupId.slice(0, 8)}... getDeviceMemberships threw: ${String(e).slice(0, 120)}`

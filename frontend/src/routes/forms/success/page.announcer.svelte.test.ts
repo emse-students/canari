@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PAYMENT RETURN ANNOUNCES ITS ANSWER ITSELF (iPhone 12, v1.2.9-alpha.4: SvelteKit's route
  * announcer, which reads the title once at the navigation, still said "Verification du paiement..."

@@ -59,8 +59,9 @@ impl From<mls_core::DatedKeyPackage> for DatedKeyPackagePayload {
 }
 
 /// An authored frame as `envoyer_message_bytes` hands it to TypeScript:
-/// `{ ciphertext: number[], authorProof: number[] }` (`mls_core::authorship`).
-#[derive(serde::Serialize, Clone)]
+/// `{ ciphertext: number[], authorProof: number[] }` (`mls_core::authorship`), inside the
+/// `sealed` outcome of `Scellement`.
+#[derive(Debug, PartialEq, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AuthoredFramePayload {
     pub ciphertext: Vec<u8>,

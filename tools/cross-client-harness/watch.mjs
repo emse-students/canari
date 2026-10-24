@@ -308,7 +308,15 @@ const BENIGN = [
   // is owed. Deliberately NOT written as a `^\[OUTBOX\] \S+ withdrawn` prefix - the sibling branch
   // one `if` above it in `outbox.ts` fires when the send was already in flight, means the opposite
   // (the peers DO have it), and sits in `NOTABLE`. A prefix rule would silence that one too.
-  /^\[OUTBOX\] [0-9a-f]{8}… withdrawn from the queue before it was ever sent$/,
+  // Spelt as `outbox.ts` spells it since the lanes: "before this tab sent it" - the older wording
+  // matched nothing from then on.
+  /^\[OUTBOX\] [0-9a-f]{8}… withdrawn from the queue before (?:it was ever sent|this tab sent it)$/,
+  // A GROUP EXIT SETTLING ITS QUEUE (GRP-6, 2026-10-22): the leave or delete sends what the group
+  // still had queued before its server step, so none is refused 403 afterwards. Benign only at
+  // `0 lost`; a loss names its kinds and is the line's evidence. And the owed exit refusing a frame
+  // queued after it (the closing conversation's read mark): the gate doing its job.
+  /^\[OUTBOX\] (?:leave|delete) of [0-9a-f]{8}…: \d+ of \d+ queued entr(?:y|ies) sent before the server step, 0 lost$/,
+  /^\[OUTBOX\] [0-9a-f]{8}… \((?:control|text|reply|media)\) not queued: this device owes the (?:leave|delete) of [0-9a-f]{8}…, so nothing of it can be delivered$/,
   // AN EVICTION APPLIED TWICE. Commits are replayed - by a history drain, by a reconnect - and the
   // second application finds the conversation already retired. Nothing happened, and saying so is
   // what separates it from the first application, which DID something and sits in `STATE_CHANGE`.

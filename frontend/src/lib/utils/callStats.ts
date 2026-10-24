@@ -170,14 +170,18 @@ type VideoRtpEntry = RtpCodecEntry & {
   pliCount?: number;
   framesEncoded?: number;
   qualityLimitationReason?: string;
+  encoderImplementation?: string;
+  totalEncodeTime?: number;
 };
 
 /**
  * Describes the call's VIDEO as the engine reports it, both directions:
- * `video recv=video/VP8 640x480 fps=30 decoded=900 keyframes=1 freezes=0 (0 s) pli=0 | send=video/VP8 640x480 fps=30 encoded=900 limit=none`.
+ * `video recv=video/VP8 640x480 fps=30 decoded=900 keyframes=1 freezes=0 (0 s) pli=0 | send=video/VP8 1280x720 fps=30 encoded=900 limit=none enc=libvpx encode_ms=4.1`.
  * A direction with no stream reads `none`. Logged at each conclusive E2E path check of a call that
  * carries video, so a phone reading says whether the picture decoded smoothly, not only whether it
- * was encrypted. Counts are cumulative over the stream's life.
+ * was encrypted. Counts are cumulative over the stream's life; `encode_ms` is the mean encode time
+ * per frame so far and `enc` the encoder (software `libvpx` or a hardware one) - what the phone
+ * reading compares across the quality ladder's rungs (calls.md, "The quality ladder").
  */
 export function describeVideoStats(stats: RTCStatsReport): string {
   const entries = new Map<string, VideoRtpEntry>();
@@ -195,8 +199,12 @@ export function describeVideoStats(stats: RTCStatsReport): string {
   const recv = inbound
     ? `${codecOf(inbound)} ${size(inbound)} fps=${fps(inbound)} decoded=${inbound.framesDecoded ?? '?'} keyframes=${inbound.keyFramesDecoded ?? '?'} freezes=${inbound.freezeCount ?? '?'} (${Math.round(inbound.totalFreezesDuration ?? 0)} s) pli=${inbound.pliCount ?? '?'}`
     : 'none';
+  const encodeMs = (rtp: VideoRtpEntry) =>
+    typeof rtp.totalEncodeTime === 'number' && rtp.framesEncoded
+      ? Math.round((rtp.totalEncodeTime * 10_000) / rtp.framesEncoded) / 10
+      : '?';
   const send = outbound
-    ? `${codecOf(outbound)} ${size(outbound)} fps=${fps(outbound)} encoded=${outbound.framesEncoded ?? '?'} limit=${outbound.qualityLimitationReason ?? '?'}`
+    ? `${codecOf(outbound)} ${size(outbound)} fps=${fps(outbound)} encoded=${outbound.framesEncoded ?? '?'} limit=${outbound.qualityLimitationReason ?? '?'} enc=${outbound.encoderImplementation ?? '?'} encode_ms=${encodeMs(outbound)}`
     : 'none';
   return `video recv=${recv} | send=${send}`;
 }

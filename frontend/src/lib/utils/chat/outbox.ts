@@ -3,7 +3,8 @@ import { bumpOutboxQueueVersion } from './outboxActivity.svelte';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
-import type { OutboxResumableUpload } from '$lib/db/types';
+import type { OutboxResumableUpload, PendingGroupExit } from '$lib/db/types';
+import { owedFor } from '$lib/utils/chat/pendingGroupExits';
 import { OutboxPayloadUnreadableError } from '$lib/db/outboxCodec';
 import {
   OutboxBlobCorruptError,
@@ -332,6 +333,13 @@ export function buildOutboxProto(entry: OutboxEntry): Uint8Array | null {
   });
 }
 
+/**
+ * Who withdrew a queued entry. A withdrawn entry whose send then FAILS is over whatever the cause,
+ * but what that means differs: the author deleted it (`user`), a newer read mark replaced it
+ * (`superseded`), the group is being left or deleted (`exit`), or another tab withdrew it.
+ */
+export type WithdrawReason = 'user' | 'superseded' | 'exit' | 'other-tab';
+
 /** Dependencies driving the outbox flusher. Built once per session and registered globally. */
 export interface OutboxDeps {
   mlsService: IMlsService;
@@ -450,6 +458,24 @@ export interface OutboxController {
    * `true` means there is nothing out there to tell anyone about.
    */
   cancelPending: (messageId: string) => Promise<boolean>;
+  /**
+   * Settles one conversation's queue before this device leaves or deletes it, and resolves only once
+   * nothing of it is queued or on the wire.
+   *
+   * Once the server has ended the membership no entry of the group can be delivered - its POST is
+   * answered 403 and it would sit parked until the next sign-in, for a group this device no longer
+   * holds (GRP-6, 2026-10-22: a read watermark queued as the leaver closed the conversation, refused
+   * 54 ms after the leave). So the exit calls this BEFORE its server step:
+   *  1. a lane already running for the group is AWAITED, so a send in flight settles first;
+   *  2. the exit claims the lane, and drains it - the membership and the MLS state still exist, so
+   *     a text written just before leaving is sent rather than dropped;
+   *  3. what could not be sent (offline, held, backing off, an upload still running) is withdrawn
+   *     under the same claim, and logged by kind as lost.
+   * An ALLOWLIST by construction: only rows whose `conversationId` is exactly `conversationId`.
+   *
+   * @returns how many entries were lost (withdrawn unsent).
+   */
+  drainForExit: (conversationId: string, exitKind: 'leave' | 'delete') => Promise<number>;
   /**
    * Whether the durable queue holds an entry for this message id: `true`/`false` from the light read
    * (no payload decode), `null` when the queue could not be read - which is NOT "absent".
@@ -654,8 +680,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * The durable row is deleted by the cancellation itself, which is what stops every FUTURE flush -
    * this set stops the CURRENT one, whose loop is walking a snapshot of the queue read before the
    * user pressed delete. Entries leave it as they are dropped, and it is bounded by the queue.
+   *
+   * Keyed to WHY it was withdrawn, because a send that then fails means a different thing for each:
+   * see {@link WithdrawReason} and the failure branch at the top of `settleFailure`.
    */
-  const cancelled = new Set<string>();
+  const cancelled = new Map<string, WithdrawReason>();
+
+  /**
+   * Conversations whose exit is draining them right now ({@link OutboxController.drainForExit}). A
+   * lane of one of these does not wait for an upload to end: the exit is waiting on the lane, and an
+   * attachment still uploading is what the drain then reports as lost.
+   */
+  const exiting = new Set<string>();
 
   /**
    * The ids inside `mlsService.sendMessage` right now.
@@ -707,7 +743,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (lanes.size > 0 || cancelled.size === 0) return;
     const present = new Set(queued.map((e) => e.id));
     let forgotten = 0;
-    for (const id of cancelled) {
+    for (const id of cancelled.keys()) {
       if (!present.has(id) && !inFlight.has(id)) {
         cancelled.delete(id);
         forgotten++;
@@ -781,7 +817,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // here would only grow the set for the session. An undecided tab keeps it: it may be the
       // leader, and it reads its first snapshot only once the election is over.
       if (getTabLeadership() === 'follower') return;
-      cancelled.add(event.messageId);
+      cancelled.set(event.messageId, 'other-tab');
       log(
         `[OUTBOX] ${event.messageId.slice(0, 8)}… cancelled by another tab - it will not be sent.`
       );
@@ -2056,6 +2092,25 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload cancelled - the transfer was aborted`);
       return 'gone';
     }
+    // WITHDRAWN WHILE IT WAS ON THE WIRE: its row is already deleted, so no disposition below can
+    // apply - there is nothing left to park, count or retry. Whatever the server answered, the entry
+    // is over; the line says what that means for the reason it was withdrawn.
+    const withdrawnAs = cancelled.get(entry.id);
+    if (withdrawnAs) {
+      clearUpload(entry.id);
+      const answer = refusalStatus(e) ?? (e instanceof Error ? e.name : 'unknown');
+      const meaning: Record<WithdrawReason, string> = {
+        // The author's delete already went as an event (the withdrawal answered "maybe sent"), and
+        // it is harmless now: the members never got the frame it deletes.
+        user: 'deleted by its author while on the wire, and the send failed - the members never got it',
+        superseded:
+          'superseded while on the wire, and the send failed - the newer entry carries it',
+        exit: 'withdrawn by the group exit while on the wire, and the send failed - the group is being left',
+        'other-tab': 'withdrawn by another tab while on the wire, and the send failed',
+      };
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… ${meaning[withdrawnAs]} (${answer}) - dropped`);
+      return 'gone';
+    }
     // ANY OTHER ANSWER BREAKS A RUN OF 5xx, so the count is truly consecutive. A transport failure is
     // not an answer and leaves it as it is.
     if (!(e instanceof SendServerError) && isSendAnswer(e) && (entry.serverErrors ?? 0) > 0) {
@@ -2381,8 +2436,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     for (;;) {
       if (disposed) return;
       laneRerun.delete(conversationId);
-      const entries = (await readQueue('flush')).filter((e) => e.conversationId === conversationId);
+      const queue = await readQueue('flush');
+      const entries = queue.filter((e) => e.conversationId === conversationId);
       if (entries.length === 0) return;
+      // A GROUP WHOSE EXIT IS OWED SENDS NOTHING FROM AN ORDINARY FLUSH: its rows are withdrawn, under
+      // this lane's claim, before any of them reaches the wire. The exit's own drain is the one lane
+      // that may still send them (`exiting`), while the membership exists. This is what covers a kill
+      // between `recordPendingGroupExit` and that drain: on relaunch the replay of the owed exit may
+      // end the membership before or after this flush, and either way no row of the group is posted
+      // into the 403 (review of #2259). Read from DURABLE state, once per pass: a lane is claimed
+      // before it runs, and an exit recorded during the pass awaits the lane before it withdraws.
+      if (!exiting.has(conversationId) && (await withdrawForOwedExit(conversationId, queue))) {
+        return;
+      }
       logMlsMetric({ kind: 'outbox_pending_count', count: entries.length });
       log(
         `[OUTBOX] Flushing ${entries.length} queued entr${entries.length === 1 ? 'y' : 'ies'} for ${conversationId.slice(0, 8)}…`
@@ -2414,7 +2480,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         else break;
       }
       // Chain another pass if a send unblocked dependents, or a concurrent enqueue arrived.
-      if (anySent || laneRerun.has(conversationId)) continue;
+      if (anySent) continue;
+      // AN EXIT IS WAITING ON THIS LANE: one pass that sent nothing is its answer, and what is left
+      // (an upload still running, a held entry) is what the exit withdraws and reports as lost.
+      if (exiting.has(conversationId)) return;
+      if (laneRerun.has(conversationId)) continue;
       if (disposed || !hasRunningUpload(conversationId)) return;
       // THE BACKOFF IS ARMED BEFORE THE WAIT: `runFlush` arms it only once every lane it started has
       // returned, and this one may wait minutes for a file - a text held behind it on a 5xx would wait
@@ -2432,6 +2502,86 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       await new Promise<void>((resolve) => laneWake.set(conversationId, resolve));
       laneWake.delete(conversationId);
     }
+  }
+
+  /**
+   * Whether this device owes the exit of `entry`'s conversation - a DURABLE fact (`pendingGroupExits`),
+   * written before the exit acts and read on every enqueue - and, when it does, the line saying so.
+   * An unreadable store answers `false`: it proves nothing, the entry is queued, and that is logged.
+   */
+  async function owedExitRefuses(entry: OutboxEntry, what: string): Promise<boolean> {
+    const exit = await owedExitOf(entry.conversationId, `${entry.id.slice(0, 8)}…`, 'queued');
+    if (!exit) return false;
+    const line = `[OUTBOX] ${entry.id.slice(0, 8)}… (${entry.kind}) ${what}: this device owes the ${exit.kind} of ${entry.conversationId.slice(0, 8)}… (owed for ${owedFor(exit.requestedAt)}), so nothing of it can be delivered`;
+    // SOMETHING THE MEMBER WROTE, DROPPED, ACCUSES. A control refused here is the late read-mark
+    // writer this gate exists for; a text or a file is not, and the one way to reach this with one is
+    // an exit the server keeps refusing (kept for ever, by design) on a group the member is in again
+    // - and the enqueue resolves, so this line is all that says it (backlog, P3).
+    if (entry.kind !== 'control') console.warn(line);
+    log(line);
+    return true;
+  }
+
+  /**
+   * The exit this device owes for `conversationId`, read from DURABLE state, or `null`. An unreadable
+   * store answers `null`: it proves nothing, and the line says what goes ahead without the check.
+   */
+  async function owedExitOf(
+    conversationId: string,
+    subject: string,
+    without: string
+  ): Promise<PendingGroupExit | null> {
+    if (!storage) return null;
+    try {
+      return (
+        (await storage.getPendingGroupExits()).find((x) => x.groupId === conversationId) ?? null
+      );
+    } catch (e) {
+      log(
+        `[OUTBOX] ${subject} owed group exits unreadable (${String(e).slice(0, 80)}) - ${without} without that check`
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Withdraws every queued row of `conversationId` when its exit is owed, and says so by kind.
+   * `queue` is the snapshot the lane just read. Returns whether the exit was owed (the lane stops).
+   */
+  async function withdrawForOwedExit(
+    conversationId: string,
+    queue: OutboxEntry[]
+  ): Promise<boolean> {
+    const short = conversationId.slice(0, 8);
+    const exit = await owedExitOf(conversationId, `lane ${short}…`, 'flushed');
+    if (!exit) return false;
+    const { left, kinds } = await withdrawGroupForExit(conversationId, queue);
+    // A WARNING: rows reaching a flush with their group's exit owed means the exit's own drain never
+    // ran - a kill inside the leave - and what the member queued there is lost.
+    const line = `[OUTBOX] lane ${short}…: this device owes the ${exit.kind} of the group (owed for ${owedFor(exit.requestedAt)}) - ${left.length} queued entr${left.length === 1 ? 'y' : 'ies'} withdrawn, never sent into the refusal (${kinds})`;
+    console.warn(line);
+    log(line);
+    return true;
+  }
+
+  /**
+   * Withdraws every row of `conversationId` in `snapshot` for a group exit, rewrites the mirror once,
+   * and returns how many there were and what they were, by kind - the two exit paths word it alike.
+   */
+  async function withdrawGroupForExit(
+    conversationId: string,
+    snapshot: OutboxEntry[]
+  ): Promise<{ left: OutboxEntry[]; kinds: string }> {
+    const left = snapshot.filter((e) => e.conversationId === conversationId);
+    const gone = new Set<string>();
+    const lostByKind = new Map<OutboxEntry['kind'], number>();
+    for (const entry of left) {
+      const { rowDeleted } = await withdraw(entry.id, 'exit', snapshot);
+      if (rowDeleted) gone.add(entry.id);
+      lostByKind.set(entry.kind, (lostByKind.get(entry.kind) ?? 0) + 1);
+    }
+    if (gone.size > 0) await syncOutboxMirror(snapshot.filter((e) => !gone.has(e.id)));
+    return { left, kinds: [...lostByKind].map(([k, n]) => `${n} ${k}`).join(', ') };
   }
 
   /**
@@ -2490,12 +2640,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * a snapshot, its answer feeds a log line, and the receiver's `max` makes the extra frame
    * harmless; re-reading the queue per row to close it is the cost the single read removed.
    *
+   * @param reason who withdrew it - it decides what each line says, since "the delete has to travel as
+   *               an event" is true of an author's delete and false of a group exit.
    * @param snapshot the queue as the caller already read it, so a supersede reads it once per enqueue;
    *                 and then the mirror is left to the caller, which rewrites it once for the batch.
    * @returns `withdrawn`: guaranteed never sent by this tab; `rowDeleted`: the durable row is gone.
    */
   async function withdraw(
     messageId: string,
+    reason: Exclude<WithdrawReason, 'other-tab'>,
     snapshot?: OutboxEntry[]
   ): Promise<{ withdrawn: boolean; rowDeleted: boolean }> {
     if (!storage) return { withdrawn: false, rowDeleted: false };
@@ -2514,7 +2667,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // Three things, and the order between them does not matter because none can undo another:
     // the durable row (every future flush), this tab's snapshot (a flush already walking), and
     // the other tabs' snapshots (a leader draining on our behalf).
-    cancelled.add(messageId);
+    cancelled.set(messageId, reason);
     parked.delete(messageId);
     serverFailed.delete(messageId);
     noAnswer.delete(messageId);
@@ -2552,15 +2705,21 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (!rowDeleted || onWireAtStart || inFlight.has(messageId)) {
       if (rowDeleted) {
         log(
-          `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn while it was already being sent - the peers` +
-            ' will have it, so the delete has to travel as an event'
+          reason === 'exit'
+            ? // NOT REACHED BY THIS TAB'S OWN LANE: the exit withdraws under its claim, after the lane
+              // drained. Only a send another path holds can be here, and it is said for what it is.
+              `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn by the group exit while it was being sent - the members may have it; it is not retried`
+            : `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn while it was already being sent - the peers` +
+                ' will have it, so the delete has to travel as an event'
         );
       }
       return { withdrawn: false, rowDeleted };
     }
     if (maybeStored) {
       log(
-        `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn after ${queued.serverErrors} 5xx answer(s) - a gateway may have stored it, so the delete travels as an event too`
+        reason === 'exit'
+          ? `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn by the group exit after ${queued.serverErrors} 5xx answer(s) - a gateway may have stored it, so the members may have it`
+          : `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn after ${queued.serverErrors} 5xx answer(s) - a gateway may have stored it, so the delete travels as an event too`
       );
       return { withdrawn: false, rowDeleted };
     }
@@ -2569,7 +2728,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     uploads.get(messageId)?.abort('cancel');
     // "By this tab": only this tab's sends are known here. A leader tab draining on a follower's
     // behalf learns of the withdrawal from `outbox_entry_cancelled`, and may already be sending it.
-    log(`[OUTBOX] ${messageId.slice(0, 8)}… withdrawn from the queue before this tab sent it`);
+    log(
+      reason === 'exit'
+        ? `[OUTBOX] ${messageId.slice(0, 8)}… (${queued.kind}) withdrawn by the group exit - it could not be sent before the membership ended, and is lost`
+        : `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn from the queue before this tab sent it`
+    );
     return { withdrawn: true, rowDeleted };
   }
 
@@ -2603,6 +2766,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       if (!storage) {
         log(`[OUTBOX] Enqueue refused for ${entry.id.slice(0, 8)}…: no storage layer`);
         throw new OutboxEnqueueError('no storage layer');
+      }
+      // A GROUP THIS DEVICE IS LEAVING OR DELETING TAKES NOTHING NEW, read from the DURABLE owed
+      // exit (`pendingGroupExits`), which is written before the exit acts and outlives a reload. A
+      // frame queued from here on could only be refused once the membership ends - this is what
+      // closes the late read-mark writers (the debounce cleanup, the owed-mark drain) without a
+      // clock. RESOLVES, not rejects: the owed-mark ledger then drops the mark, which is the point,
+      // and there is no member-visible send to fail - the conversation is already retired.
+      // A read that fails proves nothing, so the entry is queued as before and the line says so.
+      if (await owedExitRefuses(entry, 'not queued')) {
+        // A send path that wrote the row beside its echo has ALREADY queued it: the row goes too,
+        // or the next flush would post it into the refusal this gate exists to prevent.
+        if (opts.alreadyDurable) await withdraw(entry.id, 'exit');
+        return;
       }
       let superseded: OutboxEntry[] = [];
       // ONE READ OF THE QUEUE PER LATEST-WINS ENQUEUE: it decides the supersede, settles each
@@ -2641,12 +2817,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           throw new OutboxEnqueueError('the durable write failed', e);
         }
       }
+      // AND ASKED AGAIN ONCE THE ROW IS ON DISK. An exit recorded while this write ran may already
+      // have taken its last look at the queue, and would never see this row; so the writer looks
+      // instead. Whichever comes second sees the other, so no row of an exited group outlives both.
+      if (await owedExitRefuses(entry, 'withdrawn right after its write')) {
+        await withdraw(entry.id, 'exit');
+        return;
+      }
       // WITHDRAWN ONLY NOW, AFTER THE NEW ROW IS ON DISK: a crash between the two leaves both rows,
       // which send in order and merge as `max` - one spare frame. The other order loses both.
       if (snapshot) {
         const gone = new Set<string>();
         for (const old of superseded) {
-          const { withdrawn, rowDeleted } = await withdraw(old.id, snapshot);
+          const { withdrawn, rowDeleted } = await withdraw(old.id, 'superseded', snapshot);
           if (rowDeleted) gone.add(old.id);
           log(
             !rowDeleted
@@ -2678,7 +2861,69 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     },
 
     async cancelPending(messageId: string): Promise<boolean> {
-      return (await withdraw(messageId)).withdrawn;
+      return (await withdraw(messageId, 'user')).withdrawn;
+    },
+
+    async drainForExit(conversationId: string, exitKind: 'leave' | 'delete'): Promise<number> {
+      if (!storage) return 0;
+      const tag = `[OUTBOX] ${exitKind} of ${conversationId.slice(0, 8)}…`;
+      exiting.add(conversationId);
+      try {
+        // 1. A LANE ALREADY RUNNING IS AWAITED, NOT RACED: its send in flight settles before the
+        // membership ends. Woken first, so one waiting for an upload sees `exiting` and returns.
+        for (
+          let running = lanes.get(conversationId);
+          running;
+          running = lanes.get(conversationId)
+        ) {
+          laneWake.get(conversationId)?.();
+          await running;
+        }
+        // 2. THE LANE IS CLAIMED BY THE EXIT, with no await since the check above. Until it is
+        // released no other flush can start a send for this group, so what is withdrawn below is
+        // known not to be on the wire - the withdrawal ends the race instead of healing it.
+        let release!: () => void;
+        lanes.set(
+          conversationId,
+          new Promise<void>((resolve) => {
+            release = resolve;
+          })
+        );
+        try {
+          const before = (await readQueue('exit drain')).filter(
+            (e) => e.conversationId === conversationId
+          );
+          if (before.length === 0) return 0;
+          // 3. WHAT CAN STILL GO, GOES - the membership and the MLS state both exist until the server
+          // step. In queue order, so a text written before a reaction to it still precedes it, and
+          // each skips its backoff once: an exit is the last chance it has.
+          const canSend =
+            getIsTabLeader() && !connectivity.isOffline && (canFlush ? canFlush() : true);
+          if (canSend) {
+            for (const e of before) resuming.add(e.id);
+            await drainLane(conversationId);
+          } else {
+            log(
+              `${tag}: ${before.length} queued entr${before.length === 1 ? 'y' : 'ies'} cannot be sent from here (${!getIsTabLeader() ? 'not the leader tab' : connectivity.isOffline ? 'offline' : 'session not ready to send'})`
+            );
+          }
+          // 4. WHAT COULD NOT GO IS WITHDRAWN, under the same claim, and said by kind: a text lost
+          // here is something the member wrote, a control is a receipt or a reaction.
+          const { left, kinds } = await withdrawGroupForExit(
+            conversationId,
+            await readQueue('exit withdraw')
+          );
+          const line = `${tag}: ${before.length - left.length} of ${before.length} queued entr${before.length === 1 ? 'y' : 'ies'} sent before the server step, ${left.length} lost${left.length > 0 ? ` (${kinds})` : ''}`;
+          if (left.length > 0) console.warn(line);
+          log(line);
+          return left.length;
+        } finally {
+          lanes.delete(conversationId);
+          release();
+        }
+      } finally {
+        exiting.delete(conversationId);
+      }
     },
 
     flush(): Promise<void> {
@@ -2873,6 +3118,22 @@ export function isOutboxEntryQueued(messageId: string): Promise<boolean | null> 
 export function cancelOutboxMessage(messageId: string): Promise<boolean> {
   if (!active) return Promise.resolve(false);
   return active.cancelPending(messageId).finally(bumpOutboxQueueVersion);
+}
+
+/**
+ * Settle the queue of a conversation this device is leaving or deleting, on the active controller -
+ * see {@link OutboxController.drainForExit}. Rejects with {@link OutboxEnqueueError} when no
+ * controller is registered: a group exit is only reachable from a signed-in session, so reaching
+ * here without one is a defect to report, never "nothing queued".
+ */
+export function drainOutboxForExit(
+  conversationId: string,
+  exitKind: 'leave' | 'delete'
+): Promise<number> {
+  if (!active) {
+    return Promise.reject(new OutboxEnqueueError('no active outbox controller'));
+  }
+  return active.drainForExit(conversationId, exitKind).finally(bumpOutboxQueueVersion);
 }
 
 /** Mark loaded messages still queued as `pending` (no-op when none). */

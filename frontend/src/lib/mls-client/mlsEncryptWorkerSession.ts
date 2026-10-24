@@ -10,6 +10,20 @@ let sharedWorker: Worker | null = null;
 /** Serialises encrypt jobs on a single worker (WASM init is not re-entrant). */
 let jobChain: Promise<void> = Promise.resolve();
 
+/** The at-rest format last reported, so a session names its checkpoint format once, not per save. */
+let loggedSealFormat: string | null = null;
+
+/**
+ * Names the web checkpoint's at-rest format the first time it is used, and again only if it ever
+ * changes. It is the line a device reading looks for to know which format a build WROTE - the
+ * reader's own line (`loadAndInitWasm`) only says what the previous session left.
+ */
+function logSealFormatOnce(format: string): void {
+  if (loggedSealFormat === format) return;
+  loggedSealFormat = format;
+  console.log(`[MLS] web checkpoint seal format: ${format}`);
+}
+
 /** Terminates the shared encrypt worker (tests / teardown). */
 export function disposeMlsEncryptWorker(): void {
   sharedWorker?.terminate();
@@ -118,6 +132,7 @@ export async function sealWebMlsState(
   deviceKeyB64: string,
   options: { v2: boolean; useEncryptWorker: boolean }
 ): Promise<Uint8Array> {
+  logSealFormatOnce(options.v2 ? 'framed v2 (WebCrypto AES-GCM)' : 'legacy (WASM ChaCha20)');
   if (options.v2) {
     if (isTauriRuntime()) {
       throw new Error(

@@ -12,10 +12,11 @@ import {
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import {
   MessagingService,
   SendMessageBody,
@@ -25,10 +26,33 @@ import {
 } from '../services/messaging.service';
 import { sanitizeEpoch, sanitizeLogValue } from '../utils/sanitize';
 
+/**
+ * Commits one user may submit per minute on `POST /mls/commit`, across all their devices.
+ *
+ * SIZED ABOVE THE LARGEST LEGITIMATE BURST, NOT AT THE AVERAGE. Key-group external joins run at
+ * ~77 a day across the whole estate (2026-10-22), but one device that restores, or rejoins after a
+ * lost state, commits once per group in quick succession - and a client submits its commits one at
+ * a time, each under its MLS mutex and after its own round-trip. 600 a minute is ten a second per
+ * user, which that serial path does not reach on any network a phone sits on, while still bounding
+ * what a crafted stream costs (a key group's external commit asks social-service once per commit).
+ * The production maximum per user and minute is owed (`mls_commit_log`, grouped by sender device
+ * and minute) and is what this number is checked against: see the channel-encryption protocol,
+ * "WP-21, and the gate it had nowhere to live".
+ */
+export const MLS_COMMIT_LIMIT_PER_MINUTE = 600;
+
+/** How many uninvited entries are remembered for deduplication; the oldest goes first past it. */
+export const MAX_REMEMBERED_UNINVITED_ENTRIES = 5000;
+
+/** The classes a client may name an uninvited entry as (`UninvitedEntryKind` on the client). */
+const UNINVITED_ENTRY_KINDS: readonly string[] = ['new-person', 'returning', 'direct-peer'];
+
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
 @Controller()
 export class MessagingController {
   private readonly logger = new Logger(MessagingController.name);
+  /** The entries `mls/uninvited-entry` already counted, as (group, entrant, epoch), oldest first. */
+  private readonly reportedUninvitedEntries = new Set<string>();
 
   constructor(private readonly messagingService: MessagingService) {}
 
@@ -56,9 +80,16 @@ export class MessagingController {
    * A client's commit, handed to the gate as the fields the web client sends (`submitCommit`) and
    * nothing else: {@link foregroundCommitBody}. A Welcome travels WITH a commit only on the
    * background re-add (`POST mls/push/send-welcome-and-commit`); passed through here, a raw body
-   * would store one through a door nobody declared.
+   * would store one through a door nobody declared. Epoch-gated (`MessagingService.validateCommit`)
+   * and rate-limited per user.
+   *
+   * The limit sits on the route and not on the service because the background Welcome
+   * (`push.controller.ts`) reaches the same gate under a PushSecret, one commit per Welcome, and is
+   * not a stream a client chooses. A refusal is the throttler's `429`, before any work: the epoch
+   * has not moved, and the client rolls its staged commit back on that status (`BaseMlsService`).
    */
-  @UseGuards(HeaderAuthGuard)
+  @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
+  @Throttle({ default: { limit: MLS_COMMIT_LIMIT_PER_MINUTE, ttl: 60_000 } })
   @Post('mls/commit')
   async validateCommit(
     @Body() body: ForegroundCommitBody,
@@ -189,6 +220,89 @@ export class MessagingController {
         `kind=${sanitizeLogValue(body.kind)} ` +
         `envelope=${sanitizeLogValue(body.envelopeUserId)}:${sanitizeLogValue(body.envelopeDeviceId, 'none')} ` +
         `verified=${sanitizeLogValue(body.verifiedIdentity, 'unreadable')}`
+    );
+    return { recorded: true };
+  }
+
+  /**
+   * A client stating that a NEW PERSON entered one of its conversations by their own commit - an
+   * external commit signed by the very device it admitted, from a user who held no leaf before it.
+   * No member added them; the group info this service serves and the commit it accepted are all
+   * that let them in.
+   *
+   * A MEASUREMENT, exactly as `mls/sender-mismatch`: such an entry is either a user who lost every
+   * leaf rejoining by themselves, or one nobody wanted. The reporting device says what it can tell
+   * (`kind`, an allowlist): `returning` - it saw this user's leaves leave this tree before;
+   * `direct-peer` - the 1:1 conversation's own other person, whom opening it already chose;
+   * `new-person` - neither. The line carries it so the classes are counted apart. It stores nothing;
+   * the WARN line and its date are the count.
+   *
+   * ONE LINE PER ENTRY, NOT PER REPORTER: every member device sees the same commit and reports it,
+   * so the count is deduplicated on (group, entrant, epoch) - an entry is one commit, and a later
+   * entry of the same device is another. In memory and bounded: a restart may print an entry once
+   * more, never lose one. The first reporter's `kind` is the one printed.
+   *
+   * The reporter is the authenticated user and device and a MEMBER of the group (anyone else is
+   * refused, 403, as `mls/integrity-finding`). Every field goes through `sanitizeLogValue`.
+   */
+  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @Post('mls/uninvited-entry')
+  async reportUninvitedEntry(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') reporterDeviceId: string | undefined,
+    @Body()
+    body: {
+      groupId?: unknown;
+      entrant?: unknown;
+      epoch?: unknown;
+      keyFingerprint?: unknown;
+      kind?: unknown;
+    }
+  ): Promise<{ recorded: true }> {
+    const reporter = `${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)}`;
+    const groupId = typeof body.groupId === 'string' ? body.groupId : '';
+    if (
+      !groupId ||
+      !authUserId ||
+      !(await this.messagingService.isGroupMember(groupId, authUserId))
+    ) {
+      this.logger.warn(
+        `[UNINVITED_ENTRY] REJECT not-a-member reporter=${reporter} group=${sanitizeLogValue(body.groupId)}`
+      );
+      throw new ForbiddenException({
+        error: 'not-a-member',
+        message: 'not a member of this group',
+      });
+    }
+    // The one numeric field, printed as its digits; anything else is `invalid` like every field.
+    const epoch = sanitizeLogValue(
+      typeof body.epoch === 'number' && Number.isSafeInteger(body.epoch)
+        ? String(body.epoch)
+        : body.epoch
+    );
+    const entrant = sanitizeLogValue(body.entrant);
+    const group = sanitizeLogValue(groupId);
+    const kind =
+      body.kind === undefined || body.kind === null
+        ? 'unstated'
+        : UNINVITED_ENTRY_KINDS.includes(body.kind as string)
+          ? (body.kind as string)
+          : 'invalid';
+    const entry = `${group}\0${entrant}\0${epoch}`;
+    if (this.reportedUninvitedEntries.has(entry)) {
+      this.logger.debug(
+        `[UNINVITED_ENTRY] repeat reporter=${reporter} group=${group} entrant=${entrant} epoch=${epoch} - already counted`
+      );
+      return { recorded: true };
+    }
+    if (this.reportedUninvitedEntries.size >= MAX_REMEMBERED_UNINVITED_ENTRIES) {
+      const oldest = this.reportedUninvitedEntries.values().next().value;
+      if (oldest !== undefined) this.reportedUninvitedEntries.delete(oldest);
+    }
+    this.reportedUninvitedEntries.add(entry);
+    this.logger.warn(
+      `[UNINVITED_ENTRY] kind=${kind} reporter=${reporter} group=${group} entrant=${entrant} ` +
+        `epoch=${epoch} key=${sanitizeLogValue(body.keyFingerprint)}`
     );
     return { recorded: true };
   }

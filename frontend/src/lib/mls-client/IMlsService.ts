@@ -10,7 +10,14 @@ import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
-import type { GroupExclusions, GroupRosterBatch, SentFrame } from './mlsDeliveryApi';
+import type {
+  GroupExclusions,
+  GroupRosterBatch,
+  GroupUserMemberRow,
+  JoinDeclineOutcome,
+  PendingInvitationRow,
+  SentFrame,
+} from './mlsDeliveryApi';
 import type { ForkFinding } from './integrityFindings';
 
 export type { FrameDelivery };
@@ -93,6 +100,12 @@ export type ExternalJoinOutcome =
   | { joined: false; reason: 'own_key_package_unverified' }
   /** The commit gate was never reached. Nothing is claimed about membership. */
   | { joined: false; reason: 'unreachable' }
+  /**
+   * The server's per-user commit limit refused it (`429`), or still holds from an earlier refusal.
+   * Nothing is claimed about membership; nothing else this account commits is accepted for
+   * `retryAfterMs`, so a sweep stops there rather than ask group after group.
+   */
+  | { joined: false; reason: 'rate_limited'; retryAfterMs: number }
   /** The gate refused every bounded attempt; `serverReason` is its own classification. */
   | { joined: false; reason: 'refused'; serverReason: string; serverEpoch?: number };
 
@@ -310,10 +323,13 @@ export class GroupDrainAbandonedError extends Error {
  * instead ({@link StateLoadFailure}).
  */
 export class SavedStateUnopenedError extends Error {
-  readonly reason: Extract<StateLoadFailure, 'rotated' | 'undecryptable' | 'unknown'>;
+  readonly reason: Extract<
+    StateLoadFailure,
+    'rotated' | 'undecryptable' | 'unreadable_now' | 'unknown'
+  >;
 
   constructor(
-    reason: Extract<StateLoadFailure, 'rotated' | 'undecryptable' | 'unknown'>,
+    reason: Extract<StateLoadFailure, 'rotated' | 'undecryptable' | 'unreadable_now' | 'unknown'>,
     cause: unknown
   ) {
     super(`the saved MLS state did not open under this key (${reason}) - nothing written`, {
@@ -357,8 +373,10 @@ export function isKeystoreKeyUnavailable(error: unknown): boolean {
  * `mismatch` (another device's identity), `rotated` (a framed state whose header names another
  * key: the old PIN opens it), `altered` (a framed state whose header names THE KEY IN HAND and whose
  * tag fails: no PIN opens it), `undecryptable` (a legacy state that did not open - either of the two,
- * and nothing says which), `keystore_unavailable` (biometric mode found no key) and `unknown` (an
- * untyped failure).
+ * and nothing says which), `keystore_unavailable` (biometric mode found no key), `unreadable_now`
+ * (the web's WebCrypto refused a v2 state and the deterministic reader did not prove it altered:
+ * nothing is known about the bytes, so the state is re-read and never replaced -
+ * `MlsStateUnreadableNowError`) and `unknown` (an untyped failure).
  */
 export type StateLoadFailure =
   | 'mismatch'
@@ -366,6 +384,7 @@ export type StateLoadFailure =
   | 'rotated'
   | 'altered'
   | 'keystore_unavailable'
+  | 'unreadable_now'
   | 'unknown';
 
 /**
@@ -470,6 +489,8 @@ export type UserGroupRow = {
     welcomeQueued: boolean;
     addInFlight: boolean;
     admitted: boolean;
+    /** The seat waits for a member's admission (see {@link DeviceMembershipRow}); absent from an older server. */
+    awaitingAdmission?: boolean;
   } | null;
 };
 
@@ -589,6 +610,12 @@ export type DeviceMembershipRow = {
   welcomeQueued?: boolean;
   /** Some member holds this group's add lock right now, so an Add really is in flight. */
   addInFlight?: boolean;
+  /**
+   * The seat came from an invitation link and no member has admitted the person yet: the server
+   * refuses them the external-join base and every commit, so the device WAITS for a member's Add
+   * (`readWelcomeOwedFromRow` -> `awaiting-admission`). Absent from a server older than the field.
+   */
+  awaitingAdmission?: boolean;
 };
 
 export interface IMlsService {
@@ -599,7 +626,10 @@ export interface IMlsService {
     state?: Uint8Array,
     opts?: MlsInitOptions
   ): Promise<void>;
-  /** Creates a new local MLS group with the given ID. */
+  /**
+   * Creates a new local MLS group with the given ID. Refused on a follower tab
+   * (`FollowerTabCommitError`), whose state is a copy the leader never holds.
+   */
   createGroup(groupId: string): Promise<void>;
   /** Creates a new named group on the delivery server and returns its assigned group ID. */
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
@@ -945,6 +975,24 @@ export interface IMlsService {
     gapAt?: number;
   }>;
   /**
+   * Resubmits every commit of this device whose outcome is unknown (`commitSubmission.ts`) - or
+   * only those of `groupIds` - and merges or clears each on the gate's answer. One with no answer
+   * yet stays kept and pending in the MLS state. Takes the MLS lock itself, so it must never be called holding it.
+   * Called after the gateway connects and before the pending messages are drained.
+   */
+  settleUnresolvedCommits(groupIds?: string[]): Promise<void>;
+  /**
+   * Settles this device's unresolved commit of `groupId` from the server's commit log, as a replay
+   * reads it: `commitAtBase` is the log's row at the commit's base epoch (`null` when it has none,
+   * which decides nothing). Our bytes there -> merged (and an Add's Welcome delivered); another
+   * device's -> cleared; a staged commit that was never submitted -> cleared. No lock: the caller
+   * holds the client, as it does for the replay itself.
+   */
+  settleUnresolvedCommitFromLog(
+    groupId: string,
+    commitAtBase: string | null
+  ): Promise<'none' | 'merged' | 'cleared' | 'undecided'>;
+  /**
    * Refreshes the server-stored GroupInfo (external-join base) at the current epoch. Best-effort:
    * called after every commit (a new group's first member-add is itself a commit) so a member lacking
    * state can self-join. [[Phase 4]]
@@ -1215,9 +1263,18 @@ export interface IMlsService {
   deleteGroupOnServer(groupId: string): Promise<boolean>;
   /** Removes a user from the server-side membership list of a group (no MLS commit). */
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
+  /**
+   * A member's Decline of an invitation-link ask: withdraws the person's seat only while it still
+   * awaits a member, never the seat of someone another member's Add admitted (`JoinDeclineOutcome`).
+   */
+  declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome>;
   /** Performs a real MLS remove commit for all devices of the given user(s) and broadcasts it. */
   removeMember(groupId: string, userIds: string[]): Promise<void>;
-  /** Performs a real MLS remove commit for specific devices by identity ("userId:deviceId") and broadcasts it. */
+  /**
+   * Performs a real MLS remove commit for specific devices by identity ("userId:deviceId") and
+   * broadcasts it. The revoked-leaf collector's commit: staged only when this device's context is
+   * the base the server publishes, else it throws `UnpublishedBranchError` having staged nothing.
+   */
   removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
   /**
    * Every leaf identity (`userId:deviceId`) in the group's MLS ratchet tree, read locally.
@@ -1265,7 +1322,7 @@ export interface IMlsService {
   /** Returns the (userId, deviceId) pairs currently in a group. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
-  getGroupUserMembers(groupId: string): Promise<{ userId: string }[]>;
+  getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]>;
   /**
    * The windows during which each current member of `groupId` was out of it, from
    * `GET /api/mls/groups/:groupId/exclusions`. Throws on any failure: a history answer that cannot
@@ -1313,18 +1370,7 @@ export interface IMlsService {
 
   // DeviceGroupMembership tracking
   /** Get all pending device-group invitations in groups where this device is a full member */
-  getPendingInvitations(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{
-      id: string;
-      userId: string;
-      deviceId: string;
-      groupId: string;
-      status: string;
-    }>
-  >;
+  getPendingInvitations(userId: string, deviceId: string): Promise<PendingInvitationRow[]>;
   /**
    * Get all device-group memberships for the current device, each with its status.
    *

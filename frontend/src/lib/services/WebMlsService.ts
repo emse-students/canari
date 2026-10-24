@@ -1,11 +1,15 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import type { OwedWelcome, PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
-import { MLS_STATE_SEAL_V2_WRITER_ENABLED } from '$lib/mls-client/mlsStateSeal';
+import {
+  MLS_STATE_SEAL_V2_WRITER_ENABLED,
+  MlsStateUnreadableNowError,
+} from '$lib/mls-client/mlsStateSeal';
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
@@ -47,6 +51,7 @@ import { getToken } from '$lib/stores/auth';
 import {
   loadMlsState,
   saveMlsState,
+  MlsCheckpointNotWrittenError,
   MlsStateWriteRefusedError,
   type MlsStateWriteLatch,
   toBase64,
@@ -69,6 +74,14 @@ interface WorkerKeyPackageResult {
   poolPackages: DatedKeyPackage[];
   state: Uint8Array;
 }
+
+/**
+ * How many times a load reads a state WebCrypto refused before giving up for THIS start - a COUNT,
+ * never a clock. Three, because an engine fault under memory pressure is transient and a tag that
+ * fails is not: the first re-read separates most of the first kind, and a state that resists three
+ * stays exactly as it is for the next start ({@link MlsStateUnreadableNowError}).
+ */
+export const MLS_STATE_UNREADABLE_NOW_READS = 3;
 
 /** MLS service implementation for the browser (WASM via openmls). */
 export class WebMlsService extends BaseMlsService {
@@ -867,6 +880,25 @@ export class WebMlsService extends BaseMlsService {
         }
       }
 
+      // UNREADABLE RIGHT NOW IS NOT A STATE TO REPLACE, WITH OR WITHOUT `noFreshStart`: WebCrypto
+      // refused it and nothing proved the bytes wrong (`MlsStateUnreadableNowError`), so the blob is
+      // kept as it is and the next start reads it again. A rotation here was IRREVERSIBLE for a
+      // state that was only ever in a browser short of memory.
+      //
+      // AND IT HAS NO EXIT IN CODE, DELIBERATELY: a browser that refuses the same bytes on every
+      // start stays here on every start. The remedy is the user's and the message names it
+      // (`auth_local_state_unreadable_now`: free memory and restart the browser; meanwhile use the
+      // app or another browser, which are other devices; support before any reset). A silent repair
+      // - installing the state `mls-core` opened, or rotating - is exactly what this branch refuses.
+      // The persistent case is an OWED item, not a decided one (`docs/wiki/backlog.md`, "unreadable
+      // right now on every start").
+      if (cause === 'unreadable_now') {
+        console.error(
+          `[MLS] The saved state stayed unreadable after ${MLS_STATE_UNREADABLE_NOW_READS} reads - NOTHING rotated or written, the next start reads it again: ${String(e).slice(0, 240)}`
+        );
+        throw new SavedStateUnopenedError('unreadable_now', e);
+      }
+
       if (noPinOpensState(cause) || state != null) {
         // ANYTHING NO PIN CAN OPEN IS ROTATED, EVERYTHING ELSE IS WORTH PAUSING FOR - same
         // reasoning as `TauriMlsService`, and the same reason it is written as a negation: `unknown`
@@ -896,19 +928,43 @@ export class WebMlsService extends BaseMlsService {
     }
   }
 
-  /** WASM decrypt + client init for a given device key/state; throws on wrong key (no fresh-start). */
+  /**
+   * WASM decrypt + client init for a given device key/state; throws on wrong key (no fresh-start).
+   *
+   * A state WebCrypto could not open RIGHT NOW ({@link MlsStateUnreadableNowError}: an engine fault,
+   * not a verdict on the bytes) is re-read, up to {@link MLS_STATE_UNREADABLE_NOW_READS} reads in
+   * all - a COUNT, never a clock. What still fails after them reaches the caller typed, and `init`
+   * answers it without destroying anything.
+   */
   protected async loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void> {
-    this.client = await loadAndInitWasm(
-      this.userId,
-      this.deviceId,
-      state,
-      deviceKeyB64,
-      this.stateWasExpected
-    );
+    for (let read = 1; ; read++) {
+      try {
+        this.client = await loadAndInitWasm(
+          this.userId,
+          this.deviceId,
+          state,
+          deviceKeyB64,
+          this.stateWasExpected
+        );
+        if (read > 1) {
+          console.warn(
+            `[MLS] state opened on read ${read} after WebCrypto refused it - an engine fault`
+          );
+        }
+        return;
+      } catch (e) {
+        if (!(e instanceof MlsStateUnreadableNowError) || read >= MLS_STATE_UNREADABLE_NOW_READS) {
+          throw e;
+        }
+        console.error(
+          `[MLS] state unreadable right now (read ${read}/${MLS_STATE_UNREADABLE_NOW_READS}, ${e.blobBytes} B, ${e.errorName}, key ${e.keyPrepared ? 'derived' : 'NOT derived'}, mls-core: ${e.deterministicReader ?? 'not asked'}) - reading it again`
+        );
+      }
+    }
   }
 
   /** WASM client wrapper - calls `this.client.create_group` to create a new local MLS group. */
-  async createGroup(groupId: string): Promise<void> {
+  protected async createGroupImpl(groupId: string): Promise<void> {
     this.client.create_group(groupId);
   }
 
@@ -970,9 +1026,24 @@ export class WebMlsService extends BaseMlsService {
    *
    * And on `ended`: the latch is handed to the write and read IN ITS TRANSACTION, after this capture
    * and its off-thread seal - a refused rotation may have set it while this one was encrypting.
+   *
+   * EVERY OTHER FAILURE IS TYPED BY WHERE IT HAPPENED ({@link MlsCheckpointNotWrittenError}): the
+   * export and seal, or the IndexedDB transaction, which stores all of it or none of it. A caller
+   * deciding whether a commit's stage can be on disk reads that, never the text.
    */
   protected async writeCheckpoint(deviceKeyB64: string, latch: MlsStateWriteLatch): Promise<void> {
-    const outcome = await saveMlsState(this.userId, await this.saveState(deviceKeyB64), latch);
+    let sealed: Uint8Array;
+    try {
+      sealed = await this.saveState(deviceKeyB64);
+    } catch (e) {
+      throw new MlsCheckpointNotWrittenError('export', e);
+    }
+    let outcome: Awaited<ReturnType<typeof saveMlsState>>;
+    try {
+      outcome = await saveMlsState(this.userId, sealed, latch);
+    } catch (e) {
+      throw new MlsCheckpointNotWrittenError('store', e);
+    }
     if (outcome === 'stale' || outcome === 'collision' || outcome === 'ended')
       throw new MlsStateWriteRefusedError(outcome);
   }
@@ -1194,7 +1265,8 @@ export class WebMlsService extends BaseMlsService {
    */
   protected async stageAddMembers(
     groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; identity: string }>
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>,
+    intent: Uint8Array
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -1205,7 +1277,8 @@ export class WebMlsService extends BaseMlsService {
     const res = this.client.add_members_bulk(
       groupId,
       devices.map((d) => d.keyPackage),
-      devices.map((d) => d.identity)
+      devices.map((d) => d.identity),
+      intent
     );
     return {
       commit: res[0] as Uint8Array,
@@ -1216,13 +1289,15 @@ export class WebMlsService extends BaseMlsService {
     };
   }
 
-  /** WASM client wrapper - `replace_device`, `[commit, welcome, group_info]`, staged not merged. */
+  /** WASM client wrapper - `replace_device`, `[commit, welcome, group_info]`, staged not merged
+   *  and recorded with `intent` in the same call. */
   protected async stageReplaceDevice(
     groupId: string,
     identity: string,
-    keyPackage: Uint8Array
+    keyPackage: Uint8Array,
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }> {
-    const res = this.client.replace_device(groupId, identity, keyPackage);
+    const res = this.client.replace_device(groupId, identity, keyPackage, intent);
     return {
       commit: res[0] as Uint8Array,
       welcome: res[1] as Uint8Array,
@@ -1268,27 +1343,93 @@ export class WebMlsService extends BaseMlsService {
   /** WASM client wrapper - stages a Remove commit for all devices of the given users (no merge). */
   protected async stageRemoveMembers(
     groupId: string,
-    userIds: string[]
+    userIds: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const jsArray = userIds.reduce((arr, id) => {
       arr.push(id);
       return arr;
     }, [] as string[]);
-    const res = this.client.remove_members(groupId, jsArray);
+    const res = this.client.remove_members(groupId, jsArray, intent);
     return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
   }
 
   /** WASM client wrapper - stages a Remove commit for specific device identities (no merge). */
   protected async stageRemoveMembersByDevice(
     groupId: string,
-    deviceIdentities: string[]
+    deviceIdentities: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const jsArray = deviceIdentities.reduce((arr, id) => {
       arr.push(id);
       return arr;
     }, [] as string[]);
-    const res = this.client.remove_members_by_device(groupId, jsArray);
+    const res = this.client.remove_members_by_device(groupId, jsArray, intent);
     return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
+  }
+
+  /** WASM client wrapper - stages a refresh of this device's own leaf (no merge). */
+  protected async stageSelfUpdate(
+    groupId: string,
+    intent: Uint8Array
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
+    const res = this.client.self_update(groupId, intent);
+    return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
+  }
+
+  /** WASM client wrapper - when this device's leaf was minted, `null` once a commit replaced it. */
+  protected async ownLeafMintedAt(groupId: string): Promise<number | null> {
+    return this.client.own_leaf_minted_at(groupId) ?? null;
+  }
+
+  /** WASM client wrapper - whether this device's context is the one the served base describes. */
+  protected async ownContextMatchesBase(groupId: string, groupInfo: Uint8Array): Promise<boolean> {
+    return this.client.own_context_matches_base(groupId, groupInfo);
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.pendingSubmission}. */
+  protected async pendingSubmission(groupId: string): Promise<PendingSubmissionRead> {
+    const res = this.client.pending_submission(groupId) as unknown[];
+    if (res[0] === 'none' || res[0] === 'unreadable') return { status: res[0] };
+    return {
+      status: 'recorded',
+      record: {
+        intent: res[1] as Uint8Array,
+        baseEpoch: res[2] as number,
+        commit: res[3] as Uint8Array,
+        groupInfo: res[4] as Uint8Array,
+        welcome: (res[5] as Uint8Array | undefined) ?? undefined,
+        addedIndices: res[6] as number[],
+      },
+    };
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.mergePendingCommitOwingWelcome}. */
+  protected async mergePendingCommitOwingWelcome(
+    groupId: string,
+    recipients: string[]
+  ): Promise<void> {
+    this.client.merge_pending_commit_owing_welcome(groupId, recipients);
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.owedWelcomes}. */
+  protected async owedWelcomes(): Promise<OwedWelcome[]> {
+    return (this.client.owed_welcomes() as unknown[][]).map((w) => ({
+      groupId: w[0] as string,
+      welcome: w[1] as Uint8Array,
+      ratchetTree: w[2] as Uint8Array,
+      recipients: w[3] as string[],
+    }));
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.welcomeDelivered}. */
+  protected async welcomeDelivered(groupId: string, recipient: string): Promise<void> {
+    this.client.welcome_delivered(groupId, recipient);
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */
+  protected async groupsWithPendingCommit(): Promise<string[]> {
+    return this.client.groups_with_pending_commit();
   }
 
   /** WASM client wrapper - merges the pending staged commit (server accepted). */

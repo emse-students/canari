@@ -38,35 +38,91 @@ export async function isEntitledToDistributionGroup(
   userId: string,
   traceId: string
 ): Promise<boolean> {
+  const what = `[ENTITLEMENT][${traceId}] UNANSWERED ${scope.kind}=${scope.id} user=${userId.slice(0, 8)}`;
+  const entitled = await askSocial(
+    'internal/distribution-groups/entitlement',
+    { kind: scope.kind, scopeId: scope.id, userId },
+    'entitled',
+    what
+  );
+  if (typeof entitled !== 'boolean') return unanswered(what, 'no boolean in the answer');
+  return entitled;
+}
+
+/** How a key group's departure ended, as social-service decided it once and for all. */
+export type DepartureOutcome = 'departed' | 'cancelled';
+
+/**
+ * The outcome of the key-group departure `departure` of `userId` from `groupId` - asked of
+ * social-service by the hourly drain, for a departure whose second eviction never arrived.
+ *
+ * NOT THE ENTITLEMENT, WHICH CANNOT ANSWER THIS. While the departure's roster write has not
+ * committed, the entitlement still says `true` - and so it does after a rejoin. Social-service
+ * records each departure by this name in the transaction of its roster write, and this question
+ * DECIDES one still undecided: it records it `cancelled`, so the roster write can no longer commit
+ * under that name (`departed` and `cancelled` share one key). The answer is therefore final.
+ *
+ * Anything but one of the two outcomes is not an answer and throws a 503, like the entitlement.
+ */
+export async function askDepartureOutcome(
+  groupId: string,
+  userId: string,
+  departure: number,
+  traceId: string
+): Promise<DepartureOutcome> {
+  const what = `[DEPARTURE][${traceId}] UNANSWERED group=${groupId} user=${userId.slice(0, 8)} departure=${departure}`;
+  const outcome = await askSocial(
+    'internal/distribution-groups/departure-outcome',
+    { groupId, userId, departure },
+    'outcome',
+    what
+  );
+  if (outcome !== 'departed' && outcome !== 'cancelled') {
+    return unanswered(what, 'no outcome in the answer');
+  }
+  return outcome;
+}
+
+/** Logs `what` with `why` and throws the retryable 503 every unanswered question here is. */
+function unanswered(what: string, why: string): never {
+  logger.warn(`${what}: ${why}`);
+  throw new ServiceUnavailableException({
+    error: 'entitlement_unavailable',
+    message: 'membership could not be checked, retry',
+  });
+}
+
+/**
+ * POSTs `body` to social-service's internal `path` and returns the answer's `field`, unchecked.
+ * The secret unset, the service unreachable, a non-2xx or an unreadable body throw
+ * ({@link unanswered}); the caller checks the field's type.
+ */
+async function askSocial(
+  path: string,
+  body: Record<string, unknown>,
+  field: string,
+  what: string
+): Promise<unknown> {
   const secret = process.env.INTERNAL_SECRET ?? '';
-  const unavailable = (why: string): never => {
-    logger.warn(
-      `[ENTITLEMENT][${traceId}] UNANSWERED ${scope.kind}=${scope.id} user=${userId.slice(0, 8)}: ${why}`
-    );
-    throw new ServiceUnavailableException({
-      error: 'entitlement_unavailable',
-      message: 'membership could not be checked, retry',
-    });
-  };
-  if (!secret) return unavailable('INTERNAL_SECRET unset');
+  if (!secret) return unanswered(what, 'INTERNAL_SECRET unset');
   let res: globalThis.Response;
   try {
-    res = await fetch(socialUrl('internal/distribution-groups/entitlement'), {
+    res = await fetch(socialUrl(path), {
       method: 'POST',
       headers: { 'x-internal-secret': secret, 'content-type': 'application/json' },
-      body: JSON.stringify({ kind: scope.kind, scopeId: scope.id, userId }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(5_000),
     });
   } catch (e) {
-    return unavailable(`unreachable ${e instanceof Error ? `${e.name} ${e.message}` : String(e)}`);
+    return unanswered(
+      what,
+      `unreachable ${e instanceof Error ? `${e.name} ${e.message}` : String(e)}`
+    );
   }
-  if (!res.ok) return unavailable(`status=${res.status}`);
-  let entitled: unknown;
+  if (!res.ok) return unanswered(what, `status=${res.status}`);
   try {
-    entitled = ((await res.json()) as { entitled?: unknown }).entitled;
+    return ((await res.json()) as Record<string, unknown>)[field];
   } catch (e) {
-    return unavailable(`unreadable body ${e instanceof Error ? e.message : String(e)}`);
+    return unanswered(what, `unreadable body ${e instanceof Error ? e.message : String(e)}`);
   }
-  if (typeof entitled !== 'boolean') return unavailable('no boolean in the answer');
-  return entitled;
 }

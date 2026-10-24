@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * MINESWEEPER MODERATION IN THE LEADERBOARD (user, 2026-10-02): a global admin can remove a score and
  * ban a player, and lift a ban. Pinned: the controls exist for an admin and for nobody else, every

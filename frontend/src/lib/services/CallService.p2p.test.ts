@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import type { IMlsService } from '$lib/mls-client';
@@ -246,6 +247,10 @@ type FakeSender = {
   transform: unknown;
   late?: boolean;
   replaceTrack: (t: { kind: string } | null) => Promise<void>;
+  /** What `setParameters` last set (the quality ladder's rung), as the browser keeps it. */
+  params: { encodings: Record<string, unknown>[] };
+  getParameters: () => { encodings: Record<string, unknown>[] };
+  setParameters: (p: { encodings: Record<string, unknown>[] }) => Promise<void>;
 };
 
 /** A sender whose `replaceTrack` swaps its track in place, as the browser's (no negotiation). */
@@ -256,6 +261,11 @@ function fakeSender(track: { kind: string } | null, kind: string): FakeSender {
   }) as FakeSender;
   sender.replaceTrack = async (t) => {
     sender.track = t;
+  };
+  sender.params = { encodings: [{}] };
+  sender.getParameters = () => structuredClone(sender.params);
+  sender.setParameters = async (p) => {
+    sender.params = p;
   };
   return sender;
 }
@@ -319,23 +329,29 @@ class FakePeerConnection {
   }
   /** When set, `getStats` refuses with it. */
   statsError: Error | null = null;
+  /** More fields of the outbound video entry (the quality ladder's sample); `null` = none. */
+  videoSend: Record<string, unknown> | null = null;
   /** When set, `getStats` answers only once it settles: a reading still in flight. */
   statsGate: Promise<void> | null = null;
-  /** Entries added to every reading as they are (`[CALL_REPORT]` byte totals and timestamps). */
+  /**
+   * More entries of every reading, keyed by their `id` (`remote-inbound-rtp`, `candidate-pair`,
+   * `[CALL_REPORT]` byte totals and timestamps, ...).
+   */
   extraStats: Record<string, unknown>[] = [];
   async getStats() {
     workerAnswers.reads.push('stats');
     if (this.statsGate) await this.statsGate;
     if (this.statsError) throw this.statsError;
     const stats = new Map<string, unknown>();
-    this.extraStats.forEach((entry, i) => stats.set(`extra-${i}`, entry));
-    if (this.videoOutboundPackets !== null) {
+    if (this.videoOutboundPackets !== null || this.videoSend) {
       stats.set('out-v', {
         type: 'outbound-rtp',
         kind: 'video',
-        packetsSent: this.videoOutboundPackets,
+        packetsSent: this.videoOutboundPackets ?? 0,
+        ...this.videoSend,
       });
     }
+    for (const e of this.extraStats) stats.set(String(e.id), e);
     if (this.videoInboundPackets !== null) {
       stats.set('in-v', {
         type: 'inbound-rtp',
@@ -1518,6 +1534,142 @@ describe('the E2E worker report (2026-10-19)', () => {
       } finally {
         delete (document as unknown as { hidden?: boolean }).hidden;
       }
+    });
+
+    describe('the quality ladder (utils/callVideoQuality.ts)', () => {
+      /** The camera sender's link as `getStats` reports it, advanced by one 2 s sample. */
+      function linkReporter(pc: FakePeerConnection) {
+        let frames = 0;
+        let sent = 0;
+        let lost = 0;
+        let reports = 0;
+        return async (o: { loss?: number; limit?: string; available?: number } = {}) => {
+          frames += 60;
+          reports += 1;
+          sent += 400;
+          lost += Math.round(400 * (o.loss ?? 0));
+          pc.videoSend = {
+            framesEncoded: frames,
+            packetsSent: sent,
+            qualityLimitationReason: o.limit ?? 'none',
+          };
+          pc.extraStats = [
+            {
+              id: 'rv',
+              type: 'remote-inbound-rtp',
+              kind: 'video',
+              localId: 'out-v',
+              packetsLost: lost,
+              roundTripTime: 0.05,
+              reportsReceived: reports,
+            },
+            { id: 't', type: 'transport', selectedCandidatePairId: 'p' },
+            {
+              id: 'p',
+              type: 'candidate-pair',
+              availableOutgoingBitrate: o.available ?? 5_000_000,
+            },
+          ];
+          await vi.advanceTimersByTimeAsync(2_000);
+        };
+      }
+
+      async function cameraCall() {
+        const call = await connectedCall();
+        call.pc.outboundPackets = 250;
+        call.pc.inboundPackets = 251;
+        workerAnswers.video = { sender: 100, receiver: 0 };
+        const cam = await turnCameraOn(call.service);
+        await vi.advanceTimersByTimeAsync(0);
+        const sender = call.pc.getTransceivers().find((x) => x.sender.track === cam)!.sender;
+        return { ...call, sender, sample: linkReporter(call.pc) };
+      }
+
+      it('starts the camera on 480p, climbs to 720p on clean samples, drops on a starved encoder and says it', async () => {
+        const { service, sender, sample, lines } = await cameraCall();
+        expect(sender.params.encodings[0]).toEqual({
+          maxBitrate: 1_200_000,
+          maxFramerate: 30,
+          scaleResolutionDownBy: 1.5,
+        });
+
+        expect(lines()).toContain(
+          '[Call] video quality ladder starts on 480p30 (degradationPreference=unset)'
+        );
+        await sample(); // the baseline
+        await sample();
+        await sample();
+        await sample();
+        expect(lines()).toContain(
+          '[Call] video quality up 480p30 -> 720p30 after 3 clean samples (loss=0% rtt=50ms limit=none avail=5000kbps sent=? enc=?)'
+        );
+        expect(sender.params.encodings[0]).toEqual({
+          maxBitrate: 2_500_000,
+          maxFramerate: 30,
+          scaleResolutionDownBy: 1,
+        });
+        expect(get(service.videoSendReduced)).toBe(false);
+
+        await sample(); // read across the change, never judged
+        await sample({ limit: 'bandwidth', available: 190_000 });
+        expect(lines()).toContain(
+          '[Call] video quality down 720p30 -> 360p15 after a severe sample, the climb into 720p30 failed - the next one needs 6 clean samples (loss=0% rtt=50ms limit=bandwidth avail=190kbps sent=? enc=?)'
+        );
+        expect(sender.params.encodings[0]).toEqual({
+          maxBitrate: 400_000,
+          maxFramerate: 15,
+          scaleResolutionDownBy: 2,
+        });
+        expect(get(service.videoSendReduced)).toBe(true);
+        expect(get(service.callState)).toBe('incall');
+
+        // The call ends: the ladder stops with it and reads nothing more.
+        service.endCall();
+        expect(get(service.videoSendReduced)).toBe(false);
+        workerAnswers.reads = [];
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(workerAnswers.reads).not.toContain('stats');
+      });
+
+      it('a camera that is off is no evidence: the ladder waits and moves nothing', async () => {
+        const { service, sender, sample, lines } = await cameraCall();
+        await service.toggleVideo();
+        expect(sender.track).toBeNull();
+        for (let i = 0; i < 6; i++) await sample({ loss: 0.5 });
+        expect(lines().some((l) => /video quality (up|down)/.test(l))).toBe(false);
+        expect(sender.params.encodings[0]).toMatchObject({ scaleResolutionDownBy: 1.5 });
+        // The camera back on: the ladder samples again, from a new baseline.
+        await service.toggleVideo();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sender.track).not.toBeNull();
+        for (let i = 0; i < 3; i++) await sample({ loss: 0.5 });
+        expect(lines()).toContain(
+          '[Call] video quality down 480p30 -> 360p30 after a severe sample (loss=50% rtt=50ms limit=none avail=5000kbps sent=? enc=?)'
+        );
+      });
+
+      it('stops, at ERROR, when the engine refuses a rung - never keeps proposing it', async () => {
+        const { service, sender, sample, lines } = await cameraCall();
+        sender.setParameters = async () => {
+          throw new Error('InvalidModificationError');
+        };
+        await sample();
+        await sample({ loss: 0.3 });
+        expect(lines()).toContain(
+          '[Call] ERROR video sender setParameters(360p30) refused: Error: InvalidModificationError'
+        );
+        expect(lines()).toContain(
+          '[Call] ERROR video quality ladder stopped: the sender refused a rung'
+        );
+        const before = lines().length;
+        for (let i = 0; i < 5; i++) await sample({ loss: 0.3 });
+        expect(
+          lines()
+            .slice(before)
+            .some((l) => l.includes('video quality') || l.includes('setParameters'))
+        ).toBe(false);
+        expect(get(service.videoSendReduced)).toBe(false);
+      });
     });
 
     it('names a non-VP8 video frame ONCE per call at ERROR, and the kind of a failed decrypt', async () => {

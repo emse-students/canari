@@ -41,6 +41,7 @@
     loadControlRefusals,
     setControlRetryExecutor,
   } from '$lib/utils/chat/controlRefusals.svelte';
+  import { setJoinRequestHandlers } from '$lib/utils/chat/joinRequests.svelte';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { mayPinMessage } from '$lib/utils/chat/pinPermission';
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
@@ -835,6 +836,15 @@
   onMount(() => {
     setControlRetryExecutor((refusal) => messaging.retryRefusedControl(refusal, msgCtx()));
     return () => setControlRetryExecutor(null);
+  });
+  // A member's answer to a new person asking to join (`JoinRequestBanner`), run with the context of
+  // the tap: admitting is this device's own Add, declining removes the roster row.
+  onMount(() => {
+    setJoinRequestHandlers({
+      approve: (request) => convs.approveJoinRequest(request, convCtx()),
+      decline: (request) => convs.declineJoinRequest(request, convCtx()),
+    });
+    return () => setJoinRequestHandlers(null);
   });
 
   // ─── Mount: event listeners (window focus, visibility, debug shortcut) ────

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 const wasmInitFn = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const WasmMlsClient = vi.hoisted(() =>
   vi.fn().mockImplementation(function WasmMlsClientMock(this: { tag: string }) {
@@ -6,6 +7,8 @@ const WasmMlsClient = vi.hoisted(() =>
 );
 
 const decryptWithPin = vi.hoisted(() => vi.fn());
+/** `mls-core`'s deterministic reader, answering a CODE (`state_blob_verdict` in `mls-wasm`). */
+const stateBlobVerdict = vi.hoisted(() => vi.fn());
 const encryptWithKey = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/wasm/mls_wasm.js', () => ({
@@ -14,6 +17,7 @@ vi.mock('$lib/wasm/mls_wasm.js', () => ({
   WasmMlsClient: WasmMlsClient,
   decrypt_with_pin: decryptWithPin,
   encrypt_mls_state_blob_with_key: encryptWithKey,
+  state_blob_verdict: stateBlobVerdict,
 }));
 
 vi.mock('$lib/wasm/mls_wasm_bg.wasm?url', () => ({
@@ -26,7 +30,11 @@ import {
   resetMlsWasmModuleCacheForTests,
 } from './mlsWasmLoader';
 import { getBootReport, resetBootBench } from './bootBenchmark';
-import { sealMlsStateBlobV2 } from './mlsStateSeal';
+import {
+  MlsStateUnreadableNowError,
+  MlsStateVerdictError,
+  sealMlsStateBlobV2,
+} from './mlsStateSeal';
 
 function wasmMagicResponse(): Response {
   const buf = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
@@ -38,6 +46,7 @@ describe('loadAndInitWasm', () => {
     resetMlsWasmModuleCacheForTests();
     wasmInitFn.mockClear();
     WasmMlsClient.mockClear();
+    stateBlobVerdict.mockReset();
   });
 
   afterEach(() => {
@@ -136,14 +145,110 @@ describe('loadAndInitWasm', () => {
       expect(WasmMlsClient).not.toHaveBeenCalled();
     });
 
-    it('rejects an altered v2 blob as STATE_ALTERED, never constructing a client', async () => {
+    it('calls a WebCrypto refusal ALTERED only when mls-core answers the code, typed', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
       const blob = await sealMlsStateBlobV2(plain, KEY_B64);
       blob[blob.length - 1] ^= 1;
-      await expect(loadAndInitWasm('u', 'd', blob, KEY_B64, true)).rejects.toThrow(
-        /^STATE_ALTERED: /
-      );
+      stateBlobVerdict.mockReturnValueOnce('STATE_ALTERED');
+      const error = await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MlsStateVerdictError);
+      expect((error as MlsStateVerdictError).code).toBe('STATE_ALTERED');
+      expect((error as MlsStateVerdictError).refusal).toBeInstanceOf(MlsStateUnreadableNowError);
+      // The code also leads the message: the word a native load surfaces for the same bytes.
+      expect((error as Error).message).toMatch(/^STATE_ALTERED: /);
+      // The deterministic reader was asked with the SEALED bytes and the key; no client was built.
+      expect(stateBlobVerdict).toHaveBeenCalledWith('u', 'd', blob, KEY_B64);
       expect(WasmMlsClient).not.toHaveBeenCalled();
+    });
+
+    it('keeps a refusal mls-core OPENS as unreadable now, installing nothing', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      stateBlobVerdict.mockReturnValueOnce('OPENED');
+      const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+      decrypt.mockRejectedValueOnce(new DOMException('engine', 'OperationError'));
+      const error = await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MlsStateUnreadableNowError);
+      expect((error as MlsStateUnreadableNowError).deterministicReader).toBe('opened');
+      expect(stateBlobVerdict).toHaveBeenCalledTimes(1);
+      expect(WasmMlsClient).not.toHaveBeenCalled();
+    });
+
+    it('does not ask again for bytes mls-core already opened (a re-read)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      stateBlobVerdict.mockReturnValueOnce('OPENED');
+      const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+      decrypt
+        .mockRejectedValueOnce(new DOMException('engine', 'OperationError'))
+        .mockRejectedValueOnce(new DOMException('engine', 'OperationError'));
+      await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch(() => {});
+      const again = await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch((e: unknown) => e);
+      expect(again).toBeInstanceOf(MlsStateUnreadableNowError);
+      expect((again as MlsStateUnreadableNowError).deterministicReader).toBe('opened');
+      expect(stateBlobVerdict).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['STATE_KEY_MISMATCH', 'IDENTITY_MISMATCH', 'STATE_UNDECRYPTABLE'] as const)(
+      'passes the deterministic verdict %s through typed, never unreadable now',
+      async (code) => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+        const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+        stateBlobVerdict.mockReturnValueOnce(code);
+        const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+        decrypt.mockRejectedValueOnce(new DOMException('engine', 'OperationError'));
+        const error = await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(MlsStateVerdictError);
+        expect((error as MlsStateVerdictError).code).toBe(code);
+      }
+    );
+
+    it('a REJECTION from mls-core is no verdict, whatever its text says', async () => {
+      // The classification is the Rust variant's, made before the boundary: a rejection is by
+      // contract NOT a verdict, so even a message naming a code must not acquire its recovery.
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      stateBlobVerdict.mockImplementationOnce(() => {
+        throw new Error('STATE_ALTERED appears in this text and proves nothing');
+      });
+      const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+      decrypt.mockRejectedValueOnce(new DOMException('engine', 'OperationError'));
+      const error = await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MlsStateUnreadableNowError);
+      expect(error).not.toBeInstanceOf(MlsStateVerdictError);
+    });
+
+    it('an answer outside the contract (a bindings mismatch) is unreadable now, never a verdict', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      stateBlobVerdict.mockReturnValueOnce('SOMETHING_NEW');
+      const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+      decrypt.mockRejectedValueOnce(new DOMException('engine', 'OperationError'));
+      const error = await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MlsStateUnreadableNowError);
+      expect((error as MlsStateUnreadableNowError).deterministicReader).toMatch(
+        /^unrecognised answer: SOMETHING_NEW/
+      );
+    });
+
+    it('keeps a refusal mls-core cannot judge (out of memory) as unreadable now', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      stateBlobVerdict.mockImplementationOnce(() => {
+        throw new RangeError('WebAssembly.Memory.grow(): Maximum memory size exceeded');
+      });
+      const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+      decrypt.mockRejectedValueOnce(new DOMException('engine', 'OperationError'));
+      const error = await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MlsStateUnreadableNowError);
+      expect(String(error)).not.toMatch(/STATE_ALTERED/);
+      expect((error as MlsStateUnreadableNowError).deterministicReader).toMatch(
+        /^failed: RangeError/
+      );
+      // A trap may leave the memoised instance unusable: the next load instantiates afresh.
+      const fetches = vi.mocked(globalThis.fetch).mock.calls.length;
+      await loadAndInitWasm('u', 'd', undefined, undefined, false);
+      expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(fetches + 1);
     });
   });
 

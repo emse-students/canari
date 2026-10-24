@@ -2,12 +2,14 @@ import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions, ConversationLifecycle } from '$lib/types';
 import {
+  entersUninvited,
   CONTACT_NEW_DEVICE_WINDOW_MS,
   deviceEventAudience,
   deviceEventKey,
   isNewToItsOwner,
   type DeviceEvent,
 } from '$lib/mls-client/deviceTrust';
+import { reportUninvitedEntry, type UninvitedEntryKind } from '$lib/mls-client/uninvitedEntry';
 import {
   canonicalIdentity,
   canonicalUserId,
@@ -67,8 +69,18 @@ export interface DeviceNoticeContext {
   /** The conversation rows by MLS group id - where a contact line may be written. */
   conversations: ReadonlyMap<
     string,
-    { conversationType?: string; messages: ReadonlyArray<{ id: string }> }
+    {
+      conversationType?: string;
+      /** The other person of a 1:1 conversation - whose own rejoin is not an uninvited entry. */
+      directPeerId?: string;
+      messages: ReadonlyArray<{ id: string }>;
+    }
   >;
+  /**
+   * The epochs at which this device saw `userId` leave the group's tree (`IMlsService.removalEpochs`)
+   * - a self-admitted entry after one is a member coming back, not a new person.
+   */
+  removalEpochs: (groupId: string, userId: string) => Promise<number[]>;
   /**
    * The groups this device holds MLS state for (`IMlsService.getLocalGroups`) - the authority on
    * where a contact line is owed, whether or not its conversation row is loaded yet.
@@ -110,6 +122,9 @@ export const MAX_ANNOUNCED_DEVICE_KEYS = 256;
 /** How many events whose evidence could not be read are kept for the next delivery. */
 export const MAX_UNDECIDED_DEVICE_EVENTS = 64;
 
+/** How many uninvited entries whose conversation row is not loaded yet are kept for the next delivery. */
+export const MAX_OWED_UNINVITED_LINES = 64;
+
 interface Stored {
   pending: OwnDeviceNotice[];
   announced: string[];
@@ -121,6 +136,11 @@ interface Stored {
   owedLines: OwedLine[];
   /** Refused own devices whose notice was dismissed (`dismissRefusedDeviceNotice`). */
   refusedSeen: string[];
+  /**
+   * Entries no member made ({@link entersUninvited}) into a conversation whose row was not loaded
+   * when the event came: the line is written at the next delivery that finds the row.
+   */
+  owedUninvited: DeviceEvent[];
 }
 
 /** A contact line decided owed but not yet written everywhere, retried at each delivery. */
@@ -138,6 +158,7 @@ const EMPTY: Stored = {
   undecided: [],
   owedLines: [],
   refusedSeen: [],
+  owedUninvited: [],
 };
 
 function isOwedLine(v: unknown): v is OwedLine {
@@ -169,6 +190,7 @@ let undecided: DeviceEvent[] = [];
 let owedLines: OwedLine[] = [];
 const refusedNotices = new SvelteMap<string, RefusedDeviceNotice>();
 let refusedSeen: string[] = [];
+let owedUninvited: DeviceEvent[] = [];
 let boundAccount: string | null = null;
 function isNotice(v: unknown): v is OwnDeviceNotice {
   if (!v || typeof v !== 'object') return false;
@@ -199,6 +221,9 @@ function readStored(userId: string): Stored {
       undecided: Array.isArray(parsed.undecided) ? parsed.undecided.filter(isEvent) : [],
       owedLines: Array.isArray(parsed.owedLines) ? parsed.owedLines.filter(isOwedLine) : [],
       refusedSeen: strings(parsed.refusedSeen),
+      owedUninvited: Array.isArray(parsed.owedUninvited)
+        ? parsed.owedUninvited.filter(isEvent)
+        : [],
     };
   } catch (e) {
     console.error(`[DEVICE_NOTICE] stored notices corrupt, dropped: ${String(e)}`);
@@ -214,6 +239,7 @@ function writeStored(userId: string): void {
     undecided,
     owedLines,
     refusedSeen,
+    owedUninvited,
   };
   try {
     localStorage.setItem(ACCOUNT_KEY.deviceNotices(userId), JSON.stringify(stored));
@@ -235,6 +261,7 @@ export function loadDeviceNotices(userId: string): void {
   undecided = stored.undecided;
   owedLines = stored.owedLines;
   refusedSeen = stored.refusedSeen;
+  owedUninvited = stored.owedUninvited;
   for (const n of stored.pending) pending.set(n.key, n);
   if (stored.pending.length > 0) {
     console.log(`[DEVICE_NOTICE] ${stored.pending.length} unseen new-device alert(s) restored`);
@@ -250,6 +277,7 @@ export function forgetDeviceNotices(): void {
   undecided = [];
   owedLines = [];
   refusedSeen = [];
+  owedUninvited = [];
   boundAccount = null;
 }
 
@@ -305,13 +333,21 @@ export async function deliverDeviceEvents(
     return;
   }
   // An empty hand-over with nothing parked is every drain's: nothing to do, nothing to say.
-  if (events.length === 0 && undecided.length === 0 && owedLines.length === 0) return;
+  if (
+    events.length === 0 &&
+    undecided.length === 0 &&
+    owedLines.length === 0 &&
+    owedUninvited.length === 0
+  ) {
+    return;
+  }
   // One tree read per conversation per delivery, whatever the number of events (not reactive).
   const trees: Record<string, Promise<string[]>> = {};
   // Read before the retry: a retry that settles or expires every owed line leaves nothing parked,
   // and the stored copy must still lose them.
   const hadOwedLines = owedLines.length > 0;
   await retryOwedLines(ctx, trees);
+  await noteUninvitedEntries(events, ctx);
   // The events a previous delivery could not decide come first, oldest first.
   const retried = undecided;
   undecided = [];
@@ -395,6 +431,113 @@ export async function deliverDeviceEvents(
       console.error('[DEVICE_NOTICE] native ledger claim failed:', e);
     }
   }
+}
+
+/** The message id of an uninvited-entry line: one per conversation, device and key. */
+function uninvitedLineId(groupId: string, key: string): string {
+  return `uninvited-entry:${groupId}:${key}`;
+}
+
+/**
+ * Writes, in the conversation itself, every entry no member made ({@link entersUninvited}) among
+ * `events` that is a NEW PERSON's, and retries the ones owed from an earlier delivery. Every decided
+ * entry is reported to the server with its kind (`reportUninvitedEntry`, once per session) - that
+ * report is the measurement.
+ *
+ * Decided on the conversation ROW, loaded or durable, never on `isDistributionGroup`: that set is
+ * session-local and may not name a key group yet at start-up, and a key group - where an external
+ * commit is how every member enters - never has a row. A row not loaded yet keeps the entry owed,
+ * durably, and it is decided and reported when the row is found; a group with no live row is not a
+ * conversation and nothing is said.
+ */
+async function noteUninvitedEntries(
+  events: DeviceEvent[],
+  ctx: DeviceNoticeContext
+): Promise<void> {
+  const retried = owedUninvited;
+  const fresh = events.filter(entersUninvited);
+  if (retried.length === 0 && fresh.length === 0) return;
+  owedUninvited = [];
+  for (const event of [...retried, ...fresh]) {
+    try {
+      const decided = await decideUninvitedEntry(event, ctx);
+      if (decided === 'not-a-conversation') {
+        console.debug(
+          `[DEVICE_NOTICE] self-admitted entry in ${event.groupId.slice(0, 8)}... - not a conversation, nothing to say`
+        );
+        continue;
+      }
+      if (decided === 'owed') {
+        owedUninvited = [...owedUninvited, event].slice(-MAX_OWED_UNINVITED_LINES);
+        continue;
+      }
+      reportUninvitedEntry(event, decided.kind);
+      if (decided.kind === 'new-person') await writeUninvitedLine(event, decided.convo, ctx);
+    } catch (e) {
+      // Nothing is lost - the entry is kept, durably, and decided at the next delivery - so this is
+      // a warning: what accuses is the entry itself, once decided (`reportUninvitedEntry`).
+      console.warn('[DEVICE_NOTICE] uninvited entry not decided, owed to the next delivery:', e);
+      owedUninvited = [...owedUninvited, event].slice(-MAX_OWED_UNINVITED_LINES);
+    }
+  }
+  if (boundAccount) writeStored(boundAccount);
+}
+
+type NoticeConversation =
+  DeviceNoticeContext['conversations'] extends ReadonlyMap<string, infer C> ? C : never;
+
+/**
+ * Whether an entry no member made is said, and as what ({@link UninvitedEntryKind}).
+ *
+ * A LEGITIMATE REJOIN IS NOT WRITTEN: the other person of a 1:1 conversation (`direct-peer`), or a
+ * user this device SAW leave the tree before the entering epoch (`returning`, from the departures the
+ * MLS layer recorded - `removalEpochs`). Both are reported with their kind, so the count still says
+ * how often they happen. Anything else is a `new-person` and is written. A departure this device
+ * never saw cannot be known here, so a returning member reads as `new-person` on such a device.
+ *
+ * A departure read that fails throws: the entry stays owed to the next delivery rather than being
+ * guessed either way.
+ */
+async function decideUninvitedEntry(
+  event: DeviceEvent,
+  ctx: DeviceNoticeContext
+): Promise<
+  'owed' | 'not-a-conversation' | { kind: UninvitedEntryKind; convo: NoticeConversation }
+> {
+  // A key group, when this session already knows it as one: every member enters it this way.
+  if (ctx.isDistributionGroup(event.groupId)) return 'not-a-conversation';
+  const convo = ctx.conversations.get(event.groupId);
+  if (!convo) {
+    return (await isLiveStoredConversation(event.groupId, ctx)) ? 'owed' : 'not-a-conversation';
+  }
+  const type = convo.conversationType ?? 'group';
+  if (type === 'channel') return 'not-a-conversation';
+  const userId = canonicalUserId(userIdOfLeaf(event.identity));
+  if (type === 'direct' && convo.directPeerId && canonicalUserId(convo.directPeerId) === userId) {
+    return { kind: 'direct-peer', convo };
+  }
+  const departures = await ctx.removalEpochs(event.groupId, userId);
+  if (departures.some((epoch) => epoch < event.epoch)) return { kind: 'returning', convo };
+  return { kind: 'new-person', convo };
+}
+
+async function writeUninvitedLine(
+  event: DeviceEvent,
+  convo: NoticeConversation,
+  ctx: DeviceNoticeContext
+): Promise<void> {
+  const key = deviceEventKey(event) ?? event.identity;
+  const messageId = uninvitedLineId(event.groupId, key);
+  if (convo.messages.some((msg) => msg.id === messageId)) return;
+  const userId = userIdOfLeaf(event.identity);
+  const getName = await ctx.resolveDisplayNames([userId]);
+  await ctx.addMessageToChat(
+    'system',
+    m.chat_system_uninvited_entry({ user: getName(userId) }),
+    event.groupId,
+    { isSystem: true, messageId }
+  );
+  console.warn(`[DEVICE_NOTICE] uninvited-entry line written in ${event.groupId.slice(0, 8)}...`);
 }
 
 /**

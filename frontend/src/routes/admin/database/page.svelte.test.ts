@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE "BASE DE DONNEES" ADMIN PAGE (user, 2026-10-02). Pinned: a global admin sees the warning and the
  * button; anyone else is sent back to /admin; the native apps get an explanation instead of a button

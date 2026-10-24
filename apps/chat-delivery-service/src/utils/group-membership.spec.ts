@@ -118,6 +118,18 @@ describe('ensureGroupMember', () => {
       groupId: 'g-1',
       userId: 'alice',
       role: 'member',
+      // Only an invitation link's acceptance writes a seat that awaits a member's admission.
+      awaitingAdmission: false,
+    });
+  });
+
+  it("writes an invitation link's seat as awaiting a member's admission", async () => {
+    const { manager, inserts } = managerWithRecorder();
+
+    await ensureGroupMember(manager, 'g-1', 'alice', { awaitingAdmission: true });
+
+    expect(inserts.find((i) => i.target === GroupMember)?.values).toMatchObject({
+      awaitingAdmission: true,
     });
   });
 
@@ -609,14 +621,15 @@ describe('endDeviceMemberships', () => {
       'welcomes'
     );
 
+    // The queue before the device rows: the one delete order (`utils/seat-eviction.ts`).
     expect(statements.map((s) => [s.sql, s.params])).toEqual([
-      [
-        'DELETE FROM "dm_device_group_memberships" WHERE ("userId" = $1 AND "deviceId" = $2 AND "groupId" = $3)',
-        ['bob', 'b1', 'g-1'],
-      ],
       [
         'DELETE FROM "queued_message" WHERE ("recipientId" = $1 AND "deviceId" = $2 AND "groupId" = $3 AND "isWelcome" = $4)',
         ['bob', 'b1', 'g-1', true],
+      ],
+      [
+        'DELETE FROM "dm_device_group_memberships" WHERE ("userId" = $1 AND "deviceId" = $2 AND "groupId" = $3)',
+        ['bob', 'b1', 'g-1'],
       ],
     ]);
   });
@@ -626,7 +639,7 @@ describe('endDeviceMemberships', () => {
 
     await endDeviceMemberships(manager, { userId: 'bob', groupId: 'g-1' }, 'all');
 
-    expect(statements[1]).toEqual({
+    expect(statements[0]).toEqual({
       sql: 'DELETE FROM "queued_message" WHERE ("recipientId" = $1 AND "groupId" = $2)',
       params: ['bob', 'g-1'],
     });

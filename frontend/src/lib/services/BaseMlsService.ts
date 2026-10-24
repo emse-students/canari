@@ -33,6 +33,9 @@ import {
   type GroupRosterBatch,
   type MlsDeliveryFetch,
   type CommitRemoval,
+  type JoinDeclineOutcome,
+  type GroupUserMemberRow,
+  type PendingInvitationRow,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import {
@@ -42,13 +45,25 @@ import {
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import {
   MAX_BURN_GENERATIONS,
+  OwedSendBurnFailedError,
   commitPersisted,
+  forgetSendRatchetEntries,
   noteFrameEmitted,
-  pendingSendGenerations,
   resetSendRatchetLedger,
+  sendRatchetDebt,
+  sendRatchetEntries,
+  sendRatchetKey,
   snapshotEmitted,
 } from '$lib/mls-client/sendRatchetLedger';
+import { sealedFrameEpoch } from '$lib/mls-client/sealedFrameEpoch';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
+import { noteOwnLeafRefreshed, refreshLeafIfDue } from '$lib/mls-client/leafRefresh';
+import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
+import {
+  MlsStateUnreadableNowError,
+  MlsStateVerdictError,
+  type MlsStateVerdictCode,
+} from '$lib/mls-client/mlsStateSeal';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
@@ -70,6 +85,7 @@ import {
   setSenderMismatchReporter,
   type EnvelopeSender,
 } from '$lib/mls-client/verifiedSender';
+import { setUninvitedEntryReporter } from '$lib/mls-client/uninvitedEntry';
 import { setIntegrityFindingReporter, type ForkFinding } from '$lib/mls-client/integrityFindings';
 import {
   keyPackagePublication,
@@ -120,6 +136,7 @@ import {
 import { getToken } from '$lib/stores/auth';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import {
+  checkpointWroteNothing,
   fromBase64,
   MlsStateWriteRefusedError,
   toBase64,
@@ -153,8 +170,34 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
 import { forgetRefusedDevicesOf } from '$lib/mls-client/refusedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
-import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
-import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { commitRemovals, parseDeviceIdentity } from '$lib/mls-client/commitAdmits';
+import {
+  CommitRefusedError,
+  SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS,
+  SEAT_CLAIM_OVERTAKEN_REASON,
+  COMMIT_LOCK_BUDGET_SPENT_REASON,
+} from '$lib/mls-client/CommitRefusedError';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { commitRateLimitRemainingMs, noteCommitRateLimited } from '$lib/mls-client/commitRateLimit';
+import {
+  CommitOutcomeUnknownError,
+  CommitStageNotSavedError,
+  FollowerTabCommitError,
+  StagedCommitPendingError,
+  composeSubmission,
+  encodeIntent,
+  isDefinitiveCommitRefusal,
+  refusesOnlyThisRequest,
+  resubmissionVerdict,
+  COMMIT_LOCK_HOLD_BUDGET_MS,
+  commitLockHoldEndsAt,
+  mayStartCommitRequest,
+  type CommitIntent,
+  type CommitSubmission,
+  type OwedWelcome,
+  type PendingSubmissionRead,
+  type ResubmissionVerdict,
+} from '$lib/mls-client/commitSubmission';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
@@ -165,6 +208,51 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
  * that is behind the group's epoch ends the loop on that fact, whatever this number is.
  */
 const EXTERNAL_JOIN_MAX_ATTEMPTS = 3;
+
+/**
+ * Whether a failed commit submission is the server's 409 `SEAT_CLAIM_OVERTAKEN`: a whole-commit
+ * refusal that advanced nothing, read off the typed status and code, never off the message.
+ */
+function isSeatClaimOvertaken(e: unknown): boolean {
+  return e instanceof ApiRefusalError && e.status === 409 && e.code === 'SEAT_CLAIM_OVERTAKEN';
+}
+
+/**
+ * Answers a definitive refusal `e` of `groupId`'s commit staged on `baseEpoch`: `true` when it was a
+ * `409 SEAT_CLAIM_OVERTAKEN` the commit transaction may rebuild from (the stage is cleared through
+ * `clear`, and `attempt` is below the bound), `false` for any other refusal, left to the caller. On
+ * the last attempt, or when the stage could not be cleared (a rebuild would fail on it), it throws
+ * the typed refusal.
+ */
+async function rebuildOnOvertakenClaim(
+  clear: () => Promise<void>,
+  groupId: string,
+  baseEpoch: number,
+  attempt: number,
+  e: unknown
+): Promise<boolean> {
+  if (!isSeatClaimOvertaken(e)) return false;
+  const last = attempt >= SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS;
+  console.warn(
+    `[COMMIT] ${groupId.slice(0, 8)}... refused at epoch ${baseEpoch}: an unrelated eviction overtook its seat claim - staged commit rolled back, ` +
+      (last
+        ? `attempt ${attempt}/${SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS}, giving up`
+        : `rebuilding (attempt ${attempt}/${SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS})`)
+  );
+  // Not rebuilt on a commit that is still staged: the next stage would fail on it.
+  const cleared = await clear().then(
+    () => true,
+    (clearErr: unknown) => {
+      console.error(
+        `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the overtaken commit:`,
+        String(clearErr).slice(0, 120)
+      );
+      return false;
+    }
+  );
+  if (!last && cleared) return true;
+  throw new CommitRefusedError(SEAT_CLAIM_OVERTAKEN_REASON, baseEpoch, baseEpoch);
+}
 
 /**
  * How many times one join may read the device's published-KeyPackage fact while rounds keep
@@ -248,6 +336,17 @@ function assertResolvedIdentity(seam: string, userId: string, deviceId: string):
     throw new UnresolvedIdentityError(seam, 'deviceId');
   }
 }
+
+/**
+ * The recovery each verdict of `mls-core`'s deterministic reader maps to - the same one the prefix
+ * of the identical native error reaches through the string arms of `classifyStateLoadFailure`.
+ */
+const STATE_LOAD_FAILURE_OF_VERDICT: Record<MlsStateVerdictCode, StateLoadFailure> = {
+  STATE_ALTERED: 'altered',
+  STATE_KEY_MISMATCH: 'rotated',
+  STATE_UNDECRYPTABLE: 'undecryptable',
+  IDENTITY_MISMATCH: 'mismatch',
+};
 
 export abstract class BaseMlsService implements IMlsService {
   // ── Platform identity ─────────────────────────────────────────────────────
@@ -570,6 +669,11 @@ export abstract class BaseMlsService implements IMlsService {
     setSenderMismatchReporter((report) =>
       this.delivery.deliveryPost('sender-mismatch', { ...report })
     );
+    // The same for an entry no member made (`uninvitedEntry.ts`): the server's `[UNINVITED_ENTRY]`
+    // line is the count the refusal of such an entry waits on.
+    setUninvitedEntryReporter((report) =>
+      this.delivery.deliveryPost('uninvited-entry', { ...report })
+    );
     // The same for a fork or forged history (`[INTEGRITY]`): seen on a device, read on the server.
     setIntegrityFindingReporter((finding) =>
       this.delivery.deliveryPost('integrity-finding', { ...finding })
@@ -633,8 +737,9 @@ export abstract class BaseMlsService implements IMlsService {
    * therefore a two-release sequence; see `docs/wiki/backlog.md`.
    *
    * **`rotated` AND `altered` ARE THE TWO HALVES OF `undecryptable` THAT A KEY FINGERPRINT
-   * SEPARATES**, and since step 2 framed every save (2026-10-17) both fire. `mls-core` (and the web's
-   * v2 reader) throws `STATE_KEY_MISMATCH` when a FRAMED state's header names a key other than the
+   * SEPARATES**, and since step 2 framed every save (2026-10-17) both fire. `mls-core` (the web's v2
+   * opener for `STATE_KEY_MISMATCH` only - a WebCrypto refusal is `unreadable_now` unless `mls-core`
+   * confirms the tag, `loadAndInitWasm`) throws `STATE_KEY_MISMATCH` when a FRAMED state's header names a key other than the
    * one in hand - the old PIN opens it - and `STATE_ALTERED` when the header names THE KEY IN HAND
    * and the tag still fails: the bytes were altered and no PIN ever will (CORRUPT-1, CORRUPT-2). No
    * guess, no failed decrypt to interpret - the blob says so. A LEGACY blob, written before the flip
@@ -653,6 +758,12 @@ export abstract class BaseMlsService implements IMlsService {
    * and hands the user to the PIN modal ({@link isKeystoreKeyUnavailable}).
    */
   protected classifyStateLoadFailure(error: unknown): StateLoadFailure {
+    // A TYPE, read before any code: the web's WebCrypto refusal is not a verdict on the bytes, and
+    // its message must never be able to reach a needle below.
+    if (error instanceof MlsStateUnreadableNowError) return 'unreadable_now';
+    // A TYPE too: `mls-core`'s deterministic reader judged bytes WebCrypto refused, and its verdict
+    // crossed the WASM boundary as a code (`state_blob_verdict`), never as prose.
+    if (error instanceof MlsStateVerdictError) return STATE_LOAD_FAILURE_OF_VERDICT[error.code];
     const errStr = String(error);
     if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
     if (errStr.includes('STATE_KEY_MISMATCH')) return 'rotated';
@@ -2846,6 +2957,8 @@ export abstract class BaseMlsService implements IMlsService {
     // for a fresh one starting at generation zero. Carried over, they would burn against sends
     // that, from the peers' side, this device has never made.
     resetSendRatchetLedger(this.userId);
+    this.owedSendBurns.clear();
+    this.unprovenSendRatchets.clear();
     // Deregister the abandoned device so other members stop generating Welcomes for a key package
     // our fresh state no longer holds (NoMatchingKeyPackage). RECORDED BEFORE IT IS ASKED, so a
     // failed delete is retried at the next published round rather than forgotten; never awaited, so
@@ -3240,11 +3353,15 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.removeMemberFromServer(groupId, userId);
   }
 
+  async declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome> {
+    return this.delivery.declineJoinRequest(groupId, userId);
+  }
+
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     return this.delivery.getGroupMembers(groupId);
   }
 
-  async getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
+  async getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]> {
     return this.delivery.getGroupUserMembers(groupId);
   }
 
@@ -3288,12 +3405,7 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.undismissGroup(groupId);
   }
 
-  async getPendingInvitations(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{ id: string; userId: string; deviceId: string; groupId: string; status: string }>
-  > {
+  async getPendingInvitations(userId: string, deviceId: string): Promise<PendingInvitationRow[]> {
     return this.delivery.getPendingInvitations(userId, deviceId);
   }
 
@@ -3442,6 +3554,13 @@ export abstract class BaseMlsService implements IMlsService {
   async persistCheckpoint(options?: { endsDocumentOnRefusal?: boolean }): Promise<void> {
     if (this.stateWritesEnded === true) throw new MlsStateWriteRefusedError('ended');
     const emitted = snapshotEmitted(this.userId);
+    // A RATCHET WHOSE REPAIR THIS STATE DOES NOT HOLD IS NOT DECLARED DURABLE. A burn still owed
+    // (or still running) when the count is read is not in the state this checkpoint exports, so
+    // committing `persisted = emitted` for that ratchet would erase the only record of the debt: the
+    // settle merges into the epoch, a checkpoint lands, a reload finds nothing owed and re-issues
+    // generation 0. Left out at SNAPSHOT time; a burn that lands during the write is only over-counted
+    // on the next load, which is free.
+    for (const key of this.sendRatchetsNotDurable()) delete emitted[key];
     // The replay marks are captured BEFORE the write for the same reason as `emitted`: a page
     // decrypted while the seal runs is marked in memory, and this write does not hold its advance.
     const replayMarks = snapshotPendingHistoryMarks(this.userId);
@@ -3486,46 +3605,134 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * Generations owed to an epoch the restored state has not reached yet, per group then epoch:
+   * frames this device sent after a merge its last checkpoint does not hold. Filled by
+   * {@link reconcileSendRatchets}, spent by {@link burnOwedOnArrival} before the first frame sealed
+   * at that epoch, and removed only once its burn has run.
+   *
+   * In memory, and the LEDGER keeps the debt durable: a reload before the burn reads it again only
+   * because no checkpoint declared that ratchet durable meanwhile - {@link persistCheckpoint} leaves
+   * every ratchet named here out of what it commits ({@link sendRatchetsNotDurable}).
+   */
+  private owedSendBurns = new Map<string, Map<number, number>>();
+
+  /**
+   * Ledger keys whose epoch the load could not read, so their burn ran blind (in whatever epoch the
+   * state held) and may not have been the repair. Never declared durable this session, so the next
+   * load - which can read the epoch - judges them again; over-burning there is free.
+   */
+  private unprovenSendRatchets = new Set<string>();
+
+  /** The owed burn running for a group, which every send to that group awaits. */
+  private owedBurnInFlight = new Map<string, Promise<void>>();
+
+  /** The ledger keys a checkpoint must not declare durable: see {@link persistCheckpoint}. */
+  private sendRatchetsNotDurable(): string[] {
+    const keys = [...this.unprovenSendRatchets];
+    for (const [groupId, owed] of this.owedSendBurns) {
+      for (const epoch of owed.keys()) keys.push(sendRatchetKey(groupId, epoch));
+    }
+    return keys;
+  }
+
+  /**
    * Burns whatever this device sent but never checkpointed, so the restored ratchet is back where
    * the peers already believe it is. Runs once per {@link init}, before anything can send.
    *
    * A fresh start has no history to repair and any surviving count describes a device that no longer
    * exists, so the ledger is dropped rather than replayed.
    *
+   * EACH COUNT IS BURNT IN THE EPOCH IT WAS COUNTED IN ({@link sendRatchetDebt}). The restored state
+   * can sit BEHIND an epoch this device already sent in - its own commit merged after the checkpoint
+   * that holds the stage, or a received one never checkpointed - and that epoch restarts at
+   * generation 0 when the group gets there again. Burnt here, those frames moved the restored epoch's
+   * ratchet, which nobody reads any more, and the merge then re-issued every generation the peers had
+   * consumed (`SecretReuseError`). So a count AHEAD of the state is kept for that epoch, and burnt when
+   * the first frame is about to be sealed there.
+   *
    * Per group, and isolated per group: the ledger can name a conversation this device has since left
-   * or forgotten, and `skipSendGenerations` answers `GroupNotFound` for it. One unrepairable group
-   * must not cost the repair of the others.
+   * or forgotten, and the platform answers `GroupNotFound` for it. One unrepairable group must not
+   * cost the repair of the others.
    */
   protected async reconcileSendRatchets(): Promise<void> {
+    this.owedSendBurns.clear();
+    this.unprovenSendRatchets.clear();
     if (this.freshStart) {
       resetSendRatchetLedger(this.userId);
       return;
     }
-    const pending = pendingSendGenerations(this.userId);
-    if (pending.length === 0) return;
+    const entries = sendRatchetEntries(this.userId);
+    if (entries.length === 0) return;
 
+    const restored = new Map<string, number | 'not-held' | 'unknown'>();
+    const forget: string[] = [];
     let repaired = 0;
-    for (const { groupId, deficit, clamped } of pending) {
-      if (clamped) {
+    for (const entry of entries) {
+      const { groupId } = entry;
+      const short = groupId.slice(0, 8);
+      if (!restored.has(groupId)) restored.set(groupId, await this.restoredEpochOf(groupId));
+      const restoredEpoch = restored.get(groupId);
+      if (restoredEpoch === 'not-held') {
+        forget.push(entry.key);
+        continue;
+      }
+      // NO EPOCH TO JUDGE BY IS NO REASON TO SKIP THE REPAIR: the debt is burnt where the state is,
+      // as the per-group ledger always did. Right when the frames were sent in the epoch the state
+      // holds (the common case: a send not yet checkpointed); a burn moving an epoch nobody reads
+      // when they were not, which is free. What it cannot prove is that it repaired, so the key is
+      // never declared durable this session (`unprovenSendRatchets`) and the next load judges it.
+      const debt =
+        restoredEpoch === 'unknown' || restoredEpoch === undefined
+          ? sendRatchetDebt({ ...entry, epoch: null }, 0)
+          : sendRatchetDebt(entry, restoredEpoch);
+      if (restoredEpoch === 'unknown' || restoredEpoch === undefined) {
+        this.unprovenSendRatchets.add(entry.key);
+      }
+      if (debt.kind === 'spent' || debt.kind === 'settled') {
+        // A settled entry with an epoch keeps counting; a spent one, or a settled pre-epoch one,
+        // will never be read again.
+        if (debt.kind === 'spent' || (entry.epoch === null && restoredEpoch !== 'unknown')) {
+          forget.push(entry.key);
+        }
+        continue;
+      }
+      if (debt.clamped) {
         // NAMED, NEVER SILENT: a deficit past the receivers' forward window is a corrupt counter,
         // not a backlog, and burning the cap will not repair it. Saying so is what separates
         // "repaired" from "gave up at the bound" in the log a later reader will have.
         console.warn(
-          `[MLS] Send ledger for ${groupId.slice(0, 8)}... claims more than ${MAX_BURN_GENERATIONS} unpersisted frames - burning the cap only; the ratchet cannot be repaired past the receivers' forward window`
+          `[MLS] Send ledger for ${short}... claims more than ${MAX_BURN_GENERATIONS} unpersisted frames - burning the cap only; the ratchet cannot be repaired past the receivers' forward window`
         );
       }
+      if (debt.kind === 'on-arrival') {
+        const epoch = entry.epoch as number;
+        const owed = this.owedSendBurns.get(groupId) ?? new Map<number, number>();
+        owed.set(epoch, debt.count);
+        this.owedSendBurns.set(groupId, owed);
+        console.log(
+          `[MLS] Restored state for ${short}... is at epoch ${restoredEpoch}, behind ${debt.count} frame(s) this device sent at epoch ${epoch} - owed there, burnt before the first frame sealed at it`
+        );
+        continue;
+      }
       try {
-        await this.skipSendGenerations(groupId, deficit);
+        await this.skipSendGenerations(groupId, debt.count);
         repaired++;
         console.log(
-          `[MLS] Restored state for ${groupId.slice(0, 8)}... was ${deficit} generation(s) behind this device's own sends - burnt, no frame will re-use a spent generation`
+          `[MLS] Restored state for ${short}... was ${debt.count} generation(s) behind this device's own sends at epoch ${restoredEpoch} - burnt, no frame will re-use a spent generation`
         );
       } catch (e) {
         console.warn(
-          `[MLS] Could not burn ${deficit} generation(s) for ${groupId.slice(0, 8)}...:`,
+          `[MLS] Could not burn ${debt.count} generation(s) for ${short}...:`,
           String(e).slice(0, 160)
         );
       }
+    }
+    forgetSendRatchetEntries(this.userId, forget);
+    const blind = [...restored.values()].filter((r) => r === 'unknown').length;
+    if (blind > 0) {
+      console.warn(
+        `[MLS] Send ledger: the restored epoch of ${blind} group(s) could not be read - their debt was burnt in whatever epoch the state holds, and stays open for the next load`
+      );
     }
 
     // The burn moved the live ratchet and nothing durable knows it yet, so a second reload would
@@ -3539,6 +3746,125 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
+  /**
+   * The epoch the restored state holds `groupId` at; `'not-held'` for a group the state does not
+   * hold (left or forgotten - a later join builds a new ratchet, so its counts describe nothing);
+   * `'unknown'` when that cannot be told, which burns blind and forgets nothing (see
+   * {@link reconcileSendRatchets}).
+   */
+  private async restoredEpochOf(groupId: string): Promise<number | 'not-held' | 'unknown'> {
+    // Asked FIRST, and only of a listing known to describe the state: both platforms answer epoch
+    // 0 for a group they do not hold, which would read as a real epoch.
+    if (!this.heldGroupsKnown()) return 'unknown';
+    if (!this.getLocalGroups().includes(groupId)) return 'not-held';
+    try {
+      return await this.freshEpoch(groupId);
+    } catch (e) {
+      console.warn(
+        `[MLS] Send ledger names ${groupId.slice(0, 8)}..., whose epoch cannot be read - its debt is burnt blind:`,
+        String(e).slice(0, 160)
+      );
+      return 'unknown';
+    }
+  }
+
+  /**
+   * Spends what {@link reconcileSendRatchets} left owed to `groupId` at `epoch`, which the group has
+   * now reached, and drops what it owed to epochs it went past without sending (their ratchets can
+   * no longer be used).
+   *
+   * The entry is removed only AFTER its burn has run: until then it is what keeps every checkpoint
+   * from declaring that ratchet durable. A burn that fails leaves it owed and THROWS
+   * ({@link OwedSendBurnFailedError}) - a frame sealed past it would re-use a generation the peers
+   * consumed, so the send is refused and the next one tries again.
+   *
+   * Never called directly: {@link settleOwedBurns} runs it one at a time per group.
+   */
+  private async burnOwedOnArrival(groupId: string, epoch: number): Promise<void> {
+    const owed = this.owedSendBurns.get(groupId);
+    if (!owed) return;
+    const short = groupId.slice(0, 8);
+    for (const passed of [...owed.keys()].filter((e) => e < epoch)) {
+      owed.delete(passed);
+      console.log(
+        `[MLS] ${short}... went past epoch ${passed} without sealing a frame there - its owed burn is moot`
+      );
+    }
+    const count = owed.get(epoch);
+    if (count !== undefined) {
+      try {
+        await this.skipSendGenerations(groupId, count);
+      } catch (e) {
+        console.error(
+          `[MLS] Could not burn ${count} owed generation(s) for ${short}... at epoch ${epoch} - the send is refused rather than sealed over a consumed generation:`,
+          String(e).slice(0, 160)
+        );
+        throw new OwedSendBurnFailedError(groupId, epoch, e);
+      }
+      owed.delete(epoch);
+      console.log(
+        `[MLS] ${short}... reached epoch ${epoch}, where this device had sent ${count} frame(s) its restored state did not hold - burnt before sealing there`
+      );
+      // The burn is in the live state only; the next checkpoint holds it, and from then on the
+      // ratchet may be declared durable.
+      scheduleOutboundMlsPersist();
+    }
+    if (owed.size === 0) this.owedSendBurns.delete(groupId);
+  }
+
+  /**
+   * Runs `groupId`'s owed burn at `epoch` (the group's current one when omitted), AFTER any burn
+   * already running for it. ONE AT A TIME PER GROUP, and every send awaits it: two sends that both
+   * found a burn owed used to race - the first removed the entry and awaited the platform, the
+   * second saw nothing owed and sealed, and only the order of two platform calls stood between that
+   * frame and a consumed generation.
+   */
+  private settleOwedBurns(groupId: string, epoch?: number): Promise<void> {
+    const before = this.owedBurnInFlight.get(groupId) ?? Promise.resolve();
+    const run = before
+      // The previous burn's failure belongs to the send that ran it; this one re-reads what is owed.
+      .catch(() => {})
+      .then(async () => {
+        if (!this.owedSendBurns.has(groupId)) return;
+        await this.burnOwedOnArrival(groupId, epoch ?? (await this.freshEpoch(groupId)));
+      });
+    this.owedBurnInFlight.set(groupId, run);
+    void run
+      .finally(() => {
+        if (this.owedBurnInFlight.get(groupId) === run) this.owedBurnInFlight.delete(groupId);
+      })
+      // Awaited by the caller, which receives the failure; this tail only ends the bookkeeping.
+      .catch(() => {});
+    return run;
+  }
+
+  /**
+   * Seals `messageBytes` at a generation no peer has consumed: what is owed to the group's epoch is
+   * burnt first, and the frame's OWN epoch is read back - the fact the ledger counts it against.
+   *
+   * An incoming commit is not held off by the send barrier (only this device's own are), so one can
+   * move the group between the epoch read and the encrypt. A frame sealed at an epoch that still owes
+   * a burn is therefore never posted: the overlap is said, the burn is spent, and the frame is sealed
+   * again. It terminates - each pass that does not return removes one owed epoch, or throws.
+   */
+  private async sealPastOwedBurns(
+    groupId: string,
+    messageBytes: Uint8Array
+  ): Promise<AuthoredFrame & { epoch: number }> {
+    for (;;) {
+      if (this.owedSendBurns.has(groupId) || this.owedBurnInFlight.has(groupId)) {
+        await this.settleOwedBurns(groupId);
+      }
+      const frame = await this.encryptForSend(groupId, messageBytes);
+      const epoch = sealedFrameEpoch(frame.sealed);
+      if (!this.owedSendBurns.get(groupId)?.has(epoch)) return { ...frame, epoch };
+      console.error(
+        `[MLS] ${groupId.slice(0, 8)}... a frame was sealed at epoch ${epoch}, which still owed a burn - an incoming commit moved the group between the burn and the encrypt; the frame is dropped unsent and sealed again`
+      );
+      await this.settleOwedBurns(groupId, epoch);
+    }
+  }
+
   /** `latch`: as on {@link writeCheckpoint}, read at the put. */
   protected abstract changeDeviceKeyImpl(
     newDeviceKeyB64: string,
@@ -3546,7 +3872,28 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<void>;
   protected abstract generateKeyPackageImpl(deviceKeyB64: string): Promise<DatedKeyPackage>;
   abstract publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
-  abstract createGroup(groupId: string): Promise<void>;
+
+  /**
+   * Creates `groupId` in this device's MLS state, as its only member.
+   *
+   * CONCRETE, AND REFUSED ON A FOLLOWER TAB ({@link FollowerTabCommitError}), for the reason a
+   * commit is ({@link runCommitTransaction}): a follower's state is a copy no disk and no other tab
+   * follows, so a group created there exists only in that copy - the leader never holds it, and
+   * every message and commit of it after that is the follower's alone. Here rather than at each
+   * caller, so no caller can create one around it.
+   */
+  async createGroup(groupId: string): Promise<void> {
+    if (getTabLeadership() === 'follower') {
+      console.warn(
+        `[MLS] createGroup ${groupId.slice(0, 8)}... refused on a follower tab - only the leader creates groups`
+      );
+      throw new FollowerTabCommitError(groupId);
+    }
+    await this.createGroupImpl(groupId);
+  }
+
+  /** The platform half of {@link createGroup}. */
+  protected abstract createGroupImpl(groupId: string): Promise<void>;
 
   // ── One commit regime (C7-A unified: stage -> validate -> merge/clear) ──────
   //
@@ -3561,10 +3908,12 @@ export abstract class BaseMlsService implements IMlsService {
    *  `groupInfo`: the external-join base for the epoch the commit CREATES (see
    *  {@link runCommitTransaction}). Each package travels with the `userId:deviceId` it was
    *  FETCHED FOR, and Rust skips one whose credential names another device or whose key is not
-   *  the one pinned for it (`deviceTrust.ts`). */
+   *  the one pinned for it (`deviceTrust.ts`). Every stage below RECORDS its submission from
+   *  `intent` and its own output in the same platform call (`commitSubmission.ts`). */
   protected abstract stageAddMembers(
     groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; identity: string }>
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>,
+    intent: Uint8Array
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -3578,20 +3927,39 @@ export abstract class BaseMlsService implements IMlsService {
   protected abstract stageReplaceDevice(
     groupId: string,
     identity: string,
-    keyPackage: Uint8Array
+    keyPackage: Uint8Array,
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }>;
   /** Stages a Remove commit (all devices of the given users) WITHOUT merging. Returns the commit
    *  and the external-join base for the epoch it creates. */
   protected abstract stageRemoveMembers(
     groupId: string,
-    userIds: string[]
+    userIds: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>;
   /** Stages a Remove commit for specific devices ("userId:deviceId") WITHOUT merging. Returns the
    *  commit and the external-join base for the epoch it creates. */
   protected abstract stageRemoveMembersByDevice(
     groupId: string,
-    deviceIdentities: string[]
+    deviceIdentities: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>;
+  /** Stages a refresh of this device's own leaf - an empty commit with a path and no proposal -
+   *  WITHOUT merging. Returns the commit and the external-join base for the epoch it creates. */
+  protected abstract stageSelfUpdate(
+    groupId: string,
+    intent: Uint8Array
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>;
+  /** When this device's leaf in `groupId` was minted (Unix seconds), `null` once a commit replaced
+   *  it. See `MlsManager::own_leaf_minted_at` and `leafRefresh.ts`. */
+  protected abstract ownLeafMintedAt(groupId: string): Promise<number | null>;
+  /** Whether this device's current context in `groupId` (epoch, tree hash, confirmed transcript
+   *  hash) is the one the served base `groupInfo` describes. See
+   *  `MlsManager::own_context_matches_base`. */
+  protected abstract ownContextMatchesBase(
+    groupId: string,
+    groupInfo: Uint8Array
+  ): Promise<boolean>;
   /** Merges the pending staged commit (server accepted): advances the local epoch. */
   protected abstract mergePendingCommit(groupId: string): Promise<void>;
   /** Clears the pending staged commit (server rejected): local epoch unchanged, no fork. */
@@ -3621,80 +3989,321 @@ export abstract class BaseMlsService implements IMlsService {
    * epoch N+1 while this device is still at N, so it is never published on its own - only the gate
    * accepting the commit makes it true. Nothing is left to mint after the merge, so there is no
    * follow-up to lose and no window between "the epoch moved" and "its base exists".
+   *
+   * **A SUBMISSION THAT GETS NO ANSWER IS RESUBMITTED, NEVER GUESSED** (`commitSubmission.ts`). The
+   * same request goes again and the gate's verdict decides: accepted or answered as a duplicate ->
+   * merge; refused -> clear and catch up; still no answer -> the staged commit is KEPT with the
+   * record its stage wrote beside it, and {@link CommitOutcomeUnknownError} is thrown. Both are on
+   * disk before the FIRST request leaves (a checkpoint awaited between the stage and the send), so a
+   * crash at any point after the send reloads them. Until a resubmission
+   * answers - at the next connection, the next send, the next commit in the group, or a replay that
+   * finds the log decided at that epoch - the group takes no commit and no send.
    */
   protected async runCommitTransaction(
     groupId: string,
-    stageFn: () => Promise<{
+    stageFn: (intent: Uint8Array) => Promise<{
       commit: Uint8Array;
       welcome?: Uint8Array;
       groupInfo: Uint8Array;
       addedDeviceIds?: string[];
       skipped?: SkippedDevice[];
     }>,
-    opts: { excludeDeviceIds?: string[]; exportTree?: boolean; removes?: CommitRemoval[] } = {}
+    opts: {
+      excludeDeviceIds?: string[];
+      exportTree?: boolean;
+      removes?: CommitRemoval[];
+      /** For an Add of several devices: the device of each key package, by position. */
+      keyPackageDevices?: string[];
+    } = {}
   ): Promise<{
     welcome?: Uint8Array;
     ratchetTree?: Uint8Array;
     addedDeviceIds: string[];
     skipped: SkippedDevice[];
   }> {
+    // A FOLLOWER TAB DOES NOT COMMIT (`FollowerTabCommitError`): its state is a copy no disk and no
+    // other tab will follow, so a commit it sent stranded the leader behind the group.
+    if (getTabLeadership() === 'follower') {
+      console.warn(
+        `[COMMIT] ${groupId.slice(0, 8)}... commit refused on a follower tab - only the leader commits`
+      );
+      throw new FollowerTabCommitError(groupId);
+    }
     const out = await this.runUnderMlsLock(async () =>
       // RAISED UNDER THE MLS MUTEX, WHICH IS WHAT MAKES IT DEADLOCK-FREE: a send that sees this
       // barrier provably does not hold the mutex, so it blocks nothing the drain inside waits for.
-      // The section covers stage through merge - the whole window in which this device's notion of
-      // the epoch and the server's can disagree. See `epochSendBarrier`.
+      // The section covers stage through merge - the whole window in which this device's notion
+      // of the epoch and the server's can disagree. See `epochSendBarrier`.
       runAsEpochAdvance(groupId, async () => {
-        const staged = await stageFn();
-        // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
-        const baseEpoch = await this.freshEpoch(groupId);
-        // The devices this commit adds, recorded by the server WITH the advance so each is a
-        // recipient of what it can open before its Welcome is even sent (`commitAdmits`).
-        const admits = commitAdmits(
-          opts.excludeDeviceIds,
-          staged.addedDeviceIds,
-          `${this.userId}:${this.deviceId}`
-        );
-        if (admits.length > 0) {
-          console.log(
-            `[COMMIT] ${groupId.slice(0, 8)}... admits ${admits.length} device(s) at epoch ${baseEpoch + 1}: ${admits.map((a) => `${a.userId.slice(0, 8)}:${a.deviceId}`).join(', ')}`
-          );
-        }
-        // One atomic server round-trip: validate the epoch, and on accept the server records the
-        // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
-        // between this accept and the local merge below, our epoch lags the server by one - a gap the
-        // rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
-        const validation = await this.delivery.submitCommit(
-          groupId,
-          baseEpoch,
-          toBase64(staged.commit),
-          opts.excludeDeviceIds,
-          toBase64(staged.groupInfo),
-          admits,
-          // Whom this commit removes, so the server queues it to the devices its half of the
-          // removal already parted (`commitRemovals`).
-          opts.removes
-        );
-        if (!validation.accepted) {
-          // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
-          // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
-          // retryable failure rather than a fork to heal. [[C7]]
-          await this.clearPendingCommit(groupId).catch(() => {});
-          // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
-          await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
-          throw new CommitRefusedError(
-            validation.reason || 'epoch_mismatch',
-            baseEpoch,
-            validation.currentEpoch
-          );
-        }
-        await this.mergePendingCommit(groupId);
-        const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
-        return {
-          welcome: staged.welcome,
-          ratchetTree,
-          addedDeviceIds: staged.addedDeviceIds ?? [],
-          skipped: staged.skipped ?? [],
+        // ONE COMMIT, REBUILT WHILE THE SERVER ANSWERS `SEAT_CLAIM_OVERTAKEN`. That refusal moved
+        // nothing - the epoch, the tree and the log stand where they were - and it reaches EVERY
+        // commit that writes a seat, an ordinary conversation's included: a pending member's own
+        // add or remove carries its committer's claim. Rebuilt here, under the same lock, no caller
+        // has to know about it; only the last refusal of the bound is handed up.
+        //
+        // ONLY A FIRST REQUEST THE GATE ANSWERED IS REBUILT. The 409 refuses the request that got
+        // it, and nothing more: the gate reads seat claims per request, so a first request that got
+        // no answer - stalled on the way, or inside its transaction past the server's 5 s commit
+        // lock while this client waits up to 30 s - may still land with claims of its own. After
+        // one, a 409 keeps the stage (`resubmitUnresolved`), never clears or rebuilds it.
+        //
+        // A STAGE LEFT ON A FAILED CLEAR IS STILL UNRESOLVED, so every clear here notes the group
+        // when it fails: the next settlement reads it again.
+        const clear = async () => {
+          try {
+            await this.clearPendingCommit(groupId);
+          } catch (clearErr) {
+            this.unresolvedGroups?.add(groupId);
+            throw clearErr;
+          }
         };
+        // ONE BUDGET FOR THE WHOLE HOLD, settlement and rebuilds included (`COMMIT_LOCK_HOLD_BUDGET_MS`):
+        // the lock this runs under guards the incoming processing of every group.
+        const holdEndsAt = commitLockHoldEndsAt();
+        for (let attempt = 1; ; attempt++) {
+          // NOT STAGED AT ALL while the server still refuses this account's commits: the answer is
+          // already known (`commitRateLimit.ts`), and nothing is left to roll back.
+          const waitMs = commitRateLimitRemainingMs();
+          if (waitMs > 0) {
+            const epoch = await this.freshEpoch(groupId);
+            console.warn(
+              `[COMMIT] ${groupId.slice(0, 8)}... not submitted - the commit rate limit holds for ${Math.round(waitMs / 1000)} s more`
+            );
+            throw new CommitRefusedError('rate_limited', epoch, undefined, waitMs);
+          }
+          // A PREVIOUS COMMIT WHOSE OUTCOME IS UNKNOWN IS SETTLED FIRST, and nothing is staged on
+          // top of it while it stays unknown: openmls holds it pending, and the epoch this commit
+          // would be built on is exactly what that outcome decides.
+          if ((await this.settleUnresolvedLocked(groupId, holdEndsAt)) === 'unknown') {
+            throw new CommitOutcomeUnknownError(
+              groupId,
+              this.getEpoch(groupId),
+              'the previous commit of this group is still unresolved'
+            );
+          }
+          // NOTHING IS STAGED THAT THE BUDGET CANNOT SEE ANSWERED: a stage whose first request
+          // cannot start would only be rolled back.
+          if (!mayStartCommitRequest(holdEndsAt)) {
+            const epoch = this.getEpoch(groupId);
+            console.warn(
+              `[COMMIT] ${groupId.slice(0, 8)}... not staged on ${epoch} (attempt ${attempt}) - the MLS lock budget of ${COMMIT_LOCK_HOLD_BUDGET_MS} ms is spent`
+            );
+            throw new CommitRefusedError(
+              attempt > 1 ? SEAT_CLAIM_OVERTAKEN_REASON : COMMIT_LOCK_BUDGET_SPENT_REASON,
+              epoch,
+              attempt > 1 ? epoch : undefined
+            );
+          }
+          // WHAT THIS CLIENT KNOWS OF THE COMMIT GOES INTO THE STAGE ITSELF, and the platform records
+          // it with the staged commit in the SAME call (`commitSubmission.ts`): a checkpoint does not
+          // take this lock, so a record written by a second call could miss one that ran between.
+          const intent: CommitIntent = {
+            groupId,
+            self: `${this.userId}:${this.deviceId}`,
+            ...(opts.excludeDeviceIds ? { excludeDeviceIds: opts.excludeDeviceIds } : {}),
+            // Whom this commit removes, so the server queues it to the devices its half of the
+            // removal already parted (`commitRemovals`).
+            ...(opts.removes ? { removes: opts.removes } : {}),
+            ...(opts.keyPackageDevices ? { keyPackageDevices: opts.keyPackageDevices } : {}),
+          };
+          const staged = await stageFn(encodeIntent(intent));
+          // THE REQUEST IS COMPOSED FROM THE RECORD, never from the values in hand, so the first
+          // submission and any resubmission are one spelling of the same bytes.
+          const read = await this.pendingSubmission(groupId);
+          const submission = read.status === 'recorded' ? composeSubmission(read.record) : null;
+          if (!submission) {
+            // The platform staged without the record its contract promises: nothing has been sent,
+            // so clearing is safe - and this is a defect of the stage, said as one.
+            await this.clearPendingCommit(groupId).catch(() => {});
+            console.error(
+              `[COMMIT] ${groupId.slice(0, 8)}... the stage left ${read.status === 'recorded' ? 'an unreadable' : read.status} ` +
+                'record beside its commit - cleared before sending anything'
+            );
+            throw new Error(`staged commit of ${groupId.slice(0, 8)}... has no usable record`);
+          }
+          const { baseEpoch } = submission;
+          // ON DISK BEFORE THE FIRST REQUEST LEAVES. Once it has left, the gate may accept it at any
+          // moment, so a crash from here on must reload a state that holds this stage and its
+          // record - the resubmission at the next connection then decides. Without this, a crash
+          // before the next checkpoint reloaded the state from BEFORE the stage: a commit the
+          // server may hold, that this device can neither merge nor resubmit.
+          //
+          // A CHECKPOINT THAT THREW SENDS NOTHING. What it does with the stage depends on WHERE it
+          // threw, read from the type (`checkpointWroteNothing`):
+          //  - it stored nothing (refused, or failed before anything was stored): the commit never
+          //    left and this write did not save it, so it is CLEARED and the failure is definitive
+          //    (`CommitStageNotSavedError`) - a checkpoint that keeps failing costs each commit, not
+          //    every send of the session. An earlier checkpoint exporting after the stage may still
+          //    have saved it; a reload then holds a stage that never left, which its settle submits
+          //    as a first request and the gate decides - a commit the member asked for, never a fork;
+          //  - anything else may have thrown after its write landed, so the stage may be on disk and
+          //    a clear reported as "failed" would be contradicted by the next reload. It is KEPT,
+          //    exactly like an unanswered one, and the settle decides - after its own checkpoint.
+          const unsaved = await this.checkpointStageBeforeSend(groupId, baseEpoch);
+          if (unsaved !== null && checkpointWroteNothing(unsaved)) {
+            try {
+              await this.clearPendingCommit(groupId);
+            } catch (clearErr) {
+              // Not cleared: the stage stays, so its outcome is the settle's to decide.
+              console.error(
+                `[COMMIT] ${groupId.slice(0, 8)}... could not clear the unsaved stage on ${baseEpoch}: ${String(clearErr).slice(0, 120)}`
+              );
+              this.unresolvedGroups?.add(groupId);
+              throw new CommitOutcomeUnknownError(groupId, baseEpoch, clearErr, 'its clear failed');
+            }
+            console.warn(
+              `[COMMIT] ${groupId.slice(0, 8)}... the stage on epoch ${baseEpoch} was not saved (the checkpoint stored nothing) - cleared, nothing sent`
+            );
+            throw new CommitStageNotSavedError(groupId, baseEpoch, unsaved);
+          }
+          if (unsaved !== null) {
+            this.unresolvedGroups?.add(groupId);
+            throw new CommitOutcomeUnknownError(
+              groupId,
+              baseEpoch,
+              unsaved,
+              'its checkpoint failed before the first request, so it was never sent'
+            );
+          }
+          // THE BUDGET IS READ AGAIN AFTER THE CHECKPOINT, which may have taken long: a first request
+          // that cannot start is never sent, so its stage is cleared exactly as an unsaved one is.
+          // The checkpoint may have saved it; a reload then settles a stage that never left, which
+          // the gate decides as a first request - never a fork.
+          if (!mayStartCommitRequest(holdEndsAt)) {
+            try {
+              await clear();
+            } catch (clearErr) {
+              console.error(
+                `[COMMIT] ${groupId.slice(0, 8)}... could not clear the unsent stage on ${baseEpoch}: ${String(clearErr).slice(0, 120)}`
+              );
+              throw new CommitOutcomeUnknownError(groupId, baseEpoch, clearErr, 'its clear failed');
+            }
+            console.warn(
+              `[COMMIT] ${groupId.slice(0, 8)}... the stage on ${baseEpoch} was not sent - the MLS lock budget of ${COMMIT_LOCK_HOLD_BUDGET_MS} ms is spent; cleared`
+            );
+            throw new CommitRefusedError(
+              attempt > 1 ? SEAT_CLAIM_OVERTAKEN_REASON : COMMIT_LOCK_BUDGET_SPENT_REASON,
+              baseEpoch,
+              attempt > 1 ? baseEpoch : undefined
+            );
+          }
+          if (submission.admits) {
+            console.log(
+              `[COMMIT] ${groupId.slice(0, 8)}... admits ${submission.admits.length} device(s) at epoch ${baseEpoch + 1}: ${submission.admits.map((a) => `${a.userId.slice(0, 8)}:${a.deviceId}`).join(', ')}`
+            );
+          }
+          // One atomic server round-trip: validate the epoch, and on accept the server records the
+          // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
+          // between this accept and the local merge below, the reload holds the stage and its record
+          // (checkpointed above), and the resubmission at the next connection merges it. [[C7]]
+          let validation: Awaited<ReturnType<typeof this.delivery.submitCommit>>;
+          try {
+            validation = await this.submitRecorded(submission);
+          } catch (e) {
+            // A 429 ON THE FIRST REQUEST IS A REFUSAL, NOT A SILENCE: the per-user limit on
+            // `POST /mls/commit` answers before the epoch gate, and no earlier request of these
+            // bytes exists, so the server provably did not advance. Rolled back exactly as on a
+            // business refusal, with the limit remembered (`commitRateLimit.ts`). On a RESUBMISSION
+            // the same 429 says nothing of the first request, which `resubmitUnresolved` keeps.
+            if (e instanceof ApiRefusalError && e.status === 429) {
+              console.warn(
+                `[COMMIT] ${groupId.slice(0, 8)}... refused by the commit rate limit at epoch ${baseEpoch} - staged commit rolled back`
+              );
+              noteCommitRateLimited(e.retryAfterMs);
+              await clear().catch((clearErr: unknown) =>
+                console.error(
+                  `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the rate-limited commit:`,
+                  String(clearErr).slice(0, 120)
+                )
+              );
+              throw new CommitRefusedError(
+                'rate_limited',
+                baseEpoch,
+                undefined,
+                commitRateLimitRemainingMs()
+              );
+            }
+            if (isDefinitiveCommitRefusal(e)) {
+              // The gate ANSWERED, and refused before reaching the epoch: nothing landed.
+              if (await rebuildOnOvertakenClaim(clear, groupId, baseEpoch, attempt, e)) continue;
+              await clear().catch((clearErr: unknown) =>
+                console.error(
+                  `[COMMIT] ${groupId.slice(0, 8)}... could not clear the refused commit at ` +
+                    `${baseEpoch}: ${String(clearErr)}`
+                )
+              );
+              throw e;
+            }
+            // NO ANSWER IS NOT A REFUSAL, AND IT IS NOT A GUESS EITHER. The request may still be on
+            // its way, or it was taken and only the answer lost - the same bytes, sent again, make
+            // the gate say which (an accepted commit is answered as a duplicate).
+            console.warn(
+              `[COMMIT] ${groupId.slice(0, 8)}... no answer to the commit from epoch ${baseEpoch} ` +
+                `(${String(e).slice(0, 120)}) - resubmitting the same commit`
+            );
+            const answer = await this.resubmitUnresolved(submission, holdEndsAt);
+            if (answer.verdict === 'unknown') {
+              // KEPT: the staged commit and its record stay in the state - already on disk, by the
+              // checkpoint before the first request - and a later resubmission decides. Never
+              // rebuilt: the first request's outcome is what is unknown.
+              this.unresolvedGroups?.add(groupId);
+              throw new CommitOutcomeUnknownError(
+                groupId,
+                baseEpoch,
+                answer.error ?? answer.answer?.reason ?? e
+              );
+            }
+            if (answer.answer === undefined) {
+              // Refused by a 4xx that is neither a 429 nor a 409 (`resubmitUnresolved` reads both as unknown): the gate
+              // answered these bytes before reaching the epoch, and nothing landed.
+              await clear().catch((clearErr: unknown) =>
+                console.error(
+                  `[COMMIT] ${groupId.slice(0, 8)}... could not clear the commit refused on resubmission at ` +
+                    `${baseEpoch}: ${String(clearErr).slice(0, 120)}`
+                )
+              );
+              throw answer.error;
+            }
+            validation = answer.answer;
+          }
+          if (!validation.accepted) {
+            // Rejected: roll back the staged commit. The local epoch never moved, so there is NO
+            // fork. Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
+            // retryable failure rather than a fork to heal. [[C7]]
+            await clear().catch((clearErr: unknown) =>
+              console.error(
+                `[COMMIT] ${groupId.slice(0, 8)}... could not clear the refused commit at ` +
+                  `${baseEpoch}: ${String(clearErr).slice(0, 120)}`
+              )
+            );
+            // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
+            await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
+            throw new CommitRefusedError(
+              validation.reason || 'epoch_mismatch',
+              baseEpoch,
+              validation.currentEpoch
+            );
+          }
+          if (validation.duplicate) {
+            console.log(
+              `[COMMIT] ${groupId.slice(0, 8)}... the commit from epoch ${baseEpoch} had been ` +
+                'accepted - its first answer was lost; merging'
+            );
+          }
+          await this.mergePendingCommit(groupId);
+          // EVERY OWN COMMIT REPLACES THIS DEVICE'S LEAF - openmls puts a path in each member commit
+          // it builds (`mls-core/tests/self_update.rs`) - so an Add or a Remove is a refresh too,
+          // and the periodic one is not owed again for an interval. Written here, the one seam they
+          // all pass.
+          noteOwnLeafRefreshed(this.userId, this.deviceId, groupId, baseEpoch + 1);
+          const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
+          return {
+            welcome: staged.welcome,
+            ratchetTree,
+            addedDeviceIds: staged.addedDeviceIds ?? [],
+            skipped: staged.skipped ?? [],
+          };
+        }
       })
     );
     // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX (COMM-22). It used to be a
@@ -3704,6 +4313,406 @@ export abstract class BaseMlsService implements IMlsService {
     // as the holder repair for the OTHER causes of a stale base (a legacy client's commit, a
     // server-side write that failed), which is a different question from this commit's own base.
     return out;
+  }
+
+  /** Submits `submission` to the commit gate, exactly as recorded - the one spelling of the request. */
+  private submitRecorded(
+    submission: CommitSubmission
+  ): ReturnType<typeof this.delivery.submitCommit> {
+    return this.delivery.submitCommit(
+      submission.groupId,
+      submission.baseEpoch,
+      submission.commit,
+      submission.excludeDeviceIds,
+      submission.groupInfo,
+      submission.admits,
+      submission.removes
+    );
+  }
+
+  /**
+   * Submits `submission` AGAIN and reads the gate's verdict (`commitSubmission.ts`): accepted (the
+   * first time, or answered as a duplicate), refused (an epoch conflict, or a 4xx), or unknown (no
+   * answer, a 5xx, or `concurrent_commit` - a lock our own first request may hold).
+   *
+   * A 429, A 401 AND A 403 ARE UNKNOWN HERE, never a refusal ({@link refusesOnlyThisRequest}): the
+   * throttler and the auth guard answer before the gate, so they say nothing of the EARLIER request
+   * of these bytes, which may have landed - a session that expired after an accepted but unanswered
+   * commit is exactly that. Clearing on one could leave this device behind its own accepted commit,
+   * on the way to a re-Welcome; the stage is kept (and a 429's limit remembered).
+   *
+   * SO IS A `409 SEAT_CLAIM_OVERTAKEN`. The gate reads a commit's seat claims per REQUEST, when it
+   * arrives, so the 409 refuses this copy only: the first request, stalled on the way or inside its
+   * transaction past the server's 5 s commit lock, reads its own claims and may still land. The gate
+   * answers `duplicate` instead of the 409 once that first request's log row exists, so the next
+   * settlement decides; never cleared, never rebuilt here.
+   *
+   * No request starts once `holdEndsAt` would be passed ({@link mayStartCommitRequest}): the outcome
+   * then stays unknown.
+   */
+  private async resubmitUnresolved(
+    submission: CommitSubmission,
+    holdEndsAt: number
+  ): Promise<{
+    verdict: ResubmissionVerdict;
+    answer?: Awaited<ReturnType<MlsDeliveryApi['submitCommit']>>;
+    error?: unknown;
+  }> {
+    const short = submission.groupId.slice(0, 8);
+    const from = `the commit from epoch ${submission.baseEpoch}`;
+    if (!mayStartCommitRequest(holdEndsAt)) {
+      const error = new Error(
+        `the MLS lock budget of ${COMMIT_LOCK_HOLD_BUDGET_MS} ms is spent - no resubmission sent`
+      );
+      console.warn(`[COMMIT] ${short}... resubmission of ${from}: unknown (${error.message})`);
+      return { verdict: 'unknown', error };
+    }
+    try {
+      const answer = await this.submitRecorded(submission);
+      const verdict = resubmissionVerdict(answer);
+      console.log(
+        `[COMMIT] ${short}... resubmission of ${from}: ` +
+          `${verdict}${answer.duplicate ? ' (duplicate of an accepted commit)' : ''}` +
+          `${answer.reason ? ` (${answer.reason}${answer.currentEpoch !== undefined ? `, server at ${answer.currentEpoch}` : ''})` : ''}`
+      );
+      return { verdict, answer };
+    } catch (e) {
+      const rateLimited = e instanceof ApiRefusalError && e.status === 429;
+      if (rateLimited) noteCommitRateLimited(e.retryAfterMs);
+      const verdict: ResubmissionVerdict =
+        !refusesOnlyThisRequest(e) && !isSeatClaimOvertaken(e) && isDefinitiveCommitRefusal(e)
+          ? 'refused'
+          : 'unknown';
+      console.warn(
+        `[COMMIT] ${short}... resubmission of ${from}: ${verdict} (${String(e).slice(0, 120)})`
+      );
+      return { verdict, error: e };
+    }
+  }
+
+  /**
+   * Makes `groupId`'s staged commit and its record durable BEFORE a request carrying it leaves - the
+   * first one, and a settle's resubmission - and returns what stopped it, or `null`. Awaited under
+   * the MLS lock, which is safe: the checkpoint exports the state without taking that lock. Its cost
+   * is one checkpoint per commit, paid while the commit holds the lock - measured in
+   * `mls-protocol.md`.
+   */
+  private async checkpointStageBeforeSend(groupId: string, baseEpoch: number): Promise<unknown> {
+    try {
+      await persistMlsStructuralCheckpoint({ mlsService: this });
+      return null;
+    } catch (e) {
+      console.error(
+        `[COMMIT] ${groupId.slice(0, 8)}... the commit staged on epoch ${baseEpoch} could NOT be ` +
+          `checkpointed - nothing is sent (${checkpointWroteNothing(e) ? 'nothing was stored' : 'the write may have landed'}): ${String(e).slice(0, 120)}`
+      );
+      return e;
+    }
+  }
+
+  /**
+   * Awaits the structural checkpoint after an unresolved commit was settled: the server already
+   * holds the outcome, and the merged epoch's secrets exist only in memory until this lands.
+   */
+  private async awaitCommitCheckpoint(groupId: string, what: string): Promise<void> {
+    try {
+      await persistMlsStructuralCheckpoint({ mlsService: this });
+    } catch (e) {
+      console.error(
+        `[COMMIT] ${groupId.slice(0, 8)}... ${what} was NOT checkpointed - a reload before the ` +
+          `next write loses it: ${String(e).slice(0, 120)}`
+      );
+    }
+  }
+
+  /** The record its stage wrote beside `groupId`'s staged commit (`commitSubmission.ts`). */
+  protected abstract pendingSubmission(groupId: string): Promise<PendingSubmissionRead>;
+  /** Merges `groupId`'s accepted Add and records its Welcome as owed to `recipients`, in one call. */
+  protected abstract mergePendingCommitOwingWelcome(
+    groupId: string,
+    recipients: string[]
+  ): Promise<void>;
+  /** Every Welcome the state still owes (`mls-core/src/owed_welcome.rs`). */
+  protected abstract owedWelcomes(): Promise<OwedWelcome[]>;
+  /** `recipient` was sent `groupId`'s owed Welcome. */
+  protected abstract welcomeDelivered(groupId: string, recipient: string): Promise<void>;
+  /** Every group whose state holds a staged commit not yet merged or cleared. */
+  protected abstract groupsWithPendingCommit(): Promise<string[]>;
+
+  /**
+   * The groups this session knows hold an unresolved commit - a DERIVED index of the MLS state, read
+   * from it once ({@link groupsWithPendingCommit}) and then kept by the paths that keep or settle a
+   * commit, so a send does not cross into the platform to ask. The state stays the one truth: every
+   * settlement reads it again.
+   */
+  private unresolvedGroups: Set<string> | null = null;
+
+  private async knownUnresolvedGroups(): Promise<Set<string>> {
+    if (this.unresolvedGroups === null) {
+      this.unresolvedGroups = new Set(await this.groupsWithPendingCommit());
+    }
+    return this.unresolvedGroups;
+  }
+
+  /**
+   * Drops the derived index of unresolved groups, so the next send re-reads it from the state. Called
+   * BEFORE a state swap as well as after it: a send between the two must not trust an index of the
+   * state being replaced.
+   */
+  protected forgetUnresolvedIndex(): void {
+    this.unresolvedGroups = null;
+  }
+
+  /**
+   * The MLS state was replaced under this session - a resume reload installed `mls.bin`, which a
+   * background engine may have written with a commit staged and unsettled (an Android background
+   * Welcome whose answer it never read). The derived index is dropped AT ONCE, before this returns,
+   * so the next send re-reads the state and settles first ({@link knownUnresolvedGroups}); then every
+   * staged commit is settled, without holding the caller: its outcome needs the server, and a resume
+   * must not wait on the network.
+   */
+  protected settleAfterStateReplaced(): void {
+    this.forgetUnresolvedIndex();
+    void this.settleUnresolvedCommits().catch((e: unknown) =>
+      console.error(
+        `[COMMIT] settling the commits of a reloaded state failed: ${String(e).slice(0, 160)}`
+      )
+    );
+  }
+
+  /**
+   * Settles `groupId`'s staged commit, if its state holds one, by resubmitting the submission kept
+   * beside it. MUST be called holding the MLS lock (and inside the group's epoch-advance barrier):
+   * it merges or clears.
+   *
+   * - `none`: no staged commit;
+   * - `merged`: the gate accepted it (first time or duplicate) - merged, and an Add's Welcome
+   *   delivered to the devices it admits, since nobody else is left to send it;
+   * - `cleared`: refused (and caught up), or staged and NEVER SENT - no record beside it, which the
+   *   one-call stage makes a proof, not a guess;
+   * - `unknown`: still no answer, or a record that cannot be read
+   *   ({@link escalateUnreadableSubmission}); the staged commit and its record stay.
+   *
+   * `holdEndsAt` is the lock-hold budget of the caller's transaction ({@link commitLockHoldEndsAt}):
+   * this settlement's requests count against it.
+   */
+  private async settleUnresolvedLocked(
+    groupId: string,
+    holdEndsAt: number
+  ): Promise<'none' | 'merged' | 'cleared' | 'unknown'> {
+    if (!(await this.groupsWithPendingCommit()).includes(groupId)) {
+      this.unresolvedGroups?.delete(groupId);
+      return 'none';
+    }
+    const short = groupId.slice(0, 8);
+    const read = await this.pendingSubmission(groupId);
+    if (read.status === 'none') {
+      await this.clearPendingCommit(groupId).catch((e: unknown) =>
+        console.error(`[COMMIT] ${short}... could not clear an unsent staged commit: ${String(e)}`)
+      );
+      this.unresolvedGroups?.delete(groupId);
+      console.warn(
+        `[COMMIT] ${short}... a staged commit with no record beside it was never sent - cleared`
+      );
+      return 'cleared';
+    }
+    const submission = read.status === 'recorded' ? composeSubmission(read.record) : null;
+    if (!submission) {
+      this.escalateUnreadableSubmission(groupId);
+      return 'unknown';
+    }
+    // NOTHING IS SUBMITTED THAT IS NOT ON DISK. A stage kept because its checkpoint threw may never
+    // have reached disk, and this request may be its FIRST: the same rule as in
+    // `runCommitTransaction`, paid only when a kept commit is settled.
+    if ((await this.checkpointStageBeforeSend(groupId, submission.baseEpoch)) !== null) {
+      this.unresolvedGroups?.add(groupId);
+      return 'unknown';
+    }
+    const answer = await this.resubmitUnresolved(submission, holdEndsAt);
+    if (answer.verdict === 'unknown') {
+      this.unresolvedGroups?.add(groupId);
+      return 'unknown';
+    }
+    this.unresolvedGroups?.delete(groupId);
+    if (answer.verdict === 'accepted') {
+      await this.mergeSettled(submission);
+      return 'merged';
+    }
+    await this.clearPendingCommit(groupId).catch((e: unknown) => {
+      // Still staged, so still unresolved: the next settlement reads it again.
+      this.unresolvedGroups?.add(groupId);
+      console.warn(`[COMMIT] ${short}... could not clear the refused commit: ${String(e)}`);
+    });
+    console.log(
+      `[COMMIT] ${short}... the kept commit from epoch ${submission.baseEpoch}: refused - cleared`
+    );
+    await this.catchUpOnRefusedCommit(groupId, submission.baseEpoch, answer.answer?.currentEpoch);
+    return 'cleared';
+  }
+
+  /**
+   * A staged commit whose record cannot be read: its outcome is UNDECIDED, and nothing here can
+   * decide it - the bytes a resubmission needs are the unreadable part, and the commit log can only
+   * be compared against them. Clearing would be a guess (the commit may have landed, and a cleared
+   * device then forks); merging would be the opposite guess.
+   *
+   * THE RUNG TAKEN IS THE LADDER'S SECOND, forget + re-Welcome, because it is the one repair that is
+   * right whichever way the commit went: the group is marked in the epoch-gap registry, which keeps
+   * every send out of it and hands it to the sync watchdog that owns rung 2. The staged commit stays
+   * until then, so no new commit is built on an epoch nobody knows.
+   */
+  private escalateUnreadableSubmission(groupId: string): void {
+    this.unresolvedGroups?.add(groupId);
+    markEpochGap(groupId);
+    console.error(
+      `[COMMIT] ${groupId.slice(0, 8)}... the record of the staged commit is UNREADABLE - its outcome ` +
+        'cannot be learnt, so it is neither merged nor cleared; the group is handed to rung 2 ' +
+        '(forget + re-Welcome) through the epoch-gap registry'
+    );
+  }
+
+  /**
+   * Merges a kept commit the gate has now accepted, dates the leaf, and - for an Add - delivers its
+   * Welcome to the devices it admits: the Welcome is a separate request made after the accept, and
+   * the call that staged the Add is long gone.
+   *
+   * **THE OWED WELCOME IS STATE, WRITTEN BY THE MERGE** (`mls-core/src/owed_welcome.rs`). This used
+   * to merge, send, and leave the checkpoint for later, so a reload in between settled the same Add
+   * again and sent every Welcome twice. Now the merge records "owed to these devices" in the same
+   * platform call, the checkpoint is awaited, and only then is anything sent, each recipient
+   * cleared as it goes ({@link deliverOwedWelcomes}). A reload re-sends at most what was not yet
+   * cleared, and the joiner takes a copy of a Welcome for a group it holds as a redelivery
+   * (`setupMessageHandler`).
+   */
+  private async mergeSettled(submission: CommitSubmission): Promise<void> {
+    const { groupId, baseEpoch } = submission;
+    const short = groupId.slice(0, 8);
+    const recipients = submission.welcome
+      ? (submission.admits ?? []).map((a) => `${a.userId}:${a.deviceId}`)
+      : [];
+    if (recipients.length > 0) await this.mergePendingCommitOwingWelcome(groupId, recipients);
+    else await this.mergePendingCommit(groupId);
+    noteOwnLeafRefreshed(this.userId, this.deviceId, groupId, baseEpoch + 1);
+    console.log(`[COMMIT] ${short}... the kept commit from epoch ${baseEpoch}: accepted - merged`);
+    if (recipients.length === 0) return;
+    // ON DISK BEFORE THE FIRST SEND: from here a reload finds the Add merged and its Welcome owed,
+    // never the Add still staged.
+    await this.awaitCommitCheckpoint(groupId, 'the settled Add and the Welcome it owes');
+    await this.deliverOwedWelcomes(groupId);
+  }
+
+  /**
+   * Sends every Welcome the state still owes - `groupId`'s only, when given - and clears each
+   * recipient once its send returned. A send that fails is said and stays owed, for the next
+   * settlement (the next connection) to send again; the joiner's own welcome request is the other
+   * repair. The clears reach disk with the next checkpoint: one lost clears means one more copy of a
+   * Welcome, which the joiner ignores.
+   */
+  private async deliverOwedWelcomes(groupId?: string): Promise<void> {
+    const owed = (await this.owedWelcomes()).filter((w) => !groupId || w.groupId === groupId);
+    let cleared = 0;
+    for (const w of owed) {
+      const short = w.groupId.slice(0, 8);
+      for (const recipient of w.recipients) {
+        const device = parseDeviceIdentity(recipient);
+        if (!device) {
+          // Written by this client from `userId:deviceId` admits; unreachable, and said if reached.
+          console.error(
+            `[COMMIT] ${short}... owed Welcome names no device (${recipient}) - dropped`
+          );
+          await this.welcomeDelivered(w.groupId, recipient);
+          continue;
+        }
+        try {
+          await this.sendWelcome(
+            w.welcome,
+            device.userId,
+            w.groupId,
+            device.deviceId,
+            w.ratchetTree
+          );
+          await this.welcomeDelivered(w.groupId, recipient);
+          cleared += 1;
+          console.log(
+            `[COMMIT] ${short}... Welcome of the settled Add delivered to ${device.deviceId}`
+          );
+        } catch (e) {
+          console.error(
+            `[COMMIT] ${short}... Welcome of the settled Add NOT delivered to ${device.deviceId} - ` +
+              `still owed, sent again at the next settlement: ${String(e).slice(0, 120)}`
+          );
+        }
+      }
+    }
+    if (cleared > 0) scheduleOutboundMlsPersist();
+  }
+
+  /**
+   * See {@link IMlsService.settleUnresolvedCommits}. Takes the MLS lock and the epoch-advance barrier
+   * per group, then awaits a checkpoint when any group's state moved.
+   */
+  async settleUnresolvedCommits(groupIds?: string[]): Promise<void> {
+    // A Welcome a previous settlement owed and did not get out (a reload, a failed send) goes first.
+    if (!groupIds) await this.deliverOwedWelcomes();
+    // READ AND INDEXED UNDER THE LOCK every settlement and every stage takes: a read made outside it
+    // and assigned after its await could re-index a group a concurrent settle had just merged, or
+    // drop one a concurrent commit had just staged.
+    const all = await this.runUnderMlsLock(async () => {
+      const groups = await this.groupsWithPendingCommit();
+      this.unresolvedGroups = new Set(groups);
+      return groups;
+    });
+    const pending = all.filter((g) => !groupIds || groupIds.includes(g));
+    if (pending.length === 0) return;
+    console.log(`[COMMIT] settling ${pending.length} staged commit(s) by resubmission`);
+    let moved = false;
+    for (const groupId of pending) {
+      try {
+        const outcome = await this.runUnderMlsLock(() =>
+          runAsEpochAdvance(groupId, () =>
+            this.settleUnresolvedLocked(groupId, commitLockHoldEndsAt())
+          )
+        );
+        if (outcome === 'merged' || outcome === 'cleared') moved = true;
+      } catch (e) {
+        console.warn(
+          `[COMMIT] ${groupId.slice(0, 8)}... settling the kept commit failed: ${String(e).slice(0, 160)}`
+        );
+      }
+    }
+    if (moved) await this.awaitCommitCheckpoint(pending[0], 'the settled commit');
+  }
+
+  /**
+   * See {@link IMlsService.settleUnresolvedCommitFromLog}. Takes no lock: it is called from inside a
+   * commit replay, by whoever holds the client for it.
+   */
+  async settleUnresolvedCommitFromLog(
+    groupId: string,
+    commitAtBase: string | null
+  ): Promise<'none' | 'merged' | 'cleared' | 'undecided'> {
+    if (!(await this.groupsWithPendingCommit()).includes(groupId)) return 'none';
+    const short = groupId.slice(0, 8);
+    const read = await this.pendingSubmission(groupId);
+    const submission = read.status === 'recorded' ? composeSubmission(read.record) : null;
+    if (read.status !== 'none' && !submission) {
+      this.escalateUnreadableSubmission(groupId);
+      return 'undecided';
+    }
+    if (submission && commitAtBase === null) return 'undecided';
+    this.unresolvedGroups?.delete(groupId);
+    if (submission && commitAtBase === submission.commit) {
+      await this.mergeSettled(submission);
+      return 'merged';
+    }
+    // Another device's commit holds the epoch, or ours was never sent: either way it did not land.
+    await this.clearPendingCommit(groupId).catch((e: unknown) =>
+      console.warn(`[COMMIT] ${short}... could not clear the lost commit: ${String(e)}`)
+    );
+    console.log(
+      `[COMMIT] ${short}... the kept commit: ${submission ? "another device's commit holds its epoch" : 'never sent'} - cleared`
+    );
+    return 'cleared';
   }
 
   /**
@@ -4623,6 +5632,14 @@ export abstract class BaseMlsService implements IMlsService {
    * always a chat group we are genuinely outside of.
    */
   async externalJoin(groupId: string): Promise<ExternalJoinOutcome> {
+    // AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as {@link runCommitTransaction}
+    // does: the tree it would join into is a copy no disk and no other tab will follow.
+    if (getTabLeadership() === 'follower') {
+      console.warn(
+        `[MLS] externalJoin ${groupId.slice(0, 8)}... refused on a follower tab - only the leader commits`
+      );
+      throw new FollowerTabCommitError(groupId);
+    }
     // ONE JOIN PER GROUP AT A TIME. The wait below can be long, so a second caller (the recovery
     // seam's own cooldown is 60 s) could otherwise start a second join of a group the first is
     // about to hold - the duplicate-leaf race. Sharing the promise gives both the same answer.
@@ -4667,6 +5684,15 @@ export abstract class BaseMlsService implements IMlsService {
       // gate must exclude the id that actually joins.
       const excludeSelf = [`${this.userId}:${this.deviceId}`];
       for (let attempt = 0; attempt < EXTERNAL_JOIN_MAX_ATTEMPTS; attempt++) {
+        // The server already refuses this account's commits for a while: nothing is built, and the
+        // caller is told how long (`commitRateLimit.ts`), so a sweep can stop rather than ask again.
+        const waitMs = commitRateLimitRemainingMs();
+        if (waitMs > 0) {
+          console.warn(
+            `[MLS] externalJoin ${short}... not attempted - the commit rate limit holds for ${Math.round(waitMs / 1000)} s more`
+          );
+          return { joined: false, reason: 'rate_limited', retryAfterMs: waitMs };
+        }
         // THE REFUSAL HAS TO SURVIVE THIS CATCH, which flattened every outcome into `null` and cost
         // the caller the only discriminator it needed. `NotAGroupMemberError` is the server answering
         // the question recovery is asking; anything else says nothing about membership and leaves the
@@ -4748,12 +5774,44 @@ export abstract class BaseMlsService implements IMlsService {
           // still dropped, because an external commit cannot be cleared and a pending one left
           // unmerged breaks every later operation on it - and if the server DID accept the commit we
           // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
+          const rateLimited = e instanceof ApiRefusalError && e.status === 429;
+          const overtaken = isSeatClaimOvertaken(e);
           await dropGroupState(this, joined.groupId, {
-            reason: 'the commit gate could not be reached',
+            reason: rateLimited
+              ? 'the commit gate refused it under the rate limit'
+              : overtaken
+                ? 'an unrelated eviction overtook its seat claim'
+                : 'the commit gate could not be reached',
             // Built in memory during this very call and never checkpointed: there is nothing
             // durable to undo, and a save here would cost one per failed attempt.
             checkpoint: 'never-persisted',
           });
+          // A 429 IS AN ANSWER: the throttler refused before the gate, so nothing was accepted. Its
+          // wait is recorded for every commit path and handed to the caller, which stops its sweep.
+          if (rateLimited) {
+            noteCommitRateLimited(e.retryAfterMs);
+            return {
+              joined: false,
+              reason: 'rate_limited',
+              retryAfterMs: commitRateLimitRemainingMs(),
+            };
+          }
+          // A 409 SEAT_CLAIM_OVERTAKEN IS AN ANSWER: nothing advanced, and the next attempt asks
+          // for a fresh claim at once. Each refusal proves an eviction landed in between, and the
+          // attempt bound still holds against a group evicting without pause.
+          if (overtaken) {
+            console.warn(
+              `[MLS] externalJoin seat claim OVERTAKEN for ${short}... (base ${gi.baseEpoch}) - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
+            );
+            if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
+              return {
+                joined: false,
+                reason: 'refused',
+                serverReason: SEAT_CLAIM_OVERTAKEN_REASON,
+              };
+            }
+            continue;
+          }
           console.warn(
             `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +
               ` nothing is claimed about membership:`,
@@ -4764,6 +5822,9 @@ export abstract class BaseMlsService implements IMlsService {
 
         if (validation.accepted) {
           await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
+          // The external commit's path IS this device's new leaf, so the group's periodic refresh is
+          // dated from here - not from a ledger entry of an earlier incarnation (`leafRefresh.ts`).
+          noteOwnLeafRefreshed(this.userId, this.deviceId, joined.groupId, gi.baseEpoch + 1);
           // THE SERVER HAS ALREADY MADE THIS DURABLE FOR EVERYONE ELSE, so this device may not hold
           // its half in RAM. The commit is accepted: the group's epoch has advanced for every other
           // member, and the secrets that make the new epoch usable exist ONLY here, in WASM memory.
@@ -5095,10 +6156,12 @@ export abstract class BaseMlsService implements IMlsService {
     }
     const result = await this.runCommitTransaction(
       groupId,
-      async () => {
-        const staged = await this.stageAddMembers(groupId, [
-          { keyPackage: device.keyPackage, identity: `${device.userId}:${device.deviceId}` },
-        ]);
+      async (intent) => {
+        const staged = await this.stageAddMembers(
+          groupId,
+          [{ keyPackage: device.keyPackage, identity: `${device.userId}:${device.deviceId}` }],
+          intent
+        );
         return {
           commit: staged.commit,
           welcome: staged.welcome,
@@ -5135,8 +6198,13 @@ export abstract class BaseMlsService implements IMlsService {
     );
     const result = await this.runCommitTransaction(
       groupId,
-      async () =>
-        this.stageReplaceDevice(groupId, `${device.userId}:${device.deviceId}`, device.keyPackage),
+      async (intent) =>
+        this.stageReplaceDevice(
+          groupId,
+          `${device.userId}:${device.deviceId}`,
+          device.keyPackage,
+          intent
+        ),
       { excludeDeviceIds, exportTree: true }
     );
     // As `addMember`: a replaced device under a new key is a device event this commit recorded.
@@ -5156,10 +6224,11 @@ export abstract class BaseMlsService implements IMlsService {
   }> {
     const result = await this.runCommitTransaction(
       groupId,
-      async () => {
+      async (intent) => {
         const staged = await this.stageAddMembers(
           groupId,
-          devices.map((d) => ({ keyPackage: d.keyPackage, identity: `${d.userId}:${d.deviceId}` }))
+          devices.map((d) => ({ keyPackage: d.keyPackage, identity: `${d.userId}:${d.deviceId}` })),
+          intent
         );
         return {
           commit: staged.commit,
@@ -5172,24 +6241,144 @@ export abstract class BaseMlsService implements IMlsService {
           })),
         };
       },
-      { excludeDeviceIds, exportTree: true }
+      {
+        excludeDeviceIds,
+        exportTree: true,
+        keyPackageDevices: devices.map((d) => d.deviceId),
+      }
     );
     void this.handOverDeviceEvents('own add');
     return result;
   }
 
   async removeMember(groupId: string, userIds: string[]): Promise<void> {
-    await this.runCommitTransaction(groupId, () => this.stageRemoveMembers(groupId, userIds), {
-      removes: commitRemovals({ userIds }),
+    await this.runCommitTransaction(
+      groupId,
+      (intent) => this.stageRemoveMembers(groupId, userIds, intent),
+      {
+        removes: commitRemovals({ userIds }),
+      }
+    );
+  }
+
+  /**
+   * Removes the leaves of the named devices in ONE commit - the revoked-leaf collector's commit
+   * (`strayLeaves.ts`), decided by no person, so staged only on the branch the server publishes
+   * ({@link assertOnPublishedBranch}): a forked device's removal would be accepted by the epoch
+   * gate and break every healthy member.
+   */
+  async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
+    const assertOnBranch = await this.assertOnPublishedBranch(groupId, 'revoked-leaf removal');
+    await this.runCommitTransaction(
+      groupId,
+      async (intent) => {
+        await assertOnBranch();
+        return this.stageRemoveMembersByDevice(groupId, deviceIdentities, intent);
+      },
+      { removes: commitRemovals({ deviceIdentities }) }
+    );
+  }
+
+  /**
+   * Replaces this device's own leaf in `groupId` - the periodic refresh (`leafRefresh.ts`). A commit
+   * like any other: staged, submitted to the epoch gate, merged on its accept (which dates the leaf
+   * in the refresh ledger) or cleared on its refusal, which throws {@link CommitRefusedError}.
+   * Admits nobody and removes nobody, so it declares neither. Staged only on the published branch.
+   */
+  async refreshOwnLeaf(groupId: string): Promise<void> {
+    // THE ROLE BEFORE THE BASE: a follower tab never commits (`runCommitTransaction` refuses it), so
+    // fetching the published base first only cost a request per epoch before the same refusal.
+    if (getTabLeadership() === 'follower') {
+      console.log(
+        `[LEAF_REFRESH] ${groupId.slice(0, 8)}... not refreshed on a follower tab - the leader refreshes`
+      );
+      throw new FollowerTabCommitError(groupId);
+    }
+    const assertOnBranch = await this.assertOnPublishedBranch(groupId, 'leaf refresh');
+    await this.runCommitTransaction(groupId, async (intent) => {
+      await assertOnBranch();
+      return this.stageSelfUpdate(groupId, intent);
     });
   }
 
-  async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
-    await this.runCommitTransaction(
-      groupId,
-      () => this.stageRemoveMembersByDevice(groupId, deviceIdentities),
-      { removes: commitRemovals({ deviceIdentities }) }
-    );
+  /**
+   * Reads the external-join base the server publishes for `groupId` and returns the check a
+   * MECHANISM's commit runs in its stage callback, before staging anything (`publishedBranch.ts`):
+   * this device's epoch must be the base's, and its context (tree hash, confirmed transcript hash)
+   * the one the base describes.
+   *
+   * The base is read OUTSIDE the MLS lock (network) and compared INSIDE it, against the state the
+   * commit is built from: an epoch that moved in between no longer matches, and nothing is staged.
+   *
+   * **A `diverged` ANSWER IS A FORK, AND IT IS HANDED TO THE RECOVERY LADDER HERE**, where it is
+   * known, for every caller: the group is marked in the epoch-gap registry - which keeps every send
+   * out of it and hands it to the sync watchdog's rung 2 (forget + re-Welcome) - with an
+   * error-level line, the route {@link escalateUnreadableSubmission} takes for the other state
+   * whose branch cannot be trusted. Rung 1 (replaying the commit log) cannot help: the device is not
+   * behind, it is beside. `no-base` and `other-epoch` accuse nothing and enter nothing.
+   *
+   * @throws {UnpublishedBranchError} from the returned check, and from here when no base exists.
+   */
+  private async assertOnPublishedBranch(
+    groupId: string,
+    what: string
+  ): Promise<() => Promise<void>> {
+    const base = await this.delivery.fetchGroupInfo(groupId);
+    if (!base) throw new UnpublishedBranchError(groupId, 'no-base', what);
+    const baseBytes = fromBase64(base.groupInfo);
+    return async () => {
+      const epoch = await this.freshEpoch(groupId);
+      if (base.baseEpoch !== epoch) throw new UnpublishedBranchError(groupId, 'other-epoch', what);
+      if (await this.ownContextMatchesBase(groupId, baseBytes)) return;
+      markEpochGap(groupId);
+      console.error(
+        `[FORK] ${groupId.slice(0, 8)}... ${what} not staged: this device's context DIVERGES from ` +
+          `the published base at the same epoch ${epoch} - another branch; the group is handed to ` +
+          'rung 2 (forget + re-Welcome) through the epoch-gap registry'
+      );
+      throw new UnpublishedBranchError(groupId, 'diverged', what);
+    };
+  }
+
+  /** The epoch at which a refresh of each group last failed this session (`leafRefresh.ts`). */
+  private readonly leafRefreshAttempts = new Map<string, number>();
+  /** One refresh decision in flight per group: two sends in a row must not stage two commits. */
+  private readonly leafRefreshInFlight = new Map<string, Promise<unknown>>();
+
+  /**
+   * Runs the periodic leaf refresh for `groupId` after a durable send, without holding the send up.
+   *
+   * NOT AWAITED BY THE SEND, AND OUTSIDE ITS BARRIER: the refresh is a commit, which takes the MLS
+   * lock and the epoch-advance barrier itself, and a send must never wait for one. Its loss costs
+   * nothing - the ledger is written only on an accepted commit, so the next durable send decides
+   * again from the same durable facts.
+   */
+  private scheduleLeafRefresh(groupId: string): void {
+    if (this.leafRefreshInFlight.has(groupId)) return;
+    const run = refreshLeafIfDue(
+      {
+        userId: this.userId,
+        deviceId: this.deviceId,
+        isDistributionGroup: (g) => this.isDistributionGroup(g),
+        isInEpochGap,
+        isGroupActive: (g) => this.isGroupActive(g),
+        getEpoch: (g) => this.getEpoch(g),
+        ownLeafMintedAt: (g) => this.ownLeafMintedAt(g),
+        refreshOwnLeaf: (g) => this.refreshOwnLeaf(g),
+        checkpoint: () => persistMlsStructuralCheckpoint({ mlsService: this }),
+        attemptedAtEpoch: this.leafRefreshAttempts,
+        now: () => Date.now(),
+        log: (message) => console.log(message),
+      },
+      groupId
+    )
+      .catch((e) =>
+        console.warn(
+          `[LEAF_REFRESH] ${groupId.slice(0, 8)}... decision failed: ${String(e).slice(0, 160)}`
+        )
+      )
+      .finally(() => this.leafRefreshInFlight.delete(groupId));
+    this.leafRefreshInFlight.set(groupId, run);
   }
 
   abstract processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;
@@ -5229,12 +6418,70 @@ export abstract class BaseMlsService implements IMlsService {
     frameDelivery: FrameDelivery = DELIVERY.visible
   ): Promise<SentFrame> {
     await this.waitForCatchUpIdle();
+    // NOTHING IS SEALED ON TOP OF A COMMIT WHOSE OUTCOME IS UNKNOWN: whether this device is at N or
+    // N+1 is exactly what that outcome decides, so it is asked first, by the same resubmission.
+    await this.settleBeforeSend(groupId);
     // ...and nothing straddles a LOCAL epoch advance either: a frame encrypted at epoch N and posted
     // after this device's own commit moved the group to N+1 is a past-epoch frame for every
     // recipient, which two further commits make undecryptable for good. The barrier deletes the
     // overlap rather than detecting it afterwards - see `epochSendBarrier`, which also carries the
     // lock order this relies on.
-    return runAsEpochSend(groupId, () => this.emitFrame(groupId, messageBytes, frameDelivery));
+    const emit = () =>
+      runAsEpochSend(groupId, () => this.emitFrame(groupId, messageBytes, frameDelivery));
+    let sent: SentFrame;
+    try {
+      sent = await emit();
+    } catch (e) {
+      // THE STATE REFUSED WHAT THE INDEX ALLOWED: it holds a staged commit the index did not name
+      // (a state swapped under it). Re-indexed from the state, settled as any known one, and sealed
+      // once more - a second refusal is an outcome still unknown, never a failed send.
+      if (!(e instanceof StagedCommitPendingError)) throw e;
+      console.warn(
+        `[COMMIT] ${groupId.slice(0, 8)}... the state refused a send its index allowed - settling first`
+      );
+      this.forgetUnresolvedIndex();
+      await this.settleBeforeSend(groupId);
+      try {
+        sent = await emit();
+      } catch (again) {
+        if (!(again instanceof StagedCommitPendingError)) throw again;
+        console.error(
+          `[COMMIT] ${groupId.slice(0, 8)}... refused again after the settle - a commit was staged in between`
+        );
+        throw new CommitOutcomeUnknownError(
+          groupId,
+          this.getEpoch(groupId),
+          again,
+          'a commit was staged again between the settle and the send'
+        );
+      }
+    }
+    // ACTIVITY IN THE GROUP IS WHAT DUE LEAF REFRESHES WAIT FOR: a conversation frame the server
+    // just accepted. An ALLOWLIST of the two conversation kinds, by identity, because neither the
+    // value nor `durable` can tell them from key material: a seed is shaped exactly like a mutation,
+    // and an addressed seed is a fresh object each time. Never a seed (key groups are not refreshed,
+    // see `leafRefresh.ts` - and the key-group registry is empty at a cold start), never
+    // transport traffic, which every connection sends. See `leafRefresh.ts`.
+    if (frameDelivery === DELIVERY.visible || frameDelivery === DELIVERY.mutation) {
+      this.scheduleLeafRefresh(groupId);
+    }
+    return sent;
+  }
+
+  /**
+   * Settles `groupId`'s staged commit before a send when the index names one, and throws
+   * {@link CommitOutcomeUnknownError} when it is still unresolved after the resubmission.
+   */
+  private async settleBeforeSend(groupId: string): Promise<void> {
+    if (!(await this.knownUnresolvedGroups()).has(groupId)) return;
+    await this.settleUnresolvedCommits([groupId]);
+    if ((await this.knownUnresolvedGroups()).has(groupId)) {
+      throw new CommitOutcomeUnknownError(
+        groupId,
+        this.getEpoch(groupId),
+        'a send waits for the resubmission to answer'
+      );
+    }
   }
 
   /**
@@ -5249,17 +6496,18 @@ export abstract class BaseMlsService implements IMlsService {
     messageBytes: Uint8Array,
     frameDelivery: FrameDelivery
   ): Promise<SentFrame> {
-    const { sealed: encryptedBytes, authorProof } = await this.encryptForSend(
-      groupId,
-      messageBytes
-    );
+    const {
+      sealed: encryptedBytes,
+      authorProof,
+      epoch,
+    } = await this.sealPastOwedBurns(groupId, messageBytes);
     this.noteLiveMutation();
     // DURABLE, AND BEFORE THE POST. The ratchet has moved by now and stays moved whether or not the
     // POST below succeeds, so this is the only correct moment: counting a successful send instead
     // would leave every failed POST as an under-count, which is the direction that re-issues a spent
     // generation. It is what a reload recovers the advance from when the checkpoint below does not
     // land in time - the whole reason that checkpoint is allowed not to be awaited.
-    noteFrameEmitted(this.userId, groupId);
+    noteFrameEmitted(this.userId, groupId, epoch);
     // BEST-EFFORT, AND DELIBERATELY NOT AWAITED. It shortens the window; the ledger write above is
     // what CLOSES it. Awaiting here would put a checkpoint on the latency of every message - 1.7 s
     // on the phone - to buy a guarantee that is already held, so the trade is refused.

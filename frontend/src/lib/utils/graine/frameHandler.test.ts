@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import protobuf from 'protobufjs';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';

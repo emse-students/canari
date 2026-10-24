@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE EVENT FORM LETS A USER NAME MORE THAN ONE CO-ORGANISER, DRIVEN THROUGH THE PICKER.
  *

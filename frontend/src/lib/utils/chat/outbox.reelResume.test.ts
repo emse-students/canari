@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A CHAT REEL THROUGH THE OUTBOX, KILLED AT EVERY STAGE (reels-in-chat RC-5).
  *

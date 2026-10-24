@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * REMOVING A DOCUMENT REVIEWER ASKS FIRST, THEN OFFERS UNDO (user, 2026-10-16).
  *

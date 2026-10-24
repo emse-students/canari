@@ -48,6 +48,56 @@ Owed before it ships:
   must exist before the first push and stay stable, while the at-rest key rotates (migration, recovery,
   reset). Revisit only if #2271 lands with a design that tolerates a rotation.
 
+## A new person is admitted only by a member (decided by the user on 2026-10-23): step one built
+
+Built: no automatic Add brings in a user absent from the adder's tree, web, native and the Android
+background answer alike; a member is asked "X asks to join this group. Only a member can add them." (Add / Decline), which replaces the
+group link's automatic admission (the server holds a link joiner outside, `awaitingAdmission`, until a
+member's Add); and an entry no member made is written in the conversation and reported
+(`[UNINVITED_ENTRY]`, with its `kind`) - see
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Owed: migration 038
+deployed with the build; the `minClientVersion` floor at this build, since a member client older
+than the rule still auto-Adds a link joiner and "only by a member" holds only from that floor
+([legacy-compatibility](legacy-compatibility.md)); the `[UNINVITED_ENTRY] kind=new-person` count on
+production once the build serves both stores; and a second step on the receiving side (private
+operations notes).
+
+## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
+
+A removal deletes the roster row before the member's Remove commit lands. If that commit never
+lands, the removed person keeps a leaf, and when they later follow an invitation link
+`automaticAdmission` reads their user in the tree as `member-device`: a member's device Adds them
+with no one asked, and the commit's `admits` lifts their `awaitingAdmission`. "Holds a leaf" is not
+"is a member". Not built: the fix needs a fact the client can read that says the leaf is owed a
+Remove (the server's exclusion intervals, or `removeStrayLeaves` run before the sweep decides) -
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
+## P2 - Three delivery routes check no membership at all (re-review of #2358, already on main)
+
+`POST mls/history-request`, `POST mls/base-refresh-request` and `POST mls/notify-reaction` relay to
+a group's members without asking whether the caller holds a seat in it, admitted or not: anyone
+authenticated can make the members' devices answer, or notify them, in a group they are not in. The
+waiting seat of #2358 is only one such caller. Owed: the same caller predicate as the other routes
+(`callerSeatStanding`, `utils/group-membership.ts`), an integration case per route, and a look at
+what an older client sends there before it is refused -
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
+## P3 - Calls: the waiting-seat exclusion is built and has never run against a live call (re-review of #2358)
+
+Every call route refuses a seat awaiting a member's admission (409) and the ring's callees are
+admitted seats only (`ADMITTED_SEAT`), proven against PostgreSQL by `admission.integration.spec.ts`.
+`calls_mode` is `off` on production, so no ring has gone through it. Owed: one ring on dev with a
+pending link joiner in the conversation, read in the `[ring]` lines (`not rung: ... hold no
+admitted seat`) - [calls](frontend/modules/calls.md).
+
+## P3 - The Android background answer refuses a newcomer and tells nobody (review of #2358)
+
+`prepare_welcome_background_with_key` refuses a `welcome_request` from a user absent from the tree
+(`newcomer`) and raises no local notification, so a member whose phone is shut learns of the ask
+only when the app is next opened and the foreground sweep raises it. Owed: a local notification
+"X asks to join" from the background engine (both platforms, one ledger with the new-device
+notices), which is more than a small change - [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
 ## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
 
 Built: the owner's in-app alert, the contact line in every DM and group shared with the contact
@@ -117,6 +167,70 @@ on a phone or desktop. No decision that 90 days is intended was found. Whether n
 (gate the GC on `deviceWindowMs()`) or the claim is lowered is a product decision; nothing was
 changed. Until it is taken, a native device claims coverage it deleted.
 
+## P2 - addGroupMember can enrol an erased account after the final erasure pass (review of #2258, 2026-10-24)
+
+`MembersController.addGroupMember` (`POST mls/groups/:groupId/members`: a group invite, and the
+opening of a 1:1 DM) is the one admitting writer the seat lock never converted. It reads the
+target's key packages outside any transaction or lock, then writes the roster row, its membership
+interval and `pending` device rows with no seat lock and no `heldKeyPackages`. Nothing refuses an id
+whose account was erased, so any member holding a valid token can POST an erased uuid and recreate a
+roster row naming that person, even after chat-delivery's final erasure pass (no key package is
+left, so no device row; the roster row and interval are enough to name them). Pre-existing, not a
+regression of #2258, which only names it as the second known exception to "every writer that admits
+a device reads its key package under the lock" ([channel-encryption](protocols/channel-encryption.md),
+[account-erasure](account-erasure.md)). Fix direction (from the review): route it through
+`writePendingSeats(enrol=true)`, which already takes the seat lock, re-reads the group and reads
+`heldKeyPackages`; and refuse the target itself, either by a roster-level tombstone that the erasure
+writes and that names no one once its own window ends, or by asking core whether the account exists.
+
+## P2 - `setNotificationLevel` saves a whole member copy and can undo a demotion (review of #2284, 2026-10-24)
+
+`setNotificationLevel` reads a membership row, changes `notifLevels` and `save`s the whole copy;
+TypeORM writes back every column the copy differs on, so a role change committed between its read
+and its save is reverted (`roleIds` written back) - a demoted admin restored by changing a salon's
+notification level. The fix is an `update` of `notifLevels` alone, the rule `social-service.md` now
+states for salon rows. `promoteSuccessor` and `setRole` also save whole member copies, but the
+column they mean to write is `roleIds` itself, so they only race each other.
+([social-service](services/social-service.md#removals-are-bounded-by-the-actor-and-so-is-hiding-a-salon-2026-10-24))
+
+## P3 - Edges of the community removal lock, left by the review of #2284 (2026-10-24)
+
+- **A salon reorder can deadlock with a departure or a community deletion.** A departure now locks
+  the community's private salons in one order (`ORDER BY id`) before the membership rows, and a grant
+  and `hardDeleteWorkspace` take salon rows before membership rows (the grant-vs-deletion cycle
+  #2284's review found is closed). Left: the reorder transaction writes several salon rows in the
+  order the client sent, and `hardDeleteWorkspace`'s bulk `DELETE` takes them in whatever order the
+  plan visits them, so either can cross a departure on two salons. PostgreSQL aborts one side
+  (`40P01`); an aborted departure settles `cancelled` and is retried inline, a reorder is answered
+  5xx. The fix is the same `ORDER BY id` lock (a `SELECT ... FOR UPDATE`) before each bulk write.
+- **`assertRemovalKeepsAnAdmin` is not asked again under the lock** (pre-existing): two admins
+  kicking each other at the same moment both pass it and can leave a community with members and no
+  admin. The fix is to re-ask it inside the kick's `guard`, reading the admin set `FOR SHARE`.
+- **A group retirement runs after the commit, outside any lock.** A makes a salon public, B makes it
+  private again (the idempotent mint returns the same group G), then A's retirement deletes G on
+  chat-delivery and nulls `distributionGroupId`: a private salon with no group. The fix is a
+  conditional retirement - `UPDATE ... WHERE "distributionGroupId" = G AND NOT "isPrivate"`, and the
+  delete only when that row changed.
+- **Case.** The removal bound's member map takes the LAST of two membership rows differing only by
+  case; it should merge their roles. Allowlist entries written before the actor id was lowercased may
+  be mixed case, which `stripFromChannels`' exact compare misses: one `GROUP BY` over production's
+  `allowedUsers` for an uppercase letter settles whether any exist. A comma inside a user id would
+  corrupt the comma-separated `allowedUsers` column (theoretical).
+- **An invitation that reads a salon public and loses the race to a private flip** announces it
+  `public` and grants nothing (pre-existing): the flip's allowlist does not name the invitee.
+
+([social-service](services/social-service.md#removals-are-bounded-by-the-actor-and-so-is-hiding-a-salon-2026-10-24))
+
+## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
+
+`deleteUserData` tombstones the DMs its discovery found. A DM opened with the account after that
+read (by the account while a token is valid, or by a peer through `addGroupMember`) loses the
+account's roster row to the roster delete and its device rows to the sweep's cut, but its
+`dm_groups` row and the other party's side stay: a 1:1 conversation with one member left. The final
+pass does not find it either, since nothing of the account names it any more. Small and rare (a DM
+opened inside the erasure window); fix with the P2 above, or by having the sweep tombstone any DM
+whose roster the account was on.
+
 ## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
 `withholdReason` places a copy with no `serverTimestamp` against every window widened by
@@ -145,6 +259,16 @@ and withdrawing the group's queued entries on a leave would only silence the lin
 ordering: step 2 must wait for the notice's DELIVERY, not its durable write. A parked entry for a
 group the device has left should also be withdrawn rather than wait for a sign-in.
 
+## P3 - Three edges of the exit drain, left by the review of #2259 (2026-10-24)
+
+Mechanism: [chat](frontend/modules/chat.md#an-exit-takes-the-groups-queue-with-it-before-its-server-step-grp-6-2026-10-22).
+(1) An exit the server keeps REFUSING stays owed for ever, by design. Every later enqueue for that
+group is then refused, a re-add included, and the enqueue RESOLVES. A text or a file now says so at
+`warn`; nothing clears the owed exit on a re-add. (2) A FOLLOWER tab's exit cannot send, so it
+withdraws the group's texts the leader could still have sent. (3) `resuming` marks set by an exit
+drain for entries it then withdrew are never deleted. They are one id each per page life. The owed-exit
+check also costs one `getPendingGroupExits` read per enqueue and per lane pass on the hot path.
+
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 
 Every device joining a community's key group commits, and the outbound rotation rotated on any
@@ -171,10 +295,59 @@ Reasoning and numbers:
 ## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)
 
 A QUESTION first: measure that group's unreadable-frame rate against the communities' and decide
-whether a group conversation above some size should be backed by Graine. Leaves never self-update
-either, so MLS post-compromise security is never exercised. A periodic update commit would heal a
-stolen leaf, at the price of more commits, which is the desync class itself
+whether a group conversation above some size should be backed by Graine
 ([dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#dms-and-group-conversations)).
+
+## P2 - Community key groups: no periodic leaf refresh and no revoked-device removal yet (2026-10-22, re-decided 2026-10-23)
+
+Conversations refresh their leaves and drop revoked devices
+([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)). Two halves are deferred for
+key groups, and they are NOT the same question:
+
+- **The refresh.** Seeds rotate on departures only since 2026-10-22 (`graineOutboundVerdict`), and
+  a refresh is not one, so it would not mint a seed by itself. Its cost is that each refresh moves
+  the epoch: every sender's next send REDISTRIBUTES its seed (one frame per sender per refresh), and
+  a redistributed session takes the reused caps (50 messages, 24 h FROM ITS MINT), so a session past
+  a day rotates. One refresh per active device per week keeps every sender's session under a day
+  old in a busy community. Owed before it is turned on: a redistribution that does not tighten the
+  caps for a refresh-only epoch move (or caps counted from the redistribution), and the rotation rate
+  re-measured with it.
+- **The revoked device's leaf.** The roster collector (`reconcileDistributionGroupRoster`) does not
+  read the `revoked` answer, so a revoked device's leaf stays in every key group it was in and can
+  read every seed distributed there until the group is re-created. The server now refuses its
+  COMMITS (`validateCommit`, `DEVICE_REVOKED`) and its routing is purged, so it receives nothing new
+  through the delivery service - what is left is the cryptographic half. Owed: the same allowlist
+  there, staged on the published branch like the conversation one; a removal IS a departure, so it
+  rotates, as it should.
+
+## P2 - A forked holder's republished base can send honest members to rung 2 (review of #2269, 2026-10-24, not built)
+
+The commits no person asks for (the leaf refresh, the revoked-leaf removal) are staged only on the
+branch the server publishes (`assertOnPublishedBranch`, `publishedBranch.ts`), and a `diverged`
+answer - same epoch number, another group context - is read as a FORK of THIS device: the group is
+marked in the epoch-gap registry and handed to rung 2 (forget + re-Welcome). That reading trusts the
+base. A base minted by the commit gate is trustworthy (stored in the transaction that accepted the
+commit), but the holder republish (`putGroupInfo`, `republishStaleBase`) checks only that the epoch
+RISES - not that the GroupInfo is on the branch the commit log holds. Scenario: the published base is
+stale (a legacy commit, a failed write), a device that forked at epoch E republishes ITS GroupInfo
+for E, and the server takes it because E is above the stale epoch. Every honest member at E then
+reads `diverged`, accuses itself, and forgets the group for a re-Welcome - while the forked device,
+the one actually off the branch, matches the base and keeps going. Owed, in order: a count of
+`[FORK]` lines per group on production after #2269 ships (more than one member per group at the same
+epoch accuses the base, not the members); then either the server checks a republished base against
+the commit log's row for that epoch (its confirmed transcript hash), or a `diverged` is read as
+`unproven` (nothing staged, nothing escalated) unless the base was minted by the gate. Code unchanged
+in #2269 by decision of the review.
+
+## P3 - A commit left unresolved past the commit-log horizon reads as refused (2026-10-22)
+
+A commit whose submission got no answer is settled by resubmitting it, and the gate's duplicate
+answer reads the commit-log row at its base epoch
+([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)). Rows are kept 365 days and the
+last 20 000 epochs per group, so a commit left unresolved longer than that (a device offline for a
+year, or a group that moved 20 000 epochs) is answered `epoch_mismatch` even if it had landed: the
+device clears it and falls to rung 2. Owed only if a measurement ever shows it: a count of
+`DUPLICATE` versus refused resubmissions older than a day.
 
 ## P3 - Names in the clear: conversation, community and salon names (user, 2026-10-21, not designed)
 
@@ -395,6 +568,54 @@ field lands on the card, so a driven sign-in types into the wrong field. It is a
 settings, not of the app. A driven sign-in avoids it by moving focus with Tab and submitting with Enter;
 the page the test accounts use is the "Connexion externe (service-account)" route, not the school CAS.
 
+## P3 - The background Welcome route refuses `not_a_member` before it asks whether these bytes already landed (review of #2329, 2026-10-24)
+
+`POST /api/mls/push/send-welcome-and-commit` (`push.controller.ts`, `sendWelcomeAndCommitPush`) runs, in
+order: `verifyPushSecretAuth` -> the body checks -> the **membership guard** (no `dm_group_members` row
+for the target -> `409 {status: 'rejected', reason: 'not_a_member'}`) -> `validateCommit`, whose
+refusals are the only ones that first ask the commit log whether THESE bytes from THIS device already
+landed at the base (`answerIfAlreadyAccepted`, `messaging.service.ts`) and answer `duplicate` if so.
+
+**The sequence it loses:** the phone's first POST is accepted (the Add lands, the Welcome is stored);
+the answer is lost and Android's `HttpURLConnection` silently retries the POST on a reused connection;
+between the two, the target is removed from the conversation. The retry meets the membership guard
+first and reads `not_a_member`, a typed refusal, so the phone CLEARS its stage
+(`BackgroundWelcomeAnswer.settle`) while the server holds its commit. The device then recovers through
+the foreground's replay and ladder (`ACCEPTED AND NOT HELD` is never said: the clear ran on a refusal),
+so the cost is a recovery, not a fork. Rare: it needs a lost answer AND a removal inside one round trip.
+
+**Why the check cannot simply move after `validateCommit`:** the guard is the single chokepoint that
+stops a holder's phone from re-adding a REMOVED user from a push. After the gate, a removed target's
+re-add commit would already be accepted - the epoch moved, the Welcome stored - before it is refused.
+That is a security regression, not a reordering.
+
+**The fix owed:** on the membership refusal only, ask `answerIfAlreadyAccepted` for these bytes (group,
+device, base epoch, commit) and answer the duplicate acceptance when the log holds them; refuse
+`not_a_member` otherwise. It needs the helper exposed from `MessagingService` (it is private today) and
+one spec: an accepted commit, then a removal, then the same request -> `duplicate`, never
+`not_a_member`. Closes when that spec is green.
+
+## P3 - The background Welcome's warm-process refusal: its rate, its wasted round trip, and the old-PIN path (review of #2329, 2026-10-24)
+
+1. **The warm mark is sticky, so the refusal may be the common case.** `live_manager_in_process` is set
+   by the first foreground load and never cleared while the process lives, so a process in which the
+   app was ever opened refuses EVERY background Welcome (`prepare refused reason=warm-process`) until
+   Android kills it - which it often does not, for hours. The path is then effectively off whenever
+   Android keeps the process; the newcomer is served by another member, the foreground, or its own
+   external join. **Owed: measure the warm-process refusal rate** against the prepares that reach a
+   stage, on the Mi 9T and in the field logs, before deciding whether a warm process needs its own path.
+2. **The phone learns it is warm too late.** `processWelcomeRequestBackground`
+   (`CanariFirebaseMessagingService.kt`) fetches the KeyPackage over HTTP and takes the Redis add-lock
+   BEFORE the JNI prepare refuses `warm-process`: one wasted round trip and a held lock per push. A
+   cheap JNI probe (`live_manager_in_process`) checked before the fetch removes it; the prepare's own
+   check stays, since the compare-and-swap is the proof.
+3. **The old-PIN recovery marks the process warm only at install.** The branch of `commands/mls.rs`
+   that installs CALLER-SUPPLIED bytes (`mark_foreground_manager_loading`) marks the process when it
+   installs them, not when the WebView read them. Bytes read before a cold stage write and installed
+   after it build a manager without the stage, which then persists over it while the server may hold
+   the commit. Closing it means marking the process warm before those bytes are read, or re-reading
+   `mls.bin` under the lock at install.
+
 ## Hardware reading owed (user): one background Welcome on the Mi 9T (2026-10-22)
 
 The background Welcome route (`POST /mls/push/send-welcome-and-commit`) now validates its commit as the
@@ -418,13 +639,21 @@ The reading has one setup and three checks:
   phone answer in the background. **That request is sent only when the newcomer's own external join
   for the chat group FAILS for a reason other than `NotAGroupMember`** (no GroupInfo published, a stale
   base, an unreachable server; `requestReAdd` step 9 and `sendWelcomeRequest` in `recovery.ts`). A new
-  login on a healthy estate does not send it: see the attempt below.
+  login on a healthy estate does not send it: see the attempt below. The PROCESS must be cold: a
+  process in which the app was loaded since it last died answers `prepare refused
+  reason=warm-process` and sends nothing, by design.
 - **Phone (logcat).** Both of these lines appear (their wording since the typed answer, see
-  [chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)):
+  [chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)):
   - `processWelcomeRequestBackground: Welcome staged ... baseEpoch=N`;
-  - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - state installed`.
+  - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - staged Add merged`.
 
-  No `REFUSED`, `OUTCOME UNKNOWN` or `ACCEPTED AND NOT INSTALLED` line appears.
+  No `REFUSED`, `OUTCOME UNKNOWN` or `ACCEPTED AND NOT HELD` line appears.
+- **The same reading with the app OPENED inside the round trip** (open the app between the
+  `Welcome staged` line and the answer): the phone logs `stage left in mls.bin (left-to-foreground)`
+  or `already settled by the foreground`; the foreground's next load logs `background stage of
+  group=... found in the loaded state` (or `already merged`), then the WebView logs `[COMMIT] settling
+  1 staged commit(s) by resubmission` and `... accepted - merged`; the newcomer reads the next message.
+  No `ACCEPTED AND NOT HELD`, no `is ABSENT from the state this foreground keeps`, no `ERASES`.
 - **The same reading with the phone STALE** (its group moved while it was shut, as on 2026-10-22):
   the phone logs `REFUSED epoch_mismatch: built on base N, the group is at M`, the server answers 409,
   the phone then reads the group's next message once opened, and the newcomer's next ask logs
@@ -451,6 +680,58 @@ on that build. **READ later the same day, with the user's agreement to delete on
 sent and the phone answered it from a stale epoch, see the P2 above. The phone stays on the debug
 build, signed in on the local estate only, which is stopped.
 
+## P2 - WP-CHECKPOINT-CAS: the foreground checkpoint writes over a file it did not load (2026-10-23, design: one MLS manager per process, owed a review before code)
+
+**The race.** `write_mls_state_blob` (`concurrency.rs`) writes `mls.bin` blind. Every background
+writer is a compare-and-swap over the bytes it loaded; the foreground is not. A live manager that
+never loaded what a background engine wrote - a resume reload refused as `live-ahead` (the WebView then
+persists the live state, `TauriMlsService.reloadStateFromDisk`) or as an epoch regression
+(`reload_into`) - writes over it. A staged background Add the server accepted is then `ACCEPTED AND
+NOT HELD`, and a background decrypt's ratchet advance is lost the same way. Both are now SAID at
+ERROR when they happen (`report_what_keeping_the_live_state_loses`, `report_background_stages`), not
+prevented. Decided 2026-10-23: not accepted as permanent; its own pull request, stacked after the
+recorded-stage background Welcome
+([chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)).
+
+**REJECTED 2026-10-23: a per-group reconcile of the file into the live manager.** It needed a
+per-group unsaved-advance flag and a per-group transplant of openmls storage between two managers, and
+it reconciles two states afterwards - a heal, which the rules forbid.
+
+**The design (for review; nothing built): ONE MLS MANAGER PER PROCESS.** Two managers of one state in
+one process are the race; removing the second removes it.
+
+- **What holds the manager today.** `AppState.mls_manager: Arc<Mutex<Option<MlsManager>>>`
+  (`state.rs`), created empty by `.manage(AppState { .. })` in `lib.rs` and filled by `initialiser_mls`
+  (`commands/mls.rs`) and a `reloaded` resume (`reload_into`, `commands/storage.rs`). The JNI entries
+  cannot reach it: they get no `AppHandle`, and the only process-wide statics are
+  `ANDROID_JAVA_VM` and `ANDROID_CLASS_LOADER` (`lib.rs`). Nothing sets it back to `None` at sign-out.
+- **A process-global handle to THE SAME `Arc`.** `static LIVE_MANAGER: OnceLock<Arc<Mutex<Option<MlsManager>>>>`
+  in `concurrency.rs`, set once in the builder with a clone of the `Arc` handed to `.manage`. Installed
+  means `Some` inside the mutex, so the handle never needs re-installing.
+- **A background engine borrows it while it is `Some`.** Each JNI engine (send, Welcome prepare and
+  settle, decrypt, worker) takes the manager mutex; `Some(manager)` - it runs on that manager, in
+  memory, and persists through the foreground's own checkpoint path (`write_mls_state_blob`, which is
+  then the ONLY writer of `mls.bin` in that process), then tells the WebView (an event, which runs
+  `syncGroupCachesFromNative` and `settleAfterStateReplaced`). `None` - a cold process the FCM service
+  started with no WebView - it loads `mls.bin` as today, by compare-and-swap. The decision is the
+  mutex's content, read under the mutex: no flag, no clock.
+- **Teardown.** Sign-out and `delete_mls_state` set the manager to `None` under its mutex BEFORE the
+  state files are removed, so an engine that waited on it finds `None`, then finds no file, and does
+  nothing. A sign-in installs `Some` again through `initialiser_mls`.
+- **Lock order, one for every path:** Kotlin `MlsStateLock` (background only, outermost) ->
+  `foreground_checkpoint_lock` -> the manager mutex -> `mls_bin_write_lock` (innermost). The foreground
+  never takes `MlsStateLock`, and a background engine that borrows takes the checkpoint lock before the
+  manager, as the foreground does, so no two paths take any pair in opposite orders.
+- **The foreground checkpoint becomes a GUARD.** Its compare-and-swap keeps a process-global digest of
+  the file its manager stands on; a mismatch can then only mean a second writer, which this design
+  removes, so it refuses at ERROR and never reconciles.
+- **The resume reload becomes moot** while a manager is installed (nothing else writes `mls.bin`), and
+  stays for a process restarted under a file a cold engine advanced.
+- **Tests first, with the foreground marked active as in real life:** a JNI send with a live manager
+  advances the live manager and writes nothing of its own; a JNI engine after teardown finds `None` and
+  loads the file; a cold engine and a foreground load in turn see each other's writes; a checkpoint
+  over a moved file refuses at ERROR.
+
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
 A key-group external commit and a key group's Welcome target are now asked of social-service
@@ -460,14 +741,26 @@ an unanswered call is a `503 entitlement_unavailable`, never an acceptance
 Owed before a stable: the rate of `[ENTITLEMENT] UNANSWERED` lines on dev, then production, against
 the ~77 key-group joins/day.
 
-## P3 - An external commit's activation can follow an eviction it raced (2026-10-22)
+## P3 - The key-group seat lock: what it does not yet carry (2026-10-22)
 
-The entitlement or roster answer is read before the commit lock, and the activation runs inside it. An
-eviction that lands between the two leaves an `active` row behind, cut only by the next member
-removal commit. The bound and the reasoning are in [channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live).
-The fix makes the eviction and the activation exclude each other. Before choosing between a shared
-lock and a conditional activation, count how often `[DISTRIBUTION_GROUP] evict` and an `ADMITS` or
-activation line for the same user and group fall within one second of each other on production.
+Every seat-creating write (a commit's committer and its admits, a key group's publisher) and every
+eviction share one per-group advisory lock, and a seat claim is the group's own generation,
+`dm_groups."seatGeneration"`, which every eviction moves (chat-delivery migration 036; a claim an
+unrelated eviction overtook refuses the whole commit with a retryable 409 `SEAT_CLAIM_OVERTAKEN`).
+`dm_seat_evictions` only names a key-group departure in progress, and an erasure deletes its rows;
+every key-group departure, account erasure included, goes through one function and
+records its outcome in `distribution_departures` (social migration 108), which the hourly drain asks
+for ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+Both migrations are applied by the release's deploy before the new containers start, and may ride the
+next stable (user, 2026-10-22). The first-writer-wins race runs against PostgreSQL in CI
+(`distribution-departure.integration.spec.ts`), and chat-delivery's seat lock orderings too
+(`seat-lock.integration.spec.ts`, `test-chat-delivery-integration`). A rejoin after a lost second eviction
+waits for the hourly drain, by design ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+Owed: (1) the counts of `[KEY_DISTRIBUTION] second eviction FAILED`, `departure ABANDONED`,
+`abandoned departure NOT settled`, `first eviction named NO departure`, `DEPARTURE_SUPERSEDED`,
+`route NOT written`, `ROUTE_NOT_RESTORED`, `SEAT_GONE_NOT_QUEUED` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
+unnamed line only during the deploy itself); (2) the latency of a key group's commit with admits
+(the questions are asked in parallel, one round trip) measured on dev.
 
 ## P2 - The mobile sign-in returns through a custom scheme: PKCE binds the code, not the app (2026-10-23)
 
@@ -484,15 +777,16 @@ refuses a callback with no verifier
 Owed first: whether `ASWebAuthenticationSession` and the Custom Tab both hand an `https` callback on a
 claimed host back to the app on the bench phones, a reading, since no gate here sees it.
 
-## P3 - `POST /mls/commit` has no rate limit (2026-10-22)
+## P3 - The commit rate limit is not yet checked against production (2026-10-22)
 
-Neither an edge `limit_req` nor the configured `ThrottlerModule` applies to the commit route. A key
-group's external commit costs a social-service call, one or two queries and a log line on each
-service, so a crafted stream of them costs every one of those. A limit must not refuse legitimate
-bursts: a device that rejoins many groups after a restore commits once per group in quick succession.
-Measure first: the maximum number of commits per user per minute on production over 30 days
-(`mls_commit_log`, grouped by sender device and minute). Set the limit above that maximum, then add a
-test that the route answers `429` past it and never below it.
+`POST /mls/commit` is limited to 600 commits per user per minute since 2026-10-22, and a refusal
+carries its wait (`RATE_LIMITED`, `retryAfterMs`) so the client's sweeps stop on it
+([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+The push-triggered key-group joins of #2266 go through `POST /mls/push/key-group-join` (PushSecret),
+which has no throttler, so they do NOT count against this per-user quota. Owed: the production
+maximum per user and minute over 30 days (`mls_commit_log` joined to its sender device's user,
+grouped by minute), and the count of `[THROTTLE] REFUSED MessagingController.validateCommit` lines
+on dev then production, expected 0.
 
 ## P2 - A push registration is not bound to the session that made it (2026-10-22) - DECIDED: build it (user, 2026-10-23)
 
@@ -516,19 +810,24 @@ lastError)` written in the SAME transaction as the session delete and drained li
 `account_erasure_jobs` until chat-delivery answers 2xx. Together these make a session's end and its
 push ending one durable fact.
 
-## P3 - A refused membership report is silent on the client (2026-10-22)
+## Note - a kicked device's membership report (2026-10-22)
 
-A report of `active` now promotes an existing seat only, and is refused (`403 NOT_A_MEMBER`, with
-`reason` `no_seat`, `kicked` or `not_on_roster`) otherwise. `updateInvitationStatus` in
-`mlsDeliveryApi.ts` ignores the status code, so a device whose pending row was purged (the 14-day
-cleanup) before it processed its Welcome stays unrouted with no client-side line; the server's
-`REFUSED ... reason=` warn is the only trace. Owed: log a non-2xx answer at warn on the client.
-
-A kicked device's report is refused until an ADMITTING commit clears the kick, and only clients from
+A refused report of `active` is warned on the client since 2026-10-22 (`[MEMBERSHIP] report of
+active REFUSED`, with the status, code and reason). A kicked device's report is refused until an ADMITTING commit clears the kick, and only clients from
 `0.18.28` (`commitAdmits.ts`) send admits. Measured on production 2026-10-22: `min_client_version` is
 `1.2.7` (enforced by the client, which refuses to sign in below it), and of the 398 devices that
 committed in the 30 days before, 0 reporting a version below `0.18.28` and 0 reporting none committed
 after 2026-10-17, the day the floor reached `1.2.7`. So no re-add without admits is expected.
+
+## P3 - An invitation reads `Membre` as the base role, so a role literally named Membre is not grantable by invitation (2026-10-22)
+
+`inviteToChannel` maps `roleName: 'Membre'` (and the base role's own name) to the base role, because
+every client before #2277 sends `Membre` for an ordinary invitation, whatever the community calls its
+lowest role ([social-service](services/social-service.md#an-invitation-grants-only-a-role-the-inviter-may-grant-2026-10-22)).
+A community that names a higher role `Membre` cannot grant it by invitation; a role change after the
+join still can. **Lifted when `minClientVersion` reaches the first version carrying #2277's client**
+(which sends no `roleName` for an ordinary invitation): then match a role by its own name before the
+`Membre` fallback, with the test that a role literally named Membre above the base role is granted.
 
 ## P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)
 
@@ -578,14 +877,33 @@ A row found this way is put on sale by its association's admin from the boutique
 
 Reuse the bench phones with screen recording to make demo videos and screenshots for the stores and for communication, from the fictional dev seed (never production). Personal data blurred frame by frame and the result reviewed before delivery; Apple and Google formats. Capture and sizes: [store-listings](store-listings.md#6-capture). Not built.
 
-## Sharing into and out of Canari - S1-S3 and S5 (Android) built, S4 in review (user, 2026-10-11, a priority 2026-10-21)
+## Sharing into and out of Canari - S1-S4 and S5 (Android) built (user, 2026-10-11, a priority 2026-10-21)
 
 Share IN on Android (S1+S2) and share OUT (S3, [share-out](frontend/share-out.md)) are built; a
 waiting share is erased at sign-out (user, 2026-10-22). The Android share-sheet suggestions (S5) are
-built too: recent conversations as direct targets, erased at sign-out, behind a setting. **S4, share
-IN on iOS**: the App ID and both profiles exist (user, 2026-10-22); the Share Extension is a draft
-pull request, and it carries the iOS suggestions next. CanaRun waits. Owed: the Mi 9T and iPhone 12
-readings. [sharing](frontend/sharing.md)
+built too: recent conversations as direct targets, erased at sign-out, behind a setting. Owed: the
+Mi 9T and iPhone 12 readings.
+**S4, share IN on iOS, is BUILT (2026-10-22)** now that the App ID `fr.emse.canari.share` (App
+Group) and its `CanariShare` profiles exist: a Share Extension writes into the App Group and the app
+carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
+is its first compile and the iPhone readings listed under Owed on
+[sharing](frontend/sharing.md#owed) are its first proof - including the secret
+`APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
+suggestions (`INSendMessageIntent`). CanaRun waits.
+
+## P2 - A waiting share is plaintext at rest: the manifest carries the shared text (found 2026-10-24)
+
+`pending_share.json` holds the shared TEXT in the clear, in three places: the App Group (written by
+the iOS Share Extension), the app data directory on iOS (written by `app_group_share.rs`) and on
+Android (written by `IncomingShare.kt`). The copies in `shared_inbox/` are plaintext too. Since
+the review of the Share Extension (PR #2295) both iOS manifests and the App Group inbox are
+EXCLUDED FROM BACKUPS, and Android excludes its whole data domain, so what is left is the file on
+the device while it waits - the same exposure as the copy a system picker leaves in the cache. Not
+a small reuse of the native-cache seal (`native_cache.rs`): the Kotlin and Swift writers would need
+a twin of its envelope, and the extension holds no key (its entitlement is the App Group alone).
+The shape, if it is built: the extension and `IncomingShare.kt` seal the TEXT with the install's
+cache key (`CNSEAL1`, a purpose of its own), the extension gaining the keychain group to read it,
+and `read_and_clear_pending_share` opens it - the one reader. [sharing](frontend/sharing.md)
 
 ## P3 - The eight service images run as root (Trivy DS-0002, measured 2026-10-23)
 
@@ -663,6 +981,7 @@ tab-swipe gestures (no touch input was driven).
 
 | What | The measurement that closes it |
 | --- | --- |
+| the checkpoint every commit awaits under the MLS lock before its first request (`checkpointStageBeforeSend`, the leaf-refresh PR #2269): ~1.4-2 s per commit on a Mi 9T DEBUG capture, a burst of N commits ~2N checkpoints ([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)) | in the pre-release carrying #2269, on a RELEASE build on the Mi 9T AND the iPhone 12: the `[COMMIT]` stage-checkpoint duration of one commit (a leaf refresh or an invite), and of a burst (a group creation adding several devices), read from the device log; the rig rows LEAF-REFRESH-1..4 ([cross-client-testing](cross-client-testing.md)) on the same build |
 | the organiser alert for a payment over capacity (#2228, D3; owed only once `FORM_ORGANISER_ALERT_ENABLED` is `true`) | first the client floor: `minClientVersion` at or above the version carrying #2228 on both estates, both stores serving it; then on the Mi 9T AND the iPhone 12, one payment landing on a full form on dev: the push arrives with the title only, a tap (app killed AND backgrounded) opens `/forms` with that form's responses accordion open and in view, and the bell row reads the alert sentence ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)) |
 | a video filmed with the new-post composer's camera is a CanaReel, with a deletion notice and "Garder comme post" (user, 2026-10-19: one camera, one behaviour; component tests only) | check CR on the Mi 9T and the iPhone 12, next pre-release ([device-verification](device-verification.md#cr-the-composers-camera-films-a-canareel---owed-on-both-phones)) |
 | calls lot 1 (#1997, #2010): 1:1 audio peer to peer on dev builds, never placed on a phone - BLOCKED 2026-10-18, no tag carries it ([bench readings](device-readings-calls-live-2026-10-18.md#1-calls---blocked-no-build-within-reach-carries-lot-1)) | after the next pre-release: a call PC <-> Mi 9T and Mi 9T <-> iPhone 12 on dev - setup time, the selected pair (direct or Cloudflare TURN), audio heard both ways, the ring on a throttled uplink, and a key mismatch on a build with #2013 |
@@ -742,7 +1061,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret** (environment `development`; today only the repository-level production `FIREBASE_SERVICE_ACCOUNT_JSON` exists): without it dev sends no push and T1, the push-to-banner latency, cannot be measured | 1 secret | [the notification latency P2](#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11) |
 | **send the DSI the log-retention request** (the host's logs and security tooling: each kept 90 days at most, as the privacy policy promises) - the text is ready, in French | 1 e-mail | [dsi-log-retention-request](infrastructure/dsi-log-retention-request.md) |
 | **decide whether a container whose live log is past 60 days is RECREATED unattended** by the daily `log-retention` job (today it only goes red and a human recreates it); it is a production restart, of postgres and redis included | 1 decision | [logging](infrastructure/logging.md#the-90-day-ceiling-2026-10-16) |
-| **read the WebCrypto checkpoint seal on both bench phones, then take draft #2074 out of draft** (decided 2026-10-18: an alpha first, a stable only if clean) | 1 reading | [the P2](#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12) |
+| **set production's `minClientVersion`, and the web rollback floor, to the release tag carrying the hardened v2 reader (#2074)** once it is a stable - the condition the separate writer flip waits on | 1 setting, 1 decision | [the P2](#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **set the `DEV_KLIPY_API_KEY` secret** (environment `development`, the same KLIPY key is fine - KLIPY moves no money and believes nothing about production): since the GIF search moved to the server, dev without it answers "GIF search is not configured" | 1 click | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
@@ -1276,7 +1595,11 @@ Ranked, measured and located on [performance-audit-2026-10-12](frontend/performa
 
 ### P2 - the web checkpoint is 82 % WASM ChaCha20 seal - BUILT, WRITER OFF (draft PR, 2026-10-12)
 
-The framed `state_blob` v2 (WebCrypto AES-GCM on the web, read by `mls-core` everywhere, opened by WebCrypto in the browser) takes a 7.7 MB checkpoint from ~198 to ~47 ms and the cold-start load from ~240 to ~97 ms ([performance-audit](frontend/performance-audit-2026-10-12.md#the-webcrypto-seal-v2---measured-2026-10-12)). **Owed: the one-line flip of `MLS_STATE_SEAL_V2_WRITER_ENABLED`, which is DRAFT #2074** (both conditions checked there: the reader is in the stable `v1.2.7` and `minClientVersion` is at it; decided 2026-10-18: an alpha first, read on both bench phones, a stable only if clean) ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)). Then the encrypt worker and `encryptMlsStateOnMainThread` have no checkpoint caller left and are deleted.
+The framed `state_blob` v2 (WebCrypto AES-GCM on the web, read by `mls-core` everywhere, opened by WebCrypto in the browser) takes a 7.7 MB checkpoint from ~198 to ~47 ms and the cold-start load from ~240 to ~97 ms ([performance-audit](frontend/performance-audit-2026-10-12.md#the-webcrypto-seal-v2---measured-2026-10-12)). **READER FIRST (#2074, review 2026-10-23): the HARDENED reader ships, the writer stays OFF** - a WebCrypto refusal is `unreadable_now` and re-read, never `STATE_ALTERED`, and the verdict on the bytes comes typed from `mls-core` ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)). Why the writer waits: `v1.2.7` turns a refused v2 blob into a PIN-recovery prompt and `v1.4.0` into `STATE_ALTERED`, which rotates the identity irreversibly - [the PIN-rotation P1](#p1---a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user-actually-holds-does-not-get-them-back-in-measured-2026-09-08) again, for any v2 blob reaching such a build (an old tab re-initialising, a web rollback). **Owed, in order:** (1) the release carrying #2074 reaches a stable tag; (2) production's `minClientVersion` AND the allowed web rollback floor are both set at or past that tag (today `minClientVersion` is `1.2.7`); (3) ONLY THEN the flip of `MLS_STATE_SEAL_V2_WRITER_ENABLED` to `true`, in its OWN pull request, an alpha first and read on both bench phones' BROWSERS (user, 2026-10-18), with the reader enumeration of mls-protocol re-checked on `main`; (4) once a stable carries the flip, delete the encrypt worker and `encryptMlsStateOnMainThread` (kept until then so a revert stays one line).
+
+### P2 - unreadable right now on every start has no exit but the user
+
+A web state that WebCrypto refuses and `mls-core` does not prove altered (`unreadable_now`, #2074) is re-read 3 times per start and then stops the login with the blob untouched - with no exit in code if the same browser refuses it on EVERY start. Decided, not forgotten: no silent repair (installing what `mls-core` opened is a second load path behind a failed primary one; rotating is the irreversible loss the branch refuses). The remedy is the user's and `auth_local_state_unreadable_now` names it: free memory, restart the browser; meanwhile the app or another browser (other devices); support before any reset ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)). **Owed:** it can only happen once a v2 blob exists, so after the writer flip ([the P2 above](#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12)) - count the `stayed unreadable after 3 reads` and `bytes that mls-core OPENS` lines per browser, and only if one recurs, decide what the product offers after N starts (an explicit, user-chosen reset; an export first). Nothing before a measurement.
 
 ### P2 - IndexedDB message pages read the whole conversation
 
@@ -2063,7 +2386,11 @@ Not on the roster, so no `channel.deleted`; the sidebar keeps a stale row until 
 
 ### P2 - WP-RESTORE-1: Zero-Tap Sign-In restoration, required by Google Play from April 2027
 
-The principle is accepted (user, 2026-08-26) and **DECIDED 2026-10-18: planned NOW, independent of the campaign** ([WP-RESTORE-1](#decided-by-the-user-on-2026-10-18---every-design-question-answered)); the Block Store exemption date of 30 September 2026 has passed and enforcement begins April 2027. It needs a WebAuthn server `core-service` does not have. Mechanism, the E2EE argument and the three traps: [mobile](frontend/mobile.md#wp-restore-1---zero-tap-sign-in-restoration-accepted-2026-08-26-planned-now-built-on-draft-2065).
+The principle is accepted (user, 2026-08-26) and **DECIDED 2026-10-18: planned NOW, independent of the campaign** ([WP-RESTORE-1](#decided-by-the-user-on-2026-10-18---every-design-question-answered)); the Block Store exemption date of 30 September 2026 has passed and enforcement begins April 2027. **BUILT 2026-10-18 on a draft pull request (server, client, Android plugin): the design and what each claim is verified by are on [account-restore](account-restore.md).** What closes it is a device reading, never more code: a real restore A -> B on the Mi 9T and a second Android phone (zero tap, the old phone signed out), the UP/UV flags a real key carries, and the platform replacing the consumed key at the new phone's first start. One one-off for the user: the GitHub secret `DEV_ANDROID_APP_LINK_SHA256` (the same value as production's), without which dev answers every restore route 503. The requirement and the three traps: [mobile](frontend/mobile.md#wp-restore-1---zero-tap-sign-in-restoration-accepted-2026-08-26-built-2026-10-18).
+
+### P3 - a sign-out that never reached the server leaves a restore key alive in the Google backup
+
+A restore key dies with the session that registered it (`ON DELETE CASCADE`), and a sign-out revokes that session under a deadline (`clearAuthUnderway`). Past the deadline the row lives on for its 7-day idle life, and so does the key's copy in a Google backup taken before the sign-out: a new phone restored from that backup would restore a session its owner signed out of. The phone that signed out cannot do it (`canari_restore_attempted` is written at every sign-out). This is the residual the refresh row already has, made reachable from a restored phone. **Remedy, not built:** a durable sign-out - the revocation kept and retried until a status answers it - which is a sessions change, not a restore one ([account-restore](account-restore.md#threat-model)).
 
 ## Tooling
 
@@ -2182,7 +2509,7 @@ Swiping right from the leftmost tab opens the camera, and nothing says so. Wante
 - **The double-tap window stays 250 ms**: #1784 (draft) only stops a double tap from also opening the info panel.
 - **Releases while the user is away**: pre-releases freely; a stable only if clean, and never carrying the PIN change (#1777) or the notification landing (#1770), which both want a phone reading first.
 - **Reaper pass 2 is DONE**: 118 devices revoked, 30 940 queued rows removed ([second pass](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#second-pass---2026-10-12)).
-- **The WebCrypto checkpoint seal: DECIDED 2026-10-18 - an alpha first, read on both bench phones, a stable only if clean.** It is built with the writer off and the flip is draft #2074 ([the P2](#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12)). The other levers (fewer or smaller checkpoints) change durability instead, and wait for the TAB-3b answer ([performance audit, #1776](https://github.com/emse-students/canari/pull/1776)).
+- **The WebCrypto checkpoint seal: DECIDED 2026-10-18 - an alpha first, read on both bench phones, a stable only if clean.** Re-sequenced 2026-10-23: #2074 ships the hardened reader with the writer OFF, and the flip is a later pull request gated on both floors reaching that reader's tag ([the P2](#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12)). The other levers (fewer or smaller checkpoints) change durability instead, and wait for the TAB-3b answer ([performance audit, #1776](https://github.com/emse-students/canari/pull/1776)).
 - **Production log retention: DECIDED 2026-10-18 - fewer lines, no retention change.** The per-message `LOG` lines roll the container log over in ~20 minutes ([prod-queue-and-epoch-audit](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md)); they are aggregated per batch since #2018 (`v1.3.0`, [prod-queue-and-epoch-audit](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md)).
 
 **Open pull requests at the end of 2026-10-12** (re-read with `gh pr list --state open`, this list goes stale):
@@ -2207,7 +2534,7 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 - **WP-SMOKE-LOGIN (S-M, CI, no native): a dedicated smoke account on the DEV estate only**, its credentials as a GitHub environment secret, a real sign-in right after the dev deploy and before a stable proceeds (a stable ships the pre-release that served dev). No production credential in GitHub. Must keep four visible workflows.
 - **WP-HOLD-NOTHING (M, MLS-adjacent, OPUS): an additive "I hold nothing" answer to a HISTORY ask**, so the requester records a definitive answer and stops re-asking once per launch. Blocks: verify first that an OLD client ignores an unknown answer frame without error (a test on the old reader), then ship reader-then-writer. **BUILT 2026-10-18** ([channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)): the old reader was checked first (an empty bundle, absorbed silently since `1.0.3`), so reader and writer ship together. **Merge order with #2023:** whichever of the two merges second derives `historyAnswered.ts`'s `KEY_PREFIX` from `ACCOUNT_KEY` (its guard test fails on the literal).
 - **WP-CHECKPOINT-SKIP (M, native + MLS, OPUS): skip the full checkpoint after a drain that only received application frames**, forced after K deferred receive generations (K about 200, a COUNT never a clock). **MEASURED 2026-10-22 on the Mi 9T, switch ON, K 20-100, up to 60 skipped frames: 0 lost, 0 `live-ahead`, 0 duplicates, 0 `unreadable for good` in 6 valid trials (table in [the question](open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)); what it does not cover is named there, and the build decision is the user's.** Was blocked on: the Mi 9T crash measurement of [the question](open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13) (kill, push while dead, resume, read `live-ahead`, duplicates, `unreadable for good`); nothing changes before it. The v2 seal (writer off) is a separate lever.
-- **WP-RESTORE-1 is planned NOW, independent of the campaign** (Play enforcement April 2027): [mobile](frontend/mobile.md#wp-restore-1---zero-tap-sign-in-restoration-accepted-2026-08-26-planned-now-built-on-draft-2065); BUILT on draft PR #2065 (not merged, out of any stable until read on a phone). Size L, native and a new server WebAuthn component, OPUS. First task: the design and the server piece; Mi 9T test before the deadline.
+- **WP-RESTORE-1 is planned NOW, independent of the campaign** (Play enforcement April 2027): [mobile](frontend/mobile.md#wp-restore-1---zero-tap-sign-in-restoration-accepted-2026-08-26-built-2026-10-18); built 2026-10-18, [account-restore](account-restore.md). Size L, native and a new server WebAuthn component, OPUS. First task: the design and the server piece; Mi 9T test before the deadline.
 - **WP-MIGALLERY-OFFSITE (M, ops + a MiGallery PR, no native): MiGallery's offsite backup goes to Canari's own offsite server**, then the old Canari VM can be wound down. Needs the offsite server's access arranged (private notes); a restore test.
 - **WP-MENTION-NAME (M, native Android and iOS, OPUS): a mention notification names its author from the phone's local copy of names**, "someone" if unknown; the name never rides the push. Owed: one look on each phone, and on the Mi 9T whether the COLLAPSED shade shows only the first line of a mention (the author line is line 1 of the message and may hide the text). **BUILT 2026-10-18**: the author on a salon banner (an MLS banner already names its sender), and the mentioned person inside the text from the same copy.
 - **WP-PUSH-I18N (M, Rust + native readings, OPUS): the 16 notification sentences of `mobile/proto_fields.rs` are translated in Rust from the app language, and a voice note stops being announced as an audio file.** One implementation for Android and iOS; a reading on each. **BUILT 2026-10-18** (`mobile/push_text.rs`), owed the two readings.

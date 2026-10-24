@@ -124,11 +124,12 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
 
   describe('MembersController', () => {
     let controller: MembersController;
-    const groupMemberRepo = { count: jest.fn() };
+    const groupMemberRepo = { count: jest.fn(), findOne: jest.fn() };
 
     beforeEach(async () => {
       jest.clearAllMocks();
       groupMemberRepo.count.mockResolvedValue(0);
+      groupMemberRepo.findOne.mockResolvedValue(null);
       const module: TestingModule = await Test.createTestingModule({
         controllers: [MembersController],
         providers: [
@@ -141,6 +142,7 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
           { provide: getRepositoryToken(KeyPackage), useValue: {} },
           { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
           { provide: getRepositoryToken(QueuedMessage), useValue: {} },
+          { provide: getRepositoryToken(RevokedDevice), useValue: {} },
           { provide: getRepositoryToken(MlsGroupInfo), useValue: {} },
           { provide: 'REDIS_CLIENT', useValue: {} },
           { provide: DataSource, useValue: { manager: { query: jest.fn() } } },

@@ -116,13 +116,24 @@ describe('a queued frame - one delivery, two routes', () => {
     manager: {
       transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
         cb({
+          // The shared seat lock a send's write takes; the seats it re-reads are the roster's.
+          query: jest.fn().mockResolvedValue([]),
           getRepository: (entity: unknown) =>
             entity === Group
               ? { find: jest.fn().mockResolvedValue([{ id: GROUP, deletedAt: null }]) }
-              : entity === GroupMember
-                ? // The Welcome's target still holds its seat when the store re-reads it.
-                  { findOne: jest.fn().mockResolvedValue({ id: 'seat' }) }
-                : { save: queuedSave },
+              : entity === DeviceGroupMembership
+                ? deviceGroupRepo
+                : entity === GroupMember
+                  ? // The Welcome's target still holds its seat when the store re-reads it, and
+                    // the store lifts any invitation-link ask it answers (none here).
+                    {
+                      findOne: jest.fn().mockResolvedValue({ id: 'seat' }),
+                      update: jest.fn().mockResolvedValue({ affected: 0 }),
+                    }
+                  : entity === KeyPackage
+                    ? // ...and its key package: every device asked for is still registered.
+                      { find: jest.fn(async ({ where }: { where: unknown[] }) => where) }
+                    : { save: queuedSave },
         })
       ),
     },
@@ -144,6 +155,8 @@ describe('a queued frame - one delivery, two routes', () => {
     sadd: jest.fn().mockResolvedValue(0),
     srem: jest.fn().mockResolvedValue(1),
     smembers: jest.fn().mockResolvedValue([]),
+    // Every member already routed: the reconciliation writes nothing here.
+    smismember: jest.fn(async (_key: string, ...members: string[]) => members.map(() => 1)),
     del: jest.fn(),
     pipeline: jest.fn(() => pipelineDouble()),
   };

@@ -83,6 +83,13 @@ export async function attemptCommitReplay(
   }
 
   let applied = 0;
+  // THIS DEVICE'S OWN UNRESOLVED COMMIT IS SETTLED BY THE LOG, NEVER PROCESSED FROM IT: openmls
+  // refuses a commit of its own, so the replay used to stop on it - at the very row proving it was
+  // accepted. The row at our base epoch is decided for good (unique per epoch, written with the
+  // advance), so it merges ours or clears ours for another's; no row decides nothing.
+  const atStart = commits.find((c) => c.baseEpoch === startEpoch);
+  const settled = await mlsService.settleUnresolvedCommitFromLog(groupId, atStart?.proto ?? null);
+  if (settled === 'merged') applied++;
   const target = untilEpoch === undefined ? activeEpoch : Math.min(untilEpoch, activeEpoch);
   for (const c of commits) {
     if (mlsService.getEpoch(groupId) >= target) break;

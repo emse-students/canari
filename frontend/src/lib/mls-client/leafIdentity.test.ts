@@ -6,6 +6,7 @@ import {
   deviceIdOfLeaf,
   sameDeviceIdentity,
   treeHoldsDevice,
+  treeHoldsUser,
   userIdOfLeaf,
 } from './leafIdentity';
 
@@ -76,5 +77,27 @@ describe('leafIdentity - a legacy bare leaf names its user and no device', () =>
       expect(userIdOfLeaf(bad)).toBe('');
     }
     error.mockRestore();
+  });
+});
+
+// THE QUESTION AN AUTOMATIC ADD ASKS (`actions.ts`): is this a device of a user already in the tree,
+// or a new person? Read on the user half alone, canonically, so a member's new device is never taken
+// for a stranger and a stranger never borrows a member's device id.
+describe('leafIdentity - whether a tree holds any leaf of a user', () => {
+  it('finds a user by any of their devices, under any spelling of the user half', () => {
+    expect(treeHoldsUser(['me:self', 'Peer:old-phone'], 'peer')).toBe(true);
+  });
+
+  it('does not let another user with the same device id answer for them', () => {
+    expect(treeHoldsUser(['me:self', 'peer:dev-1'], 'stranger')).toBe(false);
+  });
+
+  it('counts a legacy bare leaf as its user', () => {
+    expect(treeHoldsUser(['me:self', 'peer'], 'peer')).toBe(true);
+  });
+
+  it('holds nobody for an empty user id or an empty tree', () => {
+    expect(treeHoldsUser(['me:self'], '')).toBe(false);
+    expect(treeHoldsUser([], 'peer')).toBe(false);
   });
 });

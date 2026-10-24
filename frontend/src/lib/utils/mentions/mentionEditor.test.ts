@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: (userId: string) => userId,
   resolveUserDisplayName: vi.fn().mockResolvedValue(null),

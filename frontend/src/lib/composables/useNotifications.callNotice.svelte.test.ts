@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * AN INCOMING CALL IS NOT ANNOUNCED TWICE ON SCREEN (CALL-OS-BANNER, iPhone, 2026-10-19).
  *

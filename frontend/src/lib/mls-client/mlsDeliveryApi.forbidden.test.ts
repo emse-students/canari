@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AwaitingAdmissionError,
   ExclusionsRefusedError,
   MlsDeliveryApi,
+  NotAGroupMemberError,
   SendEdgeRefusedError,
   SendForbiddenError,
   SenderNotActiveError,
@@ -188,6 +190,56 @@ describe('getGroupExclusions on a refusal', () => {
 
     expect(refusalStatus(failure)).toBe(503);
     expect(classifyOutgoingSendError(failure)).toBe('unknown');
+  });
+});
+
+/**
+ * A SEAT STILL AWAITING A MEMBER'S ADMISSION IS ANSWERED 409 `awaiting_admission` by every
+ * membership-gated read (review of #2358): typed at the throw, never NotAGroupMemberError, on which a
+ * caller retires the conversation.
+ */
+describe('the membership reads on a 409 awaiting_admission', () => {
+  const api = (res: () => Response) =>
+    new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: vi.fn(async () => res()) as unknown as typeof fetch,
+    });
+  const awaiting = () =>
+    new Response(
+      JSON.stringify({ error: 'awaiting_admission', message: 'a member has not admitted' }),
+      { status: 409, headers: { 'content-type': 'application/json' } }
+    );
+  const reads: [string, (a: MlsDeliveryApi) => Promise<unknown>][] = [
+    ['getGroupUserMembers', (a) => a.getGroupUserMembers('g1')],
+    ['getGroupMembers', (a) => a.getGroupMembers('g1')],
+    ['getGroupExclusions', (a) => a.getGroupExclusions('g1')],
+    ['fetchGroupInfo', (a) => a.fetchGroupInfo('g1')],
+  ];
+
+  it.each(reads)('%s raises AwaitingAdmissionError, still carrying its status', async (_, read) => {
+    const failure = await read(api(awaiting)).catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(AwaitingAdmissionError);
+    expect(failure).not.toBeInstanceOf(NotAGroupMemberError);
+    expect(failure).not.toBeInstanceOf(ExclusionsRefusedError);
+    expect(refusalStatus(failure)).toBe(409);
+    expect((failure as AwaitingAdmissionError).code).toBe('awaiting_admission');
+  });
+
+  it.each(reads)('%s leaves another 409 an ordinary refusal', async (_, read) => {
+    const failure = await read(
+      api(
+        () =>
+          new Response(JSON.stringify({ code: 'SEAT_CLAIM_OVERTAKEN' }), {
+            status: 409,
+            headers: { 'content-type': 'application/json' },
+          })
+      )
+    ).catch((e: unknown) => e);
+
+    expect(failure).not.toBeInstanceOf(AwaitingAdmissionError);
+    expect(refusalStatus(failure)).toBe(409);
   });
 });
 

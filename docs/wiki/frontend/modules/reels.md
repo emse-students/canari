@@ -226,7 +226,8 @@ event, after the last chunk. Every failure is a typed `ReelRecorderError` (`unsu
 
 **A take is one history entry from its first frame to the end of its review**, so Back ends a
 recording or discards a review before it leaves the camera, and the tab swipe stands down meanwhile
-(it reads the overlay depth). The lens switch and the close button stand down during a take. The
+(it reads the overlay depth). The close button stands down during a take; the lens switch stays and
+flips WITHOUT ending the take ([below](#zoom-and-a-lens-flip-during-a-take-user-2026-10-22)). The
 review plays the take full screen and looping in `VideoPlayer`, with the camera held OFF
 (`CameraScreen`'s `paused`) so the privacy dot is not lit for nothing; discarding reopens it. Going to
 the background mid-take ENDS the take and keeps it (`onBeforeRelease`) rather than losing it with the
@@ -306,6 +307,91 @@ OWED, see below):
   `pdfDocument.ts` encodes nothing since 2026-10-11 (pages stay canvases) and the PDF thumbnail goes
   through `canvasToBlob` ([posts](posts.md#making-the-reader-fluid-on-a-phone-2026-10-11)). Re-measure before touching `reelRecorderMimeCandidates`: VP9 is NOT the
   cause of the photo wait; it stays a lead for the TAKE's end only.
+
+### Zoom and a lens flip during a take (user, 2026-10-22)
+
+**THE DECISIONS (user, 2026-10-22), not to be relitigated:**
+
+1. **SWIPE TO ZOOM.** While filming, with the finger held on the shutter, sliding UP zooms in and
+   sliding DOWN zooms out (Snapchat's and Instagram's gesture).
+2. **ONE GESTURE EVERYWHERE, TWO MODES.** Where the lens's track lists a `zoom` capability
+   (`getCapabilities().zoom`) the zoom is the HARDWARE's (`applyConstraints`). Where it lists none
+   (expected: iOS WKWebView) the SAME gesture zooms DIGITALLY - crop and enlarge. This is a user
+   decision, not a fallback: the mode is a fact of the track, logged ONCE per session and mode at
+   info (`zoom is digital on the user lens (1x-5x)`), never per gesture.
+3. **A DOUBLE TAP ON THE PREVIEW FLIPS THE LENS, DURING A TAKE TOO**, and the take continues across
+   the flip with its sound uninterrupted.
+
+**The zoom** (`reels/cameraZoom.ts`, pure). `zoomFromDrag` maps the held finger's vertical travel to
+a level on a LOGARITHMIC scale - 1x to 2x takes the same travel as 2x to 4x - with the whole range
+over `ZOOM_DRAG_FULL_RANGE_PX` (300 CSS px), continuous (no steps), clamped to the track's range or
+to 1x-`DIGITAL_ZOOM_MAX` (5x). `ReelShutter` reports the travel (`onmove`, positive up); `ReelCapture`
+zooms only while `recording` (a press still deciding between photo and video zooms nothing), from
+the level and travel of the first slide on the current lens, so a flip re-bases it. Every take
+starts at 1x, and a flip rests the new lens at 1x (`restingZoom`). A hardware lens gets at most ONE
+`applyConstraints` in flight, the latest level winning, so a drag never queues a backlog; a lens that
+refuses its own capability is logged once and keeps its real level. A request still running when a
+flip, a reopen or a stop takes its lens away is rejected by a track that is gone: that rejection
+belongs to an earlier generation and is NOT a refusal - nothing is accused, nothing changes, and a
+level the new lens asked for meanwhile is still applied. **The zoom is slide-only: no VoiceOver or
+keyboard equivalent exists** - accepted for an optional feature (the take films at 1x without it).
+
+**The recorded framing follows the zoom.** A take is recorded from the canvas `FramedStream` draws
+(above), never from the camera track. HARDWARE: the frame arrives zoomed, so the preview and the
+canvas both show it with no change. DIGITAL: the preview `<video>` gets `transform: scale(z)` about
+its centre (clipped by `ReelFrame`), and every capture - the take's canvas, the photo, the
+thumbnail - draws `digitalZoomCrop(coverCropRect(...), z)`, the centred `1/z` part of the preview's
+crop, which is exactly what the CSS scale shows (`PreviewBox.zoom`, read on every frame). The file's
+size is fixed by the UNZOOMED crop, so a zoom changes what is drawn, never the canvas.
+
+**The flip during a take** (`CameraSession.flipDuringTake`, `FramedStream`'s `FrameSource`). ONE
+recorder for the whole take: it records the canvas's track and the microphone's, and neither changes.
+The flip stops the old lens (a phone opens one camera at a time), opens the other ALONE through the
+session's lens opener (`openPhotoCamera`, no microphone request), and installs a new stream of that
+lens plus the KEPT microphone tracks - never stopped, never asked again. The phase stays `live`
+(`flipping` says the lens is missing), so the shutter held under the finger is never unmounted, and
+the shutter is not disabled for want of a frame during a take (a disabled button under the finger
+could swallow the release). The canvas reads its frame from whatever element shows the current lens,
+every frame; until the new lens has a decoded frame, the canvas re-paints its OWN last picture, so
+the canvas track keeps producing frames: the file shows a short FREEZE, never a hole, and the sound
+runs on. **What a flip costs is logged, not yet measured on hardware**: `[framed-capture] the new lens
+draws again: N frame(s) held over X ms` per flip, and the take's total at its end - the device
+readings are owed (Mi 9T, iPhone 12). A lens that cannot be opened during a take ends the session in
+its fault, and `ReelCapture` ENDS AND KEEPS the take (as the cap would); the old lens is not reopened
+behind the member's back. Outside a take, the button and the double tap keep the ordinary
+`switchFacing` (everything reopened). **Both stand down unless the capture is `ready` or
+`recording`** (`lensFlipAllowed`, the one predicate, handed to `CameraScreen` as `flipAllowed`):
+during `pressing` the hold timer could start a take on a lens being reopened, and during `finishing`
+a reopen would release the microphone before the recorder's last chunk arrived (review of #2291). The exact `facingMode`, the front lens's mirror
+(`shouldMirrorCapture`, read per frame, so a flipped take draws each lens as its preview showed it)
+and the permission handling are unchanged.
+
+**The double tap** (`reels/previewDoubleTap.ts`) uses the app's ONE double-tap arithmetic
+(`isDoubleTap`, `GESTURE.DOUBLE_TAP_MS`, `DOUBLE_TAP_SLOP_PX`, `TAP_MAX_MS`, `TAP_SLOP_PX`) but NOT
+`doubleTapLike`: that action counts the engine's `click`s, and during a take the flip is a SECOND
+finger's tap while the first holds the shutter, for which no engine synthesises a click. Taps are read
+from the pointers instead, per pointer, whatever other finger is down. The shutter row is
+`data-no-double-tap` (the held finger is never counted) and a control's press never counts. The
+preview has no single-tap action, so nothing waits for the double-tap window. A vertical slide on the
+shutter cannot reach the page's own gestures: the button is `touch-none`, captures its pointer and
+sits in `data-swipe-nav-ignore`; the viewer's swipe and `NOT_A_GESTURE` belong to `ReelViewer` and
+`MediaLightbox`, not to this screen.
+
+**Owed on hardware - nothing above was run on a camera** (tests mock the tracks, the canvas and the
+recorder): on the Mi 9T, whether the back lens lists `zoom` (hardware mode) and the zoom is smooth;
+on the iPhone 12, that the mode is digital and the recorded file's framing matches the zoomed
+preview; on both, a double tap DURING a take - that the second-finger tap registers while the
+shutter is held, that reopening a lens while the microphone track stays live is accepted
+(WKWebView in particular), the frames held per flip from the log line, that the file plays through
+the flip with continuous sound, and that a double tap outside a take never takes a photo. Three are
+named apart (review of #2291):
+
+- **iOS WKWebView, the second video-only `getUserMedia` while the take's audio track is live**: it
+  may mute or re-route the audio session - LISTEN to a flipped take's sound on the iPhone, past the
+  flip.
+- **The Mi 9T hardware zoom range** each lens lists (`zoom is hardware ... (Ax-Bx)` at info).
+- **How long the picture holds still after a flip**, on both phones (the `frame(s) held over X ms`
+  line).
 
 **The camera also takes still photos.** A photo is captured from the live frame, reviewed, and can
 be edited before publishing. The editor draws freehand strokes and app-font text, then bakes those

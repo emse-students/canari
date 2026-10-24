@@ -29,6 +29,11 @@ import type {
 } from '$lib/mls-client/IMlsService';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import {
+  StagedCommitPendingError,
+  type OwedWelcome,
+  type PendingSubmissionRead,
+} from '$lib/mls-client/commitSubmission';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
@@ -70,6 +75,11 @@ interface NativeDatedKeyPackage {
   public: number[];
   notAfterSecs: number;
 }
+
+/** What `envoyer_message_bytes` did - mirrors `Scellement` in `src-tauri/src/commands/mls.rs`. */
+type SealOutcome =
+  | { status: 'sealed'; ciphertext: number[]; authorProof: number[] }
+  | { status: 'commitPending' };
 
 /** What `recharger_mls_au_resume` did - mirrors `ReloadOutcome` in `src-tauri/src/commands/storage.rs`. */
 type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live-ahead';
@@ -924,7 +934,7 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Tauri-native `invoke` wrapper - calls `creer_groupe` in Rust and updates the local known-groups cache. */
-  async createGroup(groupId: string): Promise<void> {
+  protected async createGroupImpl(groupId: string): Promise<void> {
     await invoke('creer_groupe', { groupId });
     this._knownGroups.add(groupId);
     await this.refreshEpochCache(groupId);
@@ -1005,6 +1015,9 @@ export class TauriMlsService extends BaseMlsService {
       console.warn('[MLS][Tauri] reloadStateFromDisk skipped - no device key in session.');
       return;
     }
+    // THE INDEX GOES BEFORE THE SWAP: a send racing the reload re-reads the state (or is refused by
+    // it natively) instead of trusting an index of the state being replaced.
+    this.forgetUnresolvedIndex();
     try {
       const outcome = await invoke<ReloadOutcome>('recharger_mls_au_resume', {
         userId: this.userId,
@@ -1016,6 +1029,9 @@ export class TauriMlsService extends BaseMlsService {
         // file), so the epochs are re-read with the groups - a stale-low epoch reads as "behind".
         await this.syncGroupCachesFromNative();
         console.log('[MLS][Tauri] mls.bin reloaded on resume (C2) - group cache refreshed.');
+        // The installed state may hold a commit a background engine staged and could not settle (a
+        // background Welcome whose answer it never read): settled like this session's own.
+        this.settleAfterStateReplaced();
       } else if (outcome === 'live-ahead') {
         console.warn(
           '[MLS][Tauri] Resume reload SKIPPED: the live manager holds a send or a decrypted frame that mls.bin does not - reloading would put the ratchet back. Persisting the live state instead.'
@@ -1280,7 +1296,8 @@ export class TauriMlsService extends BaseMlsService {
    */
   protected async stageAddMembers(
     groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; identity: string }>
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>,
+    intent: Uint8Array
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -1292,7 +1309,12 @@ export class TauriMlsService extends BaseMlsService {
     const expectedIdentities = devices.map((d) => d.identity);
     const result = await invoke<
       [number[], number[] | null, number[], SkippedKeyPackage[], number[]]
-    >('ajouter_membres_bulk', { groupId, keyPackagesBytes, expectedIdentities });
+    >('ajouter_membres_bulk', {
+      groupId,
+      keyPackagesBytes,
+      expectedIdentities,
+      intent: Array.from(intent),
+    });
     return {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
@@ -1302,15 +1324,17 @@ export class TauriMlsService extends BaseMlsService {
     };
   }
 
-  /** Tauri-native `invoke` wrapper - `remplacer_appareil`, staged not merged. */
+  /** Tauri-native `invoke` wrapper - `remplacer_appareil`, staged not merged and recorded with
+   *  `intent` in the same call. */
   protected async stageReplaceDevice(
     groupId: string,
     identity: string,
-    keyPackage: Uint8Array
+    keyPackage: Uint8Array,
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }> {
     const [commit, welcome, groupInfo] = await invoke<[number[], number[], number[]]>(
       'remplacer_appareil',
-      { groupId, identity, keyPackage: Array.from(keyPackage) }
+      { groupId, identity, keyPackage: Array.from(keyPackage), intent: Array.from(intent) }
     );
     return {
       commit: Uint8Array.from(commit),
@@ -1365,11 +1389,13 @@ export class TauriMlsService extends BaseMlsService {
   /** Tauri-native `invoke` wrapper - stages a Remove commit for all devices of the given users (no merge). */
   protected async stageRemoveMembers(
     groupId: string,
-    userIds: string[]
+    userIds: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const [commit, groupInfo] = await invoke<[number[], number[]]>('retirer_membres', {
       groupId,
       userIds,
+      intent: Array.from(intent),
     });
     return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
   }
@@ -1377,13 +1403,101 @@ export class TauriMlsService extends BaseMlsService {
   /** Tauri-native `invoke` wrapper - stages a Remove commit for specific device identities (no merge). */
   protected async stageRemoveMembersByDevice(
     groupId: string,
-    deviceIdentities: string[]
+    deviceIdentities: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const [commit, groupInfo] = await invoke<[number[], number[]]>('retirer_membres_par_appareil', {
       groupId,
       deviceIdentities,
+      intent: Array.from(intent),
     });
     return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
+  }
+
+  /** Tauri-native `invoke` wrapper - stages a refresh of this device's own leaf (no merge). */
+  protected async stageSelfUpdate(
+    groupId: string,
+    intent: Uint8Array
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
+    const [commit, groupInfo] = await invoke<[number[], number[]]>('rafraichir_feuille', {
+      groupId,
+      intent: Array.from(intent),
+    });
+    return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
+  }
+
+  /** Tauri-native `invoke` wrapper - when this device's leaf was minted, `null` once a commit replaced it. */
+  protected async ownLeafMintedAt(groupId: string): Promise<number | null> {
+    return (await invoke<number | null>('date_feuille', { groupId })) ?? null;
+  }
+
+  /** Tauri-native `invoke` wrapper - whether this device's context is the one the served base describes. */
+  protected async ownContextMatchesBase(groupId: string, groupInfo: Uint8Array): Promise<boolean> {
+    return invoke<boolean>('contexte_correspond_base', {
+      groupId,
+      groupInfo: Array.from(groupInfo),
+    });
+  }
+
+  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.pendingSubmission}. */
+  protected async pendingSubmission(groupId: string): Promise<PendingSubmissionRead> {
+    const res = await invoke<
+      | { status: 'none' | 'unreadable' }
+      | {
+          status: 'recorded';
+          intent: number[];
+          baseEpoch: number;
+          commit: number[];
+          groupInfo: number[];
+          welcome: number[] | null;
+          addedIndices: number[];
+        }
+    >('soumission_en_attente', { groupId });
+    if (res.status !== 'recorded') return { status: res.status };
+    return {
+      status: 'recorded',
+      record: {
+        intent: Uint8Array.from(res.intent),
+        baseEpoch: res.baseEpoch,
+        commit: Uint8Array.from(res.commit),
+        groupInfo: Uint8Array.from(res.groupInfo),
+        welcome: res.welcome ? Uint8Array.from(res.welcome) : undefined,
+        addedIndices: res.addedIndices,
+      },
+    };
+  }
+
+  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.mergePendingCommitOwingWelcome}. */
+  protected async mergePendingCommitOwingWelcome(
+    groupId: string,
+    recipients: string[]
+  ): Promise<void> {
+    await invoke('confirmer_commit_welcome_du', { groupId, recipients });
+    await this.refreshEpochCache(groupId);
+  }
+
+  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.owedWelcomes}. */
+  protected async owedWelcomes(): Promise<OwedWelcome[]> {
+    const owed =
+      await invoke<
+        Array<{ groupId: string; welcome: number[]; ratchetTree: number[]; recipients: string[] }>
+      >('welcomes_dus');
+    return owed.map((w) => ({
+      groupId: w.groupId,
+      welcome: Uint8Array.from(w.welcome),
+      ratchetTree: Uint8Array.from(w.ratchetTree),
+      recipients: w.recipients,
+    }));
+  }
+
+  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.welcomeDelivered}. */
+  protected async welcomeDelivered(groupId: string, recipient: string): Promise<void> {
+    await invoke('welcome_remis', { groupId, recipient });
+  }
+
+  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */
+  protected async groupsWithPendingCommit(): Promise<string[]> {
+    return invoke<string[]>('groupes_commit_en_attente');
   }
 
   /** Tauri-native `invoke` wrapper - merges the pending staged commit (server accepted) and refreshes the epoch cache. */
@@ -1457,16 +1571,24 @@ export class TauriMlsService extends BaseMlsService {
   /**
    * Native `invoke` wrapper - encrypts via `envoyer_message_bytes`, which appends this device's
    * author signature (`mls-core/src/authorship.rs`) and advances the live send ratchet. Ordering
-   * and persistence: `sendMessage`.
+   * and persistence: `sendMessage`. The native side refuses, typed, a group whose state holds a
+   * staged commit ({@link StagedCommitPendingError}): the state decides, not the session's index of
+   * it.
    */
   protected async encryptForSend(
     groupId: string,
     messageBytes: Uint8Array
   ): Promise<AuthoredFrame> {
-    const res = await invoke<{ ciphertext: number[]; authorProof: number[] }>(
-      'envoyer_message_bytes',
-      { groupId, messageBytes: Array.from(messageBytes) }
-    );
+    const res = await invoke<SealOutcome>('envoyer_message_bytes', {
+      groupId,
+      messageBytes: Array.from(messageBytes),
+    });
+    if (res.status === 'commitPending') {
+      console.warn(
+        `[MLS][Tauri] ${groupId.slice(0, 8)}... send refused natively: a staged commit is unsettled`
+      );
+      throw new StagedCommitPendingError(groupId);
+    }
     return {
       sealed: Uint8Array.from(res.ciphertext),
       authorProof: Uint8Array.from(res.authorProof),

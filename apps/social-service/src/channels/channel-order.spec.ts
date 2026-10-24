@@ -83,6 +83,7 @@ describe('channel order and free-format names', () => {
         Promise.resolve(channels.find((c) => c.id === q.where.id) ?? null)
       ),
       create: jest.fn((x: Record<string, unknown>) => x),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       save: jest.fn((x: Record<string, unknown>) => {
         saved.push(x);
         return Promise.resolve({ ...x, id: 'new', workspaceId: 'ws1' });
@@ -202,7 +203,8 @@ describe('channel order and free-format names', () => {
       const { service, channelRepo } = makeService();
       const result = await service.renameChannel('a', MANAGER, FREE_NAME);
       expect(result.name).toBe(FREE_NAME);
-      expect(channelRepo.save).toHaveBeenCalledWith(expect.objectContaining({ name: FREE_NAME }));
+      // The one column: a save of the unlocked copy would write back its visibility and allowlist.
+      expect(channelRepo.update).toHaveBeenCalledWith({ id: 'a' }, { name: FREE_NAME });
     });
 
     it('keeps only sensible limits', () => {

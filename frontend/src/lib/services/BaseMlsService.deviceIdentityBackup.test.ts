@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DEVICE'S IDENTITY SURVIVED ONLY A SUCCESSFUL NETWORK CALL.
  *

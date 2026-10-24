@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The triggers, and what stops a device asking twice for the same thing.
  *

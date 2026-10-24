@@ -12,6 +12,50 @@ import { isTransportFailure, TransportFailureError } from '$lib/utils/transportF
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 
+/**
+ * What the server did with a member's Decline of an invitation-link ask
+ * (`POST mls/groups/:groupId/join-requests/:userId/decline`):
+ *
+ * - `withdrawn`: the seat still awaited a member; it is gone, the ask with it.
+ * - `already-admitted`: a member's Add came first - the person is in, and nothing was touched (the
+ *   generic removal used to delete that admitted person's seat and leave their leaf with none).
+ * - `not-awaiting`: the seat never awaited a member and the server holds no trace of an Add of
+ *   theirs - not an invitation-link ask at all (a seat older than the rule, a member's invite between
+ *   its roster write and its Add, a member whose leaves were removed). Nothing was touched.
+ * - `gone`: no seat - answered or expired before.
+ */
+export const JOIN_DECLINE_OUTCOMES = [
+  'withdrawn',
+  'already-admitted',
+  'not-awaiting',
+  'gone',
+] as const;
+export type JoinDeclineOutcome = (typeof JOIN_DECLINE_OUTCOMES)[number];
+
+/**
+ * A device still to be Added into a group this device is a member of
+ * (`GET mls/invitations/pending/:userId/:deviceId`).
+ */
+export type PendingInvitationRow = {
+  id: string;
+  userId: string;
+  deviceId: string;
+  groupId: string;
+  status: string;
+  /**
+   * The person's seat is an invitation link's ask no member has answered: the one row a member is
+   * asked about ("X asks to join"). Absent from a server older than the field.
+   */
+  awaitingAdmission?: boolean;
+};
+
+/** One user of a group's roster (`GET mls/groups/:groupId/user-members`). */
+export type GroupUserMemberRow = {
+  userId: string;
+  /** As {@link PendingInvitationRow.awaitingAdmission}, for the roster read. */
+  awaitingAdmission?: boolean;
+};
+
 export type MlsDeliveryFetch = typeof fetch;
 
 /**
@@ -52,6 +96,12 @@ export interface GroupRosterBatch {
   rosters: Map<string, string[]>;
   /** Groups the server refused because the caller is not in them (the single read's 403). */
   refused: Set<string>;
+  /**
+   * The `userId:deviceId` of every REVOKED device of an answered group's roster, by group - the
+   * allowlist `removeStrayLeaves` collects revoked leaves from. Absent for a group with none, and
+   * empty against a server that predates the field: nothing known revoked is nothing removed.
+   */
+  revoked: Map<string, string[]>;
 }
 
 /**
@@ -212,6 +262,54 @@ export class NotAGroupMemberError extends Error {
     super(`Caller is not a member of group ${groupId}`);
     this.name = 'NotAGroupMemberError';
   }
+}
+
+/**
+ * The delivery service ANSWERED 409 `awaiting_admission`: this account holds a seat in `groupId`
+ * that an invitation link wrote and no member has admitted yet - a pending member who WAITS, never
+ * {@link NotAGroupMemberError}'s "not a member", on which a caller retires the conversation.
+ *
+ * Every membership-gated read refuses such a seat this way (`callerSeatStanding` on the server,
+ * review of #2358). Typed at the throw so a caller reads `instanceof` rather than a status beside a
+ * body field; an {@link ApiRefusalError} still, so a reader of the status alone keeps working.
+ */
+export class AwaitingAdmissionError extends ApiRefusalError {
+  constructor(readonly groupId: string) {
+    super(
+      409,
+      'awaiting_admission',
+      `group ${groupId}: this account's seat awaits a member's admission (409 awaiting_admission)`
+    );
+    this.name = 'AwaitingAdmissionError';
+  }
+}
+
+/**
+ * {@link AwaitingAdmissionError} when `res` is the server's 409 `awaiting_admission`, else null. The
+ * body is read from a CLONE, so a caller that classifies the response further is not starved; a 409
+ * with any other body (another conflict) is not this answer.
+ */
+export async function awaitingAdmissionFrom(
+  res: Response,
+  groupId: string
+): Promise<AwaitingAdmissionError | null> {
+  if (res.status !== 409) return null;
+  try {
+    const body: unknown = await res.clone().json();
+    if (
+      body &&
+      typeof body === 'object' &&
+      (body as { error?: unknown }).error === 'awaiting_admission'
+    ) {
+      return new AwaitingAdmissionError(groupId);
+    }
+  } catch {
+    // Not JSON: an edge page, not the delivery service's answer - the caller's own branch reads it.
+    console.debug(
+      `[AWAITING_ADMISSION] group ${groupId}: a 409 whose body is not JSON - not this answer`
+    );
+  }
+  return null;
 }
 
 /**
@@ -1154,22 +1252,43 @@ export class MlsDeliveryApi {
     groupInfoBase64?: string,
     admits?: Array<{ userId: string; deviceId: string }>,
     removes?: CommitRemoval[]
-  ): Promise<{ accepted: boolean; reason?: string; currentEpoch?: number; newEpoch?: number }> {
-    const res = await this.f(`${this.historyUrl}/api/mls/commit`, {
-      method: 'POST',
-      headers: await this.auth({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        groupId,
-        deviceId: this.deviceId,
-        baseEpoch,
-        proto: protoBase64,
-        senderId: this.userId,
-        ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
-        ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
-        ...(admits?.length ? { admits } : {}),
-        ...(removes?.length ? { removes } : {}),
-      }),
-    });
+  ): Promise<{
+    accepted: boolean;
+    reason?: string;
+    currentEpoch?: number;
+    newEpoch?: number;
+    /** True when the gate had ALREADY accepted these exact bytes: a resubmission, answered again. */
+    duplicate?: boolean;
+  }> {
+    // UNDER THE `write` HEAD DEADLINE (`requestDeadline.ts`: 30 s plus the time the body needs to
+    // leave), because every caller awaits this INSIDE THE GLOBAL MLS LOCK, which also guards the
+    // incoming processing of every group: a POST hung on a half-open connection or a captive portal
+    // froze decryption in every conversation for as long as the engine tolerated - and the periodic
+    // leaf refresh makes an unasked commit ordinary. The expiry is a `RequestDeadlineError`, a
+    // transport failure: NO ANSWER, never a refusal, because the gate may have accepted. The callers
+    // already read it that way - `runCommitTransaction` resubmits the same bytes and KEEPS the stage
+    // as unknown while no answer comes (`CommitOutcomeUnknownError`), and the next resubmission
+    // decides, an accepted commit being answered as a duplicate.
+    const res = await trackedFetch(
+      this.f,
+      `${this.historyUrl}/api/mls/commit`,
+      {
+        method: 'POST',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          groupId,
+          deviceId: this.deviceId,
+          baseEpoch,
+          proto: protoBase64,
+          senderId: this.userId,
+          ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
+          ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
+          ...(admits?.length ? { admits } : {}),
+          ...(removes?.length ? { removes } : {}),
+        }),
+      },
+      { requestClass: 'write' }
+    );
     if (!res.ok) {
       throw await refusalFromResponse(res, 'Commit submission HTTP error');
     }
@@ -1227,6 +1346,8 @@ export class MlsDeliveryApi {
       { headers: await this.auth() }
     );
     if (res.status === 403) throw new NotAGroupMemberError(groupId);
+    const awaiting = await awaitingAdmissionFrom(res, groupId);
+    if (awaiting) throw awaiting;
     if (!res.ok) {
       throw await refusalFromResponse(res, 'GroupInfo fetch HTTP error');
     }
@@ -1727,6 +1848,25 @@ export class MlsDeliveryApi {
   }
 
   /**
+   * A member's Decline of a person who asked to join by invitation link: the server withdraws their
+   * seat ONLY while it still awaits a member's admission, under the group's seat lock. Every outcome
+   * is an answer (200) - see {@link JoinDeclineOutcome}; a non-2xx (not an admitted member) throws.
+   */
+  async declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/groups/${groupId}/join-requests/${userId}/decline`,
+      { method: 'POST', headers: await this.auth() }
+    );
+    if (!res.ok) throw await refusalFromResponse(res, 'declineJoinRequest failed');
+    const body = (await res.json()) as { outcome?: unknown };
+    const outcome = JOIN_DECLINE_OUTCOMES.find((o) => o === body.outcome);
+    if (!outcome) {
+      throw new Error(`declineJoinRequest: unknown outcome ${JSON.stringify(body.outcome)}`);
+    }
+    return outcome;
+  }
+
+  /**
    * Returns the current device-level member list (dm_device_group_memberships) for `groupId`.
    * THROWS on transport/HTTP failure: a `[]` must not mask a network failure (audit S2).
    * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
@@ -1740,6 +1880,8 @@ export class MlsDeliveryApi {
       headers: await this.auth(),
     });
     if (res.status === 403) throw new NotAGroupMemberError(groupId);
+    const awaiting = await awaitingAdmissionFrom(res, groupId);
+    if (awaiting) throw awaiting;
     if (!res.ok) throw await refusalFromResponse(res, 'getGroupMembers failed');
     return await res.json();
   }
@@ -1748,14 +1890,17 @@ export class MlsDeliveryApi {
    * Returns user-level members from dm_group_members for `groupId`.
    * THROWS on transport/HTTP failure: a `[]` must not mask a network failure (audit S2).
    * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
+   * A seat still awaiting a member's admission is answered {@link AwaitingAdmissionError}.
    */
-  getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
+  getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]> {
     // Simultaneous askers share ONE request (membership guards, stray sweeps and peer resolution all
     // ask per conversation). Never held past the answer: callers decide security and repairs on it.
     return this.joinInFlight(`user-members:${groupId}`, async () => {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
         headers: await this.auth(),
       });
+      const awaiting = await awaitingAdmissionFrom(res, groupId);
+      if (awaiting) throw awaiting;
       if (!res.ok) throw await refusalFromResponse(res, 'getGroupUserMembers failed');
       return await res.json();
     });
@@ -1771,7 +1916,8 @@ export class MlsDeliveryApi {
    *
    * CLASSIFIED AT THE THROW: a gateway 403 is {@link ExclusionsRefusedError} (this account is not on
    * the roster - never on its own a reason to repair this device), an edge 403 a {@link SendEdgeRefusedError} (the
-   * network path), any other status an {@link ApiRefusalError} carrying it; a transport failure is
+   * network path), a seat still awaiting a member's admission an {@link AwaitingAdmissionError}, any
+   * other status an {@link ApiRefusalError} carrying it; a transport failure is
    * whatever `f` raised, untouched.
    */
   async getGroupExclusions(groupId: string, forUserId?: string): Promise<GroupExclusions> {
@@ -1829,6 +1975,8 @@ export class MlsDeliveryApi {
         if (responseOrigin(res) === 'edge') throw new SendEdgeRefusedError(groupId, res.status);
         throw new ExclusionsRefusedError(groupId);
       }
+      const awaiting = await awaitingAdmissionFrom(res, groupId);
+      if (awaiting) throw awaiting;
       if (!res.ok) {
         throw new ApiRefusalError(
           res.status,
@@ -1861,7 +2009,7 @@ export class MlsDeliveryApi {
    * per group - so the caller knows it without asking again.
    */
   async fetchGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {
-    const out: GroupRosterBatch = { rosters: new Map(), refused: new Set() };
+    const out: GroupRosterBatch = { rosters: new Map(), refused: new Set(), revoked: new Map() };
     for (let i = 0; i < groupIds.length; i += GROUP_ROSTERS_MAX_GROUPS) {
       const chunk = groupIds.slice(i, i + GROUP_ROSTERS_MAX_GROUPS);
       try {
@@ -1880,6 +2028,7 @@ export class MlsDeliveryApi {
         const data = (await res.json()) as {
           rosters?: Record<string, string[]>;
           refused?: string[];
+          revoked?: Record<string, unknown>;
         };
         for (const [groupId, userIds] of Object.entries(data.rosters ?? {})) {
           // A roster that is not a list is not an empty roster: an empty one names every leaf as a
@@ -1887,6 +2036,15 @@ export class MlsDeliveryApi {
           if (Array.isArray(userIds)) out.rosters.set(groupId, userIds);
         }
         for (const groupId of data.refused ?? []) out.refused.add(groupId);
+        // AN ALLOWLIST FOR A DESTRUCTIVE COLLECTOR: only a non-empty string, only for a group whose
+        // roster was answered. A malformed entry names nobody - never "everybody".
+        for (const [groupId, identities] of Object.entries(data.revoked ?? {})) {
+          if (!out.rosters.has(groupId) || !Array.isArray(identities)) continue;
+          const named = identities.filter(
+            (id): id is string => typeof id === 'string' && id.length > 0
+          );
+          if (named.length > 0) out.revoked.set(groupId, named);
+        }
       } catch (e) {
         console.warn(
           `[ROSTER] batch of ${chunk.length} group(s) could not be sent - nothing is decided for these groups:`,
@@ -2110,12 +2268,7 @@ export class MlsDeliveryApi {
   }
 
   /** Returns outstanding Welcome invitations for a device (used by multi-device sync). */
-  async getPendingInvitations(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{ id: string; userId: string; deviceId: string; groupId: string; status: string }>
-  > {
+  async getPendingInvitations(userId: string, deviceId: string): Promise<PendingInvitationRow[]> {
     try {
       const res = await this.f(
         `${this.historyUrl}/api/mls/invitations/pending/${userId}/${deviceId}`,
@@ -2151,7 +2304,14 @@ export class MlsDeliveryApi {
     return await res.json();
   }
 
-  /** Marks a device's group invitation as `pending` or `active`. Best-effort, non-throwing. */
+  /**
+   * Marks a device's group invitation as `pending` or `active`. Best-effort, non-throwing.
+   *
+   * A REFUSAL IS SAID HERE, because no caller reads it. A report of `active` promotes an existing
+   * seat only, and the server refuses it (`403 NOT_A_MEMBER`, `reason` `no_seat`, `kicked` or
+   * `not_on_roster`) otherwise - a device whose pending row was purged before it processed its
+   * Welcome then stays unrouted, and without this line its own log never said so.
+   */
   async updateInvitationStatus(
     deviceId: string,
     userId: string,
@@ -2159,11 +2319,18 @@ export class MlsDeliveryApi {
     status: 'pending' | 'active'
   ): Promise<void> {
     try {
-      await this.f(`${this.historyUrl}/api/mls/invitations/status`, {
+      const res = await this.f(`${this.historyUrl}/api/mls/invitations/status`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ deviceId, userId, groupId, status }),
       });
+      if (!res.ok) {
+        const refusal = await refusalFromResponse(res, 'invitation status report');
+        console.warn(
+          `[MEMBERSHIP] report of ${status} REFUSED for group ${groupId.slice(0, 8)}... device ${deviceId}: ` +
+            `status=${refusal.status} code=${refusal.code ?? 'none'} reason=${refusal.reason ?? 'none'}`
+        );
+      }
     } catch (e) {
       console.error('Failed to update invitation status', e);
     }

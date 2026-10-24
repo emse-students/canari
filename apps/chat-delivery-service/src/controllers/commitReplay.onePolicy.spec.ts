@@ -13,6 +13,7 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { MessagingService } from '../services/messaging.service';
 
 /**
@@ -92,6 +93,8 @@ describe('commit replay - one sinceEpoch policy, both routes', () => {
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(PushSecretGuard)
       .useValue({ canActivate: () => true })

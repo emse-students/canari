@@ -41,17 +41,19 @@ use crate::commands::display_names::store_display_names;
 use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share};
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit,
-    cles_signature_epinglees, confirmer_commit, creer_groupe, envoyer_message_bytes,
-    epoques_departs, exporter_group_info, exporter_ratchet_tree, exporter_secret,
-    feuille_portant_cle, generer_key_packages_et_persister, graine_member_signature_key,
-    graine_run, graine_session_keypair, graine_sign_with_device_credential,
-    graine_sign_with_session_key, graine_verify_signature, graine_verify_signatures, groupe_actif,
+    cles_signature_epinglees, confirmer_commit, confirmer_commit_welcome_du,
+    contexte_correspond_base, creer_groupe, date_feuille, envoyer_message_bytes, epoques_departs,
+    exporter_group_info, exporter_ratchet_tree, exporter_secret, feuille_portant_cle,
+    generer_key_packages_et_persister, graine_member_signature_key, graine_run,
+    graine_session_keypair, graine_sign_with_device_credential, graine_sign_with_session_key,
+    graine_verify_signature, graine_verify_signatures, groupe_actif, groupes_commit_en_attente,
     initialiser_mls, key_package_a_clef_privee, lister_groupes, lister_identites_membres,
     obtenir_epoch, oublier_groupe, oublier_key_packages, prendre_constats_fork,
-    prendre_evenements_appareils, recenser_key_packages, recevoir_message_bytes,
-    recevoir_messages_batch, recuperer_cle_session_mls, rejoindre_par_commit_externe,
-    remplacer_appareil, retirer_membres, retirer_membres_par_appareil,
-    sauvegarder_mls_et_persister, skip_send_generations, trailer_welcome, verifier_key_package,
+    prendre_evenements_appareils, rafraichir_feuille, recenser_key_packages,
+    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
+    rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
+    retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
+    soumission_en_attente, trailer_welcome, verifier_key_package, welcome_remis, welcomes_dus,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::discard_picked_file;
@@ -684,8 +686,8 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
     }
 }
 
-/// Prepares a background Welcome: builds it and STAGES the post-add state, writing nothing to
-/// `mls.bin` (see `mobile::background::prepare_welcome_background_with_key` for the answer's shape).
+/// Prepares a background Welcome: builds it and STAGES the Add in `mls.bin`, with its submission
+/// record (see `mobile::background::prepare_welcome_background_with_key` for the answer's shape).
 #[cfg(target_os = "android")]
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
@@ -754,74 +756,84 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepa
         .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
 }
 
-/// Installs the state a prepared Welcome staged - called only after the server answered `accepted`.
+/// Settles the Add a prepared Welcome staged in `mls.bin`, on the server's DEFINITIVE answer:
+/// `accepted` merges it; otherwise it is cleared, and `stale_base` / `server_epoch` (both `>= 0` for
+/// an `epoch_mismatch`, recorded for the group, `-1` otherwise) or `refused_target` (`userId:deviceId`,
+/// recorded for that target alone) say what the refusal leaves in the stale ledger. An answer nobody
+/// read is not settled here at all (see `mobile::background::settle_background_welcome`).
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeInstallStagedWelcome<
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSettleBackgroundWelcome<
     'a,
 >(
     mut env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
     files_dir: jni::objects::JString<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    key_b64: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
+    commit_b64: jni::objects::JString<'a>,
+    base_epoch: jni::sys::jlong,
+    accepted: jni::sys::jboolean,
+    stale_base: jni::sys::jlong,
+    server_epoch: jni::sys::jlong,
+    refused_target: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
-    let json = match (env.get_string(&files_dir), env.get_string(&group_id)) {
-        (Ok(dir), Ok(gid)) => {
-            let dir: String = dir.into();
-            let gid: String = gid.into();
-            mobile::background::install_staged_welcome(std::path::Path::new(&dir), &gid)
-        }
-        _ => {
-            log::error!("[BG_WELCOME] nativeInstallStagedWelcome: JNI argument unreadable");
+    let result = (|| -> Result<serde_json::Value, String> {
+        let text =
+            |env: &mut jni::JNIEnv<'a>, s: &jni::objects::JString<'a>| -> Result<String, String> {
+                Ok(env.get_string(s).map_err(|e| e.to_string())?.into())
+            };
+        let dir = text(&mut env, &files_dir)?;
+        let state = env
+            .convert_byte_array(&state_bytes)
+            .map_err(|e| e.to_string())?;
+        let key = text(&mut env, &key_b64)?;
+        let user = text(&mut env, &user_id)?;
+        let device = text(&mut env, &device_id)?;
+        let gid = text(&mut env, &group_id)?;
+        let commit = text(&mut env, &commit_b64)?;
+        let target = if refused_target.is_null() {
+            None
+        } else {
+            Some(text(&mut env, &refused_target)?)
+        };
+        let base = mobile::background::staged_base_from_jni(base_epoch)?;
+        let answer = mobile::background::welcome_answer_from_jni(
+            accepted != 0,
+            stale_base,
+            server_epoch,
+            target.as_deref(),
+        );
+        Ok(mobile::background::settle_background_welcome(
+            std::path::Path::new(&dir),
+            &state,
+            &key,
+            &user,
+            &device,
+            &mobile::background::StagedWelcome {
+                group_id: &gid,
+                commit_b64: &commit,
+                base_epoch: base,
+            },
+            answer,
+        ))
+    })();
+    let json = match result {
+        Ok(v) => v,
+        Err(e) => {
+            // Nothing was settled: the stage stays in mls.bin, and the foreground settles it.
+            log::error!(
+                "[BG_WELCOME] nativeSettleBackgroundWelcome: JNI argument unreadable ({e}) - left to the foreground"
+            );
             serde_json::json!({ "ok": false, "reason": "jni-argument" })
         }
     };
     env.new_string(json.to_string())
         .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
-}
-
-/// Discards the state a prepared Welcome staged. `stale_base` / `server_epoch` are both `>= 0` for
-/// an `epoch_mismatch` refusal (recorded for the group), and `-1` otherwise; `refused_target`
-/// (`userId:deviceId`) is non-null for a refused target (recorded for that target alone).
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDiscardStagedWelcome(
-    mut env: jni::JNIEnv,
-    _service: jni::objects::JObject,
-    files_dir: jni::objects::JString,
-    group_id: jni::objects::JString,
-    stale_base: jni::sys::jlong,
-    server_epoch: jni::sys::jlong,
-    refused_target: jni::objects::JString,
-) {
-    let (Ok(dir), Ok(gid)) = (env.get_string(&files_dir), env.get_string(&group_id)) else {
-        log::error!("[BG_WELCOME] nativeDiscardStagedWelcome: JNI argument unreadable");
-        return;
-    };
-    let dir: String = dir.into();
-    let gid: String = gid.into();
-    let target: Option<String> = if refused_target.is_null() {
-        None
-    } else {
-        match env.get_string(&refused_target) {
-            Ok(t) => Some(t.into()),
-            Err(e) => {
-                log::error!(
-                    "[BG_WELCOME] nativeDiscardStagedWelcome: refused target unreadable: {e}"
-                );
-                None
-            }
-        }
-    };
-    let memo = match (&target, stale_base >= 0 && server_epoch >= 0) {
-        (Some(t), _) => mobile::background::RefusalMemo::TargetRefused { target: t },
-        (None, true) => mobile::background::RefusalMemo::Stale {
-            base_epoch: stale_base as u64,
-            server_epoch: server_epoch as u64,
-        },
-        (None, false) => mobile::background::RefusalMemo::Nothing,
-    };
-    mobile::background::discard_staged_welcome(std::path::Path::new(&dir), &gid, memo);
 }
 
 /// Why a Welcome for `target` in `group_id`, built from these `mls.bin` bytes, would be refused
@@ -1212,6 +1224,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
     entries_json: jni::objects::JString<'a>,
+    max_attempts: jni::sys::jint,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> Result<serde_json::Value, String> {
         let files_dir_str: String = env
@@ -1240,6 +1253,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
             &user_id_str,
             &device_id_str,
             &entries,
+            usize::try_from(max_attempts).map_err(|_| format!("max attempts {max_attempts}"))?,
         )
     })();
 
@@ -1318,7 +1332,9 @@ pub fn run() {
         .plugin(tauri_plugin_keystore::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_customtabs::init())
-        .plugin(tauri_plugin_gallery::init());
+        .plugin(tauri_plugin_gallery::init())
+        // Android's Restore Credentials (WP-RESTORE-1); its commands answer Unsupported on iOS.
+        .plugin(tauri_plugin_restore::init());
 
     // The native tab bar, iOS only: see the dependency's comment in Cargo.toml.
     #[cfg(target_os = "ios")]
@@ -1570,6 +1586,14 @@ pub fn run() {
             lister_identites_membres,
             retirer_membres,
             retirer_membres_par_appareil,
+            rafraichir_feuille,
+            date_feuille,
+            contexte_correspond_base,
+            soumission_en_attente,
+            groupes_commit_en_attente,
+            confirmer_commit_welcome_du,
+            welcomes_dus,
+            welcome_remis,
             confirmer_commit,
             annuler_commit,
             exporter_ratchet_tree,

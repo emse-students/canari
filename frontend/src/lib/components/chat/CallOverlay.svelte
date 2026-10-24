@@ -679,6 +679,16 @@
             <span>{micNotice}</span>
           </p>
         {/if}
+        {#if call.kind === 'live' && !call.isVideoOff && call.videoSendReduced}
+          <!-- The quality ladder had to shrink THIS side's picture (CallService.videoSendReduced). -->
+          <p
+            class="mt-1 inline-flex max-w-full items-center gap-2 text-sm text-amber-200"
+            data-testid="call-video-reduced"
+          >
+            <Video size={16} class="shrink-0" />
+            <span>{m.call_video_reduced_notice()}</span>
+          </p>
+        {/if}
         {#if callView.audioBlocked}
           <button
             type="button"

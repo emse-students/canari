@@ -439,6 +439,49 @@ post-condition, poll `emitted - persisted`, and reload the instant it is positiv
 on the FIRST send on both platforms. This is rule 7 - a precondition the client agrees with beats
 one the check hopes for.
 
+**THE COUNT IS KEPT PER EPOCH, AND BURNT IN THE EPOCH IT WAS COUNTED IN (2026-10-23).** A generation
+belongs to one epoch's ratchet, and a merge starts the next epoch at generation 0. The ledger counted
+per group, so a reload whose state sat BEHIND an epoch this device had already sent in burnt those
+frames in the restored epoch - a ratchet nobody reads any more - and when the group reached the later
+epoch again it re-issued every generation the peers had consumed there. Two ways to be behind: the
+commit's own stage checkpoint (awaited before its first request, section 4 and
+[mls-protocol](mls-protocol.md)) is the last one when a crash follows the merge and the sends of the
+next epoch, and the settle merges the same commit again; or a received commit was processed and never
+checkpointed, and the replay re-applies it. Found by review of #2269, whose stage checkpoint made the
+first way deterministic.
+
+- Each frame is counted against the epoch it was SEALED at, read from the frame itself
+  (`sealedFrameEpoch.ts`, the RFC 9420 header) rather than from a second read of the state an incoming
+  commit can move.
+- At load, `sendRatchetDebt` places each entry against the restored epoch: AT it, `emitted - persisted`
+  is burnt at once; AHEAD of it, all of `emitted` is owed THERE (the snapshot holds nothing of that
+  epoch) and burnt by `burnOwedOnArrival` before the first frame sealed at it; BEHIND it, the entry is
+  dead and forgotten, as are a group's entries when the state no longer holds the group.
+- An owed burn lives in memory only, so it stays OUT OF what a checkpoint declares durable until it
+  has run: `persistCheckpoint` drops every owed `group@epoch` from the counts it snapshots
+  (`sendRatchetsNotDurable`). Otherwise a checkpoint landing between the settle's merge and the first
+  send wrote the epoch without the burn and committed `persisted = emitted` for it, and the next load
+  found nothing owed and re-issued generation 0 (the final check of #2269, 2026-10-23). The entry is
+  removed only once its burn has run.
+- One owed burn at a time per group, and every send awaits it (`settleOwedBurns`): two sends used to
+  race, the second sealing while the first's burn was still in the platform. A burn that fails refuses
+  the send (`OwedSendBurnFailedError`) and stays owed for the next one.
+- When the held groups cannot be listed (`heldGroupsKnown` false) or an epoch cannot be read, there is
+  no epoch to judge by: the debt is burnt in whatever epoch the state holds, said at `warn` with the
+  number of groups, and those keys are never declared durable this session, so the next load judges
+  them again. Over-burning is free; skipping the repair was not.
+- An incoming commit is not held off by the send barrier, so the group can reach an owing epoch
+  between the burn and the encrypt. `sealPastOwedBurns` reads the sealed frame's epoch and never posts
+  a frame sealed at an epoch that still owes a burn: it says so at `error`, burns, and seals again.
+- Entries written before this change carry no epoch, and are read the way their writer counted:
+  against the restored epoch ([legacy-compatibility](../legacy-compatibility.md)).
+
+Proven in `mls-core/tests/burn_spent_generations.rs` on two real clients (the burn before the merge
+leaves `SecretReuse`, the burn after it decrypts; and the frame header layout the web reader relies
+on, against openmls's own `parse_message_epoch`), and in `BaseMlsService.sendRatchet.test.ts` on a
+ratchet model through the real reconcile and send path - the review's sequence, stage, send, merge,
+send in E+1, crash, reload, which re-used generation `5:0` on the per-group ledger.
+
 The background handoff is ordered for the same reason: on `hidden` the checkpoint is flushed
 **before** `pause_mls_foreground` releases the native guard. Releasing it is what lets a background
 JNI engine load `mls.bin` and advance from it, so releasing it first hands that engine a state that

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * `insertNewlineAtCursor` MUTATES THE DOM DIRECTLY AND FIRES A REAL `input` EVENT, rather than
  * going through `syncFromPlainText` (see the method's own docblock for why: that path raced

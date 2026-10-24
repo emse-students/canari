@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A PRIVATE CONVERSATION HAS THE SALON'S THREE LEVELS, IN THE SAME CONTROL.
  *

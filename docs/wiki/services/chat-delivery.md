@@ -656,12 +656,11 @@ refusals by reason with a sample of group ids, and `fetchPendingMessages` report
 `waitForMessageQueueIdle`** - the rows are enqueued, not handled, so what was refused is only known
 once the queue has drained. Silent when there is nothing to say.
 
-### The background Welcome answers what happened, and the phone installs only an acceptance (2026-10-22)
+### The background Welcome answers what happened, and the stage is merged only on an acceptance (2026-10-22)
 
 A killed Android phone answers a `welcome_request_pending` push from its `mls.bin`
 (`processWelcomeRequestBackground` in `CanariFirebaseMessagingService.kt`, Rust
-`prepare_welcome_background_with_key` / `install_staged_welcome` / `discard_staged_welcome` in
-`mobile/background.rs`). Read on the Mi 9T on 2026-10-22: the phone had been shut while its group moved
+`prepare_welcome_background_with_key` / `settle_background_welcome` in `mobile/background.rs`). Read on the Mi 9T on 2026-10-22: the phone had been shut while its group moved
 from epoch 1 to 3, built its add on base 1, the gate refused it (`epoch_mismatch`), the route answered
 `201`, and the phone logged "Welcome sent". Worse, it had merged the add into `mls.bin` before the
 answer, so it held an epoch nobody else had and could not read the group's next message.
@@ -670,10 +669,44 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   `409 {status: 'rejected', reason, currentEpoch?}` otherwise. The phone classifies
   the body's `status` token (`push/BackgroundWelcomeAnswer.kt`), so it reads a pre-2026-10-22 server
   (`201 {status: 'rejected'}`, `201 {status: 'done'}`) correctly too.
-- **The phone stages, and installs only an acceptance** - the foreground's order since C7. The post-add
-  state is sealed beside `mls.bin` with the digest of the bytes it was built from, installed by a
-  compare-and-swap on `accepted`, and deleted on anything else. A transport failure or a 5xx is
-  `unknown`: not installed, because installing a refusal is the fork this exists to prevent.
+- **The phone stages the Add IN `mls.bin`, and merges it only on an acceptance** - the foreground's
+  order since C7, and its recorded stage (`add_members_recorded`, `mls-core/src/pending_submission.rs`):
+  the pending commit and its submission record are written by compare-and-swap over the bytes the Add
+  was built from, BEFORE the commit leaves. `accepted` merges it, a refusal clears it, each written by
+  compare-and-swap over the `mls.bin` loaded at that moment. A transport failure or a 5xx is
+  `unknown`: nothing is settled, because guessing either way is the fork this exists to prevent.
+  So is every untyped 4xx but a WHITELIST - 400 and 413 (`BYTES_REFUSALS`), which refuse the bytes
+  and so every wire copy alike: Android's `HttpURLConnection` silently retries a POST on a reused
+  connection, so the request read may be a copy of one the server accepted, and a 401/403/408/429 from
+  the guards or a 404/405/409 from an edge says nothing of it. The stage is left for the foreground's
+  resubmission. A typed
+  `concurrent_commit` is left too: the lock it reports may be this commit's own first copy, as the
+  client's resubmission rule reads it (`resubmissionVerdict`), and the group answers `commit-pending`
+  until the foreground settles it. A 400, a 413 and every other typed `rejected` body still clear. One
+  route-side gap is owed: the membership guard answers `not_a_member` before the duplicate check
+  ([backlog](../backlog.md#p3---the-background-welcome-route-refuses-not_a_member-before-it-asks-whether-these-bytes-already-landed-review-of-2329-2026-10-24)).
+- **Only a COLD process stages or settles** (`background_write_mls_bin_if_unchanged_and_cold`, the
+  key-group join's writer). In a process whose foreground manager is loaded
+  (`live_manager_in_process`), that manager persists over `mls.bin` at its next resume or checkpoint
+  and would erase the stage while the server holds the commit. The prepare refuses `warm-process`
+  and sends nothing - the app's own load answers the request, and the newcomer re-asks every 60 s; a
+  settle in a process warmed inside the round trip is `left-to-foreground`, whose loaded state holds
+  the stage. The stage's ledger entry is written under the same hold of the `mls.bin` write lock as
+  the stage, and the sign-out sweep (`remove_mls_state_in`) takes that lock, so it removes both or
+  neither. The entry names its commit's digest, so a settle forgets its own stage and never a later
+  one of the same group. The warm mark is STICKY (set by the first foreground load, never cleared while
+  the process lives), so a process Android keeps alive refuses every background Welcome; its rate is
+  owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
+- **What the background cannot settle, the foreground does - and nothing waits.** No answer read, a
+  busy state lock, a foreground that started or wrote inside the round trip: the stage stays in
+  `mls.bin`, and whoever loads it next holds it. The foreground settles it as it settles its own
+  commits (`settleUnresolvedCommits`, at connect, before a send in that group, and after a resume
+  reload that installed a new state): it resubmits the recorded commit, the gate answers an accepted
+  one `duplicate`, and it merges - then sends the Welcome its record owes (`excludeDeviceIds` and
+  `keyPackageDevices` name the admitted device; the intent is pinned on both sides by
+  `src/lib/mls-client/test/fixtures/background-welcome-intent.json`). The joiner refuses the second
+  copy of a Welcome it already took. A group holding an unsettled stage is not answered again
+  (`commit-pending`), and the background outbox seals nothing in it (the entry stays queued).
 - **The KeyPackage is bound to the requester, as the foreground's Add binds it.** The phone hands
   Rust the `userId:deviceId` the push named (`WelcomeRequest.requester`). A package whose credential
   names another device, or that device under a key the phone never pinned for it, is refused BEFORE
@@ -689,10 +722,11 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   not answered again from the same bytes; any write to `mls.bin` lifts it. A refused TARGET
   (`welcome_target_unknown` / `welcome_target_not_member`) is remembered the same way, for that target
   alone (`{group}|{userId:deviceId}`), so a holder does not commit and get refused on every ask; a
-  target admitted later is answered from the next bytes, or by another holder or the foreground. Deleting the MLS state
-  (`remove_mls_state_in`) sweeps the memo, its `.tmp` and every staged `mls.bin.welcome-*` with it,
-  since a staged file holds that state's epoch secrets - and deletes `mls.bin` after them, so a sweep
-  that fails part-way leaves the state intact for the next reset to finish; the owner record
+  target admitted later is answered from the next bytes, or by another holder or the foreground. The memo of a refusal is written
+  against the bytes the clear WROTE, which are the bytes the next request is answered from. Deleting
+  the MLS state (`remove_mls_state_in`) sweeps the memo and its `.tmp` with it - and deletes
+  `mls.bin` after them, so a sweep that fails part-way leaves the state intact for the next reset to
+  finish; the owner record
   (`mls.owner` and its `.tmp`) goes after `mls.bin`, so a failed removal never leaves a state nobody
   is named for.
 - **The newcomer heals on its own cadence**: `requestReAdd` re-asks every 60 s while its app is open
@@ -739,12 +773,32 @@ answer, so it held an epoch nobody else had and could not read the group's next 
 - **The commit is fanned out once.** `validateCommit` fans an accepted commit out itself; the route used
   to broadcast it a second time.
 - **What the phone does with the answer is decided in `BackgroundWelcomeAnswer.apply`**, behind a
-  `StagedWelcome` seam the JVM tests drive: an install that finds the MLS state lock busy never ran, so
-  the staged file is deleted there and the line says `lock busy`.
-- **What is left open:** an acceptance whose install is refused (the foreground started and wrote
-  `mls.bin` inside the round trip) leaves the server one commit ahead of this device, logged
-  `ACCEPTED AND NOT INSTALLED`; the device then recovers through the usual ladder. iOS has no
-  background re-add (its branch was unreachable and is deleted).
+  `StagedWelcome` seam the JVM tests drive: a merge or a clear that finds the MLS state lock busy never
+  ran, and the stage is left to the foreground (`stage left in mls.bin (lock busy)`).
+- **The state refuses what its index allows.** The WebView keeps an index of the groups holding a
+  staged commit, and a resume reload swaps the state under it. So the index is dropped BEFORE the
+  swap, and the native send (`envoyer_message_bytes`) refuses, typed, a group whose state holds a
+  staged commit (`Scellement::CommitPending`, `StagedCommitPendingError`): `sendMessage` settles it
+  and seals once more, or answers `CommitOutcomeUnknownError`. The background outbox holds such a
+  group without spending a slot of its batch (`maxAttempts` counts only the entries attempted).
+- **Every stage is traced to its end.** The prepare names the stage in `background_stages.json`; a
+  settlement by the background forgets it; the foreground's next load reports each one left
+  (`report_background_stages`): `found in the loaded state` (settled by resubmission), `already
+  merged`, or `is ABSENT from the state this foreground keeps` at ERROR.
+- **What is left open:** the foreground's checkpoint is a BLIND write (`write_mls_state_blob`). A live
+  manager that never loaded the stage - a resume reload refused as `live-ahead` (which then persists
+  the live state) or as an epoch regression - writes over it, and an accepted Add is then held by the
+  server and not by this device. Staging only in a cold process closes that for a process warmed
+  BEFORE the prepare; what is left is a process warmed inside the round trip, whose load read the
+  stage, and a manager that then never re-reads the file. It is SAID, not prevented: before the
+  persist - whether or not a stage is noted, since a Welcome received in the background joins a group
+  with nothing in the ledger - `... ERASES` at ERROR
+  with the counts and group prefixes of the stages and later epochs the file holds; at the
+  background's answer, `ACCEPTED AND NOT HELD`; at the next load, `is ABSENT`. The device recovers
+  through the usual ladder. The same write loses any background advance, not only this one; it is its
+  own work package
+  ([backlog](../backlog.md#p2---wp-checkpoint-cas-the-foreground-checkpoint-writes-over-a-file-it-did-not-load-2026-10-23-design-one-mls-manager-per-process-owed-a-review-before-code)).
+  iOS has no background re-add (its branch was unreachable and is deleted).
 
 ### A key-group frame is stored once (migration 034, 2026-10-22)
 
@@ -1162,7 +1216,7 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 | POST | `/api/mls/groups/:groupId/members` | Add member record to group |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
-| POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused }`) |
+| POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused, revoked }`) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 
@@ -1210,12 +1264,18 @@ one. Pinned by `members.controller.group-rosters.spec.ts` (one query, refusal pe
 `strayLeaves.test.ts` (one roster read for every held group, after every tree; a leaver who
 rejoined after the batch read is spared).
 
+**And the revoked devices of each roster (2026-10-22).** The answer carries `revoked`: per ANSWERED
+group, the `userId:deviceId` of every active revocation (`activeRevocationWhere`) among that group's
+roster users, read in ONE `revoked_device` query over every answered user. A refused or unanswered
+group names nobody. The client removes exactly those leaves
+([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)).
+
 ### Messaging
 
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/mls/send` | Send MLS message/commit (publishes to Redis, queues for offline devices); answers `receivedAt`, the `Date` written into every queued copy's `createdAt` ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)) |
-| POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22) |
+| POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22). A RESUBMISSION of the exact bytes the log already holds at that base epoch from the same device is answered `{ accepted: true, duplicate: true }` with nothing advanced or fanned out again - how a committer whose first answer was lost learns the outcome ([mls-protocol](../protocols/mls-protocol.md#the-periodic-leaf-refresh)). A device under an active revocation is refused `403 DEVICE_REVOKED` before the lock and before that duplicate answer, read by the pair on the denylist's `(userId, deviceId)` unique index ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits to catch up a lagging device |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
@@ -1269,7 +1329,7 @@ those groups' first pages itself, which is the path every group took before the 
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ optional iOS `voipToken`) |
+| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ iOS `voipToken`: a token, or `null` from a build without the native ring, which clears it) |
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
 | GET / PUT | `/api/mls/notification-preferences` | JWT | The account's switched-off notification categories (`{ disabled: string[] }`); PUT replaces the set and refuses an unknown id |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background push service |
@@ -1282,7 +1342,7 @@ those groups' first pages itself, which is the path every group took before the 
 | DELETE | `/api/mls/push/release-add-lock` | PushSecret | Release add-lock |
 | GET | `/api/mls/push/key-package` | PushSecret | Get key package for background service |
 | POST | `/api/mls/push/commits` | PushSecret | Replayable commits since `sinceEpoch`, for the in-memory catch-up of a device whose app is killed |
-| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit`, which records the commit, stores its Welcome in the same transaction, fans the commit out and delivers the Welcome from its row. **The answer is typed** ([background Welcome](#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)): `201 {status: 'accepted', newEpoch}`, or `409 {status: 'rejected', reason, currentEpoch?}` with `reason` one of `epoch_mismatch`, `concurrent_commit`, `not_a_member`, `welcome_target_unknown`, `welcome_target_not_member` |
+| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit`, which records the commit, stores its Welcome in the same transaction, fans the commit out and delivers the Welcome from its row. **The answer is typed** ([background Welcome](#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)): `201 {status: 'accepted', newEpoch}`, or `409 {status: 'rejected', reason, currentEpoch?}` with `reason` one of `epoch_mismatch`, `concurrent_commit`, `not_a_member`, `welcome_target_unknown`, `welcome_target_not_member` |
 | POST | `/api/mls/push/key-group-base` | PushSecret, then 64 per user per minute (`PushSecretGuard` -> `PushSecretThrottlerGuard`, 429) | A shut phone's read of a KEY GROUP's scope and external-join base, for the join from a salon push ([channel-encryption section 26](../protocols/channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)). 403 not a key group or not entitled, 503 entitlement unanswered; `welcomeOwed` instead of a base when a Welcome is queued or the add lock is held |
 | POST | `/api/mls/push/key-group-join` | PushSecret, then 64 per user per minute (429, its own bucket) | That phone's external commit into the key group. External commits into key groups only (400 / 403 otherwise), then `validateCommit` unchanged; admits, removes and excludes are not taken here |
 | POST | `/api/mls/push/send` | PushSecret | Send message from background service |
@@ -1649,8 +1709,10 @@ per member token:
 - **iOS with a `voipToken`** → **direct APNs VoIP push** (`ApnsVoipService`) - the single
   deliberate exception to the all-FCM rule, because FCM cannot carry `apns-push-type: voip`
   and only a VoIP push may wake CallKit from a killed state. ES256 provider JWT (cached 40 min)
-  over node:http2, topic `<bundle>.voip`, `apns-expiration` now+45 s; a 410 response clears the
-  stored `voipToken`.
+  over node:http2, topic `<bundle>.voip`, `apns-expiration` = the ring's answer deadline; a 410
+  response clears the stored `voipToken`. The payload carries ids and the deadline, never a name,
+  and is sent only while the ring is live; without the APNs key such a device is not rung (ERROR,
+  no FCM alert instead) - [calls](../frontend/modules/calls.md#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22).
 - **iOS without `voipToken`** (legacy builds) → FCM alert banner ("📞 Appel entrant").
 
 `/api/calls/ring-end` (reason `answered`/`cancelled`/`ended`) is sent to **all** members
@@ -2331,7 +2393,7 @@ be pushed is a population question, answered by `tools/cross-client-harness/devi
 | `APNS_VOIP_KEY_ID` | no | Key ID of the APNs auth key |
 | `APNS_VOIP_TEAM_ID` | no | Apple Developer Team ID (`4CLNB8SR6L`) |
 | `APNS_VOIP_TOPIC` | no | VoIP topic, default `fr.emse.canari.voip` |
-| `APNS_VOIP_SANDBOX` | no | `true` to target the APNs sandbox (dev builds) |
+| `APNS_VOIP_SANDBOX` | no | `true` to target the APNs sandbox - Xcode debug builds only; a TestFlight build (dev estate included) is `aps-environment production` |
 
 ### The push avatar log line
 

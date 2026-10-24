@@ -218,6 +218,16 @@ describe('the role an invitation grants', () => {
     expect(grantedRoleIds(memberRepo)).toEqual(['r-guest']);
   });
 
+  it('matches the base role by its own name', async () => {
+    const roles = [
+      ...ROLES,
+      { id: 'r-guest', name: 'Invite', priority: 5, permissions: [] },
+    ] as unknown as ChannelRole[];
+    const { result, memberRepo } = invite('r-mod', 'Invite', roles);
+    expect(await result).toMatchObject({ success: true });
+    expect(grantedRoleIds(memberRepo)).toEqual(['r-guest']);
+  });
+
   it('lets an administrator grant Administrateur', async () => {
     const { result, memberRepo } = invite('r-admin', 'Administrateur');
     expect(await result).toMatchObject({ success: true });

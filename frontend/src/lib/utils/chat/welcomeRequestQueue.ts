@@ -2,6 +2,7 @@ import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { handleWelcomeRequest } from '$lib/utils/chat/actions';
+import type { JoinApprovalRequest } from '$lib/utils/chat/actions';
 
 /**
  * ONE WAY A `welcome_request` IS SERVED, AND ONE PLACE THAT SAYS WHAT HAPPENS WHEN IT CANNOT BE.
@@ -40,6 +41,8 @@ export interface WelcomeRequestContext {
   log: (msg: string) => void;
   /** groupId -> the askers waiting for it. Drained by {@link drainDeferredWelcomeRequests}. */
   deferred: Map<string, DeferredWelcomeRequest[]>;
+  /** A new person asked: a member's approval is raised instead of an Add (`automaticAdmission`). */
+  onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
 }
 
 /** `true` when this asker is already waiting on `groupId`. */
@@ -74,6 +77,7 @@ export async function serveWelcomeRequest(
       requesterUserId: request.requesterUserId,
       requesterDeviceId: request.requesterDeviceId,
       groupId,
+      onJoinApprovalRequested: ctx.onJoinApprovalRequested,
       onNotReady: (terminalGroupId) => {
         const list = ctx.deferred.get(terminalGroupId) ?? [];
         // ONE ENTRY PER ASKER. A device that has been refused re-asks every 60 seconds, and each
