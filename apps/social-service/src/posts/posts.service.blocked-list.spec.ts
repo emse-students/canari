@@ -160,7 +160,7 @@ describe('PostsService hides a blocked account, and only where the author was vi
     expect(sql).toMatch(/jsonb_array_length/);
   });
 
-  it('filters the associations feed on comments only - every row there is already exempt', async () => {
+  it('filters the associations feed like the others - a member post an association carries is in it', async () => {
     const { query, calls } = makeQueryMock();
     const service = makeService(query);
 
@@ -173,7 +173,7 @@ describe('PostsService hides a blocked account, and only where the author was vi
 
     const sql = feedSql(calls);
     expect(sql).toMatch(/COALESCE\(elem->>'userId', ''\) <> ALL/);
-    expect(sql).not.toMatch(/posts\."authorId" <> ALL/);
+    expect(sql).toMatch(/posts\."authorId" <> ALL\(\$\d+::text\[\]\)/);
   });
 
   it('filters the followed feed too - severing the two follows is best-effort', async () => {

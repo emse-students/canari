@@ -14,11 +14,25 @@
 
 ## Feed tabs
 
-| Tab | Content |
+| Tab (`feed=`) | Content |
 |---|---|
-| All | All posts from all associations |
-| Followed | Posts from associations the user follows |
-| Association filter | Posts from a specific association or category |
+| Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication |
+| Suivis (`followed`) | Posts from the associations and members the reader follows (never an anonymous post) |
+| Tout (`all`) | Every post the reader may see |
+
+**A republication is an association publishing, so the Associations feed carries it (user,
+2026-10-24).** The arm of `listPosts` read `posts."associationId" IS NOT NULL` alone, so a member's
+post the BDE republished (D38b) never entered that feed, only "Tout" under its own date - the client
+filters nothing per tab, so the server's clause was the whole cause. The two clauses now live in
+`apps/social-service/src/posts/associations-feed-sql.ts`: a row is in the feed when an association
+published it OR a `post_republications` row names it (an `EXISTS`, never a join, so a post carried
+twice, or published by one association and carried by another, is still one row), and it is placed
+at `GREATEST(publishedAt, latest republishedAt)` - pinned posts still first, the CanaReels list of
+that feed with no pin. Visibility is untouched (`postVisibleToUserSql` already lets a republisher's
+audience read the post), and since a member's post can now be in the arm, `blockedAuthorSql`
+applies there as in the others. Proven against PostgreSQL by
+`associations-feed-sql.integration.spec.ts`. The card still shows the post's own `publishedAt`;
+only its place is the repost's.
 
 Posts are loaded via `GET /api/posts` (social-service), paginated with infinite scroll (`IntersectionObserver`).
 

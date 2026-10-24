@@ -44,6 +44,7 @@ import { pageComments, type CommentOrder } from './comment-page';
 import { CommentIdentityService } from './comment-identity';
 import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
+import { ASSOCIATIONS_FEED_AT_SQL, IN_ASSOCIATIONS_FEED_SQL } from './associations-feed-sql';
 import {
   postVisibleToViewerSql,
   readInFeedAudience,
@@ -248,11 +249,14 @@ export class PostsService {
    * full-screen list would greet every reader with the same page. Every other list keeps its pinned
    * posts first. THE ORDER IS TOTAL: `id` breaks a tie of `publishedAt` (scheduled posts published
    * at the same instant), so an `OFFSET` page can neither repeat nor skip a row.
+   *
+   * `at` is the instant a row is placed at: its `publishedAt`, except in the Associations feed,
+   * where a carried post sits at its latest republication (`ASSOCIATIONS_FEED_AT_SQL`).
    */
-  private listOrderSql(kind: PostKind | undefined): string {
+  private listOrderSql(kind: PostKind | undefined, at = 'posts."publishedAt"'): string {
     return kind === 'reel'
-      ? `ORDER BY posts."publishedAt" DESC, posts.id DESC`
-      : `ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC`;
+      ? `ORDER BY ${at} DESC, posts.id DESC`
+      : `ORDER BY posts.pinned DESC, ${at} DESC, posts.id DESC`;
   }
 
   /**
@@ -1186,7 +1190,9 @@ export class PostsService {
   }
 
   /**
-   * Returns paginated posts for one of three feeds:
+   * Returns paginated posts for one of four feeds:
+   * - "associations": what associations publish or republish, a carried post at its latest
+   *   republication (`associations-feed-sql.ts`)
    * - "all": every post, pinned first
    * - "followed": posts from associations and users the viewer follows
    * - "custom": personal posts filtered by promo year and/or formation
@@ -1283,22 +1289,23 @@ export class PostsService {
 
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
-      // NO `blockedAuthorSql` HERE, and deliberately: every row in this feed is an association
-      // post, which that clause exempts by design, so emitting it would be a clause that can
-      // never be true. The comments underneath ARE filtered - they carry their author's name.
+      // What associations publish AND republish (`associations-feed-sql.ts`): a member's post an
+      // association carries is in it, so `blockedAuthorSql` applies as in every other arm - it
+      // exempts association and anonymous posts by itself.
       const bp = blockedAt(promoCutoff ? 4 : 3);
       rawPosts = await this.postRepo.manager.query(
         `SELECT ${this.postSelectBody(bp)}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
-       WHERE posts."associationId" IS NOT NULL
+       WHERE ${IN_ASSOCIATIONS_FEED_SQL}
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
          ${reelFilters}
          ${serviceAccountFilter}
+         ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
          ${visibleAt(3 + tail.length)}
-       ${this.listOrderSql(kind)}
+       ${this.listOrderSql(kind, ASSOCIATIONS_FEED_AT_SQL)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
