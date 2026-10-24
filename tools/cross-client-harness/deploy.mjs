@@ -220,21 +220,40 @@ export function estateRestarts(sinceMs) {
 }
 
 /**
- * The containers of `<name> <StartedAt>` lines that started at or after `sinceMs`, shaped like a
- * deploy so `describe` and every reader of `redeployedMidRun` keep one vocabulary.
+ * THE HOST CLOCK IS NOT THIS CLOCK. `StartedAt` / `FinishedAt` are written by the docker host and
+ * `sinceMs` by this workstation; a few seconds of skew would let a restart at the very start of a
+ * window read as "before" it. So the window is widened by this much - over-reporting costs a
+ * re-run, under-reporting files a defect against the product (R4 low finding).
+ */
+export const HOST_CLOCK_SKEW_MS = 5_000;
+
+/**
+ * The containers of `<name> <StartedAt> [<FinishedAt> <Running>]` lines that STARTED, or STOPPED, at
+ * or after `sinceMs` (less {@link HOST_CLOCK_SKEW_MS}), shaped like a deploy so `describe` and
+ * every reader of `redeployedMidRun` keep one vocabulary.
  *
- * @param {string} out `docker inspect --format '{{.Name}} {{.State.StartedAt}}'` output
+ * A container that went down inside the window and is still down never "started" in it, so the
+ * running-only read could not see it (R4 low finding): its `FinishedAt` is the witness. One that
+ * stopped long before the window (a finished one-off job) is not counted.
+ *
+ * @param {string} out `docker inspect` output, two or four fields per line
  * @param {number} sinceMs
  * @param {'local' | 'dev'} estate
  */
 export function restartsIn(out, sinceMs, estate) {
+  const from = sinceMs - HOST_CLOCK_SKEW_MS;
   const restarted = [];
   for (const line of out.split('\n')) {
-    const m = /^\/?(\S+)\s+(\S+)$/.exec(line.trim());
+    const m = /^\/?(\S+)\s+(\S+)(?:\s+(\S+)\s+(true|false))?$/.exec(line.trim());
     if (!m) continue;
     const startedMs = Date.parse(m[2]);
-    if (!Number.isFinite(startedMs) || startedMs < sinceMs) continue;
-    restarted.push({ id: m[1], sha: estate, status: 'restarted', conclusion: '', title: new Date(startedMs).toISOString() });
+    const finishedMs = m[3] ? Date.parse(m[3]) : Number.NaN;
+    const running = m[4] !== 'false';
+    if (Number.isFinite(startedMs) && startedMs >= from) {
+      restarted.push({ id: m[1], sha: estate, status: 'restarted', conclusion: '', title: new Date(startedMs).toISOString() });
+    } else if (Number.isFinite(finishedMs) && finishedMs >= from) {
+      restarted.push({ id: m[1], sha: estate, status: running ? 'restarted' : 'stopped', conclusion: '', title: new Date(finishedMs).toISOString() });
+    }
   }
   return restarted;
 }
@@ -261,7 +280,7 @@ export function devRestartsSync(sinceMs, { timeoutMs = 60_000 } = {}) {
   } catch {
     return { asked: false, why: `dev's containers could not be asked (status ${r.status}): ${String(r.stderr ?? '').trim().split('\n').pop()}` };
   }
-  if (!String(out).trim()) return { asked: false, why: `no running container in dev's compose project` };
+  if (!String(out).trim()) return { asked: false, why: `no container at all in dev's compose project` };
   return { asked: true, restarted: restartsIn(out, sinceMs, 'dev') };
 }
 

@@ -304,13 +304,19 @@ export function buildEnvVerdict(env, envFiles = []) {
  * @param {string} origin the estate's origin
  * @returns {{ok: true, record: object} | {ok: false, why: string}}
  */
-export function installVerdict(records, apkSha256, origin) {
+export function installVerdict(records, apkSha256, origin, { acceptDeadLiterals = false } = {}) {
   const same = records.filter((r) => r.apkSha256 === apkSha256);
   if (!same.length) return { ok: false, why: 'no build of this rig recorded this APK (sha256 unknown) - its bundle was never checked' };
   const here = same.filter((r) => r.origin === origin);
   if (!here.length) return { ok: false, why: `this APK was built for ${[...new Set(same.map((r) => r.origin))].join(', ')}, not ${origin}` };
   const last = here[here.length - 1];
   if (last.bundleOk !== true) return { ok: false, why: 'the recorded bundle verdict of this APK did not pass' };
+  // AN APK THAT PASSED ONLY BY AN ACCEPTANCE IS INSTALLED ONLY BY THE SAME EXPLICIT GESTURE (review
+  // low finding): the acceptance is a decision about an old-client row, and a plain --no-build must
+  // not inherit it from a record.
+  if (last.acceptedDeadProductionLiteral && !acceptDeadLiterals) {
+    return { ok: false, why: `its bundle passed only by accepting ${[].concat(last.acceptedDeadProductionLiteral).join(', ')} (ref ${last.ref}) - pass --accept-dead-production-literal again to install it` };
+  }
   return { ok: true, record: last };
 }
 

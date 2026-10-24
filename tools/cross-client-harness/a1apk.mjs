@@ -268,8 +268,11 @@ export async function armA1({
     );
   }
   // FOR OLD REFS ONLY, AND NEVER IMPLIED (decided 2026-10-24 for ADM-5..7): see the README.
-  if (acceptDeadProductionLiteral && !(buildOnly && ref)) {
-    throw new Error('--accept-dead-production-literal is for an OLD client only: pass it with --build-only --ref <tag>');
+  if (acceptDeadProductionLiteral && !((buildOnly && ref) || (!build && !buildOnly))) {
+    throw new Error(
+      '--accept-dead-production-literal is for an OLD client only: pass it with --build-only --ref <tag> to build one, ' +
+        'or with --no-build to install the APK such a build recorded'
+    );
   }
   // BINDS THE NAMED PHONE ITSELF, defaulting to the one this atom is named for.
   //
@@ -313,7 +316,7 @@ export async function armA1({
   const tree = ref ? refTree(ref, TAG) : { frontend: FRONTEND, repo: REPO };
   // A REF THAT NO LONGER CARRIES THE FALLBACK (#2385 and later) HAS NOTHING TO ACCEPT, so the flag
   // is refused there rather than left to widen a check it cannot narrow to anything.
-  if (acceptDeadProductionLiteral && !carriesDeadPushFallback(readFileSync(join(tree.frontend, LAYOUT_MODULE), 'utf8'))) {
+  if (acceptDeadProductionLiteral && ref && !carriesDeadPushFallback(readFileSync(join(tree.frontend, LAYOUT_MODULE), 'utf8'))) {
     throw new Error(`--accept-dead-production-literal refused: ${ref}'s ${LAYOUT_MODULE} carries no push-service production fallback to accept`);
   }
 
@@ -481,7 +484,7 @@ export async function armA1({
   // so the verdict a build recorded is bound to the file's sha256 and to the estate it was for.
   if (!build) {
     const sha = sha256Of(APK);
-    const v = installVerdict(apkBuilds(), sha, plan.origin);
+    const v = installVerdict(apkBuilds(), sha, plan.origin, { acceptDeadLiterals: acceptDeadProductionLiteral });
     if (!v.ok) throw new Error(`--no-build refuses ${APK} (sha256 ${sha.slice(0, 12)}): ${v.why}. Build it with bun a1apk.mjs.`);
     console.log(`[${TAG}] --no-build: this APK's bundle passed for ${plan.origin} when it was built (${v.record.recordedAt})`);
     if (v.record.acceptedDeadProductionLiteral) {

@@ -298,13 +298,15 @@ export function devLogsCommand(service, since) {
 }
 
 /**
- * `<name> <State.StartedAt>` for every running container of dev's compose project, one per line -
- * the restart witness `deploy.mjs` reads for a dev window (R4). Read-only, and an empty project
- * prints nothing, which the reader treats as unanswered rather than as "nothing restarted".
+ * `<name> <StartedAt> <FinishedAt> <Running>` for EVERY container of dev's compose project, running
+ * or not, one per line - the restart witness `deploy.mjs` reads for a dev window (R4). A container
+ * that stopped inside the window and stayed down is a disruption too, so stopped ones are listed
+ * (R4 low finding). Read-only, and an empty project prints nothing, which the reader treats as
+ * unanswered rather than as "nothing restarted".
  */
 export const devContainerStartsCommand = () =>
-  `docker ps -q --filter label=com.docker.compose.project=${DEV_PROJECT} --filter status=running ` +
-  `| xargs -r docker inspect --format '{{.Name}} {{.State.StartedAt}}'`;
+  `docker ps -aq --filter label=com.docker.compose.project=${DEV_PROJECT} ` +
+  `| xargs -r docker inspect --format '{{.Name}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.State.Running}}'`;
 
 /** Chrome and Nest colour their output; a rule matching a bare word must not meet an escape. */
 // oxlint-disable-next-line no-control-regex -- ESC is the character this must match; that IS the rule.
