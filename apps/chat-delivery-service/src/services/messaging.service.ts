@@ -68,6 +68,7 @@ import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import {
   bumpSeatGeneration,
   claimSeat,
+  heldKeyPackages,
   readSeatEviction,
   recordSeatEviction,
   seatClaimHolds,
@@ -2293,6 +2294,18 @@ export class MessagingService {
             }
             admitted = kept;
           }
+          // EVERY ADMIT INSERTS A ROW, SO EACH IS WRITTEN ONLY BESIDE ITS KEY PACKAGE, read `FOR
+          // SHARE` here, in any kind of group ({@link heldKeyPackages}): a device whose account is
+          // being erased gets no row, which the erasure could no longer find.
+          const keyed = await heldKeyPackages(m, admitted);
+          admitted = admitted.filter((a) => {
+            if (keyed.has(`${a.userId}:${a.deviceId}`)) return true;
+            this.logger.warn(
+              `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${a.userId}:${a.deviceId} ` +
+                `reason=no_key_package (read under the seat lock - the account or device is being erased)`
+            );
+            return false;
+          });
           // A WELCOME IS NEVER STORED FOR A GROUP THAT ENDED while this commit was in flight - the
           // device handed one asks for a group nobody can serve, on every reconnection. Read under a
           // row lock so the deletion and this write cannot interleave (the guard of
@@ -3222,21 +3235,6 @@ export class MessagingService {
   }
 
   /**
-   * An account erasure's last sweep of the routes of `userId` in `groupId`, by prefix, UNDER THE
-   * SEAT LOCK: a route writer re-reads its seat and adds the route under the same lock
-   * ({@link routeActiveSeat}), so one that read a seat before the erasure deleted it has added its
-   * route before this runs, and one after finds no seat. For the groups the erasure's device-row
-   * delete touched, whichever way they were found.
-   *
-   * @returns how many routes went, for the caller's log line.
-   */
-  async eraseRoutes(groupId: string, userId: string): Promise<number> {
-    return withSeatLock(this.groupRepo.manager, groupId, () =>
-      this.removeRoutesOf(groupId, userId)
-    );
-  }
-
-  /**
    * SETTLES THE KEY-GROUP DEPARTURES WHOSE SECOND EVICTION NEVER ARRIVED (hourly, beside the stale
    * device detection).
    *
@@ -3381,9 +3379,34 @@ export class MessagingService {
    * progress, refuses the store; one that comes after waits for this transaction, then deletes
    * the stored Welcome with the seats.
    *
+   * The target's key package is read `FOR SHARE` after it ({@link heldKeyPackages}): both callers
+   * insert the target's pending row, and a device being erased gets none.
+   *
    * @returns false when the seat is gone, logged; the caller rolls its transaction back.
    */
   private async lockWelcomeSeat(
+    m: EntityManager,
+    target: WelcomeSeat,
+    groupId: string,
+    traceId: string,
+    tag: string
+  ): Promise<boolean> {
+    if (!(await this.seatStandsFor(m, target, groupId, traceId, tag))) return false;
+    // ...AND THE TARGET'S KEY PACKAGE, read `FOR SHARE` last: both stores insert the target's
+    // pending row in this transaction, and a row inserted after an account erasure took the key
+    // packages would outlive it ({@link heldKeyPackages}).
+    if ((await heldKeyPackages(m, [target])).has(`${target.userId}:${target.deviceId}`))
+      return true;
+    this.logger.warn(
+      `[${tag}][${traceId}] REJECT welcome_target_not_member group=${groupId} ` +
+        `target=${sanitizeLogValue(target.userId)}:${sanitizeLogValue(target.deviceId)} ` +
+        `reason=no_key_package (read under the seat lock - the account or device is being erased)`
+    );
+    return false;
+  }
+
+  /** {@link lockWelcomeSeat}'s first half: whether the target still holds its seat, logged when not. */
+  private async seatStandsFor(
     m: EntityManager,
     target: WelcomeSeat,
     groupId: string,
@@ -3800,8 +3823,14 @@ export class MessagingService {
 
     if (authority === 'report') return this.promoteReportedSeat(userId, deviceId, groupId, tag);
 
+    // The group's creation needs no claim - nobody can evict from a group nobody else knows yet -
+    // but its seat is an INSERT like any other, so it is written under the seat lock beside its key
+    // package ({@link writeClaimedSeat}): created while its account is erased, it gets no seat.
     if (authority === 'group_creator') {
-      await this.writeActiveSeat(this.deviceGroupRepo, userId, deviceId, groupId, tag);
+      const refused = await withSeatLock(this.groupRepo.manager, groupId, (m) =>
+        this.writeClaimedSeat(m, userId, deviceId, groupId, tag)
+      );
+      if (refused !== null) return { ok: false, reason: refused };
       await this.routeActiveSeat(userId, deviceId, groupId, tag);
       return { ok: true };
     }
@@ -3832,12 +3861,8 @@ export class MessagingService {
 
   /**
    * Writes the active seat of a claim that held, in the transaction `m` holding the group's seat
-   * lock - IF the device still has its KeyPackage row, read `FOR SHARE` here.
-   *
-   * THE KEY PACKAGE IS WHAT AN ACCOUNT ERASURE TAKES FIRST. It deletes the account's key packages
-   * before its device rows, in one transaction, so a seat written here either commits before that
-   * delete - which then waits for it and deletes the seat with the rest - or finds the row gone and
-   * writes nothing. Read before the lock ({@link deviceAddressability}) it could not decide that: a
+   * lock - IF the device still has its KeyPackage row, read `FOR SHARE` here ({@link heldKeyPackages},
+   * which says why). Read before the lock ({@link deviceAddressability}) it could not decide that: a
    * device with no trace in the group yet, whose seat the erasure has nothing to cut, would get one
    * after it.
    *
@@ -3862,12 +3887,7 @@ export class MessagingService {
       );
       return 'revoked';
     }
-    const keyPackage = await m.getRepository(KeyPackage).findOne({
-      where: { userId, deviceId },
-      select: { id: true },
-      lock: { mode: 'pessimistic_read' },
-    });
-    if (!keyPackage) {
+    if (!(await heldKeyPackages(m, [{ userId, deviceId }])).has(`${userId}:${deviceId}`)) {
       this.logger.warn(
         `[${tag}] REFUSED group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
           `reason=no_key_package (read under the seat lock - the account or device is being erased)`

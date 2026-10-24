@@ -612,17 +612,22 @@ window with a durable row and a lock:
   a member whose seat is not yet `active`) and each admit's are re-read. A claim an unrelated
   eviction overtook (`evicted_since_claim`: the group's generation moved) refuses the WHOLE commit
   with a 409 `SEAT_CLAIM_OVERTAKEN` (`seat: committer|admit`): nothing advances, and the client
-  retries at once on a fresh claim (`isSeatClaimOvertaken` in `BaseMlsService`, the external join's
-  attempt loop, `admitNewcomer`'s rebuild). Each such refusal proves an eviction landed in between,
-  which is what bounds the retries. A departure in progress still refuses an external join
+  rebuilds and resubmits at once on a fresh claim. That holds for EVERY commit, an ordinary
+  conversation's included - a pending member's own add or remove carries a committer claim too - so
+  the rebuild lives in `runCommitTransaction` itself (up to `SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS`
+  submissions), with the external join's attempt loop and `admitNewcomer`'s tree re-read above it.
+  Each such refusal proves an eviction landed in between, which is what bounds the retries. A departure in progress still refuses an external join
   (`NOT_A_MEMBER`, `reason=departure_in_progress`): no leaf enters the tree for a person with no seat.
-- **A seat is written only beside its key package, read under the lock.** `writeClaimedSeat` (the
-  committer's seat, an activation) reads the device's `KeyPackage` row `FOR SHARE` and checks the
-  revocation denylist before writing. An account erasure deletes the account's key packages FIRST,
-  in the transaction that then ends its device rows, so a seat writer either commits before it
-  (and the erasure ends that seat) or finds no key package and writes nothing. The erasure then
-  sweeps the Redis routes, by prefix and under each group's seat lock (`eraseRoutes`), of every group
-  its device rows named. `recordSeatEviction` creates no row for an account it is not beginning a
+- **A device row is inserted only beside its key package, read under the lock.** Every writer that
+  INSERTS one reads the device's `KeyPackage` row `FOR SHARE` under the seat lock first
+  (`heldKeyPackages`): `writeClaimedSeat` (the committer's seat, an activation, the group's creator -
+  which also checks the revocation denylist), a commit's admits (`ADMIT_REFUSED reason=no_key_package`),
+  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. An account erasure deletes the
+  account's key packages FIRST, in a transaction of its own, so a writer either commits before it -
+  and its row is there for the erasure's discovery - or finds no key package and writes nothing.
+  The erasure then cuts every group it found, under each group's seat lock (`eraseSeats`: rows,
+  queue and routes together), so a run interrupted anywhere leaves what it had not cut still named
+  by a row for the retry. `recordSeatEviction` creates no row for an account it is not beginning a
   departure for, so an eviction after the erasure leaves nothing naming it.
 - **A key group's admits are asked like a join.** An admit writes a `pending` seat its device later
   promotes by reporting itself, so in a key group each admitted person is asked of social-service

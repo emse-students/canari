@@ -1,10 +1,13 @@
+import { Logger } from '@nestjs/common';
 import { IsNull, type EntityManager } from 'typeorm';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { Group } from '../entities/group.entity';
-import { takeSharedSeatLock } from './seat-eviction';
+import { heldKeyPackages, takeSharedSeatLock } from './seat-eviction';
+
+const seatsLogger = new Logger('GroupMembership');
 
 /**
  * Enrols a user into a group at the user level, and leaves an enrolment that already exists
@@ -108,13 +111,27 @@ export async function writePendingSeats(
       });
       if (!seat) return 'not_on_roster';
     }
-    if (deviceIds.length > 0) {
+    // Each row only beside its device's key package, read `FOR SHARE` under the lock
+    // ({@link heldKeyPackages}): a device of an account being erased gets none.
+    const keyed = await heldKeyPackages(
+      m,
+      deviceIds.map((deviceId) => ({ userId, deviceId }))
+    );
+    const writable = deviceIds.filter((deviceId) => keyed.has(`${userId}:${deviceId}`));
+    if (writable.length < deviceIds.length) {
+      seatsLogger.warn(
+        `[PENDING_SEATS] group=${groupId} user=${userId.slice(0, 8)} ` +
+          `${deviceIds.length - writable.length} device(s) NOT seated - no key package under the ` +
+          `seat lock (the account or device is being erased)`
+      );
+    }
+    if (writable.length > 0) {
       await m
         .createQueryBuilder()
         .insert()
         .into(DeviceGroupMembership)
         .values(
-          deviceIds.map((deviceId) => ({ userId, deviceId, groupId, status: 'pending' as const }))
+          writable.map((deviceId) => ({ userId, deviceId, groupId, status: 'pending' as const }))
         )
         .orIgnore()
         .execute();

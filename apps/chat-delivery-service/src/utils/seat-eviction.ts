@@ -1,4 +1,5 @@
 import type { EntityManager } from 'typeorm';
+import { KeyPackage } from '../entities/key-package.entity';
 
 /**
  * THE SEAT LOCK, AND THE CLAIM A SEAT IS WRITTEN AGAINST.
@@ -88,6 +89,31 @@ export async function withSeatLock<T>(
     await takeSeatLock(m, groupId);
     return fn(m);
   });
+}
+
+/**
+ * Which of `devices` still have their key package, read `FOR SHARE` in `m` - the read EVERY writer
+ * that INSERTS a device row makes first, under the group's seat lock, so the result is the set of
+ * `userId:deviceId` keys it may write a row for.
+ *
+ * THE KEY PACKAGE IS WHAT AN ACCOUNT ERASURE TAKES FIRST, in a transaction of its own
+ * (`InternalController.deleteUserData`). A row inserted after that delete committed would name an
+ * erased account with nothing left to find it, so a writer either holds the key package before the
+ * delete - which then waits for it, and the erasure's per-group cut, run after, takes the row - or
+ * finds it gone and writes nothing. A writer that only UPDATES a row needs no read: a deleted row
+ * matches nothing.
+ */
+export async function heldKeyPackages(
+  m: EntityManager,
+  devices: ReadonlyArray<{ userId: string; deviceId: string }>
+): Promise<Set<string>> {
+  if (devices.length === 0) return new Set();
+  const rows = await m.getRepository(KeyPackage).find({
+    where: devices.map(({ userId, deviceId }) => ({ userId, deviceId })),
+    select: { userId: true, deviceId: true },
+    lock: { mode: 'pessimistic_read' },
+  });
+  return new Set(rows.map((r) => `${r.userId}:${r.deviceId}`));
 }
 
 /** What {@link claimSeat} read: the group's seat generation and the person's departure, as they stood. */

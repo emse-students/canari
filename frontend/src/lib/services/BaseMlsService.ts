@@ -153,6 +153,7 @@ import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
 import {
   CommitRefusedError,
+  SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS,
   SEAT_CLAIM_OVERTAKEN_REASON,
 } from '$lib/mls-client/CommitRefusedError';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
@@ -3650,110 +3651,127 @@ export abstract class BaseMlsService implements IMlsService {
       // The section covers stage through merge - the whole window in which this device's notion of
       // the epoch and the server's can disagree. See `epochSendBarrier`.
       runAsEpochAdvance(groupId, async () => {
-        // NOT STAGED AT ALL while the server still refuses this account's commits: the answer is
-        // already known (`commitRateLimit.ts`), and nothing is left to roll back.
-        const waitMs = commitRateLimitRemainingMs();
-        if (waitMs > 0) {
-          const epoch = await this.freshEpoch(groupId);
-          console.warn(
-            `[COMMIT] ${groupId.slice(0, 8)}... not submitted - the commit rate limit holds for ${Math.round(waitMs / 1000)} s more`
-          );
-          throw new CommitRefusedError('rate_limited', epoch, undefined, waitMs);
-        }
-        const staged = await stageFn();
-        // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
-        const baseEpoch = await this.freshEpoch(groupId);
-        // The devices this commit adds, recorded by the server WITH the advance so each is a
-        // recipient of what it can open before its Welcome is even sent (`commitAdmits`).
-        const admits = commitAdmits(
-          opts.excludeDeviceIds,
-          staged.addedDeviceIds,
-          `${this.userId}:${this.deviceId}`
-        );
-        if (admits.length > 0) {
-          console.log(
-            `[COMMIT] ${groupId.slice(0, 8)}... admits ${admits.length} device(s) at epoch ${baseEpoch + 1}: ${admits.map((a) => `${a.userId.slice(0, 8)}:${a.deviceId}`).join(', ')}`
-          );
-        }
-        // One atomic server round-trip: validate the epoch, and on accept the server records the
-        // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
-        // between this accept and the local merge below, our epoch lags the server by one - a gap the
-        // rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
-        let validation: Awaited<ReturnType<MlsDeliveryApi['submitCommit']>>;
-        try {
-          validation = await this.delivery.submitCommit(
-            groupId,
-            baseEpoch,
-            toBase64(staged.commit),
+        // ONE COMMIT, REBUILT WHILE THE SERVER ANSWERS `SEAT_CLAIM_OVERTAKEN`. That refusal moved
+        // nothing - the epoch, the tree and the log stand where they were - and it reaches EVERY
+        // commit that writes a seat, an ordinary conversation's included: a pending member's own
+        // add or remove carries its committer's claim. Rebuilt here, under the same lock, no caller
+        // has to know about it; only the last refusal of the bound is handed up.
+        for (let attempt = 1; ; attempt++) {
+          // NOT STAGED AT ALL while the server still refuses this account's commits: the answer is
+          // already known (`commitRateLimit.ts`), and nothing is left to roll back.
+          const waitMs = commitRateLimitRemainingMs();
+          if (waitMs > 0) {
+            const epoch = await this.freshEpoch(groupId);
+            console.warn(
+              `[COMMIT] ${groupId.slice(0, 8)}... not submitted - the commit rate limit holds for ${Math.round(waitMs / 1000)} s more`
+            );
+            throw new CommitRefusedError('rate_limited', epoch, undefined, waitMs);
+          }
+          const staged = await stageFn();
+          // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
+          const baseEpoch = await this.freshEpoch(groupId);
+          // The devices this commit adds, recorded by the server WITH the advance so each is a
+          // recipient of what it can open before its Welcome is even sent (`commitAdmits`).
+          const admits = commitAdmits(
             opts.excludeDeviceIds,
-            toBase64(staged.groupInfo),
-            admits,
-            // Whom this commit removes, so the server queues it to the devices its half of the
-            // removal already parted (`commitRemovals`).
-            opts.removes
+            staged.addedDeviceIds,
+            `${this.userId}:${this.deviceId}`
           );
-        } catch (e) {
-          // A 429 IS A REFUSAL, NOT A SILENCE: the per-user limit on `POST /mls/commit` answers
-          // before the epoch gate, so the server provably did not advance. The staged commit is
-          // rolled back exactly as on a business refusal - left pending, it would block every later
-          // commit on this group - and the caller gets the same typed refusal, which says nothing
-          // about our state. Every other failure is left as it was: unanswered is not refused.
-          if (e instanceof ApiRefusalError && e.status === 429) {
-            console.warn(
-              `[COMMIT] ${groupId.slice(0, 8)}... refused by the commit rate limit at epoch ${baseEpoch} - staged commit rolled back`
+          if (admits.length > 0) {
+            console.log(
+              `[COMMIT] ${groupId.slice(0, 8)}... admits ${admits.length} device(s) at epoch ${baseEpoch + 1}: ${admits.map((a) => `${a.userId.slice(0, 8)}:${a.deviceId}`).join(', ')}`
             );
-            noteCommitRateLimited(e.retryAfterMs);
-            await this.clearPendingCommit(groupId).catch((clearErr) =>
-              console.error(
-                `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the rate-limited commit:`,
-                String(clearErr).slice(0, 120)
-              )
-            );
-            throw new CommitRefusedError(
-              'rate_limited',
+          }
+          // One atomic server round-trip: validate the epoch, and on accept the server records the
+          // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
+          // between this accept and the local merge below, our epoch lags the server by one - a gap the
+          // rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
+          let validation: Awaited<ReturnType<MlsDeliveryApi['submitCommit']>>;
+          try {
+            validation = await this.delivery.submitCommit(
+              groupId,
               baseEpoch,
-              undefined,
-              commitRateLimitRemainingMs()
+              toBase64(staged.commit),
+              opts.excludeDeviceIds,
+              toBase64(staged.groupInfo),
+              admits,
+              // Whom this commit removes, so the server queues it to the devices its half of the
+              // removal already parted (`commitRemovals`).
+              opts.removes
+            );
+          } catch (e) {
+            // A 429 IS A REFUSAL, NOT A SILENCE: the per-user limit on `POST /mls/commit` answers
+            // before the epoch gate, so the server provably did not advance. The staged commit is
+            // rolled back exactly as on a business refusal - left pending, it would block every later
+            // commit on this group - and the caller gets the same typed refusal, which says nothing
+            // about our state. Every other failure is left as it was: unanswered is not refused.
+            if (e instanceof ApiRefusalError && e.status === 429) {
+              console.warn(
+                `[COMMIT] ${groupId.slice(0, 8)}... refused by the commit rate limit at epoch ${baseEpoch} - staged commit rolled back`
+              );
+              noteCommitRateLimited(e.retryAfterMs);
+              await this.clearPendingCommit(groupId).catch((clearErr) =>
+                console.error(
+                  `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the rate-limited commit:`,
+                  String(clearErr).slice(0, 120)
+                )
+              );
+              throw new CommitRefusedError(
+                'rate_limited',
+                baseEpoch,
+                undefined,
+                commitRateLimitRemainingMs()
+              );
+            }
+            // A 409 SEAT_CLAIM_OVERTAKEN IS A REFUSAL OF THE WHOLE COMMIT: an unrelated eviction
+            // moved the group's seat generation while a seat this commit writes was being decided,
+            // so nothing advanced. Rolled back like any refusal, then rebuilt on a fresh claim.
+            if (isSeatClaimOvertaken(e)) {
+              const last = attempt >= SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS;
+              console.warn(
+                `[COMMIT] ${groupId.slice(0, 8)}... refused at epoch ${baseEpoch}: an unrelated eviction overtook its seat claim - staged commit rolled back, ` +
+                  (last
+                    ? `attempt ${attempt}/${SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS}, giving up`
+                    : `rebuilding (attempt ${attempt}/${SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS})`)
+              );
+              // Not rebuilt on a commit that is still staged: the next stage would fail on it.
+              const cleared = await this.clearPendingCommit(groupId).then(
+                () => true,
+                (clearErr) => {
+                  console.error(
+                    `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the overtaken commit:`,
+                    String(clearErr).slice(0, 120)
+                  );
+                  return false;
+                }
+              );
+              if (!last && cleared) continue;
+              throw new CommitRefusedError(SEAT_CLAIM_OVERTAKEN_REASON, baseEpoch, baseEpoch);
+            }
+            throw e;
+          }
+          if (!validation.accepted) {
+            // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
+            // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
+            // retryable failure rather than a fork to heal. [[C7]]
+            await this.clearPendingCommit(groupId).catch(() => {});
+            // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
+            await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
+            throw new CommitRefusedError(
+              validation.reason || 'epoch_mismatch',
+              baseEpoch,
+              validation.currentEpoch
             );
           }
-          // A 409 SEAT_CLAIM_OVERTAKEN IS A REFUSAL OF THE WHOLE COMMIT: an unrelated eviction
-          // moved the key group's seat generation while the server asked who may hold a seat, so
-          // nothing advanced. Rolled back like any refusal; the caller retries on a fresh claim.
-          if (isSeatClaimOvertaken(e)) {
-            console.warn(
-              `[COMMIT] ${groupId.slice(0, 8)}... refused at epoch ${baseEpoch}: an unrelated eviction overtook its seat claim - staged commit rolled back`
-            );
-            await this.clearPendingCommit(groupId).catch((clearErr) =>
-              console.error(
-                `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the overtaken commit:`,
-                String(clearErr).slice(0, 120)
-              )
-            );
-            throw new CommitRefusedError(SEAT_CLAIM_OVERTAKEN_REASON, baseEpoch, baseEpoch);
-          }
-          throw e;
+          await this.mergePendingCommit(groupId);
+          const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
+          return {
+            welcome: staged.welcome,
+            ratchetTree,
+            addedDeviceIds: staged.addedDeviceIds ?? [],
+            skipped: staged.skipped ?? [],
+          };
         }
-        if (!validation.accepted) {
-          // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
-          // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
-          // retryable failure rather than a fork to heal. [[C7]]
-          await this.clearPendingCommit(groupId).catch(() => {});
-          // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
-          await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
-          throw new CommitRefusedError(
-            validation.reason || 'epoch_mismatch',
-            baseEpoch,
-            validation.currentEpoch
-          );
-        }
-        await this.mergePendingCommit(groupId);
-        const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
-        return {
-          welcome: staged.welcome,
-          ratchetTree,
-          addedDeviceIds: staged.addedDeviceIds ?? [],
-          skipped: staged.skipped ?? [],
-        };
       })
     );
     // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX (COMM-22). It used to be a

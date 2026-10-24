@@ -107,8 +107,11 @@ function makeRepos() {
       manager: {
         transaction: jest.fn(),
         // The account erasure's own-records half, outside the group sweep this file measures.
-        query: jest.fn().mockResolvedValue([[], 0]),
+        // A SELECT answers rows (the account's eviction rows: none); a raw DELETE `[rows, count]`.
+        query: jest.fn(async (sql: string) => (sql.trim().startsWith('SELECT') ? [] : [[], 0])),
         delete: jest.fn().mockResolvedValue({ affected: 0 }),
+        // The account's key packages, deleted on their own before anything is read.
+        getRepository: () => ({ delete: jest.fn().mockResolvedValue({ affected: 0 }) }),
       },
     },
     groupMember: {

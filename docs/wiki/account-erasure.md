@@ -256,10 +256,11 @@ before the erasure is the group's generation, which names no one, never the acco
 on PostgreSQL with the whole erasure run between a claim and its check
 (`seat-lock.integration.spec.ts`, "a claim in flight across a whole account erasure"). **A seat
 written while the erasure runs cannot outlive it either**: the account's key packages are deleted
-first, in the same transaction that ends its device rows, and every seat writer reads its device's
-key package `FOR SHARE` under the seat lock, so a late writer finds none and writes nothing. The
-routes of every group those rows named are swept after, by prefix under each group's seat lock
-(`eraseRoutes`), and an eviction after the erasure writes no row naming the account. The cost of the ordering is that an
+first, in a transaction of their own, and every writer that inserts a device row reads its device's
+key package `FOR SHARE` under the seat lock, so a late writer finds none and writes nothing. Every
+group the account's rows still name is then cut under its own seat lock, its rows and its routes
+together, so a run that stops anywhere leaves each uncut group still named for the retry; an
+eviction after the erasure writes no row naming the account. The cost of the ordering is that an
 account's MLS data waits for social's final pass, the account itself being deactivated at once. The claim is
 `FOR UPDATE SKIP LOCKED` with a lease, so several workers never run one job twice at once; a
 completion write is guarded by `"completedAt" IS NULL`, so a pass that outlived its lease cannot

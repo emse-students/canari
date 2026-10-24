@@ -45,6 +45,7 @@ import { InvitationsController } from '../controllers/invitations.controller';
 import { DevicesController } from '../controllers/devices.controller';
 import { InternalController } from '../controllers/internal.controller';
 import { claimSeat, seatClaimHolds, withSeatLock, type SeatClaim } from '../utils/seat-eviction';
+import { writePendingSeats } from '../utils/group-membership';
 import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 
@@ -168,6 +169,12 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
        VALUES ($1, $2, $3, 'active')`,
       [who.userId, who.deviceId, GROUP]
     );
+  const keyPackageFor = async (who: { userId: string; deviceId: string }) =>
+    q(
+      `INSERT INTO key_package ("userId", "deviceId", "keyPackage") VALUES ($1, $2, 'kp')
+       ON CONFLICT DO NOTHING`,
+      [who.userId, who.deviceId]
+    );
   const queuedFor = async (who: { userId: string }): Promise<number> => {
     const [row]: { n: string }[] = await q(
       `SELECT count(*) AS n FROM queued_message WHERE "groupId" = $1 AND "recipientId" = $2`,
@@ -274,6 +281,9 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     await q(`DELETE FROM dm_group_members`);
     await seat(SENDER);
     await seat(PEER);
+    // Every writer that inserts a device row reads its key package under the lock; an erasure
+    // case below deletes PEER's, so it is put back here.
+    for (const who of [SENDER, PEER]) await keyPackageFor(who);
   });
 
   afterAll(async () => {
@@ -881,6 +891,96 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       );
 
       expect(await seatsOfGroup(NEWCOMER)).toBe(1);
+    });
+  });
+
+  /**
+   * EVERY WRITER THAT INSERTS A DEVICE ROW READS ITS KEY PACKAGE UNDER THE LOCK. An account erasure
+   * deletes the key packages first, on their own; a row inserted after that would name an erased
+   * account with nothing left to find it. Each case is a device whose key package is already gone.
+   */
+  describe('no device row is inserted without its key package', () => {
+    const GONE = { userId: 'erased-gone', deviceId: 'dev-eg' };
+
+    beforeEach(async () => {
+      await q(`DELETE FROM key_package WHERE "userId" = $1`, [GONE.userId]);
+      await q(`UPDATE dm_groups SET "deletedAt" = NULL, "activeEpoch" = 3 WHERE id = $1`, [GROUP]);
+      await q(`DELETE FROM mls_commit_log`);
+    });
+
+    it("a commit whose admit is erased while it waits on the seat lock is accepted without that admit's row", async () => {
+      // The admit's key package is there when the commit reads its admits, before the lock.
+      await keyPackageFor(GONE);
+      jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
+      const held = await holder('exclusive');
+      let committing: Promise<unknown>;
+      try {
+        committing = service.validateCommit(
+          {
+            groupId: GROUP,
+            deviceId: SENDER.deviceId,
+            baseEpoch: 3,
+            proto: memberCommitFrame(GROUP, 3n),
+            senderId: SENDER.userId,
+            admits: [GONE],
+          },
+          SENDER.userId
+        );
+        await parked(1);
+        await q(`DELETE FROM key_package WHERE "userId" = $1`, [GONE.userId]);
+        await held.query('COMMIT');
+      } finally {
+        await release(held);
+      }
+
+      await expect(committing).resolves.toMatchObject({ accepted: true });
+      expect(await seatsOf(GONE)).toBe(0);
+    });
+
+    it('a Welcome to it is refused and stores nothing', async () => {
+      const claim = await claimSeat(ds.manager, GROUP, GONE.userId);
+
+      await expect(storeWelcome(GONE, claim)).rejects.toMatchObject({
+        response: { error: 'welcome_target_not_member' },
+      });
+      expect(await queuedFor(GONE)).toBe(0);
+      expect(await seatsOf(GONE)).toBe(0);
+    });
+
+    it('a pending seat is not written for it, while its owner is still enrolled', async () => {
+      await expect(
+        writePendingSeats(ds.manager, GROUP, GONE.userId, [GONE.deviceId], true)
+      ).resolves.toBe('written');
+
+      expect(await seatsOf(GONE)).toBe(0);
+      const roster: unknown[] = await q(
+        `SELECT 1 FROM dm_group_members WHERE "groupId" = $1 AND "userId" = $2`,
+        [GROUP, GONE.userId]
+      );
+      expect(roster).toHaveLength(1);
+    });
+
+    it("a group's creator erased while its seat waits on the lock gets no seat", async () => {
+      // Addressable when the creation's gate asks, before the lock; gone by the time it writes.
+      await keyPackageFor(GONE);
+      const held = await holder('exclusive');
+      let creating: Promise<unknown>;
+      try {
+        creating = service.activateDeviceMembership(GONE.userId, GONE.deviceId, GROUP, {
+          authority: 'group_creator',
+        });
+        await parked(1);
+        await q(`DELETE FROM key_package WHERE "userId" = $1`, [GONE.userId]);
+        await held.query('COMMIT');
+      } finally {
+        await release(held);
+      }
+
+      await expect(creating).resolves.toEqual({ ok: false, reason: 'no_key_package' });
+      expect(await seatsOf(GONE)).toBe(0);
+      expect(routes.has(`${GONE.userId}:${GONE.deviceId}`)).toBe(false);
     });
   });
 });

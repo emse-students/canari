@@ -69,6 +69,8 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   let claimRow: EvictionRow | null;
   /** The same row as the store's transaction re-reads it, under the seat lock. */
   let txEvictionRow: EvictionRow | null;
+  /** Whether the target's key package is still there when the store re-reads it under the lock. */
+  let txKeyPackage: boolean;
   const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
     cb({
       // The seat lock, and the eviction row a key-group target's claim is checked against.
@@ -105,6 +107,15 @@ describe('MessagingService - sendWelcome does not touch membership status or the
             createQueryBuilder: jest.fn(() => {
               txReads.push('pending-row');
               return insertBuilder;
+            }),
+          };
+        }
+        // The target's key package, read FOR SHARE before its pending row is inserted.
+        if (entity === KeyPackage) {
+          return {
+            find: jest.fn(async () => {
+              txReads.push('key-package');
+              return txKeyPackage ? [{ userId: 'u2', deviceId: 'd2' }] : [];
             }),
           };
         }
@@ -171,6 +182,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     txSeat.mockResolvedValue({ id: 'm-u2' });
     claimRow = null;
     txEvictionRow = null;
+    txKeyPackage = true;
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1', userId: 'u2', deviceId: 'd2' });
     deviceGroupRepo.createQueryBuilder.mockReturnValue(insertBuilder);
     deviceGroupRepo.findOne.mockResolvedValue(null);
@@ -241,7 +253,14 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       where: { groupId: 'g1', userId: 'u2' },
       lock: { mode: 'pessimistic_read' },
     });
-    expect(txReads).toEqual(['seat-lock-shared', 'group', 'seat', 'save', 'pending-row']);
+    expect(txReads).toEqual([
+      'seat-lock-shared',
+      'group',
+      'seat',
+      'key-package',
+      'save',
+      'pending-row',
+    ]);
   });
 
   /**
@@ -265,6 +284,19 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     });
     expect(queuedSave).not.toHaveBeenCalled();
     expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
+    expect(redis.publish).not.toHaveBeenCalled();
+  });
+
+  // An account erasure deletes the key packages first: a pending row inserted after it would name
+  // an erased account with nothing left to find it.
+  it('stores nothing when the target key package is gone by the time the transaction reads it', async () => {
+    txKeyPackage = false;
+
+    await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+      response: { error: 'welcome_target_not_member' },
+    });
+    expect(queuedSave).not.toHaveBeenCalled();
+    expect(txReads).not.toContain('pending-row');
     expect(redis.publish).not.toHaveBeenCalled();
   });
 
@@ -381,7 +413,14 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       social(true);
 
       await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
-      expect(txReads).toEqual(['seat-lock-shared', 'group', 'claim', 'save', 'pending-row']);
+      expect(txReads).toEqual([
+        'seat-lock-shared',
+        'group',
+        'claim',
+        'key-package',
+        'save',
+        'pending-row',
+      ]);
       // The claim is read before social-service is asked.
       const claimRead = claimQuery.mock.calls.findIndex(([sql]) =>
         String(sql).includes('FROM dm_seat_evictions')

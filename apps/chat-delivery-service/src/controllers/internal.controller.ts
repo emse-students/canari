@@ -751,6 +751,14 @@ export class InternalController {
 
     const who = userId.slice(0, 8);
     this.logger.log(`[INTERNAL_DELETE] starting user=${who}`);
+    const manager = this.groupRepo.manager;
+
+    // THE KEY PACKAGES GO FIRST, AND ALONE. Every writer that inserts a device row reads its key
+    // package `FOR SHARE` under the group's seat lock (`heldKeyPackages`), so once this commits no
+    // new row of the account can appear anywhere: one that committed before it is a row the
+    // discovery below reads. Nothing is deleted by reading something an earlier step deleted, so a
+    // run interrupted at any point leaves every row it had not cut still there for the retry.
+    const keyPackages = await manager.getRepository(KeyPackage).delete({ userId });
 
     // Every group the account is still recorded in, through EITHER membership table - a Graine
     // distribution group carries device memberships and no `dm_group_members` row - or through an
@@ -791,46 +799,37 @@ export class InternalController {
         );
       }
 
-      // ── Multi-member groups: every seat of this account, per group, UNDER ITS SEAT LOCK ──
+      // ── Every other group: every seat of this account, per group, UNDER ITS SEAT LOCK ──
       // The group's seat generation moves, then the queue, the device rows and the routes (by
       // prefix) go together ({@link MessagingService.eraseSeats}): a claim or a route read taken
       // before this waits for it, then is refused or finds no row - so a retry never leaves one.
+      // A group with no `dm_groups` row any more (an orphan the sweep has not reached) is cut the
+      // same way: its device rows are what name it, so they go with its routes, never before them.
+      const tombstoned = new Set(dmGroups.map((g) => g.id));
+      const cut = groupIds.filter((id) => !tombstoned.has(id));
       let routes = 0;
-      for (const g of multiGroups) {
-        routes += (await this.messagingService.eraseSeats(g.id, userId)).toRemove;
+      for (const groupId of cut) {
+        routes += (await this.messagingService.eraseSeats(groupId, userId)).toRemove;
       }
       this.logger.log(
-        `[INTERNAL_DELETE] removed from ${multiGroups.length} group(s) user=${who} routes=${routes}`
+        `[INTERNAL_DELETE] removed from ${multiGroups.length} group(s) ` +
+          `(+${cut.length - multiGroups.length} with no group row) user=${who} routes=${routes}`
       );
     }
 
     // ── User's own records ────────────────────────────────────────────────
-    const manager = this.groupRepo.manager;
-    // Every device row of the account and everything queued FOR it - Welcomes included - in ONE
-    // transaction ({@link endDeviceMemberships}), AFTER ITS KEY PACKAGES IN THE SAME ONE. A seat is
-    // written only while its device's key package is read `FOR SHARE` under the group's seat lock
-    // (`MessagingService.writeClaimedSeat`), so a seat racing this either committed first - this
-    // delete waited for it, and the device rows below take it - or finds no key package and is never
-    // written. That holds in a group this erasure found no trace of, which no cut above reached.
-    const departed = await manager.transaction(async (tx) => {
-      const keyPackages = await tx.getRepository(KeyPackage).delete({ userId });
-      const touched = await tx.getRepository(DeviceGroupMembership).find({
-        where: { userId },
-        select: { groupId: true },
-      });
-      const ended = await endDeviceMemberships(tx, { userId }, 'all');
-      return {
-        ...ended,
-        keyPackages: keyPackages.affected ?? 0,
-        groupIds: [...new Set(touched.map((t) => t.groupId))],
-      };
-    });
-    // The routes of every group those device rows were in, by prefix and under each group's seat
-    // lock ({@link MessagingService.eraseRoutes}): a seat that committed just before the delete above
-    // may have had its route added since the group list was read at the start.
-    let lateRoutes = 0;
-    for (const groupId of departed.groupIds) {
-      lateRoutes += await this.messagingService.eraseRoutes(groupId, userId);
+    // Everything still queued FOR the account (a frame with no group included) and any device row
+    // left, in one transaction ({@link endDeviceMemberships}). Every group the rows named was cut
+    // above, and every writer of an `active` row reads the key package deleted first, so a row met
+    // here is one written since the discovery by a path that inserts without that read - the
+    // self-reported demotion (`deactivateDeviceMembership`), whose `pending` row carries no route.
+    // It goes with the rest, and the count says it happened.
+    const departed = await manager.transaction((tx) => endDeviceMemberships(tx, { userId }, 'all'));
+    if (departed.memberships > 0) {
+      this.logger.warn(
+        `[INTERNAL_DELETE] ${departed.memberships} device row(s) of user=${who} written after the ` +
+          `discovery, deleted now - a writer that inserts without reading the key package`
+      );
     }
     const [, sentQueued] = (await manager.query(
       `DELETE FROM queued_message
@@ -859,7 +858,7 @@ export class InternalController {
     this.logger.log(
       `[INTERNAL_DELETE] done user=${who} sentQueued=${sentQueued} ` +
         `deviceMemberships=${departed.memberships} queuedFor=${departed.queued} ` +
-        `keyPackages=${departed.keyPackages} lateRoutes=${lateRoutes}`
+        `keyPackages=${keyPackages.affected ?? 0}`
     );
     return { ok: true };
   }

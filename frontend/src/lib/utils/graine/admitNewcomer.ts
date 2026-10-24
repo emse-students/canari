@@ -224,7 +224,8 @@ export async function admitNewcomerToDistributionGroup(
           continue;
         }
         // A WHOLE-COMMIT REFUSAL THAT MOVED NOTHING: an unrelated eviction overtook this Add's seat
-        // claim, so the epoch is where it was and the tree is re-read and the Add rebuilt at once.
+        // claim on every submission `runCommitTransaction` made, so the epoch is where it was and
+        // the tree is re-read - an evicted device may have left it - and the Add rebuilt at once.
         // Termination is still a proof - each such refusal is an eviction that landed in between.
         if (e instanceof CommitRefusedError && e.reason === SEAT_CLAIM_OVERTAKEN_REASON) {
           log(

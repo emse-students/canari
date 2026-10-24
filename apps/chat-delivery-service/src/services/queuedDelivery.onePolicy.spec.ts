@@ -126,7 +126,10 @@ describe('a queued frame - one delivery, two routes', () => {
                 : entity === GroupMember
                   ? // The Welcome's target still holds its seat when the store re-reads it.
                     { findOne: jest.fn().mockResolvedValue({ id: 'seat' }) }
-                  : { save: queuedSave },
+                  : entity === KeyPackage
+                    ? // ...and its key package: every device asked for is still registered.
+                      { find: jest.fn(async ({ where }: { where: unknown[] }) => where) }
+                    : { save: queuedSave },
         })
       ),
     },

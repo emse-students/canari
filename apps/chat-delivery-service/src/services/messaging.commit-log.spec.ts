@@ -80,12 +80,23 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         // The newcomers a commit admits are written in the same callback as the advance.
         if (entity === DeviceGroupMembership) return txMembershipRepo;
         // A seat's key package, read FOR SHARE under the seat lock before the seat is written.
-        if (entity === KeyPackage) return keyPackageRepo;
+        if (entity === KeyPackage) return txKeyPackageRepo;
         if (entity === RevokedDevice) return revokedDeviceRepo;
         return txGroupInfoRepo;
       },
     })
   );
+  /**
+   * The key packages as the advance's transaction re-reads them under the seat lock: every device
+   * asked for is still registered unless a test says an erasure took it since the gate's read.
+   */
+  const txKeyPackageRepo = {
+    find: jest.fn(async ({ where }: { where: Array<{ userId: string; deviceId: string }> }) =>
+      where.filter((d) => !txErasedDevices.has(`${d.userId}:${d.deviceId}`))
+    ),
+  };
+  /** `userId:deviceId` of devices whose key package is gone by the time the lock is held. */
+  const txErasedDevices = new Set<string>();
   const membershipInsertBuilder = {
     insert: jest.fn().mockReturnThis(),
     values: jest.fn().mockReturnThis(),
@@ -196,6 +207,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       deviceId: 'device-1',
     });
     revokedDeviceRepo.findOne.mockResolvedValue(null);
+    txErasedDevices.clear();
     txGroupFind.mockResolvedValue([{ id: 'group-1', deletedAt: null }]);
     txSeatRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'user-2' });
     txQueuedRepo.save.mockImplementation(async (row: Record<string, unknown>) => ({
@@ -1191,7 +1203,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
                 if (entity === MlsCommitLog)
                   return { createQueryBuilder: () => commitInsertBuilder };
                 if (entity === DeviceGroupMembership) return seatRepo;
-                if (entity === KeyPackage) return keyPackageRepo;
+                if (entity === KeyPackage) return txKeyPackageRepo;
                 if (entity === RevokedDevice) return revokedDeviceRepo;
                 if (entity === QueuedMessage)
                   return { delete: jest.fn().mockResolvedValue({ affected: 0 }) };
@@ -1770,6 +1782,25 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         expect(txQueuedRepo.save).toHaveBeenCalledTimes(1);
       });
 
+      it("refuses the commit when the Welcome target's key package is gone under the seat lock", async () => {
+        // Registered when the target was resolved; an account erasure took it before the advance.
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        const sent = fanOut();
+        txErasedDevices.add('user-2:phone-2');
+
+        await expect(withWelcome()).resolves.toMatchObject({
+          accepted: false,
+          reason: 'welcome_target_not_member',
+        });
+        expect(groupUpdate).not.toHaveBeenCalled();
+        expect(txQueuedRepo.save).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
       it('refuses, before the epoch moves, a Welcome to a person the group does not name', async () => {
         tables({ keyPackages: [ownKey, newcomer], devices: [ownDevice], roster: [] });
         const sent = fanOut();
@@ -2002,6 +2033,21 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
       expect(txMembershipRepo.update).not.toHaveBeenCalled();
       expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
+    });
+
+    it('writes no row for an admit whose key package an erasure took after the gate read it', async () => {
+      // Registered when the admits were resolved, before the lock; gone when it is held.
+      keyPackageRepo.find.mockResolvedValue([{ userId: 'user-2', deviceId: 'phone-2' }]);
+      txErasedDevices.add('user-2:phone-2');
+
+      const res = await accept([{ userId: 'user-2', deviceId: 'phone-2' }]);
+
+      expect(res.accepted).toBe(true);
+      expect(txKeyPackageRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({ lock: { mode: 'pessimistic_read' } })
+      );
+      expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
+      expect(txMembershipRepo.update).not.toHaveBeenCalled();
     });
 
     it('records nothing for a client predating the field', async () => {

@@ -60,7 +60,11 @@ describe('the ONE writer of an active membership', () => {
     publish: jest.fn().mockResolvedValue(1),
   };
   const revokedDeviceRepo = { findOne: jest.fn().mockResolvedValue(null) };
-  const keyPackageRepo = { findOne: jest.fn().mockResolvedValue({ id: 'kp-1' }) };
+  const keyPackageRepo = {
+    findOne: jest.fn().mockResolvedValue({ id: 'kp-1' }),
+    // The key package as a seat writer re-reads it under the lock, before it inserts.
+    find: jest.fn().mockResolvedValue([{ userId: 'u1', deviceId: 'd1' }]),
+  };
   const deviceGroupRepo = {
     findOne: jest.fn().mockResolvedValue(null),
     upsert: jest.fn().mockResolvedValue(undefined),
@@ -84,12 +88,21 @@ describe('the ONE writer of an active membership', () => {
     // in-memory one below - so a write and the route's re-read see the same rows.
     groupRepo.manager = {
       transaction: async (cb: (m: unknown) => Promise<unknown>) =>
-        cb({ query: async () => [], getRepository: () => deviceGroupRepo }),
+        cb({
+          query: async () => [],
+          getRepository: (entity: unknown) =>
+            entity === KeyPackage
+              ? keyPackageRepo
+              : entity === RevokedDevice
+                ? revokedDeviceRepo
+                : deviceGroupRepo,
+        }),
     };
     groupRepo.findOne.mockResolvedValue(null);
     groupMemberRepo.findOne.mockResolvedValue(null);
     revokedDeviceRepo.findOne.mockResolvedValue(null);
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1' });
+    keyPackageRepo.find.mockResolvedValue([{ userId: 'u1', deviceId: 'd1' }]);
     deviceGroupRepo.findOne.mockResolvedValue(null);
     redis.xrange.mockResolvedValue([]);
 
@@ -166,6 +179,17 @@ describe('the ONE writer of an active membership', () => {
 
     expect(outcome).toEqual({ ok: false, reason: 'no_key_package' });
     expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a creator's seat whose key package is gone by the time the seat lock is held", async () => {
+    // Addressable at the gate; an account erasure deleted the key package before the write.
+    keyPackageRepo.find.mockResolvedValue([]);
+
+    const outcome = await service.activateDeviceMembership('u1', 'd1', 'g1', CREATOR);
+
+    expect(outcome).toEqual({ ok: false, reason: 'no_key_package' });
+    expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+    expect(redis.sadd).not.toHaveBeenCalled();
   });
 
   it('ACCUSES under the CALLER tag, so a refusal names the door that asked', async () => {
@@ -405,7 +429,12 @@ describe('the ONE writer of an active membership', () => {
               if (sql.includes('pg_advisory_xact_lock')) locks.push(String(params[0]));
               return sql.includes('FROM dm_seat_evictions') && eviction ? [eviction] : [];
             },
-            getRepository: () => deviceGroupRepo,
+            getRepository: (entity: unknown) =>
+              entity === KeyPackage
+                ? keyPackageRepo
+                : entity === RevokedDevice
+                  ? revokedDeviceRepo
+                  : deviceGroupRepo,
           }),
       };
       return locks;
@@ -425,9 +454,9 @@ describe('the ONE writer of an active membership', () => {
         ).resolves.toEqual({ ok: true });
       }
       expect(seats).toHaveLength(1);
-      // The creator's write needs no lock; each claimed write takes it, and each of the three
-      // routes takes it again after its seat committed.
-      expect(locks).toEqual(Array(5).fill('seat:g1'));
+      // Every write takes it - the creator's too, which inserts beside its key package like the
+      // others - and each of the three routes takes it again after its seat committed.
+      expect(locks).toEqual(Array(6).fill('seat:g1'));
       expect(redis.sadd).toHaveBeenCalledTimes(3);
     });
 

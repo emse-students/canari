@@ -12,7 +12,10 @@ import { BaseMlsService } from './BaseMlsService';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { isInEpochGap, resetEpochGapRegistry } from '$lib/utils/chat/epochGapRegistry';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
-import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import {
+  CommitRefusedError,
+  SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS,
+} from '$lib/mls-client/CommitRefusedError';
 import { commitRateLimitRemainingMs, resetCommitRateLimit } from '$lib/mls-client/commitRateLimit';
 
 /**
@@ -204,22 +207,63 @@ describe('BaseMlsService - a commit refused by the rate limit (429)', () => {
     expect(isInEpochGap('g')).toBe(false);
   });
 
-  it('rolls back a commit whose seat claim an unrelated eviction overtook, as a typed refusal', async () => {
+  const overtaken = () =>
+    new ApiRefusalError(409, 'SEAT_CLAIM_OVERTAKEN', 'Commit submission HTTP error (409)');
+
+  it('rebuilds and resubmits a commit whose seat claim an unrelated eviction overtook, so no caller sees it', async () => {
+    // A pending member's own add or remove in an ordinary conversation carries a committer claim:
+    // without the rebuild here it failed once, with nothing retrying it.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const ctx = makeCtx();
-    ctx.delivery.submitCommit.mockRejectedValue(
-      new ApiRefusalError(409, 'SEAT_CLAIM_OVERTAKEN', 'Commit submission HTTP error (409)')
-    );
+    ctx.delivery.submitCommit
+      .mockRejectedValueOnce(overtaken())
+      .mockResolvedValueOnce({ accepted: true, newEpoch: 196 });
+    const stageFn = vi.fn(async () => ({
+      commit: new Uint8Array([1]),
+      groupInfo: new Uint8Array([2]),
+    }));
+
+    await (
+      BaseMlsService.prototype as unknown as {
+        runCommitTransaction: (g: string, s: typeof stageFn) => Promise<unknown>;
+      }
+    ).runCommitTransaction.call(ctx, 'g', stageFn);
+
+    // Rolled back, staged again on the same epoch, accepted the second time.
+    expect(ctx.clearPendingCommit).toHaveBeenCalledTimes(1);
+    expect(stageFn).toHaveBeenCalledTimes(2);
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(2);
+    expect(ctx.mergePendingCommit).toHaveBeenCalledWith('g');
+  });
+
+  it('hands the refusal up as a typed one after its bound, every staged commit rolled back', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit.mockRejectedValue(overtaken());
 
     const refused = await runCommit(ctx, 'g').catch((e: unknown) => e);
 
-    // The server refused the WHOLE commit before advancing anything: the staged commit goes, and
-    // the caller is told a retry meets a fresh claim - never a fork, never a loss of state.
+    // The server refused the WHOLE commit each time before advancing anything: never a fork,
+    // never a loss of state, and the caller is told a later retry meets a fresh claim.
     expect(refused).toBeInstanceOf(CommitRefusedError);
     expect((refused as CommitRefusedError).reason).toBe('seat_claim_overtaken');
-    expect(ctx.clearPendingCommit).toHaveBeenCalledWith('g');
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS);
+    expect(ctx.clearPendingCommit).toHaveBeenCalledTimes(SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS);
     expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
     expect(commitRateLimitRemainingMs()).toBe(0);
     expect(isInEpochGap('g')).toBe(false);
+  });
+
+  it('does not rebuild on a commit it could not roll back', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const ctx = makeCtx({ clearPendingCommit: vi.fn().mockRejectedValue(new Error('locked')) });
+    ctx.delivery.submitCommit.mockRejectedValue(overtaken());
+
+    const refused = await runCommit(ctx, 'g').catch((e: unknown) => e);
+
+    expect((refused as CommitRefusedError).reason).toBe('seat_claim_overtaken');
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
   });
 
   it('leaves every other failed submission as it was: unanswered is not refused', async () => {
