@@ -404,7 +404,8 @@ export async function verifyGraineEndorsementV2(
  * Appends length-prefixed fields and fixed-width integers, big-endian. Exported for the other Graine
  * structures a device credential signs (`graineAdmission.ts`), which must begin the same way: a
  * 4-byte length whose first byte is `0x00`, the property that keeps them from ever being an MLS
- * `SignContent` (`mls-core/src/graine_signature.rs`).
+ * `SignContent` (`mls-core/src/graine_signature.rs`) - and for the author proofs of
+ * `messageAuthorship.ts`, whose descriptor shares this encoding.
  */
 export class GraineFieldWriter {
   private readonly parts: Uint8Array[] = [];

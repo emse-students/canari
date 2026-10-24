@@ -29,6 +29,7 @@ import {
   NotAGroupMemberError,
   type GroupExclusions,
   type SentFrame,
+  type AuthoredFrame,
   type GroupRosterBatch,
   type MlsDeliveryFetch,
   type CommitRemoval,
@@ -52,6 +53,7 @@ import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
   BaseRefreshOutcome,
+  DecryptedApplication,
   IncomingDeliveryMeta,
 } from '$lib/mls-client/IMlsService';
 import type { SkippedDevice, SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
@@ -68,6 +70,7 @@ import {
   setSenderMismatchReporter,
   type EnvelopeSender,
 } from '$lib/mls-client/verifiedSender';
+import { setIntegrityFindingReporter, type ForkFinding } from '$lib/mls-client/integrityFindings';
 import {
   keyPackagePublication,
   type DeviceKeyPackageAnswer,
@@ -566,6 +569,10 @@ export abstract class BaseMlsService implements IMlsService {
     // logs it (`[SENDER_MISMATCH]`, channel-encryption section 21).
     setSenderMismatchReporter((report) =>
       this.delivery.deliveryPost('sender-mismatch', { ...report })
+    );
+    // The same for a fork or forged history (`[INTEGRITY]`): seen on a device, read on the server.
+    setIntegrityFindingReporter((finding) =>
+      this.delivery.deliveryPost('integrity-finding', { ...finding })
     );
   }
 
@@ -4366,11 +4373,15 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<Uint8Array | null> {
     let plaintext: Uint8Array | null;
     try {
-      plaintext = await this.processIncomingMessage(groupId, ciphertext, {
-        userId: sender,
-        ...(senderDeviceId ? { deviceId: senderDeviceId } : {}),
-        path: 'distribution',
-      });
+      // A key-group frame relays no history, so its author verdict has no use here.
+      plaintext =
+        (
+          await this.processIncomingMessage(groupId, ciphertext, {
+            userId: sender,
+            ...(senderDeviceId ? { deviceId: senderDeviceId } : {}),
+            path: 'distribution',
+          })
+        )?.plaintext ?? null;
     } catch (e) {
       // REFUSED FOR ITS SENDER, BUT DECRYPTED: the generation is spent all the same (WP-G2-1b).
       if (e instanceof SenderMismatchError) {
@@ -5187,7 +5198,10 @@ export abstract class BaseMlsService implements IMlsService {
    * Platform-specific and nothing else: every rule that has to hold around a send lives in
    * {@link sendMessage}, which is the only caller.
    */
-  protected abstract encryptForSend(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array>;
+  protected abstract encryptForSend(
+    groupId: string,
+    messageBytes: Uint8Array
+  ): Promise<AuthoredFrame>;
 
   /**
    * Encrypts an application message and puts it on the wire.
@@ -5235,7 +5249,10 @@ export abstract class BaseMlsService implements IMlsService {
     messageBytes: Uint8Array,
     frameDelivery: FrameDelivery
   ): Promise<SentFrame> {
-    const encryptedBytes = await this.encryptForSend(groupId, messageBytes);
+    const { sealed: encryptedBytes, authorProof } = await this.encryptForSend(
+      groupId,
+      messageBytes
+    );
     this.noteLiveMutation();
     // DURABLE, AND BEFORE THE POST. The ratchet has moved by now and stays moved whether or not the
     // POST below succeeds, so this is the only correct moment: counting a successful send instead
@@ -5249,13 +5266,13 @@ export abstract class BaseMlsService implements IMlsService {
     scheduleOutboundMlsPersist();
     const proto = toBase64(encryptedBytes);
     const receivedAt = await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
-    return { sealed: encryptedBytes, receivedAt };
+    return { sealed: encryptedBytes, authorProof, receivedAt };
   }
   abstract processIncomingMessage(
     groupId: string,
     messageBytes: Uint8Array,
     envelope?: EnvelopeSender
-  ): Promise<Uint8Array | null>;
+  ): Promise<DecryptedApplication | null>;
   abstract exportSecret(
     groupId: string,
     label: string,
@@ -5273,5 +5290,6 @@ export abstract class BaseMlsService implements IMlsService {
   abstract graineRun(groupId: string): Promise<GraineRunReading>;
   abstract graineSignatureEngine(): GraineSignatureEngine;
   abstract signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
+  abstract takeForkFindings(): Promise<ForkFinding[]>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;
 }

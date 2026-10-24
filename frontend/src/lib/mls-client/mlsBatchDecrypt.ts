@@ -1,4 +1,5 @@
 import type { MlsBatchProcessResult } from './IMlsService';
+import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 
 /** Raw batch row from WASM or Tauri IPC before normalisation. */
 export type BatchDecryptRow = {
@@ -6,6 +7,8 @@ export type BatchDecryptRow = {
   data?: Uint8Array | number[] | null;
   /** The sender OpenMLS verified (`userId:deviceId`), beside `data` and only with it. */
   sender?: string | null;
+  /** mls-core's author-proof verdict, beside `data` and only with it (`AuthorVerdict::code`). */
+  author?: AuthorVerdict;
   error?: string;
 };
 
@@ -20,7 +23,12 @@ export function mapBatchDecryptRows(raw: BatchDecryptRow[]): MlsBatchProcessResu
     // Native omits `sender` when the credential was unreadable (serde skips a `None`), WASM sends
     // `null`: both mean "a plaintext whose sender cannot be checked", and must not read as a path
     // that carries no sender at all.
-    return { ok: true, plaintext: plain, sender: row.sender ?? null };
+    return {
+      ok: true,
+      plaintext: plain,
+      sender: row.sender ?? null,
+      ...(row.author ? { author: row.author } : {}),
+    };
   });
 }
 
