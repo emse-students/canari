@@ -20,10 +20,18 @@
  * | `delay MS`      | response | YES                | the real answer, MS later                    |
  * | `hold`          | request  | NOT YET            | nothing, until `release()` sends it / `fail()` |
  * | `hold-answer`   | response | YES                | nothing, until `release()` delivers / `fail()` |
+ * | `rewrite`       | response | YES                | the real status and headers, the body `transform(text)` returned |
+ * | `rewrite-url`   | request  | the NEW url        | the answer to the url `url(original)` returned |
  *
  * `hold` is the one for "two members commit at the same epoch, released together" (CC-*): both
  * requests are stopped BEFORE the server, and `Promise.all([a.release(), b.release()])` lets them go
  * at once. `hold-answer` is for "the request never answers" (DUP-6): the server has acted.
+ *
+ * `rewrite` and `rewrite-url` are the GAP rows' tools (2026-10-25): a pending pull whose commit rows
+ * are taken out (GAP-1), a captured frame delivered again in a later pull (GAP-2), a pull that starts
+ * past the first 2000 frames (GAP-3). Each takes a FUNCTION on its rule - `transform(text, record)`
+ * returning the new body, `url(original)` returning the new url - and records whether it changed
+ * anything (`changed`): a rewrite that changed nothing is a fault that never happened.
  *
  * Every rule takes a count: `once` (1), `xN`, or unlimited. A request the rule no longer applies to
  * is continued untouched, so a `status 401 once` refuses the first commit and lets the retry through.
@@ -59,6 +67,8 @@ export const MODES = {
   delay: { stage: 'Response', arg: 'ms' },
   hold: { stage: 'Request', arg: null },
   'hold-answer': { stage: 'Response', arg: null },
+  rewrite: { stage: 'Response', arg: null },
+  'rewrite-url': { stage: 'Request', arg: null },
 };
 
 /**
@@ -111,7 +121,11 @@ export function ruleMatches(rule, { url, method }) {
  * (DUP-4) - cannot be provoked by a status alone. An object is sent as JSON; a string as text/plain.
  * Any other mode with a body is refused: a body nobody sends is a rule that lies about what it does.
  *
- * @param {Array<{match: string|RegExp, method?: string, fault: string, body?: string|object}>} rules
+ * `transform` (for `rewrite`) and `url` (for `rewrite-url`) are functions, required by their mode and
+ * refused on any other, for the same reason.
+ *
+ * @param {Array<{match: string|RegExp, method?: string, fault: string, body?: string|object,
+ *   transform?: (text: string, record: object) => string, url?: (original: string) => string}>} rules
  */
 export function compileRules(rules) {
   if (!Array.isArray(rules) || rules.length === 0) throw new Error('armFault: no rule given');
@@ -121,7 +135,24 @@ export function compileRules(rules) {
     const parsed = parseFault(r.fault);
     if (r.body !== undefined && MODES[parsed.mode].arg !== 'status')
       throw new Error(`armFault: rule ${index} gives a body to '${parsed.mode}', which sends none`);
-    return { index, match: r.match, method: r.method ?? null, ...parsed, body: fulfilBody(r.body), spec: r.fault, fired: 0 };
+    for (const [fn, mode] of [
+      ['transform', 'rewrite'],
+      ['url', 'rewrite-url'],
+    ]) {
+      if (parsed.mode === mode && typeof r[fn] !== 'function') throw new Error(`armFault: rule ${index} '${mode}' needs a '${fn}' function`);
+      if (parsed.mode !== mode && r[fn] !== undefined) throw new Error(`armFault: rule ${index} gives '${fn}' to '${parsed.mode}', which never calls it`);
+    }
+    return {
+      index,
+      match: r.match,
+      method: r.method ?? null,
+      ...parsed,
+      body: fulfilBody(r.body),
+      transform: r.transform ?? null,
+      url: r.url ?? null,
+      spec: r.fault,
+      fired: 0,
+    };
   });
 }
 
@@ -187,6 +218,38 @@ export async function armFault(cx, rules, { log = (l) => console.log(l) } = {}) 
     wake();
   };
 
+  /**
+   * A `rewrite`: read the real body, hand it to the rule's `transform`, answer with what it returns
+   * under the REAL status and headers - minus the length and the encoding, which described the old
+   * bytes. A transform that throws, or a body that cannot be read, sends the real answer on and says
+   * so on the record: never a page left paused.
+   */
+  const rewriteAnswer = async (p, rule, record) => {
+    let text;
+    try {
+      const got = await cx.send('Fetch.getResponseBody', { requestId: p.requestId });
+      text = got?.base64Encoded ? Buffer.from(got.body ?? '', 'base64').toString('utf8') : String(got?.body ?? '');
+    } catch (e) {
+      record.rewriteError = `body unreadable: ${String(e?.message ?? e)}`;
+      return answer('Fetch.continueRequest', { requestId: p.requestId }, record);
+    }
+    let out = text;
+    try {
+      out = String(rule.transform(text, record));
+    } catch (e) {
+      record.rewriteError = `transform threw: ${String(e?.message ?? e)}`;
+    }
+    record.changed = out !== text;
+    record.bytesBefore = Buffer.byteLength(text, 'utf8');
+    record.bytesAfter = Buffer.byteLength(out, 'utf8');
+    const headers = (p.responseHeaders ?? []).filter((h) => !/^(content-length|content-encoding)$/i.test(h.name));
+    return answer(
+      'Fetch.fulfillRequest',
+      { requestId: p.requestId, responseCode: p.responseStatusCode ?? 200, responseHeaders: headers, body: Buffer.from(out, 'utf8').toString('base64') },
+      record,
+    );
+  };
+
   const onPaused = (p) => {
     const stage = p.responseStatusCode !== undefined || p.responseErrorReason !== undefined ? 'Response' : 'Request';
     const req = { url: p.request?.url ?? '', method: p.request?.method ?? '', stage };
@@ -230,6 +293,21 @@ export async function armFault(cx, rules, { log = (l) => console.log(l) } = {}) 
       case 'hold-answer':
         held.push(record);
         break;
+      case 'rewrite':
+        void rewriteAnswer(p, rule, record);
+        break;
+      case 'rewrite-url': {
+        let next = req.url;
+        try {
+          next = String(rule.url(req.url));
+        } catch (e) {
+          record.rewriteError = String(e?.message ?? e);
+        }
+        record.changed = next !== req.url;
+        record.gaveUrl = next;
+        void answer('Fetch.continueRequest', record.changed ? { requestId: p.requestId, url: next } : { requestId: p.requestId }, record);
+        break;
+      }
       default:
         throw new Error(`fault: no action for mode ${rule.mode}`);
     }
