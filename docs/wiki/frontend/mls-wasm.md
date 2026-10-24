@@ -303,6 +303,39 @@ hit. Three things about it are deliberate:
   `.wasm` under `build/` by content and fails on any binary written more than once, because nothing
   about the duplicate is visible at runtime except a slow first load.
 
+### A worker loads in a worker scope
+
+A worker has no `window`, no `document` and no SvelteKit client runtime, so a module that touches
+any of them **at load** kills the worker before its first message - and nothing in the page's graph
+says so, since the page has all three. A type-check sees an import edge, never the scope it runs in.
+
+**What shipped (`1.4.1-alpha.2`, found on dev 2026-10-24).** #2261 turned `mlsWasmLoader.ts`'s
+`import type` from `$lib/crypto/graineV2` into a value import (`packGraineSignatureChecks`). That
+reached `graine.ts`, then `utils/hex.ts`, which took `isTauriRuntime` from `utils/openExternal.ts` -
+the link-click module, a re-export - and so pulled in `appLinkNavigation.ts` -> `$app/navigation`
+and `stores/auth.ts` -> `$app/paths`. SvelteKit's client runtime reads `window.fetch` when it loads,
+so `mlsCrypto`, `mlsEncrypt` and `mlsKeyPackage` all died with `window is not defined`. The state
+export then failed (`MlsCheckpointNotWrittenError ... at its export - nothing was stored`), nothing
+was ever persisted, and every reload found no state and rotated the device identity. `1.4.0` and
+`1.4.1-alpha.1` predate #2261; native builds do not spawn the MLS workers (`TauriMlsService` runs MLS
+in Rust, and `sealWebMlsState` refuses inside Tauri), so only the WEB client was hit.
+
+**The fix is the edge, not the scope**: `hex.ts` imports `isTauriRuntime` from
+`utils/tauriRuntime.ts`, its dependency-free home. The `window = globalThis` line at the top of each
+MLS worker is NOT the answer and must not be moved before the imports: it exists for the wasm-bindgen
+`window.wasm_bindings_log` import, which only runs on a call, and widening it would let a page module
+load half-working inside a worker instead of failing.
+
+**The guard runs the worker, it does not read it**: `src/lib/workers/workerScope.test.ts` finds every
+`?worker` import in the source (and fails on any other way to start one of ours), bundles each entry
+with Vite so tree-shaking and type-only erasure are the real ones, refuses `$app/*`, `$env/*` and
+`__sveltekit/*` at resolution with the importer named, then imports the bundle in a
+`node:worker_threads` thread - `fetch` and `crypto` but no `window` or `document`, `self` set as a
+worker scope has it - and requires the load to succeed. On the pre-fix tree it fails the three MLS
+workers and names `appLinkNavigation.ts imports $app/navigation`; an added top-level
+`window.location` read in a module they share fails all three with `ReferenceError: window is not
+defined`. The call worker (`encryption.worker.ts`) is covered by the same test and loads clean.
+
 ### Why it is not committed
 
 It was, until 2026-08-18, and it went stale. Only `deploy.yml` and `cd-dev.yml` rebuilt it (the latter

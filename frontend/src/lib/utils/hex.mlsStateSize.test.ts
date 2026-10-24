@@ -2,7 +2,7 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 
 let tauri = true;
-vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => tauri }));
+vi.mock('$lib/utils/tauriRuntime', () => ({ isTauriRuntime: () => tauri }));
 
 import { mlsStateSize, hasMlsState } from './hex';
 
