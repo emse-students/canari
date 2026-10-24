@@ -1366,7 +1366,7 @@ static PUSH_CONTEXT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Takes [`PUSH_CONTEXT_LOCK`]. The lock guards an ORDER, not a value: a holder that panicked
 /// leaves no half-built data behind it, so a poisoned lock is taken as it is.
-fn push_context_guard() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn push_context_guard() -> std::sync::MutexGuard<'static, ()> {
     PUSH_CONTEXT_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1586,7 +1586,7 @@ pub(crate) fn claim_device_notices(
 }
 
 /// The file that NAMES whose the files above are - removed last, since it is the proof.
-const PUSH_CONTEXT_FILE: &str = "push_context.json";
+pub(crate) const PUSH_CONTEXT_FILE: &str = "push_context.json";
 
 /// Deletes the push-side files of a DELETED account (WP-DEL-LOCAL) - see [`remove_user_push_files`].
 ///
@@ -1764,11 +1764,11 @@ fn remove_user_push_files_proved(
 
 /// The app's own handoff file: read FIRST by every in-app reader, then moved into the Keystore /
 /// Keychain (`retrievePushSecret`, `CanariRetrievePushSecret`).
-const PENDING_PUSH_SECRET_FILE: &str = "pending_push_secret.txt";
+pub(crate) const PENDING_PUSH_SECRET_FILE: &str = "pending_push_secret.txt";
 
 /// The iOS Notification Service Extension's copy, in the App Group container
 /// (`NotificationService.loadPushSecret`). The extension has no other way to the secret.
-const EXTENSION_PUSH_SECRET_FILE: &str = "push_secret.txt";
+pub(crate) const EXTENSION_PUSH_SECRET_FILE: &str = "push_secret.txt";
 
 /// Writes a freshly minted push secret to EVERY place a reader looks for it, in one call.
 ///
@@ -1782,7 +1782,7 @@ const EXTENSION_PUSH_SECRET_FILE: &str = "push_secret.txt";
 /// in-app `refresh-token` calls passed. `extension_dir` is `None` where there is no extension
 /// (Android).
 #[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
-fn write_push_secret(
+pub(crate) fn write_push_secret(
     data_dir: &std::path::Path,
     extension_dir: Option<&std::path::Path>,
     secret: &str,
@@ -1808,7 +1808,11 @@ fn write_push_secret(
                 format!("write {}: {e}", target.display())
             })?;
     }
-    Ok(())
+    // A SECRET IS THE SERVER'S ANSWER TO A REGISTRATION, so this device is a push destination again
+    // - for the session that registered it. LAST, once every copy of the secret is written: a
+    // device whose copies are incomplete stays signed out, and its next registration retries all.
+    // See `push_registration.rs`.
+    crate::commands::push_registration::clear_signed_out_mark(data_dir)
 }
 
 /// Stores the pushSecret received from the backend: `pending_push_secret.txt` for the app's own

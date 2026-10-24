@@ -410,32 +410,34 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * file's presence never means anything but "newer than the Keystore".
          */
         internal fun retrievePushSecret(context: Context): String? {
-            try {
-                val file = File(MlsContextLoader.tauriDataDir(context), "pending_push_secret.txt")
-                if (file.exists()) {
-                    val rawBytes = file.readBytes()
-                    val secret = rawBytes.toString(Charsets.UTF_8).trim()
-                    if (secret.isNotEmpty()) {
-                        PushSecretKeystore.store(context, secret)
-                        file.writeBytes(ByteArray(rawBytes.size) { 0 })
-                        file.delete()
-                        Log.i(TAG, "retrievePushSecret: newer secret adopted from pending_push_secret.txt -> Keystore")
-                        return secret
+            synchronized(PushSecretKeystore.handoffLock) {
+                try {
+                    val file = File(MlsContextLoader.tauriDataDir(context), "pending_push_secret.txt")
+                    if (file.exists()) {
+                        val rawBytes = file.readBytes()
+                        val secret = rawBytes.toString(Charsets.UTF_8).trim()
+                        if (secret.isNotEmpty()) {
+                            PushSecretKeystore.store(context, secret)
+                            file.writeBytes(ByteArray(rawBytes.size) { 0 })
+                            file.delete()
+                            Log.i(TAG, "retrievePushSecret: newer secret adopted from pending_push_secret.txt -> Keystore")
+                            return secret
+                        }
+                        // An empty file is a half-written handoff, not an answer: leave it for the next
+                        // reader and fall through to the Keystore rather than deleting a secret nobody
+                        // has read yet.
+                        Log.w(TAG, "retrievePushSecret: pending_push_secret.txt present but empty - falling through to the Keystore")
                     }
-                    // An empty file is a half-written handoff, not an answer: leave it for the next
-                    // reader and fall through to the Keystore rather than deleting a secret nobody
-                    // has read yet.
-                    Log.w(TAG, "retrievePushSecret: pending_push_secret.txt present but empty - falling through to the Keystore")
+                } catch (e: Exception) {
+                    Log.e(TAG, "retrievePushSecret: pending_push_secret.txt unreadable: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "retrievePushSecret: pending_push_secret.txt unreadable: ${e.message}")
-            }
 
-            val stored = PushSecretKeystore.retrieve(context)
-            if (stored == null) {
-                Log.e(TAG, "retrievePushSecret: no pending file and no Keystore entry - background send cannot authenticate")
+                val stored = PushSecretKeystore.retrieve(context)
+                if (stored == null) {
+                    Log.e(TAG, "retrievePushSecret: no pending file and no Keystore entry - background send cannot authenticate")
+                }
+                return stored
             }
-            return stored
         }
 
         /**
@@ -2539,8 +2541,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // token) until reopen. Best-effort via PushSecret; if the context/secret is missing (device
         // not enrolled yet), the foreground will register the token at the next startup.
         runWithWakeLock("fcm_token_refresh", 15_000L) {
+            // The context first: after a sign-out there is none (the deletion that minted this
+            // token is the sign-out's), and the secret's absence is then expected, not a fault.
             val ctx = MlsContextLoader.loadPushContext(this)
-            val secret = retrievePushSecret(this)
+            val secret = ctx?.let { retrievePushSecret(this) }
             if (ctx == null || secret == null) {
                 Log.d(TAG, "onNewToken: context/secret absent -> backend refresh deferred to foreground")
                 return@runWithWakeLock
@@ -2570,6 +2574,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (msgType == "call_ring_end") {
             Log.d(TAG, "call_ring_end: call=${data["callId"]} reason=${data["reason"]}")
             cancelIncomingCallNotification(this, data["callId"] ?: "")
+            return
+        }
+
+        // A SIGNED-OUT DEVICE SHOWS NOTHING. No account owns this install's pushes until the next
+        // registration is answered (`push_registration.rs`); a push still reaching it was sent
+        // before the server ended the session's registration and FCM forgot the deleted token,
+        // and showing it would show the account that left.
+        if (PushRegistrationEnd.isSignedOut(this)) {
+            Log.w(TAG, "onMessageReceived: dropped type=$msgType - this device is signed out, no account owns its pushes")
             return
         }
 

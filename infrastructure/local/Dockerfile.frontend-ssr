@@ -27,7 +27,12 @@
 # swap, and one nothing here has verified against a running site. The rule this
 # repo learned on Portail-etu is that a runtime move is proven on its target
 # host, not in CI. Until that is done, this stays on node.
-FROM node:25-alpine
+#
+# NODE 24, AN LTS LINE, NEVER AN ODD MAJOR. Node 25 left support on 2026-06-01
+# and node:25-alpine has not been rebuilt since, so its OpenSSL and bundled npm
+# carry fixed advisories the image scan reports (#2308 moved off it, Dependabot's
+# #2338 moved back; `.github/dependabot.yml` now leaves node majors to a hand move).
+FROM node:24-alpine
 
 WORKDIR /app
 COPY frontend/build ./
