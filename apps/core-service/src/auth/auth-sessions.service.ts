@@ -19,6 +19,24 @@ export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const ROTATION_GRACE_SECONDS = 60;
 
 /**
+ * Whether `presented` is the `jti` the session's last rotation replaced, still inside
+ * {@link ROTATION_GRACE_SECONDS}. ONE predicate for every caller that accepts that token: the
+ * refresh itself, and a restore-key registration racing it (docs/wiki/account-restore.md).
+ */
+export function isPreviousTokenInGrace(
+  row: Pick<AuthSession, 'previousTokenId' | 'rotatedAt'>,
+  presented: string,
+  now: Date
+): boolean {
+  return (
+    row.previousTokenId === presented &&
+    row.rotatedAt !== null &&
+    row.rotatedAt !== undefined &&
+    now.getTime() - row.rotatedAt.getTime() <= ROTATION_GRACE_SECONDS * 1000
+  );
+}
+
+/**
  * How often expired rows are swept. An expired row is already refused, so for AUTHENTICATION this is
  * housekeeping - but the sweep is also what deletes `lastIp` and `userAgent`, and the privacy
  * policy promises IP logs are kept 90 days at most. Every write of `lastIp` moves `expiresAt` to
@@ -197,12 +215,7 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
       return { status: 'unknown' };
     }
 
-    if (
-      row.previousTokenId === presentedTokenId &&
-      row.rotatedAt !== null &&
-      row.rotatedAt !== undefined &&
-      now.getTime() - row.rotatedAt.getTime() <= ROTATION_GRACE_SECONDS * 1000
-    ) {
+    if (isPreviousTokenInGrace(row, presentedTokenId, now)) {
       this.logger.debug(`Concurrent refresh accepted sid=${sessionId} (grace window)`);
       return {
         status: 'reissued',

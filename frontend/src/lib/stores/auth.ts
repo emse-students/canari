@@ -39,6 +39,11 @@ import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
 import { endPushRegistration } from '$lib/services/PushNotificationService';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { customTabsCommand } from '$lib/services/customTabsCommands';
+import {
+  clearRestoreKey,
+  forgetRestoreKeyRegistrations,
+  markRestoreAttempted,
+} from '$lib/services/restoreKey';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -679,23 +684,43 @@ async function handleOidcCallbackUnderway(
     throw new Error(message);
   }
 
-  const data = (await res.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    /** MiConnect's id_token, kept for ONE use: the `id_token_hint` of the sign-out. */
-    id_token?: string;
-    user: {
-      id: string;
-      email: string;
-      displayName: string;
-      firstYearOfSchool: number | null;
-      avatarMediaId: string | null;
-      bio: string | null;
-      admin: boolean;
-    };
-  };
+  const data = (await res.json()) as SignedInSession;
+  await adoptSignedInSession(data, 'miconnect');
+  console.debug('[auth] handleOidcCallback complete');
+  return data.user;
+}
 
-  console.debug('[auth] got access_token, saving user:', data.user?.id);
+/** What a session-minting route answers: core-service's `issueSession` body. */
+export interface SignedInSession {
+  access_token: string;
+  refresh_token?: string;
+  /** MiConnect's id_token, kept for ONE use: the `id_token_hint` of the sign-out. */
+  id_token?: string;
+  user: {
+    id: string;
+    email: string;
+    displayName: string;
+    firstYearOfSchool: number | null;
+    avatarMediaId: string | null;
+    bio: string | null;
+    admin: boolean;
+  };
+}
+
+/**
+ * Adopts a session the server has just MINTED, whichever way the account was proven: a MiConnect
+ * callback, or a restore key on a new Android phone (WP-RESTORE-1, docs/wiki/account-restore.md).
+ * ONE implementation, so a restored session can never be missing a step a signed-in one takes.
+ *
+ * `via` decides the one difference: a restore has no MiConnect id_token, by construction (MiConnect
+ * was not asked), so the stale one of a previous sign-in is removed WITHOUT the warning that says a
+ * server forgot to send it.
+ */
+async function adoptSignedInSession(
+  data: SignedInSession,
+  via: 'miconnect' | 'restore'
+): Promise<void> {
+  console.debug(`[auth] got access_token (${via}), saving user:`, data.user?.id);
   // THE SERVER LET THIS SUBJECT IN, so any erasure of it has completed and this is a new account: a
   // wipe still owed on this device for the deleted one must never reach it (WP-DEL-LOCAL). First,
   // before this session's token or identity exists anywhere another tab's resume could miss.
@@ -726,10 +751,33 @@ async function handleOidcCallbackUnderway(
   saveUserLocally(data.user);
   // After the save, so the account it names is already the signed-in one when a reader compares.
   noteSessionAnswered(data.user.id);
-  await rememberMiconnectIdToken(data.id_token);
-  console.debug('[auth] handleOidcCallback complete');
+  // A NEW SESSION HAS NO RESTORE KEY YET: the marker that says "registered" spoke of the previous
+  // session's, so the next start registers one for this one. And this install is past its first
+  // start, so it never attempts a restore again.
+  forgetRestoreKeyRegistrations();
+  markRestoreAttempted();
+  if (via === 'miconnect') {
+    await rememberMiconnectIdToken(data.id_token);
+  } else {
+    await removeOidcEntry(OIDC_ID_TOKEN_KEY);
+    alog(
+      'restored session: no MiConnect id_token, by construction - the sign-out will not end one'
+    );
+  }
+}
 
-  return data.user;
+/**
+ * Adopts the session `POST /api/auth/restore/assertion` minted, counted as a sign-in in flight
+ * while it lands (as {@link handleOidcCallback} is), so a resumed deletion wipe waits for it.
+ */
+export async function adoptRestoredSession(data: SignedInSession): Promise<void> {
+  const run = adoptSignedInSession(data, 'restore');
+  _signInsInFlight.add(run);
+  try {
+    await run;
+  } finally {
+    _signInsInFlight.delete(run);
+  }
 }
 
 /**
@@ -1270,6 +1318,14 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
     alog('clear✓ local only - the shared cookie and credential are left to the tab that owns them');
     return;
   }
+  // THE RESTORE KEY GOES WITH THE SESSION (WP-RESTORE-1). The server's copy dies with the session
+  // row the logout below revokes; this is the platform's copy, so no later backup carries it. And
+  // the install is past its first start: a key that a sign-out could not reach the server about
+  // must never sign this user straight back in from `/login`. Not in the local-only branch above:
+  // the key, like the cookie, is one per app, and that branch touches nothing shared.
+  forgetRestoreKeyRegistrations();
+  markRestoreAttempted();
+  void clearRestoreKey('signed out');
   // Tell the backend to REVOKE the session row - the cookie is the least of it. The credential has
   // to travel the same way it does on a refresh, or the server cannot name the row to delete and a
   // logout on iOS would clear the local copy while leaving the session alive for seven more days.

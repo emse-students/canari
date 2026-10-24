@@ -6,6 +6,8 @@
   interface Props {
     /** Whether an OIDC or dev login request is in progress. */
     isLoggingIn: boolean;
+    /** What the busy button says; the OIDC redirect's sentence when not given. */
+    busyLabel?: string | null;
     /** Error message to display below the login button; empty string hides it. */
     loginError: string;
     /** Whether biometric authentication is available on the current device. */
@@ -26,6 +28,7 @@
 
   let {
     isLoggingIn,
+    busyLabel = null,
     loginError,
     biometricAvailable: _biometricAvailable,
     maintenanceNotice = null,
@@ -87,7 +90,7 @@
             <span
               class="border-cn-ink/20 border-t-cn-ink inline-block h-4 w-4 animate-spin rounded-full border-2"
             ></span>
-            {m.auth_redirecting()}
+            {busyLabel ?? m.auth_redirecting()}
           </span>
         {:else}
           {m.auth_sign_in()}
