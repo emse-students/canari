@@ -91,9 +91,10 @@ production CAS, which needs one second-factor validation by a person.
 - Never count a callback whose user-agent is the CAS's own HTTP client: single logout calls our
   callback from the CAS side and raises `No state stored in the session`.
 
-## Still open
+## Closed by the project owner, 2026-10-22
 
-- Re-measure the school production CAS (IP only, user-agent only) once the school confirms which
-  setting it applied there ([backlog](../backlog.md)).
+- **No re-measure of the school production CAS.** The school brings its own fix to production when it reaches it
+  on its roadmap; nothing is owed here and the table above stays as the record. If the production share of
+  bare callbacks (second table) is ever read again, compare it with 14 % before 2026-10-08 and 4 % after.
 - Nothing in Canari or in Authentik can fix this: Authentik already restarts the flow, which is why
   the failure heals. The fix belongs at the CAS.

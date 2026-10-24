@@ -12,6 +12,10 @@ vi.mock('$lib/features', async (orig) => ({
   ...(await orig<typeof import('$lib/features')>()),
   CALLS_ENABLED: true,
 }));
+vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
+  ...(await orig<typeof import('$lib/stores/appVersionCheck.svelte')>()),
+  serverCallsMode: () => 'audio',
+}));
 vi.mock('$lib/utils/userAvatarCache', () => ({
   resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
   releaseUserAvatarDisplayUrl: () => {},

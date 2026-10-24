@@ -301,9 +301,7 @@
       selections,
     })
   );
-  const priceDecided = $derived(price.priceDecided);
   const priceUnavailable = $derived(price.priceUnavailable);
-  const priceCents = $derived(price.priceCents);
   const appliedPricingLabel = $derived(price.appliedLabel);
 
   /** The supplement shown beside an option, in cents - zero where the grid prices the question. */
@@ -537,14 +535,7 @@
     </div>
   {:else if form}
     <!-- ── Header ── -->
-    <FormHeader
-      {form}
-      priceLabel={priceDecided && !priceUnavailable && priceCents > 0
-        ? m.form_view_from_price({ price: formatCurrency(priceCents, form.currency) }) +
-          appliedPricingLabel
-        : null}
-      {submitted}
-    />
+    <FormHeader {form} {submitted} />
 
     <!-- ── Progress bar ── -->
     {#if !submitted && totalCount > 0}
@@ -734,7 +725,9 @@
           <span class="text-text-muted text-sm">{m.form_view_combination_closed_title()}</span>
         {:else if calculateTotal() > 0}
           <div>
-            <p class="text-text-muted text-xs font-medium">{m.form_view_total_to_pay()}</p>
+            <p class="text-text-muted text-xs font-medium">
+              {m.form_view_total_to_pay()}{appliedPricingLabel}
+            </p>
             <p class="text-cn-dark text-lg font-bold">
               {formatCurrency(calculateTotal(), form.currency)}
             </p>

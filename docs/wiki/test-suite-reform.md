@@ -232,7 +232,7 @@ change failing.
   case count, same pass set, and the list of moved files in the PR.
 
 **Built 2026-10-18 (draft PR `chore/tests-t4-node-env`).** `vitest.config.ts` says
-`environment: 'node'`, and the **380** files (2026-10-24) that need a DOM say so on their own first line:
+`environment: 'node'`, and the **381** files (2026-10-24) that need a DOM say so on their own first line:
 `// @vitest-environment happy-dom`. The population was SEEDED from `--environment=node` runs, never
 guessed: 149 plain test files (the first whole-suite run) and 150 of the 179 `*.svelte.test.ts` (a
 second run of those alone; the other 29 pass under node and now run there), plus 3 that `main` added
