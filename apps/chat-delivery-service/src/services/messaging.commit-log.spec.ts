@@ -470,6 +470,29 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(transaction).not.toHaveBeenCalled();
     });
 
+    it('names the revocation, not the ownership, when the revocation also purged the KeyPackage', async () => {
+      // The ordinary shape of a revoked device: denylisted AND its static KeyPackage gone. The
+      // answer its client acts on must be the true one, so the denylist is asked first.
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      deviceGroupRepo.findOne.mockResolvedValue({ deviceId: 'device-1' });
+      revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
+      keyPackageRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-1',
+            baseEpoch: 5,
+            proto: memberCommitFrame('group-1', 5n),
+            senderId: 'user-1',
+          },
+          'user-1'
+        )
+      ).rejects.toMatchObject({ response: { code: 'DEVICE_REVOKED', error: 'device_revoked' } });
+      expect(transaction).not.toHaveBeenCalled();
+    });
+
     it('refuses a commit from a device with no static KeyPackage, before promoting anything', async () => {
       // It is registered to nobody, so it is not the committer's device: refused at the door, where
       // it used to be accepted and only its promotion refused.

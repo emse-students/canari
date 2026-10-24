@@ -660,6 +660,19 @@ export class MessagingService {
   ) {}
 
   /**
+   * Whether `userId:deviceId` is on the revocation denylist under the one active-revocation rule -
+   * read by the PAIR, on the `(userId, deviceId)` unique index. Shared by every gate that must
+   * refuse a revoked device (routing, the commit gate), so they cannot disagree on what "revoked" is.
+   */
+  private async isDeviceRevoked(userId: string, deviceId: string): Promise<boolean> {
+    const revoked = await this.revokedDeviceRepo.findOne({
+      where: activeRevocationWhere({ userId, deviceId }),
+      select: { id: true },
+    });
+    return Boolean(revoked);
+  }
+
+  /**
    * Whether a device may be given - or keep - an `active` routing membership.
    *
    * A device good enough to be MESSAGED must be at least as valid as one good enough to be
@@ -686,10 +699,7 @@ export class MessagingService {
     userId: string,
     deviceId: string
   ): Promise<{ ok: boolean; reason?: 'revoked' | 'no_key_package' }> {
-    const revoked = await this.revokedDeviceRepo.findOne({
-      where: activeRevocationWhere({ userId, deviceId }),
-    });
-    if (revoked) return { ok: false, reason: 'revoked' };
+    if (await this.isDeviceRevoked(userId, deviceId)) return { ok: false, reason: 'revoked' };
     const keyPackage = await this.keyPackageRepo.findOne({
       where: { userId, deviceId },
       select: { id: true },
@@ -1891,6 +1901,25 @@ export class MessagingService {
       });
     }
     this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'COMMIT');
+    // THE DEVICE IS NOT REVOKED - asked FIRST, so a revoked device is told the reason that is true.
+    // A revocation purges the static KeyPackage, so the ownership check below would refuse it as
+    // `device_not_owned`, a coincidence of the purge and not a rule, and the answer its client acts
+    // on. A revoked device is exactly the one whose leaf members are removing, and a commit from it
+    // would move the epoch of every group it still holds, its Remove of THEIR leaves included.
+    // Refused before the lock and before the duplicate answer: a resubmission is a commit too, and a
+    // revoked device is told so rather than told it landed. Read by the pair, on the
+    // `(userId, deviceId)` unique index the denylist already carries - no migration.
+    if (await this.isDeviceRevoked(committer, deviceId)) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] REJECT device_revoked group=${groupId} device=${deviceId} ` +
+          `sender=${sanitizeLogValue(committer)}`
+      );
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.DEVICE_REVOKED, 'this device was revoked', {
+          error: 'device_revoked',
+        })
+      );
+    }
     // AND THE DEVICE IS THE CALLER'S: the commit activates `senderId:deviceId`, so a device
     // registered to anyone else is refused. The static KeyPackage row is the registry, and it is
     // unique on the PAIR - read by the pair, never by the device id alone.
@@ -1907,28 +1936,6 @@ export class MessagingService {
         error: 'device_not_owned',
         message: 'this device is not registered to the committer',
       });
-    }
-    // AND THE DEVICE IS NOT REVOKED. A revocation purges the static KeyPackage, so the check above
-    // usually refuses it first - but that is a coincidence of the purge, not a rule: a revoked
-    // device is exactly the one whose leaf members are removing, and a commit from it would move
-    // the epoch of every group it still holds, its Remove of THEIR leaves included. Refused before
-    // the lock and before the duplicate answer below: a resubmission is a commit too, and a revoked
-    // device is told so rather than told it landed. Read by the pair, on the `(userId, deviceId)`
-    // unique index the denylist already carries - no migration.
-    const revoked = await this.revokedDeviceRepo.findOne({
-      where: activeRevocationWhere({ userId: committer, deviceId }),
-      select: { id: true },
-    });
-    if (revoked) {
-      this.logger.warn(
-        `[COMMIT][${traceId}] REJECT device_revoked group=${groupId} device=${deviceId} ` +
-          `sender=${sanitizeLogValue(committer)}`
-      );
-      throw new ForbiddenException(
-        refusalBody(RefusalCode.DEVICE_REVOKED, 'this device was revoked', {
-          error: 'device_revoked',
-        })
-      );
     }
     const baseEpoch =
       typeof body.baseEpoch === 'number' && Number.isFinite(body.baseEpoch)
