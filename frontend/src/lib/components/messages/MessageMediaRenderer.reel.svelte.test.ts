@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A CanaReel sent in a conversation is a TILE, and this file MOUNTS the branch that draws it.
  *

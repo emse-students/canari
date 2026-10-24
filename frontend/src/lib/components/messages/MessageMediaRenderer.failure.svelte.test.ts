@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A CHAT ATTACHMENT THAT CANNOT BE SHOWN SAYS WHY (2026-10-01).
  *

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * WHO SAYS WHETHER A MISSING MLS STATE IS A LOSS.
  *

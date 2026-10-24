@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A MEDIA ROW NOTHING WILL EVER FILL SAYS SO, AND AN OWN FILE CARD WITH NO BUBBLE BEHIND IT USES
  * THEME TOKENS (Mi 9T, alpha.3). The orphan used to draw the queued spinner for ever; the card's

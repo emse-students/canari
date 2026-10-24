@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE BOX A COMMENT IS WRITTEN IN (the comment refonte, 2026-10-21). Pinned: a failed send is said
  * beside the box; a draft is kept per post and comes back; the identity (anonymous, an association)

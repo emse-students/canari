@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { relativeTo, sourceFiles } from '../../test/sourceTree';
 import { bindFixedPopover, computeFixedPopoverPosition } from './fixedPopover';
 

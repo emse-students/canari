@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The review is NOT a player (user, 2026-10-09: black bars after a capture): the take fills the
  * screen under `object-cover`, loops, and carries no seek bar, timecode or bottom sound button.

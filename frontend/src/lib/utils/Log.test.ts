@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * What a debug line must carry for a reader that is not DevTools.
  *

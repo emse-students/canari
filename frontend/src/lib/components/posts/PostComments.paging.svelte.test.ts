@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * OLDER COMMENTS, PAGE BY PAGE (`PostComments`): the button follows the SERVER's answer to "is there
  * more" - its count only before the first page - and the sorts that are about the WHOLE thread read

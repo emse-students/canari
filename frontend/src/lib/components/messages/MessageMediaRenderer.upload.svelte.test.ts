@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * AN ATTACHMENT STILL UPLOADING SHOWS THE UPLOAD (2026-10-10, WP-OFF-8).
  *

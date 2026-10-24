@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { SvelteMap } from 'svelte/reactivity';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 

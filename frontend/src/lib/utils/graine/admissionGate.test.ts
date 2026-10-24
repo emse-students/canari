@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import type { IStorage } from '$lib/db/types';
 import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEngine';
 import {

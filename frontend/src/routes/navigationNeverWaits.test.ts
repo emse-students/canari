@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * NAVIGATION NEVER WAITS ON DATA (WP-NAV-1, 2026-10-10). A tap on a weak link must show the next page
  * at once. Pinned for the two loads that used to hold it: the root layout (a profile round trip

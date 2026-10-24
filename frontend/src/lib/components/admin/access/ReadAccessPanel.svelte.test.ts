@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE NAMED READERS SAVE AT ONCE, AND UNDO IS THE INVERSE WRITE (user, 2026-10-16).
  *

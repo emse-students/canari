@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE iOS APP'S BOTTOM BAR IS A NATIVE UITabBar (user, 2026-09-29) - Liquid Glass on iOS 26.
  *

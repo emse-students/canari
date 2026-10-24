@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A QUOTE THAT IS CUT MUST SAY SO (user, 2026-10-05: a reply's quote ended mid-sentence, no "...").
  *

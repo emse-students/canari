@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import type { Conversation } from '$lib/types';
 import { handleWelcomeRequest } from './actions';
 import { recordWelcomeSent, resetWelcomeSent } from './welcomeSent';

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The publish step as the member meets it: "Publier" creates the reel and lands on the feed, a
  * refused publish says why and stays, a cancelled re-encode says nothing, and the back arrow returns

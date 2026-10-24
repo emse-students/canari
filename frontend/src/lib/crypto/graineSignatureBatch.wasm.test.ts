@@ -1,4 +1,3 @@
-// @vitest-environment node
 /**
  * F7: the TS packer against the BUILT engine, not only against a hex vector both sides copy.
  *

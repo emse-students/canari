@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The feed's tab row keeps the SELECTED tab in full view: on arrival, on a selection, and when the
  * row's layout changes under it - the web font arriving after the first layout, or a resize (Mi 9T,

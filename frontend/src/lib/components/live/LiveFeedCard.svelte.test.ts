@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The feed's LIVE card as a reader meets it: nothing at all with no live on air, one row per live
  * naming who broadcasts (a member, or an association by its name), a tap opening the viewer, and a

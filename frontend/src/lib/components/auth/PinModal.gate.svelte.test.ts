@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PIN GATE CANNOT BE WALKED AWAY FROM, AND IT ALWAYS OFFERS ONE WAY OUT.
  *

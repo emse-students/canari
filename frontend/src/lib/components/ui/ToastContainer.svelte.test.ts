@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A PINNED TOAST HAS NO CLOSE BUTTON. It is shown by a page that no longer saves anything
  * (`BaseMlsService.tellMemberThisPageEnded`), and closed it would leave that page looking alive.

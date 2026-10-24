@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * F1 - THE RESTORE DOES NOT BLANK THE THREAD THE LANDING DREW.
  *

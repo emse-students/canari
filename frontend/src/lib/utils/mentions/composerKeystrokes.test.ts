@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { markdownStructureKey } from '$lib/utils/markdown/inlinePreview';
 import {
   composerMarkdownPreviewEnabled,

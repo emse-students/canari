@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 const invoke = vi.fn();
 const authenticate = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({

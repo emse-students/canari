@@ -5,11 +5,16 @@ import { resolve } from 'path';
 export default defineConfig({
   plugins: [svelte()],
   test: {
-    environment: 'happy-dom',
     // The locale is global and some files move it; this gives every file the same starting
     // point. Fourteen assertions depended on worker order until 2026-09-17 - see the file.
     setupFiles: ['./src/test/locale.ts', './src/test/noRealNetwork.ts'],
     globals: true,
+    // NODE BY DEFAULT: no window is built for a file that does not ask for one. A file that needs a
+    // DOM says so on its first line, `// @vitest-environment happy-dom`, and a file that needs one
+    // without saying so fails with `document is not defined` - pinned by
+    // `src/test/environment.test.ts`. Why a per-file docblock rather than a central list:
+    // docs/wiki/test-suite-reform.md (WP-T4).
+    environment: 'node',
     // The source tree is walked ONCE per run for the ~20 scan files, not once per file: see
     // `src/test/sourceTreeSetup.ts` and docs/wiki/test-suite-reform.md (WP-T9).
     globalSetup: ['./src/test/sourceTreeSetup.ts'],

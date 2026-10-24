@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The camera's refusals are TYPES classified where `getUserMedia` throws (CanaReels, C5). The names
  * pinned here are the ones read on the phones on 2026-10-01 (`NotAllowedError` on a refusal) plus the
