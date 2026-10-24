@@ -1,4 +1,5 @@
-import type { GraineSignatureEngine, GraineSignatureVerdict } from '$lib/crypto/graineV2';
+import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import { tauriGraineSignatureEngine } from '$lib/mls-client/tauriGraineSignatureEngine';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
 import { invoke } from '@tauri-apps/api/core';
@@ -1576,29 +1577,9 @@ export class TauriMlsService extends BaseMlsService {
     );
   }
 
-  /** The Rust engine's Ed25519 commands, the same `mls-core` code the web runs as WASM. */
+  /** The Rust engine's Ed25519 commands: the one standalone implementation, `tauriGraineSignatureEngine`. */
   graineSignatureEngine(): GraineSignatureEngine {
-    return {
-      async newSessionKeyPair() {
-        const pair = await invoke<{ secret: number[]; public: number[] }>('graine_session_keypair');
-        return { secret: new Uint8Array(pair.secret), publicKey: new Uint8Array(pair.public) };
-      },
-      async signWithSessionKey(secret, message) {
-        return new Uint8Array(
-          await invoke<number[]>('graine_sign_with_session_key', {
-            secret: Array.from(secret),
-            message: Array.from(message),
-          })
-        );
-      },
-      verifySignature(publicKey, message, signature) {
-        return invoke<GraineSignatureVerdict>('graine_verify_signature', {
-          publicKey: Array.from(publicKey),
-          message: Array.from(message),
-          signature: Array.from(signature),
-        });
-      },
-    };
+    return tauriGraineSignatureEngine();
   }
 
   /**
