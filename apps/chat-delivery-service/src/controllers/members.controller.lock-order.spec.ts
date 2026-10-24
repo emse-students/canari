@@ -116,6 +116,7 @@ describe('MembersController - lock order of an add and a removal', () => {
         {} as never,
         {} as never,
         {} as never,
+        {} as never,
         recorded.dataSource
       );
       return { controller, statements: recorded.statements };

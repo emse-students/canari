@@ -165,6 +165,7 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       ds.getRepository(DeviceGroupMembership),
       ds.getRepository(MlsGroupInfo),
       ds.getRepository(QueuedMessage),
+      ds.getRepository(RevokedDevice),
       redis as unknown as Redis,
       ds
     ).declineJoinRequest(GROUP, JOINER.userId, who.userId);
@@ -435,28 +436,41 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
         decline(MEMBER),
       ]);
 
-      const seat = await awaiting(JOINER);
-      const devices = await rowsOf('dm_device_group_memberships', JOINER);
-      if (declined.status === 'fulfilled' && declined.value.outcome === 'withdrawn') {
-        // The Decline went first: the ask is gone whole. An Add accepted after it is an ordinary
-        // invitation by that member - its own admitted row, the roster row its client registers
-        // next - never a leftover of the withdrawn ask: a Decline does not undo a later Add.
-        expect(seat).toBeNull();
-        const admittedRows: { admittedAtEpoch: number | null }[] = await q(
-          `SELECT "admittedAtEpoch" FROM dm_device_group_memberships
-           WHERE "groupId" = $1 AND "userId" = $2`,
-          [GROUP, JOINER.userId]
-        );
-        expect(admittedRows).toEqual(added.status === 'fulfilled' ? [{ admittedAtEpoch: 4 }] : []);
-      } else {
-        expect(declined).toMatchObject({
-          status: 'fulfilled',
-          value: { outcome: 'already-admitted' },
-        });
-        expect(added.status).toBe('fulfilled');
-        expect(seat).toBe(false);
-        expect(devices).toBe(1);
-      }
+      const admittedRows: { admittedAtEpoch: number | null }[] = await q(
+        `SELECT "admittedAtEpoch" FROM dm_device_group_memberships
+         WHERE "groupId" = $1 AND "userId" = $2`,
+        [GROUP, JOINER.userId]
+      );
+      const observed = {
+        declined: declined.status === 'fulfilled' ? declined.value.outcome : 'rejected',
+        added: added.status,
+        seat: await awaiting(JOINER),
+        devices: await rowsOf('dm_device_group_memberships', JOINER),
+        admittedRows,
+      };
+      // Two orders, each with ONE consistent end state - chosen by what the Decline answered, and
+      // asserted whole, so no expectation is skipped on either side.
+      // - The Decline went first: the ask is gone whole. An Add accepted after it is an ordinary
+      //   invitation by that member - its own admitted row, the roster row its client registers
+      //   next - never a leftover of the withdrawn ask: a Decline does not undo a later Add.
+      // - The Add went first: the Decline answers `already-admitted` and leaves the person whole.
+      const declineFirst = {
+        declined: 'withdrawn',
+        added: added.status,
+        seat: null,
+        // Not this order's question: the admitted rows below are.
+        devices: observed.devices,
+        admittedRows: added.status === 'fulfilled' ? [{ admittedAtEpoch: 4 }] : [],
+      };
+      const addFirst = {
+        declined: 'already-admitted',
+        added: 'fulfilled',
+        seat: false,
+        devices: 1,
+        // Not this order's question: one device row is.
+        admittedRows: observed.admittedRows,
+      };
+      expect(observed).toEqual(observed.declined === 'withdrawn' ? declineFirst : addFirst);
     }
   });
 
