@@ -2455,7 +2455,6 @@
   "form_view_payment_declined_note": "The payment was declined: you can try again.",
   "form_view_payment_ended_note": "The payment request expired or was cancelled: you can try again.",
   "form_view_form_full_note": "This form is no longer accepting new responses.",
-  "form_view_from_price": "From {price}",
   "form_view_error_not_open": "This form opens on {date}.",
   "form_view_error_login_required": "Please sign in to submit.",
   "form_view_error_complete_matrix": "Please complete all rows for \"{label}\"",

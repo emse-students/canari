@@ -216,6 +216,36 @@ code can be stated truthfully; the provider's body is logged, never returned (`a
 
 The user's `sub` claim from Authentik becomes the canonical `userId` across all Canari services (`findOrCreateFromOidc` uses `userinfo.sub` as the primary key).
 
+## Signing in without the CAS (2026-10-23)
+
+Two flows take a password, and both are reachable by URL: `password-login` (the test campaign, the
+smoke sign-in of `serve-dev.yml` and the store review account) and authentik's own
+`default-authentication-flow`. An enrolment flow is reachable by URL too. What guards each, in the
+blueprints and driven by `test-password-guard.py` on every CI run of `test-blueprints.sh`:
+
+- **`miconnect-password-refused`, a deny stage between the identification and the password**, on
+  both password flows. It stops a request when either policy holds (`policy_engine_mode: any`):
+  - `miconnect-password-reputation` - the address or the username has fallen to `-5`. authentik
+    takes 1 per failed password and adds 1 per success, floors each (username, address) row at the
+    tenant's `-5`, and expires a row after a day. A username's rows are summed across addresses, so
+    five failures spread over five addresses still stop it. The cost: five wrong passwords lock that
+    account out of the password flows for a day - a mistyped smoke secret does that too.
+  - `miconnect-password-superuser` - the pending user is a superuser. An admin signs in through the
+    CAS (`miconnect-auth`), never with a password alone. In a stage binding evaluated after the
+    identification, `request.user` IS the pending user, which is what makes this a one-line policy.
+  It sits BEFORE the password stage on purpose: placed after it, it would answer only a RIGHT
+  password, and so tell whoever is guessing that the password was right.
+- **`password-login` asks for the second factor** of an account that has one, with authentik's own
+  `default-authentication-mfa-validation` (an account with no device goes through, which is what the
+  review and test accounts are).
+- **`miconnect-enrollment` plans only when a source handed it an identity** (`ak_is_sso_flow`, the
+  policy authentik's default source enrolment carries). Opened directly, it answers access denied
+  before any page.
+
+**A flow's policy binding is found by its `policybindingmodel` row** (`[flow__slug, ...]`), the way
+the stage bindings are. A `!Find` on the flow itself resolves and applies once, but never matches the
+stored target again, so the second apply of `test-blueprints.sh` fails on a duplicate.
+
 ## Nginx auth_request integration
 
 Every protected request goes through `auth_request /internal/auth/verify`:
@@ -625,7 +655,8 @@ printed in full (the rollback):**
 
 - `password-login` is reachable by URL only and is NOT dead: the test campaign signs in through it
   (`PASSWORD_LOGIN_FLOW_SLUG`, [cross-client-campaign-resume](../cross-client-campaign-resume.md)).
-  Accounts without a usable password cannot use it.
+  Accounts without a usable password cannot use it. What guards it is
+  [Signing in without the CAS](#signing-in-without-the-cas-2026-10-23).
 - `miconnect-auth-fallback` is referenced by nothing inside authentik; its deny text describes the
   CAS failure below.
 - The `Default - Out-of-box-experience flow` blueprint reports `error` since 2026-08-29. Harmless
