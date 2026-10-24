@@ -142,6 +142,20 @@ vulnerabilities:
       - "usr/local/lib/node_modules/npm/**"
     statement: "A dependency of the npm CLI bundled in node:24-alpine; frontend-ssr runs node index.js and never invokes npm."
 
+  # --- brotli-libs 1.2.0-r1, in the Alpine 3.24 images (decided 2026-10-24) ---------------------
+  # Reported in adminer, nginx:1.31.8-alpine (the edge), nginx:stable-alpine (the frontend base) and
+  # postgres:18-alpine. Every one of those pins was already the newest upstream build: Alpine shipped
+  # the fix (1.2.1-r0) on 2026-10-22 and the official images were rebuilt that day still carrying
+  # 1.2.0-r1, so there was no patched digest to move to. Scoped by purl to that one package version,
+  # so a later brotli build is NOT covered and the rescan retires the entry the day the pins move.
+  # What was verified (Trivy's package inventory of each image): the only packages depending on
+  # brotli-libs are libcurl (all four) and freetype (both nginx). Nothing verified which processes
+  # call them at runtime.
+  - id: CVE-2026-111497
+    purls:
+      - "pkg:apk/alpine/brotli-libs@1.2.0-r1"
+    statement: "brotli-libs 1.2.0-r1 in adminer, nginx:1.31.8-alpine, nginx:stable-alpine and postgres:18-alpine, pulled in only by libcurl (all four) and freetype (nginx): it decodes brotli in HTTP responses curl fetches and in WOFF2 fonts, not in request bodies these servers accept - the dependency graph was verified, runtime use was not. No patched upstream image yet (Alpine fixed 2026-10-22; official nginx/postgres/adminer images rebuilt only with 1.2.0); remove when the pins are rebuilt."
+
   # --- the identity provider, ghcr.io/goauthentik/server:2026.8.5 -------------------------------
   # An upstream image this repository cannot rebuild, and which one is RUN is the host's `.env`
   # (`AUTHENTIK_TAG`), not this file. Measured on 2026.8.0, two kinds of entry:

@@ -2030,8 +2030,11 @@ are builder stages and the local compose file, which reach no estate.
 - `CVE-2026-111497` (`brotli-libs` 1.2.0, fixed in Alpine's 1.2.1-r0 of 2026-10-22) is in `adminer`,
   `nginx:1.31.8-alpine`, `nginx:stable-alpine` and `postgres:18-alpine`, and **every one of those pins
   was already the newest upstream build**: no digest carrying the fix existed that day, so there was
-  nothing to move to. It clears when upstream rebuilds and the pins move (Dependabot's weekly
-  `docker-compose` run, or by hand), not by an allowlist entry.
+  nothing to move to. **Allowlisted** (decided the same day), scoped by purl to
+  `brotli-libs@1.2.0-r1` so a later build is not covered: the inventory shows only libcurl (all four)
+  and freetype (nginx) depend on it, which decode brotli in fetched HTTP responses and WOFF2 fonts, not
+  in request bodies - runtime use was not verified. The rescan retires the entry when the pins move
+  ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
 
 **Not gated: Trivy's Dockerfile misconfiguration scan.** Measured the same day, it finds `DS-0002`
 (no non-root `USER`) in all eight Dockerfiles and `DS-0029` (`--no-install-recommends`) in the two
