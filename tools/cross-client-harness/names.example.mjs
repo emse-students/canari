@@ -105,7 +105,7 @@ export const DEV_AUTHENTIK = { url: "<https://... dev's VITE_AUTHENTIK_URL>", cl
  * account-level, so the fresh device enters the same one. `newdevice.mjs` refuses any other device
  * by name - see its `WIPEABLE`.
  */
-export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, A2: 9335, I1: 9444 };
+export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, W4: 9226, W5: 9227, A2: 9335, I1: 9444 };
 
 /**
  * WHICH PHYSICAL PHONE EACH ANDROID NAME IS - and it is REQUIRED as soon as two are attached.
@@ -144,7 +144,7 @@ export const UDID_OF = { I1: "<UDID of the iPhone>" };
  * So route by DEVICE, never by the one constant that happens to be a URL. `SITE` remains what the
  * browsers load and what a link points at; it is not where the phone runs.
  */
-export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, A1: "http://tauri.localhost", A2: "http://tauri.localhost", I1: "tauri://localhost" };
+export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, W4: SITE, W5: SITE, A1: "http://tauri.localhost", A2: "http://tauri.localhost", I1: "tauri://localhost" };
 
 /**
  * Which account key in `test-accounts.json` each device is logged in as.
@@ -160,6 +160,10 @@ export const ACCOUNT_OF = {
   I1: "<owner key>",
   W3: "<owner key>",
   W2: "<peer key>",
+  // The 1.4.1 campaign's third and fourth accounts (plan section 4.1): `campaign-fixtures.mjs` seats
+  // them here and refuses without a web seat; `launch.mjs` starts these two profiles.
+  W4: "<third key>",
+  W5: "<fourth key>",
 };
 
 /**
