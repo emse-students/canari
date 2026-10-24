@@ -2,6 +2,7 @@ import {
   composeSubmission,
   encodeIntent,
   isDefinitiveCommitRefusal,
+  refusesOnlyThisRequest,
   resubmissionVerdict,
   COMMIT_LOCK_HOLD_BUDGET_MS,
   commitLockHoldEndsAt,
@@ -24,6 +25,20 @@ describe('isDefinitiveCommitRefusal - did the gate answer, and refuse?', () => {
     ['a programming error', new TypeError('x is undefined'), false],
   ] as const)('%s', (_n, error, definitive) => {
     expect(isDefinitiveCommitRefusal(error)).toBe(definitive);
+  });
+});
+
+describe('refusesOnlyThisRequest - a 4xx a resubmission keeps as unknown', () => {
+  it.each([
+    ['a 401 (session expired)', new ApiRefusalError(401, null, 'x'), true],
+    ['a 403 (auth guard)', new ApiRefusalError(403, null, 'x'), true],
+    ['a 429 (rate limited)', new ApiRefusalError(429, null, 'x'), true],
+    // These answer the bytes themselves, whichever request carried them.
+    ['a 400 (malformed)', new ApiRefusalError(400, null, 'x'), false],
+    ['a 410 (group gone)', new ApiRefusalError(410, null, 'x'), false],
+    ['a transport failure', new TransportFailureError('offline'), false],
+  ] as const)('%s', (_n, error, onlyThis) => {
+    expect(refusesOnlyThisRequest(error)).toBe(onlyThis);
   });
 });
 

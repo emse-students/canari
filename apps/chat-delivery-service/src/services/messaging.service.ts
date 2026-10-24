@@ -2221,9 +2221,8 @@ export class MessagingService {
       }
 
       // Strict epoch gate: the submitted baseEpoch must match the server's activeEpoch exactly.
-      // A genuinely uninitialized group (just created) OR freshly re-bootstrapped
-      // (reset-epoch -> activeEpoch=0 then force_create_group restarting at MLS epoch 0)
-      // always has its first commit at baseEpoch 0: activeEpoch==0 therefore legitimately only
+      // A genuinely uninitialized group (just created) always has its first commit at
+      // baseEpoch 0: activeEpoch==0 therefore legitimately only
       // accepts baseEpoch==0. The old bypass (accepting any baseEpoch when activeEpoch==0)
       // let an inconsistent device fast-forward the counter (e.g. baseEpoch=5 -> activeEpoch=6)
       // and desynchronize everyone (H4).
@@ -2528,11 +2527,13 @@ export class MessagingService {
         // EVERY REFUSAL BELOW FIRST ASKS WHETHER THESE BYTES ALREADY LANDED. This transaction may
         // have waited on the seat lock past the Redis lock's 5 s, behind an EARLIER request of the
         // same commit from the same device that has since committed: its row is then in the log,
-        // and what failed here is only this copy of an accepted commit.
+        // and what failed here is only this copy of an accepted commit. NOT asked on
+        // `log_row_exists`: that advance found the epoch still on the base, so no request of ours
+        // advanced from it, and the row it collided with is a defect the error line below reports.
         if (
           e instanceof SeatClaimOvertaken ||
           e instanceof WelcomeSeatGone ||
-          e instanceof EpochAdvanceLost
+          (e instanceof EpochAdvanceLost && e.lost === 'epoch_moved')
         ) {
           const duplicate = await this.answerIfAlreadyAccepted(
             groupId,

@@ -785,6 +785,35 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         )
       ).resolves.toEqual({ accepted: false, currentEpoch: 5, reason: 'epoch_mismatch' });
       expect(fanOut).not.toHaveBeenCalled();
+      // The epoch still stood on the base: no request of ours advanced from it, so nothing is asked.
+      expect(commitLogRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['other bytes took the base', { commit: 'b3RoZXI=', senderDeviceId: 'device-1' }],
+      [
+        'the same bytes came from another device',
+        { commit: memberCommitFrame('group-1', 5n), senderDeviceId: 'device-2' },
+      ],
+    ])('still refuses a lost advance when %s', async (_n, row) => {
+      groupRepo.findOne
+        .mockResolvedValueOnce({ id: 'group-1', activeEpoch: 5 })
+        .mockResolvedValue({ id: 'group-1', activeEpoch: 6 });
+      commitLogRepo.findOne.mockResolvedValueOnce({ groupId: 'group-1', baseEpoch: 5, ...row });
+      groupUpdate.mockResolvedValueOnce({ affected: 0 });
+
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-1',
+            baseEpoch: 5,
+            proto: memberCommitFrame('group-1', 5n),
+            senderId: 'user-1',
+          },
+          'user-1'
+        )
+      ).resolves.toEqual({ accepted: false, currentEpoch: 6, reason: 'epoch_mismatch' });
     });
   });
 
@@ -1662,6 +1691,29 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             expect(groupUpdate).not.toHaveBeenCalled();
           });
 
+          it.each([
+            ['other bytes', { commit: 'b3RoZXI=', senderDeviceId: 'device-1' }],
+            [
+              'the same bytes from another device',
+              { commit: MEMBER_COMMIT, senderDeviceId: 'device-2' },
+            ],
+          ])('still answers the 409 when the logged commit is %s', async (_n, row) => {
+            fetchSpy.mockImplementationOnce(async () => {
+              await service.evictSeats('group-1', 'user-2', 'begin');
+              await service.evictSeats('group-1', 'user-2', { settles: 1 });
+              return entitled(true);
+            });
+            commitLogRepo.findOne.mockResolvedValueOnce({
+              groupId: 'group-1',
+              baseEpoch: 5,
+              ...row,
+            });
+
+            await expect(admitUser2()).rejects.toMatchObject({
+              response: { code: 'SEAT_CLAIM_OVERTAKEN', seat: 'admit' },
+            });
+          });
+
           it('asks nobody for a commit built on another epoch', async () => {
             tables({
               keyPackages: [ownKey, { userId: 'user-2', deviceId: 'device-2' }],
@@ -2012,6 +2064,32 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         });
         expect(groupUpdate).not.toHaveBeenCalled();
         expect(txQueuedRepo.save).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
+      // The seat this copy found gone may have been taken by its OWN earlier request, committed
+      // while it waited on the seat lock: the log row decides, not the seat.
+      it('answers a duplicate, not a refusal, when its own earlier request landed the Welcome', async () => {
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        const sent = fanOut();
+        txErasedDevices.add('user-2:phone-2');
+        commitLogRepo.findOne.mockResolvedValueOnce({
+          groupId: 'group-1',
+          baseEpoch: 5,
+          commit: MEMBER_COMMIT,
+          senderDeviceId: 'device-1',
+        });
+
+        await expect(withWelcome()).resolves.toEqual({
+          accepted: true,
+          newEpoch: 6,
+          duplicate: true,
+        });
+        expect(groupUpdate).not.toHaveBeenCalled();
         expect(sent).not.toHaveBeenCalled();
       });
 

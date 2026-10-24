@@ -494,6 +494,10 @@ describe('runCommitTransaction - a submission that got no answer', () => {
       '`concurrent_commit` on the resubmission',
       { accepted: false, reason: 'concurrent_commit', currentEpoch: 5 },
     ],
+    // The auth guard answers before the gate: a session that expired after an accepted but
+    // unanswered first request says nothing of that request.
+    ['a 401 on the resubmission', new ApiRefusalError(401, null, 'Unauthorized')],
+    ['a 403 on the resubmission', new ApiRefusalError(403, null, 'Forbidden')],
   ] as Array<[string, Step]>)(
     'KEEPS the staged commit and its record, and checkpoints them, after %s',
     async (_name, second) => {
@@ -579,6 +583,26 @@ describe('runCommitTransaction - a group whose last commit is unresolved', () =>
     expect(c.delivery.submitCommit).not.toHaveBeenCalled();
     expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
     expect(c.state.size).toBe(0);
+  });
+
+  it('keeps the unsent stage UNKNOWN, and notes it, when that clear fails', async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    persistMlsStructuralCheckpoint.mockImplementation(async () => {
+      now += 2 * DEADLINE_MS.write + 1;
+      return true;
+    });
+    const c = ctx(submitting({ accepted: true }));
+    c.unresolvedGroups = new Set() as never;
+    c.clearPendingCommit.mockRejectedValueOnce(new Error('state busy'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const err = await run(c).catch((e: unknown) => e);
+    clock.mockRestore();
+    error.mockRestore();
+    expect(err).toBeInstanceOf(CommitOutcomeUnknownError);
+    expect(c.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(c.state.has(G)).toBe(true);
+    expect((c.unresolvedGroups as unknown as Set<string>).has(G)).toBe(true);
   });
 });
 

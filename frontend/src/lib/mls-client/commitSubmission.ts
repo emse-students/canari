@@ -218,13 +218,29 @@ export class FollowerTabCommitError extends Error {
 }
 
 /**
- * Whether a THROWN submission is a definitive refusal: the server answered with a 4xx, which it
- * sends only before the epoch gate is reached (a malformed commit, a committer not allowed, an
- * expired token, a rate limit) - so the commit did not land. A 5xx, a gateway error or a transport
- * failure is NOT one: the advance may have committed before the answer was lost.
+ * Whether a THROWN FIRST submission is a definitive refusal: the server answered with a 4xx, which
+ * it sends only before the epoch gate is reached (a malformed commit, a committer not allowed, an
+ * expired token, a rate limit) - so the commit did not land, and no earlier request of it exists.
+ * A 5xx, a gateway error or a transport failure is NOT one: the advance may have committed before
+ * the answer was lost. A RESUBMISSION reads some of these 4xx differently
+ * ({@link refusesOnlyThisRequest}).
  */
 export function isDefinitiveCommitRefusal(error: unknown): boolean {
   return error instanceof ApiRefusalError && error.status >= 400 && error.status < 500;
+}
+
+/**
+ * Whether a 4xx answers THIS REQUEST rather than the commit's bytes: a 401 or a 403 from the auth
+ * guard (a session that expired, a device revoked since, a committer no longer a member) or a 429
+ * from the throttler, all given before the gate. On a resubmission they say nothing of the EARLIER
+ * request of the same bytes, which may have landed - an expired session after an accepted but
+ * unanswered commit is exactly that - so the outcome stays UNKNOWN, never refused.
+ */
+export function refusesOnlyThisRequest(error: unknown): boolean {
+  return (
+    error instanceof ApiRefusalError &&
+    (error.status === 401 || error.status === 403 || error.status === 429)
+  );
 }
 
 /**
@@ -232,8 +248,9 @@ export function isDefinitiveCommitRefusal(error: unknown): boolean {
  * to the commit gate, each under the `write` head deadline: the resubmission that settles the
  * group's previous commit, then this commit's first request and the resubmission an unanswered one
  * owes. Three deadlines, derived from that deadline and never tuned apart from it. Each request's
- * own deadline adds the time its body needs to leave (`deadlineFor`), which is why the count is
- * not two: a first request that ran to its deadline must still leave room for its resubmission.
+ * own deadline adds the time its body needs to leave (`deadlineFor`), so a first request that ran to
+ * its deadline leaves room for its resubmission only when no settlement request ran before it;
+ * after one, the resubmission that no longer fits is not sent and the outcome stays unknown.
  *
  * A BOUND, NOT A DECISION: a resubmission the budget does not let start leaves the outcome UNKNOWN
  * (the stage kept, the next settlement decides); a first request it does not let start is never

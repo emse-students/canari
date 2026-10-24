@@ -182,6 +182,7 @@ import {
   composeSubmission,
   encodeIntent,
   isDefinitiveCommitRefusal,
+  refusesOnlyThisRequest,
   resubmissionVerdict,
   COMMIT_LOCK_HOLD_BUDGET_MS,
   commitLockHoldEndsAt,
@@ -4325,9 +4326,11 @@ export abstract class BaseMlsService implements IMlsService {
    * first time, or answered as a duplicate), refused (an epoch conflict, or a 4xx), or unknown (no
    * answer, a 5xx, or `concurrent_commit` - a lock our own first request may hold).
    *
-   * A 429 IS UNKNOWN HERE, never a refusal: the per-user commit limit answers before the gate, so it
-   * says nothing of the EARLIER request of these bytes, which may have landed. Clearing on it could
-   * leave this device behind its own accepted commit; the stage is kept and the limit remembered.
+   * A 429, A 401 AND A 403 ARE UNKNOWN HERE, never a refusal ({@link refusesOnlyThisRequest}): the
+   * throttler and the auth guard answer before the gate, so they say nothing of the EARLIER request
+   * of these bytes, which may have landed - a session that expired after an accepted but unanswered
+   * commit is exactly that. Clearing on one could leave this device behind its own accepted commit,
+   * on the way to a re-Welcome; the stage is kept (and a 429's limit remembered).
    *
    * SO IS A `409 SEAT_CLAIM_OVERTAKEN`. The gate reads a commit's seat claims per REQUEST, when it
    * arrives, so the 409 refuses this copy only: the first request, stalled on the way or inside its
@@ -4368,7 +4371,7 @@ export abstract class BaseMlsService implements IMlsService {
       const rateLimited = e instanceof ApiRefusalError && e.status === 429;
       if (rateLimited) noteCommitRateLimited(e.retryAfterMs);
       const verdict: ResubmissionVerdict =
-        !rateLimited && !isSeatClaimOvertaken(e) && isDefinitiveCommitRefusal(e)
+        !refusesOnlyThisRequest(e) && !isSeatClaimOvertaken(e) && isDefinitiveCommitRefusal(e)
           ? 'refused'
           : 'unknown';
       console.warn(
