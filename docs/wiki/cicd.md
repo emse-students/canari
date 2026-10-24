@@ -2035,6 +2035,18 @@ are builder stages and the local compose file, which reach no estate.
   and freetype (nginx) depend on it, which decode brotli in fetched HTTP responses and WOFF2 fonts, not
   in request bodies - runtime use was not verified. The rescan retires the entry when the pins move
   ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
+- Later the same day, two more on every pull request. **`CVE-2026-109869`**, `undici` 6.28.0 in
+  `node:24-alpine`, is npm's own copy (`usr/local/lib/node_modules/npm/node_modules/undici`) and the
+  tag was already the newest Node 24 (24.22.1, npm 11.19.1): **allowlisted** by path with the other
+  npm entries - `frontend-ssr` never runs npm, and Node's built-in `fetch` is compiled into the binary,
+  not that file. **`CVE-2026-111497` again**, as Debian's `libbrotli1` 1.1.0-2+b7 in
+  `goauthentik/server:2026.8.5` (fixed in 1.1.0-2+deb13u1): 2026.8.5 is the newest authentik release,
+  so **allowlisted** by purl
+  ([backlog](backlog.md#p3---bump-authentik-when-a-release-ships-debians-libbrotli1-110-2deb13u1-2026-10-24)).
+  One id on two packages exposed a hole in the retirement: the id check stays satisfied while EITHER
+  half is reported, so the half that moved would never retire. **The retirement now also reads each
+  purl-scoped entry as `id package version`** (`image-scan.sh --allowlist-purls`, compared with a YAML
+  parse by `image-scan-allowlist.test.mjs`) and fails on a triple the raw scan no longer reports.
 
 **Not gated: Trivy's Dockerfile misconfiguration scan.** Measured the same day, it finds `DS-0002`
 (no non-root `USER`) in all eight Dockerfiles and `DS-0029` (`--no-install-recommends`) in the two

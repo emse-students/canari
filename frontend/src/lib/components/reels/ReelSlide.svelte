@@ -294,6 +294,7 @@
           reactionCount={reactionTotal(post.reactions)}
           commentCount={commentCountOf(post)}
           onHeart={rail?.onHeart}
+          onReact={rail?.onReact}
           onComments={rail?.onComments}
           onSend={rail?.onSend}
           tools={page === 'reel' ? railTools : undefined}
