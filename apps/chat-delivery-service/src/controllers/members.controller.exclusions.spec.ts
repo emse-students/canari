@@ -202,6 +202,13 @@ describe('MembersController - membership intervals and the exclusions read', () 
             count: jest.fn(({ where }: { where: { userId?: string } }) =>
               Promise.resolve(members.filter((m) => m.userId === where.userId).length)
             ),
+            findOne: jest.fn(({ where }: { where: { userId?: string } }) =>
+              Promise.resolve(
+                members.some((m) => m.userId === where.userId)
+                  ? { id: 'seat', awaitingAdmission: false }
+                  : null
+              )
+            ),
           },
         },
         { provide: getRepositoryToken(UserDismissedGroup), useValue: {} },

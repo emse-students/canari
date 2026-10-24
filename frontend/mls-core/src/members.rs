@@ -141,6 +141,24 @@ impl MlsManager {
         group.members().map(|m| leaf_identity(&m)).collect()
     }
 
+    /// Whether `group_id`'s tree holds ANY leaf of the user `identity` names (`userId:deviceId`, or a
+    /// bare user id), read under the one canonical user of [`crate::device_trust::canonical_user_of`].
+    ///
+    /// The question an AUTOMATIC Add asks before it brings a device in: a device of a user already
+    /// in the tree is a member's, one of a user absent from it is a new person, and a new person is
+    /// brought in by a member's own gesture - never by a server row or a relayed request, which is
+    /// all an automatic Add acts on. The TypeScript twin is `treeHoldsUser` (`leafIdentity.ts`).
+    /// An identity naming nobody holds nothing.
+    pub fn user_holds_leaf(&self, group_id: &str, identity: &str) -> Result<bool, MlsError> {
+        let Some(wanted) = crate::device_trust::canonical_user_of(identity) else {
+            return Ok(false);
+        };
+        Ok(self
+            .member_identities(group_id)?
+            .iter()
+            .any(|leaf| crate::device_trust::canonical_user_of(leaf).as_deref() == Some(&wanted)))
+    }
+
     /// The signature public key of the leaf whose identity is `identity` (`userId:deviceId`) in
     /// `group_id`, or `None` when no leaf carries it.
     ///

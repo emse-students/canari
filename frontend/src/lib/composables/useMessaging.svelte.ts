@@ -101,6 +101,7 @@ import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/outbox';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
+import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
 import {
   clearControlRefusal,
   clearMessageControlRefusals,
@@ -230,6 +231,8 @@ export function useMessaging() {
     forgetControlRefusals();
     // So are the new-device alerts on screen; its unseen ones stay persisted for its next session.
     unregisterDeviceNotices();
+    // And the join asks on screen: a member of the NEXT account must not answer them.
+    resetJoinRequests();
   }
 
   /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */

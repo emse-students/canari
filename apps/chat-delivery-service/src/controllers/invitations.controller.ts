@@ -39,6 +39,8 @@ import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import {
+  refuseAwaitingSeat,
+  callerSeatStanding,
   endDeviceMemberships,
   writePendingSeats,
   type DepartureScope,
@@ -84,17 +86,22 @@ export class InvitationsController {
     );
   }
 
-  /** Caller must belong to the group unless they are a global admin. */
+  /**
+   * Caller must be an ADMITTED member of the group unless they are a global admin. A seat still
+   * awaiting a member's admission mints no invitation link and vouches for no device: it is
+   * answered the 409 `awaiting_admission` ({@link callerSeatStanding}), never the 403 of no seat.
+   */
   private async assertCallerIsGroupMember(
     callerUserId: string,
     groupId: string,
     headerGlobalAdmin?: string
   ): Promise<void> {
     if (headerGlobalAdmin === 'true') return;
-    const membership = await this.groupMemberRepo.findOne({
-      where: { userId: callerUserId, groupId },
-    });
-    if (!membership) {
+    const standing = await callerSeatStanding(this.groupMemberRepo, groupId, callerUserId);
+    if (standing === 'awaiting') {
+      throw refuseAwaitingSeat(this.logger, 'INVITATIONS', groupId, callerUserId);
+    }
+    if (standing === null) {
       throw new ForbiddenException(
         refusalBody(RefusalCode.NOT_A_MEMBER, 'Not a member of this group')
       );
@@ -146,9 +153,15 @@ export class InvitationsController {
   }
 
   /**
-   * Accepts a group invite: creates the caller's GroupMember + `pending`
-   * DeviceGroupMembership rows so the existing pipeline (any online member,
-   * add-lock, addMember + Welcome) adds them. No crypto happens here.
+   * Accepts a group invite: creates the caller's GroupMember + `pending` DeviceGroupMembership rows,
+   * the seat AWAITING A MEMBER'S ADMISSION (`GroupMember.awaitingAdmission`). No crypto happens here.
+   *
+   * A LINK IS AN ASK, NOT AN ADMISSION (user, 2026-10-23). Members no longer Add a person who holds
+   * no leaf on a server row's word: the ask is put to a member (Add / Decline), and the person
+   * enters by that member's Add and its Welcome. The flag is what keeps the other door shut - while
+   * it holds, this person may not read the external-join base nor have a commit accepted, and their
+   * device is told to wait (`getDeviceMemberships`) rather than learning it by a refusal.
+   * docs/wiki/protocols/mls-protocol.md, "Who admits a new person".
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/group-invites/:token/accept')
@@ -197,8 +210,8 @@ export class InvitationsController {
       );
     }
 
-    // The user-level membership (authoritative "who belongs to the group") and the pending device
-    // memberships (fulfilled by processPendingInvitations on members) in ONE transaction under the
+    // The user-level membership, written as a seat awaiting a member's admission, and the pending
+    // device memberships (each raising a member's Add / Decline) in ONE transaction under the
     // group's seat lock, after re-reading that the group still lives (`writePendingSeats`): a
     // group's end or a removal racing this acceptance never leaves a seat behind it.
     const outcome = await writePendingSeats(
@@ -221,10 +234,9 @@ export class InvitationsController {
       `[GROUP_INVITE] accepted group=${group.id} user=${callerId.slice(0, 8)} devices=${deviceIds.length}`
     );
 
-    // Trigger the add immediately instead of waiting for a member's next sync:
-    // notifyWelcomeRequest forwards a welcome_request to an online member (who runs
-    // addMember + Welcome at once) and, if none is online, wakes them via FCM.
-    // Best-effort - the pending rows above remain the durable fallback.
+    // Put the ask to a member now instead of at their next sync: notifyWelcomeRequest forwards a
+    // welcome_request to an online member (whose client shows "X asks to join") and, if none is
+    // online, wakes one via FCM. Best-effort - the pending rows above are the durable ask.
     for (const deviceId of deviceIds) {
       try {
         await this.messagingService.notifyWelcomeRequest(callerId, {
@@ -315,10 +327,30 @@ export class InvitationsController {
         `[PENDING][${traceId}] Skipped ${skipped} invitation(s) without active KeyPackage`
       );
     }
-    this.logger.log(
-      `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=${actionable.length}`
+    // WHETHER EACH ROW IS AN INVITATION LINK'S ASK (`GroupMember.awaitingAdmission`): the one case
+    // a member is asked "X asks to join". A person absent from the tree whose seat is NOT an ask - a
+    // member's invite between its roster write and its Add, a seat older than migration 038 - is
+    // neither added automatically nor put to a member as an ask nobody made (review of #2358, P2-1).
+    const askers = new Set(
+      (actionable.length === 0
+        ? []
+        : await this.groupMemberRepo.find({
+            where: {
+              groupId: In([...new Set(actionable.map((a) => a.groupId))]),
+              userId: In([...new Set(actionable.map((a) => a.userId))]),
+              awaitingAdmission: true,
+            },
+            select: { groupId: true, userId: true },
+          })
+      ).map((m) => `${m.groupId}|${m.userId}`)
     );
-    return actionable;
+    this.logger.log(
+      `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=${actionable.length} asks=${askers.size}`
+    );
+    return actionable.map((a) => ({
+      ...a,
+      awaitingAdmission: askers.has(`${a.groupId}|${a.userId}`),
+    }));
   }
 
   /**
@@ -359,7 +391,11 @@ export class InvitationsController {
    * Both are false only when nothing is happening and nothing has happened, which is the one state
    * from which a device may serve itself. Neither is a permission: the client still decides.
    *
-   * TWO QUERIES FOR THE WHOLE SET, NOT ONE PER ROW. A device holds one membership per conversation -
+   * - `awaitingAdmission` - the seat came from an invitation link and no member has admitted the
+   *   person yet (`GroupMember.awaitingAdmission`). Such a device may NOT serve itself: the commit
+   *   gate refuses it, so it waits for a member's Add, and this says so before it tries.
+   *
+   * THREE QUERIES FOR THE WHOLE SET, NOT ONE PER ROW. A device holds one membership per conversation -
    * eleven on the account above - and this is polled by the sync watchdog.
    */
   @UseGuards(HeaderAuthGuard)
@@ -391,22 +427,34 @@ export class InvitationsController {
       this.logger
     );
 
+    // THE THIRD FACT: the seat waits for a member's admission (a link's, `GroupMember.awaitingAdmission`).
+    // Neither of the two above says it - nothing is queued and nobody holds the lock while a member
+    // has not answered - so without it the joiner read `unhonoured-seat` and served itself an
+    // external commit around the member's decision. One query for the whole set.
+    const awaiting = await this.awaitingAdmissionGroups(
+      safeUserId,
+      memberships.map((m) => m.groupId)
+    );
+
     const answer = memberships.map((m) => ({
       ...m,
       welcomeQueued: welcomed.has(m.groupId),
       addInFlight: locked.has(m.groupId),
+      // An ACTIVE row is in the tree whatever the roster flag says, so it never reads as awaiting.
+      awaitingAdmission: m.status !== 'active' && awaiting.has(m.groupId),
     }));
 
     // THE STRANDED COUNT IS ON THE LINE, because this endpoint is now the only place that sees the
     // partition at the moment a device asks about it - the hourly report sees it an hour later and
     // only past its own window. A non-zero count here on a device that keeps asking IS the defect.
+    // A seat awaiting a member's answer is not stranded: a member is the one who answers it.
     const stranded = answer.filter(
-      (m) => m.status === 'pending' && !m.welcomeQueued && !m.addInFlight
+      (m) => m.status === 'pending' && !m.welcomeQueued && !m.addInFlight && !m.awaitingAdmission
     ).length;
     const statuses = answer
       .map(
         (m) =>
-          `${m.groupId.slice(0, 8)}:${m.status}${m.status === 'pending' ? `(welcome=${m.welcomeQueued},adding=${m.addInFlight})` : ''}`
+          `${m.groupId.slice(0, 8)}:${m.status}${m.status === 'pending' ? `(welcome=${m.welcomeQueued},adding=${m.addInFlight}${m.awaitingAdmission ? ',awaiting-member' : ''})` : ''}`
       )
       .join(',');
     // SAID WHEN THE ANSWER CHANGES, not on every poll. A settling device polls several times a
@@ -427,6 +475,16 @@ export class InvitationsController {
       );
     }
     return answer;
+  }
+
+  /** The groups among `groupIds` where `userId`'s seat awaits a member's admission. */
+  private async awaitingAdmissionGroups(userId: string, groupIds: string[]): Promise<Set<string>> {
+    if (groupIds.length === 0) return new Set();
+    const rows = await this.groupMemberRepo.find({
+      where: { userId, groupId: In(groupIds), awaitingAdmission: true },
+      select: { groupId: true },
+    });
+    return new Set(rows.map((r) => r.groupId));
   }
 
   /**

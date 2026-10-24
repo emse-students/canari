@@ -291,6 +291,33 @@ export async function createNewGroup(
   }
 }
 
+/** Why an invitation added nobody - see {@link BulkAdditionOutcome}. */
+export type BulkAdditionRefusal =
+  /** No user id was named. */
+  | 'nobody-named'
+  /** A block stands between the inviter and every named user, or it could not be checked. */
+  | 'nobody-reachable'
+  /** No named user has a device to add. */
+  | 'no-devices'
+  /** Another device holds the group's add lock: nothing was staged, the invite can be retried. */
+  | 'add-lock-busy'
+  /** The commit added no device - every key package was skipped (logged per device). */
+  | 'no-device-added'
+  /** Something threw before the commit merged (logged). */
+  | 'failed';
+
+/**
+ * What an invitation did, read by a caller that must not report success it did not have - the
+ * answer to a join ask (`approveJoinRequest`) keeps the ask on screen unless its person was added.
+ *
+ * `added` means the Add COMMIT MERGED with at least one device of each user in `addedUsers`: they
+ * are in the tree. A Welcome lost after that is the joiner's own recovery (`welcome_request`, now a
+ * member's device), so it does not unmake the Add.
+ */
+export type BulkAdditionOutcome =
+  | { kind: 'added'; addedUsers: string[] }
+  | { kind: 'not-added'; reason: BulkAdditionRefusal };
+
 /**
  * Core helper that collects all devices for the given user IDs, adds them to
  * the MLS group in a single bulk commit, delivers Welcome messages per-device,
@@ -298,17 +325,24 @@ export async function createNewGroup(
  *
  * Users whose devices cannot be fetched are skipped with a warning rather than
  * aborting the entire operation.
+ *
+ * NEVER THROWS, AND SAYS WHAT HAPPENED INSTEAD ({@link BulkAdditionOutcome}): every early return
+ * and the catch-all name their reason, so a caller can tell an Add from a refusal.
  */
 async function processBulkAddition(
   memberIds: string[],
   conversation: Conversation,
   deps: GroupCreationDeps
-): Promise<void> {
+): Promise<BulkAdditionOutcome> {
   const { mlsService, userId, deviceKeyB64, log } = deps;
-  if (memberIds.length === 0) return;
+  const notAdded = (reason: BulkAdditionRefusal): BulkAdditionOutcome => ({
+    kind: 'not-added',
+    reason,
+  });
+  if (memberIds.length === 0) return notAdded('nobody-named');
 
   let targetUsers = memberIds.map((m) => m.trim().toLowerCase()).filter(Boolean);
-  if (targetUsers.length === 0) return;
+  if (targetUsers.length === 0) return notAdded('nobody-named');
 
   log(`Inviting ${targetUsers.length} member(s): ${targetUsers.join(', ')}...`);
 
@@ -328,9 +362,11 @@ async function processBulkAddition(
       log(`[ERROR] Could not check whether ${target} can be added, skipping: ${String(e)}`);
     }
   }
-  if (reachable.length === 0) return;
+  if (reachable.length === 0) return notAdded('nobody-reachable');
   targetUsers = reachable;
 
+  // Set once the Add commit has MERGED: from then on the users are in the tree whatever fails next.
+  let addedUsers: Set<string> | null = null;
   try {
     await mlsService.registerMember(conversation.id, userId);
 
@@ -360,7 +396,7 @@ async function processBulkAddition(
     if (allDevices.length === 0) {
       log('[ERROR] No devices found for any of the requested users.');
       console.error('[SYNC] No devices found for any requested user - aborting bulk add');
-      return;
+      return notAdded('no-devices');
     }
 
     const lockAcquired = await mlsService.acquireAddLock(conversation.id).catch(() => false);
@@ -371,7 +407,7 @@ async function processBulkAddition(
       console.warn(
         `[SYNC] Add-lock busy for ${conversation.id}, aborting to avoid concurrent commits`
       );
-      return;
+      return notAdded('add-lock-busy');
     }
 
     // Users registered server-side AND whose Welcome was accepted: only those are announced.
@@ -400,12 +436,13 @@ async function processBulkAddition(
       // registration fails gets no Welcome from here: a Welcome to an unregistered member is the
       // broken state itself, and the joiner recovers through its own welcome_request.
       log(`[SYNC] bulk.addedDeviceIds: ${bulk.addedDeviceIds.join(', ')}`);
-      const addedUsers = new Set(
+      const added = new Set(
         bulk.addedDeviceIds.map((did) => userMap.get(did)).filter((u): u is string => !!u)
       );
+      addedUsers = added;
       const registeredUsers = new Set<string>();
       await Promise.all(
-        [...addedUsers].map(async (tUser) => {
+        [...added].map(async (tUser) => {
           try {
             await mlsService.registerMember(conversation.id, tUser);
             registeredUsers.add(tUser);
@@ -462,7 +499,11 @@ async function processBulkAddition(
     if (e instanceof FollowerTabCommitError) throw e;
     log(`Bulk invite error: ${String(e)}`);
     console.error('[SYNC] processBulkAddition failed:', e);
+    // A throw AFTER the commit merged does not unmake the Add: the users are in the tree.
+    if (addedUsers === null || addedUsers.size === 0) return notAdded('failed');
   }
+  if (addedUsers === null || addedUsers.size === 0) return notAdded('no-device-added');
+  return { kind: 'added', addedUsers: [...addedUsers] };
 }
 
 /**
@@ -521,12 +562,15 @@ async function performDirectAdd(
 /**
  * Adds one or more users to an existing MLS group by their Canari user IDs.
  * All devices belonging to each user are added in a single bulk MLS commit.
+ *
+ * @returns what it did ({@link BulkAdditionOutcome}) - it never throws, so a caller that must know
+ *   whether a person was added reads this, never the absence of an exception.
  */
 export async function inviteMembersToGroup(
   memberIds: string[],
   conversation: Conversation,
   deps: GroupCreationDeps
-): Promise<void> {
+): Promise<BulkAdditionOutcome> {
   return processBulkAddition(memberIds, conversation, deps);
 }
 

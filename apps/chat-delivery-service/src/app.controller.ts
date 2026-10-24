@@ -42,6 +42,7 @@ import {
   totalGroupOwnedRows,
 } from './utils/group-purge';
 import { MessagingService } from './services/messaging.service';
+import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -609,7 +610,25 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // `\0` cannot occur in either identifier, so the pair key is unambiguous - a plain `:` or
     // `-` join would be, since a deviceId already contains both.
     const owedAWelcome = new Set(welcomed.map((w) => `${w.deviceId}\0${w.groupId}`));
-    const stranded = pending.filter((p) => !owedAWelcome.has(`${p.deviceId}\0${p.groupId}`));
+    const unwelcomed = pending.filter((p) => !owedAWelcome.has(`${p.deviceId}\0${p.groupId}`));
+
+    // A SEAT AN INVITATION LINK WROTE WAITS FOR A MEMBER'S ANSWER (`GroupMember.awaitingAdmission`),
+    // and nothing follows it until a member answers by design: it is not stranded, and counting it
+    // here would name a decision nobody took yet as a defect. Counted apart, so a link nobody
+    // answers for weeks is still visible.
+    const awaitingRows = unwelcomed.length
+      ? await this.groupMemberRepo.find({
+          where: unwelcomed.map((p) => ({
+            groupId: p.groupId,
+            userId: p.userId,
+            awaitingAdmission: true,
+          })),
+          select: { groupId: true, userId: true },
+        })
+      : [];
+    const awaitingSeats = new Set(awaitingRows.map((r) => `${r.userId}\0${r.groupId}`));
+    const stranded = unwelcomed.filter((p) => !awaitingSeats.has(`${p.userId}\0${p.groupId}`));
+    const awaitingAnswer = unwelcomed.length - stranded.length;
 
     // THE SECOND PARTITION, AND IT IS THE ONE THAT NAMES A DEFECT NOTHING ELSE REPORTS. Every row
     // above holds a seat with no Welcome, and two opposite causes wear that: a device
@@ -626,7 +645,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     this.logger.log(
       `[CRON] reportStrandedDeviceMemberships: ${pending.length} pending membership(s) past the ` +
-        `window - ${pending.length - stranded.length} awaiting a queued Welcome, ` +
+        `window - ${pending.length - unwelcomed.length} awaiting a queued Welcome, ` +
+        `${awaitingAnswer} awaiting a member's answer to an invitation link, ` +
         `${neverAdded.length} never added, ${kicked.length} kicked with no re-add`
     );
     if (stranded.length === 0) return;
@@ -1202,8 +1222,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * either through its Welcome still queued (separate table, 90d retention - without a new
    * commit), or through `welcome_request`, which triggers a re-add at the current epoch. The
    * threshold is therefore deliberately much shorter than the Welcome retention: it only bounds
-   * how long the durable trigger/fallback is kept on the inviter side. `active` rows and
-   * `dm_group_members` are never touched.
+   * how long the durable trigger/fallback is kept on the inviter side. `active` rows are never
+   * touched, and `dm_group_members` only in the case below.
+   *
+   * **AN INVITATION LINK'S ASK THAT NOBODY ANSWERED EXPIRES WHOLE** (`GroupMember.awaitingAdmission`).
+   * Its device rows alone cannot go: the joiner would then read no `awaiting-admission` row, try the
+   * external join, meet the 409 its seat still earns, and raise a fresh ask on every cadence. So when
+   * none of the person's device rows in the group is `active` or younger than the expiry, the seat is
+   * withdrawn the way a member's Decline withdraws it ({@link expireUnansweredAsks}, under the seat
+   * lock and guarded on the flag): roster row, device rows, Welcomes, the interval the link opened.
+   * The joiner's next look then finds no seat - a 403, the conversation retired - and following the
+   * link again is a new ask.
    *
    * **FILTERS ON `pendingSince`, AND FOR TWELVE DAYS IT FILTERED ON `updatedAt` INSTEAD.** The
    * intent was right and is unchanged - a device once `active` and then put back to `pending` by
@@ -1224,7 +1253,19 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     if (stale.length === 0) return;
 
+    const { awaiting, outcomes } = await expireUnansweredAsks(
+      this.groupMemberRepo.manager,
+      stale,
+      expiry
+    );
+    if (awaiting.size > 0) {
+      this.logger.log(
+        `[CRON] cleanupStalePendingInvitations: ${awaiting.size} invitation-link ask(s) awaiting a member - ${JSON.stringify(outcomes)}`
+      );
+    }
+
     for (const m of stale) {
+      if (awaiting.has(seatKey(m.groupId, m.userId))) continue;
       await this.deviceGroupRepo.delete({
         userId: m.userId,
         deviceId: m.deviceId,

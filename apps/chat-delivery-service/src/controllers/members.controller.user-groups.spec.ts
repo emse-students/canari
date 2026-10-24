@@ -301,7 +301,21 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
         welcomeQueued: false,
         addInFlight: false,
         admitted: false,
+        awaitingAdmission: false,
       });
+    });
+
+    it("carries a seat awaiting a member's admission (an invitation link's), read off the roster row", async () => {
+      groupMemberRepo.find.mockResolvedValue([
+        { groupId: 'g-ordinary', userId: 'u1', awaitingAdmission: true },
+      ]);
+      deviceGroupRepo.find.mockResolvedValue([seat('pending')]);
+      queuedRepo.find.mockResolvedValue([]);
+      redis.mget.mockResolvedValue([null]);
+
+      const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+
+      expect(row.deviceMembership).toMatchObject({ status: 'pending', awaitingAdmission: true });
     });
 
     it('carries a queued Welcome, a held add lock and an admitting commit as owed facts', async () => {
@@ -316,6 +330,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
         welcomeQueued: true,
         addInFlight: true,
         admitted: true,
+        awaitingAdmission: false,
       });
     });
 

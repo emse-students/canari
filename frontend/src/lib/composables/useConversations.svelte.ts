@@ -6,6 +6,12 @@
  * - Group-level operations (create, rename, delete, invite, kick)
  * - Storage helpers (save, load history, reload)
  */
+import type { JoinAnswerResult, JoinRequest } from '$lib/utils/chat/joinRequests.svelte';
+import {
+  admitJoinRequest,
+  declineJoinRequest as declineJoinAsk,
+  type JoinAnswerDeps,
+} from '$lib/utils/chat/joinAnswers';
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -2062,6 +2068,55 @@ export function useConversations() {
     }
   }
 
+  /** What a member's answer to a join ask needs, bound to this context (`joinAnswers.ts`). */
+  function joinAnswerDeps(ctx: ConversationContext): JoinAnswerDeps {
+    const mlsService = ctx.ensureMls();
+    return {
+      mlsService,
+      conversations,
+      invite: (userIds, convo) =>
+        inviteMembersToGroup(userIds, convo, {
+          mlsService,
+          storage: ctx.storage,
+          userId: ctx.userId,
+          deviceKeyB64: ctx.deviceKeyB64,
+          historyBaseUrl: ctx.historyBaseUrl,
+          conversations,
+          selectConversation: (name) => selectConversationWithCtx(name, ctx),
+          saveConversation: (name) => saveConversation(name, ctx),
+          log: ctx.log,
+        }),
+      log: ctx.log,
+    };
+  }
+
+  /**
+   * A member ADMITS a new person who asked to join (`joinRequests.svelte.ts`): the same Add as an
+   * invitation from the member list, built and signed by this device (`admitJoinRequest`). Says
+   * whether the person is now in the tree, so the ask stays on screen when the Add did not happen.
+   */
+  async function approveJoinRequest(
+    request: JoinRequest,
+    ctx: ConversationContext
+  ): Promise<JoinAnswerResult> {
+    const result = await admitJoinRequest(request, joinAnswerDeps(ctx));
+    if (result.done && selectedContact === request.groupId) {
+      await loadGroupMembers(request.groupId, ctx);
+    }
+    return result;
+  }
+
+  /**
+   * A member DECLINES a new person who asked to join: their roster row and pending devices leave the
+   * server (`declineJoinRequest` in `joinAnswers.ts`), which is what stops the ask coming back.
+   */
+  async function declineJoinRequest(
+    request: JoinRequest,
+    ctx: ConversationContext
+  ): Promise<JoinAnswerResult> {
+    return declineJoinAsk(request, joinAnswerDeps(ctx));
+  }
+
   /**
    * Opens or creates a direct 1-to-1 conversation with the given user.
    *
@@ -2396,6 +2451,8 @@ export function useConversations() {
     createNewGroup,
     /** Invites one or more users to the currently selected group. */
     inviteMembersToCurrentGroup,
+    approveJoinRequest,
+    declineJoinRequest,
     /** Opens or creates a direct 1-to-1 conversation with the given user. */
     startNewConversation,
     /** Renames the currently selected group and broadcasts the change. */

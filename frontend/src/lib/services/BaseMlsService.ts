@@ -33,6 +33,9 @@ import {
   type GroupRosterBatch,
   type MlsDeliveryFetch,
   type CommitRemoval,
+  type JoinDeclineOutcome,
+  type GroupUserMemberRow,
+  type PendingInvitationRow,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import {
@@ -82,6 +85,7 @@ import {
   setSenderMismatchReporter,
   type EnvelopeSender,
 } from '$lib/mls-client/verifiedSender';
+import { setUninvitedEntryReporter } from '$lib/mls-client/uninvitedEntry';
 import { setIntegrityFindingReporter, type ForkFinding } from '$lib/mls-client/integrityFindings';
 import {
   keyPackagePublication,
@@ -664,6 +668,11 @@ export abstract class BaseMlsService implements IMlsService {
     // logs it (`[SENDER_MISMATCH]`, channel-encryption section 21).
     setSenderMismatchReporter((report) =>
       this.delivery.deliveryPost('sender-mismatch', { ...report })
+    );
+    // The same for an entry no member made (`uninvitedEntry.ts`): the server's `[UNINVITED_ENTRY]`
+    // line is the count the refusal of such an entry waits on.
+    setUninvitedEntryReporter((report) =>
+      this.delivery.deliveryPost('uninvited-entry', { ...report })
     );
     // The same for a fork or forged history (`[INTEGRITY]`): seen on a device, read on the server.
     setIntegrityFindingReporter((finding) =>
@@ -3344,11 +3353,15 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.removeMemberFromServer(groupId, userId);
   }
 
+  async declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome> {
+    return this.delivery.declineJoinRequest(groupId, userId);
+  }
+
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     return this.delivery.getGroupMembers(groupId);
   }
 
-  async getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
+  async getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]> {
     return this.delivery.getGroupUserMembers(groupId);
   }
 
@@ -3392,12 +3405,7 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.undismissGroup(groupId);
   }
 
-  async getPendingInvitations(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{ id: string; userId: string; deviceId: string; groupId: string; status: string }>
-  > {
+  async getPendingInvitations(userId: string, deviceId: string): Promise<PendingInvitationRow[]> {
     return this.delivery.getPendingInvitations(userId, deviceId);
   }
 

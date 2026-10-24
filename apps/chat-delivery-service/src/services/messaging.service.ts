@@ -57,7 +57,11 @@ import {
 } from '../internal/distribution-entitlement';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
+  ADMITTED_SEAT,
+  awaitingAdmissionRefusal,
+  callerSeatStandings,
   endDeviceMemberships,
+  refuseAwaitingSeat,
   exclusionWindows,
   openMissingIntervals,
   partingKey,
@@ -582,8 +586,12 @@ export type ActivationRefusal =
   /** An eviction overtook the claim the seat was to be written against (`utils/seat-eviction.ts`). */
   | 'departed';
 
-/** Why a REPORT of `active` was refused: the device holds no seat it may promote. */
-export type SeatRefusal = 'no_seat' | 'kicked' | 'not_on_roster';
+/**
+ * Why a REPORT of `active` was refused: the device holds no seat it may promote - or its owner's
+ * seat still awaits a member's admission (`awaiting_admission`: no member's Add or Welcome admitted
+ * them, so a device of theirs cannot be in the tree).
+ */
+export type SeatRefusal = 'no_seat' | 'kicked' | 'not_on_roster' | 'awaiting_admission';
 
 /**
  * By what right a device becomes `active` - REQUIRED of every caller, so none can skip the seat.
@@ -608,7 +616,11 @@ export type ActivationAuthority =
  */
 export function activationRefusalException(
   reason: ActivationRefusal | undefined
-): ForbiddenException | BadRequestException {
+): ForbiddenException | BadRequestException | ConflictException {
+  // A pending member who waits, never "not a member": a 403 retires the conversation on a client.
+  if (reason === 'awaiting_admission') {
+    return awaitingAdmissionRefusal();
+  }
   return reason === 'no_seat' ||
     reason === 'kicked' ||
     reason === 'not_on_roster' ||
@@ -720,6 +732,12 @@ export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
   /** Per-device count of sends that found no push token - see `sendFcmForQueued`. */
   private readonly noPushTokenRepeats = new RepeatCounter();
+  /**
+   * An invitation link's ask repeats by design: the waiting device asks a member on every recovery
+   * cadence until one answers or the ask expires (14 days), and an older client also meets the
+   * withheld base each time. Said once per (group, device), then at each power of ten.
+   */
+  private readonly awaitingAskRepeats = new RepeatCounter();
   /**
    * Whether a key-group fan-out is written as ONE shared payload. Read once at boot; OFF until a
    * release after the one that ships the readers turns it on - see `readSharedPayloadWrites`.
@@ -2496,6 +2514,20 @@ export class MessagingService {
                 { admittedAtEpoch: baseEpoch + 1, kickedAt: null }
               );
           }
+          // THE ADMISSION A LINK'S SEAT WAITED FOR (`GroupMember.awaitingAdmission`): this commit
+          // is a member's Add - the gate above refuses every commit from a seat still awaiting one -
+          // and it admits a device of the person, declared (`admits`) or as the target of the
+          // Welcome it carries, so the person is a member from this epoch on. Written with the
+          // advance, so the flag never outlives the leaf nor goes before it. A key group has no
+          // roster rows: nothing matches.
+          await this.liftAwaitingAdmission(
+            m,
+            groupId,
+            [...admitted.map((a) => a.userId), ...(welcome ? [welcome.userId] : [])],
+            traceId,
+            'COMMIT',
+            'admits'
+          );
           // THE WELCOME LANDS WITH THE ADVANCE OR NEITHER DOES (`ValidateCommitBody.welcome`). Its
           // seat is guaranteed as `sendWelcome` guarantees it - inserted, never overwriting a row -
           // when the admits above did not already write it.
@@ -2763,7 +2795,11 @@ export class MessagingService {
       ? !!(await this.deviceGroupRepo.findOne({
           where: { groupId, userId, status: 'active' },
         }))
-      : !!(await this.groupMemberRepo.findOne({ where: { groupId, userId } }));
+      : // A seat still AWAITING a member's admission (an invitation link's ask) is no membership:
+        // its holder may not Welcome anyone - a Welcome lifts the flag - nor read the log or report.
+        !!(await this.groupMemberRepo.findOne({
+          where: { groupId, userId, ...ADMITTED_SEAT },
+        }));
     return { isMember, isKeyDistribution };
   }
 
@@ -2892,9 +2928,9 @@ export class MessagingService {
     groupInfo: string,
     baseEpoch: number
   ): Promise<{ stored: boolean }> {
-    if (!(await this.isOnRoster(groupId, requesterUserId))) {
-      throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
-    }
+    // Who may write the base is who may read it: a person still awaiting a member's admission holds
+    // no tree, so a base from them is one nobody minted.
+    await this.assertMayReadExternalBase(groupId, requesterUserId);
     return this.putGroupInfo(groupId, groupInfo, baseEpoch);
   }
 
@@ -2990,16 +3026,15 @@ export class MessagingService {
   /**
    * Returns the latest stored GroupInfo for `groupId` so an authorized member can build an external
    * commit to (re)join. Membership-gated (the ratchet tree it carries is public group state, but we
-   * still restrict it to roster members). Returns null when no GroupInfo has been stored yet (the
+   * still restrict it to roster members, and to those a member admitted -
+   * {@link assertMayReadExternalBase}). Returns null when no GroupInfo has been stored yet (the
    * caller then falls back to a peer welcome_request).
    */
   async getGroupInfo(
     groupId: string,
     requesterUserId: string
   ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null> {
-    if (!(await this.isOnRoster(groupId, requesterUserId))) {
-      throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
-    }
+    await this.assertMayReadExternalBase(groupId, requesterUserId);
     return this.readGroupInfo(groupId);
   }
 
@@ -3133,8 +3168,13 @@ export class MessagingService {
    *   A removal deletes the removed member's rows and a kick stamps `kickedAt`: both are refused.
    * - AN EXTERNAL COMMIT is the one commit made from outside the tree (an external join or rejoin),
    *   recognised by its own clear header ({@link readCommitFrame}), never by a client flag. It is
-   *   accepted from whoever may read the base it is built on - the roster predicate of
-   *   {@link getGroupInfo} - so the gate and the door it guards answer the same question.
+   *   accepted from whoever may read the base it is built on - {@link assertMayReadExternalBase},
+   *   the predicate of {@link getGroupInfo} - so the gate and the door it guards answer the same
+   *   question.
+   * - A SEAT AWAITING A MEMBER'S ADMISSION (`GroupMember.awaitingAdmission`, an invitation link's)
+   *   commits nothing, external or member: no member has admitted the person, so they hold no leaf,
+   *   and the one way in is a member's Add (docs/wiki/protocols/mls-protocol.md, "Who admits a new
+   *   person").
    * - A KEY-DISTRIBUTION GROUP'S external commit is asked of social-service, which owns its roster
    *   and serves its base by the same predicate ({@link isEntitledToDistributionGroup}). Unanswered,
    *   it is a retryable 503 and never an acceptance (WP-KEYGROUP-JOIN-GATE).
@@ -3158,15 +3198,21 @@ export class MessagingService {
   ): Promise<SeatClaim> {
     const claim = await claimSeat(this.groupRepo.manager, groupId, userId);
     const scope = external ? await this.keyDistributionScope(groupId) : null;
+    // The conversation roster seat, read once: an external commit needs one, and a seat awaiting a
+    // member's admission refuses every commit. A key group has no roster rows - social-service owns
+    // its membership - so it is not read there.
+    const seat = scope ? null : await this.rosterSeat(groupId, userId);
+    const awaiting = seat ? await this.seatAwaitsAdmission(groupId, userId, seat) : false;
     // A DEPARTURE IN PROGRESS IS REFUSED HERE, before the epoch moves - not at the activation that
     // follows, which would leave the committer in the tree with no seat. Read from the claim, so no
     // second query, and the activation's re-read under the lock still catches one that begins later.
     const allowed =
       !claim.owed &&
+      !awaiting &&
       (scope
         ? await isEntitledToDistributionGroup(scope, userId, traceId)
         : external
-          ? await this.isOnRoster(groupId, userId)
+          ? seat !== null
           : !!(await this.deviceGroupRepo.findOne({
               where: [
                 { groupId, userId, deviceId, status: 'active' as const },
@@ -3179,7 +3225,8 @@ export class MessagingService {
       `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
         `device=${sanitizeLogValue(userId)}:${deviceId} ` +
         `kind=${scope ? `key-group-external ${scope.kind}=${scope.id}` : external ? 'external' : 'member'}` +
-        (claim.owed ? ' reason=departure_in_progress' : '')
+        (claim.owed ? ' reason=departure_in_progress' : '') +
+        (awaiting ? ' reason=awaiting_admission' : '')
     );
     // `code` is what a client's typed refusal reads; `error` is kept for the clients that read it.
     throw new ForbiddenException(
@@ -3511,13 +3558,113 @@ export class MessagingService {
     return (await this.memberOfGroupKind(group, groupId, userId)).isMember;
   }
 
-  /** Whether `userId` is on the user roster of `groupId` - who may read its external-join base. */
+  /** Whether `userId` is on the user roster of `groupId`, admitted or still awaiting a member. */
   private async isOnRoster(groupId: string, userId: string): Promise<boolean> {
-    return !!(await this.groupMemberRepo.findOne({ where: { groupId, userId } }));
+    return (await this.rosterSeat(groupId, userId)) !== null;
   }
 
   /**
-   * Re-reads, under a SHARE lock and inside the caller's transaction, the seat a Welcome is about to
+   * Whether `seat` still awaits a member's admission: its flag is set AND no device of the person
+   * is `active` in the group. An active device is in the tree - a Welcome admitted it - so the person
+   * is a member whatever the flag says. By construction the two never meet (the flag is lifted where
+   * a member's Add or Welcome is stored, {@link liftAwaitingAdmission}, and a report of `active` is
+   * refused while it stands, {@link promoteReportedSeat}); this read is what keeps a member who
+   * nevertheless holds both from being refused every commit for good.
+   */
+  private async seatAwaitsAdmission(
+    groupId: string,
+    userId: string,
+    seat: Pick<GroupMember, 'awaitingAdmission'>
+  ): Promise<boolean> {
+    if (!seat.awaitingAdmission) return false;
+    const active = await this.deviceGroupRepo.count({
+      where: { groupId, userId, status: 'active' as const },
+    });
+    if (active === 0) return true;
+    this.logger.error(
+      `[ADMISSION] group=${groupId} user=${sanitizeLogValue(userId)} holds ${active} active device(s) ` +
+        `under a seat still flagged awaitingAdmission - a Welcome reached them past the lift; read as admitted`
+    );
+    return false;
+  }
+
+  /**
+   * LIFTS `awaitingAdmission` FOR `userIds` in `groupId`, in the transaction `m` that stores what
+   * admits them - the ONE writer of that lift. Two doors reach it, both behind a member:
+   *
+   * - an accepted commit (the gate refuses one from a seat still awaiting): its declared `admits`,
+   *   and the target of the Welcome it carries;
+   * - a Welcome stored by `sendWelcome`, whose sender is an admitted member ({@link memberOfGroupKind}).
+   *
+   * THE WELCOME IS WHAT EVERY ADD SHIPS, so it lifts the flag for a member whose client predates
+   * `admits` (it Adds from the `pending` row and sends the Welcome apart): without it, that joiner
+   * turned `active` under a flag nothing would ever clear, and every commit of theirs was refused.
+   */
+  private async liftAwaitingAdmission(
+    m: EntityManager,
+    groupId: string,
+    userIds: readonly string[],
+    traceId: string,
+    tag: string,
+    door: 'admits' | 'welcome'
+  ): Promise<void> {
+    if (userIds.length === 0) return;
+    const lifted = await m
+      .getRepository(GroupMember)
+      .update(
+        { groupId, userId: In([...new Set(userIds)]), awaitingAdmission: true },
+        { awaitingAdmission: false }
+      );
+    if ((lifted.affected ?? 0) > 0) {
+      this.logger.log(
+        `[${tag}][${traceId}] ADMITTED group=${groupId} users=${lifted.affected} door=${door} - a member's Add answered their invitation-link ask`
+      );
+    }
+  }
+
+  /** `userId`'s roster seat in `groupId`, or `null` - the one read of `dm_group_members` here. */
+  private async rosterSeat(
+    groupId: string,
+    userId: string
+  ): Promise<Pick<GroupMember, 'id' | 'awaitingAdmission'> | null> {
+    return this.groupMemberRepo.findOne({
+      where: { groupId, userId },
+      select: { id: true, awaitingAdmission: true },
+    });
+  }
+
+  /**
+   * Refuses `userId` the external-join base of `groupId` unless they hold a roster seat that does
+   * NOT await a member's admission - the question the commit gate ({@link assertCommitterMayCommit})
+   * asks of an external commit, so the base and the gate agree.
+   *
+   * A seat an invitation link wrote is an ask until a member's Add admits the person
+   * (`GroupMember.awaitingAdmission`); serving it the base let the person enter around that member.
+   * Its refusal is a 409 `awaiting_admission`, NEVER the 403 of no seat at all: a client reads a 403
+   * here as "I am not a member" and retires the conversation (`NotAGroupMemberError`), while this
+   * person is a pending member who waits. A current client is told before it asks
+   * (`GET mls/device-memberships`, `awaitingAdmission`); this answer is what an older one meets, and
+   * it falls back to asking a member, which is the right next move.
+   */
+  private async assertMayReadExternalBase(groupId: string, userId: string): Promise<void> {
+    const seat = await this.rosterSeat(groupId, userId);
+    if (!seat) {
+      throw new ForbiddenException(`User ${userId} is not a member of group ${groupId}`);
+    }
+    if (await this.seatAwaitsAdmission(groupId, userId, seat)) {
+      // An older client asks for the base on every cadence of its wait: said at 1, 10, 100...
+      const nth = this.awaitingAskRepeats.hit(`base|${groupId}|${userId}`);
+      if (nth !== null) {
+        this.logger.log(
+          `[GROUP_INFO] group=${groupId} user=${sanitizeLogValue(userId)} awaits a member's admission - base withheld (repeat=${nth}, said at 1, 10, 100...)`
+        );
+      }
+      throw awaitingAdmissionRefusal();
+    }
+  }
+
+  /**
+   * Re-reads, under a row lock and inside the caller's transaction, the seat a Welcome is about to
    * be stored for - so a Welcome store and a removal of its target serialise.
    *
    * A conversation's seat is the target's `dm_group_members` row. The removal deletes that row
@@ -3583,9 +3730,13 @@ export class MessagingService {
       );
       return false;
     }
+    // `FOR UPDATE`, not `FOR SHARE`: the store then lifts this row's `awaitingAdmission`
+    // ({@link liftAwaitingAdmission}), and two Welcomes stored at once for two devices of one person
+    // (`deliverWelcomes` sends them in parallel) would each hold the share lock and deadlock on the
+    // upgrade. Taken exclusive here, the second waits for the first.
     const seat = await m.getRepository(GroupMember).findOne({
       where: { groupId, userId: target.userId },
-      lock: { mode: 'pessimistic_read' },
+      lock: { mode: 'pessimistic_write' },
     });
     if (seat) return true;
     this.logger.warn(
@@ -3967,7 +4118,8 @@ export class MessagingService {
           `(EXISTS (SELECT 1 FROM dm_groups g WHERE g.id = :groupId
             AND (g."distributionWorkspaceId" IS NOT NULL OR g."distributionChannelId" IS NOT NULL))
           OR EXISTS (SELECT 1 FROM dm_group_members m
-            WHERE m."groupId" = :groupId AND m."userId" = :userId))`
+            WHERE m."groupId" = :groupId AND m."userId" = :userId
+              AND m."awaitingAdmission" = false))`
         )
         .execute()
     );
@@ -4002,7 +4154,9 @@ export class MessagingService {
     if (!seat) return 'no_seat';
     if (seat.status === 'pending' && seat.kickedAt) return 'kicked';
     if (await this.isKeyDistributionGroup(groupId)) return null;
-    return (await this.isOnRoster(groupId, userId)) ? null : 'not_on_roster';
+    const roster = await this.rosterSeat(groupId, userId);
+    if (!roster) return 'not_on_roster';
+    return roster.awaitingAdmission ? 'awaiting_admission' : null;
   }
 
   /**
@@ -4706,9 +4860,19 @@ export class MessagingService {
     // invitation.
     const members = await this.routableMembers(groupId, traceId, 'WELCOME_REQ');
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
+    // AN ASK OF A SEAT AWAITING A MEMBER is relayed exactly as before, and said only at its 1st,
+    // 10th, 100th... repeat for this device ({@link awaitingAskRepeats}): every line below is the
+    // same sentence on every cadence of a wait that may last the 14 days of the ask.
+    const awaitingAsk =
+      (await this.rosterSeat(groupId, requesterUserId))?.awaitingAdmission === true;
+    const nth = awaitingAsk ? this.awaitingAskRepeats.hit(`ask|${groupId}|${senderKey}`) : 1;
+    const say = (line: string) => {
+      if (nth !== null) this.logger.log(line);
+    };
 
-    this.logger.log(
-      `[WELCOME_REQ][${traceId}] START group=${groupId} requester=${senderKey} members=${members.length}`
+    say(
+      `[WELCOME_REQ][${traceId}] START group=${groupId} requester=${senderKey} members=${members.length}` +
+        (awaitingAsk ? ` ask=awaiting-member repeat=${nth} (said at 1, 10, 100...)` : '')
     );
 
     const notification = JSON.stringify({
@@ -4729,7 +4893,7 @@ export class MessagingService {
       }
       const onlineKey = this.presenceKey(memberUserId, memberDeviceId);
       const isOnline = await this.redis.exists(onlineKey);
-      this.logger.log(`[WELCOME_REQ][${traceId}] Candidate=${member} online=${!!isOnline}`);
+      say(`[WELCOME_REQ][${traceId}] Candidate=${member} online=${!!isOnline}`);
       if (isOnline) {
         await this.redis.publish(
           'chat:messages',
@@ -4745,7 +4909,7 @@ export class MessagingService {
             senderDeviceId: requesterDeviceId,
           })
         );
-        this.logger.log(
+        say(
           `[WELCOME_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`
         );
 
@@ -4781,7 +4945,7 @@ export class MessagingService {
         }
         if (stored.length > 0) {
           await this.redis.del(pendingSetKey);
-          this.logger.log(
+          say(
             `[WELCOME_REQ][${traceId}] Drained ${drained} stored welcome_request(s) for group=${groupId}`
           );
         }
@@ -4828,7 +4992,7 @@ export class MessagingService {
     // without waiting for an organic reconnection.
     await this.sendFcmWelcomeRequestPending(groupId, members, senderKey, traceId);
 
-    this.logger.log(
+    say(
       `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis, FCM sent to peers`
     );
     return { status: 'no_peer_online' };
@@ -4951,7 +5115,20 @@ export class MessagingService {
       }
       if (kept.length === 0) return [];
       const saved = await this.saveQueuedRows(manager, group, kept, groupId, tag, traceId);
-      if (welcome) await this.ensurePendingSeat(manager, groupId, welcome);
+      if (welcome) {
+        await this.ensurePendingSeat(manager, groupId, welcome);
+        // A Welcome stored by an admitted member admits its target ({@link liftAwaitingAdmission}).
+        if (!welcome.keyGroup) {
+          await this.liftAwaitingAdmission(
+            manager,
+            groupId,
+            [welcome.userId],
+            traceId,
+            tag,
+            'welcome'
+          );
+        }
+      }
       return saved;
     });
   }
@@ -5343,16 +5520,22 @@ export class MessagingService {
       return new Set();
     }
 
-    const memberships = await this.groupMemberRepo.find({
-      where: { userId: authUserId, groupId: In(deliverable) },
-      select: { groupId: true },
-    });
-    const memberIds = new Set(memberships.map((m) => m.groupId));
+    // A SEAT STILL AWAITING A MEMBER'S ADMISSION READS NO HISTORY (review of #2358, F1): the person
+    // is not in the group yet. The single read answers it the 409 `awaiting_admission` (a pending
+    // member who waits, never the 403 its client would retire the conversation on); the batch omits
+    // the group like any other it may not read.
+    const standings = await callerSeatStandings(this.groupMemberRepo, deliverable, authUserId);
+    const memberIds = new Set(
+      [...standings].filter(([, standing]) => standing === 'admitted').map(([gid]) => gid)
+    );
 
     if (rejectForbidden && groupIds.length === 1) {
       const gid = groupIds[0];
       if (!deliverableIds.has(gid)) {
         return new Set();
+      }
+      if (standings.get(gid) === 'awaiting') {
+        throw refuseAwaitingSeat(this.logger, 'HISTORY', gid, authUserId);
       }
       if (!memberIds.has(gid)) {
         throw new ForbiddenException('Not a member of this group');

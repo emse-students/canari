@@ -877,6 +877,142 @@ can still post for such a device when a heal brings it back; the app does not an
 contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
 the history began carry that date, not their device's enrolment.
 
+### Who admits a new person (2026-10-23)
+
+**A new person enters a conversation by a member's own gesture, never by an automatic Add.** The
+two automatic adders - the pending-invitation sweep (`processPendingInvitations`) and the
+`welcome_request` handler, plus the Android background answer (`prepare_welcome_background_with_key`)
+- act on what the delivery service says: a `pending` row, a roster row, a relayed request. None of
+that is a member's decision. So before either builds an Add, it reads THIS device's tree: a requester
+whose USER already holds a leaf is a member's new or recovering device, and is added as before; a
+user who holds none is a new person, and is not added (`automaticAdmission` in `actions.ts`,
+`MlsManager::user_holds_leaf` in Rust, `treeHoldsUser` in TypeScript). A tree that cannot be read
+proves no membership, so nothing is added (it used to fall through to the Add).
+
+Instead, the ask is put to a member: **"X asks to join this group. Only a member can add them."** (`join_request_body`), with Add and Decline
+(`JoinRequestBanner`, `joinRequests.svelte.ts`). Add is the member's own Add (`inviteMembersToGroup`,
+signed by their device); Decline withdraws the ask (`declineJoinRequest`, below), which is what
+stops it coming back. The sweep reads the server's `pending` rows, the durable state, so each
+completed sweep replaces the asks on screen: one another member answered leaves with the next sweep.
+The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>`), which used to
+admit the person with no member involved. The Android background answer refuses such a request as
+`newcomer` and leaves it to the foreground's sweep. Only a GROUP conversation takes an ask
+(`askAMemberToAdmit`): a 1:1 conversation's `pending` rows and a key group's requests raise nothing -
+a DM ask's Add always failed and its Decline deleted the peer's own roster row. And only a seat the
+server holds AS an ask is asked about: the pending rows (`GET mls/invitations/pending`) and the roster
+read (`GET .../user-members`) carry `awaitingAdmission`, and a person absent from the tree whose seat
+is not flagged - a member's invite between its roster write and its Add, a seat written before
+migration 038, a member whose leaves were removed - is neither added nor asked about (logged "not an
+invitation-link ask"). A member's own invite brings such a person in. The banner shows an ask only
+while the chat page that answers it is mounted (`canAnswerJoinRequests`).
+
+**An answer leaves the screen only when it happened** (`joinAnswers.ts`). The invite never throws; it
+returns a typed `BulkAdditionOutcome` (`added` with the users the merged commit put in the tree, or
+`not-added` with `add-lock-busy`, `no-device-added`, `failed`...), and Add is done only when the
+person is among `addedUsers` - or already holds a leaf, another member's Add having come first. Decline
+is `POST mls/groups/:groupId/join-requests/:userId/decline`, answered only to an ADMITTED member
+other than the asker (`403 NOT_A_MEMBER` otherwise). Under the seat lock it deletes the seat ONLY
+while `awaitingAdmission` still stands (`withdrawAwaitingSeat`), and answers a typed outcome:
+`withdrawn` (roster row, queued Welcomes and device rows gone, the open interval deleted - no
+eviction and no exclusion interval are written for someone who was never in), `already-admitted`
+(a member's Add came first; nothing is touched, so a Decline can never strip an admitted person),
+`not-awaiting` (the flag was never set and the server holds no trace of an Add - no `active` device
+row, no `admittedAtEpoch`, no queued Welcome: the seat was never an ask, nothing is touched), or
+`gone`. All four leave the screen; a refused or failed call keeps the ask. A Decline that wins
+the race against an Add makes that Add an ordinary invitation by the adding member, which registers
+the roster row as any invite does. Anything else keeps the ask, logged with its reason.
+
+**The link is an ASK, carried from the server that knows it.** Accepting a link writes the roster row
+with `awaitingAdmission = true` (`dm_group_members`, migration 038; only `acceptGroupInvite` sets it),
+and the server holds the person outside until a member answers:
+
+- `getDeviceMemberships` says `awaitingAdmission` per row, so the joiner's `requestReAdd` reads
+  `awaiting-admission` (`readWelcomeOwedFromRow`) and sends a `welcome_request` instead of an
+  external join - the request that raises the ask on a member's device. Nothing is learned by failing.
+- The external-join base (`GET`/`PUT .../group-info`) answers **409 `awaiting_admission`** to such a
+  person - deliberately not a 403, which older clients read as `NotAGroupMemberError` and retire the
+  conversation on - and the commit gate refuses every commit from them, external or member.
+- The flag has ONE writer that clears it, `liftAwaitingAdmission`, at the two doors through which a
+  member's Add reaches the server: inside the transaction of an accepted commit, for the devices its
+  `admits` name and the target of its inline Welcome; and inside the transaction that stores a
+  Welcome sent apart (`sendWelcome` -> `enqueueForLiveGroup`). Every Add ships a Welcome, so a
+  member client that declares no `admits` (older than #1151) still lifts it - otherwise its Add
+  would leave the person refused on every commit. Only an admitted member can store that Welcome:
+  `memberOfGroupKind` does not count an awaiting seat, so the asker cannot Welcome themselves.
+- An ACTIVE device row is never read as awaiting: the membership reads report the flag only on a
+  row that is not `active`, the client's `readWelcomeOwedFromRow` ignores it on one, and the commit
+  gate reads such a seat as admitted and logs `[ADMISSION]` at ERROR - the invariant broke upstream.
+  The report of `active` is refused with **409 `awaiting_admission`** while the flag stands, so a
+  row cannot become active ahead of the lift. The Welcome path reads the roster row `FOR UPDATE`
+  (`seatStandsFor`), the lock the lift upgrades to, so two Welcomes stored at once cannot deadlock.
+- An unanswered ask EXPIRES WHOLE (`expireUnansweredAsks`, in the hourly stale-pending sweep): once
+  no device of the person is `active` or pending since the 14-day cutoff, the seat is withdrawn as
+  a Decline withdraws it, per seat under its lock; the device-only purge never touches an awaiting
+  seat, so it cannot leave a roster row that answers 409 to a fresh ask forever. The stranded-seat
+  reports count these seats apart (`awaiting-member`).
+- **A seat awaiting a member is not a membership ANYWHERE a caller is checked** (review of #2358,
+  B1). Every caller predicate of the controllers reads the seat through ONE helper,
+  `callerSeatStanding` (`utils/group-membership.ts`): enrolling or removing someone
+  (`POST`/`DELETE mls/groups/:groupId/members`), minting an invitation link, vouching for or
+  kicking a device, and reading the roster (`user-members`, `members`; `group-rosters` lists the
+  group in `refused`) are all answered **409 `awaiting_admission`** for such a seat. Counted as a
+  membership, a person still waiting enrolled an accomplice whose seat read as not awaiting, who then
+  read the base and entered by external commit with no member's Add. Leaving is the one thing it may
+  do (the removal of its own seat). The re-review (F1) found four reads that never asked the flag;
+  they go through the same helpers now: the history (`GET mls/history/:groupId` answers the 409,
+  the batch omits the group; `callerSeatStandings`), the exclusion windows, a Decline by a caller
+  whose own seat waits (409, never `NOT_A_MEMBER`), and every call route (initiate, room token, ICE,
+  ring, ring-end). WHO SHARES a conversation reads one `where` fragment, `ADMITTED_SEAT`: the
+  presence audience (both directions) and the call ring's callees, so a waiting seat neither sees nor
+  is seen online, and is rung by nobody. Each refusal is one WARN at the 1st, 10th, 100th... repeat
+  per (route, group, person) (`refuseAwaitingSeat`), and the client types it at the throw
+  (`AwaitingAdmissionError`, a 409 `ApiRefusalError`) on the roster, members, exclusions and base
+  reads.
+- **The wait is quiet on the server.** The waiting device asks a member on every recovery cadence
+  for up to the 14 days of its ask, and an older client meets the withheld base each time: the
+  `[WELCOME_REQ]` lines of such an ask and the `[GROUP_INFO] base withheld` line are said at the 1st,
+  10th, 100th... repeat per (group, device) (`awaitingAskRepeats`, a `RepeatCounter`), every relay
+  still made. The joiner reads "Waiting for a member of X to add you" on the link page
+  (`group_join_sent_desc`); the conversation appears once a member adds them.
+- **"Holds a leaf" is not "is a member" (review of #2358, P2-2).** A removal deletes the roster row
+  BEFORE the member's Remove commit lands; if that commit never lands, the removed person keeps a
+  leaf. Following a link later, they are re-added automatically: `automaticAdmission` reads their
+  user in the tree as `member-device`, and the commit's `admits` lifts the flag. Open in
+  [backlog](../backlog.md#p2---a-removed-member-whose-leaf-survived-is-re-added-automatically-by-a-link-review-of-2358).
+- **"Only through a member's decision" holds from a client floor**, not from this build:
+  a member client older than the rule still auto-Adds a link joiner, and that Add legitimately lifts
+  the flag. It holds once `minClientVersion` floors at this build, with migration 038 deployed with
+  it ([legacy-compatibility](../legacy-compatibility.md)).
+- **WHEN THE FLOOR IS RAISED (user, 2026-10-24): once BOTH stores serve the version carrying this
+  change** - not at the deploy, not on a date. Until then an older client meets the tolerated
+  **409 `awaiting_admission`** path above (it falls back to asking a member) and an older member's
+  automatic Add is honoured through the Welcome lift. That tolerance is the shim, and its removal
+  condition is that floor, with no calendar date.
+
+The other reading was refused: treating the link as the member's decision would mean a member's
+device honouring a server-written flag, the very trust in server rows this policy removes.
+
+**A new person who entered by their own commit is made visible.** It shows in the signed commit as a
+`DeviceEvent` whose `addedBy` IS the admitted leaf and whose `memberAlreadyPresent` is `false`
+(`entersUninvited`, pinned in Rust by
+`an_external_commit_by_a_new_user_is_recorded_as_signed_by_the_device_it_admits`). In a conversation
+- decided on its row, loaded or durable, never on the session-local key-group set - the client writes
+"X entered the conversation without being added by a member" (`chat_system_uninvited_entry`, owed
+durably until the row loads), logs it at ERROR and reports it once (`POST mls/uninvited-entry`,
+`[UNINVITED_ENTRY]` in the delivery log). Never in a community or salon key group, where an external
+commit is how every member enters. The shape is `sender-mismatch`'s: a measurement, read on
+production before anything is decided about such entries. The receiving side is hardened in a
+second step.
+
+**A legitimate rejoin is not written, only counted.** The report carries a `kind`
+(`UninvitedEntryKind`): `returning` when this device saw the same user leave the tree at an earlier
+epoch (`removalEpochs`), `direct-peer` for the other person of a 1:1 conversation, `new-person`
+otherwise - and only `new-person` is written and logged at ERROR. A departure read that fails keeps
+the entry owed rather than guessing. A device that never saw the departure still reads a returning
+member as `new-person`. The server takes the report from a member of the group only (403
+`not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
+(group, entrant, epoch), so N members reporting one entry make one line, not N.
+
 ## Key packages
 
 ### The two kinds of key package

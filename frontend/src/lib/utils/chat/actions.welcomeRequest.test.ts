@@ -89,8 +89,9 @@ describe('handleWelcomeRequest - membership guard', () => {
       fetchUserDevices: vi
         .fn()
         .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
-      // Leaf not yet in the tree -> no kick, straight to addMember.
-      getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
+      // This device's leaf is not in the tree, its user's is (another device) -> a member's device,
+      // no kick, straight to addMember.
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:laptop']),
       // addMember now runs the whole staged transaction and returns the Welcome + ratchet tree.
       addMember: vi
         .fn()
@@ -233,7 +234,7 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
   // single reconnect. A plain Add goes out instead.
   it('does not replace when the routing table lists a device the tree never held', async () => {
     const mlsService = admissible({
-      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self']),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:laptop']),
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user', deviceId: 'dev-1' }]),
     });
     const log = vi.fn();
@@ -245,9 +246,10 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
     expect(mlsService.addMember).toHaveBeenCalledTimes(1);
   });
 
-  // A DESTRUCTIVE ACTION IS NOT TAKEN ON DOUBT. An unreadable tree is not a leaf sighting, so
-  // nothing is removed; the Add still goes out, and the branch says which fact it was missing.
-  it('never removes on an unreadable tree, and logs that it could not tell', async () => {
+  // NOTHING IS TAKEN ON DOUBT. An unreadable tree is not a leaf sighting, so nothing is removed - and
+  // it cannot say the requester's user is a member either, so nothing is added
+  // (`automaticAdmission`). The branch says which fact it was missing.
+  it('neither removes nor adds on an unreadable tree, and logs that it could not tell', async () => {
     const mlsService = admissible({
       getGroupMemberIdentities: vi.fn().mockRejectedValue(new Error('GroupNotFound')),
     });
@@ -259,7 +261,7 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
     expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Tree of g-kick-u'));
-    expect(mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(mlsService.addMember).not.toHaveBeenCalled();
   });
 
   // THE REPAIR IS ONE COMMIT, NOT A KICK THEN AN ADD. Two commits left a window where the device
@@ -376,7 +378,7 @@ describe('handleWelcomeRequest - a re-add the device key cannot justify', () => 
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const log = vi.fn();
     const mlsService = requester({
-      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self']),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:laptop']),
       addMember: vi
         .fn()
         .mockRejectedValue(new DeviceTrustRefusedError('identity-mismatch', 'legit-user', 'dev-1')),
@@ -452,6 +454,9 @@ describe('handleWelcomeRequest - a duplicate signature key', () => {
       // The first read could not tell; the second, after the refusal, sees the leaf.
       getGroupMemberIdentities: vi
         .fn()
+        // The admission read sees the user by another device; the leaf read could not tell; the read
+        // after the refusal sees the leaf.
+        .mockResolvedValueOnce(['me:self', 'legit-user:laptop'])
         .mockRejectedValueOnce(new Error('busy'))
         .mockResolvedValue(['me:self', 'legit-user:dev-1']),
       leafHoldingKeyOf: vi.fn().mockResolvedValue('legit-user:dev-1'),
@@ -494,6 +499,9 @@ describe('handleWelcomeRequest - a duplicate signature key', () => {
     const mlsService = requester({
       getGroupMemberIdentities: vi
         .fn()
+        // The admission read sees the user by another device; the leaf read could not tell; the read
+        // after the refusal sees the leaf.
+        .mockResolvedValueOnce(['me:self', 'legit-user:laptop'])
         .mockRejectedValueOnce(new Error('busy'))
         .mockResolvedValue(['me:self', 'legit-user:dev-1', 'legit-user:dev-9']),
       leafHoldingKeyOf: vi.fn().mockResolvedValue('legit-user:dev-9'),

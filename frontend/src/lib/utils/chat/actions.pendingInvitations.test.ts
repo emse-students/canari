@@ -30,7 +30,9 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     acquireAddLock: vi.fn().mockResolvedValue(true),
     releaseAddLock: vi.fn().mockResolvedValue(undefined),
     getGroupMembers: vi.fn().mockResolvedValue([]),
-    getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
+    // `peer` is a MEMBER by default: an automatic Add brings in a member's device, never a new person
+    // (`automaticAdmission`) - the cases about a new person are in `actions.admission.test.ts`.
+    getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
     fetchDeviceKeyPackage: vi.fn().mockResolvedValue({ kind: 'none', reason: 'unregistered' }),
     removeMemberDevice: vi.fn().mockResolvedValue(undefined),
@@ -142,7 +144,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
         .mockResolvedValue([
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
-      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device']),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'peer', deviceId: 'peer-dev' }]),
       fetchUserDevices: vi
         .fn()
@@ -176,7 +178,9 @@ describe('processPendingInvitations - leaf already in tree', () => {
         .mockResolvedValue([
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
-      getGroupMemberIdentities: vi.fn().mockResolvedValue(['someone-else:peer-dev']),
+      getGroupMemberIdentities: vi
+        .fn()
+        .mockResolvedValue(['someone-else:peer-dev', 'peer:old-phone']),
       fetchUserDevices: vi
         .fn()
         .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
@@ -196,10 +200,11 @@ describe('processPendingInvitations - leaf already in tree', () => {
     expect(addMember).toHaveBeenCalled();
   });
 
-  // THREE ANSWERS, AND THE THIRD IS NOT A "NO". An unreadable tree falls through to the Add exactly
-  // as the swallowed `catch` here used to - but it says so first, which is the whole change: this
-  // branch was the one place a lost group could hide.
-  it('falls through to the add on an unreadable tree, and logs that it could not tell', async () => {
+  // THREE ANSWERS, AND THE THIRD IS NOT A "NO" - NOR A "YES". An unreadable tree cannot say whether
+  // the device's USER is a member, and an automatic Add of a new person is refused
+  // (`automaticAdmission`), so nothing is added and the line says why. It used to fall through to the
+  // Add; the row stays, and the next sweep asks again.
+  it('adds nothing on an unreadable tree, and logs that it could not tell', async () => {
     const addMember = vi
       .fn()
       .mockResolvedValue({ welcome: new Uint8Array([9]), ratchetTree: null });
@@ -227,7 +232,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
       log,
     });
 
-    expect(addMember).toHaveBeenCalled();
+    expect(addMember).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Tree of g1'));
     expect(log).toHaveBeenCalledWith(expect.stringContaining('GroupNotFound'));
   });
@@ -336,7 +341,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
         requestReAdd: () => Promise.resolve(),
         log,
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(true);
 
     // Both were attempted: the first refusal did not abandon the second invitation.
     expect(mlsService.updateInvitationStatus).toHaveBeenCalledTimes(2);
@@ -646,8 +651,9 @@ describe('processPendingInvitations - a duplicate signature key', () => {
       requestReAdd: () => Promise.resolve(),
       log: vi.fn(),
     });
-  // The first tree read (before the Add) does not hold the device; the second, after the refusal,
-  // is `afterRefusal`. `holder` is the leaf the tree says carries the package's key.
+  // The two tree reads before the Add (whether `peer` is a member, then whether this device is a
+  // leaf) hold `peer` by another device only; the read after the refusal is `afterRefusal`. `holder`
+  // is the leaf the tree says carries the package's key.
   const withTree = (afterRefusal: string[], holder: string | null) =>
     makeMls({
       getPendingInvitations: vi
@@ -660,7 +666,8 @@ describe('processPendingInvitations - a duplicate signature key', () => {
         .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
       getGroupMemberIdentities: vi
         .fn()
-        .mockResolvedValueOnce(['self:self-device'])
+        .mockResolvedValueOnce(['self:self-device', 'peer:old-phone'])
+        .mockResolvedValueOnce(['self:self-device', 'peer:old-phone'])
         .mockResolvedValue(afterRefusal),
       leafHoldingKeyOf: vi.fn().mockResolvedValue(holder),
       addMember: vi.fn().mockRejectedValue(new Error('AddMembers: DuplicateSignatureKey')),

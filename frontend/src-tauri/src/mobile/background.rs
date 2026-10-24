@@ -534,7 +534,8 @@ pub struct WelcomeRequest<'a> {
 /// `groupInfo` is the external-join base of the epoch the commit creates, published by the route
 /// in the advance's own transaction - COMM-22), or
 /// `{"ok": false, "reason"}` with one of: `foreground-active`, `warm-process`, `stale-epoch-known`,
-/// `commit-pending`, `key-package-unreadable`, `state-unreadable`, `group-not-held`,
+/// `commit-pending`, `key-package-unreadable`, `state-unreadable`, `group-not-held`, `newcomer` (the
+/// requester's user holds no leaf: a new person, whom only a member's gesture admits),
 /// `already-member`, `add-failed`, `stage-failed`, or the [`mls_core::SkippedKeyPackageReason`] wire
 /// name the package is refused for (`identity-mismatch`, `signature-key-changed`, `expired`, ...).
 ///
@@ -614,6 +615,24 @@ pub fn prepare_welcome_background_with_key(
             "[BG_WELCOME] group={short} holds a staged commit not yet settled - no second one is staged over it"
         );
         return welcome_refused("commit-pending");
+    }
+    // A NEW PERSON IS NOT ADDED FROM A PUSH. Everything that brought this request here - the roster
+    // row, the relayed request, the KeyPackage - is the delivery service's word; this device's tree is
+    // not. A requester whose user holds no leaf is a new person, admitted only by a member's own
+    // gesture: the foreground raises that approval at its next sweep (`automaticAdmission` in
+    // `actions.ts`, the same rule).
+    match manager.user_holds_leaf(group_id, requester) {
+        Ok(true) => {}
+        Ok(false) => {
+            log::warn!(
+                "[BG_WELCOME] {requester} has no leaf in group={short} - a new person is not added from a push, a member's approval is owed"
+            );
+            return welcome_refused("newcomer");
+        }
+        Err(e) => {
+            log::warn!("[BG_WELCOME] tree of group={short} unreadable ({e}) - nothing added");
+            return welcome_refused("group-not-held");
+        }
     }
     // Bound to the requester BEFORE staging, typed: the refusal travels as its wire name. mls-core
     // has already logged a substitution (`identity-mismatch`, `signature-key-changed`) at ERROR.
@@ -2272,7 +2291,8 @@ mod tests {
 
     /// A shut phone (`alice`) in a group that moved on without it: `bob` admitted `dave`, so the
     /// group is one epoch past alice's `mls.bin`. Returns alice's stale sealed state, the commit that
-    /// moved the group, carol's key package (the newcomer asking for a Welcome) and the group id.
+    /// moved the group, the key package of a NEW DEVICE of bob (`dev-c`, asking for a Welcome - a
+    /// member's device, the one case a background Add answers) and the group id.
     fn shut_phone_behind_its_group(
         tag: &str,
         key_seed: u8,
@@ -2285,7 +2305,7 @@ mod tests {
             .add_member(&gid, &dave.generate_key_package().unwrap())
             .expect("bob adds dave");
         bob.merge_pending_commit_for(&gid).expect("bob merges");
-        let carol = MlsManager::load_or_create(&format!("{tag}-carol"), "dev-c", None).unwrap();
+        let carol = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         (stale, bob, moved, kp, gid)
     }
@@ -2300,8 +2320,9 @@ mod tests {
         dir
     }
 
-    /// Alice in a group with bob, her sealed state in a directory of its own, and carol (the
-    /// newcomer) with the key package she asks to be added with.
+    /// Alice in a group with bob, her sealed state in a directory of its own, and a NEW DEVICE of
+    /// bob (`dev-c`, named `carol` below for the device asking) with the key package it asks to be
+    /// added with - a member's device, the one case a background Add answers (`newcomer` otherwise).
     fn holder_and_newcomer(
         tag: &str,
         seed: u8,
@@ -2310,12 +2331,12 @@ mod tests {
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(seed)).unwrap();
         let state = alice.save_encrypted_with_key(&key).unwrap();
         let dir = dir_holding(tag, &state);
-        let carol = MlsManager::load_or_create(&format!("{tag}-carol"), "dev-c", None).unwrap();
+        let carol = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         (dir, state, carol, kp, gid)
     }
 
-    /// The background prepare, as the FCM service calls it, for `{tag}-carol:dev-c`.
+    /// The background prepare, as the FCM service calls it, for `{tag}-bob:dev-c`.
     fn prepare(
         dir: &Path,
         state: &[u8],
@@ -2332,7 +2353,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: gid,
-                requester: &format!("{tag}-carol:dev-c"),
+                requester: &format!("{tag}-bob:dev-c"),
                 key_package_b64: kp,
             },
         )
@@ -2420,7 +2441,7 @@ mod tests {
             serde_json::json!({
                 "groupId": gid,
                 "self": "stage-alice:dev-a",
-                "excludeDeviceIds": ["stage-carol:dev-c"],
+                "excludeDeviceIds": ["stage-bob:dev-c"],
                 "keyPackageDevices": ["dev-c"],
             })
         );
@@ -2840,7 +2861,7 @@ mod tests {
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(66)).unwrap();
         let state = alice.save_encrypted_with_key(&key).unwrap();
         let dir = dir_holding("slots", &state);
-        let carol = MlsManager::load_or_create("slots-carol", "dev-c", None).unwrap();
+        let carol = MlsManager::load_or_create("slots-bob", "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         assert_eq!(
             prepare(&dir, &state, 66, "slots", &held_gid, &kp)["ok"],
@@ -3296,13 +3317,49 @@ mod tests {
         );
     }
 
+    /// A NEW PERSON IS NOT ADDED FROM A PUSH. The roster row, the relayed request and the KeyPackage
+    /// are the delivery service's word; a requester whose user holds no leaf in this phone's tree is
+    /// refused as `newcomer`, and nothing is staged or written - a member's own gesture admits them.
+    #[test]
+    fn a_new_person_is_not_added_from_a_push() {
+        let _s = quiet_foreground();
+        let (alice, _bob, gid) = joined_pair("stranger");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(57)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("stranger", &state);
+        let carol = MlsManager::load_or_create("stranger-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(57),
+            "stranger-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "stranger-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(out["ok"], false, "{out}");
+        assert_eq!(out["reason"], "newcomer", "{out}");
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+    }
+
     /// A package naming a device this phone pinned, under ANOTHER signature key, is refused: nothing
     /// proves the change, so the background answer does not re-add it.
     #[test]
     fn a_key_package_under_an_unpinned_key_is_refused_on_the_background_path() {
         let _s = quiet_foreground();
         let (mut alice, bob, gid) = joined_pair("rekey");
-        // bob leaves, so the request is a re-add and not an `already-member`.
+        // bob keeps another device, so he is still a member and the request is a member's device -
+        // the one case a background Add answers (`newcomer` otherwise) - and the KEY is what refuses.
+        let bob_phone = MlsManager::load_or_create("rekey-bob", "dev-b9", None).unwrap();
+        alice
+            .add_member(&gid, &bob_phone.generate_key_package().unwrap())
+            .expect("add bob's phone");
+        alice.merge_pending_commit_for(&gid).expect("merge add");
+        // bob's dev-b leaves, so the request is a re-add and not an `already-member`.
         alice
             .remove_members_for_devices(&gid, &["rekey-bob:dev-b"])
             .expect("remove bob");

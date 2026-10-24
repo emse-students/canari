@@ -11,6 +11,13 @@ import type { DeviceMembershipRow, UserGroupRow } from '$lib/mls-client/IMlsServ
  *   follows. Nobody owes the device anything, so it may serve itself.
  * - `not-pending`: no row, or an `active` one (joined once, state since lost). The self-service
  *   door is the device's own.
+ * - `awaiting-admission`: the seat came from an invitation link and no member has admitted the
+ *   person yet (`awaitingAdmission`). The self-service door is SHUT - the server refuses this person
+ *   the base and every commit - and a new person enters only by a member's Add (decided 2026-10-23,
+ *   docs/wiki/protocols/mls-protocol.md, "Who admits a new person"). So the device waits and asks a
+ *   member, exactly as for `owed`; it is told so here instead of learning it from a refusal. It
+ *   wins over every other fact of a row that is not `active`; an `active` row is in the tree - a
+ *   Welcome admitted it - so the flag says nothing there and the row reads `not-pending`.
  *
  * ONE READING FOR EVERY DOOR THAT ASKS IT, and there are two: the conversation recovery seam
  * (`requestReAdd`) and the Graine key-group join (`ensureDistributionGroupFor`), which since
@@ -21,10 +28,11 @@ import type { DeviceMembershipRow, UserGroupRow } from '$lib/mls-client/IMlsServ
  * **A SERVER THAT DOES NOT SAY IS NOT A SERVER SAYING NO**: a `pending` row carrying neither field
  * reads `owed`, the behaviour every client had before the fields existed.
  */
-export type WelcomeOwedReading = 'owed' | 'unhonoured-seat' | 'not-pending';
+export type WelcomeOwedReading = 'owed' | 'awaiting-admission' | 'unhonoured-seat' | 'not-pending';
 
 /** Classifies one membership row; see {@link WelcomeOwedReading}. PURE. */
 export function readWelcomeOwedFromRow(row: DeviceMembershipRow | undefined): WelcomeOwedReading {
+  if (row?.awaitingAdmission === true && row.status !== 'active') return 'awaiting-admission';
   if (row?.status !== 'pending') return 'not-pending';
   if (row.welcomeQueued === undefined && row.addInFlight === undefined) return 'owed';
   return row.welcomeQueued === true || row.addInFlight === true ? 'owed' : 'unhonoured-seat';

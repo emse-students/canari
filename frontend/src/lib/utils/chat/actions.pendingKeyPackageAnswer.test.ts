@@ -47,7 +47,7 @@ describe('a pending invitation acts on WHICH answer it got', () => {
       acquireAddLock: vi.fn().mockResolvedValue(true),
       releaseAddLock: vi.fn().mockResolvedValue(undefined),
       getGroupMembers: vi.fn().mockResolvedValue([]),
-      getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
       // Empty, so every case below falls through to the single-device fallback under test.
       fetchUserDevices: vi.fn().mockResolvedValue([]),
       fetchDeviceKeyPackage: vi.fn(),

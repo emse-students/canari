@@ -41,10 +41,18 @@ import { sanitizeEpoch, sanitizeLogValue } from '../utils/sanitize';
  */
 export const MLS_COMMIT_LIMIT_PER_MINUTE = 600;
 
+/** How many uninvited entries are remembered for deduplication; the oldest goes first past it. */
+export const MAX_REMEMBERED_UNINVITED_ENTRIES = 5000;
+
+/** The classes a client may name an uninvited entry as (`UninvitedEntryKind` on the client). */
+const UNINVITED_ENTRY_KINDS: readonly string[] = ['new-person', 'returning', 'direct-peer'];
+
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
 @Controller()
 export class MessagingController {
   private readonly logger = new Logger(MessagingController.name);
+  /** The entries `mls/uninvited-entry` already counted, as (group, entrant, epoch), oldest first. */
+  private readonly reportedUninvitedEntries = new Set<string>();
 
   constructor(private readonly messagingService: MessagingService) {}
 
@@ -212,6 +220,89 @@ export class MessagingController {
         `kind=${sanitizeLogValue(body.kind)} ` +
         `envelope=${sanitizeLogValue(body.envelopeUserId)}:${sanitizeLogValue(body.envelopeDeviceId, 'none')} ` +
         `verified=${sanitizeLogValue(body.verifiedIdentity, 'unreadable')}`
+    );
+    return { recorded: true };
+  }
+
+  /**
+   * A client stating that a NEW PERSON entered one of its conversations by their own commit - an
+   * external commit signed by the very device it admitted, from a user who held no leaf before it.
+   * No member added them; the group info this service serves and the commit it accepted are all
+   * that let them in.
+   *
+   * A MEASUREMENT, exactly as `mls/sender-mismatch`: such an entry is either a user who lost every
+   * leaf rejoining by themselves, or one nobody wanted. The reporting device says what it can tell
+   * (`kind`, an allowlist): `returning` - it saw this user's leaves leave this tree before;
+   * `direct-peer` - the 1:1 conversation's own other person, whom opening it already chose;
+   * `new-person` - neither. The line carries it so the classes are counted apart. It stores nothing;
+   * the WARN line and its date are the count.
+   *
+   * ONE LINE PER ENTRY, NOT PER REPORTER: every member device sees the same commit and reports it,
+   * so the count is deduplicated on (group, entrant, epoch) - an entry is one commit, and a later
+   * entry of the same device is another. In memory and bounded: a restart may print an entry once
+   * more, never lose one. The first reporter's `kind` is the one printed.
+   *
+   * The reporter is the authenticated user and device and a MEMBER of the group (anyone else is
+   * refused, 403, as `mls/integrity-finding`). Every field goes through `sanitizeLogValue`.
+   */
+  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @Post('mls/uninvited-entry')
+  async reportUninvitedEntry(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') reporterDeviceId: string | undefined,
+    @Body()
+    body: {
+      groupId?: unknown;
+      entrant?: unknown;
+      epoch?: unknown;
+      keyFingerprint?: unknown;
+      kind?: unknown;
+    }
+  ): Promise<{ recorded: true }> {
+    const reporter = `${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)}`;
+    const groupId = typeof body.groupId === 'string' ? body.groupId : '';
+    if (
+      !groupId ||
+      !authUserId ||
+      !(await this.messagingService.isGroupMember(groupId, authUserId))
+    ) {
+      this.logger.warn(
+        `[UNINVITED_ENTRY] REJECT not-a-member reporter=${reporter} group=${sanitizeLogValue(body.groupId)}`
+      );
+      throw new ForbiddenException({
+        error: 'not-a-member',
+        message: 'not a member of this group',
+      });
+    }
+    // The one numeric field, printed as its digits; anything else is `invalid` like every field.
+    const epoch = sanitizeLogValue(
+      typeof body.epoch === 'number' && Number.isSafeInteger(body.epoch)
+        ? String(body.epoch)
+        : body.epoch
+    );
+    const entrant = sanitizeLogValue(body.entrant);
+    const group = sanitizeLogValue(groupId);
+    const kind =
+      body.kind === undefined || body.kind === null
+        ? 'unstated'
+        : UNINVITED_ENTRY_KINDS.includes(body.kind as string)
+          ? (body.kind as string)
+          : 'invalid';
+    const entry = `${group}\0${entrant}\0${epoch}`;
+    if (this.reportedUninvitedEntries.has(entry)) {
+      this.logger.debug(
+        `[UNINVITED_ENTRY] repeat reporter=${reporter} group=${group} entrant=${entrant} epoch=${epoch} - already counted`
+      );
+      return { recorded: true };
+    }
+    if (this.reportedUninvitedEntries.size >= MAX_REMEMBERED_UNINVITED_ENTRIES) {
+      const oldest = this.reportedUninvitedEntries.values().next().value;
+      if (oldest !== undefined) this.reportedUninvitedEntries.delete(oldest);
+    }
+    this.reportedUninvitedEntries.add(entry);
+    this.logger.warn(
+      `[UNINVITED_ENTRY] kind=${kind} reporter=${reporter} group=${group} entrant=${entrant} ` +
+        `epoch=${epoch} key=${sanitizeLogValue(body.keyFingerprint)}`
     );
     return { recorded: true };
   }

@@ -48,6 +48,56 @@ Owed before it ships:
   must exist before the first push and stay stable, while the at-rest key rotates (migration, recovery,
   reset). Revisit only if #2271 lands with a design that tolerates a rotation.
 
+## A new person is admitted only by a member (decided by the user on 2026-10-23): step one built
+
+Built: no automatic Add brings in a user absent from the adder's tree, web, native and the Android
+background answer alike; a member is asked "X asks to join this group. Only a member can add them." (Add / Decline), which replaces the
+group link's automatic admission (the server holds a link joiner outside, `awaitingAdmission`, until a
+member's Add); and an entry no member made is written in the conversation and reported
+(`[UNINVITED_ENTRY]`, with its `kind`) - see
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Owed: migration 038
+deployed with the build; the `minClientVersion` floor at this build, since a member client older
+than the rule still auto-Adds a link joiner and "only by a member" holds only from that floor
+([legacy-compatibility](legacy-compatibility.md)); the `[UNINVITED_ENTRY] kind=new-person` count on
+production once the build serves both stores; and a second step on the receiving side (private
+operations notes).
+
+## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
+
+A removal deletes the roster row before the member's Remove commit lands. If that commit never
+lands, the removed person keeps a leaf, and when they later follow an invitation link
+`automaticAdmission` reads their user in the tree as `member-device`: a member's device Adds them
+with no one asked, and the commit's `admits` lifts their `awaitingAdmission`. "Holds a leaf" is not
+"is a member". Not built: the fix needs a fact the client can read that says the leaf is owed a
+Remove (the server's exclusion intervals, or `removeStrayLeaves` run before the sweep decides) -
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
+## P2 - Three delivery routes check no membership at all (re-review of #2358, already on main)
+
+`POST mls/history-request`, `POST mls/base-refresh-request` and `POST mls/notify-reaction` relay to
+a group's members without asking whether the caller holds a seat in it, admitted or not: anyone
+authenticated can make the members' devices answer, or notify them, in a group they are not in. The
+waiting seat of #2358 is only one such caller. Owed: the same caller predicate as the other routes
+(`callerSeatStanding`, `utils/group-membership.ts`), an integration case per route, and a look at
+what an older client sends there before it is refused -
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
+## P3 - Calls: the waiting-seat exclusion is built and has never run against a live call (re-review of #2358)
+
+Every call route refuses a seat awaiting a member's admission (409) and the ring's callees are
+admitted seats only (`ADMITTED_SEAT`), proven against PostgreSQL by `admission.integration.spec.ts`.
+`calls_mode` is `off` on production, so no ring has gone through it. Owed: one ring on dev with a
+pending link joiner in the conversation, read in the `[ring]` lines (`not rung: ... hold no
+admitted seat`) - [calls](frontend/modules/calls.md).
+
+## P3 - The Android background answer refuses a newcomer and tells nobody (review of #2358)
+
+`prepare_welcome_background_with_key` refuses a `welcome_request` from a user absent from the tree
+(`newcomer`) and raises no local notification, so a member whose phone is shut learns of the ask
+only when the app is next opened and the foreground sweep raises it. Owed: a local notification
+"X asks to join" from the background engine (both platforms, one ledger with the new-device
+notices), which is more than a small change - [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
 ## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
 
 Built: the owner's in-app alert, the contact line in every DM and group shared with the contact
