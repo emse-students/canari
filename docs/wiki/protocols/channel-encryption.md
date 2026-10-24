@@ -3611,7 +3611,7 @@ when a v1 message row is dropped, absent otherwise, first after a forced reload)
 an endorsed v2 seed). The Swift and Kotlin log lines are not compiled on a workstation: their
 reading is owed on a device. **On a real estate** the rig rows GRAINE-AUTH-5 (the live unsigned row,
 refused at ERROR, nothing asked) and GRAINE-AUTH-6 (the same row from history, warn, the notice once)
-are `PASS` since 2026-10-13 ([board](../cross-client-testing.md#20---graine---an-author-that-is-proven)).
+are `PASS` since 2026-10-13 ([board](../cross-client-testing-archive-1-4-0.md#20---graine---an-author-that-is-proven)).
 Since §21.8 the server refuses that POST, so GRAINE-AUTH-5 has no arm any more and GRAINE-AUTH-6
 inserts its row in the database.
 **First shipped in the stable `v1.2.6` (2026-10-13)**: a store build older than that still accepts a v1
@@ -3695,7 +3695,7 @@ with `CHANNEL_SIGNATURE_REQUIRED` at ERROR, nothing saved or published; a non-me
 (text with its seed frame, silent reaction or edit, poll, system notice, mention) are accepted signed,
 and the same five as `v1.0.2` posted them, unsigned, are refused. **On a real estate**: the rig row
 GRAINE-AUTH-7 (the 400, the ERROR line, nothing stored), not yet run
-([board](../cross-client-testing.md#20---graine---an-author-that-is-proven)).
+([board](../cross-client-testing-archive-1-4-0.md#20---graine---an-author-that-is-proven)).
 
 **Where it stands (2026-10-14).** Merged as #1802, on dev since `v1.2.7-alpha.1`; production gets it
 with the next stable. Production still held **373 unsigned rows in 15 salons** (none pinned), the
