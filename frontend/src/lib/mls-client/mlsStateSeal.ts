@@ -17,6 +17,13 @@
  *
  * with the 16 header bytes as the AAD and the AES key = HKDF-SHA256(device key, salt, info).
  *
+ * WHAT THE AAD BINDS, AND WHAT IT DOES NOT. The AAD is ONLY those 16 header bytes: the format, the
+ * version and the key fingerprint. Nothing about WHOSE state it is, or how recent, is bound by the
+ * seal - the same as v1 and legacy. A blob swapped for another one sealed under the same device key
+ * therefore opens; what stops a swapped blob from being INSTALLED is the identity check after the
+ * open (`IDENTITY_MISMATCH`: the state's credential must name this `user:device`). A stale blob of
+ * the SAME identity (an older checkpoint put back) is not detected by the seal at all.
+ *
  * WHY THE WEB ALSO OPENS V2 HERE, rather than leaving it to the WASM reader: RustCrypto's AES has no
  * hardware path on `wasm32`, and the bench measured the WASM opening a 7.7 MB v2 blob in 610-618 ms
  * against 233-240 ms for the ChaCha one - the checkpoint saving would have been paid back, and more, on
@@ -33,17 +40,24 @@
  */
 
 /**
- * WHETHER THE WEB CHECKPOINT WRITES V2. `false` IN THE RELEASE THAT SHIPS THE READER, DELIBERATELY.
+ * WHETHER THE WEB CHECKPOINT WRITES V2. `false`, DELIBERATELY: the HARDENED reader ships first.
  *
- * Read-first, write-later - the same sequence `state_blob`'s v1 header follows, for the same reason:
- * a build that predates the reader fails a v2 blob (loudly, into `STATE_UNDECRYPTABLE`, destroying
- * nothing - but the user is then asked for a PIN and holds a state no PIN opens in that build).
- * Three paths hand a v2 blob to such a build: a web deploy ROLLED BACK; a tab still running the
- * previous bundle that re-reads IndexedDB (an unlock after a deploy); and a `.canari` backup
- * exported on the web and restored on a phone whose store build predates the reader. Flipping this
- * is one line, owed once (a) a stable carrying the reader has served the web and (b)
- * `minClientVersion` is at or past that release, which closes the backup path
- * (`docs/wiki/protocols/mls-protocol.md`, "The state blob's framing").
+ * Read-first, write-later - the same sequence `state_blob`'s v1 header follows. A v2 reader is in
+ * every build since `v1.2.7`, but not one that survives a v2 blob reaching it: `v1.2.7` turns any
+ * WebCrypto rejection into `STATE_UNDECRYPTABLE` (a PIN-recovery prompt for a state no PIN opens in
+ * that build), and `v1.4.0` throws `STATE_ALTERED`, which `init` answers with an IRREVERSIBLE identity
+ * rotation (`noPinOpensState('altered')`) - even when the rejection was an engine fault and the bytes
+ * were healthy. Only the reader that answers {@link MlsStateUnreadableNowError} and asks `mls-core`
+ * for the verdict is safe to hand a v2 blob. Two paths hand one to an older build: a tab still
+ * running the previous bundle that re-reads IndexedDB (an unlock after a deploy), and a web deploy
+ * ROLLED BACK.
+ *
+ * THE FLIP IS ITS OWN LATER PULL REQUEST, owed once BOTH floors are at or past the release tag that
+ * carries this hardened reader: production's `minClientVersion`, AND the lowest tag a web rollback
+ * is still allowed to reach. It is then a ONE-WAY DOOR for the data: turning it back off only stops
+ * new v2 writes, so both v2 readers (`openMlsStateBlobV2` here, `state_blob::open_v2` in `mls-core`)
+ * are permanent from that day (`docs/wiki/protocols/mls-protocol.md`, "v2 - the browser seals with
+ * WebCrypto").
  */
 export const MLS_STATE_SEAL_V2_WRITER_ENABLED = false;
 
@@ -81,6 +95,10 @@ interface PreparedKey {
 /**
  * ONE ENTRY, because a session seals under one device key at a time and a PIN change replaces it.
  * A promise rather than a value so two checkpoints racing the first derivation share it.
+ *
+ * `preparedFor` is the hex of SHA-256(domain || device key) - the digest the header's fingerprint is
+ * the first 8 bytes of - and NEVER the device key itself: a module-level string outlives every
+ * caller's copy of the key, and the cache needs only to recognise the key, not to hold it.
  */
 let prepared: Promise<PreparedKey> | null = null;
 let preparedFor: string | null = null;
@@ -97,27 +115,37 @@ function decodeDeviceKey(deviceKeyB64: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+/** SHA-256(domain || device key): the fingerprint is its first 8 bytes, the cache identity all 32. */
+async function deviceKeyDigest(deviceKey: Uint8Array): Promise<Uint8Array> {
+  const input = new Uint8Array(FINGERPRINT_DOMAIN.length + deviceKey.length);
+  input.set(FINGERPRINT_DOMAIN, 0);
+  input.set(deviceKey, FINGERPRINT_DOMAIN.length);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', input));
+  input.fill(0);
+  return digest;
+}
+
 /**
  * The first 8 bytes of SHA-256(domain || device key) - `state_blob::key_fingerprint`, byte for
  * byte. It is what lets a reader say "sealed under another key" as a FACT, before any cipher runs.
  */
 export async function mlsStateKeyFingerprint(deviceKey: Uint8Array): Promise<Uint8Array> {
-  const input = new Uint8Array(FINGERPRINT_DOMAIN.length + deviceKey.length);
-  input.set(FINGERPRINT_DOMAIN, 0);
-  input.set(deviceKey, FINGERPRINT_DOMAIN.length);
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', input));
-  return digest.slice(0, 8);
+  return (await deviceKeyDigest(deviceKey)).slice(0, 8);
 }
 
-async function prepareKey(deviceKeyB64: string): Promise<PreparedKey> {
+function hexOf(bytes: Uint8Array): string {
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+
+async function prepareKey(raw: Uint8Array<ArrayBuffer>, digest: Uint8Array): Promise<PreparedKey> {
   console.log('[MLS] state seal v2: deriving the AES-GCM key for this device key (once per key)');
-  const raw = decodeDeviceKey(deviceKeyB64);
   const header = new Uint8Array(MLS_STATE_BLOB_HEADER_LEN);
   header.set(MLS_STATE_BLOB_MAGIC, 0);
   header[MLS_STATE_BLOB_MAGIC.length] = MLS_STATE_BLOB_VERSION_2;
-  header.set(await mlsStateKeyFingerprint(raw), MLS_STATE_BLOB_MAGIC.length + 1);
+  header.set(digest.subarray(0, 8), MLS_STATE_BLOB_MAGIC.length + 1);
   const ikm = await crypto.subtle.importKey('raw', raw, 'HKDF', false, ['deriveKey']);
-  raw.fill(0);
   const aesKey = await crypto.subtle.deriveKey(
     {
       name: 'HKDF',
@@ -133,23 +161,35 @@ async function prepareKey(deviceKeyB64: string): Promise<PreparedKey> {
   return { header, aesKey };
 }
 
-function preparedKeyFor(deviceKeyB64: string): Promise<PreparedKey> {
-  if (!prepared || preparedFor !== deviceKeyB64) {
-    preparedFor = deviceKeyB64;
-    const attempt = prepareKey(deviceKeyB64);
-    prepared = attempt;
-    // A failed derivation must not be cached for the rest of the session: the next checkpoint
-    // retries it. LOGGED, because the rejection itself is reported by the awaiting caller and this
-    // branch is the one place that knows the cache was dropped.
-    attempt.catch((e) => {
-      if (prepared === attempt) {
-        console.warn(`[MLS] state seal v2: key preparation failed, not cached: ${String(e)}`);
-        prepared = null;
-        preparedFor = null;
-      }
-    });
+async function preparedKeyFor(deviceKeyB64: string): Promise<PreparedKey> {
+  const raw = decodeDeviceKey(deviceKeyB64);
+  let digest: Uint8Array;
+  try {
+    digest = await deviceKeyDigest(raw);
+  } catch (e) {
+    raw.fill(0);
+    throw e;
   }
-  return prepared;
+  const identity = hexOf(digest);
+  if (prepared && preparedFor === identity) {
+    raw.fill(0);
+    return prepared;
+  }
+  preparedFor = identity;
+  // `raw` is zeroed once the import has copied it, whatever the derivation does after.
+  const attempt = prepareKey(raw, digest).finally(() => raw.fill(0));
+  prepared = attempt;
+  // A failed derivation must not be cached for the rest of the session: the next checkpoint
+  // retries it. LOGGED, because the rejection itself is reported by the awaiting caller and this
+  // branch is the one place that knows the cache was dropped.
+  attempt.catch((e) => {
+    if (prepared === attempt) {
+      console.warn(`[MLS] state seal v2: key preparation failed, not cached: ${String(e)}`);
+      prepared = null;
+      preparedFor = null;
+    }
+  });
+  return attempt;
 }
 
 /**
@@ -194,14 +234,90 @@ export function isMlsStateBlobV2(blob: Uint8Array): boolean {
 }
 
 /**
+ * WebCrypto refused to open a v2 blob, and that refusal PROVES NOTHING ABOUT THE BYTES.
+ *
+ * WebCrypto answers a failed AES-GCM tag with `OperationError` - and WebKit answers an engine fault
+ * (memory pressure on a ~19 MB state, among others) with the same name. So no rejection from
+ * `crypto.subtle` is evidence of alteration, and this type is NOT `STATE_ALTERED`: it is
+ * "unreadable right now, nothing destroyed". The verdict on the bytes is asked of `mls-core`'s
+ * deterministic reader by `loadAndInitWasm` (`mlsWasmLoader.ts`), which turns it into `STATE_ALTERED`
+ * only when that reader fails the same tag; otherwise this travels on, the caller re-reads a
+ * bounded number of times and then stops with the blob untouched - never a rotation.
+ *
+ * It carries the evidence separating the causes it cannot itself distinguish: the blob's size, the
+ * engine's error name, whether the key derivation (the unwrap) had succeeded, and - once
+ * `loadAndInitWasm` asked - what the deterministic reader answered.
+ */
+export class MlsStateUnreadableNowError extends Error {
+  /** What `mls-core`'s reader answered for the same bytes, once asked (`loadAndInitWasm`). */
+  deterministicReader: string | null = null;
+
+  constructor(
+    readonly blobBytes: number,
+    readonly errorName: string,
+    readonly keyPrepared: boolean,
+    cause: unknown
+  ) {
+    super(
+      `STATE_UNREADABLE_NOW: WebCrypto refused the v2 state blob (${blobBytes} B, ${errorName}, key ${keyPrepared ? 'derived' : 'NOT derived'}) - not proof of alteration, nothing destroyed: ${String(cause)}`,
+      { cause }
+    );
+    this.name = 'MlsStateUnreadableNowError';
+  }
+}
+
+/**
+ * The codes `mls-core`'s deterministic reader answers ABOUT THE BYTES - `MlsError::state_verdict_code`
+ * in Rust, handed across the WASM boundary as a code by `state_blob_verdict`, never read out of a
+ * message.
+ */
+export type MlsStateVerdictCode =
+  | 'STATE_ALTERED'
+  | 'STATE_KEY_MISMATCH'
+  | 'STATE_UNDECRYPTABLE'
+  | 'IDENTITY_MISMATCH';
+
+/** Every {@link MlsStateVerdictCode}, for checking an answer from the boundary against the set. */
+export const MLS_STATE_VERDICT_CODES: ReadonlySet<string> = new Set<MlsStateVerdictCode>([
+  'STATE_ALTERED',
+  'STATE_KEY_MISMATCH',
+  'STATE_UNDECRYPTABLE',
+  'IDENTITY_MISMATCH',
+]);
+
+/**
+ * WebCrypto refused a v2 blob AND `mls-core`'s deterministic reader gave a verdict on the same
+ * bytes: a FACT, carried as a {@link code} the classifier reads by type (`classifyStateLoadFailure`).
+ *
+ * The message still starts with the code, so a reader of the logs - and every consumer that has not
+ * moved to the type yet - sees the same word a native load surfaces for the same bytes.
+ */
+export class MlsStateVerdictError extends Error {
+  constructor(
+    readonly code: MlsStateVerdictCode,
+    readonly refusal: MlsStateUnreadableNowError
+  ) {
+    super(
+      `${code}: mls-core's deterministic reader judged the v2 state blob WebCrypto refused (${refusal.blobBytes} B, ${refusal.errorName})`,
+      { cause: refusal }
+    );
+    this.name = 'MlsStateVerdictError';
+  }
+}
+
+/** The engine's own name for a rejection, tested by NAME: a DOMException is realm-bound. */
+function errorNameOf(e: unknown): string {
+  return e instanceof Error ? e.name : typeof e;
+}
+
+/**
  * Opens a v2 blob on the web, returning the plain CBOR snapshot for the WASM to load.
  *
- * Rejects with the SAME codes `mls-core` throws, as an `Error` whose message leads with the code -
- * the contract `classifyStateLoadFailure` reads on both paths: `STATE_KEY_MISMATCH` when the header
- * names another device key (checked BEFORE the cipher, so a rotation is a fact, not a guess),
- * `STATE_ALTERED` for a tag that does not verify under the key the header names (WebCrypto's
- * `OperationError`, and nothing else), and `STATE_UNDECRYPTABLE` for a stub too short to carry a
- * body. Any other decrypt rejection leaves UNTYPED, so the classifier answers `unknown`.
+ * Rejects with the codes `classifyStateLoadFailure` reads: `STATE_KEY_MISMATCH` when the header
+ * names another device key (checked BEFORE the cipher, so a rotation is a fact, not a guess) and
+ * `STATE_UNDECRYPTABLE` for a stub too short to carry a body - both decided from the bytes alone,
+ * the same as `mls-core`. A rejection from WebCrypto itself (key derivation or decrypt) is
+ * {@link MlsStateUnreadableNowError}, NEVER `STATE_ALTERED`: see that type for why.
  */
 export async function openMlsStateBlobV2(
   blob: Uint8Array,
@@ -218,7 +334,16 @@ export async function openMlsStateBlobV2(
       `STATE_UNDECRYPTABLE: framed state blob (version 2) carries ${body.length} byte(s) after its header, too short to hold its 28-byte minimum`
     );
   }
-  const { header, aesKey } = await preparedKeyFor(deviceKeyB64);
+  let keyMaterial: PreparedKey;
+  try {
+    keyMaterial = await preparedKeyFor(deviceKeyB64);
+  } catch (e) {
+    console.error(
+      `[MLS] state open v2: the AES key could not be derived (${errorNameOf(e)}, blob ${blob.length} B) - unreadable right now, nothing destroyed`
+    );
+    throw new MlsStateUnreadableNowError(blob.length, errorNameOf(e), false, e);
+  }
+  const { header, aesKey } = keyMaterial;
   for (let i = MLS_STATE_BLOB_MAGIC.length + 1; i < MLS_STATE_BLOB_HEADER_LEN; i++) {
     if (blob[i] !== header[i]) {
       throw new Error(
@@ -239,22 +364,14 @@ export async function openMlsStateBlobV2(
       )
     );
   } catch (e) {
-    // ONLY `OperationError` is WebCrypto's answer for a tag that does not verify. Any other
-    // rejection (a key unusable for `decrypt`, an engine fault) proves nothing about the bytes, and
-    // `STATE_ALTERED` leads to a destructive identity rotation - so it leaves UNTYPED, and the
-    // classifier answers `unknown`: logged loudly, nothing destroyed. Tested by the NAME on an
-    // `Error` (a DOMException is one) rather than `instanceof DOMException`, which is realm-bound:
-    // under the test DOM WebCrypto throws Node's DOMException, not the global one, and the
-    // `instanceof` test then silently sent the real tag failure to `unknown`.
-    if (e instanceof Error && e.name === 'OperationError') {
-      throw new Error(
-        `STATE_ALTERED: v2 AES-GCM tag did not verify under the right key - the blob was altered: ${String(e)}`
-      );
-    }
-    throw new Error(
-      `v2 AES-GCM decrypt failed with something other than a tag check, so the state is not proven altered: ${String(e)}`,
-      { cause: e }
+    // `OperationError` IS a failed tag - AND a WebKit engine fault, under the same name. It was read
+    // as `STATE_ALTERED` here, which `init` answers with an IRREVERSIBLE identity rotation even under
+    // `noFreshStart`: an out-of-memory decrypt would have destroyed a healthy state. No WebCrypto
+    // rejection is a verdict on the bytes; `loadAndInitWasm` asks the deterministic reader for one.
+    console.error(
+      `[MLS] state open v2: WebCrypto refused the blob (${errorNameOf(e)}, blob ${blob.length} B, key derived) - not proof of alteration, nothing destroyed`
     );
+    throw new MlsStateUnreadableNowError(blob.length, errorNameOf(e), true, e);
   }
 }
 
