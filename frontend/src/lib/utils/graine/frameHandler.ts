@@ -24,6 +24,8 @@ import { mirrorGraineSeed } from './graineMirror';
 import { forgetAskedSession, noteHistoryHeldNothing, noteSeedUnavailable } from './repair';
 import { seedFromWire, storedV2From, storedV2Of, toWireSeed, type IncomingSeed } from './wireSeed';
 import { checkSeedEndorsement, type EndorsementSource } from './endorsement';
+import { pageGraineBundle } from './bundlePages';
+import { historyPageFault, noteHistoryPage } from './pagedHistoryAnswer';
 
 /**
  * What a frame arriving on a community's distribution group MEANS.
@@ -529,18 +531,20 @@ async function answerSeedRequest(
   const holdsNothing = gathered.holdsNothing === true && gathered.seeds.length === 0;
   if (!holdsNothing && gathered.seeds.length === 0 && gathered.missing.length === 0) return;
 
-  const bundle = encodeAppMessage(
-    mkGraineBundle({
-      workspaceId: frame.workspaceId,
-      requestId: String(request.requestId ?? ''),
-      seeds: gathered.seeds,
-      missingSessionIds: gathered.missing,
-      // Stated rather than left to be inferred from a short list: "this is all there is" and "this
-      // is all I could send" are different facts, and only one of them means ask again.
-      truncated: gathered.truncated,
-      ...(holdsNothing ? { holdsNothing: true } : {}),
-    })
-  );
+  // BOUNDED IN BYTES, NOT IN SEEDS (2026-10-22): an answer over GRAINE_BUNDLE_PAGE_MAX_BYTES goes as
+  // several complete bundles under one request id. Each seed is stored on its own at the other end,
+  // so the pages need no reassembly - see `bundlePages.ts` for why order and duplicates corrupt
+  // nothing there, and what a lost page costs.
+  const pages = pageGraineBundle({
+    workspaceId: frame.workspaceId,
+    requestId: String(request.requestId ?? ''),
+    seeds: gathered.seeds,
+    missing: gathered.missing,
+    // Stated rather than left to be inferred from a short list: "this is all there is" and "this
+    // is all I could send" are different facts, and only one of them means ask again.
+    truncated: gathered.truncated,
+    holdsNothing,
+  });
   const seeds = gathered.seeds;
   // A bundle CARRYING SEEDS is key material on a key-distribution group, and travels as such. It
   // was `DELIVERY.transport` until 2026-08-25, when COMM-18 measured what that costs: a device
@@ -567,11 +571,31 @@ async function answerSeedRequest(
   // rows per bundle and bundles were 70 % of its queued bytes, for seeds nobody else had asked for.
   // Still durable for the requester - the COMM-18 reason above holds for it - and kept out of the
   // group's shared log, which every member reads.
-  await mlsService.sendMessage(frame.groupId, bundle, undefined, addressedKeyMaterial(requester));
+  //
+  // EVERY PAGE TRAVELS THE SAME WAY, in order, one after the other. A page that fails to send is
+  // said with how many went before it and the failure propagates exactly as a one-message answer's
+  // did; the pages already sent are stored at the other end, and what the rest carried is asked for
+  // there one session at a time.
+  for (const [index, page] of pages.entries()) {
+    try {
+      await mlsService.sendMessage(
+        frame.groupId,
+        encodeAppMessage(mkGraineBundle(page)),
+        undefined,
+        addressedKeyMaterial(requester)
+      );
+    } catch (e) {
+      console.warn(
+        `[GRAINE] page ${index + 1}/${pages.length} of the answer to ${requester} (request ${String(request.requestId ?? '')}) was not sent - ${index} page(s) went before it: ${String(e)}`
+      );
+      throw e;
+    }
+  }
   console.info(
     `[GRAINE] answered ${requester} with ${seeds.length} seed(s)` +
       (gathered.missing.length > 0 ? `, declining ${gathered.missing.length}` : '') +
-      (holdsNothing ? ' - holds nothing of the community' : '')
+      (holdsNothing ? ' - holds nothing of the community' : '') +
+      ` in ${pages.length} page(s)`
   );
 }
 
@@ -764,11 +788,34 @@ async function gatherCommunityHistory(
   };
 }
 
-/** Stores the seeds of an answer and tells the UI which salons just became readable. */
+/**
+ * Where a bundle sits in its answer, for the absorb line: empty for an answer of one message, and
+ * `page 2/5 of request r` otherwise. Every seed is stored on its own, so a page needs nothing from
+ * the others: a numbering that cannot be true ({@link historyPageFault}) is said HERE, once, and the
+ * page still absorbed - but never counted toward this device's history answer (`noteHistoryPage`).
+ */
+function pageNote(frame: DistributionFrame, bundle: canari.GraineBundleMsg.$Properties): string {
+  const count = Number(bundle.pageCount ?? 0);
+  if (count === 0) return '';
+  const index = Number(bundle.pageIndex ?? 0);
+  const fault = historyPageFault(index, count);
+  if (fault !== null) {
+    console.warn(
+      `[GRAINE] ${frame.sender} numbered a bundle for request ${String(bundle.requestId ?? '')} in community ${frame.workspaceId.slice(0, 8)} with ${fault} - a numbering no answerer writes; its seeds are absorbed like any others, the page is not counted`
+    );
+  }
+  return ` - page ${index + 1}/${count} of request ${String(bundle.requestId ?? '')}`;
+}
+
+/**
+ * Stores the seeds of an answer - or of one PAGE of it - and tells the UI which salons just became
+ * readable. A page is a complete bundle: nothing here waits for, counts or assembles the others.
+ */
 async function absorbSeedBundle(
   frame: DistributionFrame,
   bundle: canari.GraineBundleMsg.$Properties
 ): Promise<void> {
+  const page = pageNote(frame, bundle);
   const repaired = new Set<string>();
   const refusedV1: string[] = [];
   const refusedOutOfScope: string[] = [];
@@ -820,6 +867,18 @@ async function absorbSeedBundle(
     );
   }
 
+  // AFTER its seeds are stored, never before: a page recorded as arrived is a page whose seeds are
+  // here, which is what an incomplete history answer is judged on at the next start (section 4.4).
+  // A bundle answering anything but this device's history ask is ignored there.
+  noteHistoryPage(
+    requireGraineRuntime('cannot record a history page').userId,
+    frame.workspaceId,
+    String(bundle.requestId ?? ''),
+    frame.sender,
+    Number(bundle.pageIndex ?? 0),
+    Number(bundle.pageCount ?? 0)
+  );
+
   if (refusedV1.length > 0) {
     // ONE line per bundle: an honest answerer relays every v1 session it holds, so a joiner's
     // history bundle can carry dozens. Those rows stay unreadable here and are not asked for again
@@ -842,7 +901,8 @@ async function absorbSeedBundle(
       (absorbed > 0
         ? `; endorsements verified: ${absorbed - endorsedByServer} from the tree, ${endorsedByServer} from the server's published keys`
         : '') +
-      `) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}`
+      `) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}` +
+      page
   );
 
   if (bundle.truncated) {
