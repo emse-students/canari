@@ -411,7 +411,7 @@ export function leaksContent(expr: string): boolean {
   if (MEASURES.test(expr)) return false;
   // An iOS error text often quotes the file it failed on (the shared file's name), so it is
   // content the moment it is marked public; unmarked, os.Logger redacts it in release.
-  if (/localizedDescription/.test(expr) && /privacy:\s*\.public/.test(expr)) return true;
+  if (/\blocalizedDescription\b/.test(expr) && /privacy:\s*\.public\b/.test(expr)) return true;
   return valueNamesIn(expr).some((n) => CONTENT_NAMES.includes(n));
 }
 
@@ -463,6 +463,10 @@ describe('the scanner', () => {
     expect(leaksContent('seed["sessionId"].as_str().unwrap_or_default()')).toBe(false);
     expect(leaksContent('renderMentions(text, myUserId).take(200)')).toBe(true);
     expect(leaksContent('msg.text')).toBe(true);
+    // An error text marked public is content; unmarked, os.Logger redacts it.
+    expect(leaksContent('error.localizedDescription, privacy: .public')).toBe(true);
+    expect(leaksContent('error.localizedDescription')).toBe(false);
+    expect(leaksContent('error.localizedDescriptionX, privacy: .publicX')).toBe(false);
   });
 
   it('finds the native sources it is meant to read', () => {

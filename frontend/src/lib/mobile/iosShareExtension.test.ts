@@ -41,6 +41,22 @@ function capture(source: string, re: RegExp): string {
   return match![1];
 }
 
+/**
+ * `xml` with every `<!-- ... -->` comment cut out, in one left-to-right pass: a regex replace can
+ * splice two halves into a new comment opener, a split on the opener cannot. An unclosed comment
+ * runs to the end, as an XML reader would read it.
+ */
+function withoutXmlComments(xml: string): string {
+  return xml
+    .split('<!--')
+    .map((part, i) => {
+      if (i === 0) return part;
+      const end = part.indexOf('-->');
+      return end < 0 ? '' : part.slice(end + '-->'.length);
+    })
+    .join('');
+}
+
 /** `200L * 1024 * 1024` or `200 * 1024 * 1024` evaluated - a product of integer literals. */
 function product(expr: string): number {
   return expr
@@ -198,7 +214,7 @@ describe('the names the extension, the app and Android share', () => {
 
 describe('the extension bundle', () => {
   it('holds the App Group and nothing else', () => {
-    const ent = read(resolve(SHARE, 'canari_Share.entitlements')).replace(/<!--[\s\S]*?-->/g, '');
+    const ent = withoutXmlComments(read(resolve(SHARE, 'canari_Share.entitlements')));
     expect([...ent.matchAll(/<key>([^<]+)<\/key>/g)].map((m) => m[1])).toEqual([
       'com.apple.security.application-groups',
     ]);
