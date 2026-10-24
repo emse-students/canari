@@ -15,11 +15,22 @@ function read(name: string): string {
   return readFileSync(join(MIGRATIONS, name), 'utf8');
 }
 
-describe('a migration that locks queued_message', () => {
+describe('a migration that locks a table every send reads', () => {
   it('035 sets a lock_timeout before it alters the table', () => {
     const sql = read('035_queued_message_addressed.sql');
     const timeout = sql.search(/^\s*SET\s+lock_timeout\s*=\s*'\d+s'\s*;/im);
     const alter = sql.search(/^\s*ALTER\s+TABLE\s+queued_message/im);
+
+    expect(alter).toBeGreaterThanOrEqual(0);
+    expect(timeout).toBeGreaterThanOrEqual(0);
+    expect(timeout).toBeLessThan(alter);
+  });
+
+  // `push_token` is read by every send to find its destinations: the same reason, another table.
+  it('037 sets a lock_timeout before it alters push_token', () => {
+    const sql = read('037_push_token_session.sql');
+    const timeout = sql.search(/^\s*SET\s+lock_timeout\s*=\s*'\d+s'\s*;/im);
+    const alter = sql.search(/^\s*ALTER\s+TABLE\s+"?push_token"?/im);
 
     expect(alter).toBeGreaterThanOrEqual(0);
     expect(timeout).toBeGreaterThanOrEqual(0);

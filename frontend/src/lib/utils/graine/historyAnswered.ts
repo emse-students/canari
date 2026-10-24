@@ -24,6 +24,7 @@
  */
 
 import { ACCOUNT_KEY } from '../accountLocalKeys';
+import { forgetWorkspaceRecord } from './workspaceRecords';
 
 /** Where a history ask was answered "I hold nothing": the key group, and the epoch it was sealed at. */
 export interface HistoryAskVersion {
@@ -191,8 +192,5 @@ export function markHistoryHeldNothingFinal(
  * re-joined, and in both cases what was answered before is no longer evidence about its past.
  */
 export function forgetHistoryHeldNothing(userId: string, workspaceId: string): void {
-  const records = readAll(userId);
-  if (!(workspaceId in records)) return;
-  delete records[workspaceId];
-  writeAll(userId, records);
+  forgetWorkspaceRecord(userId, workspaceId, readAll, writeAll);
 }
