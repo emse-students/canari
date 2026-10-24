@@ -1162,14 +1162,16 @@ whose whole identity is in that list, by device (`removeMemberDevice`), after th
 fresh tree and a fresh answer. It is an ALLOWLIST: a leaf the routing table merely forgot is never a
 candidate, and a device never removes its own leaf. Like the refresh, nobody asked for this commit,
 so it is staged only on the published branch (`assertOnPublishedBranch` above; a refusal is logged
-`[STRAY] ... NOT removed` and nothing is staged). Key groups are not covered yet, for the cost
-reason above ([backlog](../backlog.md)).
+`[STRAY] ... NOT removed` and nothing is staged). Key groups are not covered yet: their roster
+collector (`reconcileDistributionGroupRoster`) does not read the `revoked` answer, a separate
+question from the refresh's cost ([backlog](../backlog.md)).
 
 **And the revoked device cannot commit** (2026-10-23). The commit gate (`validateCommit`) refuses a
-commit from a device under an active revocation - `403 DEVICE_REVOKED`, before the lock and before
-the duplicate answer, read by the pair on the denylist's existing `(userId, deviceId)` unique index
-([chat-delivery](../services/chat-delivery.md)). The purge of its static KeyPackage usually refused
-it first, as `device_not_owned`; that was a coincidence of the purge, not a rule.
+commit from a device under an active revocation - `403 DEVICE_REVOKED`, FIRST: before the ownership
+check, the lock and the duplicate answer, read by the pair on the denylist's existing
+`(userId, deviceId)` unique index ([chat-delivery](../services/chat-delivery.md)). The revocation
+purges the static KeyPackage, so an ownership check asked first answers `device_not_owned` - true by
+coincidence, and not the answer the device's client acts on.
 
 ### Static fallback key package
 
