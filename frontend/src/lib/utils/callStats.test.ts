@@ -189,6 +189,8 @@ describe('describeVideoStats', () => {
           framesPerSecond: 30,
           framesEncoded: 905,
           qualityLimitationReason: 'none',
+          encoderImplementation: 'libvpx',
+          totalEncodeTime: 3.71,
         },
         { id: 'A', type: 'inbound-rtp', kind: 'audio', codecId: 'C2' },
         { id: 'C1', type: 'codec', mimeType: 'video/VP8' },
@@ -196,8 +198,16 @@ describe('describeVideoStats', () => {
       ])
     );
     expect(out).toBe(
-      'video recv=video/VP8 640x480 fps=30 decoded=900 keyframes=1 freezes=0 (0 s) pli=0 | send=video/VP8 640x480 fps=30 encoded=905 limit=none'
+      'video recv=video/VP8 640x480 fps=30 decoded=900 keyframes=1 freezes=0 (0 s) pli=0 | send=video/VP8 640x480 fps=30 encoded=905 limit=none enc=libvpx encode_ms=4.1'
     );
+  });
+
+  it('writes ? for an encoder the engine does not name and an encode time it does not keep', () => {
+    expect(
+      describeVideoStats(
+        report([{ id: 'O', type: 'outbound-rtp', kind: 'video', framesEncoded: 10 }])
+      )
+    ).toBe('video recv=none | send=? ?x? fps=? encoded=10 limit=? enc=? encode_ms=?');
   });
 
   it('reads none for a direction with no video stream', () => {

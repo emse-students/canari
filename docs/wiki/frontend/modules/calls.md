@@ -1512,8 +1512,9 @@ experiment rows of the rig (below) settle it on Chrome 155:
 - **The background turns the camera OFF for real** (the same `cameraOff`: capture stopped, peer
   sees the avatar) and the return turns it ON again; never `track.enabled = false`, which kept the
   capture open and sent black frames. A button tap meanwhile cancels the automatic resume.
-- **640x480 at 30 fps, capped at 700 kb/s** (`CALL_VIDEO_MAX_BITRATE`); the cap is on the SENDER's
-  encodings, so it survives a switch.
+- **720p at 30 fps at most, moved by a quality ladder** since 2026-10-21 (it was a fixed 640x480,
+  700 kb/s): [the quality ladder](#the-quality-ladder-2026-10-21---720p-and-an-automatic-drop).
+  The rung is on the SENDER's encodings, so it survives a switch.
 - **The screen**: the peer's picture full screen only while its track is live AND unmuted (else the
   avatar); the self view full screen until there is a peer picture, then a corner (landscape-aware);
   mirrored for the front camera only; `cover` when the peer's picture is held the way this screen
@@ -1523,7 +1524,8 @@ experiment rows of the rig (below) settle it on Chrome 155:
 - **The report**: the worker line adds `video frames in sender=.. receiver=.. encrypted=..
   decrypted=.. decrypt-failed=.. keyframes-in=.. not-vp8=..` on a call that carried video (an audio
   call's line is unchanged), and a conclusive path check adds the decoder's own numbers
-  (`describeVideoStats`: size, fps, frames decoded, key frames, freezes, PLI, the send limit).
+  (`describeVideoStats`: size, fps, frames decoded, key frames, freezes, PLI, the send limit, and
+  since 2026-10-21 the encoder `enc=` and its mean encode time per frame `encode_ms=`).
 
 **Measured in the rig, 2026-10-20** (Chrome 155 to Chrome 155, fake camera at 30 fps, 34 s a row,
 the app's own worker, constraints, cap and `preferVp8`):
@@ -1555,6 +1557,208 @@ Audio stays clean on every row (match 0.96-0.98, LSD 3.92-4.02 dB on the gated r
 - **An old client cannot decrypt the new video** (a `<=1.3.1-alpha.4` dev build framed video whole).
   Those builds had `CALLS_VIDEO_ENABLED = false` and only dev builds call at all, so no shipped
   build is affected; audio between the two is unchanged.
+
+## The quality ladder (2026-10-21) - 720p, and an automatic drop
+
+**What was there.** A fixed 640x480 capture, the sender capped at 700 kb/s and 30 fps. libwebrtc
+adapts INSIDE a ceiling (GCC lowers its target, VP8's quality scaler shrinks the picture on a high
+QP), but nothing chose a larger picture on a good link, nor a smaller frame rate on a bad one. The
+owner asked (2026-10-21, _"oui, lance"_) for 720p/30 at 1.5-2.5 Mb/s and a drop the way WhatsApp
+and FaceTime do it.
+
+**What it is** (`utils/callVideoQuality.ts`: the pure step, and `CallVideoQualityLoop`, the ONE
+sample -> step -> apply loop that `CallService.startVideoQuality` AND the rig's page both run;
+`utils/callVideo.ts` `applyCallVideoRung` applies a rung). The camera is asked for 1280x720 as an
+IDEAL, never a `max` - both bench phones capture portrait (720x1280), and a landscape `max` can make
+the engine refuse or fall to a smaller preset; the size captured is logged
+(`[Call] camera captures WxH at F fps`). The SENDER's single encoding is set to one rung:
+
+| Rung     | `scaleResolutionDownBy` | Picture (720p capture) | fps | `maxBitrate` | Needs (estimate) |
+| -------- | ----------------------- | ---------------------- | --- | ------------ | ---------------- |
+| `720p30` | 1                       | 1280x720               | 30  | 2.5 Mb/s     | 1.2 Mb/s         |
+| `480p30` | 1.5                     | 853x480                | 30  | 1.2 Mb/s     | 600 kb/s         |
+| `360p30` | 2                       | 640x360                | 30  | 700 kb/s     | 350 kb/s         |
+| `360p15` | 2                       | 640x360                | 15  | 400 kb/s     | 180 kb/s         |
+| `180p15` | 4                       | 320x180                | 15  | 200 kb/s     | -                |
+
+A camera STARTS on `480p30`: libwebrtc's estimate starts near 300 kb/s and ramps, so a call opened
+at 720p would read "bandwidth" in its first seconds and drop; a clean link climbs to 720p after
+three clean samples. Every rung is the same capture scaled down by the sender, so a change never
+reopens the camera and survives a switch or an off/on (the encodings belong to the sender).
+
+**How it moves.** One `getStats()` every 2 s (`CALL_VIDEO_QUALITY_SAMPLE_MS`); each sample is read
+against the previous one (`videoEvidence`): the loss the peer reports for the packets sent between
+the two (`remote-inbound-rtp`), the round trip, the congestion controller's estimate
+(`candidate-pair.availableOutgoingBitrate`), the encoder's `qualityLimitationReason`, and the share
+of the interval the encoder spent encoding (delta `totalEncodeTime` / delta time).
+
+- **Only a FRESH receiver report is evidence of loss or round trip.** The peer's RTCP report is
+  cumulative and stays in `getStats` when reports stop coming (an outage, a peer that stalled): read
+  naively it is "0 % loss" forever. A loss and a round trip are read only when `reportsReceived` (or,
+  where an engine does not count them, the report's `timestamp`) moved since the previous sample;
+  otherwise both are UNKNOWN, and unknown never counts as clean. The pair's round trip stands in only
+  when the peer sends no report at all.
+- **Bad** (`judgeVideoEvidence`): loss >= 10 %, round trip >= 800 ms, a CPU-starved encoder, or one
+  limited by `bandwidth` while a KNOWN estimate is under the rung's need (a missing estimate is not
+  bad). **Two consecutive bad samples drop**; a SEVERE one (loss >= 25 %, round trip >= 1.5 s, an
+  estimate under half the need) drops at once. A bandwidth drop lands on the highest rung the
+  estimate carries, not one rung down.
+- **CPU is judged on the encoder's LOAD, not on its state.** `qualityLimitationReason=cpu` is a
+  sticky state: libwebrtc keeps reporting it after a drop has relieved the encoder, and judged alone
+  it walked a call from 720p to 180p one pair of samples at a time (review of #2173). So a sample is
+  CPU-bad only when the state says `cpu` AND the encoder was busy half the interval or more
+  (`CPU_ENCODE_SHARE_BAD`); a lingering `cpu` after a drop costs exactly one rung, a unit case.
+  `qualityLimitationDurations` was rejected for the same reason: it accrues while the state HOLDS,
+  so its delta says the state lingered, not that the encoder is still saturated.
+- **Clean**: a FRESH loss < 3 %, a KNOWN round trip < 350 ms, an encoder that is not limited (a
+  lingering `cpu` counts as not limited once the encoder is under 30 % busy, `CPU_ENCODE_SHARE_CLEAR`),
+  and an estimate that is absent or either carries the rung above OR stands 1.3 times above the
+  bitrate actually sent (`HEADROOM_CLIMB`). **Three consecutive clean samples climb ONE rung.** The headroom clause is
+  measured, not argued: the rig's cheap synthetic scene sent ~670 kb/s at 480p, the estimate
+  followed what was sent, and the call never reached 720p's 1.2 Mb/s need. A full link reads an
+  estimate close to what is sent (ratio ~1), so it never qualifies on headroom.
+- **A stale `bandwidth` does not pin a call.** After a camera switch (and an off/on), Chrome went on
+  reporting `qualityLimitationReason=bandwidth` for the whole call at ~700 kb/s sent against a
+  2.97 Mb/s estimate: libwebrtc's start-up adaptation, not the link (rig trace, 2026-10-21). So
+  `bandwidth` blocks a climb only while the estimate does not show BOTH the rung above's need and
+  headroom over what is sent; it still drops a rung whenever the estimate is under the current
+  rung's need.
+- **A failed probe doubles the price of the next one**: a drop within 15 samples (~30 s,
+  `PROBE_WATCH`) of a climb doubles the clean samples needed to climb into that rung again (up to 48,
+  ~96 s). The watch was five samples in the first draft, and a link that held 720p for ~16 s cycled
+  every ~20 s at an unchanged price (review of #2173); a simulation test now runs that link for 300
+  samples and asserts a handful of climbs, each further apart than the last.
+- **A RELAYED call is capped at `480p30`** (`CALL_VIDEO_RELAY_TOP_RUNG`): when the selected pair's
+  local or remote candidate is `relay`, the media crosses our TURN server, whose traffic is billed;
+  a ladder above the cap is brought down at once (`cause: relay` on the line) and never climbs past
+  it while the pair stays relayed.
+- **Counted, never timed.** A camera that is off sends nothing and is no evidence: both streaks
+  break and nothing moves, and the 2 s timer is NOT re-armed while the sender has no track - turning
+  the camera back on resumes it from a new baseline. The sample read across a change is never judged
+  (it mixes two encodings).
+- **`degradationPreference` is left unset, deliberately.** Two controllers would then move the same
+  picture: libwebrtc's own adaptation (inside the ceiling the rung sets) and this ladder (the
+  ceiling). Setting `maintain-resolution` or `maintain-framerate` would change what libwebrtc does
+  inside a rung and is a separate decision; the ladder's start line logs the value the sender
+  carries (`degradationPreference=unset` expected), and reading VQ checks it on each phone.
+- **Why the estimate alone never drops a rung.** A still scene encodes far under its ceiling, and
+  libwebrtc's estimate seldom grows much past what is sent: a low estimate is then the SCENE. Only
+  the encoder saying it had to shrink for want of bandwidth, or the peer reporting loss, or a round
+  trip that says the path is queueing, is evidence about the link. The same fact sets the needs: each
+  rung's need is at most the ceiling of the rung below, so a link that fills a ceiling qualifies for
+  the next rung up.
+- **Every change costs a key frame** (VP8 restarts on a new resolution) - one more reason the
+  climb is slow and the probe price doubles.
+- **The log** (`[Call]`): `video quality ladder starts on 480p30 (degradationPreference=unset)`
+  once, then one line per change, naming its evidence -
+  `video quality up 480p30 -> 720p30 after 3 clean samples (loss=0% rtt=40ms limit=none avail=2600kbps sent=900kbps enc=6%)`,
+  `video quality down 720p30 -> 360p15 after a severe sample, the climb into 720p30 failed - the next one needs 6 clean samples (...)`;
+  then `video sender on <rung> (...)`. Nothing per sample. A WARN, ONCE per ladder, if the peer sends
+  no fresh loss figure for five samples (the ladder then holds and cannot climb); a WARN, once, if
+  `getStats` fails; an ERROR and the ladder STOPS if the engine refuses `setParameters` - there is no
+  other way to set a rung, so nothing else is tried. Refused at the START (before negotiation), the
+  line is `video quality ladder not started: the sender refused 480p30`, and reading VQ looks for
+  it. A refusal leaves the reduced-picture flag as the sender still is: the encodings did not change.
+- **The screen** says _"Votre vidéo est envoyée en qualité réduite (connexion ou appareil saturé)"_
+  under the status line while this side's camera is on and the ladder stands at `360p15` or below
+  (`CallService.videoSendReduced`, `CALL_VIDEO_REDUCED_FROM_RUNG`). It speaks of THIS side's
+  picture only: the peer's ladder is the peer's.
+- **E2E unchanged.** VP8 only, the 10-byte key-frame / 3-byte interframe clear header bound as AAD:
+  the header layout does not depend on the size (a VP8 key frame carries a 14-bit width and height,
+  1280x720 fits), and the worker encrypts any length - a 720p key frame is only a larger
+  ciphertext. The `video` rig row decrypts every frame at 720p with 0 failures.
+
+**Measured in the rig, 2026-10-21** (Chrome 155 to Chrome 155 on the bench desktop, Chrome's fake
+camera at 30 fps - a synthetic pattern that compresses far better than a face, so the BITRATES are
+low and only the shape and the encode cost carry over; 34 s a row; `encode ms/frame` is libwebrtc's
+`totalEncodeTime / framesEncoded`, the encoder's wall time, which can understate CPU when libvpx
+threads):
+
+| Row                       | Verdict           | Sent (ladder)                          | Decoded             | Key frames | Encode ms/frame (% of a core)                          |
+| ------------------------- | ----------------- | -------------------------------------- | ------------------- | ---------- | ------------------------------------------------------ |
+| `video`                   | PASS              | 1280x720, 914 kb/s (480p30 -> 720p30)  | 29.8 fps, 0 freezes | 5          | 1.71 (5.1)                                             |
+| `video-camera-late`       | PASS              | 1280x720, 885 kb/s (480p30 -> 720p30)  | 28.7 fps, 0 freezes | 3          | 10.46 (30.0) - host noise, 1.43-1.48 in two other runs |
+| `video-switch`            | PASS              | 1280x720, 1031 kb/s (480p30 -> 720p30) | 29.8 fps, 0 freezes | 3          | 3.26 (9.7)                                             |
+| `video-off-on`            | PASS              | 1280x720, 985 kb/s (480p30 -> 720p30)  | 29.8 fps, 0 freezes | 3          | 1.89 (5.7)                                             |
+| `video-rung-720p` (held)  | experiment        | 1280x720, 977 kb/s                     | 29.9 fps            | 4          | 1.58 (4.7); 1.71 in run 1                              |
+| `video-rung-480p` (held)  | experiment        | 853x480, 610 kb/s                      | 29.9 fps            | 4          | 1.17 (3.5); 1.74 in run 1                              |
+| `video-rung-360p` (held)  | experiment        | 640x360, 476 kb/s                      | 30 fps              | 3          | 0.96 (2.9); 1.03 in run 1                              |
+| `video-whole-frame`       | experiment        | 1280x720                               | 29.9 fps            | **537**    | -                                                      |
+| `fault-video-bare-sender` | fails, as it must | -                                      | 0 frames, 112 PLI   | 0          | -                                                      |
+
+Every row decrypts every frame it receives (decrypt-failed 0 on the gated rows); audio unchanged
+(match 0.97-0.98, LSD 3.92-3.95 dB). **Read of the cost:** on a desktop CPU, 720p costs ~1.3-1.5x
+the encode time of 480p and stays near 5 % of one core; the run-to-run spread (two Chromes encoding
+on one host) is as large as the difference between rungs, so the rig says "no cliff", not a number
+to carry to a phone. **The phone cost is owed** (below): libvpx is software on the iPhone, and the
+Mi 9T may or may not get a hardware VP8 encoder in its WebView (`enc=` on the log line says which).
+**Two things the first run found, both fixed before this table:** the switch and off/on rows never
+climbed (the headroom clause and the stale-`bandwidth` clause above), and the `video` row's key
+frames reached the old bound of 5, since each rung change costs one: `video-keyframes` is now 8, still
+two orders of magnitude under the 537 of a header that is not readable.
+**Re-run after the review fixes (2026-10-21, same rows):** the ladder's shape held on every row -
+each climbed `480p30 -> 720p30` once, key frames 3-5, decrypt-failed 0 - but the host sat at 100 %
+CPU from parallel jobs (measured with no rig running), and `video-switch` / `video-off-on` fell
+under the 27 fps bound together with the HELD `video-rung-480p` control, which runs no ladder at all,
+and an audio concealment bound. That is the host, not the change; the table above is the quiet-host
+run.
+
+**What the rig cannot show.** The DROP: the rig impairs at the receiver TRANSFORM (frames), not on
+the wire, so libwebrtc's congestion controller and the peer's loss report never see it. The downward
+path is proven by the unit tests (`callVideoQuality.test.ts`: every threshold, the streaks, the
+severe drop, the probe price, the cap) and by the service tests on fake stats
+(`CallService.p2p.test.ts`, "the quality ladder") - and it is owed on the phones, below.
+
+### Measuring it on the phones (owed: device-verification VQ)
+
+The reading agent runs this on both bench phones against a desktop Chrome
+(`bun tools/cross-client-harness/callpeer.mjs --browser w3 --launch --dial --video --seconds 300 --hangup`),
+records the numbers in [device-readings-2026-10](../../device-readings-2026-10.md), and the verdict
+in [device-verification VQ](../../device-verification.md#vq-call-video-at-720p-and-its-quality-ladder---owed-on-both-phones-mi-9t-iphone-12).
+
+1. **The climb.** Good Wi-Fi, phone screen on, the call screen up. First record three lines: the
+   size the camera really captures (`[Call] camera captures WxH at F fps (user)` - 720x1280 or
+   1280x720 expected; anything smaller means the constraints did not reach 720p), the
+   `video quality ladder starts on 480p30 (degradationPreference=unset)` line (any other value means
+   a second controller is set), and the ABSENCE of `video quality ladder not started`. Expect `video quality up 480p30 -> 720p30`
+   within ~10 s of `connected`, then `callpeer`'s received picture at 1280x720 (or 720x1280), ~30 fps,
+   freezes 0. Each conclusive path check logs `video ... send=... enc=<encoder> encode_ms=<mean>`:
+   record `enc` (software `libvpx`, or a hardware encoder) on each phone.
+2. **The cost, per rung, 5 minutes each, the same scene** (the phone propped, the front camera on a
+   face or a busy room, never a blank wall). Four runs per phone: an AUDIO call (the baseline), a
+   video call at 720p, at 480p, at 360p. Read every 10 s:
+   - **Mi 9T** (adb): `adb shell top -b -n 1 -m 15` - the app process AND the WebView renderer
+     (`com.google.android.webview:sandboxed_process*`), where WebRTC encodes; `adb shell dumpsys
+     thermalservice` (the throttling status and the skin / CPU temperatures); `adb shell dumpsys battery`
+     (`temperature` in tenths of a degree, `level`).
+   - **iPhone 12** (no adb): the app's own `encode_ms` and `limit=` lines from the in-app log, and the
+     process CPU from `pymobiledevice3 developer dvt sysmon process single` (filter the Canari process
+     AND `com.apple.WebKit.GPU` / `com.apple.WebKit.WebContent`, where WebKit runs WebRTC - read
+     `--help` first, the flags move between versions) and the battery temperature from
+     `pymobiledevice3 diagnostics battery single` (`Temperature`, hundredths of a degree). The thermal
+     STATE is not readable from outside; a "the iPhone is hot" banner or the screen dimming is
+     recorded as seen.
+   - **Holding a rung**: the ladder holds 720p on a clean link by itself. For 480p and 360p, throttle
+     the PHONE's uplink so the ladder settles there (step 3): ~1 Mb/s holds `480p30`, ~500 kb/s holds
+     `360p30`. On the Mi 9T, a rung can also be held over CDP (dev builds are inspectable): track
+     the page's peer connections as `callpeer.mjs` does, then `setParameters` on the video sender
+     with that rung's values - the ladder re-applies only on a CHANGE, and a clean link at the top
+     makes none.
+   - **The verdict per rung**: CPU (% of the app's processes), the temperature after 5 minutes, the
+     battery % spent, and whether `limit=cpu` or a `video quality down ... limit=cpu` line appeared.
+     720p is acceptable on a phone if it holds 30 fps with no `cpu` limit for 5 minutes and its
+     temperature rise stays within a few degrees of the 480p run; otherwise the reading says so and
+     the start rung or the top rung is revisited (a constant here, not a redesign).
+3. **The drop and the return.** Throttle the phone during a call:
+   - **iPhone**: Settings > Developer > Network Link Conditioner (present while the developer image
+     is mounted, as it is for WebDriverAgent): "3G", then "Very Bad Network", then a custom profile
+     (uplink 500 kb/s, 5 % loss, 300 ms delay).
+   - **Mi 9T**: Wi-Fi through the bench PC's mobile hotspot, shaped there (Windows `clumsy`: drop
+     10 % / lag 400 ms; a bandwidth cap if the shaper has one).
+   - Expect a `video quality down` line within ~4 s (two 2 s samples, or one severe), naming its
+     evidence; the reduced-picture notice at `360p15` and below; no freeze longer than the drop
+     itself (`callpeer`'s `freezes`). Lift the throttle: one rung climbed per ~8 s, and a climb that
+     fails at once doubles the next one's price (the line says so).
 
 ## The call UI: the whole screen, or a bar at the top (2026-10-19)
 

@@ -595,6 +595,7 @@
   "call_camera_short_label": "Caméra",
   "call_incoming_video_label": "Appel vidéo entrant",
   "call_switch_camera_label": "Changer de caméra",
+  "call_video_reduced_notice": "Votre vidéo est envoyée en qualité réduite (connexion ou appareil saturé)",
   "call_camera_unavailable": "La caméra n'a pas pu s'ouvrir : l'appel continue sans vidéo.",
   "call_camera_switch_failed": "L'autre caméra n'a pas pu s'ouvrir : la caméra est coupée.",
   "chat_record_voice_message_label": "Enregistrer un message vocal",
