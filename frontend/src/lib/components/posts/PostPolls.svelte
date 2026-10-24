@@ -1,9 +1,10 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
-  import { ChartBar, CircleCheck, Circle, SquareCheck, Square } from '@lucide/svelte';
+  import { ChartBar, CircleCheck, Circle, SquareCheck, Square, Users } from '@lucide/svelte';
+  import PollVotersSheet from './PollVotersSheet.svelte';
+  import { capVoters, resolvePollVoters, type PollVoter } from '$lib/posts/pollVoters';
   import type { Poll } from '$lib/posts/api';
   import { pollSelectionIsFull } from '$lib/posts/pollVote';
-  import { resolveUserDisplayName, getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { portal } from '$lib/actions/portal';
   import { m } from '$lib/paraglide/messages';
 
@@ -51,8 +52,10 @@
   // Tooltip state
   let tooltipOptionId = $state<string | null>(null);
   /** Voters per option, carried WITH their id: two voters may share a display name, never an id. */
-  let voterNames = $state<Record<string, { id: string; name: string }[]>>({});
+  let voterNames = $state<Record<string, PollVoter[]>>({});
   let tooltipPos = $state<{ top: number; right: number } | null>(null);
+  /** The poll and option the full-list sheet is open on, or null. */
+  let sheet = $state<{ pollId: string; optionId: string } | null>(null);
 
   /** Duplicate-voter lists already said, so a redraw does not say them again. */
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a record nothing draws
@@ -101,31 +104,12 @@
       tooltipPos = { top: rect.top, right: window.innerWidth - rect.right };
     }
     if (voterNames[optionId]) return;
-    const names = await Promise.all(ids.map((id) => resolveUserDisplayName(id)));
-    voterNames = {
-      ...voterNames,
-      [optionId]: names.map((n, i) => ({
-        id: ids[i],
-        name: n ?? getUserDisplayNameSync(ids[i], ids[i]),
-      })),
-    };
+    voterNames = { ...voterNames, [optionId]: await resolvePollVoters(ids) };
   }
 
   function hideTooltip() {
     tooltipOptionId = null;
     tooltipPos = null;
-  }
-
-  function toggleTooltip(
-    optionId: string,
-    votes: string[] | number | undefined,
-    anchor?: HTMLElement
-  ) {
-    if (tooltipOptionId === optionId) {
-      hideTooltip();
-    } else {
-      showVoterTooltip(optionId, votes, anchor);
-    }
   }
 
   /**
@@ -236,102 +220,119 @@
             {@const percentage = getPercentage(option.votes, totalVotes)}
             {@const voteCount = getVoteCount(option.votes)}
             {@const voterIds = getVoterIds(option.votes)}
+            {@const showInfo = !poll.anonymous && voterIds.length > 0}
 
-            <button
-              type="button"
-              class="group relative w-full overflow-hidden rounded-2xl border-2 p-4 text-left transition-all duration-300 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/30 {isSelected
-                ? 'border-amber-500 bg-amber-500/5'
-                : 'bg-cn-surface border-black/5 hover:border-amber-500/40 hover:bg-black/5 dark:border-white/5 dark:hover:bg-black/60'} {refuses
-                ? 'cursor-default opacity-70 hover:border-black/5 hover:bg-transparent dark:hover:border-white/5 dark:hover:bg-transparent'
-                : ''}"
-              onclick={() => onVoteClick(poll, option.id)}
-              aria-pressed={isSelected}
-              aria-disabled={refuses}
-            >
-              <!-- Visual vote progress bar in the background. -->
-              {#if totalVotes > 0}
-                <div
-                  class="absolute inset-y-0 left-0 z-0 bg-black/5 transition-all duration-1000 ease-out dark:bg-white/5 {isSelected
-                    ? 'bg-amber-500/10 dark:bg-amber-500/15'
-                    : ''}"
-                  style="width: {percentage}%;"
-                ></div>
-              {/if}
-
-              <!-- Option content. -->
-              <div class="relative z-10 flex items-center justify-between gap-4">
-                <div class="flex min-w-0 flex-1 items-center gap-3">
-                  <!-- Selection icon (single vs multiple choice). -->
+            <div class="relative">
+              <button
+                type="button"
+                class="group relative w-full overflow-hidden rounded-2xl border-2 p-4 {showInfo
+                  ? 'pr-14'
+                  : ''} text-left transition-all duration-300 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/30 {isSelected
+                  ? 'border-amber-500 bg-amber-500/5'
+                  : 'bg-cn-surface border-black/5 hover:border-amber-500/40 hover:bg-black/5 dark:border-white/5 dark:hover:bg-black/60'} {refuses
+                  ? 'cursor-default opacity-70 hover:border-black/5 hover:bg-transparent dark:hover:border-white/5 dark:hover:bg-transparent'
+                  : ''}"
+                onclick={() => onVoteClick(poll, option.id)}
+                aria-pressed={isSelected}
+                aria-disabled={refuses}
+              >
+                <!-- Visual vote progress bar in the background. -->
+                {#if totalVotes > 0}
                   <div
-                    class="shrink-0 transition-colors {isSelected
-                      ? 'text-amber-500'
-                      : 'text-text-muted group-hover:text-amber-500'}"
-                  >
-                    {#if poll.multipleChoice}
-                      {#if isSelected}
-                        <SquareCheck size={20} strokeWidth={2.5} class="text-amber-500" />
+                    class="absolute inset-y-0 left-0 z-0 bg-black/5 transition-all duration-1000 ease-out dark:bg-white/5 {isSelected
+                      ? 'bg-amber-500/10 dark:bg-amber-500/15'
+                      : ''}"
+                    style="width: {percentage}%;"
+                  ></div>
+                {/if}
+
+                <!-- Option content. -->
+                <div class="relative z-10 flex items-center justify-between gap-4">
+                  <div class="flex min-w-0 flex-1 items-center gap-3">
+                    <!-- Selection icon (single vs multiple choice). -->
+                    <div
+                      class="shrink-0 transition-colors {isSelected
+                        ? 'text-amber-500'
+                        : 'text-text-muted group-hover:text-amber-500'}"
+                    >
+                      {#if poll.multipleChoice}
+                        {#if isSelected}
+                          <SquareCheck size={20} strokeWidth={2.5} class="text-amber-500" />
+                        {:else}
+                          <Square
+                            size={20}
+                            strokeWidth={2}
+                            class="opacity-40 transition-opacity group-hover:opacity-100"
+                          />
+                        {/if}
+                      {:else if isSelected}
+                        <CircleCheck size={20} strokeWidth={2.5} class="text-amber-500" />
                       {:else}
-                        <Square
+                        <Circle
                           size={20}
                           strokeWidth={2}
                           class="opacity-40 transition-opacity group-hover:opacity-100"
                         />
                       {/if}
-                    {:else if isSelected}
-                      <CircleCheck size={20} strokeWidth={2.5} class="text-amber-500" />
-                    {:else}
-                      <Circle
-                        size={20}
-                        strokeWidth={2}
-                        class="opacity-40 transition-opacity group-hover:opacity-100"
-                      />
-                    {/if}
-                  </div>
+                    </div>
 
-                  <!--
+                    <!--
                     Option label. It WRAPS rather than truncating: an option is an arbitrary
                     free-text answer (an association name, a date, a sentence), and on a phone the
                     icon plus the two counters leave it under 200px - which turned every entry of a
                     real poll into "Confedera...", unreadable and indistinguishable from its
                     neighbours (2026-09-23).
                   -->
-                  <span class="text-text-main text-sm leading-snug font-bold wrap-break-word">
-                    <EmojiText text={option.label} />
-                  </span>
-                </div>
-
-                <!-- Compteurs (Pourcentage & Votes absolus) -->
-                <div class="flex shrink-0 items-center gap-2.5">
-                  {#if totalVotes > 0}
-                    <span class="text-text-muted min-w-[2.5rem] text-right text-xs font-bold">
-                      {percentage}%
+                    <span class="text-text-main text-sm leading-snug font-bold wrap-break-word">
+                      <EmojiText text={option.label} />
                     </span>
-                  {/if}
-                  <!-- Vote count badge - hover/tap to see voter names -->
-                  <div
-                    role="button"
-                    tabindex="0"
-                    class="text-text-muted text-2xs rounded-lg bg-black/5 px-2 py-1 font-bold select-none dark:bg-white/10"
-                    class:cursor-pointer={voterIds.length > 0}
-                    class:cursor-default={voterIds.length === 0}
-                    aria-label={m.post_poll_vote_count_label({ count: voteCount })}
-                    onmouseenter={(e) =>
-                      voterIds.length > 0 &&
-                      showVoterTooltip(option.id, option.votes, e.currentTarget as HTMLElement)}
-                    onmouseleave={hideTooltip}
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      toggleTooltip(option.id, option.votes, e.currentTarget as HTMLElement);
-                    }}
-                    onkeydown={(e) =>
-                      e.key === 'Enter' &&
-                      toggleTooltip(option.id, option.votes, e.currentTarget as HTMLElement)}
-                  >
-                    {voteCount}
+                  </div>
+
+                  <!-- Compteurs (Pourcentage & Votes absolus) -->
+                  <div class="flex shrink-0 items-center gap-2.5">
+                    {#if totalVotes > 0}
+                      <span class="text-text-muted min-w-[2.5rem] text-right text-xs font-bold">
+                        {percentage}%
+                      </span>
+                    {/if}
+                    <!-- The count is plain text now: the voter list is the info button's job, a
+                       SIBLING of this vote button, so no press on it can ever vote. -->
+                    <span
+                      class="text-text-muted text-2xs rounded-lg bg-black/5 px-2 py-1 font-bold select-none dark:bg-white/10"
+                    >
+                      <span aria-hidden="true">{voteCount}</span>
+                      <span class="sr-only"
+                        >{m.post_poll_vote_count_label({ count: voteCount })}</span
+                      >
+                    </span>
                   </div>
                 </div>
-              </div>
-            </button>
+              </button>
+              {#if showInfo}
+                <!-- Hover (mouse only) previews the first names; a tap opens the full list. 44px
+                   on a phone, and never inside the vote button. -->
+                <button
+                  type="button"
+                  class="text-text-muted hover:text-text-main absolute top-1/2 right-1 flex size-11 -translate-y-1/2 items-center justify-center rounded-full outline-none hover:bg-black/5 focus-visible:ring-4 focus-visible:ring-amber-500/30 dark:hover:bg-white/10"
+                  aria-label={m.post_poll_voters_info_label({ option: option.label })}
+                  aria-haspopup="dialog"
+                  data-testid="poll-voters-info"
+                  onpointerover={(e) =>
+                    e.pointerType === 'mouse' &&
+                    showVoterTooltip(option.id, option.votes, e.currentTarget as HTMLElement)}
+                  onpointerout={(e) => {
+                    // Moving onto the icon inside the button is not leaving it.
+                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) hideTooltip();
+                  }}
+                  onclick={() => {
+                    hideTooltip();
+                    sheet = { pollId: poll.id, optionId: option.id };
+                  }}
+                >
+                  <Users size={18} strokeWidth={2.25} />
+                </button>
+              {/if}
+            </div>
           {/each}
         </div>
 
@@ -374,21 +375,45 @@
   {@const names = voterNames[tooltipOptionId]}
   <div
     use:portal
-    class="bg-cn-tooltip text-2xs pointer-events-none fixed z-(--z-tooltip) -mt-1.5 max-w-[16rem] min-w-[10rem] -translate-y-full rounded-xl px-3 py-2 font-medium text-white shadow-xl"
-    style="top: {tooltipPos.top}px; right: {tooltipPos.right}px;"
+    class="bg-cn-tooltip text-2xs pointer-events-none fixed z-(--z-tooltip) -mt-1.5 max-w-[16rem] min-w-[10rem] -translate-y-full overflow-hidden rounded-xl px-3 py-2 font-medium text-white shadow-xl"
+    style="top: {tooltipPos.top}px; right: {tooltipPos.right}px; max-height: {Math.max(
+      96,
+      tooltipPos.top - 12
+    )}px;"
     role="tooltip"
   >
     <p class="text-2xs mb-1 font-bold tracking-wide text-white/60 uppercase">
       {m.post_poll_voters_label()}
     </p>
     {#if names}
+      {@const capped = capVoters(names)}
       <ul class="space-y-0.5">
-        {#each names as voter (voter.id)}
+        {#each capped.shown as voter (voter.id)}
           <li class="truncate">{voter.name}</li>
         {/each}
       </ul>
+      {#if capped.extra > 0}
+        <p class="mt-1 font-bold text-white/70">
+          {m.post_poll_voters_more({ count: capped.extra })}
+        </p>
+      {/if}
     {:else}
       <p class="italic opacity-60">{m.common_loading_label()}</p>
     {/if}
   </div>
+{/if}
+
+{#if sheet}
+  {@const sheetPoll = polls?.find((p) => p.id === sheet!.pollId)}
+  {#if sheetPoll}
+    <PollVotersSheet
+      options={sheetPoll.options.map((o) => ({
+        id: o.id,
+        label: o.label,
+        voterIds: getVoterIds(o.votes),
+      }))}
+      initialOptionId={sheet.optionId}
+      onClose={() => (sheet = null)}
+    />
+  {/if}
 {/if}
