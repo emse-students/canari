@@ -329,21 +329,19 @@ group again: a verdict about one build does not carry to the next.
   stalled INSIDE the server transaction past the 5 s lock, which no client can arm. A dev-only delay
   seam on the server would be a product change made for a test. The unit coverage stands in for the
   row: `BaseMlsService.unresolvedCommit.test.ts` and the gate's specs.
-- **Q3. SETTLED (2026-10-24): CC-4 may write ONE Redis key on dev for a campaign device.** The refresh
-  is due after 7 days of activity per seat, kept in `mls_leaf_refresh:<user>:<device>`. The row
-  arms it by writing that one key, for a campaign-owned device only, on dev (a fictional-seed estate
-  where the owner allows campaign writes). It writes no other key, no other device and nothing on
-  production. **CORRECTED 2026-10-24: there is no such Redis key** - the refresh ledger is the
-  device's own `localStorage` (`leafRefresh.ts`), so CC-4 writes nothing on the server and arms the
-  refresh on the campaign device itself
+- **Q3. SETTLED (2026-10-24, corrected and accepted by the lead): CC-4 writes NOTHING on the
+  server.** There is no Redis key: the refresh ledger `mls_leaf_refresh:<user>:<device>` is the
+  device's own `localStorage` (`leafRefresh.ts`), so the row arms the refresh on the campaign device
+  itself, backdating a leaf its own commit produced
   ([runners, section 5](cross-client-campaign-1-4-1-runners.md#5-two-findings-against-the-plan)).
-- **Q4. Can the iPhone be unlocked by the rig?** If its passcode cannot be typed over WDA, every I1
-  row after a lock is `O`, and BIG-1 / FLOOR-3 need the owner for a minute.
+- **Q4. SETTLED (2026-10-24): the rig unlocks the iPhone.** `tools/ios-device/ios.mjs unlock`, then
+  the PIN typed from stdin (the bench phones' PINs are in the private operations notes, never
+  printed, never committed). FLOOR-3 and BIG need no person.
 - **Q5. How does DEV-5 make one device id present a new key** without a product seam? Copying a
   profile and re-keying it touches the encrypted store; the row may belong to CORRUPT-8 instead.
-- **Q6. Which board.** This page proposes archiving the current board and opening a new one whose
-  rows are section 4. The alternative - reconcile the 24 disagreeing cells and append - keeps a
-  table about another estate and another version. The lead decides with the `CLAUDE.md` update.
+- **Q6. SETTLED (2026-10-24): a new board.** The old one is archived verbatim at
+  [cross-client-testing-archive-1-4-0](cross-client-testing-archive-1-4-0.md), and
+  [cross-client-testing](cross-client-testing.md) now holds the rows of section 4.2 alone.
 - **Q7. SETTLED (2026-10-24): no tester notice.** Dev is a sandbox. R5 already confines
   destructive rows to campaign-owned containers, and the load of a night of KILL and NET rows is not
   announced.

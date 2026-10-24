@@ -1448,11 +1448,11 @@ The key that proved a v2 seed is named in the line that already reports the stor
 
 ### Fixed - the Graine rig reads the server's refusal of an unsigned row
 
-The server's refusal of an unsigned salon row (#1802) broke the rig's v1 arm, which posted one. GRAINE-AUTH-7 now reads the 400, GRAINE-AUTH-6 writes its row in the database, and GRAINE-AUTH-5 has no arm ([cross-client-testing](docs/wiki/cross-client-testing.md#20---graine---an-author-that-is-proven)).
+The server's refusal of an unsigned salon row (#1802) broke the rig's v1 arm, which posted one. GRAINE-AUTH-7 now reads the 400, GRAINE-AUTH-6 writes its row in the database, and GRAINE-AUTH-5 has no arm ([cross-client-testing](docs/wiki/cross-client-testing-archive-1-4-0.md#20---graine---an-author-that-is-proven)).
 
 ### Added - two rig rows prove the refusal of an arriving v1 seed on a real estate
 
-GRAINE-AUTH-5 and -6 inject an unsigned salon row and read it live and from history: refused, nothing asked, the older-messages notice once ([cross-client-testing](docs/wiki/cross-client-testing.md#20---graine---an-author-that-is-proven)).
+GRAINE-AUTH-5 and -6 inject an unsigned salon row and read it live and from history: refused, nothing asked, the older-messages notice once ([cross-client-testing](docs/wiki/cross-client-testing-archive-1-4-0.md#20---graine---an-author-that-is-proven)).
 
 ### Changed - one roster read per connection, not one per conversation
 
@@ -3244,7 +3244,7 @@ A sideways swipe from the top of the feed is left to the tab swipe, and a move t
 
 ### Added - Test rig: a REEL phase on the phone
 
-REEL-1 opens the camera tab with a real swipe and checks for a live portrait preview; REEL-2 films, captions and publishes a reel ([board](docs/wiki/cross-client-testing.md#18---reel---the-camera-tab-and-publishing-a-reel)).
+REEL-1 opens the camera tab with a real swipe and checks for a live portrait preview; REEL-2 films, captions and publishes a reel ([board](docs/wiki/cross-client-testing-archive-1-4-0.md#18---reel---the-camera-tab-and-publishing-a-reel)).
 
 ### Removed - the "deleted in N days" chip on a member's own reels
 

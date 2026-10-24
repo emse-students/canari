@@ -68,7 +68,7 @@ the Rust test `unsaved_ratchet_advance` carries it).
 Findings: the reply context followed the member into the next conversation (fixed by #1548); the
 swipe to the camera did nothing three times on a fresh Feed (open, in the backlog); NOTIF-10 stayed
 `FAIL` with the ordering fa6b9d6aa asked for now measured
-([cross-client-testing](cross-client-testing.md#14---notif---notifications)).
+([cross-client-testing](cross-client-testing-archive-1-4-0.md#14---notif---notifications)).
 **Local estate prerequisite, not a product defect**: migrations 069-077 were not in the local
 `schema_migrations` ledger and `spaces` was EMPTY, so the signed subscription refused its own reader
 (403 `outside their spaces`) until the seed of `071_spaces.sql` was run by hand. No runner applies

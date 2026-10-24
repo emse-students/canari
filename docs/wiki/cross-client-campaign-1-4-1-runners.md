@@ -42,7 +42,7 @@ is one table plus one action per shape. Each holds its pure judgements in `<name
 | Runner | Rows | The action shape | State |
 | --- | --- | --- | --- |
 | `archive/floor.mjs` | FLOOR-1..3 | plain sends and one bulk Add | built ([#2393](https://github.com/emse-students/canari/pull/2393)) |
-| `archive/race.mjs` | CC-1..5, RM-1, RM-2, RM-7 | two (or four) actions held by `fault.mjs` `hold` and released together | next |
+| `archive/race.mjs` | CC-1..5, RM-1, RM-2, RM-7 | two (or four) actions held by `fault.mjs` `hold` and released together | CC-1..4 built as `archive/cc.mjs` ([#2395](https://github.com/emse-students/canari/pull/2395)); RM owed |
 | `archive/settle.mjs` | DUP-1, -2, -4..-7, OFF-1, OFF-2, TOK-1..3 | a commit whose ANSWER is lost, refused or late; the settlement | owed |
 | `archive/offline.mjs` | OFF-3..5, NET-1..3, RM-8 | a seat without network, or a degraded one, for a duration | owed |
 | `archive/gap.mjs` | GAP-1..3 | frames reordered, replayed or flooded against a frozen member | owed |
@@ -63,17 +63,17 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | --- | --- | --- | --- | --- | --- | --- |
 | FLOOR-1 | one marker each way in the fixture DM, timed from the send (receiver already waiting); re-counted after the invariant's reload | `send`, `awaitMessage`, `receivedOn`, `checkInvariant` | - | no | U | 10 min |
 | FLOOR-2 | W1 mints `FLOOR2-<mark>`, ONE `addMembers` of peer, third, fourth; one commit, epoch +1, every seat active | `mintRowGroup`, `addMembers`, `serverView` | - | no | U | 15 min |
-| FLOOR-3 | FLOOR-2's last group (ledger) with A1 and I1 in play as members; one tree across six clients | `openSeats` arms both phones | the fingerprint is an APPROXIMATION (not exposed to the page) | Q4 if I1 cannot be unlocked over WDA; TestFlight install on I1 | B | 15 min |
+| FLOOR-3 | FLOOR-2's last group (ledger) with A1 and I1 in play as members; one tree across six clients | `openSeats` arms both phones | the fingerprint is an APPROXIMATION (not exposed to the page) | no - the rig unlocks I1 over WDA (Q4); TestFlight install on I1 once | B | 15 min |
 
 ### CC - concurrent commits (`race.mjs`)
 
 | Id | How it is run | Atom | Missing | Human | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| CC-1 | a minted group of owner + peer; W1 Adds third, W2 Adds fourth, both POSTs `hold once`, released together; two commits, exactly ONE `REJECT epoch_mismatch` line, both users in | `fault.mjs` `hold`, `commitLines`, `addMembers` | the loser's `409` forgiven on the commit path only | no | U | 30 min |
-| CC-2 | as CC-1, one side Removes W4's user | as CC-1 | `removeMember` is private in `archive/grp.mjs` - extract it to an atom | no | U | 30 min |
+| CC-1 | a minted group of owner + peer; W1 Adds third, W2 Adds fourth, both POSTs `hold once`, released together; exactly one winner, the loser refused with a typed race refusal (`epoch_mismatch` or `concurrent_commit`, recorded, not judged), rebuilt and accepted, both users in | `fault.mjs` `hold`, `commitLines`, `addMembers` | - (a refusal answers `201`, nothing to forgive) | no | U | 30 min |
+| CC-2 | as CC-1, one side Removes W4's user | as CC-1 | - (`removeMember` moved to `archive/addmember.mjs`) | no | U | 30 min |
 | CC-3 | two seats Remove the same member; ONE commit lands, no second Remove rebuilt | as CC-2 | as CC-2 | no | U | 30 min |
-| CC-4 | backdate the refresh ledger on W1 (a device that has COMMITTED in the group), trigger by a send, `hold` the refresh and W2's Add, release | `fault.mjs` | an `armLeafRefresh` gesture (see section 5, Q3) | no | U | 30 min |
-| CC-5 | four seats each commit within 200 ms, ten rounds | `fault.mjs` `hold` x4 | what each seat commits: an Add of someone not yet in - **a fifth campaign account** (the last joiner has nobody left to Add) | the user creates the account (one-off) | U | 30 min |
+| CC-4 | backdate the refresh ledger on W1 (a device that has COMMITTED in the group), trigger by a send, `hold` the refresh and W2's Add, release | `fault.mjs`, `armLeafRefresh` | - | no | U | 30 min |
+| CC-5 | **BLOCKED-ON-ACCOUNT**. Four seats each commit within 200 ms, ten rounds | `fault.mjs` `hold` x4 | what each seat commits: an Add of someone not yet in - **a fifth campaign account** (the last joiner has nobody left to Add) | the user creates the account (one-off) | U | 30 min |
 
 ### DUP - the settlement (`settle.mjs`)
 
@@ -94,7 +94,7 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | OFF-1 | `hold` the POST, `cut()`, release on reconnect | `fault.mjs`, `net.mjs` `cut` | - | no | U | 20 min |
 | OFF-2 | `lose-answer` + `cutHard()`; the reconnect answers `duplicate` | `fault.mjs`, `net.mjs` | - | no | U | 20 min |
 | OFF-3 | W1 `cutHard()` while W2 and W4 move three epochs; on return the stage is refused, cleared, re-issued | `net.mjs`, `addMembers` | the invariant run with `expectStage` false AFTER the return | no | U | 30 min |
-| OFF-4 | W2 `cutHard()` across ten commits and a hundred messages | `net.mjs` | ten commits need ten membership changes: Add/Remove of the fifth account in a loop | fifth account | U | 20 min |
+| OFF-4 | **BLOCKED-ON-ACCOUNT**. W2 `cutHard()` across ten commits and a hundred messages | `net.mjs` | ten commits need ten membership changes: Add/Remove of the fifth account in a loop | fifth account | U | 20 min |
 | OFF-5 | A1 loses both radios mid-Add (`svc wifi/data disable`) | `phone.mjs` radio control | timing the cut on A1's stage line (logcat) | no | B | 30 min |
 
 ### GAP (`gap.mjs`)
@@ -171,9 +171,15 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 - **DUP-3 and GAP-4 are decided, not owed.** Their runner records `SKIPPED` with the plan's reason
   (Q2; the shared-payload writer OFF), so `bun rows.mjs` shows a decision rather than a gap.
 - **DEV-5 waits on Q5.** Until answered, it is `pending` on the board, never `SKIPPED`.
-- **The I1 rows (FLOOR-3, BIG-1..3) need the owner for a minute only if Q4 answers no**: the iPhone
-  passcode cannot be typed over WDA. The lead then asks for the unlock, runs the row unchanged, and
-  the row carries the fact (the iPhone was unlocked by hand) in its detail.
+- **The I1 rows (FLOOR-3, BIG-1..3) need no person** (Q4 settled): the rig unlocks the iPhone with
+  `tools/ios-device/ios.mjs unlock` and types the PIN from stdin, from the private notes. If WDA ever
+  stops answering, the lead asks for the unlock, runs the row unchanged, and the row carries the
+  fact (the iPhone was unlocked by hand) in its detail.
+- **CC-5 and OFF-4 are BLOCKED-ON-ACCOUNT**: they need a fifth campaign account, which the lead asks
+  the owner for. `pending` on the board, with that reason.
+- **The board**: Q6 settled - the old board is archived at
+  [cross-client-testing-archive-1-4-0](cross-client-testing-archive-1-4-0.md) and
+  [cross-client-testing](cross-client-testing.md) holds exactly these rows.
 - **A gesture only a person can make** (none in section 4.2 today; the `O` rows of 4.3) is recorded
   by a small `archive/handrow.mjs --row <id> --verdict <V> --what "<observed>"` (owed): it records
   with the SERVER window (`serverWindowSince` = the start the lead gives) and states the client side
@@ -196,7 +202,7 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
   `at + 7 days`; a KeyPackage-dated leaf (a device that only received a Welcome) is dated by the key
   package and cannot be backdated that way; the trigger is the device sending. So CC-4 writes NOTHING
   on the server: it rewrites `at` on a campaign device that has already committed in the row's group,
-  then sends. The Q3 settlement (one Redis key on dev) should be re-read against that.
+  then sends. The lead accepted the correction; Q3 on the plan now says so.
 
 ## 6. What is left, in runner work
 
