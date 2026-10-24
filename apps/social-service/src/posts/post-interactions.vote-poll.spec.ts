@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { CommentIdentityService } from './comment-identity';
 import { Repository } from 'typeorm';
 import { PostInteractionsService } from './post-interactions.service';
@@ -67,6 +67,20 @@ describe('PostInteractionsService.votePoll enforces the poll', () => {
     { id: 'b', label: 'B', votes: [] },
     { id: 'c', label: 'C', votes: [] },
   ];
+
+  it('answers 404 for a poll id the post does not have, and saves nothing', async () => {
+    const { service, saved } = makeService({
+      id: 'p1',
+      multipleChoice: false,
+      options: options(),
+      votesByUser: {},
+    });
+
+    await expect(
+      service.votePoll('post-1', 'unknown', { userId: 'u1', optionIds: [] })
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(saved).toEqual([]);
+  });
 
   it('refuses more than one option on a single-choice poll', async () => {
     const { service } = makeService({

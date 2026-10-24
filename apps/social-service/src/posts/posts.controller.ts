@@ -305,8 +305,9 @@ export class PostsController {
    * on a post the caller may not see (WP6b): an id is not a permission. Taking back one's own
    * reaction or comment is not gated - it adds nothing.
    *
-   * The answer is the post AS THIS READER MAY SEE IT (`serveToReader`), like every other route
-   * answering with one post - never the row the vote was written into.
+   * A vote is refused wherever opening the post would be (`assertMayVote`, the gate `getById`
+   * uses, with the vote's grant-free audience), and the answer is the post served to this reader
+   * (`serveToReader`), like every other route answering with one post.
    */
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/polls/:pollId/vote')
@@ -317,7 +318,7 @@ export class PostsController {
     @Body() body: VotePollDto,
     @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
-    await this.service.assertVisible(postId, xUserId, 'VOTE');
+    await this.service.assertMayVote(postId, xUserId);
     const stored = await this.interactions.votePoll(postId, pollId, { ...body, userId: xUserId });
     return this.service.serveToReader(stored, {
       viewerId: xUserId,

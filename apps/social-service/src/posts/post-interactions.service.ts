@@ -505,12 +505,14 @@ export class PostInteractionsService {
         updated = true;
       }
 
-      if (updated) {
-        const saved = await manager.save(post as any);
-        result = Array.isArray(saved) ? saved[0] : saved;
-      } else {
-        result = post;
+      // Every poll that matches either records the vote or throws, so nothing recorded means no
+      // poll of this post has that id: a vote on nothing, answered as such.
+      if (!updated) {
+        this.logger.debug(`votePoll ${postId.slice(0, 8)}: no poll ${pollId.slice(0, 8)}`);
+        throw new NotFoundException('Poll not found');
       }
+      const saved = await manager.save(post as any);
+      result = Array.isArray(saved) ? saved[0] : saved;
     });
     return result as Post;
   }

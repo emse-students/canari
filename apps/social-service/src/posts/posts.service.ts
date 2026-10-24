@@ -1576,16 +1576,39 @@ export class PostsService {
   ) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
+    const blockedIds = await this.assertOpenable(post, opts ?? {}, 'READ_OR_REACT');
+    return this.serveToReader(
+      post,
+      { viewerId: opts?.viewerId, isGlobalAdmin: opts?.isGlobalAdmin === true },
+      blockedIds
+    );
+  }
+
+  /**
+   * EVERY REFUSAL A READER MEETS ON ONE POST, BY ID - the ONE gate `getById` and the vote route
+   * (`assertMayVote`) go through, so a vote is refused on every post the read would refuse.
+   * Returns the reader's blocks, which the serving that follows needs anyway.
+   *
+   * @param intent `'VOTE'` asks the grant-free audience (`assertVisible`), as a vote requires.
+   * @throws NotFoundException for an expired reel, a post outside the reader's audience, a post
+   *   scheduled later (not the reader's), or one whose author and reader are blocked either way.
+   * @throws ForbiddenException for a post hidden by moderation.
+   */
+  private async assertOpenable(
+    post: Post,
+    opts: { allowHidden?: boolean; viewerId?: string },
+    intent: PostAccessIntent
+  ): Promise<string[]> {
     // A reel past its month is gone for everyone, a moderator and the author included: the worker
     // has only not reached it yet, and what it will delete is not worth opening.
     if (isExpiredReel(post)) {
-      this.logger.debug(`getById ${id} withheld: reel expired at ${String(post.expiresAt)}`);
+      this.logger.debug(`${intent} ${post.id} withheld: reel expired at ${String(post.expiresAt)}`);
       throw new NotFoundException('Post not found');
     }
     // A POST THIS READER MAY NOT SEE (WP6b) IS ONE THAT DOES NOT EXIST for them: 404, and BEFORE the
     // moderation check, whose 403 would otherwise confirm the id to someone outside its audience.
-    await this.assertVisible(id, opts?.viewerId, 'READ_OR_REACT');
-    if (post.hiddenByModeration && !opts?.allowHidden) {
+    await this.assertVisible(post.id, opts.viewerId, intent);
+    if (post.hiddenByModeration && !opts.allowHidden) {
       throw new ForbiddenException('Post not available');
     }
     // Every listPosts query carries `scheduledAt IS NULL OR scheduledAt <= NOW()`; this read did
@@ -1595,9 +1618,11 @@ export class PostsService {
     // it. Answers "not found" rather than "forbidden" to everyone else: the existence of an
     // unpublished post is itself the thing to hide.
     const publishesLater = !!post.scheduledAt && post.scheduledAt.getTime() > Date.now();
-    const viewerOwnsIt = !!opts?.viewerId && post.authorId === opts.viewerId;
-    if (publishesLater && !viewerOwnsIt && !opts?.allowHidden) {
-      this.logger.debug(`getById ${id} withheld: scheduled for ${post.scheduledAt?.toISOString()}`);
+    const viewerOwnsIt = !!opts.viewerId && post.authorId === opts.viewerId;
+    if (publishesLater && !viewerOwnsIt && !opts.allowHidden) {
+      this.logger.debug(
+        `${intent} ${post.id} withheld: scheduled for ${post.scheduledAt?.toISOString()}`
+      );
       throw new NotFoundException('Post not found');
     }
     // A BLOCK REACHES THIS READ TOO, or the feed filter would be a curtain with a link around it:
@@ -1609,22 +1634,29 @@ export class PostsService {
     // is the same one that lets them open a moderation-hidden post the feed refuses them. Their
     // FEED still honours their own block - hiding a reported post from the moderator who has to
     // read it is the trap this avoids, and it is the same split `hiddenByModeration` already makes.
-    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, opts?.viewerId);
+    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, opts.viewerId);
     if (
       !post.associationId &&
       !post.anonymous &&
       blockedIds.includes(post.authorId) &&
-      !opts?.allowHidden
+      !opts.allowHidden
     ) {
-      this.logger.debug(`getById ${id} withheld: a block stands between the reader and its author`);
+      this.logger.debug(
+        `${intent} ${post.id} withheld: a block stands between the reader and its author`
+      );
       throw new NotFoundException('Post not found');
     }
+    return blockedIds;
+  }
 
-    return this.serveToReader(
-      post,
-      { viewerId: opts?.viewerId, isGlobalAdmin: opts?.isGlobalAdmin === true },
-      blockedIds
-    );
+  /**
+   * Refuses a vote on a post its voter could not open (`assertOpenable` with the vote's audience).
+   * Never `allowHidden`: a moderation-hidden post takes no votes, a platform admin's included.
+   */
+  async assertMayVote(postId: string, viewerId: string): Promise<void> {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    await this.assertOpenable(post, { viewerId }, 'VOTE');
   }
 
   /**
@@ -1733,10 +1765,7 @@ export class PostsService {
       post.markdown = data.markdown;
       const saved = await this.postRepo.save(post);
       await this.invalidateListCache();
-      return this.toPublicPostFromEntity(
-        saved,
-        await this.viewerContext([saved], userId, isGlobalAdmin)
-      );
+      return this.serveToReader(saved, { viewerId: userId, isGlobalAdmin });
     }
     post.markdown = data.markdown;
 
@@ -1782,10 +1811,7 @@ export class PostsService {
 
     const saved = await this.postRepo.save(post);
     await this.invalidateListCache();
-    return this.toPublicPostFromEntity(
-      saved,
-      await this.viewerContext([saved], userId, isGlobalAdmin)
-    );
+    return this.serveToReader(saved, { viewerId: userId, isGlobalAdmin });
   }
 
   /**

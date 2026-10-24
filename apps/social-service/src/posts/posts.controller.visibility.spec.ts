@@ -12,6 +12,8 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
 
   function make() {
     const assertVisible = jest.fn(() => Promise.reject(new NotFoundException('Post not found')));
+    // The vote asks the whole open-the-post gate, whose visibility half is `assertVisible`.
+    const assertMayVote = jest.fn(() => Promise.reject(new NotFoundException('Post not found')));
     const interactions = {
       votePoll: jest.fn(),
       addReaction: jest.fn(),
@@ -20,14 +22,14 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
     };
     const associations = { findCalendarEventByLinkedPost: jest.fn() };
     const controller = new PostsController(
-      { assertVisible } as never,
+      { assertVisible, assertMayVote } as never,
       interactions as never,
       {} as never,
       associations as never,
       {} as never,
       { isUserMuted: jest.fn(() => Promise.resolve(false)) } as never
     );
-    return { controller, assertVisible, interactions, associations };
+    return { controller, assertVisible, assertMayVote, interactions, associations };
   }
 
   it.each([
@@ -45,13 +47,13 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
     ],
     ['likeComment', (c: PostsController) => c.likeComment('reader', undefined, POST, 'comment')],
   ] as const)('%s answers 404 and writes nothing', async (name, call) => {
-    const { controller, assertVisible, interactions } = make();
+    const { controller, assertVisible, assertMayVote, interactions } = make();
     await expect(call(controller)).rejects.toBeInstanceOf(NotFoundException);
-    expect(assertVisible).toHaveBeenCalledWith(
-      POST,
-      'reader',
-      name === 'votePoll' ? 'VOTE' : 'READ_OR_REACT'
-    );
+    const [gate, args] =
+      name === 'votePoll'
+        ? [assertMayVote, [POST, 'reader']]
+        : [assertVisible, [POST, 'reader', 'READ_OR_REACT']];
+    expect(gate).toHaveBeenCalledWith(...args);
     expect(interactions[name]).not.toHaveBeenCalled();
   });
 
