@@ -18,7 +18,7 @@ import {
   originOfConsoleEvent,
   originOfUrl,
 } from './consoleorigin.mjs';
-import { describe as describeDeploy, estateWindow, readEstateBuild } from './deploy.mjs';
+import { configuredEstate, describe as describeDeploy, estateWindow, readEstateBuild } from './deploy.mjs';
 import { DEV_SITE } from './estate-target.mjs';
 import { fromWebKit, isWebKitAgent } from './webkit-console.mjs';
 
@@ -1296,11 +1296,13 @@ export async function watch(cx, label) {
   const own = originOfUrl(typeof here === 'string' ? here : '');
   const home = new Set(own ? [own, ...TAURI_ORIGINS] : []);
   const since = Date.now();
-  // A CLIENT ON DEV RECORDS THE BUILD ITS WINDOW OPENED ON (R4, 2026-10-24): a pre-release redeploys
+  // ON DEV EVERY WINDOW RECORDS THE BUILD IT OPENED ON (R4, 2026-10-24): a pre-release redeploys
   // dev under a running row, and `gate()` compares this with the build at the end - see
   // `estateWindow` in `deploy.mjs`. Read from Node, not the page, so it adds nothing to the
-  // network events the report classifies. The local estate is asked about restarts instead.
-  const estateBuild = own === DEV_SITE ? await readEstateBuild(own) : undefined;
+  // network events the report classifies. DECIDED BY THE CONFIGURED ESTATE, NOT THE PAGE'S ORIGIN
+  // (R4 review): a native client's page is a Tauri scheme, and it stands on dev all the same.
+  // The local estate is asked about restarts instead.
+  const estateBuild = configuredEstate()?.estate === 'dev' ? await readEstateBuild(DEV_SITE) : undefined;
   return { cx, label, since, home, estateBuild };
 }
 
@@ -2943,8 +2945,12 @@ export function gate(verdict, reports, observations = {}) {
     if (window.asked === false) {
       // A BLIND SPOT IS RECORDED, NEVER GUESSED AWAY. `gh` can be absent, logged out or rate-limited,
       // and a gate that read that as "no deploy" would be silently weaker exactly when the network is
-      // already misbehaving. The verdict stands and the reader is told what could not be asked.
+      // already misbehaving. Locally the verdict stands and the reader is told what could not be
+      // asked. ON DEV (or with no estate known) IT IS VACUOUS (R4 review): dev is redeployed and
+      // reset by gestures nobody at this machine makes, so a window nobody could read is not a
+      // window anybody may vouch for.
       detail.deployWindow = `unknown - ${window.why}`;
+      if (window.estate !== 'local') out = 'VACUOUS';
     } else if (window.overlapped.length) {
       detail.redeployedMidRun = window.overlapped.map(describeDeploy);
       out = 'VACUOUS';

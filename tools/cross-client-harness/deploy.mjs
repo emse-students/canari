@@ -2,11 +2,12 @@
  * WAS THE ESTATE REDEPLOYED OR RESTARTED WHILE THE CHECK WAS RUNNING? - the one cause of transport
  * failure that is OURS, and the only one a check cannot tell from a defect.
  *
- * **WHICH QUESTION DEPENDS ON THE ESTATE (R4, 2026-10-24).** Locally it is "did a container of the
- * compose project start inside the window" ({@link estateRestarts}). On DEV it is "did dev's build
- * change, or did a pre-release run, inside the window" ({@link devWindowVerdict}): `watch()` records
- * the build `/api/version` served when each window opened, and `gate()` reads it again at the end.
- * The history below is why the question moved twice before.
+ * **WHICH QUESTION DEPENDS ON THE CONFIGURED ESTATE (R4, 2026-10-24)** - the one `site.mjs`
+ * registers ({@link configuredEstate}), never the origin a report happens to carry. Locally it is
+ * "did a container of the compose project start inside the window" ({@link estateRestarts}). On DEV
+ * it is "did dev's build change, did a pre-release run, did a dev container restart or did a seed
+ * reset run inside the window" ({@link devWindowVerdict}), and a dev window that could not be read
+ * is VACUOUS. The history below is why the question moved twice before.
  *
  * Prod IS the test server, and every push to `main` redeploys it: containers stop, nginx drops
  * whatever is in flight, and every client on the rig sees `net::ERR_CONNECTION_CLOSED` on the
@@ -43,6 +44,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEV_SITE, estateOf, registeredAttachOrigin } from './estate-target.mjs';
 
 /**
  * The workflow that restarts production - and since 2026-09-03 it is the RELEASE, not a deploy.
@@ -72,43 +74,78 @@ const RUNNING = new Set(['queued', 'in_progress', 'requested', 'waiting', 'pendi
  *   startedMs: number, endedMs: number, title: string}>} | {ok: false, why: string}}
  */
 export function deployRuns(limit = 15) {
+  const r = ghJson(['run', 'list', '--workflow', DEPLOY_WORKFLOW, '--limit', String(limit), '--json', RUN_FIELDS]);
+  return r.ok ? { ok: true, runs: r.value.map(runOf) } : r;
+}
+
+/** The `gh run list` fields every reader here takes, `headBranch` included: on a release run it is the TAG. */
+const RUN_FIELDS = 'databaseId,headSha,headBranch,event,status,conclusion,createdAt,updatedAt,displayTitle';
+
+/**
+ * One `gh` call parsed as JSON, or the reason it could not be - never a guess.
+ *
+ * @param {string[]} args
+ * @returns {{ok: true, value: any} | {ok: false, why: string}}
+ */
+function ghJson(args) {
   let raw;
   try {
-    raw = execFileSync(
-      'gh',
-      [
-        'run',
-        'list',
-        '--workflow',
-        DEPLOY_WORKFLOW,
-        '--limit',
-        String(limit),
-        '--json',
-        'databaseId,headSha,status,conclusion,createdAt,updatedAt,displayTitle',
-      ],
-      { cwd: REPO, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] }
-    );
+    raw = execFileSync('gh', args, { cwd: REPO, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
-    return { ok: false, why: `gh run list failed: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}` };
+    return { ok: false, why: `gh ${args.slice(0, 2).join(' ')} failed: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}` };
   }
   try {
-    const parsed = JSON.parse(raw);
-    return {
-      ok: true,
-      runs: parsed.map((r) => ({
-        id: r.databaseId,
-        sha: String(r.headSha ?? '').slice(0, 8),
-        status: r.status,
-        conclusion: r.conclusion ?? null,
-        startedMs: Date.parse(r.createdAt),
-        endedMs: RUNNING.has(r.status) ? Number.POSITIVE_INFINITY : Date.parse(r.updatedAt),
-        title: r.displayTitle ?? '',
-      })),
-    };
+    return { ok: true, value: JSON.parse(raw) };
   } catch (e) {
-    return { ok: false, why: `gh run list returned no JSON: ${e instanceof Error ? e.message : String(e)}` };
+    return { ok: false, why: `gh ${args.slice(0, 2).join(' ')} returned no JSON: ${e instanceof Error ? e.message : String(e)}` };
   }
 }
+
+/** A `gh run list` row in the one shape `describe` and every verdict read. */
+const runOf = (r) => ({
+  id: r.databaseId,
+  sha: String(r.headSha ?? '').slice(0, 8),
+  status: r.status,
+  conclusion: r.conclusion ?? null,
+  startedMs: Date.parse(r.createdAt),
+  endedMs: RUNNING.has(r.status) ? Number.POSITIVE_INFINITY : Date.parse(r.updatedAt),
+  title: r.displayTitle ?? '',
+  tag: r.headBranch ?? '',
+});
+
+/**
+ * THE SECOND THING THAT REWRITES DEV UNDER A ROW: `dev-reset` in `scheduled.yml` (R4 review).
+ *
+ * A dispatch-only job that puts dev's database back to the fictional seed - no new build, so the
+ * build witness cannot see it, and no container need restart, so the restart witness may not either.
+ * A row whose window it crossed measured an estate whose rows were replaced mid-run.
+ *
+ * `scheduled.yml` carries other jobs a dispatch may pick, so a dispatched run counts only when ITS
+ * reset job did not skip - read per run, and only for runs that ended after `sinceMs` (a handful).
+ *
+ * @param {number} sinceMs the earliest window start
+ * @returns {{ok: true, runs: object[]} | {ok: false, why: string}}
+ */
+export function devResetRuns(sinceMs, limit = 10) {
+  const listed = ghJson(['run', 'list', '--workflow', DEV_RESET_WORKFLOW, '--event', 'workflow_dispatch', '--limit', String(limit), '--json', RUN_FIELDS]);
+  if (!listed.ok) return listed;
+  const runs = [];
+  for (const run of listed.value.map(runOf).filter((x) => x.endedMs >= sinceMs)) {
+    const view = ghJson(['run', 'view', String(run.id), '--json', 'jobs']);
+    if (!view.ok) return view;
+    const job = (view.value.jobs ?? []).find((j) => j.name === DEV_RESET_JOB);
+    // A run whose jobs are not listed yet is still being scheduled: it may be a reset, so it counts.
+    if (!job || job.conclusion !== 'skipped') runs.push({ ...run, title: `${DEV_RESET_JOB} (${run.title})` });
+  }
+  return { ok: true, runs };
+}
+
+/**
+ * The workflow and the job name of dev's seed reset - the job's `name:` in `scheduled.yml`, which
+ * names dev's host; built from `DEV_SITE` so the rig spells that host in one place.
+ */
+export const DEV_RESET_WORKFLOW = 'scheduled.yml';
+export const DEV_RESET_JOB = `Reset ${new URL(DEV_SITE).hostname} to the fictional seed`;
 
 /** The deploys that have not finished. `[]` means production is quiet; `null` means nobody could say. */
 export function inFlight() {
@@ -179,16 +216,53 @@ export function estateRestarts(sinceMs) {
   } catch (e) {
     return { asked: false, why: `docker could not be asked: ${String(e?.message ?? e).split('\n')[0]}` };
   }
+  return { asked: true, restarted: restartsIn(out, sinceMs, 'local') };
+}
+
+/**
+ * The containers of `<name> <StartedAt>` lines that started at or after `sinceMs`, shaped like a
+ * deploy so `describe` and every reader of `redeployedMidRun` keep one vocabulary.
+ *
+ * @param {string} out `docker inspect --format '{{.Name}} {{.State.StartedAt}}'` output
+ * @param {number} sinceMs
+ * @param {'local' | 'dev'} estate
+ */
+export function restartsIn(out, sinceMs, estate) {
   const restarted = [];
   for (const line of out.split('\n')) {
     const m = /^\/?(\S+)\s+(\S+)$/.exec(line.trim());
     if (!m) continue;
     const startedMs = Date.parse(m[2]);
     if (!Number.isFinite(startedMs) || startedMs < sinceMs) continue;
-    // Shaped like a deploy so `describe` and every reader of `redeployedMidRun` keep one vocabulary.
-    restarted.push({ id: m[1], sha: 'local', status: 'restarted', conclusion: '', title: new Date(startedMs).toISOString() });
+    restarted.push({ id: m[1], sha: estate, status: 'restarted', conclusion: '', title: new Date(startedMs).toISOString() });
   }
-  return { asked: true, restarted };
+  return restarted;
+}
+
+/**
+ * Which of DEV's containers started after `sinceMs` - the fourth witness of a dev window (R4 review).
+ *
+ * A container restarted by hand, by the host or by a `docker compose up` of one service drops what
+ * nginx had in flight without changing the build or running any workflow. `State.StartedAt` is
+ * written by the thing whose liveness it measures. The read goes over the rig's one ssh route to
+ * dev (`devContainerStarts` in `estate.mjs`), which needs the machine-local host alias - so it runs
+ * in a CHILD of this runtime, and this module stays importable on a fresh checkout.
+ *
+ * @returns {{asked: true, restarted: object[]} | {asked: false, why: string}}
+ */
+export function devRestartsSync(sinceMs, { timeoutMs = 60_000 } = {}) {
+  const estateUrl = new URL('./estate.mjs', import.meta.url).href;
+  // The answer is the LAST line: an import may print its own lines first.
+  const script = `import(${JSON.stringify(estateUrl)}).then((m) => process.stdout.write('\\n' + JSON.stringify({ out: m.devContainerStarts() })))`;
+  const r = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: timeoutMs });
+  let out;
+  try {
+    ({ out } = JSON.parse(String(r.stdout).trim().split('\n').pop()));
+  } catch {
+    return { asked: false, why: `dev's containers could not be asked (status ${r.status}): ${String(r.stderr ?? '').trim().split('\n').pop()}` };
+  }
+  if (!String(out).trim()) return { asked: false, why: `no running container in dev's compose project` };
+  return { asked: true, restarted: restartsIn(out, sinceMs, 'dev') };
 }
 
 /**
@@ -233,32 +307,49 @@ export function readEstateBuildSync(origin, { timeoutMs = 20_000 } = {}) {
   }
 }
 
-/** A hyphen in the version IS a pre-release (`release_kind()`), and a pre-release deploys DEV. */
-const PRE_RELEASE = /\bv?\d+\.\d+\.\d+-/;
+/**
+ * A STABLE tag deploys production and nothing else; every other release run may deploy dev. A
+ * hyphen IS a pre-release (`release_kind()`), and a run whose tag is not a version at all (a
+ * dispatch from a branch) is counted too - over-reporting costs a re-run.
+ *
+ * READ FROM THE TAG (`headBranch` of a release run), NEVER FROM THE TITLE (R4 review): a title is
+ * the release's NAME, which a human may type as anything, and the tag is what `release_kind()` reads.
+ */
+const STABLE_TAG = /^v?\d+\.\d+\.\d+$/;
+
+/** Whether a `release.yml` run can have redeployed dev - exported for the self-test. */
+export const mayDeployDev = (run) => !STABLE_TAG.test(String(run.tag ?? '').trim());
 
 /**
  * Was the DEV estate redeployed under the window `[sinceMs, end.atMs]`? Pure - every input is read
  * elsewhere, so `archive/deploy-selftest.mjs` pins each answer.
  *
- * THREE WITNESSES, because each misses a case the others see:
+ * FIVE WITNESSES, because each misses a case the others see:
  * - the build every client's window STARTED on against the build at the END: a new pre-release
  *   changes it, and that is the case the plan names;
  * - two windows that started on DIFFERENT builds: the deploy landed between two `watch()` calls;
- * - a `release.yml` run for a PRE-RELEASE (or one whose title cannot be read) intersecting the
- *   window: a rerun of the SAME tag redeploys dev without changing its build. A STABLE deploys
- *   production, which no row on dev reads, so it is not counted.
+ * - a `release.yml` run whose TAG is not a stable version, intersecting the window: a rerun of the
+ *   SAME tag redeploys dev without changing its build. A STABLE deploys production, which no row on
+ *   dev reads, so it is not counted ({@link mayDeployDev});
+ * - a dev container that STARTED inside the window ({@link devRestartsSync}): a restart by hand or
+ *   by the host changes no build and runs no workflow;
+ * - a `dev-reset` of `scheduled.yml` intersecting the window ({@link devResetRuns}): the seed is
+ *   restored with no new build and possibly no restart.
  *
- * WHAT IT CANNOT ANSWER IT SAYS, and never guesses "quiet": an unreadable start or end build, or an
- * unreadable `gh`, returns `asked: false` with every reason.
+ * WHAT IT CANNOT ANSWER IT SAYS, and never guesses "quiet": an unreadable start or end build, an
+ * unreadable `gh` or unreadable containers return `asked: false` with every reason - and on dev
+ * `gate()` makes that VACUOUS, never PASS.
  *
  * @param {object} p
  * @param {Array<{build?: string, error?: string, atMs: number}>} p.starts each client window's start read
  * @param {{build?: string, error?: string, atMs: number}} p.end the read at gate time
  * @param {{ok: true, runs: object[]} | {ok: false, why: string}} p.runs `deployRuns()`
+ * @param {{asked: true, restarted: object[]} | {asked: false, why: string}} p.restarts `devRestartsSync()`
+ * @param {{ok: true, runs: object[]} | {ok: false, why: string}} p.resets `devResetRuns()`
  * @param {number} p.sinceMs the earliest window start
  * @returns {{asked: true, overlapped: object[], builds: {start: string[], end: string}} | {asked: false, why: string}}
  */
-export function devWindowVerdict({ starts, end, runs, sinceMs }) {
+export function devWindowVerdict({ starts, end, runs, restarts, resets, sinceMs }) {
   const blind = [];
   const startBuilds = [...new Set(starts.filter((s) => s.build).map((s) => s.build))];
   for (const s of starts) if (!s.build) blind.push(`a window's start build: ${s.error ?? 'absent'}`);
@@ -271,14 +362,14 @@ export function devWindowVerdict({ starts, end, runs, sinceMs }) {
   if (end?.build && startBuilds.some((b) => b !== end.build)) {
     overlapped.push({ id: 'dev', sha: `${startBuilds.join('|')}->${end.build}`, status: 'redeployed', conclusion: '', title: 'the build changed between the start and the end of the run' });
   }
+  const until = end?.atMs ?? Date.now();
+  const crosses = (run) => run.startedMs <= until && run.endedMs >= sinceMs;
   if (!runs.ok) blind.push(`release runs: ${runs.why}`);
-  else {
-    const until = end?.atMs ?? Date.now();
-    for (const run of runs.runs) {
-      const forDev = PRE_RELEASE.test(run.title) || !/\bv?\d+\.\d+\.\d+\b/.test(run.title);
-      if (forDev && run.startedMs <= until && run.endedMs >= sinceMs) overlapped.push(run);
-    }
-  }
+  else for (const run of runs.runs) if (mayDeployDev(run) && crosses(run)) overlapped.push(run);
+  if (!restarts?.asked) blind.push(`dev's containers: ${restarts?.why ?? 'not asked'}`);
+  else overlapped.push(...restarts.restarted);
+  if (!resets?.ok) blind.push(`dev resets: ${resets?.why ?? 'not asked'}`);
+  else for (const run of resets.runs) if (crosses(run)) overlapped.push(run);
   // AN OVERLAP IS AN ANSWER EVEN WITH A BLIND WITNESS BESIDE IT: one witness proving a redeploy
   // settles it. Only "nothing seen" needs every witness to have been readable.
   if (overlapped.length) return { asked: true, overlapped, builds: { start: startBuilds, end: end?.build ?? null } };
@@ -287,26 +378,64 @@ export function devWindowVerdict({ starts, end, runs, sinceMs }) {
 }
 
 /**
- * The window question for whichever estate the reports were taken on - the one `gate()` asks.
+ * The estate this process is configured for, from the origin `site.mjs` registered (the only door to
+ * `SITE`), or null when `site.mjs` was never evaluated here. Every row reaches it before `gate()`:
+ * attaching a client goes through `listTargets`, which loads `site.mjs`.
  *
- * A report carries `estateBuild` when its client stood on a DEPLOYED estate (dev); then dev is asked.
- * Otherwise the estate is local and the question is {@link estateRestarts}, as before.
+ * @returns {{estate: 'local' | 'dev', origin: string} | null}
+ */
+export function configuredEstate() {
+  const origin = registeredAttachOrigin();
+  return origin ? { estate: estateOf(origin), origin } : null;
+}
+
+/**
+ * The window question for the CONFIGURED estate - the one `gate()` asks.
+ *
+ * THE ESTATE IS THE CONFIGURATION'S, NEVER A REPORT'S (R4 review). The first version picked dev when
+ * a report carried a start build and local otherwise - so a dev run whose `watch()` could not record
+ * one (a native client, whose page origin is a Tauri scheme) silently asked LOCAL docker and passed
+ * on a question about the wrong machine. Now: on dev every window must have recorded its start, a
+ * missing one is a blind witness, and local is never consulted.
+ *
+ * Every answer carries `estate`, so `gate()` can make a blind dev window VACUOUS.
  *
  * @param {object[]} reports the gated reports
  * @param {number} sinceMs the earliest window start
- * @param {{readBuild?: (origin: string) => object, readRuns?: () => object, restarts?: (since: number) => object}} [io]
- *   injectable readers, for the self-test
+ * @param {{estate?: 'local' | 'dev' | null, readBuild?: (origin: string) => object, readRuns?: () => object,
+ *   restarts?: (since: number) => object, devRestarts?: (since: number) => object, readResets?: (since: number) => object}} [io]
+ *   injectable readers and estate, for the self-test
  */
 export function estateWindow(reports, sinceMs, io = {}) {
-  const { readBuild = readEstateBuildSync, readRuns = deployRuns, restarts = estateRestarts } = io;
-  const starts = reports.map((r) => r?.estateBuild).filter(Boolean);
-  if (!starts.length) {
+  const {
+    estate = configuredEstate()?.estate ?? null,
+    readBuild = readEstateBuildSync,
+    readRuns = deployRuns,
+    restarts = estateRestarts,
+    devRestarts = devRestartsSync,
+    readResets = devResetRuns,
+  } = io;
+  if (estate === 'local') {
     const r = restarts(sinceMs);
-    return r.asked ? { asked: true, overlapped: r.restarted } : r;
+    return r.asked ? { estate, asked: true, overlapped: r.restarted } : { estate, ...r };
   }
-  const origins = [...new Set(starts.map((s) => s.origin))];
-  if (origins.length !== 1) return { asked: false, why: `the windows name ${origins.length} estates: ${origins.join(', ')}` };
-  return devWindowVerdict({ starts, end: readBuild(origins[0]), runs: readRuns(), sinceMs });
+  if (estate !== 'dev') return { estate, asked: false, why: 'no estate is registered in this process (site.mjs was never evaluated)' };
+  const starts = reports.map((r) =>
+    !r?.estateBuild
+      ? { atMs: r?.since ?? sinceMs, error: 'this window recorded no start build' }
+      : r.estateBuild.origin === DEV_SITE
+        ? r.estateBuild
+        : { atMs: r.estateBuild.atMs, error: `this window read ${r.estateBuild.origin}, not ${DEV_SITE}` }
+  );
+  const verdict = devWindowVerdict({
+    starts,
+    end: readBuild(DEV_SITE),
+    runs: readRuns(),
+    restarts: devRestarts(sinceMs),
+    resets: readResets(sinceMs),
+    sinceMs,
+  });
+  return { estate, ...verdict };
 }
 
 /** One deploy, in the one form the record and the console both print. */
