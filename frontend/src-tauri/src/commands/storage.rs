@@ -328,6 +328,16 @@ pub(crate) fn with_json_ledger<R>(
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    edit_json_ledger_held(data_dir, file_name, edit)
+}
+
+/// [`with_json_ledger`] for a caller that ALREADY HOLDS [`mls_bin_write_lock`] - the background
+/// Welcome, which notes its stage under the same hold as the `mls.bin` write that stages it.
+pub(crate) fn edit_json_ledger_held<R>(
+    data_dir: &std::path::Path,
+    file_name: &str,
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> (R, bool),
+) -> Result<R, String> {
     let path = data_dir.join(file_name);
     let mut map = match std::fs::read_to_string(&path) {
         Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
@@ -450,7 +460,8 @@ pub(crate) fn report_what_a_live_persist_erases(
 /// The reports a refused reload owes before the live state is persisted over `path`: what the file
 /// holds beyond the live state ([`report_what_a_live_persist_erases`]), and the background stages
 /// the live state does not hold ([`report_background_stages`]). It reads and decrypts the file,
-/// which only a refused reload pays. A failure to read is said, and nothing else is affected.
+/// which only a refused reload pays, and only when the stages ledger names a stage. A failure to
+/// read is said, and nothing else is affected.
 fn report_what_keeping_the_live_state_loses(
     current: &MlsManager,
     path: &std::path::Path,
@@ -458,6 +469,21 @@ fn report_what_keeping_the_live_state_loses(
     device_id: &str,
     device_key_b64: &str,
 ) {
+    // Only a background stage left in the file makes this report worth decrypting the whole
+    // `mls.bin`: without one, a refused reload loses nothing a background engine wrote.
+    let Some(dir) = path.parent() else {
+        return;
+    };
+    match with_json_ledger(dir, BACKGROUND_STAGES_FILE, |map| (map.is_empty(), false)) {
+        Ok(true) => {
+            log::debug!("[RESUME] no background stage noted - what the persist erases is not read");
+            return;
+        }
+        Ok(false) => {}
+        Err(e) => log::warn!(
+            "[RESUME] background stage ledger unreadable ({e}) - mls.bin is read to report what the persist erases"
+        ),
+    }
     let bytes = {
         let Ok(_guard) = mls_bin_write_lock().lock() else {
             log::error!(
@@ -490,9 +516,7 @@ fn report_what_keeping_the_live_state_loses(
             "[RESUME] mls.bin does not open ({e}) - what the persist erases is not reported"
         ),
     }
-    if let Some(dir) = path.parent() {
-        report_background_stages(dir, current);
-    }
+    report_background_stages(dir, current);
 }
 
 /// [`delete_mls_state`] minus the `AppHandle`, so what it removes is tested on a real directory:
@@ -505,6 +529,11 @@ fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
     // staged epoch secrets, or a memo about a digest, beside no state...
     // ...and the owner record AFTER it: a failed removal of `mls.bin` leaves the state with the
     // record naming whose it is, never a state nobody is named for.
+    // UNDER THE `mls.bin` WRITE LOCK: a background Welcome writes its stage and notes it under one
+    // hold of that lock, so the sweep removes both or neither - never a ledger it re-creates after.
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
     let stale_ledger_tmp = format!("{STALE_WELCOME_LEDGER_FILE}.tmp");
     let join_staged_tmp = format!("{STAGED_KEY_GROUP_JOIN_FILE}.tmp");
     let join_ledger_tmp = format!("{KEY_GROUP_PUSH_JOIN_LEDGER_FILE}.tmp");

@@ -321,7 +321,7 @@ pub(crate) fn background_write_mls_bin_if_unchanged(
     loaded_digest: &[u8; 32],
     data: &[u8],
 ) -> Result<(), String> {
-    background_write_mls_bin_compare_and_swap(path, loaded_digest, data, false)
+    background_write_mls_bin_compare_and_swap(path, loaded_digest, data, false, || ())
 }
 
 /// [`background_write_mls_bin_if_unchanged`], AND ALSO REFUSED IN A WARM PROCESS - the writer of
@@ -339,18 +339,34 @@ pub(crate) fn background_write_mls_bin_if_unchanged_and_cold(
     loaded_digest: &[u8; 32],
     data: &[u8],
 ) -> Result<(), String> {
-    background_write_mls_bin_compare_and_swap(path, loaded_digest, data, true)
+    background_write_mls_bin_compare_and_swap(path, loaded_digest, data, true, || ())
 }
 
-/// The one body of both background writers above: the foreground guard, optionally the warm-process
-/// refusal, then the compare-and-swap, all under [`mls_bin_write_lock`].
+/// [`background_write_mls_bin_if_unchanged_and_cold`], then `then` UNDER THE SAME HOLD of
+/// [`mls_bin_write_lock`], only once `data` is written - the background Welcome's stage and its
+/// ledger entry (`mobile/background.rs`). A sign-out's sweep takes that lock too
+/// (`commands/storage.rs`, `remove_mls_state_in`), so it removes both or neither: never a ledger
+/// naming a stage beside no state. `then` must not take the lock.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
-fn background_write_mls_bin_compare_and_swap(
+pub(crate) fn background_write_mls_bin_if_unchanged_and_cold_then<R>(
+    path: &std::path::Path,
+    loaded_digest: &[u8; 32],
+    data: &[u8],
+    then: impl FnOnce() -> R,
+) -> Result<R, String> {
+    background_write_mls_bin_compare_and_swap(path, loaded_digest, data, true, then)
+}
+
+/// The one body of the background writers above: the foreground guard, optionally the warm-process
+/// refusal, then the compare-and-swap and `then`, all under [`mls_bin_write_lock`].
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+fn background_write_mls_bin_compare_and_swap<R>(
     path: &std::path::Path,
     loaded_digest: &[u8; 32],
     data: &[u8],
     refuse_warm_process: bool,
-) -> Result<(), String> {
+    then: impl FnOnce() -> R,
+) -> Result<R, String> {
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
@@ -370,7 +386,8 @@ fn background_write_mls_bin_compare_and_swap(
                 .to_string(),
         );
     }
-    write_mls_bin_atomically(path, data)
+    write_mls_bin_atomically(path, data)?;
+    Ok(then())
 }
 
 /// Writes `data` to `path` atomically: write to a temporary file followed by a `rename(2)`, which

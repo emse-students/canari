@@ -3249,7 +3249,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * 2026-10-22). Staged in mls.bin, an answer this engine cannot apply - none was read, the lock
      * was busy, the foreground started - is settled by the foreground's next load, which resubmits
      * the recorded commit and merges or clears it on the gate's answer. Nothing here waits for that,
-     * and nothing here deletes a stage.
+     * and NOTHING HERE DISCARDS A STAGE WHOSE OUTCOME IS UNKNOWN: only a definitive refusal of the
+     * commit clears it, and a refusal of the request alone (401, 403, 408, 429 -
+     * [BackgroundWelcomeAnswer.REQUEST_ONLY_REFUSALS]) leaves it, like no answer at all.
      *
      * Nothing here retries. A refusal leaves the request to the foreground (which replays the group's
      * commits at its next start) or to another member; an `epoch_mismatch` is recorded so the same

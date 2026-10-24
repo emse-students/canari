@@ -59,7 +59,19 @@ class BackgroundWelcomeAnswerTest {
         assertEquals(Outcome.Unknown(null), BackgroundWelcomeAnswer.classify(null, null, null, null))
         assertEquals(Outcome.Unknown(502), BackgroundWelcomeAnswer.classify(502, null, null, null))
         assertEquals(Outcome.Failed(400), BackgroundWelcomeAnswer.classify(400, null, null, null))
-        assertEquals(Outcome.Failed(403), BackgroundWelcomeAnswer.classify(403, null, null, null))
+    }
+
+    /**
+     * A refusal of the REQUEST is not a refusal of the commit: the request read may be a silent
+     * retry of one the server accepted, so the stage is left for the foreground's resubmission.
+     */
+    @Test
+    fun aRefusalOfTheRequestLeavesTheStage() {
+        listOf(401, 403, 408, 429).forEach { code ->
+            val outcome = BackgroundWelcomeAnswer.classify(code, null, null, null)
+            assertEquals("$code", Outcome.Unknown(code), outcome)
+            assertEquals("$code", Settlement.Leave, BackgroundWelcomeAnswer.settle(outcome, 1))
+        }
     }
 
     @Test

@@ -656,7 +656,7 @@ refusals by reason with a sample of group ids, and `fetchPendingMessages` report
 `waitForMessageQueueIdle`** - the rows are enqueued, not handled, so what was refused is only known
 once the queue has drained. Silent when there is nothing to say.
 
-### The background Welcome answers what happened, and the phone installs only an acceptance (2026-10-22)
+### The background Welcome answers what happened, and the stage is merged only on an acceptance (2026-10-22)
 
 A killed Android phone answers a `welcome_request_pending` push from its `mls.bin`
 (`processWelcomeRequestBackground` in `CanariFirebaseMessagingService.kt`, Rust
@@ -675,6 +675,20 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   was built from, BEFORE the commit leaves. `accepted` merges it, a refusal clears it, each written by
   compare-and-swap over the `mls.bin` loaded at that moment. A transport failure or a 5xx is
   `unknown`: nothing is settled, because guessing either way is the fork this exists to prevent.
+  So is a 4xx that refuses only THE REQUEST - 401, 403, 408, 429 (`REQUEST_ONLY_REFUSALS`): Android's
+  `HttpURLConnection` silently retries a POST on a reused connection, so the request read may be a
+  copy of one the server accepted, and the stage is left for the foreground's resubmission. A 400
+  still clears.
+- **Only a COLD process stages or settles** (`background_write_mls_bin_if_unchanged_and_cold`, the
+  key-group join's writer). In a process whose foreground manager is loaded
+  (`live_manager_in_process`), that manager persists over `mls.bin` at its next resume or checkpoint
+  and would erase the stage while the server holds the commit. The prepare refuses `warm-process`
+  and sends nothing - the app's own load answers the request, and the newcomer re-asks every 60 s; a
+  settle in a process warmed inside the round trip is `left-to-foreground`, whose loaded state holds
+  the stage. The stage's ledger entry is written under the same hold of the `mls.bin` write lock as
+  the stage, and the sign-out sweep (`remove_mls_state_in`) takes that lock, so it removes both or
+  neither. The entry names its commit's digest, so a settle forgets its own stage and never a later
+  one of the same group.
 - **What the background cannot settle, the foreground does - and nothing waits.** No answer read, a
   busy state lock, a foreground that started or wrote inside the round trip: the stage stays in
   `mls.bin`, and whoever loads it next holds it. The foreground settles it as it settles its own
@@ -766,7 +780,11 @@ answer, so it held an epoch nobody else had and could not read the group's next 
 - **What is left open:** the foreground's checkpoint is a BLIND write (`write_mls_state_blob`). A live
   manager that never loaded the stage - a resume reload refused as `live-ahead` (which then persists
   the live state) or as an epoch regression - writes over it, and an accepted Add is then held by the
-  server and not by this device. It is SAID, not prevented: before the persist, `... ERASES` at ERROR
+  server and not by this device. Staging only in a cold process closes that for a process warmed
+  BEFORE the prepare; what is left is a process warmed inside the round trip, whose load read the
+  stage, and a manager that then never re-reads the file. It is SAID, not prevented: before the
+  persist (and only when the stages ledger names a stage, so a `live-ahead` resume does not decrypt
+  `mls.bin` for nothing), `... ERASES` at ERROR
   with the counts and group prefixes of the stages and later epochs the file holds; at the
   background's answer, `ACCEPTED AND NOT HELD`; at the next load, `is ABSENT`. The device recovers
   through the usual ladder. The same write loses any background advance, not only this one; it is its
@@ -1316,7 +1334,7 @@ those groups' first pages itself, which is the path every group took before the 
 | DELETE | `/api/mls/push/release-add-lock` | PushSecret | Release add-lock |
 | GET | `/api/mls/push/key-package` | PushSecret | Get key package for background service |
 | POST | `/api/mls/push/commits` | PushSecret | Replayable commits since `sinceEpoch`, for the in-memory catch-up of a device whose app is killed |
-| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit`, which records the commit, stores its Welcome in the same transaction, fans the commit out and delivers the Welcome from its row. **The answer is typed** ([background Welcome](#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)): `201 {status: 'accepted', newEpoch}`, or `409 {status: 'rejected', reason, currentEpoch?}` with `reason` one of `epoch_mismatch`, `concurrent_commit`, `not_a_member`, `welcome_target_unknown`, `welcome_target_not_member` |
+| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit`, which records the commit, stores its Welcome in the same transaction, fans the commit out and delivers the Welcome from its row. **The answer is typed** ([background Welcome](#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)): `201 {status: 'accepted', newEpoch}`, or `409 {status: 'rejected', reason, currentEpoch?}` with `reason` one of `epoch_mismatch`, `concurrent_commit`, `not_a_member`, `welcome_target_unknown`, `welcome_target_not_member` |
 | POST | `/api/mls/push/key-group-base` | PushSecret, then 64 per user per minute (`PushSecretGuard` -> `PushSecretThrottlerGuard`, 429) | A shut phone's read of a KEY GROUP's scope and external-join base, for the join from a salon push ([channel-encryption section 26](../protocols/channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)). 403 not a key group or not entitled, 503 entitlement unanswered; `welcomeOwed` instead of a base when a Welcome is queued or the add lock is held |
 | POST | `/api/mls/push/key-group-join` | PushSecret, then 64 per user per minute (429, its own bucket) | That phone's external commit into the key group. External commits into key groups only (400 / 403 otherwise), then `validateCommit` unchanged; admits, removes and excludes are not taken here |
 | POST | `/api/mls/push/send` | PushSecret | Send message from background service |

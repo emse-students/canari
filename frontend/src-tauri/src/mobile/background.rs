@@ -388,14 +388,24 @@ fn with_stale_ledger<R>(
     crate::commands::storage::with_json_ledger(files_dir, STALE_WELCOME_LEDGER_FILE, edit)
 }
 
-/// Records that `group_id`'s Add is staged in `mls.bin` from `base_epoch`, so the foreground's next
-/// load reports it whoever settles it ([`crate::commands::storage::report_background_stages`]).
-fn note_stage_left(files_dir: &Path, group_id: &str, base_epoch: u64) {
+/// The digest naming ONE stage in the stages ledger: the commit it staged, so a settle forgets its
+/// own stage and never a later one of the same group.
+fn stage_digest(commit: &[u8]) -> String {
+    hex(&crate::concurrency::mls_bin_digest(commit))
+}
+
+/// Records that `group_id`'s Add of `commit` is staged in `mls.bin` from `base_epoch`, so the
+/// foreground's next load reports it whoever settles it
+/// ([`crate::commands::storage::report_background_stages`]). Runs UNDER the hold of the `mls.bin`
+/// write lock that wrote the stage
+/// ([`crate::concurrency::background_write_mls_bin_if_unchanged_and_cold_then`]), so a sign-out's
+/// sweep removes both or neither.
+fn note_stage_left_held(files_dir: &Path, group_id: &str, base_epoch: u64, commit: &[u8]) {
     let noted =
-        crate::commands::storage::with_json_ledger(files_dir, BACKGROUND_STAGES_FILE, |map| {
+        crate::commands::storage::edit_json_ledger_held(files_dir, BACKGROUND_STAGES_FILE, |map| {
             map.insert(
                 group_id.to_string(),
-                serde_json::json!({ "baseEpoch": base_epoch }),
+                serde_json::json!({ "baseEpoch": base_epoch, "commit": stage_digest(commit) }),
             );
             ((), true)
         });
@@ -407,12 +417,19 @@ fn note_stage_left(files_dir: &Path, group_id: &str, base_epoch: u64) {
     }
 }
 
-/// Forgets `group_id`'s stage: this engine settled it (or found it settled), so nothing is left for
-/// the foreground to report.
-fn forget_stage(files_dir: &Path, group_id: &str) {
+/// Forgets `group_id`'s stage of `commit`: this engine settled it (or found it settled), so nothing
+/// is left for the foreground to report. ONLY THAT STAGE: an entry naming another commit is a later
+/// stage of the same group, which is still owed its report.
+fn forget_stage(files_dir: &Path, group_id: &str, commit: &[u8]) {
+    let digest = stage_digest(commit);
     let forgot =
         crate::commands::storage::with_json_ledger(files_dir, BACKGROUND_STAGES_FILE, |map| {
-            let removed = map.remove(group_id).is_some();
+            let ours = map
+                .get(group_id)
+                .and_then(|e| e.get("commit"))
+                .and_then(serde_json::Value::as_str)
+                == Some(digest.as_str());
+            let removed = ours && map.remove(group_id).is_some();
             ((), removed)
         });
     if let Err(e) = forgot {
@@ -516,7 +533,7 @@ pub struct WelcomeRequest<'a> {
 /// Answers `{"ok": true, "welcome", "ratchetTree", "commit", "groupInfo", "baseEpoch"}` (base64;
 /// `groupInfo` is the external-join base of the epoch the commit creates, published by the route
 /// in the advance's own transaction - COMM-22), or
-/// `{"ok": false, "reason"}` with one of: `foreground-active`, `stale-epoch-known`,
+/// `{"ok": false, "reason"}` with one of: `foreground-active`, `warm-process`, `stale-epoch-known`,
 /// `commit-pending`, `key-package-unreadable`, `state-unreadable`, `group-not-held`,
 /// `already-member`, `add-failed`, `stage-failed`, or the [`mls_core::SkippedKeyPackageReason`] wire
 /// name the package is refused for (`identity-mismatch`, `signature-key-changed`, `expired`, ...).
@@ -561,6 +578,13 @@ pub fn prepare_welcome_background_with_key(
     // The foreground answers welcome_requests itself, and owns the state while it runs.
     if crate::concurrency::foreground_is_active() {
         return welcome_refused("foreground-active");
+    }
+    // A WARM PROCESS WOULD ERASE THE STAGE: its live manager, loaded before the stage was written,
+    // persists over `mls.bin` at its next resume (`LiveAhead`, `EpochRegression`) or checkpoint
+    // while the server holds this device's commit. Nothing is staged or sent; the app's own load
+    // answers the request, and the newcomer re-asks every 60 s.
+    if crate::concurrency::live_manager_in_process() {
+        return welcome_refused("warm-process");
     }
     if welcome_request_known_stale(files_dir, state_bytes, group_id) {
         return welcome_refused("stale-epoch-known");
@@ -653,13 +677,24 @@ pub fn prepare_welcome_background_with_key(
             return welcome_refused("stage-failed");
         }
     };
-    // Only over the very bytes the Add was built from: a foreground write that landed since (a
-    // checkpoint, a key change's re-seal) refuses the stage HERE, before the commit goes out.
-    if let Err(e) = write_over_loaded_state(files_dir, state_bytes, &staged) {
+    // Only over the very bytes the Add was built from, and only in a cold process: a foreground
+    // write that landed since (a checkpoint, a key change's re-seal), or a foreground manager loaded
+    // since, refuses the stage HERE, before the commit goes out. The ledger entry is written under
+    // the same hold of the lock as the stage.
+    if let Err(e) = crate::concurrency::background_write_mls_bin_if_unchanged_and_cold_then(
+        &files_dir.join("mls.bin"),
+        &crate::concurrency::mls_bin_digest(state_bytes),
+        &staged,
+        || note_stage_left_held(files_dir, group_id, base_epoch, &record.commit),
+    ) {
         log::error!("[BG_WELCOME] Add not staged in mls.bin group={short}: {e}");
+        // The warm mark is never cleared while the process lives, so reading it now says whether
+        // the write was refused for it - a fact, never the error's prose.
+        if crate::concurrency::live_manager_in_process() {
+            return welcome_refused("warm-process");
+        }
         return welcome_refused("stage-failed");
     }
-    note_stage_left(files_dir, group_id, base_epoch);
     log::info!(
         "[BG_WELCOME] staged in mls.bin group={short} base_epoch={base_epoch} ({} bytes) - settled on the server's answer, by this engine or the foreground",
         staged.len()
@@ -759,8 +794,9 @@ pub struct StagedWelcome<'a> {
 /// over `state_bytes`, the `mls.bin` this call loaded.
 ///
 /// Answers `{"ok": true, "settled": "merged" | "cleared"}`, or `{"ok": false, "reason"}`:
-/// - `left-to-foreground`: the write was refused (the foreground started, or wrote, since), or the
-///   merge or clear failed. The stage is still in whatever `mls.bin` now holds, and the foreground
+/// - `left-to-foreground`: the write was refused (the foreground started, or wrote, since, or a
+///   foreground manager was loaded in this process - the stage is then in the state it loaded), or
+///   the merge or clear failed. The stage is still in whatever `mls.bin` now holds, and the foreground
 ///   settles it against the server at its next load;
 /// - `already-settled`: the stage is gone and the group is where the answer puts it - the
 ///   foreground settled it first;
@@ -823,21 +859,21 @@ pub fn settle_background_welcome(
                 log::info!(
                     "[BG_WELCOME] settle group={short}: already merged (epoch {e}) - the foreground settled it first"
                 );
-                forget_stage(files_dir, group_id);
+                forget_stage(files_dir, group_id, &commit);
                 refused("already-settled")
             }
             (WelcomeAnswer::Accepted, _) => {
                 log::error!(
                     "[BG_WELCOME] ACCEPTED AND NOT HELD group={short}: mls.bin holds neither the staged Add of base {base_epoch} nor the epoch it creates (epoch {epoch:?}) - a write that never loaded the stage replaced it"
                 );
-                forget_stage(files_dir, group_id);
+                forget_stage(files_dir, group_id, &commit);
                 refused("accepted-not-held")
             }
             (WelcomeAnswer::Refused(_), _) => {
                 log::info!(
                     "[BG_WELCOME] settle group={short}: the refused Add is no longer staged - the foreground settled it first"
                 );
-                forget_stage(files_dir, group_id);
+                forget_stage(files_dir, group_id, &commit);
                 refused("already-settled")
             }
         };
@@ -855,7 +891,9 @@ pub fn settle_background_welcome(
             return refused("left-to-foreground");
         }
     };
-    if let Err(e) = crate::concurrency::background_write_mls_bin_if_unchanged(
+    // COLD ONLY, as the stage was written: a foreground manager loaded since holds the stage and
+    // settles it itself; a settle written under it would be persisted over.
+    if let Err(e) = crate::concurrency::background_write_mls_bin_if_unchanged_and_cold(
         &files_dir.join("mls.bin"),
         &crate::concurrency::mls_bin_digest(state_bytes),
         &sealed,
@@ -866,7 +904,7 @@ pub fn settle_background_welcome(
         return refused("left-to-foreground");
     }
     log::info!("[BG_WELCOME] settle group={short}: {verb} and written");
-    forget_stage(files_dir, group_id);
+    forget_stage(files_dir, group_id, &commit);
     if let WelcomeAnswer::Refused(memo) = answer {
         record_refusal(files_dir, group_id, &sealed, memo);
     }
@@ -1089,6 +1127,17 @@ pub fn send_messages_background_with_key(
         }
     }
 
+    // NOTHING ATTEMPTED, NOTHING ADVANCED: a batch whose every entry was held (or left) moved no
+    // ratchet, so `mls.bin` is not rewritten - a write here would only change the digest the stale
+    // ledger and a concurrent engine's compare-and-swap read.
+    if attempted == 0 {
+        log::info!(
+            "[BG_SEND] batch encrypted nothing: {held} held behind a staged commit, {} left for the next drain - mls.bin not rewritten",
+            entries.len() - held
+        );
+        return Ok(serde_json::json!({ "ok": true, "results": results }));
+    }
+
     // The one save for the whole batch - and it happens before any ciphertext leaves this function.
     let enc = manager
         .save_encrypted_with_key(&key)
@@ -1108,7 +1157,8 @@ pub fn send_messages_background_with_key(
 /// Split out so the batch loop has one obvious failure boundary per entry. The batch loop has
 /// already held back a group whose staged commit is unsettled (a background Welcome's Add whose
 /// answer nobody read): the group may be one epoch on, and the foreground holds its own sends the
-/// same way (`CommitOutcomeUnknownError`).
+/// same way - refused natively as `StagedCommitPendingError` and settled, or held as
+/// `CommitOutcomeUnknownError` while no answer is read.
 fn encrypt_one(
     manager: &mut MlsManager,
     entry: &OutboxEntry,
@@ -1507,7 +1557,15 @@ mod tests {
     fn quiet_foreground() -> std::sync::MutexGuard<'static, ()> {
         let guard = crate::concurrency::test_support::serialise();
         crate::concurrency::mark_foreground_inactive();
+        crate::concurrency::forget_live_manager_for_test();
         guard
+    }
+
+    /// The app opened and then backgrounded again: a foreground manager is loaded in this process,
+    /// and the foreground guard has expired.
+    fn warm_the_process(dir: &Path) {
+        crate::concurrency::foreground_load_mls_bin(&dir.join("mls.bin")).unwrap();
+        crate::concurrency::mark_foreground_inactive();
     }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
@@ -2347,6 +2405,87 @@ mod tests {
         );
     }
 
+    /// A WARM PROCESS STAGES NOTHING AND SENDS NOTHING: its live manager would persist over the
+    /// stage at its next resume or checkpoint while the server holds the commit. The refusal is the
+    /// `warm-process` token, and `mls.bin` and the stages ledger are untouched.
+    #[test]
+    fn a_warm_process_stages_no_welcome() {
+        let _s = quiet_foreground();
+        let (dir, state, _carol, kp, gid) = holder_and_newcomer("warmprep", 67);
+        warm_the_process(&dir);
+
+        let answer = prepare(&dir, &state, 67, "warmprep", &gid, &kp);
+        crate::concurrency::forget_live_manager_for_test();
+
+        assert_eq!(answer["ok"], false, "{answer}");
+        assert_eq!(answer["reason"], "warm-process");
+        assert!(answer.get("commit").is_none(), "nothing to send");
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+        assert!(!dir.join(BACKGROUND_STAGES_FILE).exists());
+    }
+
+    /// A PROCESS WARMED INSIDE THE ROUND TRIP: the stage was written cold, then the app opened and
+    /// loaded it. The settle is refused (`left-to-foreground`) and writes nothing - the loaded state
+    /// holds the stage and settles it itself - and the ledger keeps the stage for its report.
+    #[test]
+    fn a_process_warmed_inside_the_round_trip_leaves_the_settle_to_the_foreground() {
+        let _s = quiet_foreground();
+        let (dir, state, _carol, kp, gid) = holder_and_newcomer("warmsettle", 68);
+        let prepared = prepare(&dir, &state, 68, "warmsettle", &gid, &kp);
+        assert_eq!(prepared["ok"], true, "{prepared}");
+        let staged = std::fs::read(dir.join("mls.bin")).unwrap();
+        warm_the_process(&dir);
+
+        let settled = settle(
+            &dir,
+            68,
+            "warmsettle",
+            &gid,
+            &prepared,
+            WelcomeAnswer::Accepted,
+        );
+        crate::concurrency::forget_live_manager_for_test();
+
+        assert_eq!(settled["reason"], "left-to-foreground", "{settled}");
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), staged);
+        let ledger: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join(BACKGROUND_STAGES_FILE)).unwrap())
+                .unwrap();
+        assert_eq!(ledger[&gid]["baseEpoch"], 1, "{ledger}");
+    }
+
+    /// A SETTLE FORGETS ITS OWN STAGE ONLY: an entry naming another commit of the same group is a
+    /// later stage, still owed its report.
+    #[test]
+    fn a_settle_forgets_only_its_own_stage() {
+        let _s = quiet_foreground();
+        let dir = dir_holding("forget-own", b"x");
+        let gid = "g-forget-own";
+        crate::commands::storage::with_json_ledger(&dir, BACKGROUND_STAGES_FILE, |map| {
+            map.insert(
+                gid.to_string(),
+                serde_json::json!({ "baseEpoch": 2, "commit": stage_digest(b"later") }),
+            );
+            ((), true)
+        })
+        .unwrap();
+
+        forget_stage(&dir, gid, b"earlier");
+        let kept: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join(BACKGROUND_STAGES_FILE)).unwrap())
+                .unwrap();
+        assert_eq!(kept[gid]["baseEpoch"], 2, "a later stage is kept: {kept}");
+
+        forget_stage(&dir, gid, b"later");
+        let gone: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join(BACKGROUND_STAGES_FILE)).unwrap())
+                .unwrap();
+        assert!(
+            gone.get(gid).is_none(),
+            "its own stage is forgotten: {gone}"
+        );
+    }
+
     /// The intent is the client's `CommitIntent`, and this fixture is read by BOTH sides: here it
     /// must be what the background writes, and in `commitSubmission.test.ts` what the foreground's
     /// settle reads into the submission it resubmits.
@@ -2631,6 +2770,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(out["results"][0]["ok"], false, "{out}");
+        assert_eq!(
+            std::fs::read(dir.join("mls.bin")).unwrap(),
+            staged,
+            "a batch that attempted nothing does not rewrite mls.bin"
+        );
         assert_eq!(on_disk(&dir, "held", 65).get_epoch(&gid).unwrap(), 1);
         assert_eq!(
             on_disk(&dir, "held", 65).groups_with_pending_commit(),
@@ -2727,7 +2871,10 @@ mod tests {
         let prepared = prepare(&dir, &state, 68, "ledger", &gid, &kp);
         assert_eq!(
             stages_ledger(&dir).get(&gid),
-            Some(&serde_json::json!({ "baseEpoch": 1 }))
+            Some(&serde_json::json!({
+                "baseEpoch": 1,
+                "commit": stage_digest(&b64(&prepared, "commit")),
+            }))
         );
 
         let settled = settle(&dir, 68, "ledger", &gid, &prepared, WelcomeAnswer::Accepted);

@@ -503,9 +503,11 @@ The reading has one setup and three checks:
   phone answer in the background. **That request is sent only when the newcomer's own external join
   for the chat group FAILS for a reason other than `NotAGroupMember`** (no GroupInfo published, a stale
   base, an unreachable server; `requestReAdd` step 9 and `sendWelcomeRequest` in `recovery.ts`). A new
-  login on a healthy estate does not send it: see the attempt below.
+  login on a healthy estate does not send it: see the attempt below. The PROCESS must be cold: a
+  process in which the app was loaded since it last died answers `prepare refused
+  reason=warm-process` and sends nothing, by design.
 - **Phone (logcat).** Both of these lines appear (their wording since the typed answer, see
-  [chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)):
+  [chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)):
   - `processWelcomeRequestBackground: Welcome staged ... baseEpoch=N`;
   - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - staged Add merged`.
 
@@ -553,7 +555,7 @@ NOT HELD`, and a background decrypt's ratchet advance is lost the same way. Both
 ERROR when they happen (`report_what_keeping_the_live_state_loses`, `report_background_stages`), not
 prevented. Decided 2026-10-23: not accepted as permanent; its own pull request, stacked after the
 recorded-stage background Welcome
-([chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)).
+([chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)).
 
 **REJECTED 2026-10-23: a per-group reconcile of the file into the live manager.** It needed a
 per-group unsaved-advance flag and a per-group transplant of openmls storage between two managers, and
