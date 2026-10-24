@@ -14,8 +14,8 @@
    *
    * The broadcaster's own copy of the viewer shows nothing: nobody reports themselves.
    *
-   * A single chat line cannot be reported: `content_reports` takes `live`, not a message, by the
-   * privacy decision in docs/wiki/services/lives.md - a viewer reports the live or the person.
+   * One chat line is reported from the chat panel's own flag (`LiveChatReportDialog`); this control
+   * reports the live.
    */
   import { Flag } from '@lucide/svelte';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';

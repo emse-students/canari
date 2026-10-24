@@ -1,3 +1,4 @@
+import { readLeafNodeHead } from './key-package-leaf';
 import { readMlsOpaque } from './mls-tls';
 
 /**
@@ -25,17 +26,89 @@ import { readMlsOpaque } from './mls-tls';
  */
 export function mlsFrameEpoch(protoBase64: string): number | null {
   const bytes = Buffer.from(protoBase64, 'base64');
+  return framedWireFormat(bytes) === null ? null : (readFramedHeader(bytes)?.epoch ?? null);
+}
+
+/**
+ * What a submitted commit's CLEAR header says it is: the group and epoch it was built on, and
+ * whether it is an EXTERNAL commit - the one way a device outside the tree commits. Null when it is
+ * not the shape of either kind of commit Canari sends.
+ *
+ * RFC 9420 section 6. A member commit is a `PrivateMessage` (wire format 2): its sender and content
+ * type are encrypted. An external commit is always a `PublicMessage` (section 12.4.3.2) whose
+ * `FramedContent` continues `group_id<V> || epoch` with `sender_type` = `new_member_commit` (4),
+ * `authenticated_data<V>` and `content_type` = commit (3), all in the clear. A `PublicMessage` that
+ * is anything else is refused: Canari sends none. Measured on 5 000 production commits, 2026-10-22:
+ * every member commit was a `PrivateMessage`, every `PublicMessage` a well-formed external commit,
+ * and every header named its own group and the request's base epoch.
+ *
+ * AN EXTERNAL COMMIT ALSO NAMES ITS NEW LEAF, IN THE CLEAR. Its `Commit` follows the content type -
+ * `proposals<V> || optional<UpdatePath>` - and RFC 9420 section 12.4.3.2 makes the path mandatory
+ * there, so the joiner's `LeafNode`, and the BasicCredential identity in it, is readable without a
+ * key (`leafIdentity`). An external commit with no path, or a non-basic credential, is refused:
+ * no conforming client sends one.
+ *
+ * WHAT IT PROVES AND WHAT IT DOES NOT: the bytes CLAIM a shape; this server holds no key to check
+ * the signature. The commit gate pairs the claim with who may commit, the leaf identity with the
+ * authenticated caller, and the group and epoch with the request's own.
+ */
+export function readCommitFrame(protoBase64: string): CommitFrame | null {
+  const bytes = Buffer.from(protoBase64, 'base64');
+  const wireFormat = framedWireFormat(bytes);
+  if (wireFormat === null) return null;
+  const header = readFramedHeader(bytes);
+  if (!header) return null;
+  if (wireFormat === 2) return { groupId: header.groupId, epoch: header.epoch, external: false };
+
+  let offset = header.next;
+  if (bytes.length < offset + 1 || bytes.readUInt8(offset) !== 4) return null;
+  const authenticatedData = readMlsOpaque(bytes, offset + 1);
+  if (!authenticatedData) return null;
+  offset = authenticatedData.next;
+  if (bytes.length < offset + 1 || bytes.readUInt8(offset) !== 3) return null;
+  // Commit: proposals<V>, then optional<UpdatePath> (presence byte 1), whose first field is the
+  // committer's new LeafNode.
+  const proposals = readMlsOpaque(bytes, offset + 1);
+  if (!proposals) return null;
+  if (bytes.length < proposals.next + 1 || bytes.readUInt8(proposals.next) !== 1) return null;
+  const leaf = readLeafNodeHead(bytes, proposals.next + 1);
+  if (!leaf) return null;
+  return {
+    groupId: header.groupId,
+    epoch: header.epoch,
+    external: true,
+    leafIdentity: leaf.identity,
+  };
+}
+
+/**
+ * A commit's clear header, as `readCommitFrame` reads it. Only an external commit carries
+ * `leafIdentity`: a member commit is a `PrivateMessage`, whose content this server cannot read.
+ */
+export type CommitFrame =
+  | { groupId: string; epoch: number; external: false }
+  | { groupId: string; epoch: number; external: true; leafIdentity: string };
+
+/** The wire format of a framed MLS 1.0 message - `PublicMessage` (1) or `PrivateMessage` (2) - or null. */
+function framedWireFormat(bytes: Buffer): 1 | 2 | null {
   // version mls10 = 1; wire_format public_message = 1, private_message = 2.
   if (bytes.length < 5 || bytes.readUInt16BE(0) !== 1) return null;
   const wireFormat = bytes.readUInt16BE(2);
-  if (wireFormat !== 1 && wireFormat !== 2) return null;
+  return wireFormat === 1 || wireFormat === 2 ? wireFormat : null;
+}
 
+/**
+ * `group_id<V> || epoch` of a framed message (both wire formats begin with them), as the group id's
+ * text - the server's group id IS the MLS group id - and the offset after the epoch.
+ */
+function readFramedHeader(bytes: Buffer): { groupId: string; epoch: number; next: number } | null {
   const groupId = readMlsOpaque(bytes, 4);
   if (!groupId) return null;
   const offset = groupId.next;
   if (bytes.length < offset + 8) return null;
   const epoch = bytes.readBigUInt64BE(offset);
-  return epoch > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(epoch);
+  if (epoch > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return { groupId: groupId.bytes.toString('utf8'), epoch: Number(epoch), next: offset + 8 };
 }
 
 /**

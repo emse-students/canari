@@ -332,6 +332,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun test ./tools/dev-seed/
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh
+	@bash .github/scripts/tests/env-from-prod.test.sh
 	@bash .github/scripts/tests/deploy-migrations.test.sh
 	@bash .github/scripts/tests/deploy-registry-retry.test.sh
 	@bash .github/scripts/tests/deploy-replace.test.sh
@@ -344,6 +345,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/dependabot-cargo-reach.test.sh
 	@bash .github/scripts/tests/cargo-blocked-update-report.test.sh
 	@bash .github/scripts/tests/cargo-lock-refresh.test.sh
+	@bash .github/scripts/tests/vendored-upstream-report.test.sh
 	@bash .github/scripts/tests/arm-auto-merge-app.test.sh
 	@bash .github/scripts/tests/github-alerts-report.test.sh
 	@bash .github/scripts/tests/bump-version.test.sh
@@ -357,6 +359,8 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/audit-dependencies.test.sh
 	@bash .github/scripts/tests/stream-json-premise.test.sh
 	@bash .github/scripts/tests/ignored-advisories-still-reported.test.sh
+	@bash .github/scripts/tests/image-scan-targets.test.sh
+	@bun .github/scripts/tests/image-scan-allowlist.test.mjs
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@bash .github/scripts/tests/backup-report.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs

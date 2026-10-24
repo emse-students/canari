@@ -14,6 +14,20 @@ export function createMlsServiceStub(
     persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     generateKeyPackage: vi.fn().mockResolvedValue(new Uint8Array([9])),
     addMember: vi.fn().mockResolvedValue({ welcome: new Uint8Array([1]) }),
+    replaceMember: vi.fn().mockResolvedValue({ welcome: new Uint8Array([1]) }),
+    // Default: the package is the device's pinned one - a test about a refusal overrides it.
+    vetKeyPackage: vi.fn().mockResolvedValue('pinned'),
+    // Default: no leaf carries the package's key - a duplicate-key test names the holder.
+    leafHoldingKeyOf: vi.fn().mockResolvedValue(null),
+    takeDeviceEvents: vi.fn().mockResolvedValue([]),
+    setDeviceEventConsumer: vi.fn(),
+    // Default: a device never seen - a verifier test overrides it with the key it pins.
+    pinnedSignatureKeys: vi.fn().mockResolvedValue(null),
+    // Default: no departure seen.
+    removalEpochs: vi.fn().mockResolvedValue([]),
+    // Default: every group drained - a test about a held commit overrides it.
+    isGroupDrained: vi.fn().mockReturnValue(true),
+    whenGroupDrained: vi.fn().mockResolvedValue(undefined),
     addMembersBulk: vi.fn().mockResolvedValue({
       addedDeviceIds: [],
       skipped: [],
@@ -104,6 +118,13 @@ export function createMlsServiceStub(
     getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
     getGroupExclusions: vi.fn().mockResolvedValue(new Map()),
+    // As the server answers: the person asked `for` is counted, with nothing withheld.
+    getGroupWithheld: vi.fn(
+      async (_groupId: string, forUserId?: string) =>
+        new Map(forUserId ? [[forUserId.toLowerCase(), []]] : [])
+    ),
+    // As every server since step A answers: addressed history answers are routed.
+    getAddressedAnswersSupported: vi.fn().mockResolvedValue(true),
     getGroupRosters: vi.fn().mockResolvedValue({ rosters: new Map(), refused: new Set() }),
     getUserGroups: vi.fn().mockResolvedValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),

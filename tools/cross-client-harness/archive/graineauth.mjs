@@ -187,6 +187,10 @@ async function tamperArm(n, { edit, undo, needle, companions = [] }) {
       unmet,
       line: line ? line.slice(0, 240) : null,
       renderedCount: shown,
+      // THE SALON LOAD SEQUENCE, kept on every verdict: a run where the refused row stayed on screen
+      // (1 in 5, 2026-10-22) recorded only its unexplained lines, so the loads that drew, superseded
+      // and withdrew were lost with the run. A PASS keeps them too, to compare against.
+      loadTrail: consoleLines(w2).filter((l) => /\[CHANNEL\] (?:.*\bstored |history load)/.test(l)),
       serverSince: since,
     });
   } finally {

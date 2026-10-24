@@ -9,11 +9,12 @@ import { flushMacrotask } from '../../test/flush';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
+const fetchAllChannelMessages = vi.hoisted(() => vi.fn());
 /** Row ids the mocked decoder counts as `v1 session not held` - they raise the notice. */
 const droppedV1 = vi.hoisted(() => ({ ids: [] as string[] }));
 
 vi.mock('$lib/services/ChannelService', () => ({
-  channelService: { listMessages, listReadMarks },
+  channelService: { listMessages, listReadMarks, fetchAllChannelMessages },
 }));
 
 vi.mock('$lib/utils/chat/channelCrypto', () => ({
@@ -246,6 +247,98 @@ describe("a salon's stored page", () => {
     await flushMacrotask();
 
     expect(convs.conversations.get(SALON)?.messages).toEqual([]);
+  });
+
+  // GRAINE-AUTH-1, 2026-10-22: a row the server page no longer serves (refused, or deleted) stayed
+  // on screen once in five. A load that DREW the copy was superseded before its page came, so it
+  // withdrew nothing; the newer load found the drawn rows already in memory, drew nothing itself,
+  // and so had nothing to withdraw either.
+  it('withdraws what a superseded load drew, when the newer load finds it already in memory', async () => {
+    const storage = makeStorage([storedRow('a', 1_000), storedRow('z', 9_000)]);
+    const answers: ((rows: unknown[]) => void)[] = [];
+    listMessages.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    const ctx = makeCtx(storage);
+
+    const first = convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await vi.waitFor(() =>
+      expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a', 'z'])
+    );
+    convs.invalidateChannelHistoryCache(SALON);
+    const second = convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await vi.waitFor(() => expect(answers).toHaveLength(2));
+    answers[0]([{ id: 'a', at: 1_000 }]);
+    await first;
+    answers[1]([{ id: 'a', at: 1_000 }]);
+    await second;
+
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a']);
+  });
+
+  it('withdraws what a load drew whose page failed, once a later load merges its page', async () => {
+    const storage = makeStorage([storedRow('a', 1_000), storedRow('z', 9_000)]);
+    listMessages.mockRejectedValueOnce(new Error('offline'));
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    const ctx = makeCtx(storage);
+
+    await convs.loadHistoryForConversation(SALON, SALON, ctx);
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a', 'z']);
+    listMessages.mockResolvedValueOnce([{ id: 'a', at: 1_000 }]);
+    await convs.loadHistoryForConversation(SALON, SALON, ctx);
+
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a']);
+  });
+
+  // Review of #2245: a whole-history search fetches the rows from the server, so it confirms them. A
+  // stored row it confirmed must not be withdrawn by a later page whose window starts above it.
+  it('keeps a drawn row a search confirmed, when a later page does not reach down to it', async () => {
+    const storage = makeStorage([storedRow('a', 1_000), storedRow('b', 2_000)]);
+    listMessages.mockRejectedValueOnce(new Error('offline'));
+    fetchAllChannelMessages.mockResolvedValueOnce({
+      rows: [
+        { id: 'a', at: 1_000 },
+        { id: 'b', at: 2_000 },
+      ],
+      capped: false,
+    });
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    const ctx = makeCtx(storage);
+
+    await convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await convs.searchChannelHistory(SALON, 'server', ctx);
+    listMessages.mockResolvedValueOnce([
+      { id: 'b', at: 2_000 },
+      { id: 'c', at: 3_000 },
+    ]);
+    await convs.loadHistoryForConversation(SALON, SALON, ctx);
+
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it("forgets the ending account's unconfirmed draws on sign-out", async () => {
+    const storage = makeStorage([storedRow('a', 1_000), storedRow('z', 9_000)]);
+    listMessages.mockRejectedValueOnce(new Error('offline'));
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    const ctx = makeCtx(storage);
+    await convs.loadHistoryForConversation(SALON, SALON, ctx);
+
+    convs.forgetUnconfirmedSalonDraws();
+    // The next account holds `z` from the live stream, not from a draw: its page must not withdraw it.
+    convs.conversations.set(SALON, {
+      ...salon(),
+      messages: [
+        { id: 'a', senderId: 'peer', content: 'a', timestamp: new Date(1_000) },
+        { id: 'z', senderId: 'peer', content: 'z', timestamp: new Date(9_000) },
+      ],
+    } as unknown as Conversation);
+    listMessages.mockResolvedValueOnce([{ id: 'a', at: 1_000 }]);
+    await convs.loadHistoryForConversation(SALON, SALON, ctx);
+
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a', 'z']);
   });
 
   it('never stores the older-messages notice, which is not a message', async () => {

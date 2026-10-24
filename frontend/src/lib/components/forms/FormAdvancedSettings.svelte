@@ -41,9 +41,12 @@
     anonymousFixed: boolean;
     /**
      * Answerable without an account from a shared link. A guest has no identity, so this forces
-     * repeat answers on and cannot sit beside a payment or an audience restriction.
+     * repeat answers on and cannot sit beside an audience restriction, a cotisation grant or a
+     * price grid on who the person is. A guest CAN pay (WP-P1).
      */
     isPublic: boolean;
+    /** Whether the price grid divides on promo, formation or cotisation - what a guest has not got. */
+    profilePricing: boolean;
     /** A paid form cannot be anonymous: a payment names its payer. */
     requiresPayment: boolean;
     /** Opening date, as a `datetime-local` string. Empty when the form is open at once. */
@@ -75,6 +78,7 @@
     anonymous = $bindable(),
     anonymousFixed,
     isPublic = $bindable(),
+    profilePricing,
     requiresPayment,
     opensAt = $bindable(),
     submitCondition = $bindable(),
@@ -98,6 +102,17 @@
       // A file question puts a deletion delay to work, which is a setting doing something.
       (hasFileQuestion ? 1 : 0)
   );
+
+  /**
+   * What keeps the public switch shut: the server's refusals (`assertPublicConfigValid`), said
+   * before a save. A payment is NOT one of them any more: a guest pays with an e-mail it types.
+   */
+  const publicBlocker = $derived.by(() => {
+    if (isPublic) return null;
+    if (submitCondition != null || settings.grantsCotisation || profilePricing) return 'identity';
+    if (hasFileQuestion) return 'file';
+    return null;
+  });
 
   const badge = $derived.by(() => {
     if (submitCondition != null) return m.form_advanced_badge_restricted();
@@ -147,9 +162,9 @@
             : m.form_anonymous_hint()}
     />
 
-    <!-- A guest is nobody the server can recognise, charge or match against a criterion, so the
-         switch turns repeats on with it and stays shut beside a payment or an audience: the same
-         three refusals the server makes, said before a save rather than after one. -->
+    <!-- A guest is nobody the server can recognise, grant to or match against a criterion, so the
+         switch turns repeats on with it and stays shut beside an audience, a grant, a grid on who
+         the person is or a file: the server's refusals, said before a save rather than after one. -->
     <Toggle
       bind:checked={
         () => isPublic,
@@ -158,11 +173,11 @@
           if (on) allowMultipleSubmissions = true;
         }
       }
-      disabled={!isPublic && (requiresPayment || submitCondition != null || hasFileQuestion)}
+      disabled={publicBlocker != null}
       label={m.form_public_label()}
-      hint={!isPublic && (requiresPayment || submitCondition != null)
+      hint={publicBlocker === 'identity'
         ? m.form_public_hint_blocked()
-        : !isPublic && hasFileQuestion
+        : publicBlocker === 'file'
           ? m.form_public_hint_blocked_file()
           : m.form_public_hint()}
     />
@@ -227,11 +242,13 @@
       <p class="text-text-muted text-sm">
         {grantBlocker === 'no-payment'
           ? m.form_grant_blocked_no_payment()
-          : grantBlocker === 'no-association'
-            ? m.form_grant_blocked_no_association()
-            : grantBlocker === 'no-cotisation'
-              ? m.form_grant_blocked_no_cotisation({ association: associationName })
-              : m.form_grant_blocked_no_right({ association: associationName })}
+          : grantBlocker === 'public'
+            ? m.form_grant_blocked_public()
+            : grantBlocker === 'no-association'
+              ? m.form_grant_blocked_no_association()
+              : grantBlocker === 'no-cotisation'
+                ? m.form_grant_blocked_no_cotisation({ association: associationName })
+                : m.form_grant_blocked_no_right({ association: associationName })}
       </p>
     {:else}
       <Toggle

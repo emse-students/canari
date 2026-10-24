@@ -95,6 +95,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // -- Rows that belong to other people too, or are accounting records: anonymised -------------
   'purchase_records.userId': { action: 'anonymise' },
   'webhook_deliveries.userId': { action: 'anonymise' },
+  // A boutique checkout attempt (migration 101) is the record of a request issued for money: it
+  // stays, per row, like a partnership code - `product_checkouts_one_open` is a partial UNIQUE
+  // (productId, userId), so two erased buyers' open attempts would collide on a constant.
+  'product_checkouts.userId': { action: 'anonymise' },
   'submissions.userId': { action: 'anonymise' },
   'submissions.email': { action: 'anonymise', via: 'userId' },
   'submissions.answers': { action: 'anonymise', via: 'userId' },
@@ -484,6 +488,11 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     label: 'webhook_deliveries',
     sql: `UPDATE webhook_deliveries SET "userId" = $2 WHERE "userId" = $1`,
   },
+  // Unique per row, for the partial unique index named above.
+  {
+    label: 'product_checkouts',
+    sql: `UPDATE product_checkouts SET "userId" = '[deleted]:' || id::text WHERE "userId" = $1`,
+  },
   // The answers go, the row stays: it is a seat the form counted and, when paid, a payment record.
   {
     label: 'submissions',
@@ -780,7 +789,12 @@ export function scrubComments(
   if (!Array.isArray(comments)) return { comments, changed: false };
   const all = comments as StoredComment[];
   const byId = new Map(all.map((c) => [c.id, c]));
-  const removed = new Set(all.filter((c) => c.userId === userId).map((c) => c.id));
+  // A comment written AS an association belongs to it, not to its writer (the rule posts follow):
+  // it stays, and only the account is let go of.
+  const asAssociation = (c: StoredComment) => !!c.associationId;
+  const removed = new Set(
+    all.filter((c) => c.userId === userId && !asAssociation(c)).map((c) => c.id)
+  );
   let changed = removed.size > 0;
 
   const survivingParent = (parentId: string | null | undefined): string | null => {
@@ -798,6 +812,10 @@ export function scrubComments(
       let next = c;
       if (Array.isArray(c.likes) && c.likes.includes(userId)) {
         next = { ...next, likes: c.likes.filter((id: string) => id !== userId) };
+        changed = true;
+      }
+      if (c.userId === userId && asAssociation(c)) {
+        next = { ...next, userId: '' };
         changed = true;
       }
       if (c.parentId && removed.has(c.parentId)) {

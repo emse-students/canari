@@ -19,6 +19,7 @@ import Redis from 'ioredis';
 import type { RedisService } from '../common/redis';
 import { LIVE_SEAT_LEASE_MS, LIVE_VIEWER_CAP } from './live.constants';
 import {
+  COUNT_LIVE_SEATS_LUA,
   LIVE_SEATS_KEY,
   LiveSeats,
   RELEASE_LIVE_SEATS_LUA,
@@ -56,16 +57,43 @@ describe('the viewer cap, as the service types it', () => {
     expect(LIVE_SEAT_LEASE_MS).toBe(30_000);
   });
 
-  it('asks ONE script for the take, with the member, the cap and the lease', async () => {
-    const { seats, calls } = seatsAnswering(async () => [1, 3]);
-    await seats.take(LIVE, 'bob');
+  it('asks ONE script for the take, with the member, the cap, the lease and the live prefix', async () => {
+    const { seats, calls } = seatsAnswering(async () => [1, 3, 2]);
+    // The take answers the live's own count, not the host's (3 seated, 2 of them on this live).
+    await expect(seats.take(LIVE, 'bob')).resolves.toBe(2);
     expect(calls).toEqual([
       {
         script: TAKE_SEAT_LUA,
         keys: [LIVE_SEATS_KEY],
-        args: [seatMember(LIVE, 'bob'), LIVE_VIEWER_CAP, LIVE_SEAT_LEASE_MS],
+        args: [seatMember(LIVE, 'bob'), LIVE_VIEWER_CAP, LIVE_SEAT_LEASE_MS, `${LIVE}:`],
       },
     ]);
+  });
+
+  it("reads the broadcaster's count with ONE read-only script, a number and nothing else", async () => {
+    const { seats, calls } = seatsAnswering(async () => 4);
+    await expect(seats.watching(LIVE.toUpperCase())).resolves.toBe(4);
+    expect(calls).toEqual([
+      {
+        script: COUNT_LIVE_SEATS_LUA,
+        keys: [LIVE_SEATS_KEY],
+        args: [LIVE_SEAT_LEASE_MS, `${LIVE}:`],
+      },
+    ]);
+  });
+
+  it('answers no count, never a wrong one, when Redis fails or answers nonsense', async () => {
+    for (const reply of [
+      async () => {
+        throw new Error('ECONNREFUSED');
+      },
+      async () => 'OK',
+      async () => -1,
+      async () => [1, 2],
+    ]) {
+      const { seats } = seatsAnswering(reply);
+      await expect(seats.watching(LIVE)).resolves.toBeNull();
+    }
   });
 
   it('keys a seat by the live id lower-cased, so a leave spelled in upper case frees the take', () => {
@@ -97,6 +125,9 @@ describe('the viewer cap, as the service types it', () => {
       },
       async () => 'OK',
       async () => [7, 1],
+      // A grant with no count of its own (the reply of the script before the count existed).
+      async () => [1, 3],
+      async () => [1, 3, 0],
     ]) {
       const { seats } = seatsAnswering(reply);
       expect(await refusal(seats.take(LIVE, 'bob'))).toEqual({
@@ -119,8 +150,22 @@ const maybe = URL ? describe : describe.skip;
 maybe('the seat script against a real Redis', () => {
   const key = `live:seats:it:${Math.random().toString(36).slice(2, 10)}`;
   let redis: Redis;
+  /** The whole reply: `{granted, seated}` refused, `{1, seated, watching}` granted. */
+  const takeReply = async (member: string, cap: number, lease = 30_000) =>
+    (await redis.eval(
+      TAKE_SEAT_LUA,
+      1,
+      key,
+      member,
+      cap,
+      lease,
+      `${member.split(':')[0]}:`
+    )) as number[];
+  /** The grant and the host's count only - what the cap's own tests read. */
   const take = async (member: string, cap: number, lease = 30_000) =>
-    (await redis.eval(TAKE_SEAT_LUA, 1, key, member, cap, lease)) as [number, number];
+    (await takeReply(member, cap, lease)).slice(0, 2);
+  const watching = async (liveId: string, lease = 30_000) =>
+    (await redis.eval(COUNT_LIVE_SEATS_LUA, 1, key, lease, seatMember(liveId, ''))) as number;
 
   beforeAll(() => {
     redis = new Redis(URL!);
@@ -166,6 +211,28 @@ maybe('the seat script against a real Redis', () => {
     expect(await redis.eval(RELEASE_LIVE_SEATS_LUA, 1, key, seatMember(LIVE, ''))).toBe(2);
     expect(await redis.zrange(key, '0', '-1')).toEqual([seatMember(OTHER, 'a')]);
     expect(await redis.eval(RELEASE_LIVE_SEATS_LUA, 1, key, seatMember(LIVE, ''))).toBe(0);
+  });
+
+  it("counts ONE live's viewers, the same from the take and the broadcaster's read", async () => {
+    const OTHER = '22222222-2222-4222-8222-222222222222';
+    expect(await takeReply(seatMember(LIVE, 'a'), 5)).toEqual([1, 1, 1]);
+    expect(await takeReply(seatMember(OTHER, 'a'), 5)).toEqual([1, 2, 1]);
+    expect(await takeReply(seatMember(LIVE, 'b'), 5)).toEqual([1, 3, 2]);
+    // A renewal is not a second viewer.
+    expect(await takeReply(seatMember(LIVE, 'b'), 5)).toEqual([1, 3, 2]);
+    expect(await watching(LIVE)).toBe(2);
+    expect(await watching(OTHER)).toBe(1);
+    // A viewer who leaves goes from the count at once.
+    await redis.eval(RELEASE_SEAT_LUA, 1, key, seatMember(LIVE, 'a'));
+    expect(await watching(LIVE)).toBe(1);
+    // One whose lease lapsed (its last renewal written long ago) is not counted by the read, which
+    // writes nothing, nor by the next take, which sweeps it.
+    await redis.zadd(key, 0, seatMember(LIVE, 'b'));
+    expect(await watching(LIVE)).toBe(0);
+    expect(await redis.zscore(key, seatMember(LIVE, 'b'))).toBe('0');
+    expect(await takeReply(seatMember(LIVE, 'c'), 5)).toEqual([1, 2, 1]);
+    // A refusal at the cap carries no count.
+    expect(await takeReply(seatMember(LIVE, 'd'), 2)).toEqual([0, 2]);
   });
 
   it('lets the whole set expire once nobody renews it', async () => {

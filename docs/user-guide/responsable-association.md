@@ -54,7 +54,7 @@ Dans l'onglet **Membres** :
 
 1. Cherchez l'utilisateur par nom ou identifiant dans le champ de recherche.
 2. Choisissez **"Membre"** (aucun droit) ou **"Administrateur"** (tous les droits de gestion de
-   l'association, Stripe Connect inclus).
+   l'association, y compris la gestion du compte bancaire).
 3. Cliquez sur **"Ajouter"**.
 
 ### Modifier les droits d'un membre
@@ -139,6 +139,11 @@ Dans l'onglet **Formulaires** :
     ne s'est pas presente.
 - Exportez les reponses en **fichier Excel** (.xlsx) via le bouton **"Exporter"**.
 
+### Formulaire public (personnes sans compte)
+
+Un formulaire peut etre rempli, et paye, par des personnes sans compte Canari depuis un
+simple lien : voir [Formulaires publics](formulaires-publics.md).
+
 ### Rappels automatiques
 
 Le systeme envoie automatiquement une notification push aux utilisateurs qui ont "suivi" le
@@ -156,35 +161,69 @@ Depuis la fiche de votre association (section Documents) :
 
 ---
 
-## 8. Boutique et paiements Stripe
+## 8. Boutique et paiements en ligne (Lydia)
 
-### Configurer Stripe Connect
+Lorsque les paiements en ligne sont **actives** sur la plateforme, ils passent par **Lydia** (la page de paiement s'appelle
+"Paiement Canari" cote acheteur). Chaque association relie **son propre compte Lydia Pro** : l'argent
+arrive sur ce compte, jamais sur celui de Canari.
 
-Pour accepter des paiements en ligne, votre association doit completer l'onboarding Stripe :
+### Relier le compte Lydia de l'association
 
-1. Dans l'onglet **Paiements**, cliquez sur **"Configurer les paiements en ligne"**
-   (droit *Gerer Stripe Connect*).
-2. Vous etes redirige vers Stripe pour creer ou lier un compte de votre association.
-3. Renseignez les informations bancaires de l'association (IBAN, SIRET le cas echeant).
-4. Une fois configure, le statut affiche **"Actif"**.
+Dans l'onglet **Paiements** (droit *Gerer le compte bancaire*) :
 
-> Tant que Stripe Connect n'est pas configure, seul le paiement en especes est disponible
-> pour les formulaires payants. Les produits de la boutique necessitent Stripe Connect.
+1. Dans la carte **Lydia Pro**, renseignez les informations legales de l'association : nom legal,
+   adresse, code postal, ville, pays, email et telephone de contact. Elles sont transmises
+   directement a Lydia.
+2. Cliquez sur **"Creer le compte Lydia Pro"**. Le compte est cree chez Lydia et passe en
+   **"En attente"**.
+3. Lydia valide ensuite le dossier de l'association. Canari ne suit pas encore cette validation
+   automatiquement : un administrateur de la plateforme confirme l'activation (bouton
+   **"Valider l'onboarding"**, qu'il est le seul a voir). Le statut passe alors a **"Actif"**.
+4. Renseignez la **cle privee Business** dans le champ prevu a cet effet. Vous la trouvez dans votre
+   espace Lydia Business, rubrique "Mes informations". Elle est chiffree sur le serveur et ne
+   s'affiche plus jamais, meme pour vous (utilisez **"Remplacer la cle privee"** pour la changer).
+   Canari ne controle pas la cle a l'enregistrement : une cle erronee ne se voit qu'a la premiere
+   confirmation refusee.
+
+Cette cle permet a Canari de verifier les notifications envoyees par Lydia. Sans elle, ces
+notifications ne peuvent pas etre verifiees : le paiement est alors suivi surtout lorsque la
+personne qui paie revient dans l'application. Canari ne promet pas de confirmation automatique de
+chaque paiement : en cas de doute sur un paiement, verifiez son statut dans l'onglet **Achats**
+et dans le tableau de bord Lydia.
+
+Le bouton **"Ouvrir le tableau de bord Lydia"** ouvre l'espace Lydia de l'association ;
+**"Retirer Lydia"** detache le compte de Canari (le compte Lydia lui-meme n'est pas supprime, mais il
+faudra refaire toute la configuration pour accepter a nouveau des paiements en ligne).
+
+> Tant que le compte Lydia n'est pas **Actif**, seul le paiement en especes est disponible pour les
+> formulaires payants, et les produits de la boutique restent inactifs. Ils se remettent en vente
+> d'eux-memes des que les paiements sont prets. Si l'onglet indique qu'aucun prestataire de paiement
+> n'est configure, les paiements en ligne sont coupes sur toute la plateforme : ce n'est pas un
+> reglage de votre association.
 
 ### Creer un produit
 
-Depuis l'onglet Boutique de votre association :
+Depuis la carte **Boutique** de l'onglet **Paiements** (droit *Gerer la boutique et les cotisations*) :
 
 1. Cliquez sur **"Nouveau produit"**.
-2. Renseignez : nom, description, prix, photo (optionnel), stock (optionnel).
-3. Cliquez sur **"Creer"**.
+2. Renseignez le nom, la description, puis le prix : un **prix fixe**, ou un **montant libre**
+   (avec un minimum et un maximum). Vous pouvez aussi fixer un **tarif cotisant**, reserver le
+   produit aux cotisants, ou definir une **grille tarifaire** (prix different selon la promotion,
+   la formation ou la cotisation).
+3. Reglez si besoin les **limites d'achat** : achats multiples, maximum par utilisateur, stock
+   global.
+4. Cliquez sur **"Creer le produit"**.
 
-Le produit apparait dans la boutique globale et sur la fiche de votre association.
+Le produit apparait dans la boutique globale et sur la fiche de votre association. Chaque tentative
+d'achat est enregistree separement : un paiement refuse ou abandonne peut etre retente.
 
 ### Suivre les ventes
 
-Depuis l'onglet **Paiements**, cliquez sur **"Tableau de bord Stripe"** pour acceder au
-dashboard Stripe de votre association (historique des paiements, virements, litiges).
+L'onglet **Achats** liste l'historique des paiements de la boutique et des formulaires payants
+(date, acheteur, article, type, mode de paiement **"En ligne"** ou **"Especes / manuel"**, montant).
+Il permet aussi d'attribuer un produit a la main (especes, paiement anterieur a Canari).
+Pour le detail cote Lydia, utilisez **"Ouvrir le tableau de bord Lydia"** dans l'onglet
+**Paiements**.
 
 ---
 

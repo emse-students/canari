@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="19/10/2026"
+  updated="22/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -103,6 +103,12 @@
           demande (l'association, le membre qui l'a faite, la publication) vous est adressée, et
           rien n'est montré à son public tant que vous n'avez pas accepté. Vous pouvez retirer ce
           relais à tout moment ; la demande est effacée avec la publication ou avec votre compte.
+          Vous pouvez publier ou commenter de façon anonyme, ou au nom d'une association dont vous
+          avez le droit de parler : les autres membres ne voient alors pas votre compte, mais la
+          modération et les administrateurs de la plateforme peuvent l'identifier (pour traiter un
+          signalement, par exemple), et votre compte reste responsable de ce que vous écrivez. Un
+          commentaire écrit au nom d'une association lui appartient : il reste si vous supprimez
+          votre compte, détaché de celui-ci.
         </dd>
       </div>
       <div>
@@ -112,6 +118,22 @@
           (montant, produit, statut, identifiant de la transaction chez Lydia). Aucune donnée
           bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un formulaire (par
           exemple un CV) sont lisibles par l'association qui l'a créé.
+        </dd>
+      </div>
+      <div>
+        <dt>Formulaires publics (réponses sans compte)</dt>
+        <dd>
+          Une personne sans compte qui répond à un formulaire public laisse ses réponses, et, si le
+          formulaire est payant, le montant, le statut du paiement et l'identifiant de la demande
+          chez Lydia. L'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas
+          conservée par Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de
+          retour (jamais le lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse
+          payante attend son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC)
+          à partir du formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64
+          d'une adresse IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert
+          uniquement à limiter à trois les réponses en attente de paiement depuis un même réseau ;
+          elle est effacée par une tâche planifiée, dans les cinq minutes qui suivent le règlement,
+          l'annulation ou l'expiration de la réponse.
         </dd>
       </div>
       <div>
@@ -442,6 +464,16 @@
             <td>Aucune durée n'est encore fixée : elle est en cours de définition</td>
           </tr>
           <tr>
+            <td>
+              Empreinte (HMAC) du réseau d'une réponse payante sans compte (adresse IPv4 ou préfixe
+              /64 IPv6, jamais l'adresse elle-même)
+            </td>
+            <td>
+              Tant que la réponse attend son paiement (30 minutes en ligne, jusqu'à l'échéance fixée
+              pour un paiement en espèces), puis effacée dans les cinq minutes
+            </td>
+          </tr>
+          <tr>
             <td>Réponses et fichiers d'une réservation</td>
             <td>
               Supprimés automatiquement N jours après la fin du créneau (N est choisi par
@@ -551,6 +583,21 @@
             <td>Préférences et brouillons (stockage local)</td>
             <td>Thème, émojis récents, brouillon de publication, identifiant de l'appareil</td>
             <td>Jusqu'à leur effacement</td>
+          </tr>
+          <tr>
+            <td>Raccourcis de conversation (application Android)</td>
+            <td>
+              Les noms de vos conversations récentes, et leur identifiant interne, sont confiés au
+              système Android pour les proposer dans son menu Partager (désactivable dans Paramètres
+              &gt; Préférences) ; les notifications de message y confient aussi le nom et la photo
+              de la conversation. Le système et l'écran d'accueil peuvent donc les afficher
+            </td>
+            <td
+              >Effacés à la déconnexion (les suggestions aussi à la désactivation du réglage) ou à
+              la désinstallation. Un raccourci que vous avez épinglé sur l'écran d'accueil ne peut
+              pas être retiré par l'application : il est désactivé, et c'est le lanceur qui décide
+              s'il reste affiché</td
+            >
           </tr>
           <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>

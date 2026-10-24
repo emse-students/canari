@@ -6,7 +6,10 @@ import { InternalInvitesController } from './internal-invites.controller';
 import { InternalLegacyCotisationsController } from './internal-legacy-cotisations.controller';
 import { InternalProfileNotificationsController } from './internal-profile-notifications.controller';
 import { InternalChannelReadController } from './internal-channel-read.controller';
+import { InternalDistributionEntitlementController } from './internal-distribution-entitlement.controller';
+import { InternalPaymentsController } from './internal-payments.controller';
 import { InternalPresenceController } from './internal-presence.controller';
+import { InternalLydiaKeyController } from './internal-lydia-key.controller';
 import { PostsModule } from '../posts/posts.module';
 import { FormsModule } from '../forms/forms.module';
 import { AssociationsModule } from '../associations/associations.module';
@@ -55,7 +58,10 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
     InternalLegacyCotisationsController,
     InternalProfileNotificationsController,
     InternalChannelReadController,
+    InternalDistributionEntitlementController,
     InternalPresenceController,
+    InternalLydiaKeyController,
+    InternalPaymentsController,
   ],
 })
 export class InternalModule {}

@@ -67,10 +67,16 @@ class KeystorePlugin: Plugin {
   /// primary item, protected by `.userPresence` (Face ID / Touch ID or the device passcode), for
   /// biometric unlock, and the background copy the notification extension reads.
   ///
-  /// BOTH OLD ITEMS GO FIRST, whatever happens next. A PIN change awaits this write before it moves
-  /// any data (`pointUnattendedUnlockAt`), because an item still holding the OLD key would open the
-  /// MLS state not yet re-sealed without the server PIN check. The old order deleted the primary,
-  /// threw on its add, and never reached the background copy - which kept the old key.
+  /// THE BACKGROUND COPY IS UPDATED IN PLACE, AND FIRST (2026-10-22). On a phone whose at-rest key is
+  /// hardware-held, that item is the only copy of the key every store is sealed under: a delete
+  /// followed by an add left a window - a kill, a refused add - in which no copy existed at all. It is
+  /// now `SecItemUpdate`d (added only when absent), so at every instant it holds the old key or the
+  /// new one. The primary item, bound to `.userPresence`, cannot be updated without a Face ID sheet,
+  /// so it is still deleted then added - AFTER the background copy holds the new key, so its window
+  /// costs nothing but biometric unlock until the add. A refusal from here up leaves both items on
+  /// the old key and is returned: the key change awaiting it (`pointUnattendedUnlockAt`) moves no data.
+  /// The Rust bridge reads the background copy back before it counts the write, and asks this write
+  /// only when the entry does not already hold the key (`PluginDeviceKeyStore::store_guarded`).
   ///
   /// ON A DEVICE WITH NO PASSCODE THERE IS NO PRIMARY ITEM. It cannot exist there (see
   /// `devicePasscodeIsSet`), and biometric unlock, its only reader, cannot be enabled without a
@@ -86,20 +92,41 @@ class KeystorePlugin: Plugin {
         userInfo: [NSLocalizedDescriptionKey: "Invalid base64 key bytes"])
     }
 
+    // -- WP-SEC-1: background item, readable by the NSE - UPDATED IN PLACE, FIRST --
+    // No .userPresence (that is exactly what locks the NSE out), AfterFirstUnlockThisDeviceOnly so it
+    // is available once the device has been unlocked once (covers the "screen locked, push arrives"
+    // case), shared via the App Group keychain access group so the NSE can read it.
+    let bgMatch: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kKeychainService,
+      kSecAttrAccount as String: "mls_bg_key_\(args.alias)",
+      kSecAttrAccessGroup as String: "group.fr.emse.canari",
+    ]
+    var bgStatus = SecItemUpdate(
+      bgMatch as CFDictionary, [kSecValueData as String: keyData] as CFDictionary)
+    if bgStatus == errSecItemNotFound {
+      var bgAddQuery = bgMatch
+      bgAddQuery[kSecValueData as String] = keyData
+      bgAddQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+      bgStatus = SecItemAdd(bgAddQuery as CFDictionary, nil)
+    }
+    guard bgStatus == errSecSuccess else {
+      // Hard failure: the NSE has no JSON fallback to read the key from any more, so a silently
+      // skipped background item means every push shows generic text with nothing in the logs.
+      NSLog("[KeystorePlugin] storeKeyBytes: background keychain item failed (status=\(bgStatus))")
+      throw NSError(
+        domain: NSOSStatusErrorDomain, code: Int(bgStatus), userInfo: nil)
+    }
+
+    // -- Primary item: biometric-gated (.userPresence), for the app process --
+    // Deleted then added: an access-controlled item cannot be updated without a sheet. The
+    // background copy above already holds the new key, so this window loses nothing.
     let deleteQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: kKeychainService,
       kSecAttrAccount as String: "mls_key_\(args.alias)",
     ]
     SecItemDelete(deleteQuery as CFDictionary)
-    let bgDeleteQuery: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: kKeychainService,
-      kSecAttrAccount as String: "mls_bg_key_\(args.alias)",
-    ]
-    SecItemDelete(bgDeleteQuery as CFDictionary)
-
-    // -- Primary item: biometric-gated (.userPresence), for the app process --
     if devicePasscodeIsSet() {
       var error: Unmanaged<CFError>?
       guard
@@ -130,34 +157,6 @@ class KeystorePlugin: Plugin {
     } else {
       NSLog(
         "[KeystorePlugin] storeKeyBytes: no device passcode - no biometric item, background copy only")
-    }
-
-    // -- WP-SEC-1: secondary item, background-accessible for the NSE --
-    // No .userPresence (that is exactly what locks the NSE out),
-    // AfterFirstUnlockThisDeviceOnly so it is available once the device
-    // has been unlocked once (covers the "screen locked, push arrives"
-    // case). Shared via the App Group keychain access group so the NSE
-    // can read it from its own process.
-    let bgAddQuery: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: kKeychainService,
-      kSecAttrAccount as String: "mls_bg_key_\(args.alias)",
-      kSecValueData as String: keyData,
-      kSecAttrAccessGroup as String: "group.fr.emse.canari",
-      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-      // NO kSecAttrAccessControl — that is exactly what blocks the NSE today
-    ]
-
-    let bgStatus = SecItemAdd(bgAddQuery as CFDictionary, nil)
-    guard bgStatus == errSecSuccess else {
-      // Hard failure, like the primary item above. The NSE has no JSON fallback to
-      // read the key from any more, so a silently-skipped background item means every
-      // push shows generic text with nothing in the logs to say why. The only known
-      // cause - an access group missing from the profile - fails at codesign, not
-      // here, so a status at this point is a real error worth surfacing.
-      NSLog("[KeystorePlugin] storeKeyBytes: background keychain item failed (status=\(bgStatus))")
-      throw NSError(
-        domain: NSOSStatusErrorDomain, code: Int(bgStatus), userInfo: nil)
     }
 
     invoke.resolve()
@@ -210,7 +209,11 @@ class KeystorePlugin: Plugin {
   /// Secure Enclave, and Apple caps any reuse of that proof at 5 minutes, so a 12h window can only
   /// be honoured by reading the copy that carries no access control. The user chose that trade-off
   /// knowingly; picking "every time" in Settings keeps every read on `getKeyBytes` above.
-  /// Returns `{"keyBytes": null}` when the item is absent (a device enrolled before WP-SEC-1).
+  /// Returns `{"keyBytes": null}` ONLY when the item is absent (`errSecItemNotFound`). Every other
+  /// non-success status - `errSecInteractionNotAllowed` before the first unlock, `-34018` on an
+  /// entitlement hiccup - THROWS with its OSStatus (2026-10-22): the at-rest key's settle, prepare
+  /// and read treat "absent" as a fact that reverts a marker or writes a new key, so a transient
+  /// failure read as "absent" would destroy the only copy of a hardware-held key.
   @objc public func getKeyBytesUnattended(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(GetKeyBytesUnattendedRequest.self)
 
@@ -224,12 +227,14 @@ class KeystorePlugin: Plugin {
 
     var item: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &item)
-    guard status == errSecSuccess, let data = item as? Data else {
-      if status != errSecItemNotFound {
-        NSLog("[KeystorePlugin] getKeyBytesUnattended: bg item read failed (status=\(status))")
-      }
+    if status == errSecItemNotFound {
       invoke.resolve(["keyBytes": NSNull()])
       return
+    }
+    guard status == errSecSuccess, let data = item as? Data else {
+      NSLog("[KeystorePlugin] getKeyBytesUnattended: ERROR bg item read failed (status=\(status))")
+      throw NSError(
+        domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
     }
     invoke.resolve(["keyBytes": data.base64EncodedString()])
   }

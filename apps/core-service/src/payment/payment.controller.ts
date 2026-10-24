@@ -20,6 +20,7 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { assertInternalSecret } from '../internal/internal-secret.util';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import type { WireLineItem } from './payment-provider.interface';
+import { parseLydiaOrderRef } from './lydia-order-ref';
 import axios from 'axios';
 import { internalSocialRequestConfig, internalPaymentAccountUrl } from './social-internal-client';
 import { socialUrl } from '../internal/service-urls';
@@ -365,25 +366,40 @@ export class PaymentController {
    * Reads a payment request's state at the provider. SERVER-TO-SERVER ONLY (internal secret):
    * social-service asks it when a cancel answered `already-settled`, to tell a request that was
    * PAID (the answer is then paid, and no new request may be issued) from one cancelled or expired.
-   * `sessionId` is the `request_uuid`; answers `{ ok: true, state, raw }`.
+   * `sessionId` is the `request_uuid`; answers `{ ok: true, state, raw }`, `state` the TYPED
+   * `CheckoutRequestStateKind` (open | paid | declined | cancelled-or-expired | unknown) the
+   * provider classified - the caller decides on it and never on `raw`, which is for its log.
+   *
+   * `orderRef` INSTEAD of `sessionId` reads a boutique attempt whose issuing call never answered a
+   * uuid (a timeout, a crash mid-issue) by the order_ref Canari sent it with - only Canari's own
+   * product grammar (`parseLydiaOrderRef`), never a free string - and may answer `not-found`: no
+   * request carries it. Exactly one of the two is accepted.
    */
   @Post('request-state')
   @HttpCode(200)
   async requestState(
-    @Body() body: { sessionId?: string; connectAccountId?: string },
+    @Body() body: { sessionId?: string; orderRef?: string; connectAccountId?: string },
     @Headers('x-internal-secret') secret?: string
   ) {
     assertInternalSecret(secret);
+    const bySession =
+      typeof body?.sessionId === 'string' &&
+      SESSION_ID_RE.test(body.sessionId) &&
+      body.orderRef === undefined;
+    const byOrderRef =
+      body?.sessionId === undefined &&
+      typeof body?.orderRef === 'string' &&
+      parseLydiaOrderRef(body.orderRef)?.kind === 'product';
     if (
-      typeof body?.sessionId !== 'string' ||
-      !SESSION_ID_RE.test(body.sessionId) ||
+      (!bySession && !byOrderRef) ||
       typeof body.connectAccountId !== 'string' ||
       !body.connectAccountId.trim()
     ) {
+      this.logger.warn('request-state refused: invalid payload');
       throw new BadRequestException('Invalid payload');
     }
     const { state, raw } = await this.paymentService.getCheckoutRequestState(
-      body.sessionId,
+      bySession ? { requestUuid: body.sessionId as string } : { orderRef: body.orderRef as string },
       body.connectAccountId
     );
     return { ok: true, state, raw };

@@ -55,6 +55,8 @@ before the submission, and correct this page where they differ.
    and C20 ([register-of-processing](compliance/register-of-processing.md)).
 4. The review video (L7) and this page re-read against the stores' current texts.
 
+The whole production gate list, these four included, is [live-production](frontend/modules/live-production.md).
+
 ## See also
 
 - [moderation-and-blocking](moderation-and-blocking.md) - reports, auto-hide, blocks

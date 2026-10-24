@@ -6,21 +6,20 @@ import {
   Post,
   Query,
   Logger,
+  ServiceUnavailableException,
   UseInterceptors,
 } from '@nestjs/common';
 import { NoFilesInterceptor } from '@nestjs/platform-express';
 import axios from 'axios';
 import { PaymentService } from './payment.service';
+import type { LydiaCallbackVerdict } from './lydia-callback-verification';
 import { parseLydiaOrderRef } from './lydia-order-ref';
 import {
   internalSocialRequestConfig,
   internalSubmissionUrl,
   productPurchaseCompletedUrl,
 } from './social-internal-client';
-import { logSafeFieldName } from './lydia-signature-match';
 import { describeHttpError } from '../common/http-error-log';
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SUBMISSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 
@@ -39,8 +38,9 @@ export const LYDIA_CALLBACK_BODY_LIMITS = {
   files: 0,
 } as const;
 
-/** Most field names a refusal line carries: the sender decides every name. */
+/** Most field names a refusal line carries, and the longest one: the sender decides every name. */
 const LOGGED_FIELD_NAMES = 16;
+const LOGGED_NAME_LENGTH = 32;
 
 /**
  * The field NAMES of a refused body, safe to log: the sender controls them, so they are capped in
@@ -49,7 +49,9 @@ const LOGGED_FIELD_NAMES = 16;
  */
 export function describeFieldNames(body: Record<string, unknown> | undefined): string {
   const names = Object.keys(body ?? {});
-  const shown = names.slice(0, LOGGED_FIELD_NAMES).map((name) => logSafeFieldName(name));
+  const shown = names
+    .slice(0, LOGGED_FIELD_NAMES)
+    .map((name) => name.replace(/[^\w.-]/g, '').slice(0, LOGGED_NAME_LENGTH));
   return `${names.length} field(s)=[${shown.join(',')}]`;
 }
 
@@ -68,67 +70,80 @@ export class PaymentWebhookController {
 
   constructor(private readonly paymentService: PaymentService) {}
 
-  /** Marks a form submission as paid via the internal social-service route. */
-  private async markSubmissionPaidInternal(
-    submissionId: string,
-    sessionId?: string
-  ): Promise<void> {
-    assertValidSubmissionId(submissionId);
-    await axios.post(
-      internalSubmissionUrl(submissionId, 'mark-paid'),
-      sessionId ? { sessionId } : {},
-      {
-        ...internalSocialRequestConfig(),
-        timeout: 15_000,
-        validateStatus: (s) => s >= 200 && s < 300,
-      }
-    );
-  }
-
   /**
-   * Fulfills a boutique product purchase via the internal social-service route, from the Lydia
-   * `request/do` confirm callback below.
+   * Hands a VERIFIED confirm callback to social-service as a TRIGGER, never as the payment itself:
+   * social-service checks the row's payee account is `vendorToken` (the Business whose key verified
+   * the callback), then settles from the row's OWN stored request, read at Lydia
+   * (`FormsService.confirmPaymentFromCallback`). Nothing of the callback's amount decides anything.
    */
-  private async notifyProductPurchaseCompleted(
-    productId: string,
-    userId: string,
-    amountCents: number,
-    paymentReference: string
-  ): Promise<void> {
-    if (!UUID_RE.test(productId)) {
-      throw new Error(`Invalid productId: ${productId}`);
-    }
-    await axios.post(
-      productPurchaseCompletedUrl(productId),
-      { userId, amountCents, paymentIntentId: paymentReference },
+  private async confirmSubmissionFromCallback(
+    submissionId: string,
+    vendorToken: string,
+    requestId: string
+  ): Promise<{ outcome?: string }> {
+    assertValidSubmissionId(submissionId);
+    const { data } = await axios.post<{ outcome?: string }>(
+      internalSubmissionUrl(submissionId, 'provider-confirm'),
+      { vendorToken, requestId },
       {
         ...internalSocialRequestConfig(),
-        timeout: 15_000,
+        timeout: 30_000,
         validateStatus: (s) => s >= 200 && s < 300,
       }
     );
-    this.logger.log(`Product purchase completed: productId=${productId} userId=${userId}`);
+    return data ?? {};
   }
 
   /**
-   * Cancels a pending form submission via the internal social-service route, naming the request
+   * Hands a VERIFIED boutique confirm callback to social-service as a TRIGGER, by the same rule as a
+   * form's: social-service finds the ATTEMPT row the order_ref names (`checkoutId`) for that
+   * product, checks the Business that verified the callback is the one the attempt was issued to
+   * and that `requestId` is not another request than the attempt's, then reads the attempt's own
+   * request at Lydia and records it only if Lydia answers paid - product, buyer and amount from the
+   * row. Answers the status social-service read (`unreadable` when Lydia could not be asked).
+   */
+  private async confirmProductFromCallback(
+    productId: string,
+    checkoutId: string,
+    vendorToken: string,
+    requestId: string
+  ): Promise<{ outcome?: string }> {
+    const { data } = await axios.post<{ outcome?: string }>(
+      productPurchaseCompletedUrl(productId),
+      { checkoutId, requestId, vendorToken },
+      {
+        ...internalSocialRequestConfig(),
+        timeout: 30_000,
+        validateStatus: (s) => s >= 200 && s < 300,
+      }
+    );
+    return data ?? {};
+  }
+
+  /**
+   * Hands a VERIFIED cancel/expire callback to social-service as a trigger, naming the request
    * Lydia reported (its numeric `request_id`): social-service applies it only if that is still the
-   * row's current request, so the cancel of a request a retry replaced changes nothing.
+   * row's current request and the row's payee account is `vendorToken`, the Business whose key
+   * verified the callback - and then only once Lydia, read server to server, says the row's own
+   * request is closed (`cancelPendingSubmission`). Answers the state social-service read.
    */
   private async cancelPendingSubmissionInternal(
     submissionId: string,
-    requestId: string
-  ): Promise<void> {
+    requestId: string,
+    vendorToken: string
+  ): Promise<{ outcome?: string }> {
     assertValidSubmissionId(submissionId);
-    await axios.post(
+    const { data } = await axios.post<{ outcome?: string }>(
       internalSubmissionUrl(submissionId, 'cancel-pending'),
-      { requestId },
+      { requestId, vendorToken },
       {
         ...internalSocialRequestConfig(),
-        timeout: 15_000,
+        // The same budget as a confirm: social-service reads the row's request at Lydia first.
+        timeout: 30_000,
         validateStatus: (s) => s >= 200 && s < 300,
       }
     );
+    return data ?? {};
   }
 
   /**
@@ -140,7 +155,20 @@ export class PaymentWebhookController {
    * fulfillment cannot depend on it alone.
    *
    * No guard: the signature check below stands in for the NginxAuthGuard this route cannot
-   * carry (Lydia, not a signed-in user, is the caller).
+   * carry (Lydia, not a signed-in user, is the caller). It uses the BUSINESS private token of the
+   * association whose `vendor_token` the callback names, over every received field but `sig`
+   * (`verifyLydiaCallback`, measured 2026-10-16). An association with no key stored has its
+   * callbacks refused, by design: the payer's return (`confirm-payment`) still confirms.
+   *
+   * EVERY verification failure is the SAME 400 `Invalid signature` - unknown association, no key,
+   * wrong signature, unsignable body - so the route answers nothing about which associations hold
+   * a key. The reason goes to the server log only. Failing to READ the key, or to apply a VERIFIED
+   * callback (social-service unreachable, the row's request unreadable at Lydia), is a 503, the
+   * status Lydia may retry: neither is a verdict about the callback.
+   *
+   * A verified `product:` confirm is a trigger on the ATTEMPT row its order_ref names (migration
+   * 101, payments.md "A product checkout is a row, one per attempt"); a verified product cancel or
+   * expire changes nothing here - the attempt is read at Lydia on its next return, retry or confirm.
    */
   @Post('lydia-request-callback')
   // Reads the text fields of a `multipart/form-data` body: the global parsers only know JSON and
@@ -159,12 +187,15 @@ export class PaymentWebhookController {
       throw new BadRequestException('Invalid outcome');
     }
 
-    const requestId = String(body?.request_id ?? '');
-    const amount = String(body?.amount ?? '');
-    const currency = String(body?.currency ?? '');
-    const orderRef = String(body?.order_ref ?? '');
-    const vendorToken = String(body?.vendor_token ?? '');
-    const signature = String(body?.sig ?? '');
+    // A text field or ''. Never `String(value)`: a JSON body chooses its own types, and
+    // `String({ toString: 1 })` throws - a 500 for any caller who sends one.
+    const text = (name: string): string => {
+      const value = body?.[name];
+      return typeof value === 'string' ? value : '';
+    };
+    const requestId = text('request_id');
+    const orderRef = text('order_ref');
+    const signature = text('sig');
 
     if (!requestId || !signature) {
       // Names only, never values: what Lydia actually sent is the one fact that separates a body
@@ -176,26 +207,25 @@ export class PaymentWebhookController {
       throw new BadRequestException('Missing request_id or sig');
     }
 
-    // The field set we assume Lydia signed; its NAMES go in the failure line below, next to the
-    // names actually received, so one refused callback says which set is wrong.
-    const signedFields = {
-      request_id: requestId,
-      amount,
-      currency,
-      order_ref: orderRef,
-      vendor_token: vendorToken,
-    };
-    const verified = this.paymentService.verifyLydiaRequestCallback(signedFields, signature);
-    if (!verified) {
-      const observation = this.paymentService.observeLydiaRequestCallback(body, signature);
+    let verdict: LydiaCallbackVerdict;
+    try {
+      verdict = await this.paymentService.verifyLydiaRequestCallback(body);
+    } catch (err: unknown) {
+      this.logger.error(
+        `Lydia request-callback: could not read the Business key to verify with (outcome=${outcome})`,
+        describeHttpError(err as Error)
+      );
+      throw new ServiceUnavailableException('Callback verification unavailable');
+    }
+    if (!verdict.verified) {
       this.logger.error(
         `Lydia request-callback: signature verification failed (outcome=${outcome}, ` +
-          `content-type=${describeContentType(contentType)}, ${describeFieldNames(body)}, ` +
-          `verified-over=[${Object.keys(signedFields).join(',')}])` +
-          (observation ? ` ${observation}` : '')
+          `reason=${verdict.reason}, content-type=${describeContentType(contentType)}, ` +
+          `${describeFieldNames(body)})`
       );
       throw new BadRequestException('Invalid signature');
     }
+    const verifiedVendorToken = verdict.vendorToken;
 
     const ref = parseLydiaOrderRef(orderRef);
     if (!ref) {
@@ -206,23 +236,58 @@ export class PaymentWebhookController {
     try {
       if (outcome === 'confirm') {
         if (ref.kind === 'form') {
-          await this.markSubmissionPaidInternal(ref.submissionId, requestId);
-          this.logger.log(`Marked submission ${ref.submissionId} as paid via Lydia request/do`);
-        } else {
-          const amountCents = Math.round(Number(amount) * 100);
-          await this.notifyProductPurchaseCompleted(
-            ref.productId,
-            ref.userId,
-            Number.isFinite(amountCents) ? amountCents : 0,
+          const { outcome: settled } = await this.confirmSubmissionFromCallback(
+            ref.submissionId,
+            verifiedVendorToken,
             requestId
           );
+          if (settled === 'unreadable') {
+            // social-service could not read the row's request at Lydia: answering 2xx would tell
+            // Lydia this confirm was handled when nothing was recorded, so it becomes the 503 below.
+            throw new Error(`the row's request could not be read at Lydia`);
+          }
+          this.logger.log(
+            `Lydia confirm of request ${requestId} for submission ${ref.submissionId}: ${settled ?? 'unknown'}`
+          );
+        } else {
+          // A TRIGGER on the attempt row, never the payment: a verified signature proves only that
+          // the key the payout manager TYPED signed it, so nothing of the callback but the attempt
+          // it names is used - social-service reads that attempt's own request at Lydia.
+          const { outcome: settled } = await this.confirmProductFromCallback(
+            ref.productId,
+            ref.checkoutId,
+            verifiedVendorToken,
+            requestId
+          );
+          if (settled === 'unreadable') {
+            // Lydia could not be asked: a 2xx would tell Lydia a payment was handled when nothing
+            // was recorded, so it becomes the retryable 503 below.
+            throw new Error(`the attempt's request could not be read at Lydia`);
+          }
+          this.logger.log(
+            `Lydia confirm of request ${requestId} for product checkout ${ref.checkoutId}: ${settled ?? 'unknown'}`
+          );
         }
-      } else if (ref.kind === 'form') {
-        // No pending row exists for a boutique purchase (unlike a form submission), so a
-        // cancelled/expired Lydia request for one is simply never fulfilled - nothing to undo.
-        await this.cancelPendingSubmissionInternal(ref.submissionId, requestId);
+      } else if (ref.kind === 'product') {
+        // A cancel or expire closes nothing on its own word: the attempt is read at Lydia on its
+        // next return, retry or confirm, which is where a closed request is told from a paid one.
         this.logger.log(
-          `Reported Lydia ${outcome} of request ${requestId} for submission ${ref.submissionId}`
+          `Lydia ${outcome} of request ${requestId} for product checkout ${ref.checkoutId}: nothing applied`
+        );
+      } else if (ref.kind === 'form') {
+        // A trigger, like a confirm: social-service reads the row's own request at Lydia and
+        // releases the seat only when Lydia says it is closed.
+        const { outcome: read } = await this.cancelPendingSubmissionInternal(
+          ref.submissionId,
+          requestId,
+          verifiedVendorToken
+        );
+        if (read === 'unreadable') {
+          // Nothing was decided: a 2xx would tell Lydia this report was handled.
+          throw new Error(`the row's request could not be read at Lydia`);
+        }
+        this.logger.log(
+          `Lydia ${outcome} of request ${requestId} for submission ${ref.submissionId}: ${read ?? 'unknown'}`
         );
       }
     } catch (err: unknown) {
@@ -231,7 +296,9 @@ export class PaymentWebhookController {
         `Lydia request-callback: fan-out failed (outcome=${outcome})`,
         describeHttpError(error)
       );
-      throw new BadRequestException('Failed to process callback');
+      // 503, the status Lydia may retry: the callback was VERIFIED, so the failure is ours (social
+      // unreachable, the row's request unreadable at Lydia), never a verdict about the callback.
+      throw new ServiceUnavailableException('Failed to process callback');
     }
 
     return { received: true };

@@ -120,7 +120,11 @@ describe('sealLiveSegment / openLiveSegment', () => {
 
     it('another live id (cross-live replay)', async () => {
       const sealed = await sealLiveSegment(KEY, LIVE, 3, PLAIN);
-      await refusal(openLiveSegment(KEY, OTHER_LIVE, 3, sealed));
+      // The tag is bound to the live id through the AAD, so this is an authentication failure and
+      // not a layout one.
+      expect((await refusal(openLiveSegment(KEY, OTHER_LIVE, 3, sealed))).reason).toBe(
+        'unauthentic'
+      );
     });
 
     it('another index (reorder or replay within the live)', async () => {
@@ -132,7 +136,8 @@ describe('sealLiveSegment / openLiveSegment', () => {
     it('another format version', async () => {
       const iv = Buffer.alloc(12, 9);
       const v2 = nodeSeal(iv, PLAIN, specAad('canari-live-v2', LIVE, 3));
-      await refusal(openLiveSegment(KEY, LIVE, 3, v2));
+      // Well-formed (iv + ciphertext + tag, right length), refused only because the AAD label differs.
+      expect((await refusal(openLiveSegment(KEY, LIVE, 3, v2))).reason).toBe('unauthentic');
     });
 
     it('a flipped byte in the IV, the ciphertext or the tag', async () => {

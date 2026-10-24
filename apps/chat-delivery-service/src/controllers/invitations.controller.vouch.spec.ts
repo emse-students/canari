@@ -28,20 +28,41 @@ describe('InvitationsController - who may report a device active', () => {
   let messaging: { activateDeviceMembership: jest.Mock; deactivateDeviceMembership: jest.Mock };
   let log: jest.SpyInstance;
 
-  const deviceGroupRepo = { findOne: jest.fn(), find: jest.fn(), save: jest.fn() };
-  const groupMemberRepo = { findOne: jest.fn() };
+  type Row = Record<string, unknown>;
+  /** Every key of `where` must match, so a lookup on the wrong columns finds nothing. */
+  const hit = (rows: Row[], where: Row): Row | null =>
+    rows.find((r) => Object.entries(where).every(([k, v]) => r[k] === v)) ?? null;
+  let seats: Row[];
+  let roster: Row[];
+  let group: Row | null;
+  const deviceGroupRepo = {
+    findOne: jest.fn(async ({ where }: { where: Row }) => hit(seats, where)),
+    find: jest.fn(),
+    save: jest.fn(),
+  };
+  const groupMemberRepo = {
+    findOne: jest.fn(async ({ where }: { where: Row }) => hit(roster, where)),
+  };
+  const groupRepo = {
+    ...emptyRepo(),
+    findOne: jest.fn(async ({ where }: { where: Row }) =>
+      group && group.id === where.id ? group : null
+    ),
+  };
   const redis = { srem: jest.fn(), mget: jest.fn() };
 
-  const emptyRepo = () => ({
-    find: jest.fn().mockResolvedValue([]),
-    findOne: jest.fn(),
-    save: jest.fn(),
-    delete: jest.fn(),
-    create: jest.fn(),
-    query: jest.fn(),
-    createQueryBuilder: jest.fn(),
-    metadata: { tableName: 'stub' },
-  });
+  function emptyRepo() {
+    return {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn(),
+      save: jest.fn(),
+      delete: jest.fn(),
+      create: jest.fn(),
+      query: jest.fn(),
+      createQueryBuilder: jest.fn(),
+      metadata: { tableName: 'stub' },
+    };
+  }
 
   const MEMBER = 'user-member';
   const TARGET = 'user-target';
@@ -54,14 +75,20 @@ describe('InvitationsController - who may report a device active', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    // The voucher is an active member of the group, which the non-self branch asserts first.
-    groupMemberRepo.findOne.mockResolvedValue({ userId: MEMBER, groupId: GROUP });
+    // The voucher and the target are on the conversation's roster, and the target's device holds a
+    // `pending` seat - the row its admitting commit wrote.
+    group = { id: GROUP };
+    roster = [
+      { userId: MEMBER, groupId: GROUP },
+      { userId: TARGET, groupId: GROUP },
+    ];
+    seats = [{ userId: TARGET, deviceId: DEVICE, groupId: GROUP, status: 'pending' }];
     const module: TestingModule = await Test.createTestingModule({
       controllers: [InvitationsController],
       providers: [
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
         { provide: getRepositoryToken(GroupMember), useValue: groupMemberRepo },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(GroupInvite), useValue: emptyRepo() },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },
@@ -92,7 +119,7 @@ describe('InvitationsController - who may report a device active', () => {
       'false'
     );
 
-    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS' });
+    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS', authority: 'report' });
   });
 
   it('promotes the same way when another member vouches for the device', async () => {
@@ -102,7 +129,7 @@ describe('InvitationsController - who may report a device active', () => {
       'false'
     );
 
-    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS' });
+    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS', authority: 'report' });
     // The vouch still retires the invitation - that is the point of allowing it at all.
     expect(messaging.activateDeviceMembership).toHaveBeenCalledWith(
       TARGET,
@@ -113,7 +140,7 @@ describe('InvitationsController - who may report a device active', () => {
   });
 
   it('a vouch from a NON-member is refused before anything is written', async () => {
-    groupMemberRepo.findOne.mockResolvedValue(null);
+    roster = roster.filter((r) => r.userId !== MEMBER);
 
     await expect(
       controller.updateInvitationStatus(
@@ -134,6 +161,44 @@ describe('InvitationsController - who may report a device active', () => {
       'true'
     );
 
-    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS' });
+    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS', authority: 'report' });
+  });
+
+  /**
+   * A REPORT PROMOTES A SEAT AND NEVER CREATES ONE - decided in the one writer
+   * (`messaging.one-active-writer.spec.ts`), so this door's part is to ask as a `report` and to say
+   * the writer's answer: a missing seat is the caller not being a member.
+   */
+  describe('the answer to a refused report', () => {
+    const report = (caller = TARGET) =>
+      controller.updateInvitationStatus(
+        { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
+        caller,
+        'false'
+      );
+
+    it.each(['no_seat', 'kicked', 'not_on_roster'])(
+      'is a 403 NOT_A_MEMBER when the writer refuses for %s',
+      async (reason) => {
+        messaging.activateDeviceMembership.mockResolvedValue({ ok: false, reason });
+
+        await expect(report()).rejects.toMatchObject({
+          status: 403,
+          response: { code: 'NOT_A_MEMBER', reason },
+        });
+      }
+    );
+
+    it('is a 403 for a member vouching for a device that holds no seat', async () => {
+      messaging.activateDeviceMembership.mockResolvedValue({ ok: false, reason: 'no_seat' });
+
+      await expect(report(MEMBER)).rejects.toMatchObject({ status: 403 });
+    });
+
+    it('stays a 400 when the device is not addressable', async () => {
+      messaging.activateDeviceMembership.mockResolvedValue({ ok: false, reason: 'revoked' });
+
+      await expect(report()).rejects.toMatchObject({ status: 400 });
+    });
   });
 });

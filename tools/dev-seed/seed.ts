@@ -454,6 +454,9 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
         // Dev is where calls are read on the bench phones, video included, so its kill switch
         // (migration 014) is open; production's row defaults to `off`.
         calls_mode: 'audio_video',
+        // Dev is where lives are read on the bench phones, so its lives kill switch (migration 015)
+        // is open too; production's row defaults to `off`.
+        lives_mode: 'on',
       },
     ],
     users,

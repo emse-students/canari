@@ -381,6 +381,26 @@ the 60-row window (300 rows 2.0 s, 70 rows 0.5 s); the test now mounts 80 rows, 
 60-row cap, median 0.6 s. One run in 20 still crossed 5 s there while the box was running other
 sessions' suites (that run's wall was 59 s against a 15 s median); `testTimeout` was NOT raised.
 
+**The cause of that cost was the component (2026-10-22).** A CPU profile of a 300-row mount put
+~700 ms of ~850 ms in `ChatMessageGroups` creating rows. The first render mounted the WHOLE thread
+(301 groups) before the entry effect cut it to 20 in the same flush
+([chat](frontend/modules/chat.md)). Fixed in `ChatArea`: until the entry effect has run, the window
+is the entry frame. The test mounts 61 rows (the least above 60) and pins that no more than 20
+rows ever exist during the mount. The parallel-run readings are in #2286.
+
+**Two more load failures, and neither is a timeout to raise (2026-10-22).**
+- `graine/frameHandler.test.ts`: the hold on repair announcements is module state, kept on purpose
+  across `setGraineRuntime(null)`. A test interrupted between its hold and its release left the depth
+  at 1, and every later test expecting an announcement failed. One timeout became six failures,
+  shown by throwing inside the drain test. `afterEach` now closes leftover holds through the public
+  path, announcing a probe and releasing until it is delivered. The drain test also signs its 26
+  endorsements before it opens the hold.
+- `PostCard.doubleTap`: a REAL wall-clock dependence. The gesture compares `performance.now()`
+  against a 250 ms window, and the first click's work ran between the two dispatches. Under load
+  that gap passed 250 ms and the double tap read as two single taps (assertion failures, not
+  timeouts). The helper holds the clock still for the pair. With a clock that advances 300 ms per
+  read, 5 of 10 tests fail on the old helper and none on the new one.
+
 ## 6. Expected end state
 
 | Measure | Today | After WP-T1..T4 (estimate from the A/B) |
@@ -580,3 +600,30 @@ went from 20 groups to 15 (the five spec groups emptied to one member and were d
 `source-text` flag no reading has covered yet; the two `no-assertion` files (`liveCrypto`,
 `mlsPerGroupScheduler`); then WP-T7, the rig change in one campaign session (helpers, IndexedDB,
 named SQL, `archive/` renamed), which owes harness re-runs under rule 33 and is not a desk task.
+
+### 7.3 The frontend desk items (2026-10-21)
+
+**Merged: `customTabsCommands.test.ts` + `keystoreCommands.test.ts` -> `nativePluginCommands.test.ts`.**
+One `describe.each` over a two-row table (plugin dir, plugin name, Android class id, command map,
+builder, sample). **Cases before: 6 + 6 = 12; after: 6 x 2 rows = 12**, the same six rules per
+plugin, same regexes, same Rust files read, so coverage is identical and only the copied scaffolding
+went (the inventory's `duplicate-body` and `same-titles` flags on both files clear). A third plugin is
+a row. `galleryCommands.test.ts` is a different shape (no shared six rules) and was left alone.
+
+**`features.test.ts` stays, and why.** Six of its seven cases already test behaviour (the exported
+constants under stubbed `VITE_DEPLOY_ENVIRONMENT`). The seventh, "video does not follow
+`CALLS_COMPILED`", reads `features.ts` as text because it guards a future EDIT: `CALLS_COMPILED` is a
+literal `false` that the revival commit flips, no runtime value can stand in for it, so no behaviour
+test can exhibit the flip before it happens. It is one case, scoped to one named expression, and it
+fails loudly if the export is renamed. The inventory flag is correct and is the disposition: a
+guard on source text, kept deliberately.
+
+**The two `no-assertion` flags were a counting artefact for three cases, now strengthened.**
+`liveCrypto` cases "another live id" and "another format version" asserted through the `refusal()`
+helper (`expect(...).toBeInstanceOf`), which the inventory's `expect(` scan cannot see; they now also
+assert `reason === 'unauthentic'`, pinning WHY they are refused (tag bound to the live id and the AAD
+label, not a malformed layout). `mlsPerGroupScheduler` "release is idempotent" really had none: it
+now holds the lock with A, queues B and C, releases A twice, and asserts B is granted while C stays
+blocked, which is the harm a double release could do.
+
+**Left of the WP:** WP-T7, the rig change in one campaign session (not a desk task).

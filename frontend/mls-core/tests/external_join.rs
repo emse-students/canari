@@ -179,7 +179,7 @@ fn staged_add_carries_a_base_for_the_epoch_it_creates() {
     let before = alice.get_epoch(gid).expect("epoch");
 
     let ((_c, _w, _added, _skipped), base) = alice
-        .add_members_bulk_with_base(gid, &[&kp_carol])
+        .add_members_bulk_with_base(gid, &[&kp_carol], &["carol:dev1"])
         .expect("stage add carol");
     // Still at the OLD epoch while staged: only the bundle's base describes the new one.
     assert_eq!(alice.get_epoch(gid).expect("epoch"), before);

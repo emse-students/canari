@@ -21,6 +21,19 @@ describe('socialDeepLink - the payload contract of a tap', () => {
     );
   });
 
+  it("the organiser alert opens that form's RESPONSES, not the page that answers it", () => {
+    expect(socialDeepLink({ type: 'social', target: 'form-responses', formId: 'f1' })).toBe(
+      'fr.emse.canari://form-responses/f1'
+    );
+    expect(socialDeepLink({ target: 'form-responses', formId: 'a/b?x=1' })).toBe(
+      'fr.emse.canari://form-responses/a%2Fb%3Fx%3D1'
+    );
+    // The target without a form names nothing to open: the plain fallback, never an empty id.
+    expect(socialDeepLink({ type: 'social', target: 'form-responses' })).toBe(
+      'fr.emse.canari://posts'
+    );
+  });
+
   it('an event proposal opens the validation queue, the other agenda notices the calendar', () => {
     const base = { type: 'social', associationId: 'a1' };
     expect(socialDeepLink({ ...base, action: 'proposed' })).toBe('fr.emse.canari://admin-agenda');

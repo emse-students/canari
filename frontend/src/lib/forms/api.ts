@@ -1,6 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import { statusLabels } from './paymentStatus';
 import type { AnswerWords } from './answerText';
+import type { PaymentRequestState } from './paymentReturn';
 
 export interface FormOption {
   label: string;
@@ -132,7 +133,8 @@ import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { fetchUpload } from '$lib/media';
 import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
-import { SocialApiError } from '$lib/associations/api';
+import { amountBoundsOf, SocialApiError } from '$lib/associations/api';
+import { Log } from '$lib/utils/Log';
 import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 
 /**
@@ -149,10 +151,13 @@ import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 async function refusal(res: Response, fallback: string): Promise<SocialApiError> {
   const body = await res.json().catch(() => ({}));
   const message = Array.isArray(body.message) ? body.message.join(' ') : body.message;
+  const code = typeof body.code === 'string' ? body.code : null;
+  Log.i('FORMS', `${fallback}: refused status=${res.status} code=${code ?? 'none'}`);
   return new SocialApiError(
     message || `${fallback} (${res.status})`,
-    typeof body.code === 'string' ? body.code : null,
-    res.status
+    code,
+    res.status,
+    amountBoundsOf(body)
   );
 }
 
@@ -297,6 +302,8 @@ export interface PricingView {
 export async function checkSubmission(formId: string): Promise<{
   hasSubmitted: boolean;
   paymentStatus?: string;
+  /** The id of the caller's own answer when there is one (a `pending` one is confirmed on load). */
+  submissionId?: string;
   formFull: boolean;
   /** Null when the form has one price for everybody. */
   pricing: PricingView | null;
@@ -323,6 +330,8 @@ export interface Submission {
   totalPaid: number;
   paymentStatus: string;
   createdAt: string;
+  /** The reference a PAYING GUEST was given ("1A2B-3C4D"); null on every other row. */
+  reference?: string | null;
   /** The file answers of this submission whose file the retention purge has deleted. */
   deletedFileIds?: string[];
   /** The live files of this submission, by id: the name a manager's download is saved under. */
@@ -337,9 +346,13 @@ export async function getSubmissions(formId: string): Promise<Submission[]> {
 }
 
 /** The payment state of the caller's own submission, read by the return page after Lydia. */
-export async function getSubmissionPayment(
-  submissionId: string
-): Promise<{ id: string; formId: string; paymentStatus: string }> {
+export async function getSubmissionPayment(submissionId: string): Promise<{
+  id: string;
+  formId: string;
+  paymentStatus: string;
+  /** The request's state, typed, when the server read it on this call. */
+  requestState?: PaymentRequestState;
+}> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}`
   );
@@ -350,11 +363,17 @@ export async function getSubmissionPayment(
 /**
  * Asks the server to read, at the payment provider, whether a pending online answer was paid, and
  * to record it if so - then answers the submission like `getSubmissionPayment`. The payer's return
- * page calls it, so a payment whose provider callback was lost is still confirmed.
+ * page calls it, so a payment whose provider callback was lost is still confirmed. A request the
+ * payer declined, or that was cancelled or expired, releases the answer: `requestState` says which,
+ * and the page offers the retry (`paymentReturnVerdict`).
  */
-export async function confirmSubmissionPayment(
-  submissionId: string
-): Promise<{ id: string; formId: string; paymentStatus: string }> {
+export async function confirmSubmissionPayment(submissionId: string): Promise<{
+  id: string;
+  formId: string;
+  paymentStatus: string;
+  /** The request's state, typed, when the server read it on this call. */
+  requestState?: PaymentRequestState;
+}> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/confirm-payment`,
     { method: 'POST' }
@@ -556,27 +575,77 @@ export async function submitForm(
     method: 'POST',
     body: JSON.stringify(payload),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    // Typed, so a payment-provider refusal (`code`) is worded by the one shared function rather
-    // than shown as the bare reason; every other refusal still reads as its message.
-    throw new SocialApiError(
-      err.message || 'Submission failed',
-      typeof err.code === 'string' ? err.code : null,
-      res.status
-    );
-  }
+  // Through the one builder, so a payment refusal (`code`, and the amount bounds) is worded by
+  // `providerRefusalMessage` in the reader's language rather than shown as the server's prose.
+  if (!res.ok) throw await refusal(res, 'Submission failed');
   return res.json();
 }
 
-/** What a guest on a public form's link is served: the questions, and nothing about its owner. */
+/**
+ * What a guest on a public form's link is served: the questions, what they cost, and nothing about
+ * its owner. A public form may charge (WP-P1): a base price, option supplements, cash, and a grid on
+ * ANSWERS, whose whole slice is `pricing` (a guest has no profile for a grid to resolve).
+ */
 export type PublicForm = Pick<
   Form,
-  'id' | 'title' | 'description' | 'imageUrl' | 'items' | 'opensAt' | 'anonymous'
+  | 'id'
+  | 'title'
+  | 'description'
+  | 'imageUrl'
+  | 'items'
+  | 'opensAt'
+  | 'anonymous'
+  | 'basePrice'
+  | 'currency'
+  | 'allowCashPayment'
 > & {
   closedAt?: string | null;
   formFull: boolean;
+  pricing: PricingView | null;
 };
+
+/**
+ * What a guest's submit answers: that it was taken, and when the form charges, Lydia's payer page
+ * to go to or that cash is owed to the organiser. Never a submission id.
+ */
+export interface PublicSubmitReply {
+  ok: true;
+  checkoutUrl?: string;
+  cashPayment?: true;
+  /** With `cashPayment`: the reference the guest gives the organiser. */
+  reference?: string;
+}
+
+/**
+ * What the guest return page reads about a paid answer, for whoever holds its receipt (WP-P2): the
+ * reference to give the organiser, the amount, and where the payment stands. Never an id.
+ */
+export interface GuestReceipt {
+  reference: string;
+  formId: string;
+  totalPaid: number;
+  currency: string;
+  paymentStatus: string;
+  /** The provider state the server read on THIS call; absent when none was. */
+  requestState?: PaymentRequestState;
+}
+
+/**
+ * Confirms a guest's payment from its RECEIPT - the proof Lydia's return URL carries instead of a
+ * session. The server reads the answer's own request at Lydia; nothing else from the URL is sent.
+ * The receipt goes in the body, so it stays out of access logs. Plain `fetch`: a guest has no
+ * session. A refusal is a `SocialApiError` (404: no answer has this receipt; 429: the per-receipt
+ * limit on asking Lydia).
+ */
+export async function confirmGuestReceipt(receipt: string): Promise<GuestReceipt> {
+  const res = await fetch(`${socialUrl()}/api/public/forms/receipts/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ receipt }),
+  });
+  if (!res.ok) throw await refusal(res, 'Receipt could not be read');
+  return res.json();
+}
 
 /** Why a public form could not be read: it is not there (or not public), or the call failed. */
 export class PublicFormUnavailableError extends Error {
@@ -598,16 +667,24 @@ export async function getPublicForm(id: string): Promise<PublicForm> {
 
 /**
  * Sends one guest answer. `website` is the honeypot the page hides from people; the server drops
- * any answer that fills it. The server's own sentence is thrown.
+ * any answer that fills it. A paid answer carries the address Lydia sends the request to
+ * (`payerEmail`, never stored) and the method. A refusal is thrown through the one builder, so a
+ * payment refusal (`code`, the amount bounds) is worded by `providerRefusalMessage`.
  */
 export async function submitPublicForm(
   id: string,
-  payload: { answers: Record<string, unknown>; website: string }
-): Promise<void> {
+  payload: {
+    answers: Record<string, unknown>;
+    website: string;
+    payerEmail?: string;
+    paymentMethod?: 'online' | 'cash';
+  }
+): Promise<PublicSubmitReply> {
   const res = await fetch(`${socialUrl()}/api/public/forms/${encodeURIComponent(id)}/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw await refusal(res, 'Submission failed');
+  return res.json();
 }

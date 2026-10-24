@@ -3178,6 +3178,63 @@ Android activity (capped at 200 dp of height per edge by the OS), a wider own-si
 nothing (Messenger has the same 12 px). Never an in-page workaround: the page receives only a
 `pointercancel`.
 
+## The swipe to the camera that "sometimes" did nothing: two classes, measured (Mi 9T, 2026-10-21)
+
+User report, phone app: *the swipe from the feed to the camera does not work every time*, and the
+user could not say when. The camera is the tab swipe's `prev` from `/posts`
+([reels](modules/reels.md#the-tab-c5)), so this is the TAB SWIPE (`+layout.svelte`,
+`swipeNavigation.ts`) and every finding holds for every tab. Reproduced on the Mi 9T
+(`v1.3.1-alpha.5`, dev, 436 CSS px wide, dpr 2.475, gesture navigation) with real touches
+(`adb input swipe` and `input motionevent` for curved paths) and passive CDP listeners on `window`
+recording every touch event's `cancelable` and `defaultPrevented`, 92 cells (then 30 with the fix
+simulated): start x from 20 to
+400 physical px, slope -0.3 to 0.6, 120 to 600 ms, 65 to 240 CSS px of travel, scroll top and
+mid-feed, started on media, text and empty card space, 50 ms to 1.2 s after a vertical fling, 0 to
+150 ms after coming back from the camera, curved starts. Evidence and the runner:
+`<harness-dir>/a1-bench/camera-swipe-r1021/`. Two classes failed, every time:
+
+| Class | Cells | What the events show |
+| --- | --- | --- |
+| **A. A slow start: the first `touchmove` lands under the 12 px lock** | 8 of 8 whose first move was < 12 CSS px (3 of them carried far enough to commit) | Chrome dispatches no `touchmove` inside its touch slop (8 dp = 8 CSS px in a WebView), so the first one arrives at 9-11 px. `updateSwipeNavGesture` is still `pending` below `GESTURE_LOCK_PX` (12), so nothing claims it, and Chrome starts its own gesture on that unclaimed move: EVERY later move is `cancelable=false` (move 1 at 12-21 px). At the lock, `claimTouchMove` reads that, logs `[touch] touchmove is not cancelable (a scroll is in progress) - not claimed`, and stands the swipe down. No scroll event fires (`pan-y` drops the horizontal pan) - the page just does not move |
+| **B. The start inside Android's LEFT system-gesture inset** - x < 74 physical px (30 CSS px, `EdgeBackGestureHandler mEdgeWidthLeft=74`) | 8 of 8 | `touchstart > touchcancel` at once: the SYSTEM took the touch as Back. Depending on the WebView history it lands on the previous page (`/associations`, a stale `/login`) or closes the app |
+
+**Everything else opened the camera, 64 of 64 that cleared the release rule**: every straight swipe
+from x >= 80 physical px at any slope up to 0.6, scroll top or mid-feed, on media, text or empty
+space; 4 of 4 straight after a fling; 6 of 6 within 150 ms of coming back from the camera. A fast
+swipe passes class A only because its first `touchmove` already jumps past 12 px - which is why
+REEL-1 and check V, both one 180-200 ms injected swipe, never saw it.
+
+**A decides on the first delivered move, and ONLY the speed at the slop decides it.** Same travel
+(113 CSS px), same line, same start: first move 11 px -> stayed; first move 13 px -> camera. Made
+deterministic with `input motionevent` (one `MOVE` per step): a path whose first move is 10 px stayed
+4 of 4, the same path with a 13 px first move opened the camera 4 of 4. A
+deliberate thumb crosses the slop slowly, a flick does not - "not every time", with no visible
+difference to the person swiping. Proved by SIMULATING the fix on the phone (no rebuild): a second
+non-passive listener on `.app-shell` that `preventDefault`s the first horizontal-dominant move past
+**8 px** made the same cells claimable every time - 12 of 12 that carried far enough opened the
+camera, 0 `cancelable=false` in 20, and the deterministic 10 px path opened it 4 of 4 - and five vertical scrolls, with or without it, scrolled the
+same (44-58 scroll events each). The `touchClaim.ts` comment attributes the `cancelable=false` it
+found on 2026-10-02 to "a sideways swipe right after a vertical fling"; the fling cells here all
+passed, and class A produces that exact line, so that observation was most likely class A.
+
+**Refused BY DESIGN, not defects:** a short slow drag (65-89 CSS px under 0.5 px/ms, below a quarter
+of the screen - [section 38](#a-tap-that-drifts-is-not-a-swipe-and-60px-could-not-tell-them-apart)),
+8 of 10 curved starts whose first 12 px were more vertical than horizontal (`vertical`, a scroll),
+a start on the header (`data-swipe-nav-ignore`), and any swipe while a modal is open (the
+overlay-stack depth - a composer left open from an earlier session refused two cells here).
+
+**iPhone, by code only (not measured):** WebKit has no slop suppression, so its first `touchmove`
+arrives at 1-2 px and the 12 px lock is reached with every move still `cancelable` until UIKit's
+own pan recognises - whether that happens before 12 px is not known, so class A is unproven there.
+Class B has no iOS twin on the left (the iOS back swipe is the app's own, `swipeBack`, and only in
+a conversation).
+
+**The fix for A** is the lock moving under the engine's slop - the move that decides who owns the
+touch must be the one the gesture claims ([backlog](../backlog.md#p2---the-tab-swipe-is-lost-on-a-slow-start-the-12-px-lock-sits-past-chromes-8-dp-slop-mi-9t-2026-10-21)).
+**B is not the page's to fix in-page**: the page only ever sees a `touchcancel`. The options are the
+ones the right edge had - exclusion rects (`edgeGestureExclusion.ts`, 200 dp per edge) over the
+feed, or nothing - and that is a user decision.
+
 ## Tooltips: one convention, audited 2026-10-08
 
 Audit of every `title` in `frontend/src` (about 440 hits, 270 of them `title={m.x()}` on an element).
@@ -3212,3 +3269,27 @@ click-opened `MessageInfoTooltip`, and the panels (`ReactorsPanel`, `SeenByHeads
 the screen has its shape (within 2 %), else `rounded-2xl` (12 px, the larger card) centred over a
 blurred canvas copy of the same picture. The scale has no step above 12 px that means "media surface";
 `--radius-4xl` (24 px) is unscaled and was not used. See [reel-editor](modules/reel-editor.md#one-frame-for-capture-edit-and-publish-2026-10-11-replaces-the-cover-and-crop-of-1739).
+
+## Motion: three durations, one easing, one reduced-motion rule (2026-10-23)
+
+User, on 1.4.0: small animations, for instance when the comments section opens. The scale is in
+`app.css` (`:root`), and every class built on it moves `transform` or `opacity` ONLY - no layout, no
+blur, no shadow animation, which is what a Mi 9T cannot afford.
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `--motion-fast` | 120 ms | press feedback (`motion-press`: scale 0.9 while `:active`) |
+| `--motion-base` | 200 ms | a fade (`motion-fade-in`), one arriving item (`motion-pop-in`: 8 px rise + fade) |
+| `--motion-slow` | 250 ms | a bottom sheet rising from its edge (`motion-sheet-in`) |
+| `--motion-ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | all of them, and the sheet's drag release |
+
+**Reduced motion has ONE mechanism**, the global rule at the end of `app.css` that takes every CSS
+animation and transition to 0.01 ms. A class on this scale carries no media query of its own; use CSS
+(not Svelte's `transition:` directive, which runs on the Web Animations API and that rule does not
+reach). JS-driven moves (`ReelCommentsSheet.settle`) ask `matchMedia` and skip.
+
+Where it is used: the reel comments sheet (slides up while the reel shrinks into a rounded card above it (scale 0.34 of the screen, `ReelViewer`, as Instagram's); the X, Escape
+and a tap on the reel slide it out on the drag release snap, the reel growing back with it, before the history entry goes), a new
+comment in `PostComments` (`commentArrivals`: one new id plays the entrance - never the first draw,
+never a page of older comments, never the swap of the reader's local id for the server's row), and
+the three buttons of the reel action rail (`motion-press`). There is no reaction drawer on `main`.

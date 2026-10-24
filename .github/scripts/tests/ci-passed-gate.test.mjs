@@ -127,6 +127,43 @@ if (!it) {
   else bad(`integration job runs ${image}, production runs ${prod} - bump them together`);
   if (/SOCIAL_IT_DATABASE_URL: postgres:\/\//.test(it)) ok('it sets SOCIAL_IT_DATABASE_URL');
   else bad('it does not set SOCIAL_IT_DATABASE_URL - every spec would skip, and pass');
+  // The live seat scripts (cap atomicity, viewer count, expiry) need a REAL Redis, the production one.
+  const redisImage = /\n\s+image: (redis:\S+)/.exec(it)?.[1];
+  const prodRedis = /\n\s+image: (redis:\S+)/.exec(
+    readFileSync(resolve(repoRoot, 'infrastructure/docker-compose.prod.yml'), 'utf8')
+  )?.[1];
+  if (redisImage && prodRedis && redisImage === prodRedis) ok(`same Redis as production: ${redisImage}`);
+  else bad(`integration job runs ${redisImage}, production runs ${prodRedis} - bump them together`);
+  if (/SOCIAL_IT_REDIS_URL: redis:\/\//.test(it)) ok('it sets SOCIAL_IT_REDIS_URL');
+  else bad('it does not set SOCIAL_IT_REDIS_URL - the live seat scripts would skip, and pass');
+  if (/live-seats\\\.spec\\\.ts/.test(it)) ok('it selects live-seats.spec.ts');
+  else bad('its pattern does not select live-seats.spec.ts - the seat scripts run nowhere');
+}
+
+console.log('the addressing scripts run against a real Redis:');
+{
+  const rust = /\n  test-rust:[\s\S]*?(?=\n  [a-z-]+:\n)/.exec(ci)?.[0] ?? '';
+  if (/image: redis:/.test(rust)) ok('test-rust runs a Redis service');
+  else bad('test-rust runs no Redis - the gateway presence scripts would run nowhere');
+  if (/GATEWAY_IT_REDIS_URL: redis:\/\//.test(rust)) ok('test-rust sets GATEWAY_IT_REDIS_URL');
+  else bad('test-rust does not set GATEWAY_IT_REDIS_URL - the gateway presence tests fail under CI');
+  const boot = /\n  boot-nest-apps:[\s\S]*?(?=\n  [a-z-]+:\n)/.exec(ci)?.[0] ?? '';
+  if (/CHAT_DELIVERY_IT_REDIS_URL: redis:\/\//.test(boot) && /addressing\.redis/.test(boot)) {
+    ok('boot-nest-apps runs addressing.redis with CHAT_DELIVERY_IT_REDIS_URL');
+  } else bad('boot-nest-apps does not run addressing.redis against Redis - the publish script runs nowhere');
+}
+
+console.log('every Redis CI runs is the one production runs:');
+{
+  const prodRedis = /\n\s+image: (redis:\S+)/.exec(
+    readFileSync(resolve(repoRoot, 'infrastructure/docker-compose.prod.yml'), 'utf8')
+  )?.[1];
+  const ciRedis = [...ci.matchAll(/\n\s+image: (redis:\S+)/g)].map((x) => x[1]);
+  if (ciRedis.length === 0) bad('ci.yml runs no Redis at all');
+  for (const image of ciRedis) {
+    if (image === prodRedis) ok(`ci.yml: ${image}`);
+    else bad(`ci.yml runs ${image}, production runs ${prodRedis} - bump them together`);
+  }
 }
 
 console.log('');

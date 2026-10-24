@@ -168,12 +168,26 @@ class MemorySeats {
   cap = Number.POSITIVE_INFINITY;
   readonly held = new Set<string>();
 
-  async take(liveId: string, viewerId: string): Promise<void> {
+  async take(liveId: string, viewerId: string): Promise<number> {
     const member = seatMember(liveId, viewerId);
     if (!this.held.has(member) && this.held.size >= this.cap) {
       throw new ServiceUnavailableException({ code: 'LIVE_FULL', viewerCap: this.cap });
     }
     this.held.add(member);
+    return this.count(liveId);
+  }
+
+  /** How many times the broadcaster's read-only count was asked. */
+  watchingCalls = 0;
+
+  async watching(liveId: string): Promise<number | null> {
+    this.watchingCalls++;
+    return this.count(liveId);
+  }
+
+  private count(liveId: string): number {
+    const prefix = seatMember(liveId, '');
+    return [...this.held].filter((m) => m.startsWith(prefix)).length;
   }
 
   async release(liveId: string, viewerId: string): Promise<void> {
@@ -492,6 +506,33 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
       // A viewer leaving gives its seat to the next one in - whatever case its URL spelled the id in.
       await lives.leave(BOB, live.id.toUpperCase());
       await expect(lives.get(CAROL, live.id)).resolves.toMatchObject({ id: live.id });
+    });
+
+    it('tells every poll HOW MANY watch - a number, never who - the broadcaster uncounted', async () => {
+      const live = await start();
+      await lives.get(BOB, live.id);
+      const bobs = await lives.manifest(BOB, live.id);
+      expect(bobs.viewers).toBe(1);
+      await lives.get(CAROL, live.id);
+      expect((await lives.manifest(CAROL, live.id)).viewers).toBe(2);
+      // The broadcaster's KEY read (a return from the background) shows no count, so runs none.
+      seats.watchingCalls = 0;
+      await lives.get(ALICE, live.id);
+      expect(seats.watchingCalls).toBe(0);
+      // Its manifest reads the same number as the viewers', without taking a seat.
+      const alices = await lives.manifest(ALICE, live.id);
+      expect(alices.viewers).toBe(2);
+      expect(seats.watchingCalls).toBe(1);
+      expect(seats.held.size).toBe(2);
+      // NO IDENTITY IN THE ANSWER: no viewer's id anywhere in what the broadcaster or a viewer reads.
+      expect(JSON.stringify(bobs)).not.toContain(CAROL);
+      expect(JSON.stringify(alices)).not.toContain(BOB);
+      expect(JSON.stringify(alices)).not.toContain(CAROL);
+      // A viewer who leaves, and one the broadcaster removes, leave the count at once.
+      await lives.leave(BOB, live.id);
+      expect((await lives.manifest(ALICE, live.id)).viewers).toBe(1);
+      await lives.removeViewer(ALICE, live.id, CAROL);
+      expect((await lives.manifest(ALICE, live.id)).viewers).toBe(0);
     });
 
     it('answers removed, blocked and ended BEFORE full, and frees the seat of a removed viewer', async () => {
@@ -2525,6 +2566,43 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
       expect(row.liveChat).toMatchObject({
         text: withNul,
         integrity: { content: 'verified', author: 'verified', reporter: 'verified' },
+      });
+    });
+
+    it('a REMOVED viewer reports what they saw before the removal, and the live itself - never a line after it', async () => {
+      const live = await start();
+      const before = await say(BOB, live.id, 'avant');
+      await lives.mayWatch(CAROL, live.id);
+      await lives.removeViewer(ALICE, live.id, CAROL);
+      const after = await say(BOB, live.id, 'apres');
+      // The removal is pinned to the first line's instant: "no later than" is the boundary, and the
+      // second line, written in a later transaction, is strictly after it.
+      await q(
+        `UPDATE live_removed_viewers SET "removedAt" =
+           (SELECT "createdAt" FROM live_chat_messages WHERE id = $1)
+          WHERE "liveId" = $2 AND "viewerId" = $3`,
+        [before.id, live.id, CAROL]
+      );
+
+      expect(await refusal(reportLine(CAROL, after.id, 'apres'))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      await expect(reportLine(CAROL, before.id, 'avant')).resolves.toMatchObject({
+        contentType: 'live_chat',
+        reportedUserId: BOB,
+      });
+      await expect(
+        reports().createReport({
+          reporterId: CAROL,
+          contentType: 'live',
+          contentId: live.id,
+          reason: 'inappropriate',
+        })
+      ).resolves.toMatchObject({ contentType: 'live', reportedUserId: ALICE });
+      // Only the removed viewer is bounded: another viewer reports the later line.
+      await expect(reportLine(DAVE, after.id, 'apres')).resolves.toMatchObject({
+        contentType: 'live_chat',
       });
     });
 

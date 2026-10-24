@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { CommentIdentityService } from './comment-identity';
 import { Repository } from 'typeorm';
 import { PostInteractionsService } from './post-interactions.service';
 import { Post } from './entities/post.entity';
@@ -55,7 +56,8 @@ describe('PostInteractionsService.votePoll enforces the poll', () => {
       postRepo as unknown as Repository<Post>,
       {} as PostNotificationsService,
       {} as PushService,
-      {} as PostMediaRetentionService
+      {} as PostMediaRetentionService,
+      {} as CommentIdentityService
     );
     return { service, post, saved };
   }

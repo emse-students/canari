@@ -8,6 +8,7 @@
  */
 import { PostsService } from './posts.service';
 import { PostInteractionsService } from './post-interactions.service';
+import type { CommentIdentityService } from './comment-identity';
 import type { Repository } from 'typeorm';
 import type { Post } from './entities/post.entity';
 import type { RedisService } from '../common/redis/redis.service';
@@ -113,7 +114,16 @@ describe('PostInteractionsService.deleteComment', () => {
       postRepo as unknown as Repository<Post>,
       {} as PostNotificationsService,
       {} as PushService,
-      { release } as unknown as PostMediaRetentionService
+      { release } as unknown as PostMediaRetentionService,
+      {
+        viewerFor: (_c: unknown, who: { viewerId?: string; isGlobalAdmin?: boolean }) =>
+          Promise.resolve({
+            viewerId: who.viewerId,
+            isGlobalAdmin: !!who.isGlobalAdmin,
+            isModerator: false,
+            managedAssociationIds: new Set<string>(),
+          }),
+      } as unknown as CommentIdentityService
     );
     return { service, post, release };
   }

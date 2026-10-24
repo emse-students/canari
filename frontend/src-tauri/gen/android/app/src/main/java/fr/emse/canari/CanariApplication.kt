@@ -63,9 +63,15 @@ class CanariApplication : Application() {
      */
     private fun initStorageBackedState() {
         processPendingPushSecret()
-        migrateDeviceKeyFromJson()
         checkKeystoreHealth()
         recordInstallerPackage()
+        // Before any push can be handled by this process: the key that seals the native caches,
+        // created here and nowhere else ([NativeCacheKey]).
+        try {
+            NativeCacheKey.ensure(this)
+        } catch (e: Exception) {
+            Log.e(TAG, "NativeCacheKey.ensure: exception: ${e.message}", e)
+        }
     }
 
     /**
@@ -160,56 +166,25 @@ class CanariApplication : Application() {
         }
     }
 
-    /**
-     * WP-SEC-1 one-shot migration: existing installs hold the device key only in
-     * push_context.json. Promote it to the Android Keystore, then strip the field
-     * from the JSON. The background readers (MlsContextLoader) never fall back to
-     * the JSON — if the app has not run since the update, one push falls back to
-     * the generic text and the next launch fixes it permanently.
-     */
-    private fun migrateDeviceKeyFromJson() {
-        try {
-            val file = File(MlsContextLoader.tauriDataDir(this), "push_context.json")
-            if (!file.exists()) return
-            val j = org.json.JSONObject(file.readText())
-            val deviceKeyB64 = j.optString("deviceKeyB64", "")
-            if (deviceKeyB64.isEmpty()) return
-            val userId = j.optString("userId", "")
-            val deviceId = j.optString("deviceId", "")
-            if (userId.isEmpty() || deviceId.isEmpty()) return
-
-            val stored = MlsDeviceKeyStore.store(this, userId, deviceId, deviceKeyB64)
-            if (!stored) {
-                Log.w(TAG, "migrateDeviceKeyFromJson: Keystore store failed — keeping JSON field for now")
-                return
-            }
-
-            // Strip the field and rewrite.
-            j.remove("deviceKeyB64")
-            file.writeText(j.toString())
-            Log.i(TAG, "migrateDeviceKeyFromJson: key promoted to Keystore, JSON stripped")
-        } catch (e: Exception) {
-            Log.e(TAG, "migrateDeviceKeyFromJson: exception: ${e.message}", e)
-        }
-    }
-
     internal fun processPendingPushSecret() {
-        try {
-            val file = File(MlsContextLoader.tauriDataDir(this), "pending_push_secret.txt")
-            if (!file.exists()) return
-            // Read raw bytes first so the overwrite covers the exact file size, including
-            // any trailing newline. secret.length is a char count and diverges from byte
-            // count for multi-byte UTF-8 sequences, leaving secret bytes unzeroed.
-            val rawBytes = file.readBytes()
-            val secret = rawBytes.toString(Charsets.UTF_8).trim()
-            if (secret.isNotEmpty()) {
-                PushSecretKeystore.store(this, secret)
-                Log.i(TAG, "processPendingPushSecret: secret stored in the Keystore")
+        synchronized(PushSecretKeystore.handoffLock) {
+            try {
+                val file = File(MlsContextLoader.tauriDataDir(this), "pending_push_secret.txt")
+                if (!file.exists()) return@synchronized
+                // Read raw bytes first so the overwrite covers the exact file size, including
+                // any trailing newline. secret.length is a char count and diverges from byte
+                // count for multi-byte UTF-8 sequences, leaving secret bytes unzeroed.
+                val rawBytes = file.readBytes()
+                val secret = rawBytes.toString(Charsets.UTF_8).trim()
+                if (secret.isNotEmpty()) {
+                    PushSecretKeystore.store(this, secret)
+                    Log.i(TAG, "processPendingPushSecret: secret stored in the Keystore")
+                }
+                file.writeBytes(ByteArray(rawBytes.size) { 0 })
+                file.delete()
+            } catch (e: Exception) {
+                Log.e(TAG, "processPendingPushSecret: push secret transfer failed: ${e.message}", e)
             }
-            file.writeBytes(ByteArray(rawBytes.size) { 0 })
-            file.delete()
-        } catch (e: Exception) {
-            Log.e(TAG, "processPendingPushSecret: push secret transfer failed: ${e.message}", e)
         }
     }
 

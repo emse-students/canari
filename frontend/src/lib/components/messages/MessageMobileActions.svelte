@@ -8,6 +8,7 @@
     Trash2,
     FaceSlightlySmilingPlus,
     Copy,
+    Share2,
     Pin,
     PinOff,
   } from '@lucide/svelte';
@@ -57,6 +58,11 @@
     onForward?: () => void;
     /** Called when the user taps the copy button. Hidden when undefined (e.g. media-only). */
     onCopy?: () => void;
+    /**
+     * Called when the user taps "Partager": the system share sheet on the message's text or its
+     * attachment (`sharing/shareOut.ts`). Hidden when undefined - outside the phone apps.
+     */
+    onShare?: () => void;
     /** Whether the message is pinned (toggles the pin/unpin label + icon). */
     pinned?: boolean;
     /** Called when the user taps the pin/unpin button. Hidden when undefined. */
@@ -91,6 +97,7 @@
     onReply,
     onForward,
     onCopy,
+    onShare,
     pinned = false,
     onPin,
     onEdit,
@@ -279,6 +286,20 @@
           >
             <Copy size={20} />
             <span class="text-text-muted text-2xs font-medium">{m.msg_copy_label()}</span>
+          </button>
+        {/if}
+
+        {#if !isDeleted && onShare}
+          <button
+            onclick={() => {
+              onShare?.();
+              onClose?.();
+            }}
+            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
+            aria-label={m.msg_share_label()}
+          >
+            <Share2 size={20} />
+            <span class="text-text-muted text-2xs font-medium">{m.msg_share_label()}</span>
           </button>
         {/if}
 

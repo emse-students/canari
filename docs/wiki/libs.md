@@ -100,6 +100,15 @@ and this file pins what that module answers plus `maxUserIds`, the cap the gatew
 `apps/chat-gateway/src/presence.rs`, which is why CI's gateway filter names `libs/contracts/` too.
 `expected: null` is a refusal: a malformed question is a 400, never an empty audience.
 
+### `payment-amount-range.json`
+
+The payable range of one checkout, in cents (Lydia's 0.50-1000 EUR, 2026-10-21). Not a case table
+but two numbers two services must agree on: core-service enforces them (`LYDIA_MIN/MAX_AMOUNT_CENTS`)
+and social-service refuses a form total outside them before calling core (`PROVIDER_MIN/MAX_AMOUNT_CENTS`,
+`core-payment-error.ts`). Read by `apps/core-service/src/payment/lydia-payment-provider.spec.ts`
+and `apps/social-service/src/common/core-payment-error.spec.ts`, which is why CI's core-service
+filter names `libs/contracts/` too ([payments](frontend/modules/payments.md)).
+
 ## A SHAPE IS NOT A RULE, AND IT IS PINNED WHERE IT IS WRITTEN (2026-09-22)
 
 A case table answers "given this input, what is the right answer" - a BEHAVIOUR three

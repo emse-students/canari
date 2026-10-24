@@ -59,6 +59,7 @@ describe('FormsService pricing, through submit', () => {
       query: jest.fn(() => Promise.resolve([])),
       count: jest.fn(() => Promise.resolve(0)),
       findOne: jest.fn(() => Promise.resolve(null)),
+      find: jest.fn(() => Promise.resolve([])),
       create: jest.fn((_entity: unknown, x: Record<string, unknown>) => x),
       save: jest.fn((x: Record<string, unknown>) => {
         saved.push(x);
@@ -68,6 +69,7 @@ describe('FormsService pricing, through submit', () => {
     const submissionRepo: any = {
       count: jest.fn(() => Promise.resolve(0)),
       findOne: jest.fn(() => Promise.resolve(null)),
+      find: jest.fn(() => Promise.resolve([])),
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
       manager: {
         transaction: jest.fn((_level: string, run: (m: unknown) => Promise<void>) => run(manager)),
@@ -99,7 +101,9 @@ describe('FormsService pricing, through submit', () => {
       { create: jest.fn() } as any,
       pricingFacts,
       {} as any,
-      {} as any
+      {} as any,
+      // FormOrganiserAlertService: switched off, as it ships.
+      { enabled: () => false } as any
     );
     return { service, pricingFacts, saved };
   }
