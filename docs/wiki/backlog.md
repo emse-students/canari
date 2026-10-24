@@ -480,6 +480,33 @@ field lands on the card, so a driven sign-in types into the wrong field. It is a
 settings, not of the app. A driven sign-in avoids it by moving focus with Tab and submitting with Enter;
 the page the test accounts use is the "Connexion externe (service-account)" route, not the school CAS.
 
+## P3 - The background Welcome route refuses `not_a_member` before it asks whether these bytes already landed (review of #2329, 2026-10-24)
+
+`POST /api/mls/push/send-welcome-and-commit` (`push.controller.ts`, `sendWelcomeAndCommitPush`) runs, in
+order: `verifyPushSecretAuth` -> the body checks -> the **membership guard** (no `dm_group_members` row
+for the target -> `409 {status: 'rejected', reason: 'not_a_member'}`) -> `validateCommit`, whose
+refusals are the only ones that first ask the commit log whether THESE bytes from THIS device already
+landed at the base (`answerIfAlreadyAccepted`, `messaging.service.ts`) and answer `duplicate` if so.
+
+**The sequence it loses:** the phone's first POST is accepted (the Add lands, the Welcome is stored);
+the answer is lost and Android's `HttpURLConnection` silently retries the POST on a reused connection;
+between the two, the target is removed from the conversation. The retry meets the membership guard
+first and reads `not_a_member`, a typed refusal, so the phone CLEARS its stage
+(`BackgroundWelcomeAnswer.settle`) while the server holds its commit. The device then recovers through
+the foreground's replay and ladder (`ACCEPTED AND NOT HELD` is never said: the clear ran on a refusal),
+so the cost is a recovery, not a fork. Rare: it needs a lost answer AND a removal inside one round trip.
+
+**Why the check cannot simply move after `validateCommit`:** the guard is the single chokepoint that
+stops a holder's phone from re-adding a REMOVED user from a push. After the gate, a removed target's
+re-add commit would already be accepted - the epoch moved, the Welcome stored - before it is refused.
+That is a security regression, not a reordering.
+
+**The fix owed:** on the membership refusal only, ask `answerIfAlreadyAccepted` for these bytes (group,
+device, base epoch, commit) and answer the duplicate acceptance when the log holds them; refuse
+`not_a_member` otherwise. It needs the helper exposed from `MessagingService` (it is private today) and
+one spec: an accepted commit, then a removal, then the same request -> `duplicate`, never
+`not_a_member`. Closes when that spec is green.
+
 ## Hardware reading owed (user): one background Welcome on the Mi 9T (2026-10-22)
 
 The background Welcome route (`POST /mls/push/send-welcome-and-commit`) now validates its commit as the

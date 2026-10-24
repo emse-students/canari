@@ -78,7 +78,6 @@ class BackgroundWelcomeAnswerTest {
     fun anAcceptanceMergesARefusalClearsAndNoAnswerLeavesTheStage() {
         assertEquals(Settlement.Merge, BackgroundWelcomeAnswer.settle(Outcome.Accepted, 1))
         listOf(
-            Outcome.Refused(Refusal.CONCURRENT_COMMIT, "concurrent_commit", 1),
             Outcome.Refused(Refusal.NOT_A_MEMBER, "not_a_member", null),
             Outcome.Refused(Refusal.OTHER, "x", null),
             Outcome.Failed(400),
@@ -89,6 +88,12 @@ class BackgroundWelcomeAnswerTest {
         listOf(Outcome.Unknown(null), Outcome.Unknown(503)).forEach { outcome ->
             assertEquals("$outcome", Settlement.Leave, BackgroundWelcomeAnswer.settle(outcome, 1))
         }
+        // The lock a `concurrent_commit` reports may be this commit's own first copy (a silent
+        // retry of the POST): not a refusal of these bytes, so the stage is left too.
+        assertEquals(
+            Settlement.Leave,
+            BackgroundWelcomeAnswer.settle(Outcome.Refused(Refusal.CONCURRENT_COMMIT, "concurrent_commit", 1), 1),
+        )
     }
 
     @Test
@@ -132,7 +137,7 @@ class BackgroundWelcomeAnswerTest {
 
         val applied = BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(Outcome.Unknown(null), 1), staged)
 
-        assertEquals(Applied.Left("no answer read"), applied)
+        assertEquals(Applied.Left("no definitive answer"), applied)
         assertEquals(emptyList<String>(), staged.calls)
         val (level, line) = BackgroundWelcomeAnswer.report(applied)
         assertEquals(Level.WARN, level)

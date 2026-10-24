@@ -677,8 +677,12 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   `unknown`: nothing is settled, because guessing either way is the fork this exists to prevent.
   So is a 4xx that refuses only THE REQUEST - 401, 403, 408, 429 (`REQUEST_ONLY_REFUSALS`): Android's
   `HttpURLConnection` silently retries a POST on a reused connection, so the request read may be a
-  copy of one the server accepted, and the stage is left for the foreground's resubmission. A 400
-  still clears.
+  copy of one the server accepted, and the stage is left for the foreground's resubmission. A typed
+  `concurrent_commit` is left too: the lock it reports may be this commit's own first copy, as the
+  client's resubmission rule reads it (`resubmissionVerdict`), and the group answers `commit-pending`
+  until the foreground settles it. A 400 and every other typed `rejected` body still clear. One
+  route-side gap is owed: the membership guard answers `not_a_member` before the duplicate check
+  ([backlog](../backlog.md#p3---the-background-welcome-route-refuses-not_a_member-before-it-asks-whether-these-bytes-already-landed-review-of-2329-2026-10-24)).
 - **Only a COLD process stages or settles** (`background_write_mls_bin_if_unchanged_and_cold`, the
   key-group join's writer). In a process whose foreground manager is loaded
   (`live_manager_in_process`), that manager persists over `mls.bin` at its next resume or checkpoint

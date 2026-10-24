@@ -24,7 +24,10 @@ object BackgroundWelcomeAnswer {
     enum class Refusal(val token: String) {
         /** The phone's base is not the group's epoch: it answered from a state the group left. */
         EPOCH_MISMATCH("epoch_mismatch"),
-        /** Another commit held the group's lock: says nothing about the next request. */
+        /**
+         * Another commit held the group's lock - possibly THIS commit's own first copy, when the
+         * request read is a silent retry: says nothing about these bytes, so the stage is left.
+         */
         CONCURRENT_COMMIT("concurrent_commit"),
         /** The target was removed from the group: no Welcome is owed. */
         NOT_A_MEMBER("not_a_member"),
@@ -123,6 +126,11 @@ object BackgroundWelcomeAnswer {
     fun settle(outcome: Outcome, baseEpoch: Long): Settlement = when (outcome) {
         Outcome.Accepted -> Settlement.Merge
         is Outcome.Refused -> when {
+            // NOT A REFUSAL OF THESE BYTES: the lock it reports may be held by this commit's own
+            // first copy (a silent `HttpURLConnection` retry), which may still land - the client's
+            // resubmission rule (`resubmissionVerdict`, `commitSubmission.ts`) reads it the same way.
+            // The group then answers `commit-pending` until the foreground settles the stage.
+            outcome.reason == Refusal.CONCURRENT_COMMIT -> Settlement.Leave
             outcome.reason == Refusal.EPOCH_MISMATCH && outcome.serverEpoch != null && baseEpoch >= 0 ->
                 Settlement.Clear(baseEpoch, outcome.serverEpoch)
             outcome.reason == Refusal.WELCOME_TARGET_UNKNOWN || outcome.reason == Refusal.WELCOME_TARGET_NOT_MEMBER ->
@@ -175,7 +183,7 @@ object BackgroundWelcomeAnswer {
      */
     fun apply(settlement: Settlement, staged: StagedWelcome): Applied {
         val (report, done) = when (settlement) {
-            Settlement.Leave -> return Applied.Left("no answer read")
+            Settlement.Leave -> return Applied.Left("no definitive answer")
             Settlement.Merge -> staged.merge() to Applied.Merged
             is Settlement.Clear ->
                 staged.clear(settlement.staleBase, settlement.serverEpoch, settlement.targetRefused) to Applied.Cleared
@@ -211,7 +219,8 @@ object BackgroundWelcomeAnswer {
             Refusal.EPOCH_MISMATCH ->
                 "REFUSED epoch_mismatch: built on base $baseEpoch, the group is at ${outcome.serverEpoch} - " +
                     "this phone answered from a state the group left; the Add is cleared, left to the foreground"
-            Refusal.CONCURRENT_COMMIT -> "REFUSED concurrent_commit - another commit won the lock; the Add is cleared"
+            Refusal.CONCURRENT_COMMIT ->
+                "REFUSED concurrent_commit - the lock may be this commit's own first copy; the Add is left to the foreground"
             Refusal.NOT_A_MEMBER -> "REFUSED not_a_member - the target was removed; the Add is cleared"
             Refusal.WELCOME_TARGET_UNKNOWN, Refusal.WELCOME_TARGET_NOT_MEMBER ->
                 "REFUSED ${outcome.token} - the server does not admit this target; the Add is cleared, " +
