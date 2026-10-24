@@ -30,6 +30,26 @@
  * `leafUsers`), and the approximation disappears with no change here.
  */
 
+/**
+ * A client's 5xx answers minus the ones THE ROW'S OWN FAULT fulfilled (DUP-5's `status 503`), ONE
+ * forgiven per provoked answer - a count, never a pattern, so an unprovoked 503 on the same path
+ * still fails invariant 4. `http5xx` entries are `<status> <url up to 120 chars>` (`invariant.mjs`).
+ *
+ * @param {string[]} http5xx
+ * @param {{status: number, url: string}[]} provoked fault records' fulfilled 5xx (`rowkit.mjs` `provokedFailures`)
+ * @returns {{kept: string[], forgiven: string[]}}
+ */
+export function forgiveProvoked5xx(http5xx, provoked) {
+  const kept = [...(http5xx ?? [])];
+  const forgiven = [];
+  for (const p of provoked ?? []) {
+    if (!(p.status >= 500)) continue;
+    const i = kept.indexOf(`${p.status} ${String(p.url).slice(0, 120)}`);
+    if (i >= 0) forgiven.push(...kept.splice(i, 1));
+  }
+  return { kept, forgiven };
+}
+
 /** Lines that are never acceptable after an MLS row, wherever they appear (section 4.0, item 4). */
 export const FORBIDDEN = [
   { name: 'accepted-not-held', re: /ACCEPTED AND NOT HELD/ },
@@ -81,7 +101,7 @@ export function forbiddenIn(lines) {
  * @param {object[]} obs.clients one per client in play:
  *   `{ device, userId, deviceId, member, epochs: {gid: epoch}|null, epochsWhy?, fingerprint?, pendingSubmission?,
  *      loggedOut, lines: (string|{text,level})[]|null, rowWatched?: boolean (false: the lines cover the probe only),
- *      http5xx?: string[], leafUsers?: string[],
+ *      http5xx?: string[], provoked5xx?: {status, url}[] (forgiven one each, recorded as an approximation), leafUsers?: string[],
  *      received?: {marker, count, own: boolean|null, authorId: string|null}[] }`
  * @param {object} obs.server `{ activeEpoch, commitEpochs: number[], roster: {userId, awaitingAdmission}[],
  *   seats: {userId, deviceId, status, kicked}[], lines: string[]|null, unreachable?: string }`
@@ -198,7 +218,10 @@ export function invariantVerdict(obs) {
       approx(4, `${c.device}: client console observed during the probe only - a runner passes its own watcher to cover the row`);
     }
     for (const hit of forbiddenIn(c.lines ?? [])) fail(4, `${c.device}: ${hit}`);
-    for (const h of c.http5xx ?? []) fail(4, `${c.device}: a 5xx answer: ${h}`);
+    const { kept, forgiven } = forgiveProvoked5xx(c.http5xx, c.provoked5xx);
+    for (const h of kept) fail(4, `${c.device}: a 5xx answer: ${h}`);
+    // NOT SILENT: the row provoked these on purpose, and the verdict says which it set aside.
+    if (forgiven.length) approx(4, `${c.device}: ${forgiven.length} 5xx answer(s) the row's own fault provoked, forgiven one each: ${forgiven.join('; ')}`);
     if (c.loggedOut) fail(4, `${c.device}: logged out`);
   }
   if (server.lines === null || server.lines === undefined) {

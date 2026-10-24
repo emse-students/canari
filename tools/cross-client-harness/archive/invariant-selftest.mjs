@@ -7,7 +7,7 @@
  *
  *   bun archive/invariant-selftest.mjs
  */
-import { FORBIDDEN, forbiddenIn, invariantVerdict } from '../invariantverdict.mjs';
+import { FORBIDDEN, forbiddenIn, forgiveProvoked5xx, invariantVerdict } from '../invariantverdict.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -143,6 +143,23 @@ ok('4: "erased" in prose is not "ERASES"', forbiddenIn(['the draft was erased'])
 w = world();
 w.clients[0].http5xx = ['502 https://dev.example/api/mls/commit'];
 ok('4: a 5xx a client received fails', failsOn(invariantVerdict(w), 4, /5xx/));
+// A 5xx THE ROW'S OWN FAULT PROVOKED (DUP-5) is forgiven ONCE per provoked answer, and said.
+w = world();
+w.clients[0].http5xx = ['503 https://dev.example/api/mls/commit'];
+w.clients[0].provoked5xx = [{ status: 503, url: 'https://dev.example/api/mls/commit' }];
+{
+  const v = invariantVerdict(w);
+  ok('4: a provoked 503 is forgiven', v.ok);
+  ok('4: ... and named as an approximation, never silent', v.approximations.some((a) => a.invariant === 4 && /own fault provoked/.test(a.what)));
+}
+w.clients[0].http5xx.push('503 https://dev.example/api/mls/commit');
+ok('4: a SECOND 503 on the same path, unprovoked, still fails', failsOn(invariantVerdict(w), 4, /5xx/));
+w = world();
+w.clients[0].http5xx = ['502 https://dev.example/api/mls/commit'];
+w.clients[0].provoked5xx = [{ status: 503, url: 'https://dev.example/api/mls/commit' }];
+ok('4: a provoked 503 does not forgive a 502', failsOn(invariantVerdict(w), 4, /502/));
+ok('4: a provoked 4xx or transport failure forgives no 5xx', forgiveProvoked5xx(['503 u'], [{ status: 409, url: 'u' }, { status: null, url: 'u' }]).kept.length === 1);
+ok('4: the forgiveness matches the 120-char url the collector keeps', forgiveProvoked5xx([`503 ${'x'.repeat(120)}`], [{ status: 503, url: 'x'.repeat(150) }]).kept.length === 0);
 w = world();
 w.server.lines.push('[Nest] ERROR [ExceptionsHandler] boom');
 ok('4: an unhandled exception on the server (a 5xx) fails', failsOn(invariantVerdict(w), 4, /unhandled exception/));

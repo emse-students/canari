@@ -78,8 +78,10 @@ export function parseCommitLines(lines) {
 }
 
 const lower = (s) => String(s).toLowerCase();
-const onRoster = (view, user) => (view.roster ?? []).some((r) => lower(r.userId) === lower(user) && r.awaitingAdmission !== true);
-const activeSeats = (view, user) => (view.seats ?? []).filter((s) => lower(s.userId) === lower(user) && s.status === 'active' && !s.kicked);
+/** Whether `user` is on the server's roster and admitted (not awaiting admission). */
+export const onRoster = (view, user) => (view.roster ?? []).some((r) => lower(r.userId) === lower(user) && r.awaitingAdmission !== true);
+/** `user`'s ACTIVE, unkicked device seats in the server's view - a leaf, as the server knows it. */
+export const activeSeats = (view, user) => (view.seats ?? []).filter((s) => lower(s.userId) === lower(user) && s.status === 'active' && !s.kicked);
 
 /**
  * The refusals that are the gate's NORMAL answer to the losing commit of a same-epoch race:
@@ -112,7 +114,7 @@ function oneWinnerLoserRefused(parsed, fromEpoch) {
 }
 
 /** Both gestures reached their own post-condition (an Add's picker closed, a Remove's roster shrank, a send left). */
-const gesturesEnded = (outcomes) =>
+export const gesturesEnded = (outcomes) =>
   Object.entries(outcomes ?? {}).map(([d, o]) => ({ what: `${d}'s gesture completed${o.ok ? '' : ` (${o.error})`}`, ok: !!o.ok }));
 
 /**
