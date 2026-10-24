@@ -54,6 +54,7 @@
 import { APP_TAB, awaitGatewayConnected, clickAtPoint, client, evaluate, realClick, until } from '../chat.mjs';
 import { usernames } from '../accounts.mjs';
 import { closeOverlays } from '../groupnav.mjs';
+import { assertCampaignOwned } from '../campaign.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { mark, record } from '../results.mjs';
 import {
@@ -353,6 +354,7 @@ if (!armed)
   );
 
 // --- 5. W1 deletes the group -------------------------------------------------------------------
+assertCampaignOwned({ kind: 'group', name: NAME }, 'del1');
 await openGroup(W1, NAME, { navigate: true, label: 'del1' });
 await realClick(W1, '[aria-label="Paramètres du groupe"]');
 await until(W1, `/Supprimer le groupe/.test(document.body.innerText)`, 10000);

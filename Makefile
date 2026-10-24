@@ -480,6 +480,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/sendtrace-selftest.mjs
 	@bun tools/cross-client-harness/archive/deploy-selftest.mjs
 	@bun tools/cross-client-harness/archive/fault-selftest.mjs
+	@bun tools/cross-client-harness/archive/campaign-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
 # THE SELF-TESTS THAT NEED THE RIG UP, and therefore not the CI gate. `test-harness` runs on a fresh

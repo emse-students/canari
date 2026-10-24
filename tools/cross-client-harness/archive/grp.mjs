@@ -58,6 +58,7 @@ import { conversationRows, groupIdByName } from './idb.mjs';
 import { psql } from '../estate.mjs';
 import { closeOverlays, createGroup, deleteGroup, openGroup } from '../groupnav.mjs';
 import { confirmDialog } from '../comm.mjs';
+import { assertCampaignOwned } from '../campaign.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import {
@@ -229,7 +230,9 @@ async function panelReaches(cx, want, timeoutMs = 60000) {
  * THE POST-CONDITION IS THE ROSTER, not the click: a Remove is a commit and a network round trip,
  * exactly as an Add is, and `addmember.mjs` learnt that same lesson one gesture earlier.
  */
-async function removeMember(cx, userId) {
+async function removeMember(cx, userId, name) {
+  // R5: a removal is a commit on THIS group, so the open group must be the campaign's.
+  assertCampaignOwned({ kind: 'group', name }, 'grp removeMember');
   const before = (await panelOf(cx)).count;
   await realClick(cx, `[data-remove-member="${userId}"]`);
   // THE CLICK ONLY ASKS: the removal is confirmed in `showConfirm` since #816 ("Retirer ce membre du
@@ -252,6 +255,7 @@ async function removeMember(cx, userId) {
  * button that calls `onGroupLeave` is the `Quitter` inside it.
  */
 async function leaveGroup(cx, name) {
+  assertCampaignOwned({ kind: 'group', name }, 'grp leaveGroup');
   await realClick(cx, 'text=Quitter le groupe');
   // CASE-INSENSITIVE, because the confirmation is a `<p class="... uppercase">` and `innerText`
   // returns what CSS renders: "QUITTER CE GROUPE ?". The exact-case test timed out on every run of
@@ -747,7 +751,7 @@ async function grp3() {
       );
 
       await openGroupSettings(w1);
-      await removeMember(w1, peerId);
+      await removeMember(w1, peerId, name);
       const afterRemoval = await panelOf(w1);
       await closeOverlays(w1);
 
@@ -1281,7 +1285,7 @@ async function grp8() {
           await closeOverlays(w1);
           break;
         }
-        await removeMember(w1, peerId);
+        await removeMember(w1, peerId, name);
         const removed = await panelOf(w1);
         rounds.push({ round: i, afterAdd: added.count, afterRemove: removed.count });
         await closeOverlays(w1);

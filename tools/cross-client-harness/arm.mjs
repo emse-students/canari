@@ -17,6 +17,7 @@
  * EVERY WRITE IS SCOPED TO A ROW THE CALLING CHECK ITSELF CREATED, by the community id it just
  * built. Nothing here may touch a row it did not make.
  */
+import { assertCampaignOwned } from './campaign.mjs';
 import { psql } from './estate.mjs';
 
 /**
@@ -34,6 +35,10 @@ import { psql } from './estate.mjs';
  * @returns the number of invites aged - 0 means the arming did not happen and the run is VACUOUS
  */
 export function expireInvite(workspaceId) {
+  // A DATABASE WRITE, GUARDED BEFORE IT IS SENT (R5): the community must be campaign-owned. Its name
+  // is read too, because a runner's community is recorded by the name it minted, before any id exists.
+  const name = psql(`SELECT name FROM channel_workspaces WHERE id = '${workspaceId}'`).trim() || null;
+  assertCampaignOwned({ kind: 'community', id: workspaceId, name }, 'expireInvite');
   const out = psql(
     `UPDATE workspace_invites SET "expiresAt" = now() - interval '1 hour' ` +
       `WHERE "workspaceId" = '${workspaceId}' AND revoked = false`

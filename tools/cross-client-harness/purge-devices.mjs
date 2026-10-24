@@ -37,6 +37,7 @@
  */
 import { APP_TAB, client } from "./chat.mjs";
 import { evaluate, realClick, until } from "./cdp.mjs";
+import { assertCampaignOwned } from "./campaign.mjs";
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback = null) => {
@@ -64,6 +65,10 @@ if (tooShort.length) {
   );
 }
 const expect = opt("expect", null) === null ? null : Number(opt("expect"));
+
+// AND ON DEV, EVERY NAMED DEVICE MUST BE ONE THE CAMPAIGN ENROLLED (R5) - by its FULL id, which is
+// what the ledger holds: a prefix is a family on a shared estate, and the family may be a tester's.
+for (const id of only) assertCampaignOwned({ kind: "device", id }, "purge-devices");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const T0 = Date.now();

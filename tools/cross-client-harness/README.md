@@ -119,6 +119,37 @@ reported them as dev's.
 - **Dev is shared with testers.** Reads are free; writes to dev's database and Redis are allowed by
   the owner for campaign-owned fixtures only. Nothing the rig runs may write anywhere else.
 
+### What a row may destroy on dev: the campaign ledger (R5)
+
+**On dev a destructive gesture touches only what the campaign CREATED**, and "created" is a record
+written at creation time, never a name that looks minted. One append-only ledger per estate,
+`STATE_DIR/campaign/<estate>.ndjson` (`campaign.mjs`; decisions pure in `campaign-ledger.mjs`,
+pinned by `archive/campaign-selftest.mjs`):
+
+- **Written by** `groupnav.createGroup` / `createDM`, `comm.createCommunity` / `createChannel`,
+  `newdevice.mjs` (the device it mints) and `campaign-fixtures.mjs` (fixtures, the four accounts and
+  each seat's device, with their ids).
+- **Read by `assertCampaignOwned`, called before the first click of**: `groupnav.deleteGroup`;
+  `comm.openCommunitySettings` (the one panel where a community is deleted, left, re-roled, purged of
+  members, re-permissioned or has its invite rotated); `comm.openChannelSettings` (salon delete,
+  access revoke, privacy, write policy); `arm.expireInvite` (a database write); `purge-devices.mjs`
+  (every `--only` id, in full - a prefix is a family); `archive/grp.mjs` `removeMember` and
+  `leaveGroup`; `archive/del1.mjs`'s inline delete. Every other destructive runner reaches these.
+- **`cleanup.mjs` on dev needs `--only <ids> --expect N`**: the name shapes choose candidates, then
+  only the named ids, each owned, with the expected count, are taken - anything off refuses the
+  whole sweep. `--dry` prints the exact flags.
+- **Not guarded, deliberately**: `dismissLocally` (it removes only the rig device's own copy of a
+  conversation already deleted) and the message deletions of `mut.mjs` and `search.mjs`, which pick
+  the bubble by the run term of a message the row itself sent seconds earlier.
+- **On local the ledger is written but not required** - the whole estate is the rig's, and the name
+  allowlists decide as before.
+
+**The fixtures** - the four accounts signed in, the owner-peer DM, `VENUE` with a public and a
+`campaign-private` salon, groups `campaign-g2`, `campaign-g4`, `campaign-big` - are built through
+the product by `bun campaign-fixtures.mjs --build` (plan step 2, after the pre-release); without
+`--build` it reads and reports what is owed. Each account needs a web seat in `names.mjs`
+(`ACCOUNT_OF`, `PORTS`; the plan puts third and fourth on W4/W5).
+
 ## Setting it up
 
 1. **Node 24+** (a global `WebSocket` is assumed - there is no Playwright or Puppeteer here), `adb`
