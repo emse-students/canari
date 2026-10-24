@@ -3250,8 +3250,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * was busy, the foreground started - is settled by the foreground's next load, which resubmits
      * the recorded commit and merges or clears it on the gate's answer. Nothing here waits for that,
      * and NOTHING HERE DISCARDS A STAGE WHOSE OUTCOME IS UNKNOWN: only a definitive refusal of the
-     * commit clears it, and a refusal of the request alone (401, 403, 408, 429 -
-     * [BackgroundWelcomeAnswer.REQUEST_ONLY_REFUSALS]) leaves it, like no answer at all.
+     * commit clears it (a typed `rejected` body, or an untyped 400 or 413 -
+     * [BackgroundWelcomeAnswer.BYTES_REFUSALS]); any other 4xx leaves it, like no answer at all.
      *
      * Nothing here retries. A refusal leaves the request to the foreground (which replays the group's
      * commits at its next start) or to another member; an `epoch_mismatch` is recorded so the same

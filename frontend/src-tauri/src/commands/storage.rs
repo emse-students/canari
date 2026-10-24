@@ -460,45 +460,35 @@ pub(crate) fn report_what_a_live_persist_erases(
 /// The reports a refused reload owes before the live state is persisted over `path`: what the file
 /// holds beyond the live state ([`report_what_a_live_persist_erases`]), and the background stages
 /// the live state does not hold ([`report_background_stages`]). It reads and decrypts the file,
-/// which only a refused reload pays, and only when the stages ledger names a stage. A failure to
-/// read is said, and nothing else is affected.
+/// which only a refused reload pays. A failure to read is said, and nothing else is affected.
+///
+/// **THE FILE IS READ WHETHER OR NOT A STAGE IS NOTED.** The stages ledger names only the background
+/// Welcome's stages; other background writers - a Welcome received in the background joining a new
+/// group (`process_welcome_background_with_key`) - write `mls.bin` with nothing noted, and the
+/// persist erases them just the same. Returns the counts of [`report_what_a_live_persist_erases`],
+/// `None` when the file could not be read or opened.
 fn report_what_keeping_the_live_state_loses(
     current: &MlsManager,
     path: &std::path::Path,
     user_id: &str,
     device_id: &str,
     device_key_b64: &str,
-) {
-    // Only a background stage left in the file makes this report worth decrypting the whole
-    // `mls.bin`: without one, a refused reload loses nothing a background engine wrote.
-    let Some(dir) = path.parent() else {
-        return;
-    };
-    match with_json_ledger(dir, BACKGROUND_STAGES_FILE, |map| (map.is_empty(), false)) {
-        Ok(true) => {
-            log::debug!("[RESUME] no background stage noted - what the persist erases is not read");
-            return;
-        }
-        Ok(false) => {}
-        Err(e) => log::warn!(
-            "[RESUME] background stage ledger unreadable ({e}) - mls.bin is read to report what the persist erases"
-        ),
-    }
+) -> Option<(usize, usize)> {
     let bytes = {
         let Ok(_guard) = mls_bin_write_lock().lock() else {
             log::error!(
                 "[RESUME] mls_bin write lock poisoned - what the persist erases is not reported"
             );
-            return;
+            return None;
         };
         match std::fs::read(path) {
             Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
             Err(e) => {
                 log::error!(
                     "[RESUME] mls.bin unreadable ({e}) - what the persist erases is not reported"
                 );
-                return;
+                return None;
             }
         }
     };
@@ -508,15 +498,19 @@ fn report_what_keeping_the_live_state_loses(
             MlsManager::load_with_key(user_id, device_id, Some(bytes), &key)
                 .map_err(|e| e.to_string())
         });
-    match candidate {
-        Ok(candidate) => {
-            report_what_a_live_persist_erases(current, &candidate);
+    let erased = match candidate {
+        Ok(candidate) => Some(report_what_a_live_persist_erases(current, &candidate)),
+        Err(e) => {
+            log::error!(
+                "[RESUME] mls.bin does not open ({e}) - what the persist erases is not reported"
+            );
+            None
         }
-        Err(e) => log::error!(
-            "[RESUME] mls.bin does not open ({e}) - what the persist erases is not reported"
-        ),
+    };
+    if let Some(dir) = path.parent() {
+        report_background_stages(dir, current);
     }
-    report_background_stages(dir, current);
+    erased
 }
 
 /// [`delete_mls_state`] minus the `AppHandle`, so what it removes is tested on a real directory:
@@ -1203,6 +1197,39 @@ mod tests {
     fn persist(manager: &MlsManager, path: &Path) {
         let key = mls_core::crypto::decode_base64_to_32_bytes(DEV_KEY_B64).unwrap();
         std::fs::write(path, manager.save_encrypted_with_key(&key).unwrap()).unwrap();
+    }
+
+    /// A REFUSED RELOAD STILL SAYS WHAT IT ERASES WHEN NO STAGE IS NOTED: a Welcome received in the
+    /// background joins a group with nothing in the stages ledger, and the live persist erases it
+    /// just the same. The file is read and the group it holds beyond the live state is counted.
+    #[test]
+    fn what_a_refused_reload_erases_is_reported_with_an_empty_stages_ledger() {
+        let dir = std::env::temp_dir().join(format!("canari-erases-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mls.bin");
+        let live = MlsManager::load_or_create("erases-user", "dev-e", None).unwrap();
+        let mut file_copy = MlsManager::load_or_create("erases-user", "dev-e", None).unwrap();
+        file_copy
+            .create_group("g-joined-in-background".into())
+            .unwrap();
+        persist(&file_copy, &path);
+        assert!(!dir.join(BACKGROUND_STAGES_FILE).exists());
+
+        let erased = report_what_keeping_the_live_state_loses(
+            &live,
+            &path,
+            "erases-user",
+            "dev-e",
+            DEV_KEY_B64,
+        );
+
+        assert_eq!(
+            erased,
+            Some((0, 1)),
+            "the group the file holds beyond the live state is reported"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// THE RACE OF 2026-09-08, AS THE ONE PROPERTY THAT WOULD HAVE PREVENTED IT.

@@ -675,12 +675,14 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   was built from, BEFORE the commit leaves. `accepted` merges it, a refusal clears it, each written by
   compare-and-swap over the `mls.bin` loaded at that moment. A transport failure or a 5xx is
   `unknown`: nothing is settled, because guessing either way is the fork this exists to prevent.
-  So is a 4xx that refuses only THE REQUEST - 401, 403, 408, 429 (`REQUEST_ONLY_REFUSALS`): Android's
-  `HttpURLConnection` silently retries a POST on a reused connection, so the request read may be a
-  copy of one the server accepted, and the stage is left for the foreground's resubmission. A typed
+  So is every untyped 4xx but a WHITELIST - 400 and 413 (`BYTES_REFUSALS`), which refuse the bytes
+  and so every wire copy alike: Android's `HttpURLConnection` silently retries a POST on a reused
+  connection, so the request read may be a copy of one the server accepted, and a 401/403/408/429 from
+  the guards or a 404/405/409 from an edge says nothing of it. The stage is left for the foreground's
+  resubmission. A typed
   `concurrent_commit` is left too: the lock it reports may be this commit's own first copy, as the
   client's resubmission rule reads it (`resubmissionVerdict`), and the group answers `commit-pending`
-  until the foreground settles it. A 400 and every other typed `rejected` body still clear. One
+  until the foreground settles it. A 400, a 413 and every other typed `rejected` body still clear. One
   route-side gap is owed: the membership guard answers `not_a_member` before the duplicate check
   ([backlog](../backlog.md#p3---the-background-welcome-route-refuses-not_a_member-before-it-asks-whether-these-bytes-already-landed-review-of-2329-2026-10-24)).
 - **Only a COLD process stages or settles** (`background_write_mls_bin_if_unchanged_and_cold`, the
@@ -692,7 +694,9 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   the stage. The stage's ledger entry is written under the same hold of the `mls.bin` write lock as
   the stage, and the sign-out sweep (`remove_mls_state_in`) takes that lock, so it removes both or
   neither. The entry names its commit's digest, so a settle forgets its own stage and never a later
-  one of the same group.
+  one of the same group. The warm mark is STICKY (set by the first foreground load, never cleared while
+  the process lives), so a process Android keeps alive refuses every background Welcome; its rate is
+  owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
 - **What the background cannot settle, the foreground does - and nothing waits.** No answer read, a
   busy state lock, a foreground that started or wrote inside the round trip: the stage stays in
   `mls.bin`, and whoever loads it next holds it. The foreground settles it as it settles its own
@@ -787,8 +791,8 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   server and not by this device. Staging only in a cold process closes that for a process warmed
   BEFORE the prepare; what is left is a process warmed inside the round trip, whose load read the
   stage, and a manager that then never re-reads the file. It is SAID, not prevented: before the
-  persist (and only when the stages ledger names a stage, so a `live-ahead` resume does not decrypt
-  `mls.bin` for nothing), `... ERASES` at ERROR
+  persist - whether or not a stage is noted, since a Welcome received in the background joins a group
+  with nothing in the ledger - `... ERASES` at ERROR
   with the counts and group prefixes of the stages and later epochs the file holds; at the
   background's answer, `ACCEPTED AND NOT HELD`; at the next load, `is ABSENT`. The device recovers
   through the usual ladder. The same write loses any background advance, not only this one; it is its

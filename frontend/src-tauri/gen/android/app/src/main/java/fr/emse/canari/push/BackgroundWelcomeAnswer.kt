@@ -54,12 +54,12 @@ object BackgroundWelcomeAnswer {
         /** The gate refused: nothing was recorded, fanned out or sent. */
         data class Refused(val reason: Refusal, val token: String?, val serverEpoch: Long?) : Outcome()
 
-        /** A 4xx with no typed refusal that answers the commit's bytes (a malformed body, an old native caller): not accepted. */
+        /** An untyped 4xx that answers the commit's bytes ([BYTES_REFUSALS]: a malformed body, an old native caller): not accepted. */
         data class Failed(val httpCode: Int) : Outcome()
 
         /**
-         * No answer about THESE BYTES was read (a transport failure, a 5xx, or a 4xx that answers
-         * only the request - [REQUEST_ONLY_REFUSALS]): the server MAY have accepted. Nothing is
+         * No answer about THESE BYTES was read (a transport failure, a 5xx, or any untyped 4xx outside
+         * [BYTES_REFUSALS]): the server MAY have accepted. Nothing is
          * settled here - guessing either way is the fork this path exists to prevent.
          */
         data class Unknown(val httpCode: Int?) : Outcome()
@@ -98,22 +98,24 @@ object BackgroundWelcomeAnswer {
         if (httpCode in 200..299) {
             return if (status == "accepted" || status == "done") Outcome.Accepted else Outcome.Unknown(httpCode)
         }
-        if (httpCode in REQUEST_ONLY_REFUSALS) return Outcome.Unknown(httpCode)
-        return if (httpCode in 400..499) Outcome.Failed(httpCode) else Outcome.Unknown(httpCode)
+        return if (httpCode in BYTES_REFUSALS) Outcome.Failed(httpCode) else Outcome.Unknown(httpCode)
     }
 
     /**
-     * The 4xx that answer THIS REQUEST, never the commit's bytes: 401 and 403 from the push-secret
-     * guard, 408 a request timeout, 429 the throttler - all given before the commit gate.
+     * The ONLY untyped 4xx that clear the stage - A WHITELIST: each refuses the commit's BYTES, so it
+     * answers every wire copy of the request alike. 400 is the route's validation of the body. 413 is
+     * the body's size, identical for both copies of a retried POST, so it refuses the first one too.
      *
      * **THE FIRST REQUEST IN CODE CAN BE THE SECOND ON THE WIRE.** `HttpURLConnection` silently
      * retries a POST that failed on a reused keep-alive connection, so the request whose answer is
-     * read here may be a copy of one the server already accepted. Such a refusal says nothing of that
-     * earlier copy, so the stage is LEFT, and the foreground's resubmission through the session route
-     * reads `duplicate` or a typed refusal - the resubmission rule of `refusesOnlyThisRequest`
-     * (`src/lib/mls-client/commitSubmission.ts`).
+     * read here may be a copy of one the server already accepted. Any other 4xx - 401/403 from the
+     * push-secret guard, 408, 429 from the throttler, a 404/405/409 from an edge or a proxy - says
+     * nothing of that earlier copy, so the stage is LEFT, and the foreground's resubmission through
+     * the session route reads `duplicate` or a typed refusal - the resubmission rule of
+     * `refusesOnlyThisRequest` (`src/lib/mls-client/commitSubmission.ts`). A typed `rejected` body
+     * is read before this, by its token.
      */
-    val REQUEST_ONLY_REFUSALS = setOf(401, 403, 408, 429)
+    val BYTES_REFUSALS = setOf(400, 413)
 
     /**
      * What the staged Add becomes. An acceptance merges it, a refusal clears it - and a stale refusal

@@ -681,19 +681,11 @@ pub fn prepare_welcome_background_with_key(
     // write that landed since (a checkpoint, a key change's re-seal), or a foreground manager loaded
     // since, refuses the stage HERE, before the commit goes out. The ledger entry is written under
     // the same hold of the lock as the stage.
-    if let Err(e) = crate::concurrency::background_write_mls_bin_if_unchanged_and_cold_then(
-        &files_dir.join("mls.bin"),
-        &crate::concurrency::mls_bin_digest(state_bytes),
-        &staged,
-        || note_stage_left_held(files_dir, group_id, base_epoch, &record.commit),
-    ) {
-        log::error!("[BG_WELCOME] Add not staged in mls.bin group={short}: {e}");
-        // The warm mark is never cleared while the process lives, so reading it now says whether
-        // the write was refused for it - a fact, never the error's prose.
-        if crate::concurrency::live_manager_in_process() {
-            return welcome_refused("warm-process");
-        }
-        return welcome_refused("stage-failed");
+    if let Err(reason) = write_stage(files_dir, state_bytes, &staged, || {
+        note_stage_left_held(files_dir, group_id, base_epoch, &record.commit)
+    }) {
+        log::error!("[BG_WELCOME] Add not staged in mls.bin group={short} ({reason})");
+        return welcome_refused(reason);
     }
     log::info!(
         "[BG_WELCOME] staged in mls.bin group={short} base_epoch={base_epoch} ({} bytes) - settled on the server's answer, by this engine or the foreground",
@@ -719,6 +711,35 @@ pub fn prepare_welcome_background_with_key(
         answer["ownDeviceAdded"] = serde_json::json!(own_alerts);
     }
     answer
+}
+
+/// Writes the staged state over `loaded` in a COLD process, then `note` under the same hold of the
+/// `mls.bin` write lock ([`crate::concurrency::background_write_mls_bin_if_unchanged_and_cold_then`]).
+/// A refusal is the token the prepare answers: `warm-process` when a foreground manager was loaded
+/// in this process - before the prepare's early check or after it - and `stage-failed` otherwise.
+/// Either way `note` did not run and `mls.bin` is untouched.
+fn write_stage(
+    files_dir: &Path,
+    loaded: &[u8],
+    staged: &[u8],
+    note: impl FnOnce(),
+) -> Result<(), &'static str> {
+    crate::concurrency::background_write_mls_bin_if_unchanged_and_cold_then(
+        &files_dir.join("mls.bin"),
+        &crate::concurrency::mls_bin_digest(loaded),
+        staged,
+        note,
+    )
+    .map_err(|e| {
+        log::error!("[BG_STATE] mls.bin NOT written: {e}");
+        // The warm mark is never cleared while the process lives, so reading it now says whether
+        // the write was refused for it - a fact, never the error's prose.
+        if crate::concurrency::live_manager_in_process() {
+            "warm-process"
+        } else {
+            "stage-failed"
+        }
+    })
 }
 
 /// What a discarded Welcome's refusal leaves in the stale ledger, so the same `mls.bin` bytes do not
@@ -2422,6 +2443,31 @@ mod tests {
         assert!(answer.get("commit").is_none(), "nothing to send");
         assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
         assert!(!dir.join(BACKGROUND_STAGES_FILE).exists());
+    }
+
+    /// A MANAGER LOADED BETWEEN THE PREPARE'S EARLY CHECK AND ITS WRITE: the compare-and-swap is the
+    /// proof, so the write is refused as `warm-process`, the ledger note never runs, and `mls.bin` is
+    /// untouched.
+    #[test]
+    fn a_manager_loaded_before_the_stage_write_refuses_it_as_warm_process() {
+        let _s = quiet_foreground();
+        let (dir, state, _carol, _kp, _gid) = holder_and_newcomer("warmcas", 69);
+        warm_the_process(&dir);
+        let mut noted = false;
+
+        let written = write_stage(&dir, &state, b"staged state", || noted = true);
+        crate::concurrency::forget_live_manager_for_test();
+
+        assert_eq!(written, Err("warm-process"));
+        assert!(!noted, "the ledger note runs only after a write");
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+        assert!(!dir.join(BACKGROUND_STAGES_FILE).exists());
+
+        // The same write in a cold process lands, and notes.
+        let written = write_stage(&dir, &state, b"staged state", || noted = true);
+        assert_eq!(written, Ok(()));
+        assert!(noted);
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"staged state");
     }
 
     /// A PROCESS WARMED INSIDE THE ROUND TRIP: the stage was written cold, then the app opened and
