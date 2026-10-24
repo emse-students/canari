@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-99 scripts.
+100 scripts.
 
 | script | what it is |
 |---|---|
@@ -67,6 +67,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `inventory.mjs` | THE INDEX OF EVERY SCRIPT IN THIS RIG, GENERATED FROM THE SCRIPTS THEMSELVES. |
 | `invite.mjs` | Invites a user into the open group conversation - i.e. produces an MLS Add commit. |
 | `iosbench.mjs` | Asks a BENCH iPhone build about its own native stores - the `bench_native_store` command, invoked in |
+| `killrows.mjs` | THE KILL ROWS OF THE 1.4.1 CAMPAIGN - KILL-1..5 and RM-3 - their table and their judges. |
 | `launch.mjs` | Launching and killing the test browsers - W1/W2 (owner/peer), the W3 scratch device, and W4/W5 |
 | `login.mjs` | Drives the login for one of the campaign accounts, over CDP. |
 | `logs.mjs` | READS THE LOGS OF ONE SUBJECT - a web client, the phone, or the estate - and classifies them. |
@@ -137,7 +138,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-85 scripts.
+86 scripts.
 
 | script | what it is |
 |---|---|
@@ -186,6 +187,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/healnew.mjs` | THE NEW-DEVICE HEAL ROWS - one runner, one row per invocation. |
 | `archive/healrevoke.mjs` | THE REVOKED DEVICE THAT COMES BACK AFTER THE WORLD MOVED - one runner, one row per invocation. |
 | `archive/k.mjs` | NOTIF-6c - the notification QUICK REPLY from a merely BACKGROUNDED app (WP-NOTIF-1). |
+| `archive/kill.mjs` | THE KILL ROWS OF THE 1.4.1 CAMPAIGN - a process that dies with a commit in flight. |
 | `archive/life.mjs` | LIFE-1..8 - the phone in every state an OS can put it in, one check per run. |
 | `archive/mention.mjs` | MENTION-1..6 - the @mention composer, the cleartext `mentionedUserIds` routing hint it produces |
 | `archive/msg1.mjs` | MSG-1: W1 -> W2, both foreground, DM, plain text. One copy, correct author, and it STAYS. |
@@ -231,7 +233,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-53 scripts.
+54 scripts.
 
 | script | what it is |
 |---|---|
@@ -262,6 +264,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/instrument-selftest.mjs` | THE HASH THAT SAYS WHAT A CHECK MEASURES WITH IS ONLY WORTH ANYTHING IF IT SEES EVERY FILE. |
 | `archive/invariant-selftest.mjs` | THE FIVE INVARIANTS EVERY MLS ROW ASSERTS, PINNED (R8, `invariantverdict.mjs`). |
 | `archive/ios-observables-selftest.mjs` | THE iPHONE'S WDA-ONLY OBSERVABLES (O3, O6-O11 of docs/wiki/cross-client-ios.md) - every decision |
+| `archive/kill-selftest.mjs` | THE KILL ROWS' OWN JUDGEMENTS, PINNED (`killrows.mjs`). |
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
 | `archive/lucide-selftest.mjs` | EVERY `.lucide-*` CLASS THIS RIG AIMS AT MUST BE ONE THE APPLICATION ACTUALLY RENDERS. |
 | `archive/names-selftest.mjs` | Pins `namesderive.mjs`: the counterpart helper answers for the pair and THROWS for anyone else. |
@@ -293,7 +296,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 
 They live under `archive/` but they are NOT questions - they take no verdict. Runners that drive other rows, probes, and vocabulary that never moved to the root. **Search here before writing a gesture**: this is the half that used to be filed as rows, where nobody looking for a gesture would ever have found it.
 
-42 scripts.
+43 scripts.
 
 | script | what it is |
 |---|---|
@@ -327,6 +330,7 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 | `archive/ready-probe.mjs` | THE ONE ANSWER TO "can this client be asked a question yet", and the repair that gets it there. |
 | `archive/ready-repair.mjs` | BRINGING ONE DEVICE TO A NAMED STARTING POINT - the half of the readiness probe that acts. |
 | `archive/recon.mjs` | Reconciles what two clients hold for the conversations they SHARE, message id by message id. |
+| `archive/reopen.mjs` | A SEAT KILLED AND BROUGHT BACK - the two halves every KILL row is made of (`archive/kill.mjs`). |
 | `archive/run.mjs` | THE ONE WAY TO RUN THE CAMPAIGN. |
 | `archive/servable.mjs` | WHICH ROWS A GIVEN RESPONDER COULD ACTUALLY HAVE SERVED - the predicate, with nothing attached. |
 | `archive/synboot.mjs` | WP-BANNER-1's positive check: does the synchronisation banner rise AT STARTUP? |
@@ -342,4 +346,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-281 scripts in total.
+285 scripts in total.
