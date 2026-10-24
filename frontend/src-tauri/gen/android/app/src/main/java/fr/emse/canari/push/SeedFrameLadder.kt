@@ -12,7 +12,8 @@ package fr.emse.canari.push
  * group being joined right now. A seed frame rides on a message of the SALON, so a key group this
  * device does not hold is not a join in flight to wait for - it is a device missing from its own
  * community's key group, the defect `reportSingleHolderGroups` watches. Sleeping 5.4 s on the
- * channel lane would buy nothing but a later generic banner, so it is said, and not waited on.
+ * channel lane would buy nothing but a later generic banner, so it is said, and not waited on -
+ * and since section 26 the caller is TOLD, and joins the group itself once the banner is up.
  *
  * Compiled by the JVM test project too, so nothing here may import Android - see
  * [PushRecoveryLadder] for why that is the guard and not a style rule.
@@ -28,6 +29,8 @@ object SeedFrameLadder {
      * @param locality where the key group is; asked only after a refusal
      * @param catchUp the commit catch-up, `null` when it could not produce an outcome
      * @param log every branch says which one it took
+     * @param onAbsent told when the key group is not on this device, so the caller can join it
+     *   from the push once its banner is up (channel-encryption section 26) - never waited on here
      */
     fun <T> open(
         initial: T,
@@ -36,6 +39,7 @@ object SeedFrameLadder {
         locality: () -> GroupLocality,
         catchUp: () -> T?,
         log: (String) -> Unit,
+        onAbsent: () -> Unit = {},
     ): T {
         if (!isRefused(initial)) return initial
 
@@ -47,7 +51,8 @@ object SeedFrameLadder {
                 catchUp() ?: initial
             }
             GroupLocality.ABSENT -> {
-                log("seed frame refused group=$groupTag locality=ABSENT -> this device is not in the salon's key group; no join to wait for")
+                log("seed frame refused group=$groupTag locality=ABSENT -> this device is not in the salon's key group; nothing to wait for, the push joins it after its banner")
+                onAbsent()
                 initial
             }
             GroupLocality.UNKNOWN -> {
