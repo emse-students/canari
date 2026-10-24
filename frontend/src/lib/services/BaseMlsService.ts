@@ -183,6 +183,7 @@ import {
   CommitOutcomeUnknownError,
   CommitStageNotSavedError,
   FollowerTabCommitError,
+  StagedCommitPendingError,
   composeSubmission,
   encodeIntent,
   isDefinitiveCommitRefusal,
@@ -4454,6 +4455,32 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * Drops the derived index of unresolved groups, so the next send re-reads it from the state. Called
+   * BEFORE a state swap as well as after it: a send between the two must not trust an index of the
+   * state being replaced.
+   */
+  protected forgetUnresolvedIndex(): void {
+    this.unresolvedGroups = null;
+  }
+
+  /**
+   * The MLS state was replaced under this session - a resume reload installed `mls.bin`, which a
+   * background engine may have written with a commit staged and unsettled (an Android background
+   * Welcome whose answer it never read). The derived index is dropped AT ONCE, before this returns,
+   * so the next send re-reads the state and settles first ({@link knownUnresolvedGroups}); then every
+   * staged commit is settled, without holding the caller: its outcome needs the server, and a resume
+   * must not wait on the network.
+   */
+  protected settleAfterStateReplaced(): void {
+    this.forgetUnresolvedIndex();
+    void this.settleUnresolvedCommits().catch((e: unknown) =>
+      console.error(
+        `[COMMIT] settling the commits of a reloaded state failed: ${String(e).slice(0, 160)}`
+      )
+    );
+  }
+
+  /**
    * Settles `groupId`'s staged commit, if its state holds one, by resubmitting the submission kept
    * beside it. MUST be called holding the MLS lock (and inside the group's epoch-advance barrier):
    * it merges or clears.
@@ -4627,8 +4654,14 @@ export abstract class BaseMlsService implements IMlsService {
   async settleUnresolvedCommits(groupIds?: string[]): Promise<void> {
     // A Welcome a previous settlement owed and did not get out (a reload, a failed send) goes first.
     if (!groupIds) await this.deliverOwedWelcomes();
-    const all = await this.groupsWithPendingCommit();
-    this.unresolvedGroups = new Set(all);
+    // READ AND INDEXED UNDER THE LOCK every settlement and every stage takes: a read made outside it
+    // and assigned after its await could re-index a group a concurrent settle had just merged, or
+    // drop one a concurrent commit had just staged.
+    const all = await this.runUnderMlsLock(async () => {
+      const groups = await this.groupsWithPendingCommit();
+      this.unresolvedGroups = new Set(groups);
+      return groups;
+    });
     const pending = all.filter((g) => !groupIds || groupIds.includes(g));
     if (pending.length === 0) return;
     console.log(`[COMMIT] settling ${pending.length} staged commit(s) by resubmission`);
@@ -6379,24 +6412,42 @@ export abstract class BaseMlsService implements IMlsService {
     await this.waitForCatchUpIdle();
     // NOTHING IS SEALED ON TOP OF A COMMIT WHOSE OUTCOME IS UNKNOWN: whether this device is at N or
     // N+1 is exactly what that outcome decides, so it is asked first, by the same resubmission.
-    if ((await this.knownUnresolvedGroups()).has(groupId)) {
-      await this.settleUnresolvedCommits([groupId]);
-      if ((await this.knownUnresolvedGroups()).has(groupId)) {
-        throw new CommitOutcomeUnknownError(
-          groupId,
-          this.getEpoch(groupId),
-          'a send waits for the resubmission to answer'
-        );
-      }
-    }
+    await this.settleBeforeSend(groupId);
     // ...and nothing straddles a LOCAL epoch advance either: a frame encrypted at epoch N and posted
     // after this device's own commit moved the group to N+1 is a past-epoch frame for every
     // recipient, which two further commits make undecryptable for good. The barrier deletes the
     // overlap rather than detecting it afterwards - see `epochSendBarrier`, which also carries the
     // lock order this relies on.
-    const sent = await runAsEpochSend(groupId, () =>
-      this.emitFrame(groupId, messageBytes, frameDelivery)
-    );
+    const emit = () =>
+      runAsEpochSend(groupId, () => this.emitFrame(groupId, messageBytes, frameDelivery));
+    let sent: SentFrame;
+    try {
+      sent = await emit();
+    } catch (e) {
+      // THE STATE REFUSED WHAT THE INDEX ALLOWED: it holds a staged commit the index did not name
+      // (a state swapped under it). Re-indexed from the state, settled as any known one, and sealed
+      // once more - a second refusal is an outcome still unknown, never a failed send.
+      if (!(e instanceof StagedCommitPendingError)) throw e;
+      console.warn(
+        `[COMMIT] ${groupId.slice(0, 8)}... the state refused a send its index allowed - settling first`
+      );
+      this.forgetUnresolvedIndex();
+      await this.settleBeforeSend(groupId);
+      try {
+        sent = await emit();
+      } catch (again) {
+        if (!(again instanceof StagedCommitPendingError)) throw again;
+        console.error(
+          `[COMMIT] ${groupId.slice(0, 8)}... refused again after the settle - a commit was staged in between`
+        );
+        throw new CommitOutcomeUnknownError(
+          groupId,
+          this.getEpoch(groupId),
+          again,
+          'a commit was staged again between the settle and the send'
+        );
+      }
+    }
     // ACTIVITY IN THE GROUP IS WHAT DUE LEAF REFRESHES WAIT FOR: a conversation frame the server
     // just accepted. An ALLOWLIST of the two conversation kinds, by identity, because neither the
     // value nor `durable` can tell them from key material: a seed is shaped exactly like a mutation,
@@ -6407,6 +6458,22 @@ export abstract class BaseMlsService implements IMlsService {
       this.scheduleLeafRefresh(groupId);
     }
     return sent;
+  }
+
+  /**
+   * Settles `groupId`'s staged commit before a send when the index names one, and throws
+   * {@link CommitOutcomeUnknownError} when it is still unresolved after the resubmission.
+   */
+  private async settleBeforeSend(groupId: string): Promise<void> {
+    if (!(await this.knownUnresolvedGroups()).has(groupId)) return;
+    await this.settleUnresolvedCommits([groupId]);
+    if ((await this.knownUnresolvedGroups()).has(groupId)) {
+      throw new CommitOutcomeUnknownError(
+        groupId,
+        this.getEpoch(groupId),
+        'a send waits for the resubmission to answer'
+      );
+    }
   }
 
   /**

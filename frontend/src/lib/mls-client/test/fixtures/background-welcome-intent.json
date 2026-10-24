@@ -1,0 +1,6 @@
+{
+  "groupId": "g-fixture",
+  "self": "alice:dev-a",
+  "excludeDeviceIds": ["carol:dev-c"],
+  "keyPackageDevices": ["dev-c"]
+}

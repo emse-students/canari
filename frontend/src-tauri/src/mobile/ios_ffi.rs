@@ -465,7 +465,8 @@ pub unsafe extern "C" fn canari_native_process_welcome_background(
 /// Encrypts a WHOLE outbox batch against one load of `mls.bin` and returns
 /// `{"ok":true,"results":[{"id":..,"ok":..,"ciphertext"|"error":..}, ...]}`.
 ///
-/// `entries_json` is `[{"id":"...","groupId":"...","proto":"<b64>"}, ...]`. Android twin:
+/// `entries_json` is `[{"id":"...","groupId":"...","proto":"<b64>"}, ...]`; at most `max_attempts`
+/// of them are encrypted, a group held behind an unsettled staged commit taking none. Android twin:
 /// `nativeSendMessagesBackground`. See `send_messages_background_with_key` for why the drain is a
 /// batch and why the save must precede the return.
 #[no_mangle]
@@ -477,6 +478,7 @@ pub unsafe extern "C" fn canari_native_send_messages_background(
     user_id: *const c_char,
     device_id: *const c_char,
     entries_json: *const c_char,
+    max_attempts: usize,
 ) -> *mut c_char {
     if files_dir.is_null()
         || state_ptr.is_null()
@@ -501,6 +503,7 @@ pub unsafe extern "C" fn canari_native_send_messages_background(
         &str_from_c_str(user_id),
         &str_from_c_str(device_id),
         &entries,
+        max_attempts,
     ) {
         Ok(v) => json_to_c_string(v),
         Err(e) => err_json_to_c_string(e),

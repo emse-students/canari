@@ -18,6 +18,7 @@ import {
   CommitOutcomeUnknownError,
   CommitStageNotSavedError,
   FollowerTabCommitError,
+  StagedCommitPendingError,
   encodeIntent,
   type CommitIntent,
   type OwedWelcome,
@@ -25,6 +26,7 @@ import {
   type StagedRecord,
 } from '$lib/mls-client/commitSubmission';
 import { readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';
+import backgroundWelcomeIntent from '$lib/mls-client/test/fixtures/background-welcome-intent.json';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
 import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
@@ -764,6 +766,74 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
   );
 });
 
+describe('settleUnresolvedCommits - a stage a background engine wrote', () => {
+  it('settles the record the Android background Welcome writes: the Add is merged and carol gets her Welcome', async () => {
+    // The intent is the fixture `background.rs` asserts it writes, byte for byte.
+    const gid = backgroundWelcomeIntent.groupId;
+    const state: PendingState = new Map([
+      [
+        gid,
+        {
+          status: 'recorded',
+          record: {
+            intent: new TextEncoder().encode(JSON.stringify(backgroundWelcomeIntent)),
+            baseEpoch: 1,
+            commit: new Uint8Array([1]),
+            groupInfo: new Uint8Array([2]),
+            welcome: new Uint8Array([3]),
+            addedIndices: [0],
+          },
+        },
+      ],
+    ]);
+    const c = ctx(submitting({ accepted: true, duplicate: true }), { state });
+    await c.settleUnresolvedCommits();
+    expect(c.delivery.submitCommit).toHaveBeenCalledExactlyOnceWith(
+      gid,
+      1,
+      OURS,
+      ['carol:dev-c'],
+      BASE,
+      [{ userId: 'carol', deviceId: 'dev-c' }],
+      undefined
+    );
+    expect(c.mergePendingCommitOwingWelcome).toHaveBeenCalledExactlyOnceWith(gid, ['carol:dev-c']);
+    expect(c.sendWelcome.mock.calls).toEqual([
+      [new Uint8Array([3]), 'carol', gid, 'dev-c', new Uint8Array([7])],
+    ]);
+    expect(state.size).toBe(0);
+  });
+
+  it('indexes the state under the MLS lock, so a settle in flight is never re-indexed from a stale read', async () => {
+    let answer!: (a: Answer) => void;
+    const submit = vi.fn(
+      () =>
+        new Promise<Answer>((r) => {
+          answer = r;
+        })
+    );
+    const c = ctx(submit, { state: kept() });
+    let tail: Promise<unknown> = Promise.resolve();
+    c.runUnderMlsLock = vi.fn(<T>(fn: () => Promise<T>) => {
+      const run = tail.then(fn);
+      tail = run.catch(() => {});
+      return run;
+    }) as unknown as ReturnType<typeof vi.fn>;
+    // The read answers what the state held WHEN it was asked, a turn later - as a platform call does.
+    c.groupsWithPendingCommit = vi.fn(() => {
+      const snapshot = [...c.state.keys()];
+      return new Promise<string[]>((r) => setTimeout(() => r(snapshot), 0));
+    });
+    const first = c.settleUnresolvedCommits();
+    await vi.waitFor(() => expect(submit).toHaveBeenCalled());
+    const second = c.settleUnresolvedCommits(['g-other']);
+    answer({ accepted: true, duplicate: true });
+    await Promise.all([first, second]);
+    expect(c.state.size).toBe(0);
+    expect((c as unknown as { unresolvedGroups: Set<string> }).unresolvedGroups).toEqual(new Set());
+  });
+});
+
 describe('settleUnresolvedCommitFromLog - the log decided at the base epoch', () => {
   it("merges when the row at the base epoch is OUR commit, and delivers an Add's Welcome", async () => {
     const c = ctx(submitting(), {
@@ -805,8 +875,10 @@ describe('settleUnresolvedCommitFromLog - the log decided at the base epoch', ()
 /** Only `sendMessage` and what it reaches; the two dozen other abstract members stay unstubbed. */
 abstract class SendHarness extends BaseMlsService {
   readonly encrypted: string[] = [];
+  private readonly pending: PendingState;
   constructor(submitCommit: ReturnType<typeof vi.fn>, state: PendingState) {
     super('web');
+    this.pending = state;
     Object.assign(this as unknown as Record<string, unknown>, {
       userId: U,
       deviceId: D,
@@ -816,7 +888,9 @@ abstract class SendHarness extends BaseMlsService {
       ...primitives(state),
     });
   }
+  /** As the platform does: the STATE refuses a group with a staged commit, whatever the index says. */
   protected async encryptForSend(groupId: string): Promise<AuthoredFrame> {
+    if (this.pending.has(groupId)) throw new StagedCommitPendingError(groupId);
     this.encrypted.push(groupId);
     return { sealed: sealedFrame(5, groupId), authorProof: new Uint8Array([4]) };
   }
@@ -852,6 +926,33 @@ describe('sendMessage - a group whose last commit is unresolved', () => {
       .groupsWithPendingCommit;
     expect(asked).toHaveBeenCalledTimes(1);
     expect(svc.encrypted).toEqual([G, G]);
+  });
+
+  it('settles and seals once more when the STATE refuses a send its index allowed (a reload swapped it)', async () => {
+    const state: PendingState = new Map();
+    const svc = new Harness(submitting({ accepted: true, duplicate: true }), state);
+    await svc.sendMessage(G, new Uint8Array([9]));
+    // A resume reload installs a state a background engine staged an Add in; the index says none.
+    for (const [g, read] of kept()) state.set(g, read);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await svc.sendMessage(G, new Uint8Array([9]));
+    warn.mockRestore();
+    expect(svc.encrypted).toEqual([G, G]);
+    expect(state.size).toBe(0);
+  });
+
+  it('answers an outcome still unknown, never a failed send, when that settle gets no answer', async () => {
+    const state: PendingState = new Map();
+    const svc = new Harness(submitting(lost()), state);
+    await svc.sendMessage(G, new Uint8Array([9]));
+    for (const [g, read] of kept()) state.set(g, read);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(svc.sendMessage(G, new Uint8Array([9]))).rejects.toBeInstanceOf(
+      CommitOutcomeUnknownError
+    );
+    warn.mockRestore();
+    expect(svc.encrypted).toEqual([G]);
+    expect(state.has(G)).toBe(true);
   });
 });
 

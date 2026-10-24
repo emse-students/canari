@@ -1,5 +1,6 @@
 import { Channel } from './entities/channel.entity';
 import { ChannelMember } from './entities/channel-member.entity';
+import { ChannelRole } from './entities/channel-role.entity';
 
 /** How a departure ended, keyed `groupId:userId:departure`, as `distribution_departures` holds it. */
 export type DecidedDepartures = Map<string, 'departed' | 'cancelled'>;
@@ -9,13 +10,15 @@ export type DecidedDepartures = Map<string, 'departed' | 'cancelled'>;
  * run on - `memberRepo.manager` in the specs.
  *
  * WIRING, NOT THE RACE. Its job is to let the unit specs run the roster write: the transaction hands
- * its callback a manager whose `getRepository` returns the spec's own channel and member fakes, so
+ * its callback a manager whose `getRepository` returns the spec's own channel, member and role fakes, so
  * the write lands where the spec's assertions read. `distribution_departures` is the map `decided`,
  * keeping only its primary key's rule (the first writer of a `groupId:userId:departure` wins) so the
  * error path's steps can be pinned. The concurrency itself is proven on PostgreSQL, in
  * `distribution-departure.integration.spec.ts`.
  */
-export function fakeDepartureManager(repos: () => { channelRepo: unknown; memberRepo: unknown }): {
+export function fakeDepartureManager(
+  repos: () => { channelRepo: unknown; memberRepo: unknown; roleRepo: unknown }
+): {
   query: jest.Mock;
   transaction: jest.Mock;
   decided: DecidedDepartures;
@@ -52,6 +55,8 @@ export function fakeDepartureManager(repos: () => { channelRepo: unknown; member
   const getRepository = (entity: unknown) => {
     if (entity === Channel) return repos().channelRepo;
     if (entity === ChannelMember) return repos().memberRepo;
+    // The removal bound reads the roles it compares through the transaction, row-locked.
+    if (entity === ChannelRole) return repos().roleRepo;
     throw new Error(`fakeDepartureManager: no repository for ${String(entity)}`);
   };
   // A callback that throws rolls back what it recorded, as the real transaction does.

@@ -165,6 +165,44 @@ a device reads its key package under the lock" ([channel-encryption](protocols/c
 `heldKeyPackages`; and refuse the target itself, either by a roster-level tombstone that the erasure
 writes and that names no one once its own window ends, or by asking core whether the account exists.
 
+## P2 - `setNotificationLevel` saves a whole member copy and can undo a demotion (review of #2284, 2026-10-24)
+
+`setNotificationLevel` reads a membership row, changes `notifLevels` and `save`s the whole copy;
+TypeORM writes back every column the copy differs on, so a role change committed between its read
+and its save is reverted (`roleIds` written back) - a demoted admin restored by changing a salon's
+notification level. The fix is an `update` of `notifLevels` alone, the rule `social-service.md` now
+states for salon rows. `promoteSuccessor` and `setRole` also save whole member copies, but the
+column they mean to write is `roleIds` itself, so they only race each other.
+([social-service](services/social-service.md#removals-are-bounded-by-the-actor-and-so-is-hiding-a-salon-2026-10-24))
+
+## P3 - Edges of the community removal lock, left by the review of #2284 (2026-10-24)
+
+- **A salon reorder can deadlock with a departure or a community deletion.** A departure now locks
+  the community's private salons in one order (`ORDER BY id`) before the membership rows, and a grant
+  and `hardDeleteWorkspace` take salon rows before membership rows (the grant-vs-deletion cycle
+  #2284's review found is closed). Left: the reorder transaction writes several salon rows in the
+  order the client sent, and `hardDeleteWorkspace`'s bulk `DELETE` takes them in whatever order the
+  plan visits them, so either can cross a departure on two salons. PostgreSQL aborts one side
+  (`40P01`); an aborted departure settles `cancelled` and is retried inline, a reorder is answered
+  5xx. The fix is the same `ORDER BY id` lock (a `SELECT ... FOR UPDATE`) before each bulk write.
+- **`assertRemovalKeepsAnAdmin` is not asked again under the lock** (pre-existing): two admins
+  kicking each other at the same moment both pass it and can leave a community with members and no
+  admin. The fix is to re-ask it inside the kick's `guard`, reading the admin set `FOR SHARE`.
+- **A group retirement runs after the commit, outside any lock.** A makes a salon public, B makes it
+  private again (the idempotent mint returns the same group G), then A's retirement deletes G on
+  chat-delivery and nulls `distributionGroupId`: a private salon with no group. The fix is a
+  conditional retirement - `UPDATE ... WHERE "distributionGroupId" = G AND NOT "isPrivate"`, and the
+  delete only when that row changed.
+- **Case.** The removal bound's member map takes the LAST of two membership rows differing only by
+  case; it should merge their roles. Allowlist entries written before the actor id was lowercased may
+  be mixed case, which `stripFromChannels`' exact compare misses: one `GROUP BY` over production's
+  `allowedUsers` for an uppercase letter settles whether any exist. A comma inside a user id would
+  corrupt the comma-separated `allowedUsers` column (theoretical).
+- **An invitation that reads a salon public and loses the race to a private flip** announces it
+  `public` and grants nothing (pre-existing): the flip's allowlist does not name the invitee.
+
+([social-service](services/social-service.md#removals-are-bounded-by-the-actor-and-so-is-hiding-a-salon-2026-10-24))
+
 ## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
 
 `deleteUserData` tombstones the DMs its discovery found. A DM opened with the account after that
@@ -512,6 +550,54 @@ field lands on the card, so a driven sign-in types into the wrong field. It is a
 settings, not of the app. A driven sign-in avoids it by moving focus with Tab and submitting with Enter;
 the page the test accounts use is the "Connexion externe (service-account)" route, not the school CAS.
 
+## P3 - The background Welcome route refuses `not_a_member` before it asks whether these bytes already landed (review of #2329, 2026-10-24)
+
+`POST /api/mls/push/send-welcome-and-commit` (`push.controller.ts`, `sendWelcomeAndCommitPush`) runs, in
+order: `verifyPushSecretAuth` -> the body checks -> the **membership guard** (no `dm_group_members` row
+for the target -> `409 {status: 'rejected', reason: 'not_a_member'}`) -> `validateCommit`, whose
+refusals are the only ones that first ask the commit log whether THESE bytes from THIS device already
+landed at the base (`answerIfAlreadyAccepted`, `messaging.service.ts`) and answer `duplicate` if so.
+
+**The sequence it loses:** the phone's first POST is accepted (the Add lands, the Welcome is stored);
+the answer is lost and Android's `HttpURLConnection` silently retries the POST on a reused connection;
+between the two, the target is removed from the conversation. The retry meets the membership guard
+first and reads `not_a_member`, a typed refusal, so the phone CLEARS its stage
+(`BackgroundWelcomeAnswer.settle`) while the server holds its commit. The device then recovers through
+the foreground's replay and ladder (`ACCEPTED AND NOT HELD` is never said: the clear ran on a refusal),
+so the cost is a recovery, not a fork. Rare: it needs a lost answer AND a removal inside one round trip.
+
+**Why the check cannot simply move after `validateCommit`:** the guard is the single chokepoint that
+stops a holder's phone from re-adding a REMOVED user from a push. After the gate, a removed target's
+re-add commit would already be accepted - the epoch moved, the Welcome stored - before it is refused.
+That is a security regression, not a reordering.
+
+**The fix owed:** on the membership refusal only, ask `answerIfAlreadyAccepted` for these bytes (group,
+device, base epoch, commit) and answer the duplicate acceptance when the log holds them; refuse
+`not_a_member` otherwise. It needs the helper exposed from `MessagingService` (it is private today) and
+one spec: an accepted commit, then a removal, then the same request -> `duplicate`, never
+`not_a_member`. Closes when that spec is green.
+
+## P3 - The background Welcome's warm-process refusal: its rate, its wasted round trip, and the old-PIN path (review of #2329, 2026-10-24)
+
+1. **The warm mark is sticky, so the refusal may be the common case.** `live_manager_in_process` is set
+   by the first foreground load and never cleared while the process lives, so a process in which the
+   app was ever opened refuses EVERY background Welcome (`prepare refused reason=warm-process`) until
+   Android kills it - which it often does not, for hours. The path is then effectively off whenever
+   Android keeps the process; the newcomer is served by another member, the foreground, or its own
+   external join. **Owed: measure the warm-process refusal rate** against the prepares that reach a
+   stage, on the Mi 9T and in the field logs, before deciding whether a warm process needs its own path.
+2. **The phone learns it is warm too late.** `processWelcomeRequestBackground`
+   (`CanariFirebaseMessagingService.kt`) fetches the KeyPackage over HTTP and takes the Redis add-lock
+   BEFORE the JNI prepare refuses `warm-process`: one wasted round trip and a held lock per push. A
+   cheap JNI probe (`live_manager_in_process`) checked before the fetch removes it; the prepare's own
+   check stays, since the compare-and-swap is the proof.
+3. **The old-PIN recovery marks the process warm only at install.** The branch of `commands/mls.rs`
+   that installs CALLER-SUPPLIED bytes (`mark_foreground_manager_loading`) marks the process when it
+   installs them, not when the WebView read them. Bytes read before a cold stage write and installed
+   after it build a manager without the stage, which then persists over it while the server may hold
+   the commit. Closing it means marking the process warm before those bytes are read, or re-reading
+   `mls.bin` under the lock at install.
+
 ## Hardware reading owed (user): one background Welcome on the Mi 9T (2026-10-22)
 
 The background Welcome route (`POST /mls/push/send-welcome-and-commit`) now validates its commit as the
@@ -535,13 +621,21 @@ The reading has one setup and three checks:
   phone answer in the background. **That request is sent only when the newcomer's own external join
   for the chat group FAILS for a reason other than `NotAGroupMember`** (no GroupInfo published, a stale
   base, an unreachable server; `requestReAdd` step 9 and `sendWelcomeRequest` in `recovery.ts`). A new
-  login on a healthy estate does not send it: see the attempt below.
+  login on a healthy estate does not send it: see the attempt below. The PROCESS must be cold: a
+  process in which the app was loaded since it last died answers `prepare refused
+  reason=warm-process` and sends nothing, by design.
 - **Phone (logcat).** Both of these lines appear (their wording since the typed answer, see
-  [chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)):
+  [chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)):
   - `processWelcomeRequestBackground: Welcome staged ... baseEpoch=N`;
-  - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - state installed`.
+  - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - staged Add merged`.
 
-  No `REFUSED`, `OUTCOME UNKNOWN` or `ACCEPTED AND NOT INSTALLED` line appears.
+  No `REFUSED`, `OUTCOME UNKNOWN` or `ACCEPTED AND NOT HELD` line appears.
+- **The same reading with the app OPENED inside the round trip** (open the app between the
+  `Welcome staged` line and the answer): the phone logs `stage left in mls.bin (left-to-foreground)`
+  or `already settled by the foreground`; the foreground's next load logs `background stage of
+  group=... found in the loaded state` (or `already merged`), then the WebView logs `[COMMIT] settling
+  1 staged commit(s) by resubmission` and `... accepted - merged`; the newcomer reads the next message.
+  No `ACCEPTED AND NOT HELD`, no `is ABSENT from the state this foreground keeps`, no `ERASES`.
 - **The same reading with the phone STALE** (its group moved while it was shut, as on 2026-10-22):
   the phone logs `REFUSED epoch_mismatch: built on base N, the group is at M`, the server answers 409,
   the phone then reads the group's next message once opened, and the newcomer's next ask logs
@@ -567,6 +661,58 @@ the swiped-away phone for four `message` pushes and it applied the external-comm
 on that build. **READ later the same day, with the user's agreement to delete one local-estate row:** the request was
 sent and the phone answered it from a stale epoch, see the P2 above. The phone stays on the debug
 build, signed in on the local estate only, which is stopped.
+
+## P2 - WP-CHECKPOINT-CAS: the foreground checkpoint writes over a file it did not load (2026-10-23, design: one MLS manager per process, owed a review before code)
+
+**The race.** `write_mls_state_blob` (`concurrency.rs`) writes `mls.bin` blind. Every background
+writer is a compare-and-swap over the bytes it loaded; the foreground is not. A live manager that
+never loaded what a background engine wrote - a resume reload refused as `live-ahead` (the WebView then
+persists the live state, `TauriMlsService.reloadStateFromDisk`) or as an epoch regression
+(`reload_into`) - writes over it. A staged background Add the server accepted is then `ACCEPTED AND
+NOT HELD`, and a background decrypt's ratchet advance is lost the same way. Both are now SAID at
+ERROR when they happen (`report_what_keeping_the_live_state_loses`, `report_background_stages`), not
+prevented. Decided 2026-10-23: not accepted as permanent; its own pull request, stacked after the
+recorded-stage background Welcome
+([chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-stage-is-merged-only-on-an-acceptance-2026-10-22)).
+
+**REJECTED 2026-10-23: a per-group reconcile of the file into the live manager.** It needed a
+per-group unsaved-advance flag and a per-group transplant of openmls storage between two managers, and
+it reconciles two states afterwards - a heal, which the rules forbid.
+
+**The design (for review; nothing built): ONE MLS MANAGER PER PROCESS.** Two managers of one state in
+one process are the race; removing the second removes it.
+
+- **What holds the manager today.** `AppState.mls_manager: Arc<Mutex<Option<MlsManager>>>`
+  (`state.rs`), created empty by `.manage(AppState { .. })` in `lib.rs` and filled by `initialiser_mls`
+  (`commands/mls.rs`) and a `reloaded` resume (`reload_into`, `commands/storage.rs`). The JNI entries
+  cannot reach it: they get no `AppHandle`, and the only process-wide statics are
+  `ANDROID_JAVA_VM` and `ANDROID_CLASS_LOADER` (`lib.rs`). Nothing sets it back to `None` at sign-out.
+- **A process-global handle to THE SAME `Arc`.** `static LIVE_MANAGER: OnceLock<Arc<Mutex<Option<MlsManager>>>>`
+  in `concurrency.rs`, set once in the builder with a clone of the `Arc` handed to `.manage`. Installed
+  means `Some` inside the mutex, so the handle never needs re-installing.
+- **A background engine borrows it while it is `Some`.** Each JNI engine (send, Welcome prepare and
+  settle, decrypt, worker) takes the manager mutex; `Some(manager)` - it runs on that manager, in
+  memory, and persists through the foreground's own checkpoint path (`write_mls_state_blob`, which is
+  then the ONLY writer of `mls.bin` in that process), then tells the WebView (an event, which runs
+  `syncGroupCachesFromNative` and `settleAfterStateReplaced`). `None` - a cold process the FCM service
+  started with no WebView - it loads `mls.bin` as today, by compare-and-swap. The decision is the
+  mutex's content, read under the mutex: no flag, no clock.
+- **Teardown.** Sign-out and `delete_mls_state` set the manager to `None` under its mutex BEFORE the
+  state files are removed, so an engine that waited on it finds `None`, then finds no file, and does
+  nothing. A sign-in installs `Some` again through `initialiser_mls`.
+- **Lock order, one for every path:** Kotlin `MlsStateLock` (background only, outermost) ->
+  `foreground_checkpoint_lock` -> the manager mutex -> `mls_bin_write_lock` (innermost). The foreground
+  never takes `MlsStateLock`, and a background engine that borrows takes the checkpoint lock before the
+  manager, as the foreground does, so no two paths take any pair in opposite orders.
+- **The foreground checkpoint becomes a GUARD.** Its compare-and-swap keeps a process-global digest of
+  the file its manager stands on; a mismatch can then only mean a second writer, which this design
+  removes, so it refuses at ERROR and never reconciles.
+- **The resume reload becomes moot** while a manager is installed (nothing else writes `mls.bin`), and
+  stays for a process restarted under a file a cold engine advanced.
+- **Tests first, with the foreground marked active as in real life:** a JNI send with a live manager
+  advances the live manager and writes nothing of its own; a JNI engine after teardown finds `None` and
+  loads the file; a cold engine and a foreground load in turn see each other's writes; a checkpoint
+  over a moved file refuses at ERROR.
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
@@ -654,6 +800,16 @@ active REFUSED`, with the status, code and reason). A kicked device's report is 
 `1.2.7` (enforced by the client, which refuses to sign in below it), and of the 398 devices that
 committed in the 30 days before, 0 reporting a version below `0.18.28` and 0 reporting none committed
 after 2026-10-17, the day the floor reached `1.2.7`. So no re-add without admits is expected.
+
+## P3 - An invitation reads `Membre` as the base role, so a role literally named Membre is not grantable by invitation (2026-10-22)
+
+`inviteToChannel` maps `roleName: 'Membre'` (and the base role's own name) to the base role, because
+every client before #2277 sends `Membre` for an ordinary invitation, whatever the community calls its
+lowest role ([social-service](services/social-service.md#an-invitation-grants-only-a-role-the-inviter-may-grant-2026-10-22)).
+A community that names a higher role `Membre` cannot grant it by invitation; a role change after the
+join still can. **Lifted when `minClientVersion` reaches the first version carrying #2277's client**
+(which sends no `roleName` for an ordinary invitation): then match a role by its own name before the
+`Membre` fallback, with the test that a role literally named Membre above the base role is granted.
 
 ## P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)
 

@@ -4,50 +4,57 @@
  * rather than copying them, so the rig measures the app's own numbers.
  */
 import { vp8CodecPreferences } from './callVideoFrame';
+import type { CallVideoRung } from './callVideoQuality';
 
 /** Which camera of a phone: the screen side (`user`) or the back (`environment`). */
 export type CameraFacing = 'user' | 'environment';
 
 /**
- * The capture constraints of the call camera. 640x480 at up to 30 frames a second: a phone screen
- * shows the other party full screen, and the bitrate below is the ceiling anyway. `facingMode` is
- * IDEAL for the first capture (a desktop webcam has no facing) and EXACT for a switch, where
- * getting the same camera back would be a switch that silently did nothing.
+ * The capture constraints of the call camera: 1280x720 at up to 30 frames a second, the TOP rung
+ * of the quality ladder (`utils/callVideoQuality.ts`); every lower rung is this capture scaled down
+ * by the sender (`scaleResolutionDownBy`), so a drop or a climb never reopens the camera.
+ * `facingMode` is IDEAL for the first capture (a desktop webcam has no facing) and EXACT for a
+ * switch, where getting the same camera back would be a switch that silently did nothing.
+ *
+ * Size is IDEAL only, never `max`: both bench phones deliver the camera PORTRAIT (720x1280), and a
+ * `max` written for landscape may be applied to the rotated dimensions - the engine then refuses
+ * or falls to a smaller preset and the "720p" rung is never 720p (review of #2173). The reel
+ * camera asks the same way. The size actually captured is logged at the camera's opening.
  */
 export function callVideoConstraints(facing: CameraFacing, exact = false): MediaTrackConstraints {
   return {
     facingMode: exact ? { exact: facing } : { ideal: facing },
-    width: { ideal: 640, max: 1280 },
-    height: { ideal: 480, max: 720 },
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
     frameRate: { ideal: 30, max: 30 },
   };
 }
 
 /**
- * The video sender's bitrate ceiling (bps). A direct path rarely needs less, but a relayed call is
- * billed by Cloudflare TURN per byte and every byte crosses it twice; 700 kb/s keeps 640x480 VP8
- * sharp at 30 fps (measured in the rig, calls.md "Video, measured").
- */
-export const CALL_VIDEO_MAX_BITRATE = 700_000;
-
-/**
- * Caps a video sender (bitrate, frame rate). Best effort: an engine that refuses `setParameters`
- * keeps its own rate, and the refusal is LOGGED - a bitrate nobody can explain is the alternative.
+ * Puts a video sender on one rung of the ladder (resolution scale, frame rate, bitrate ceiling).
  * The encodings belong to the SENDER, so they survive a `replaceTrack` (camera switch, off/on).
+ * Returns `false` when the engine refuses `setParameters`, logged at ERROR: the sender then keeps
+ * what it had, and the caller stops moving it (`CallService`) - there is no other way to set it.
  */
-export async function applyCallVideoSenderLimits(
+export async function applyCallVideoRung(
   sender: RTCRtpSender,
+  rung: CallVideoRung,
   log: (msg: string) => void
-): Promise<void> {
+): Promise<boolean> {
   try {
     const params = sender.getParameters();
     if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-    params.encodings[0].maxBitrate = CALL_VIDEO_MAX_BITRATE;
-    params.encodings[0].maxFramerate = 30;
+    params.encodings[0].maxBitrate = rung.maxBitrate;
+    params.encodings[0].maxFramerate = rung.maxFramerate;
+    params.encodings[0].scaleResolutionDownBy = rung.scaleResolutionDownBy;
     await sender.setParameters(params);
-    log(`[Call] video sender capped at ${CALL_VIDEO_MAX_BITRATE / 1000} kbps`);
+    log(
+      `[Call] video sender on ${rung.name} (scale ${rung.scaleResolutionDownBy}, ${rung.maxFramerate} fps, max ${rung.maxBitrate / 1000} kbps)`
+    );
+    return true;
   } catch (e) {
-    log(`[Call] video sender setParameters refused: ${String(e)} - engine default kept`);
+    log(`[Call] ERROR video sender setParameters(${rung.name}) refused: ${String(e)}`);
+    return false;
   }
 }
 

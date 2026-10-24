@@ -98,7 +98,8 @@ char *canari_native_send_messages_background(
     const char *device_key_b64,
     const char *user_id,
     const char *device_id,
-    const char *entries_json);
+    const char *entries_json,
+    size_t max_attempts);
 
 char *canari_native_build_text_message_proto(
     const char *message_id,

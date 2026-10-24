@@ -17,8 +17,8 @@ import * as jwt from 'jsonwebtoken';
  *  - `APNS_VOIP_TEAM_ID` - Apple developer team id
  *  - `APNS_VOIP_TOPIC`   - optional, defaults to `fr.emse.canari.voip`
  *  - `APNS_VOIP_SANDBOX` - optional `true` to hit the sandbox gateway
- * All unset -> `isConfigured()` is false and callers skip VoIP delivery (the ring
- * fan-out falls back to a regular FCM alert push for that device).
+ * All unset -> `isConfigured()` is false and the ring fan-out does not ring a device that holds a
+ * voipToken at all, logged at ERROR once per fan-out (`CallsService.apnsVoipReady`).
  */
 @Injectable()
 export class ApnsVoipService {
@@ -76,12 +76,13 @@ export class ApnsVoipService {
   /**
    * Sends one VoIP push. Resolves `true` on APNs 200, `false` otherwise (never throws:
    * ring delivery is best-effort per device). `payload` is the free-form dictionary the
-   * PKPushRegistry handler receives; callers include type/groupId/callId/caller info.
+   * PKPushRegistry handler receives (`voipRingPayload`: ids and a deadline, never a name).
    * Returns `"gone"` on APNs 410 (token no longer valid) so the caller can clear it.
    */
   async sendVoipPush(
     voipToken: string,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    expiresAtSec: number = Math.floor(Date.now() / 1000) + 45
   ): Promise<boolean | 'gone'> {
     if (!this.isConfigured()) {
       this.logger.warn('[apns-voip] not configured - skipping VoIP push');
@@ -108,8 +109,9 @@ export class ApnsVoipService {
           'apns-topic': this.topic(),
           'apns-push-type': 'voip',
           'apns-priority': '10',
-          // A ring is pointless after ~45s; let APNs drop it instead of delivering late.
-          'apns-expiration': String(Math.floor(Date.now() / 1000) + 45),
+          // A ring is pointless after its answer window; APNs drops it rather than deliver it late
+          // to a phone that was off (which would still have to raise, then end, a CallKit call).
+          'apns-expiration': String(expiresAtSec),
           'content-type': 'application/json',
         });
         let status = 0;

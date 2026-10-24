@@ -88,7 +88,7 @@ describe('ChannelService - the community distribution group', () => {
       save: jest.fn((x: Record<string, unknown>) => Promise.resolve(x)),
       delete: jest.fn(),
     };
-    const departures = fakeDepartureManager(() => ({ channelRepo, memberRepo }));
+    const departures = fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo }));
     Object.assign(memberRepo, { manager: departures });
     const messageRepo = { delete: jest.fn(), manager: { transaction: jest.fn() } };
     const inviteRepo = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
@@ -588,13 +588,15 @@ describe('ChannelService - the community distribution group', () => {
     it('cuts a kicked member off through the very same seam', async () => {
       const { service, memberRepo, workspaceRepo, roleRepo } = makeService();
       workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, name: WORKSPACE_NAME });
-      memberRepo.findOne
-        .mockResolvedValueOnce({ workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] })
-        .mockResolvedValueOnce({ workspaceId: WORKSPACE, userId: 'u2', roleIds: [] });
-      memberRepo.find.mockResolvedValue([
+      const rows = [
         { workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] },
         { workspaceId: WORKSPACE, userId: 'u2', roleIds: [] },
-      ]);
+      ];
+      // By user id: the removal bound reads the actor and the target twice, early and under the lock.
+      memberRepo.findOne.mockImplementation(({ where }: { where: { userId: string } }) =>
+        Promise.resolve(rows.find((r) => r.userId === where.userId) ?? null)
+      );
+      memberRepo.find.mockResolvedValue(rows);
       roleRepo.find.mockResolvedValue([
         { id: 'r-admin', permissions: [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE], priority: 10 },
       ]);
@@ -1085,6 +1087,8 @@ describe('ChannelService - the community distribution group', () => {
         distributionGroupId: 'g-chan',
       };
       repos.channelRepo.find.mockResolvedValue([salon]);
+      // The roster write re-reads the salon under its row lock.
+      repos.channelRepo.findOne.mockResolvedValue(salon);
       repos.workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
       repos.memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER });
       repos.memberRepo.find.mockResolvedValue([

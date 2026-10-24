@@ -24,6 +24,8 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/i18n';
+import { CALLS_NATIVE_RING_COMPILED } from '$lib/features';
+import { voipRegistrationField } from '$lib/mobile/voipRegistration';
 
 /** Push gateway platform tag sent to the backend (mirrors the server's PushPlatform). */
 type PushPlatform = 'android' | 'ios';
@@ -227,11 +229,17 @@ export async function startPushService(
 
   const registerOnce = async (): Promise<PushRegistrationOutcome> => {
     return await registerPushToken(async (pushToken) => {
-      // PushKit VoIP token (iOS only, WP-XP-5): written by the native PKPushRegistry callback.
-      // Included at registration so CallKit rings work from the very first login; later
-      // rotations are pushed by the native refresh-token path.
+      // PushKit VoIP token (iOS only, WP-C6): written by the native PKPushRegistry callback, which
+      // exists only in a binary with the native ring. Sent at registration so CallKit rings from the
+      // very first login (later rotations go over the native refresh-token path), and an explicit
+      // null from a binary WITHOUT the ring clears a stale one - see `voipRegistrationField`.
       const voipToken =
-        platform === 'ios' ? await invoke<string | null>('get_voip_token').catch(() => null) : null;
+        platform === 'ios' && CALLS_NATIVE_RING_COMPILED
+          ? await invoke<string | null>('get_voip_token').catch((err) => {
+              console.warn('[Push] get_voip_token failed - registering without a VoIP token', err);
+              return null;
+            })
+          : null;
       const response = await fetch(`${apiBaseUrl}/api/mls/push/register`, {
         method: 'POST',
         headers: {
@@ -247,7 +255,7 @@ export async function startPushService(
           // The one thing the server cannot know and must not guess: `APNS_FALLBACK_BODY` is the
           // single sentence it still composes, shown when the iOS extension cannot run.
           locale: getLocale(),
-          ...(voipToken ? { voipToken } : {}),
+          ...voipRegistrationField(platform, CALLS_NATIVE_RING_COMPILED, voipToken),
         }),
       });
       if (!response.ok) {
