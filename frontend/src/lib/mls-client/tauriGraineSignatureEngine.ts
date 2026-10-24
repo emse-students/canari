@@ -1,4 +1,9 @@
-import type { GraineSignatureEngine, GraineSignatureVerdict } from '$lib/crypto/graineV2';
+import {
+  packGraineSignatureChecks,
+  type GraineSignatureEngine,
+  type GraineSignatureVerdict,
+} from '$lib/crypto/graineV2';
+import { toBase64 } from '$lib/utils/hex';
 import { invoke } from '@tauri-apps/api/core';
 
 /**
@@ -25,6 +30,14 @@ export function tauriGraineSignatureEngine(): GraineSignatureEngine {
         publicKey: Array.from(publicKey),
         message: Array.from(message),
         signature: Array.from(signature),
+      });
+    },
+    // ONE invoke for the page, its checks packed into one base64 string: per-byte number arrays
+    // are what made each single invoke cost (durable-rules, "an IPC bridge serialises").
+    async verifySignatures(checks) {
+      if (checks.length === 0) return [];
+      return invoke<GraineSignatureVerdict[]>('graine_verify_signatures', {
+        packedB64: toBase64(packGraineSignatureChecks(checks)),
       });
     },
   };

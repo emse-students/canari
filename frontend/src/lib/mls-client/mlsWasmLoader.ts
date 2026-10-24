@@ -17,7 +17,11 @@ import {
   openMlsStateBlobV2,
   type MlsStateVerdictCode,
 } from './mlsStateSeal';
-import type { GraineSignatureEngine, GraineSignatureVerdict } from '$lib/crypto/graineV2';
+import {
+  packGraineSignatureChecks,
+  type GraineSignatureEngine,
+  type GraineSignatureVerdict,
+} from '$lib/crypto/graineV2';
 
 export type MlsWasmBindings = typeof import('$lib/wasm/mls_wasm.js');
 
@@ -312,6 +316,13 @@ export function wasmGraineSignatureEngine(): GraineSignatureEngine {
     async verifySignature(publicKey, message, signature) {
       const wasm = await loadMlsWasmModule();
       return wasm.graine_verify_signature(publicKey, message, signature) as GraineSignatureVerdict;
+    },
+    async verifySignatures(checks) {
+      if (checks.length === 0) return [];
+      const wasm = await loadMlsWasmModule();
+      return wasm.graine_verify_signatures(
+        packGraineSignatureChecks(checks)
+      ) as GraineSignatureVerdict[];
     },
   };
 }

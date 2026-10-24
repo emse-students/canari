@@ -1,4 +1,4 @@
-# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09; RC-1 reader in review)
+# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09; RC-1 reader in review; RC-4 writer wiring in draft, OFF)
 
 **Decided by the user, 2026-10-09** (French, relayed): generalise CanaReels *like Snapchat*, so a
 member can SEND a reel in a group, a DM or a community salon. **The chosen form is an EPHEMERAL VIDEO
@@ -647,3 +647,13 @@ reel message does, and nothing sends one until RC-4 (behind its OFF switch); the
   [B-reel](../../device-verification.md#b-reel-a-canareel-announces-itself-on-the-lock-screen-of-a-killed-app---owed-on-both-platforms)**
   on the Mi 9T and the iPhone 12 - a DM, a group and a salon, app killed, in French and English -
   which needs a sender with the RC-4 writer switched on.
+
+## 13. What the writer wiring (RC-4) built, and what it did not (2026-10-18)
+
+**Draft, and OFF: `CHAT_REEL_WRITER_ENABLED = false` in `reels/chatReelWriter.ts` is the whole of its safety**, the precedent of `SEGMENTED_MEDIA_WRITER_ENABLED`. Flipping that one line needs RC-3 (#2049), RC-5 and RC-7 shipped and the readers at the `minClientVersion` floor; a test pins it `false`.
+
+- **The camera**: `destinationRules('chat', chatFilms)` lets a chat camera film (`photoOnly` off, the microphone asked `separate`, as the post camera does, so a refused microphone keeps the photos). `ChatArea` passes `reelMessages = !isChannel`, so **a salon never films** (its send path is RC-8's); `ChatComposer` asks `chatReelAllowed(...)`.
+- **The mark**: a video handed back by the chat camera is marked on the FILE (`markChatReelTake`, a `WeakSet` like `capturePoster.ts`), because the composers' one attachment path is `File[]`. A gallery pick is never marked.
+- **The declaration**: `prepareOneChatVideo` carries the mark onto the PREPARED file with its length; the MLS send builds `intent`, `durationMs` and `expiresAtMs` (send time + 30 days, `chatReelDeclaration`, the clock passed in) into BOTH the optimistic envelope and the outbox payload, so the tile draws at once. The ThumbHash comes from the camera's poster.
+- **The class**: the outbox uploader names `chat-reel` for a declared reel (`uploadClassFor`), `ephemeral` for everything else.
+- **Not built**: the cap and the chat encoding profile (RC-3, #2049 - the take still reads `reel-limits`' 90 s until it merges), the raw-take store and resumable outbox states (RC-5), "Envoyer" sending at once (the take is STAGED like a picked video and goes with the next send, caption included), the salon path (RC-8), push (RC-7).

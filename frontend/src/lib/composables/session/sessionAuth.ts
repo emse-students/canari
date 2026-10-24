@@ -207,6 +207,7 @@ import {
   stopConnectionWatchdogImpl,
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
+import { uploadClassFor } from '$lib/reels/chatReelWriter';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
 import { registerDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
@@ -345,7 +346,7 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
         file,
         token,
         { width: media.width, height: media.height },
-        'ephemeral',
+        uploadClassFor(media),
         transport
       );
     },

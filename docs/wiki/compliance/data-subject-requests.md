@@ -49,7 +49,7 @@ WHERE "lastName" ILIKE :'last' AND "firstName" ILIKE :'first';`
 | Group | Tables and the column naming the person |
 | --- | --- |
 | Profile | `users` (`id`), `profile_changes` (`userId`, `actorId`), `profile_correction_requests` (`userId`), `platform_announcement_seen` (`userId`) |
-| Sessions and devices | `auth_sessions` (`userId`), `key_package`, `one_time_key_package`, `device_signature_key`, `push_token`, `pin_verifier`, `revoked_device`, `notification_preference` (all `userId`) |
+| Sessions and devices | `auth_sessions` (`userId`), `session_push_endings` (`userId`), `key_package`, `one_time_key_package`, `device_signature_key`, `push_token`, `pin_verifier`, `revoked_device`, `notification_preference` (all `userId`) |
 | Messaging (metadata only; content is ciphertext) | `dm_group_members`, `dm_group_membership_intervals`, `dm_device_group_memberships`, `dm_user_dismissed_groups` (`userId`); `queued_message` (`senderId`, `recipientId`); group names via `dm_groups` joined on the person's memberships |
 | Communities | `channel_members` (`userId`), `channel_messages` (`authorId`; content is ciphertext) |
 | Feed | `posts` (`authorId`; comments and reactions are JSON inside `posts` - search `comments`/`reactions` for the id), `post_notifications` (`recipientId`, `actorId`), `post_republications` |
@@ -88,6 +88,10 @@ through the Immich admin, see [dpia-migallery-faces](dpia-migallery-faces.md#6-o
 `users` (`uuid`), `ledger` (`uuid_user`, `uuid_staff`), `canari_ledger_details`,
 `perm_bartenders`, `sessions` (`uuid_user`). Erasure anonymises the account and keeps the ledger
 (accounting).
+
+### Audio calls (register C21)
+
+**An export will not contain call metadata**: it exists only in Redis (room binding 60 s ring + 4 h, presence 2 h, deleted at hang-up) and in the technical logs (90 days at most, C13), never in a database table. Tell the person so in the answer, and search the logs for their user id only if the request names calls specifically. The call lines in a conversation (time, duration) are end-to-end encrypted messages and follow C3.
 
 ### Portail-etu
 
