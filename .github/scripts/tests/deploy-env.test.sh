@@ -65,7 +65,8 @@ dev_env() {
     DEV_CALL_ROOM_SECRET=d7 \
     DEV_AGENDA_SIGNING_KEY=d8-0123456789abcdef0123456789abcdef \
     DEV_LIVE_REPORT_SIGNING_KEY=d9-0123456789abcdef0123456789abcdef \
-    DEV_LYDIA_KEY_ENCRYPTION_SECRET=d10-0123456789abcdef0123456789abcde
+    DEV_LYDIA_KEY_ENCRYPTION_SECRET=d10-0123456789abcdef0123456789abcde \
+    DEV_LIVE_KEY_ENCRYPTION_SECRET=d11-0123456789abcdef0123456789abcde
 }
 
 prod_env() {
@@ -87,6 +88,7 @@ prod_env() {
     AGENDA_SIGNING_KEY=p8-0123456789abcdef0123456789abcdef \
     LIVE_REPORT_SIGNING_KEY=p9-0123456789abcdef0123456789abcdef \
     LYDIA_KEY_ENCRYPTION_SECRET=p10-0123456789abcdef0123456789abcde \
+    LIVE_KEY_ENCRYPTION_SECRET=p11-0123456789abcdef0123456789abcde \
     LYDIA_ENV=production
 }
 
@@ -549,6 +551,28 @@ elif grep -q 'LYDIA_KEY_ENCRYPTION_SECRET is not set for the dev environment' "$
   pass "a missing LYDIA_KEY_ENCRYPTION_SECRET fails the dev render, naming the secret"
 else
   fail "dev refused a missing LYDIA_KEY_ENCRYPTION_SECRET without naming it"
+fi
+
+out="$TMP/prod-nolivekey.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env | grep -v '^LIVE_KEY_ENCRYPTION_SECRET=') >"$TMP/prod-nolivekey.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with no LIVE_KEY_ENCRYPTION_SECRET"
+elif grep -q 'LIVE_KEY_ENCRYPTION_SECRET is not set for the prod environment' "$TMP/prod-nolivekey.log"; then
+  pass "a missing LIVE_KEY_ENCRYPTION_SECRET fails the production render, naming the secret"
+else
+  fail "production refused a missing LIVE_KEY_ENCRYPTION_SECRET without naming it"
+fi
+
+out="$TMP/dev-shortlivekey.env"
+# shellcheck disable=SC2046
+render dev "$out" $(dev_env | grep -v '^DEV_LIVE_KEY_ENCRYPTION_SECRET=') DEV_LIVE_KEY_ENCRYPTION_SECRET=0123456789abcdef0123456789abcde >"$TMP/dev-shortlivekey.log" || true
+if [ -f "$out" ]; then
+  fail "dev rendered with a 31-character LIVE_KEY_ENCRYPTION_SECRET"
+elif grep -q 'LIVE_KEY_ENCRYPTION_SECRET is set for the dev environment but is only 31 characters' "$TMP/dev-shortlivekey.log"; then
+  pass "a 31-character LIVE_KEY_ENCRYPTION_SECRET fails the dev render, naming the secret"
+else
+  fail "dev refused a short LIVE_KEY_ENCRYPTION_SECRET without naming it"
 fi
 
 # PRODUCTION'S LYDIA_ENV IS EXPLICIT (2026-10-23). The template says `homologation`, so a production
