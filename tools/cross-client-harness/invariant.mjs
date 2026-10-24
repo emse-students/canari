@@ -93,6 +93,14 @@ const RECEIVED = (marker) => `JSON.stringify((function () {
   return { count: hits.length, own: hits.length ? hits[0].own : null, authorId: hits.length ? hits[0].authorId : null, position: hits.length ? hits[0].position : undefined };
 })())`;
 
+/**
+ * How one client shows `marker`: `{count, own, authorId, position}` - the reading invariant 3 takes,
+ * exported so a row asserting its OWN messages (FLOOR-1) reads them the same way.
+ */
+export async function receivedOn(cx, marker) {
+  return JSON.parse(await evaluate(cx, RECEIVED(marker)));
+}
+
 /** The 5xx answers a watched page received (`Network.responseReceived`), as `status url`. */
 function http5xxOf(cx) {
   return (cx.consumed ?? [])
@@ -177,7 +185,8 @@ async function readClient(slot, group, markers) {
  * @param {string} p.group
  * @param {{device: string, port: number, isPhone: boolean}[]} p.targets every client in play
  * @param {string[]} [p.members] device names that must hold the group; default all
- * @param {string} p.conversation where the post-event messages go
+ * @param {string|Record<string, string>} p.conversation where the post-event messages go, as the
+ *   sidebar names it: one name for all, or one per device (a DM shows each side the other person)
  * @param {number|null} p.fromEpoch the server epoch before the row's action
  * @param {string} p.since ISO start of the row
  * @param {boolean} [p.reload]
@@ -190,6 +199,13 @@ export async function checkInvariant({ group, targets, members, conversation, fr
   if (!UUID.test(group)) throw new Error(`group '${group}' is not a uuid`);
   if (!conversation) throw new Error('a conversation to send the post-event messages in is required - invariant 3 is not optional');
   const memberSet = new Set(members?.length ? members : targets.map((t) => t.device));
+  // A DM IS NAMED DIFFERENTLY ON EACH SIDE - each sidebar shows the OTHER person - so a row may hand
+  // one name per device instead of one for all (FLOOR-1).
+  const conversationOf = (device) => {
+    const name = typeof conversation === 'string' ? conversation : conversation[device];
+    if (!name) throw new Error(`no conversation name for member ${device} - pass a string, or a name per device`);
+    return name;
+  };
 
   const slots = [];
   for (const target of targets) {
@@ -207,7 +223,7 @@ export async function checkInvariant({ group, targets, members, conversation, fr
   if (!sender) throw new Error('no member device in play');
   for (const s of slots.filter((x) => x.member)) {
     await ensureChat(s.cx);
-    await openConversation(s.cx, conversation);
+    await openConversation(s.cx, conversationOf(s.target.device));
   }
   const authorId = JSON.parse(await evaluate(sender.cx, WHO)).userId;
   const markers = [];
@@ -245,7 +261,7 @@ export async function checkInvariant({ group, targets, members, conversation, fr
       await awaitAppReady(s.cx);
       if (s.member) {
         await ensureChat(s.cx);
-        await openConversation(s.cx, conversation);
+        await openConversation(s.cx, conversationOf(s.target.device));
       }
     }
     const second = await judge('after a reload of every web client');

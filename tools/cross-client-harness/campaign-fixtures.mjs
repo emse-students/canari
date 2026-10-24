@@ -27,7 +27,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { accountFor, subjectFor } from './accounts.mjs';
-import { addMember } from './archive/addmember.mjs';
+import { addMembers } from './archive/addmember.mjs';
 import { CAMPAIGN_FIXTURES, fixturesOwed } from './campaign-ledger.mjs';
 import { ESTATE, ledger, recordCreated } from './campaign.mjs';
 import { APP_TAB, client, evaluate } from './chat.mjs';
@@ -178,16 +178,18 @@ try {
     await createChannel(owner, SPEC.privateSalon, { visibility: 'private' });
   }
 
-  // 4. THE GROUPS, created by the owner, then each missing member added from its pane.
+  // 4. THE GROUPS, created by the owner, then every missing member added in ONE bulk Add - one
+  // commit, the product's ordinary path (`addMembers`). One Add per member would give each fixture a
+  // history of N single-member commits that no user produces, and every row standing on it would
+  // inherit that shape. FLOOR-2 asks the bulk-Add question on a group of its own (`archive/floor.mjs`).
   for (const g of SPEC.groups) {
     if (!seen.groups[g.name]) await createGroup(owner, g.name, { label: 'campaign-fixtures' });
     const held = observe().seen.groups[g.name] ?? [];
-    for (const m of g.members) {
-      if (held.includes(m)) continue;
-      await closeOverlays(owner);
-      await openGroup(owner, g.name, { navigate: false, label: 'campaign-fixtures' });
-      await addMember(owner, name[m]);
-    }
+    const missing = g.members.filter((m) => !held.includes(m));
+    if (!missing.length) continue;
+    await closeOverlays(owner);
+    await openGroup(owner, g.name, { navigate: false, label: 'campaign-fixtures' });
+    await addMembers(owner, missing.map((m) => name[m]));
   }
 } finally {
   owner.close();

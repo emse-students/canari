@@ -51,6 +51,10 @@ export const GROUP_DEBRIS = [
   // matching three letters and four digits, which a person types. The fix is a MINTED shape for
   // hand-made throwaways, not a looser pattern: `SBX` plus the run mark cannot be typed by chance.
   /^SBX[A-Z0-9]{1,8}-[0-9a-z]+$/,
+  // A 1.4.1 ROW'S OWN GROUP, minted by `mlsrow.mjs` `mintRowGroup` as `rowGroupName(rowId)`
+  // (`rowkit.mjs`): the row group's prefix, its number, the mark's tail - `FLOOR2-<tail>`. The
+  // prefixes are `ROW_GROUPS`, enumerated, never `[A-Z]+`.
+  /^(FLOOR|CC|DUP|OFF|KILL|GAP|RM|ADM|DEV|BIG|TOK|NET)\d+-[0-9a-z]+$/,
 ];
 
 /** True when `name` is a group a runner minted, and therefore a group a sweep may delete. */
