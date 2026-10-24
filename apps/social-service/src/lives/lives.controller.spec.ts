@@ -1,4 +1,5 @@
-import { HttpStatus } from '@nestjs/common';
+import { HttpStatus, Logger } from '@nestjs/common';
+import type { DataSource } from 'typeorm';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Readable } from 'stream';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
@@ -26,6 +27,15 @@ async function statusOf(p: Promise<unknown> | (() => unknown)): Promise<number> 
   return HttpStatus.OK;
 }
 
+/** A DataSource whose `platform_config` answers `rows` (or throws `error`) - the one read the guard makes. */
+function platformDb(rows: unknown[] | Error) {
+  const query = jest.fn(async () => {
+    if (rows instanceof Error) throw rows;
+    return rows;
+  });
+  return { db: { manager: { query } } as unknown as DataSource, query };
+}
+
 describe('the live switch (LIVE_ENABLED)', () => {
   const saved = process.env.LIVE_ENABLED;
   afterEach(() => {
@@ -38,10 +48,17 @@ describe('the live switch (LIVE_ENABLED)', () => {
       if (value === undefined) delete process.env.LIVE_ENABLED;
       else process.env.LIVE_ENABLED = value;
       expect(isLiveEnabled()).toBe(false);
-      expect(await statusOf(() => new LiveEnabledGuard().canActivate())).toBe(HttpStatus.NOT_FOUND);
+      // The deploy lock is asked FIRST: a closed estate never reads the database, even with lives on.
+      const { db, query } = platformDb([{ lives_mode: 'on' }]);
+      expect(await statusOf(() => new LiveEnabledGuard(db).canActivate())).toBe(
+        HttpStatus.NOT_FOUND
+      );
+      expect(query).not.toHaveBeenCalled();
     }
     process.env.LIVE_ENABLED = 'true';
-    expect(new LiveEnabledGuard().canActivate()).toBe(true);
+    await expect(
+      new LiveEnabledGuard(platformDb([{ lives_mode: 'on' }]).db).canActivate()
+    ).resolves.toBe(true);
   });
 
   it('guards the whole controller, the switch BEFORE the account check', () => {
@@ -49,6 +66,63 @@ describe('the live switch (LIVE_ENABLED)', () => {
       LiveEnabledGuard,
       NginxAuthGuard,
     ]);
+  });
+});
+
+/**
+ * THE RUNTIME KILL SWITCH (`platform_config.lives_mode`, migration 015 in core-service), ANDed with
+ * the deploy lock. Every `/api/lives` route sits behind this one guard (asserted above and in
+ * live-chat.service.spec.ts), so these cases are the refusal of each route.
+ */
+describe('the live kill switch (platform_config.lives_mode)', () => {
+  const saved = process.env.LIVE_ENABLED;
+  beforeEach(() => {
+    process.env.LIVE_ENABLED = 'true';
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.LIVE_ENABLED;
+    else process.env.LIVE_ENABLED = saved;
+  });
+
+  it('answers 404 while the switch is off, the answer of the deploy lock', async () => {
+    const { db, query } = platformDb([{ lives_mode: 'off' }]);
+    expect(await statusOf(() => new LiveEnabledGuard(db).canActivate())).toBe(HttpStatus.NOT_FOUND);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('SELECT lives_mode FROM platform_config')
+    );
+  });
+
+  it('reads the database on EVERY request, so a flip holds from the next one', async () => {
+    const answers = [[{ lives_mode: 'on' }], [{ lives_mode: 'off' }]];
+    const query = jest.fn(async () => answers.shift());
+    const guard = new LiveEnabledGuard({ manager: { query } } as unknown as DataSource);
+    await expect(guard.canActivate()).resolves.toBe(true);
+    expect(await statusOf(() => guard.canActivate())).toBe(HttpStatus.NOT_FOUND);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it('answers 404 when the row is missing, and says so at error', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    expect(await statusOf(() => new LiveEnabledGuard(platformDb([]).db).canActivate())).toBe(
+      HttpStatus.NOT_FOUND
+    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('MISSING'));
+    error.mockRestore();
+  });
+
+  it.each(['ON', 'true', 'audio', '', null])(
+    'refuses (throws, never opens) on an unknown value %p',
+    async (value) => {
+      await expect(
+        new LiveEnabledGuard(platformDb([{ lives_mode: value }]).db).canActivate()
+      ).rejects.toThrow(/unknown value/);
+    }
+  );
+
+  it('refuses when the read fails - a switch that cannot be read is not read as open', async () => {
+    await expect(
+      new LiveEnabledGuard(platformDb(new Error('connection lost')).db).canActivate()
+    ).rejects.toThrow('connection lost');
   });
 });
 

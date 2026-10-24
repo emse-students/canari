@@ -145,7 +145,10 @@ Three shapes, compared honestly.
 
 > **Revised 2026-10-21 by [live-scaling](live-scaling.md)** (the owner: no VISIBLE ceiling): Cloudflare's terms are now read and restrict the Cache Rule below, so the delivery recommendation there is an R2 bucket; the bounds, the options and the staged path are on that page.
 
-The user, 2026-10-20: *"Je ne veux pas de plafond."* Nothing here is built and no infrastructure is
+The user, 2026-10-20: *"Je ne veux pas de plafond."* **Restated 2026-10-21 as a STANDING WISH: no
+visible audience ceiling for a live, "the technique must follow".** The cap of 24 is a TEMPORARY
+technical bound, and the "live complet" screen is NOT a product feature - nothing is to be built on
+it or around it, and it goes with the cap. Nothing here is built and no infrastructure is
 touched; this is the work an uncapped audience needs, in the order it should be measured. **What the
 cap protects.** The cap of 24 ([the viewer cap](../../services/lives.md#the-viewer-cap-wp-l4)) exists because every
 viewer's copy of every segment leaves the school host's uplink (~90 Mb/s measured, 3 Mb/s a viewer) from
@@ -211,8 +214,10 @@ because the manifest is per-viewer by design (the segment names are the capabili
 ### The viewer count is a signal, not a gate
 
 The seat sorted set (`live:seats`, one Lua script a poll) already knows who is watching within the
-30 s lease. Uncapped, the grant stops refusing and the set only COUNTS: `ZCARD` per live, shown to the
-broadcaster and, rounded, to viewers (**a decision**: whether viewers see a count at all). It stays
+30 s lease. Uncapped, the grant stops refusing and the set only COUNTS: `ZCARD` per live (one set per
+live then, since the count walks the shared set today), shown to the broadcaster and to viewers -
+**the owner decided 2026-10-21 that viewers see it, EXACT and not rounded (confirmed by the owner
+2026-10-21)** ([the viewer count](#the-viewer-count-2026-10-21)). It stays
 the removal point (a removed viewer's seat is freed and its key refused) and the load figure the
 bitrate choice of D2 reads. A seat renewed every poll is N Redis scripts a second: renew once per
 lease interval, as the gate-on-a-lease change above does. `LIVE_FULL`, its screen and
@@ -261,7 +266,7 @@ only when 2-6 hold.
 
 User calls, taken after the server half (WP-L2, WP-L3) was built. They supersede L7 and change what blocks a stable.
 
-- **D1 - lives come BEFORE the calls revival** (supersedes L7 of 2026-10-15). WP-L0 no longer precedes the lives; calls stay dev-only (`CALLS_COMPILED = false`, [calls](calls.md)).
+- **D1 - lives come BEFORE the calls revival** (supersedes L7 of 2026-10-15). WP-L0 no longer precedes the lives; in-app calls were compiled in by the flip PR of 2026-10-22 (`CALLS_COMPILED = true`, held shut by the server's `calls_mode`; [calls](calls.md)).
 - **D2 - bitrate is fixed at launch by the server.** v1 picks 720p or 480p from the TOTAL live load at the moment the live starts, and never changes it mid-live. The server transcodes nothing. Mid-live adaptive bitrate is NOT v1: MediaRecorder cannot reliably change resolution or bitrate without a new init segment.
 - **D3 - any member may start a live in v1, so WP-L8 is a RELEASE BLOCKER.** Moderation (hide message, remove viewer, block, report a live, staff remote cut) and the per-account limits already built must exist before any stable. Apple guideline 1.2 and the Play UGC answers (Q2) precede any store submission.
 - **D4 - a "X est en live" notification**, like "X a publié", is wanted. The server half (WP-L7) is built (#2106, spaces respected like a post); a tap lands on the feed, and the client LIVE card and the live's own viewer route are owed.
@@ -332,8 +337,11 @@ draft. `frontend/src/lib/live/liveCrypto.ts` exports `sealLiveSegment(keyHex, li
 - **WebCrypto, not WASM.** WASM holds the MLS group state; media content keys are SubtleCrypto
   (`$lib/mediaCrypto`), and the live key is a media key of that kind, so the media path is the
   precedent. The key is imported non-extractable for each call.
-- **Random IVs under one key** are safe at this volume: a 2 s segment over the longest live the
-  server allows is a few thousand seals per key, far below GCM's 2^32 random-IV bound.
+- **Random IVs under one key** are safe at this volume. The assumption: about 1000 accounts
+  chatting at once, each at the C6 ceiling of 3 messages per 5 s (2160 per account per hour), so a
+  live hour is about 2 million chat seals plus 1800 segments (2 s each), about 2^21 seals under one
+  key. The collision chance for random 96-bit IVs is then about 2^-55, and the count far below
+  GCM's 2^32 random-IV bound; ten times the chatters still leaves it below 2^25.
 
 **A segment that does not open is a `LiveSegmentOpenError`**, typed at the throw, `reason`
 `malformed` (under 28 bytes) or `unauthentic` (GCM refused it: wrong key, live, index, version, or a
@@ -364,6 +372,22 @@ WP-L5's VIEWER half, **behind `LIVE_ENABLED` (`frontend/src/lib/features.ts`): o
 by the same `deployEnvironment() === 'development'` test as `CALLS_ENABLED`. A production binary asks
 `/api/lives` nothing and draws nothing; the server answers `404` there anyway. The
 chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); moderation (WP-L8) is merged.
+
+### The server's kill switch hides the live surfaces (2026-10-21)
+
+The build switch is not enough once it ships: a store binary cannot be recalled. So every live
+surface - the feed card, the viewer, the composer's Live chip - is drawn only when
+`livesAvailable(serverLivesMode())` holds (`utils/livesAvailability.ts`): `LIVE_ENABLED` AND the
+server's runtime kill switch `platform_config.lives_mode` set to `on`, as `/api/version` last
+published it (`lives: { mode }`, parsed by `parseServerVersionInfo`; absent or unknown reads `off`).
+It is reactive on the version check, so an admin closing lives takes the card and an open viewer away
+at the next refresh (focus, reconnect, mount). An open BROADCAST screen is not torn down by it: its
+next segment meets the server's `404`, classified `disabled` by `lib/live/api.ts` (what that screen
+then shows on a flip was not read on a phone). The server refuses on
+every request whatever the client draws ([lives](../../services/lives.md#the-two-switches-live_enabled-and-lives_mode));
+the admin control is `/admin/platform`, built like the calls one (a save sends only the fields that
+changed, and is refused when nothing loaded). `livesModesAgree.test.ts` holds the six spellings of
+the two values together.
 
 | File | What it holds |
 | --- | --- |
@@ -460,7 +484,8 @@ release. **Not built: chat and reactions (WP-L6), moderation (WP-L8).**
 | `lib/live/liveBroadcast.svelte.ts` | The state machine: `preview -> starting -> live <-> away -> ending -> ended`, every dependency injected. |
 | `components/live/LiveOverlay.svelte`, `LiveBroadcaster.svelte` | The full-screen layer (portal, `coversScreen`, one history entry, the edge swipe) and the broadcast screen. The viewer's identity chip is `LiveIdentity`, a different component. |
 
-**The entry.** The post composer's chip row carries "En direct" when `LIVE_ENABLED` is on. The live
+**The entry.** The post composer's chip row carries "En direct" when `livesAvailable(serverLivesMode())`
+holds - `LIVE_ENABLED` AND the server's runtime kill switch on ([below](#the-servers-kill-switch-hides-the-live-surfaces-2026-10-21)). The live
 goes out under the identity chosen in the composer: the member, or an association they may post as
 (`associationId`; the server checks `POST_AS_ASSO`). Never anonymous: the chip is not drawn while
 "anonymous" is chosen, nor while the chosen association is missing from the list read.
@@ -554,8 +579,8 @@ longer mentions moderation); a cut read on return from the background (`fetchLiv
 `LIVE_ALREADY_OPEN` (a previous screen killed) is not resumed: the member is told it closes within the
 minute.
 
-**What the server does not give, so the client does not show it:** a viewer count (no field in
-`LiveView` or the manifest). The reason of a `410` is in the body (`endReason`) since WP-L8, and the
+**What the server does not give, so the client does not show it:** who watches - only how many
+([the viewer count](#the-viewer-count-2026-10-21), since 2026-10-21). The reason of a `410` is in the body (`endReason`) since WP-L8, and the
 two ends that are not the hour or the broadcaster's own (`dropped`, `erased`) still share the
 generic sentence.
 
@@ -758,3 +783,34 @@ Built for the owner decisions of 2026-10-20 ([lives](../../services/lives.md#dec
 - **Report a chat line.** `LiveChatPanel` takes an optional `report(line)` and draws a `Flag` on every numbered line that is not the reader's own; `LiveChatReportDialog` opens the posts' `ReportReasonDialog` on the `critical` layer and calls `createLiveChatReport` (`lib/moderation/api.ts`): `POST /api/moderation/reports { contentType: 'live_chat', contentId: <messageId>, liveId, reason, message: <plaintext> }`. Outcomes by type: `409 ALREADY_REPORTED`, `404 LIVE_NOT_FOUND`, anything else keeps the dialog open. The body shape is the contract agreed with the server half (#2172, below). Tests: `LiveChatReportDialog.svelte.test.ts`, the flag in `LiveChatPanel.svelte.test.ts`.
 
 **Contract with server PR #2172 (2026-10-21).** The reported line has NO client-side length check (the server takes up to 900 UTF-8 bytes; the composer's 300 characters bind only what one writes). Typed outcomes: `409 ALREADY_REPORTED` and `404 LIVE_NOT_FOUND` close the dialog; `400 LIVE_CHAT_REPORT_MISMATCH`, `400 LIVE_CHAT_REPORT_MESSAGE_INVALID` (over 900 bytes) and `503 LIVE_REPORT_SIGNING_UNAVAILABLE` keep it open with their own sentence. The strike ladder's refusals of a start, `LIVE_BROADCAST_SUSPENDED` (with `suspendedUntil`) and `LIVE_BROADCAST_WITHDRAWN`, are LiveRefusalKinds `suspended` / `withdrawn` with a sentence on the pre-live screen, and the notice types `live_suspended` / `live_withdrawn` are known, inert rows like `live_cut`. The standing screen and its buttons are a later PR.
+
+## The viewer count (2026-10-21)
+
+**The owner decided (2026-10-21): viewers see HOW MANY watch a live, like Instagram, and so does the
+broadcaster - a count, never a name or a list, to anybody.** The number is **EXACT, not rounded -
+confirmed by the owner 2026-10-21**. The server side (what a viewer is, blocked accounts counted, the reasoning on
+exactness, what happens when Redis does not answer) is
+[lives](../../services/lives.md#the-viewer-count-2026-10-21), the only copy. Dev builds only, behind
+`LIVE_ENABLED`, like the rest of the live.
+
+- **No new request.** The manifest carries `viewers` (`number | null`). The viewer's `LivePlayer`
+  hands it to `onViewers` at the same two places it reads the clock (the join and each poll); the
+  broadcaster's `LiveBroadcasterChatPoller` (its one loop, `chat=1`) hands it to its `onViewers`
+  argument. `liveViewerCount` (`lib/live/liveViewerCount.ts`) is the one reader: a non-negative
+  integer, or `null` - absent (a server older than the field) silently, anything else malformed with
+  a `warn`.
+- **No stale number.** A failed poll hands `null` too - the viewer's player on every failed poll
+  (the reconnecting state), the broadcaster's loop on every failed tick - so a number on screen is
+  always the last poll's. The broadcaster's screen also drops it when it goes off air and when a
+  NEW live starts, so a second live never opens on the first one's audience.
+- **`LiveViewerCount.svelte`**: an `Eye` and the number in a `cn-scrim` pill, in the viewer's top bar
+  after the time on air (not on a final screen) and under the broadcaster's ON AIR badge. `null`
+  draws nothing, never a placeholder. The number is `aria-hidden`; a screen reader reads
+  `live_viewer_count` (`"{count} spectateur(s)"` / `"{count} viewer(s)"`, Paraglide plural forms:
+  French singular for 0 and 1, English for 1 only) and is not told every change (`aria-live="off"`,
+  which also mutes it inside the broadcaster's `role="status"` row).
+- **Tests**: `liveViewerCount.test.ts` (the reader, both languages' plurals), `livePlayer.test.ts`
+  and `liveChat.test.ts` (the count from each manifest, no extra fetch), `LiveViewer.svelte.test.ts`
+  and `LiveBroadcaster.svelte.test.ts` (drawn, updated, hidden on `null`, on a failed poll, on the
+  end screen, and reset for a new live).
+- **Owed on hardware**: one look on both phones at the pill next to the badge (check Y's run).

@@ -154,14 +154,36 @@ describe('marks the replay has made but not committed', () => {
     expect(durable()).toContain(frameFingerprint(live));
   });
 
-  it('are still committed by the thunk when NO checkpoint fired during the walk', async () => {
-    // The thunk is not replaced, it is the remaining case. A short walk that mutates nothing
-    // structural never triggers a checkpoint, and its marks must still land.
+  it('are NOT written by the thunk - the checkpoint that precedes it is their one writer', async () => {
+    // The "no checkpoint fired" case is gone: `withMlsBulkIngest` runs the thunk only after a
+    // checkpoint that covers the walk, and withholds it when there is none. The thunk keeps the
+    // cursor and the retry counters; the marks are the checkpoint's.
     const commit = await replayOnePage({ ok: true, plaintext: null });
     commit?.();
     await flush();
 
+    expect(localStorage.getItem(KEY)).toBeNull();
+  });
+
+  it('a LIVE mark made while the covering checkpoint seals is not made durable by the thunk', async () => {
+    // The exact ordering of the defect: the replay ends, checkpoint Y starts (its snapshot), a live
+    // COMMIT is decrypted and marked while Y seals - its epoch is NOT in Y's file - then Y lands and
+    // the thunk runs. The thunk used to write the shared LIVE set, so the commit's fingerprint became
+    // durable before checkpoint Z that holds its epoch; a kill before Z then skipped the commit on
+    // the cold replay, and every later frame failed `wrong-epoch`.
+    const commit = await replayOnePage({ ok: true, plaintext: null });
+    const y = snapshotPendingHistoryMarks(USER); // Y starts
+    const liveCommit = new Uint8Array([0xc0, 0xff, 0xee]);
+    markHistoryFrameConsumed(USER, GROUP, frameFingerprint(liveCommit)); // while Y seals
+    commitPendingHistoryMarks(y); // Y lands
+    commit?.(); // the helper runs the thunk now
+    await flush();
+
     expect(durable()).toContain(frameFingerprint(wire));
+    expect(durable()).not.toContain(frameFingerprint(liveCommit));
+
+    checkpoint(); // Z, which holds the commit's epoch, declares it
+    expect(durable()).toContain(frameFingerprint(liveCommit));
   });
 
   it('belong to their own account - a checkpoint for somebody else writes nothing', async () => {

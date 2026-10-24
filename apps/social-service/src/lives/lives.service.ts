@@ -96,6 +96,13 @@ export interface LiveManifest {
   lastSegmentAt: Date | null;
   serverNow: Date;
   segments: LiveManifestSegment[];
+  /**
+   * HOW MANY ACCOUNTS WATCH THIS LIVE - the seats it holds on the host's cap, the caller's own
+   * included, the broadcaster never (it takes none). A COUNT ONLY: no response of this API names a
+   * viewer, to anybody (lives.md, "The viewer count"). The owner decided viewers see the count
+   * (2026-10-21), EXACT and not rounded - confirmed by the owner 2026-10-21. `null` only on the broadcaster's poll when the count did not answer ({@link LiveSeats.watching}).
+   */
+  viewers: number | null;
 }
 
 /** The answer to an ingest, and to its idempotent repeat. */
@@ -417,7 +424,7 @@ export class LivesService implements OnModuleDestroy {
    */
   async manifest(viewerId: string, liveId: string, from?: number): Promise<LiveManifest> {
     const row = await this.assertMayWatch(this.db.manager, viewerId, liveId);
-    await this.takeSeat(row, viewerId);
+    const viewers = await this.viewerCount(row, viewerId, await this.takeSeat(row, viewerId));
     const start = from ?? Math.max(0, row.nextIndex - LIVE_MANIFEST_WINDOW);
     const segments: LiveManifestSegment[] = await this.db.query(
       `SELECT s."index", s.name, s.bytes
@@ -433,6 +440,7 @@ export class LivesService implements OnModuleDestroy {
       lastSegmentAt: row.lastSegmentAt,
       serverNow: row.serverNow,
       segments,
+      viewers,
     };
   }
 
@@ -1407,10 +1415,26 @@ export class LivesService implements OnModuleDestroy {
    * takes or renews a seat, 503 `LIVE_FULL` past the host's cap. Taken AFTER the watch check, so a
    * removed, blocked or ended answer is never masked as "full". The broadcaster takes none: its
    * reads cost the uplink nothing a viewer's would.
+   *
+   * Answers the live's viewer count as the take counted it, or `null` for the broadcaster (no seat,
+   * no take) - who asks {@link viewerCount} instead, and only where a count is shown.
    */
-  private async takeSeat(row: LiveRow, viewerId: string): Promise<void> {
-    if (row.broadcasterId === viewerId) return;
-    await this.seats.take(row.id, viewerId);
+  private async takeSeat(row: LiveRow, viewerId: string): Promise<number | null> {
+    if (row.broadcasterId === viewerId) return null;
+    return this.seats.take(row.id, viewerId);
+  }
+
+  /**
+   * THE VIEWER COUNT a manifest carries (lives.md, "The viewer count") - from the seats, no second
+   * tracker: a viewer's from its own take (`taken`), the broadcaster's from a read-only count of the
+   * same set. Asked by the manifest only: the key read shows no count, so it runs no count.
+   */
+  private async viewerCount(
+    row: LiveRow,
+    viewerId: string,
+    taken: number | null
+  ): Promise<number | null> {
+    return row.broadcasterId === viewerId ? this.seats.watching(row.id) : taken;
   }
 
   /**

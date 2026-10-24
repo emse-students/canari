@@ -1,8 +1,10 @@
 [default]
 description = "Default permissions for the plugin"
+# NO WRITE AND NO DELETE FROM THE WEBVIEW (2026-10-22). On a phone the entry is the only copy of the
+# hardware-held at-rest key, so every mutation goes through the app's Rust bridge
+# (`PluginDeviceKeyStore::store_guarded` / `delete_guarded`), which asks the at-rest guard first. The
+# WebView deletes through the app command `supprimer_cle_appareil`.
 permissions = [
-  "allow-store-key-bytes",
   "allow-get-key-bytes",
-  "allow-delete-key-bytes",
   "allow-has-key-bytes",
 ]

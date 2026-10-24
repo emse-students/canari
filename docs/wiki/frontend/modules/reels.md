@@ -416,10 +416,11 @@ reel, and the server refuses a declaration over the cap, so it declares the cap
 
 ## Watching: the feed card and the full-screen viewer (C7)
 
-**In the feed a reel is a VERTICAL box** (`PostContent`): 9:16, 70 % of the screen's height, the
-video covering it. An ordinary attachment's box follows the file's ratio under the 60 % ceiling and
-cropped a phone's portrait clip into a wide strip; a reel is always portrait, so its box says so
-before the first frame. It plays muted while on screen like any feed video (`InlineVideo`), and a
+**In the feed a reel is drawn in the SAME box as any video** (`PostContent` `singleMedia`, user,
+2026-10-22): the clip's own ratio under the `--media-max-height` ceiling, the whole frame contained
+and the sides a blurred copy of its first frame; 9:16 only when the reel carries no dimensions
+([posts](posts.md)). It used to be a fixed 9:16 box 70 % of the screen high with the video covering
+it. It plays muted while on screen like any feed video (`InlineVideo`), and a
 touch opens the viewer instead of the media viewer.
 
 **A feed card fetches what its video is about to play, and gives it all back off screen (fix of
@@ -499,9 +500,9 @@ text instead of turning the reel. The fold is
 measured (`watchClampOverflow`, shared with the card), so a short caption has no button. Unfolding
 neither pauses nor turns the reel: the tap-outside layer is a button, and the unfolded text carries
 `data-reel-caption-open`, both in the viewer's `NOT_A_GESTURE`, so a drag there scrolls the text
-(`touch-pan-y`) instead of turning the reel. Anchored to the bottom, above the player's bar, so 2x
+(`touch-pan-y`) instead of turning the reel. Anchored to the bottom, above the player's line, so 2x
 type grows UPWARD. The viewer has nothing else at the bottom-right at 390 px (its step buttons are
-`md:` and mid-height; the save is in the player's bar), so nothing collides.
+`md:` and mid-height; the save and the sound are in the rail), so nothing collides.
 
 ### A double tap on a reel likes it (2026-10-19)
 
@@ -540,7 +541,8 @@ below; **owed on both phones**
 
 - **The rail** (`ReelActionRail`, inside `ReelSlide`'s frame, bottom-right on the caption's
   baseline; the caption keeps `pr-16` free for it): **heart** with the number of reactions,
-  **comments** with the number of comments, **send**. Drawn only when the viewer has a reader
+  **comments** with the number of comments, **send** (the post's share sheet, `PostShareSheet`:
+  into a conversation, copy the link, the system sheet - [sharing S6](../sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)). Drawn only when the viewer has a reader
   (`likerId`), so a conversation's reel (RC-1) has none. `data-no-double-tap` keeps it out of the
   double tap, `data-reel-rail` out of the viewer's swipe (`NOT_A_GESTURE`).
 - **The heart says "I reacted"** (`reels/reelRail.ts`): a post carries reactions of several kinds,
@@ -562,8 +564,10 @@ below; **owed on both phones**
   (`GET /api/posts/:id`, every comment and no total) sets it to the rows it read - on the read's
   own object, so its served stamp survives. On the card, a comment write declares `comments` AND
   `commentCount` to its ledger: a read issued before the write adopts neither.
-- **Send is the post menu's share** (`posts/sharePost.ts`: copy the public link, toast). Sending a
-  post INTO a conversation does not exist; it is an owed decision, not built here.
+- **Send is the post menu's share**: both open the post's share sheet (`PostShareSheet`, loaded on
+  the first send and drawn inside the viewer, so above it). Sending INTO a conversation lands the
+  link in that conversation's composer, and a tap on that link's card there opens the reel in this
+  viewer ([sharing S6](../sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)).
 - **The comments sheet** (`ReelCommentsSheet`): the POST's own thread - `PostComments` in its
   `docked` mode (the list scrolls, the composer stays at the bottom), written through
   `posts/postCommentThread.svelte.ts`, the class the card now uses too, and reported through
@@ -633,6 +637,38 @@ dp in the WebView. So a slow drag commits SOONER in Canari (25 % against 50 %) a
 be about seven times FASTER. These numbers are the reference for tuning it; this change applies
 none of them. **Follow-up, after the phone reading of RR:** decide whether the reel pager moves
 towards these thresholds (lead's decision: not in the rail's pull request).
+
+### The minimal player and the rail tools (user, 2026-10-23)
+
+*"Les Reels d'instagram sont beaucoup plus epures, la barre de lecture est discrete et collee en bas,
+sans timecode."* The viewer's player is `VideoPlayer` with `minimal` (through `PostMedia`'s
+`minimalPlayer`); every other player (lightbox, conversations) keeps its bar.
+
+- **No control row, no timecode, no play button.** One progress line on the bottom edge of the frame,
+  **2 px drawn in a 32 px touch target**, `z-40` over the caption's vignette (`z-20`) so the scrim never
+  dims it. Touched or dragged it thickens (4 px) and shows a 12 px handle; a keyboard focus does the
+  same. It stays a `role="slider"` (arrows, Home/End through `videoKeyAction`) and is
+  `data-video-controls`, so a drag on it is a seek and never a swipe. It pads for the home indicator
+  (`--safe-area-inset-bottom`) only when the frame reaches the screen bottom (`playerSafeBottom`).
+  The caption's bottom pad is now `inset + 1rem`; the 4.5 rem it left for the bar is gone.
+- **A tap on the picture plays or pauses** (it toggled the controls before; a paused reel kept a big
+  play button). **The glyph is the feedback of a tap, never a state** (user, same day): nothing at load,
+  autoplay, an engine pause or the end; the icon of what the tap just did pops and fades in 600 ms
+  (`.reel-glyph`) and is not drawn under `prefers-reduced-motion`. A double tap that likes still
+  pauses then resumes (the first tap is the player's, as it always was).
+- **The rail, top to bottom: heart, comments, share, DOWNLOAD under share, SOUND under that** (the user
+  asked for this order; Instagram puts the sound top-right). The tools show on a reel page even
+  when the rail has no social action (a conversation's reel), and not on a photo page. The sound
+  button is `videoSound`'s one answer; `VideoPlayer` now also carries a store change to its element
+  (`app` scope), so the rail needs no handle on the player. The download is the same
+  `ReelSaveButton`, same logic, drawn plain (`rail`).
+- **The top**: a scrim under the status bar and the X, the X without a disc (it overlapped a
+  letterboxed frame's rounded corner), safe-area aware; the native status bar icons are held light
+  while the viewer is up (`themeStore.holdNativeBar('dark')`, the camera's mechanism).
+- **The bands around a short frame are intended**: the frame is the camera's 9:16 shown whole
+  (`ReelFrame`), the rest of the screen is `ReelBackdrop`'s blurred copy, never black. A reel whose
+  frame fills the stage has none. No screenshot is attached: the wasm bundle could not be built
+  where this was written, so the render is **owed on a phone**.
 
 ### The CanaReels entry - an icon beside the tabs that opens the viewer (user, 2026-10-16)
 
@@ -705,10 +741,9 @@ author's name. `expiresAt`, `expiringSoon` and `serverNow` stay on the server's 
 ([reels (server)](../../services/reels.md)), which no client reads any more.
 The publish step's own note ("visible 30 days...") is unchanged and is the user's to rule on.
 
-**The save** (`ReelSaveButton`) is **for EVERY reel, public or not, in the player's bar right after the
-volume button** (user, 2026-10-09: *"un bouton pour sauvegarder tous les reels, public ou non"*). It is a
-`barActions` snippet that `ReelSlide` hands to `PostMedia` (gallery mode), which hands it to `VideoPlayer`;
-it reads the video out of the media cache with the key the viewer's own ref carries, and gives it to:
+**The save** (`ReelSaveButton`) is **for EVERY reel, public or not** (user, 2026-10-09: *"un bouton pour
+sauvegarder tous les reels, public ou non"*). Since 2026-10-23 it is in the RAIL under the send, not in
+the player's bar ([the minimal player](#the-minimal-player-and-the-rail-tools-user-2026-10-23)); it reads the video out of the media cache with the key the viewer's own ref carries, and gives it to:
 
 | Where | Path | Permission |
 | --- | --- | --- |
@@ -736,6 +771,16 @@ name a plain file name; anything that looks like a path is a typed refusal (`Bad
 `BadName`), never a default. The native copy runs off the main thread. The command names, their
 arguments and the capability are pinned on both sides by `services/galleryCommands.test.ts`, which
 reads the Rust sources.
+
+**The same staging serves the system SHARE sheet** (lot S3, [share-out](../share-out.md)): `share_staged`
+moves a staged file into the cache's `share_out/` - emptied first, one file shared out at a time,
+and swept at start-up with the `gallery-*` files - which is the ONE cache directory the app's
+FileProvider exposes (`res/xml/file_paths.xml`), then opens the sheet on it (Android `ACTION_SEND`
+with a read grant carried in the ClipData, iOS `UIActivityViewController` on the file URL). The
+copy cannot be deleted when the sheet closes, because the receiving app reads it on its own
+schedule, so it stays until the next share or the next launch. `share_text` opens the sheet on a
+text. Name and mime type are refused when they name a path or are not a plain `type/subtype`
+(`BadName`, `BadMime`).
 
 **A refusal is an outcome, not a failure**: `denied` swaps the save button for "Open settings",
 which opens the app's own page in the system settings (`ACTION_APPLICATION_DETAILS_SETTINGS`,

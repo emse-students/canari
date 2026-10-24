@@ -872,3 +872,58 @@ describe('AssociationsController POST calendar/feed-signature (2026-10-06)', () 
     );
   });
 });
+
+describe('AssociationsController POST products/:productId/checkout - the free amount', () => {
+  function makeController() {
+    const productsService = {
+      createCheckoutSession: jest.fn(() => Promise.resolve({ checkoutUrl: 'u' })),
+    };
+    const controller = new AssociationsController(
+      {} as AssociationsService,
+      productsService as unknown as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService,
+      {} as never
+    );
+    const warn = jest.spyOn((controller as any).logger, 'warn').mockImplementation(() => undefined);
+    return { controller, productsService, warn };
+  }
+
+  // 5000.5 passed every bound and was charged ROUNDED while recorded as sent; a string compared as
+  // NaN and passed both bounds. Each is refused before the service is reached, typed and logged.
+  it.each([
+    ['a fraction of a cent', 5000.5],
+    ['a numeric string', '5000'],
+    ['NaN', NaN],
+    ['a negative amount', -100],
+    ['an amount past the safe integers', 1e20],
+  ])('refuses %s with AMOUNT_INVALID and never calls the service', async (_name, amount) => {
+    const { controller, productsService, warn } = makeController();
+    const err = await Promise.resolve()
+      .then(() => controller.checkout('asso1', 'prod1', 'user1', { customAmountCents: amount }))
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as BadRequestException).getResponse()).toMatchObject({ code: 'AMOUNT_INVALID' });
+    expect(productsService.createCheckoutSession).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('amount refused'));
+  });
+
+  it.each([
+    ['a whole number of cents', 5000, 5000],
+    ['no amount at all', undefined, undefined],
+  ])('CONTROL: passes %s through unchanged, logging no refusal', async (_name, amount, passed) => {
+    const { controller, productsService, warn } = makeController();
+    await controller.checkout('asso1', 'prod1', 'user1', { customAmountCents: amount });
+    expect(productsService.createCheckoutSession).toHaveBeenCalledWith(
+      'asso1',
+      'prod1',
+      'user1',
+      passed,
+      { successUrl: undefined, cancelUrl: undefined },
+      undefined
+    );
+    expect(warn).not.toHaveBeenCalled();
+  });
+});

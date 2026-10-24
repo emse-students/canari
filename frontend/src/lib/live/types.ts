@@ -55,6 +55,12 @@ export interface LiveManifest {
   lastSegmentAt: string | null;
   serverNow: string;
   segments: LiveManifestSegment[];
+  /**
+   * How many accounts watch the live: the seats it holds on the host's cap, the caller's own
+   * included, the broadcaster never. A COUNT ONLY - no answer of the API names a viewer. `null` when
+   * the broadcaster's count did not answer: show no number, never a guessed one.
+   */
+  viewers: number | null;
   /** The live chat (WP-L6), present only when the poll asked for it (`chat=1`). */
   chat?: LiveChatBlock;
 }
@@ -265,7 +271,8 @@ export type LiveRefusalCode =
  *   or an ended live already purged), or a 404 on a segment fetch.
  * - `ended`: `410 LIVE_ENDED`, whose body carries `endedAt` and `endReason` (`cut`: a moderator ended it).
  * - `removed`: `403 LIVE_VIEWER_REMOVED` - the broadcaster removed this viewer.
- * - `disabled`: a `404` with no code on `/api/lives` - the `LIVE_ENABLED` guard (off on production).
+ * - `disabled`: a `404` with no code on `/api/lives` - the live guard: the `LIVE_ENABLED` deploy lock
+ *   (off on production) or the runtime kill switch `platform_config.lives_mode` set to `off`.
  * - `out-of-order`: `409 LIVE_SEGMENT_OUT_OF_ORDER` - `nextIndex` says which index the server wants.
  * - `retry-segment`: the SAME index should be sent again after a short backoff:
  *   `409 LIVE_SEGMENT_IN_PROGRESS`, `409 LIVE_SEGMENT_RESERVATION_LOST`,

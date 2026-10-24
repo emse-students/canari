@@ -26,18 +26,12 @@
   } from '@lucide/svelte';
   import { tick } from 'svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
-  import AnonymousAvatar from '$lib/components/shared/AnonymousAvatar.svelte';
-  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import PostImage from './PostImage.svelte';
+  import CommentAuthorAvatar from './CommentAuthorAvatar.svelte';
   import CommentItem from './CommentItem.svelte';
   import { POST_MARKDOWN_RENDERERS } from './postMarkdownRenderers';
   import { COMMENT_MAX_LENGTH, type PostComment } from '$lib/posts/api';
-  import {
-    commentAuthorHref,
-    commentAuthorKind,
-    commentAuthorName,
-  } from '$lib/posts/commentAuthor';
+  import { commentAuthorHref, commentAuthorName } from '$lib/posts/commentAuthor';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import { mediaAspectStyle, resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { timeAgo, exactDate } from '$lib/utils/time';
@@ -92,7 +86,6 @@
     onReport,
   }: Props = $props();
 
-  const kind = $derived(commentAuthorKind(comment));
   const authorName = $derived(commentAuthorName(comment));
   const authorHref = $derived(commentAuthorHref(comment));
   const isPending = $derived(pendingCommentIds?.has(comment.id) ?? false);
@@ -168,20 +161,7 @@
     : ''}"
 >
   {#snippet avatar()}
-    {#if kind === 'association' && comment.association}
-      <span class="block h-8 w-8">
-        <AssociationAvatar
-          fill
-          shape="circle"
-          name={comment.association.name}
-          logoUrl={comment.association.logoUrl}
-        />
-      </span>
-    {:else if kind === 'anonymous'}
-      <span class="block h-8 w-8"><AnonymousAvatar fill /></span>
-    {:else if comment.userId}
-      <span class="block h-8 w-8"><Avatar userId={comment.userId} fill /></span>
-    {/if}
+    <CommentAuthorAvatar {comment} />
   {/snippet}
 
   {#if authorHref}

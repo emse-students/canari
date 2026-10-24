@@ -1,5 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import { SocialApiError } from '$lib/associations/api';
+import { formatAmount } from '$lib/forms/fillAnswers';
 
 /** The body `code` social-service sets when the payment provider itself declined a payment. */
 export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
@@ -20,8 +21,68 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === PREVIOUS_PAYMENT_OPEN) {
     return m.form_previous_payment_open();
   }
+  if (err instanceof SocialApiError && err.code === AMOUNT_OUT_OF_RANGE && err.amountBounds) {
+    const { minCents, maxCents } = err.amountBounds;
+    // In the reader's locale: `formatPriceCents` is pinned to fr-FR, so English read '0,50 EUR'.
+    const min = formatAmount(minCents);
+    return maxCents === null
+      ? m.shop_payment_amount_min({ min })
+      : m.shop_payment_amount_range({ min, max: formatAmount(maxCents) });
+  }
+  if (err instanceof SocialApiError && err.code === ALREADY_ANSWERED) {
+    return m.form_already_answered();
+  }
+  if (err instanceof SocialApiError && err.code === GUEST_PENDING_LIMIT) {
+    return m.form_guest_pending_limit();
+  }
+  if (err instanceof SocialApiError && err.code === PREVIOUS_CHECKOUT_OPEN) {
+    return m.shop_previous_checkout_open();
+  }
+  if (err instanceof SocialApiError && err.code === PRODUCT_ALREADY_PURCHASED) {
+    return m.shop_already_purchased();
+  }
+  if (err instanceof SocialApiError && err.code === CHECKOUT_IN_PROGRESS) {
+    return m.shop_checkout_in_progress();
+  }
   return null;
 }
+
+/**
+ * The body `code` of a refusal because the amount is outside what can be paid (the provider's
+ * range, or a product's own bounds). Mirrors social-service's `core-payment-error.ts`; its
+ * `minCents` / `maxCents` ride beside it and become {@link SocialApiError.amountBounds}.
+ */
+export const AMOUNT_OUT_OF_RANGE = 'AMOUNT_OUT_OF_RANGE';
+
+/**
+ * The body `code` of social-service's 409 when a single-answer form already holds an answer for
+ * this person (paid, free, cash, or an online one still pending): no second answer is written and
+ * no payment is requested (`seat-hold.ts`).
+ */
+export const ALREADY_ANSWERED = 'ALREADY_ANSWERED';
+
+/**
+ * The body `code` of social-service's 429 when one visitor (one network address) already has three
+ * paid answers waiting for payment on a public form (`guest-visitor.ts`, decision PP5). The
+ * sentence says how the place comes back: a payment, or the 30-minute hold ending.
+ */
+export const GUEST_PENDING_LIMIT = 'GUEST_PENDING_LIMIT';
+
+/**
+ * The body `code` of social-service's 409 when the buyer already bought this non-repeatable
+ * product: decided by Canari from its purchase records, before any payment request is issued.
+ */
+export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
+
+/**
+ * The body `code` of the 409 a boutique checkout gets while the buyer's previous attempt of that
+ * product is still payable or unproven (`product-checkout.ts`). social-service stops refusing 35
+ * minutes after that attempt was opened (its 30-minute expiry plus a margin), so the sentence says 35.
+ */
+export const PREVIOUS_CHECKOUT_OPEN = 'PREVIOUS_CHECKOUT_OPEN';
+
+/** The body `code` of the 409 a second click gets while the first one's payment is being opened. */
+export const CHECKOUT_IN_PROGRESS = 'CHECKOUT_IN_PROGRESS';
 
 /**
  * The body `code` of social-service's 409 when a form answer's previous payment request could not

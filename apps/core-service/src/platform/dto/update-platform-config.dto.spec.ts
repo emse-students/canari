@@ -20,3 +20,18 @@ describe('UpdatePlatformConfigDto.callsMode', () => {
     expect(errors.map((e) => e.property)).toEqual(['callsMode']);
   });
 });
+
+/** The lives kill switch takes exactly the two values migration 015's CHECK allows. */
+describe('UpdatePlatformConfigDto.livesMode', () => {
+  const errorsFor = (livesMode: unknown) =>
+    validate(plainToInstance(UpdatePlatformConfigDto, { livesMode }));
+
+  it.each(['off', 'on'])('accepts %s', async (mode) => {
+    expect(await errorsFor(mode)).toHaveLength(0);
+  });
+
+  it.each(['ON', 'true', 'audio', '', 'viewers', true])('refuses %s', async (mode) => {
+    const errors = await errorsFor(mode);
+    expect(errors.map((e) => e.property)).toEqual(['livesMode']);
+  });
+});

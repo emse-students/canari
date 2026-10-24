@@ -41,6 +41,15 @@ export class PlatformConfig {
     default: 'off',
   })
   callsMode!: CallsMode;
+
+  /** The server's kill switch for lives (migration 015): whether the live routes may answer. */
+  @Column({
+    name: 'lives_mode',
+    type: 'varchar',
+    length: 16,
+    default: 'off',
+  })
+  livesMode!: LivesMode;
 }
 
 /**
@@ -53,3 +62,15 @@ export type CallsMode = 'off' | 'audio' | 'audio_video';
 
 /** Every {@link CallsMode}, for the DTO's validation. */
 export const CALLS_MODES: readonly CallsMode[] = ['off', 'audio', 'audio_video'];
+
+/**
+ * Whether an estate lets lives answer. `off` makes every live route answer 404, as the
+ * `LIVE_ENABLED` deploy lock does; `on` lets them answer PROVIDED that lock is on too - the two are
+ * ANDed. Read by social-service on every live request (`apps/social-service/src/lives/lives-mode.ts`,
+ * the same two values, held together by the column's CHECK constraint), relayed by it to
+ * media-service's segment routes, and published to clients by `GET /api/version`.
+ */
+export type LivesMode = 'off' | 'on';
+
+/** Every {@link LivesMode}, for the DTO's validation. */
+export const LIVES_MODES: readonly LivesMode[] = ['off', 'on'];

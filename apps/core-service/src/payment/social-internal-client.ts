@@ -30,7 +30,7 @@ export function internalSocialRequestConfig(): Pick<
  */
 export function internalSubmissionUrl(
   submissionId: string,
-  suffix?: 'mark-paid' | 'cancel-pending'
+  suffix?: 'provider-confirm' | 'cancel-pending'
 ): string {
   const base = `internal/forms/submissions/${encodeURIComponent(submissionId)}`;
   return socialUrl(suffix ? `${base}/${suffix}` : base);
@@ -51,7 +51,25 @@ export function internalPaymentAccountUrl(associationId: string): string {
   return socialUrl(`internal/associations/${encodeURIComponent(associationId)}/payment-account`);
 }
 
-/** Docker-network route to fulfill a boutique purchase after PaymentIntent success. */
+/**
+ * Docker-network route a VERIFIED boutique confirm callback is handed to, as a trigger: social-service
+ * settles the attempt row from Lydia's own answer (`ProductsService.handlePurchaseCompleted`).
+ * X-Internal-Secret guarded.
+ */
 export function productPurchaseCompletedUrl(productId: string): string {
   return socialUrl(`associations/products/${encodeURIComponent(productId)}/purchase-completed`);
+}
+
+/**
+ * Internal route answering the decrypted Lydia Business private token of the association holding a
+ * `vendor_token`, to verify a callback with. Under `/api/internal/`, which nginx does not route
+ * (`location /` serves the app shell for it), and X-Internal-Secret guarded on top.
+ */
+export function internalLydiaCallbackKeyUrl(): string {
+  return socialUrl('internal/associations/lydia-callback-key');
+}
+
+/** Internal route releasing the products withheld while payments were disabled (provider switched on). */
+export function providerActivatedUrl(): string {
+  return socialUrl('internal/payments/provider-activated');
 }

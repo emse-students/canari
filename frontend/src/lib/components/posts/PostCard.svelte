@@ -51,6 +51,8 @@
   import PostPolls from './PostPolls.svelte';
   import PostForms from './PostForms.svelte';
   import PostComments from './PostComments.svelte';
+  import CommentsPreview from './CommentsPreview.svelte';
+  import PostCommentsSheet from './PostCommentsSheet.svelte';
   import PostActionsMenu from './PostActionsMenu.svelte';
   import PostCornerBadge from './PostCornerBadge.svelte';
   import PostFeedback from './PostFeedback.svelte';
@@ -83,14 +85,12 @@
     /** Called immediately after the post has been deleted so the parent can remove the card. */
     onDelete?: () => void;
     /**
-     * Whether the comment section starts open.
+     * Whether the comment SHEET starts open.
      *
-     * FALSE IN A FEED, TRUE ON A POST'S OWN PAGE, and the distinction is the reader's intent. The
-     * composer is no longer drawn at rest (it cost 90 px in every card, see `PostComments`), so a
-     * card that starts closed shows none - correct for a feed being scrolled past, wrong for
-     * `/posts/[postId]`, which a reader reached by following a link to THAT post and where the
-     * comments are most of what they came for. Facebook opens the section on a post's own page for
-     * the same reason.
+     * FALSE IN A FEED, AND ON A POST'S OWN PAGE UNLESS THE READER CAME FOR A COMMENT. The card draws
+     * only a one-comment preview (`CommentsPreview`); the thread is read and written in a sheet
+     * (`PostCommentsSheet`), which opens on a tap - or at once when a notification named a comment
+     * (`focusCommentId`), where the thread is what the reader came for.
      */
     commentsOpen?: boolean;
     /** The comment a notification tap opened this post at: scrolled to and marked once drawn. */
@@ -122,17 +122,14 @@
    * only a real answer is adopted. EVERY WRITE BELOW GOES THROUGH THE LEDGER.
    */
   const ledger = new PostCardLedger(untrack(() => postProp));
-  /** Whether the reader expanded the whole thread, which a feed row (the first few) cannot carry. */
-  let fullThread = false;
   $effect.pre(() => {
     const served = postProp;
     if (served === ledger.served) return;
-    localPost = ledger.adopt(
-      untrack(() => localPost),
-      served
-    );
-    // The thread was kept from the card; ask for it again so it is as new as the row.
-    if (fullThread) untrack(() => void loadAllComments());
+    const before = untrack(() => localPost);
+    const adopted = ledger.adopt(before, served);
+    // The reader had read older pages of the thread, and the row just adopted carries only the
+    // newest few: keep the older rows, so the thread stays as long as they made it.
+    localPost = thread.hasPages ? thread.keepHeld(before, adopted) : adopted;
   });
 
   let actionMessage = $state('');
@@ -187,7 +184,14 @@
   // `untrack` states what the prop IS: an initial value, read once. The card owns the open/closed
   // state from then on - a parent that flipped the prop later would otherwise fight the reader's
   // own taps on the comment button.
-  let showComments = $state(untrack(() => commentsOpen));
+  let commentsSheetOpen = $state(untrack(() => commentsOpen));
+  /** The sheet opens with the caret in its box: the "write a comment" tap, or the icon on an empty thread. */
+  let sheetWrite = $state(false);
+
+  function openCommentsSheet(opts: { write: boolean }) {
+    sheetWrite = opts.write;
+    commentsSheetOpen = true;
+  }
   /**
    * The comment writes (`posts/postCommentThread.svelte.ts`), shared with the reel viewer's comments
    * sheet: this card lends its copy of the post, its ledger and its inline line. Its `pending` set
@@ -202,17 +206,6 @@
     begin: () => void ledger.begin(['comments', 'commentCount']),
     end: () => ledger.end(['comments', 'commentCount']),
     answered: () => ledger.answered(['comments', 'commentCount']),
-    holdThread: () => {
-      fullThread = true;
-      ledger.hold('comments');
-    },
-    adoptThread: (full) => {
-      localPost = ledger.mergeRead(
-        localPost,
-        { comments: full.comments, commentCount: full.commentCount },
-        servedAt(full)
-      );
-    },
     // Every refusal this thread raises is about the comment box, so it is said THERE.
     fail: (message) => (commentError = message),
   });
@@ -430,14 +423,6 @@
   }
 
   /**
-   * Reads the full thread to replace the truncated list a feed row carries. From then on the card
-   * HOLDS the thread: adopting a later feed row would collapse it, so a new row asks again instead.
-   */
-  function loadAllComments(): Promise<void> {
-    return thread.loadAll();
-  }
-
-  /**
    * Posts a new comment (or reply) with optional encrypted media. The box empties when the row is
    * shown, and gets the text back if the write failed and nothing was typed meanwhile.
    */
@@ -465,6 +450,8 @@
       if (from === thread) return;
       Log.d('PostCard.onPostComments', `${change.kind} from another surface on ${postId}`);
       ledger.answered(['comments', 'commentCount']);
+      // A removal made elsewhere must not come back with a page read before it answered.
+      if (change.kind === 'remove') thread.noteRemoved(change.ids);
       localPost = applyCommentChange(localPost, change);
     })
   );
@@ -729,7 +716,7 @@
         commentCount={commentCountOf(localPost) || undefined}
         onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
         onReactionSelect={handleReaction}
-        onCommentClick={() => (showComments = !showComments)}
+        onCommentClick={() => openCommentsSheet({ write: comments.length === 0 })}
       >
         {#snippet reactionSummary()}
           <ReactionsDisplay
@@ -771,30 +758,11 @@
     <PostForms {formInfos} />
 
     <div data-no-double-tap>
-      <PostComments
-        {postId}
+      <CommentsPreview
         {comments}
-        {topLevelComments}
-        {showComments}
-        {commentText}
-        submittingComment={thread.submitting}
-        pendingCommentIds={thread.pending}
-        sendError={commentError}
+        commentCount={commentCountOf(localPost)}
         {currentUserId}
-        {authToken}
-        {focusCommentId}
-        onToggleComments={() => (showComments = !showComments)}
-        onCommentTextChange={async (text) => {
-          commentText = text;
-          commentError = '';
-        }}
-        onAddComment={handleAddComment}
-        onLikeComment={(id) => void thread.like(id)}
-        onEditComment={(id, text) => thread.edit(id, text)}
-        onDeleteComment={(id) => thread.remove(id)}
-        onReport={handleReportComment}
-        onLoadAllComments={loadAllComments}
-        totalCommentCount={commentCountOf(localPost)}
+        onOpen={openCommentsSheet}
       />
     </div>
 
@@ -802,6 +770,45 @@
     <PostFeedback {errorMessage} {actionMessage} />
   </Card>
 </div>
+
+<!--
+  THE THREAD, in a sheet (`PostCommentsSheet`): full screen on a phone, with the box pinned above the
+  keyboard. It is hosted HERE, on this card's own write path - the ledger, the pending rows, the
+  report dialog and the draft all stay the card's - and `PostComments` is its body. Mounted only
+  while open, so the box takes its draft back on every opening.
+-->
+<PostCommentsSheet
+  open={commentsSheetOpen}
+  post={localPost}
+  onClose={() => (commentsSheetOpen = false)}
+>
+  <PostComments
+    {postId}
+    {comments}
+    {topLevelComments}
+    {commentText}
+    submittingComment={thread.submitting}
+    pendingCommentIds={thread.pending}
+    sendError={commentError}
+    {currentUserId}
+    {authToken}
+    {focusCommentId}
+    autofocusComposer={sheetWrite}
+    onCommentTextChange={async (text) => {
+      commentText = text;
+      commentError = '';
+    }}
+    onAddComment={handleAddComment}
+    onLikeComment={(id) => void thread.like(id)}
+    onEditComment={(id, text) => thread.edit(id, text)}
+    onDeleteComment={(id) => thread.remove(id)}
+    onReport={handleReportComment}
+    onLoadOlder={() => thread.loadMore()}
+    hasMoreComments={thread.hasMore}
+    loadingMore={thread.loadingMore}
+    totalCommentCount={commentCountOf(localPost)}
+  />
+</PostCommentsSheet>
 
 <!--
   A comment and a post are reported through the same four reasons AND the same dialog, and until

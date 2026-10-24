@@ -79,7 +79,16 @@ export function refusalIsTemporary(reason: DeviceKeyPackageRefusal): boolean {
  * `keys` may be empty, which is an answer; `unanswered` establishes nothing about the device.
  */
 export type DeviceSignatureKeys =
-  | { kind: 'keys'; keys: Uint8Array[] }
+  | {
+      kind: 'keys';
+      keys: Uint8Array[];
+      /**
+       * Each key the server's history RECORDED, with when it first saw it (ms) - the evidence the
+       * new-device notices weigh (`isNewToItsOwner`). A key absent from it predates the history.
+       * `undefined` when the server sent no ages at all (an older server), which answers nothing.
+       */
+      firstSeen?: Array<{ key: Uint8Array; firstSeenAt: number }>;
+    }
   | { kind: 'unanswered'; detail: string };
 
 /**

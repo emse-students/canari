@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SavedStateOfAnotherAccountError, SavedStateUnopenedError } from '$lib/mls-client';
 import { m } from '$lib/paraglide/messages';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 import { savedStateFailure } from './sessionAuth';
 import { isRecoverableWithOldPin, provesOtherAccountState } from './loginErrors';
 
@@ -43,13 +44,24 @@ describe('savedStateFailure', () => {
     }
   });
 
-  it('is what the login throws for both types, read by `instanceof` and never by the message', () => {
+  it('names another tab, and offers neither the old PIN nor a reset, when a rotation was refused', () => {
+    // The rotation could not record its fresh state because another tab of this account wrote the
+    // stored one (`MlsStateWriteRefusedError`). Nothing durable moved; it used to reach the login as
+    // an untyped failure, worded as whatever English the error carried.
+    const failure = savedStateFailure(new MlsStateWriteRefusedError('stale'));
+    expect(failure.code).toBe('state_written_by_another_tab');
+    expect(failure.message).toBe(m.auth_state_written_by_another_tab());
+    expect(isRecoverableWithOldPin(failure.code)).toBe(false);
+    expect(provesOtherAccountState(failure.code)).toBe(false);
+  });
+
+  it('is what the login throws for every type, read by `instanceof` and never by the message', () => {
     // WHY A SOURCE TEST (WP-T5: keep). The throw sits inside `loginImpl`, a flow over a live MLS
     // init, a vault and a gateway; what the function above returns is driven by the cases above, and
     // that the login reaches it by TYPE rather than by the retired message marker is one statement.
     const auth = readFileSync(join(import.meta.dirname, 'sessionAuth.ts'), 'utf8');
     expect(auth).toMatch(
-      /reason instanceof SavedStateUnopenedError \|\|\s+reason instanceof SavedStateOfAnotherAccountError\s+\) \{\s+throw savedStateFailure\(reason\);/
+      /reason instanceof SavedStateUnopenedError \|\|\s+reason instanceof SavedStateOfAnotherAccountError \|\|\s+reason instanceof MlsStateWriteRefusedError\s+\) \{\s+throw savedStateFailure\(reason\);/
     );
     expect(auth).not.toContain('MLS_LOCAL_STATE_UNDECRYPTABLE');
   });

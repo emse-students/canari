@@ -28,6 +28,25 @@ filter bar is gone ([reels](reels.md#the-canareels-entry---an-icon-beside-the-ta
 The publisher's picture, name and link (`PostAuthorAvatar`, `postAuthorName`, `postAuthorHref`)
 and the text renderer (`PostMarkdown`) are shared by the card and the reel viewer's overlay.
 
+**The tab row collapses like Instagram's header (member report, 2026-10-22: the tabs were reachable
+only at the very top).** The wrapper in `routes/posts/+page.svelte` is `sticky top-0` in
+`.page-scroll-wrap` (the one scroller, at every width, so desktop behaves the same) and slides out
+with `-translate-y-full` when `tabsShown` is false: a transform on one boolean, so nothing reflows
+and the infinite scroll's position is untouched. The direction is read from that container's
+`scrollTop` by `nextScrollDirection` ([`utils/scrollDirection.ts`](../../../../frontend/src/lib/utils/scrollDirection.ts)),
+a pure step with an 8 px dead zone measured from where the reader turned; the row is always shown
+at the top, and `scrollTop` is clamped to the maximum so a bottom bounce is not an upward scroll.
+The handler is passive and logs nothing per event. `motion-reduce` drops the slide, `inert` keeps
+the hidden row out of the tab order, and **the row never hides while focus is inside it**
+(`focusin`/`focusout` drive `tabsFocused`): `inert` on a focused row would drop that focus to the
+body. The direction is **seeded at the container's `scrollTop` at mount**
+(`initialScrollDirection(top)`), not at 0, so a page restored mid-scroll does not read its whole
+offset as one scroll down and hide the row unasked. **While a search replaces the feed** the row's
+content is hidden and the wrapper is neither `sticky` nor padded, so no empty opaque band sits over
+the results. Read by code and unit test only: no phone has looked at it (the tab swipe, #1223, is a
+horizontal gesture on the same container and is not touched). **Owed ONE iPhone reading** (review,
+2026-10-23): the row when the page header unmounts with the keyboard open.
+
 ## An anonymous poll stores a tally and no voters (2026-09-30)
 
 A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creation like a form's
@@ -153,12 +172,18 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   vertical clip became a strip between black bands over a grey one. Now `preparePostMedia` records
   a video's `width`/`height` at upload (the on-device encoder's own output since R2,
   [video-preparation](../video-preparation.md)), so `PostContent` reserves the box
-  at the clip's own shape; the video FILLS it (`object-cover`, cropped only by the
-  `--media-max-height` ceiling - a clip's subject is in its middle, unlike a poster's text, and the
-  whole frame is one tap away) and plays muted on its own (`InlineVideo`, rule in
+  at the clip's own shape; the video is CONTAINED in it (`object-contain`: the WHOLE
+  frame at the clip's own ratio, never cropped - user, 2026-10-22, a portrait clip past the
+  `--media-max-height` ceiling used to lose its top and bottom). The bands the ceiling leaves on the
+  sides are a blurred copy of the clip's own first frame, the picture post's backdrop
+  (`BlurredBackdrop`): `InlineVideo` draws the frame it already decoded ONCE into a 48 px canvas
+  (`captureVideoFrame`) - no second `<video>`, no second stream, one `drawImage` and a few hundred
+  bytes - and until it exists the box is the neutral `bg-cn-surface` under the usual poster. A reel
+  goes through the SAME box (`singleMedia`), with a 9:16 fallback when it carries no dimensions. The
+  square gallery cell still crops (`videoFit="cover"`, its shape being the point). It plays muted on its own (`InlineVideo`, rule in
   [durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts)).
   The download lives in the viewer. A video posted before this carries no dimensions and keeps the
-  4:3 box, filled the same way. Measured on the Mi 9T: a 1080 x 2340 clip in a 402 x 567 box,
+  4:3 box, contained the same way. Measured on the Mi 9T: a 1080 x 2340 clip in a 402 x 567 box,
   playing, looping, silent at every start until its button is pressed, then audible on every video
   at once; the viewer opening PAUSES the feed's video and closing it resumes it - before that rule
   the two played together, sound on both.
@@ -401,8 +426,9 @@ explicit-type-then-mime fallback:
 **The reservation also carries a CEILING, and that is the half that keeps a feed scrollable.** The
 ratio is clamped to `[0.25, 4]`, which still allows a box four times the card's width - about two
 phone screens of a single picture - so `mediaAspectStyle` emits `max-height: var(--media-max-height)`
-(80svh, defined once in `app.css`) alongside the `aspect-ratio`. Past the ceiling the media is
-CROPPED rather than shrunk. **The crop is CENTRED** (`object-cover object-center`): the ceiling was
+(80svh, defined once in `app.css`) alongside the `aspect-ratio`. Past the ceiling a PICTURE or a
+VIDEO is no longer cropped: both are contained over a blurred backdrop (see the video paragraph
+above). **The crop below is the one that remains - the gallery cell's, and it is CENTRED** (`object-cover object-center`): the ceiling was
 first shipped with a top anchor, on the argument that a screenshot or an infographic says what it
 has to say at the top - but a post attachment is overwhelmingly a photograph, whose subject is in
 the middle, and a top anchor reads as a bug on one. The full frame is one tap away in the viewer,
@@ -1424,6 +1450,12 @@ its own click's propagation. Two clicks within `GESTURE.DOUBLE_TAP_MS` (250) and
 `GESTURE.DOUBLE_TAP_SLOP_PX` (50) are a double, decided by `isDoubleTap` through
 `createTapDisambiguator` - the arithmetic the media viewer's zoom and the message bubble's heart
 already share, not a third copy. A third quick tap belongs to the same gesture (`quietAfterDouble`).
+**The gap is measured between the events' `timeStamp`s - when each tap HAPPENED - never with a
+clock read in the handler** (2026-10-22): on a busy phone the second click waits in the queue behind
+the first one's handling and render, and a handler-time read counted that work into the 250 ms, so a
+real double tap read as two singles. The message bubble had the same read (`Date.now()`) and takes
+the same fix; the media viewer already used `timeStamp`. `doubleTapLike.test.ts` and
+`MessageBubble.doubleTap.svelte.test.ts` queue the second click behind a 300 ms first handler.
 
 - **On text, the header, a poll's question, a reel in the viewer: no single tap is held.** The first
   click goes on to its target at once. On text it does nothing; on a reel it toggles the player's
@@ -1888,7 +1920,7 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 - Account erasure keeps an association comment (writer detached, `userId: ''`).
 - Privacy policy and register of processing say moderation can identify an anonymous author (dated 21/10/2026).
 
-**PR 3 - the components.** `PostComments.svelte` (796 lines) is split; it stays the ONE section both hosts mount (the post card, and `ReelCommentsSheet` in its `docked` mode), so the rest of the work lands in two new files it renders:
+**PR 3 - the components.** `PostComments.svelte` (796 lines) is split; it stays the ONE section both hosts mount (the post card's sheet, and `ReelCommentsSheet`), so the rest of the work lands in two new files it renders:
 
 - **`CommentItem.svelte`** - one comment and its replies. **Its controls are `canEdit` / `canDelete`, as the server served them**, never `userId === currentUserId` (an anonymous or association comment has no `userId` for most readers, `durable-rules` "a field the server strips for privacy cannot be the field a client derives a permission from"); the report shows where the reader cannot edit. Who wrote it is `posts/commentAuthor.ts` (`commentAuthorKind` / `Name` / `Href`: "Anonyme", "Anonyme - auteur du post" from `byPostAuthor`, an association's name and page, a profile link only when there is an account to link). "modifié" follows the time when `editedAt` is set. **A delete asks first** (`showConfirm`): a stray tap on the trash beside the pencil used to remove the comment and its replies. **Replies fold from two** ("Voir les N réponses"); one is shown directly, and a reply the reader just wrote (a pending id) or a notification opened the post at is never hidden. The small controls take `tap-target` (a 44 px hit box on a touch screen, drawing unchanged).
 - **`CommentComposer.svelte`** - the box: several lines growing to about five (it was `singleLine`), `maxlength` = `COMMENT_MAX_LENGTH` and a counter near it, **Enter sends on a physical keyboard and is a new line on a touch one** (`isCoarsePointerDevice`, Shift+Enter always), **the caret goes to the box when "Répondre" is tapped** (`focus()`), the draft per account and post (`postCommentDraft.ts`, restored on mount - never over text already typed - and cleared when the box empties), one image or GIF (`stageMediaFile`, moved here unchanged), and **a failed send said beside the box** (`sendError`, `role="alert"`) instead of the card's bottom banner (`PostCard` and the reel sheet now route every thread failure to `commentError`).
@@ -1900,4 +1932,17 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 
 **The box is centred on its single line.** The editor, the GIF label, the send button and the identity avatar were each a different height, and the text sat 4 px low (measured: pill centre 570.6, text 574.6). They now share the send button's height - 44 px, or 38 px under `(min-width: 768px) and (pointer: fine)`, the `ui-icon-button` rule - through the editor's vertical padding (`py-3`, `py-2.25` on a mouse), a GIF label as tall as the button, and the avatar's bottom gap. Measured on a phone and with a forced fine pointer: every centre equals the pill's, and with three lines the buttons stay aligned on the last one.
 
-**Open (PR 4):** the full-screen sheet (the reel sheet's `docked` layout is the precedent), paging by `fetchComments`, and the reading on a phone of the pinned box above the keyboard. **PR 2 must be merged AND deployed before the client offers the choice**, or an old server would ignore the field and publish under the person's name: nothing deploys on a merge, and this change rides the same release as PR 2.
+**PR 4 - the sheet, and the thread read page by page.** The card no longer holds a conversation: it draws `CommentsPreview` (the newest top-level comment, "Afficher les N commentaires" when there are several, and a "write a comment" line - NOTHING for a post nobody commented on, which cost 90 px a card), and **every tap opens `PostCommentsSheet`**. The sheet is `Modal`'s `phoneFullScreen` (edge to edge on a phone, a dialog from `sm`): the title, a two-line reminder of the post, the thread scrolling in the height left, and **the box pinned under it** - `Modal`'s overlay already follows the space the keyboard leaves, so a body laid out as a scroll region plus a footer needs nothing computed (measured with the viewport cut to 480 px: the box's bottom edge at 466 px of 480, the list above it). The back gesture, Escape and the close button all close it.
+
+- **The card hosts it, on its own write path.** `PostComments` (now only ever the thread's body: no inline mode, no show/hide, no preview slice) is given to the sheet as its content, so the ledger, the pending rows, the report dialog and the draft stay the card's. The sheet is mounted only while open, so the box takes its draft back on every opening, and what was typed survives closing it. The comment icon opens it with the caret in the box when the thread is empty, the "write" line always does, and "view the comments" opens it to READ (no keyboard over the thread).
+- **A notification opens it at once.** `commentsOpen` now means "the sheet starts open", and the post page passes it only when `?comment=` named a comment (that reader came for the thread); anyone else who followed a link to the post sees the post, its newest comment and the write line - a full-screen sheet over what they came to read would be a decision made for them. The named comment is scrolled to and ringed inside the sheet.
+- **Paging.** `PostCommentThread.loadMore()` reads the next page of `GET /posts/:id/comments` (20 whole threads, newest first) and ADDS it: **a row already held is never replaced by a page's copy** (a heart tapped while the page was in flight is newer), and **a comment removed meanwhile - here, or announced by another surface (`noteRemoved`) - stays gone** though the page was read before the deletion answered. `hasMore` is the server's answer and decides the "view older comments" button; before any page, the server's count against the rows held does. A failure is SAID (`post_comment_load_older_error`), never silent. When a fresher feed row replaces the card's, **the older pages already read are kept** (`keepHeld`: the row's own copy of a comment wins, nothing is read again) - the thread does not collapse to the newest few under the reader's thumb. The whole-thread read (`loadAll`, `GET /posts/:id`) and the ledger "hold" it needed are gone.
+- **The sorts.** "Récents" is the order the pages come in; "Anciens" and "Aimés" are about the WHOLE thread, so they read the remaining pages first (up to 25) or "oldest" would be the oldest of what happens to be loaded; a page that brings nothing ends the wait.
+- **Shared with the reel sheet.** `ReelCommentsSheet` mounts the same `PostComments` and the same `loadMore`; `CommentAuthorAvatar` is drawn by the thread and by the preview, so they cannot disagree about who wrote a comment.
+- **Fixed on the way.** The thread's list scrolled sideways: the 44 px hit box a small control gets (`tap-target`, the heart at the row's right end) stuck out of the scroller by a few pixels. The scroller now reaches the sheet's edges (`-mx-4 px-4`), so the box stays inside it.
+
+**Seen** at 390 px in a headless Chrome on a fixture card (the preview, the open sheet, the viewport cut to 480 px). **NOT seen on a phone**: the real keyboard (iOS resizes the visual viewport, Android the layout one - the overlay is built for the first and the layout rule serves both, but only a phone settles it), the back gesture, and the focus handed back to the comment button on close.
+
+## The edit picker always lists the attached form (2026-10-21)
+
+`GET /api/forms` returns only the forms its reader owns or manages (`MANAGE_FORMS`), so an editor whose post carries a form they do not manage (a moderator, an officer without that right) saw "Aucun formulaire pour l'instant" under a post that visibly had one (user report, production). `EditPostForm` now passes the list through `withAttachedForm` (`$lib/posts/editableForms.ts`), which reads the attached form by id (`GET /api/forms/:id`, open to any signed-in reader) and puts it first when the list lacks it; a failed read is logged and the list stays as it was. Saving never depended on the picker: `attachedFormId` is written from the selected id, so the form was kept all along - only the display lied. Not changed: the create picker (a new post has no attached form) and who may attach a form they do not manage (the server still decides).

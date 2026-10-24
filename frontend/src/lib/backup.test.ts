@@ -1,5 +1,7 @@
 import type { IStorage } from './db';
-import { BackupError, importBackup } from './backup';
+import { BackupError, backupFileVersion, exportBackup, importBackup } from './backup';
+import { openSealedBytes, sealBytes } from './encryption';
+import { formatRecoveryCode, generateRecoveryCodeBytes } from './crypto/backupRecoveryCode';
 
 /**
  * A backup that refuses a file has to say WHICH refusal it is.
@@ -148,5 +150,166 @@ describe('importBackup classification', () => {
     await expect(importBackup(file(2), KEY, storage, 'device-1')).resolves.toMatchObject({
       isSameDevice: false,
     });
+  });
+
+  it('says a v2 file carries a usable MLS state, since its envelope opened under this key', async () => {
+    opensTo(validPayload({ mlsState: 'ab' }));
+    await expect(importBackup(file(2), KEY, storage, 'device-1')).resolves.toMatchObject({
+      mlsStateUsable: true,
+    });
+  });
+});
+
+/**
+ * v3: sealed under a recovery code, never under a device key. What these hold is that the file
+ * moves between two devices whose keys share nothing - the phone case, where the at-rest key is
+ * random per install - and that the code, not the key, is what opens it.
+ */
+describe('a v3 backup', () => {
+  const EXPORT_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+  const IMPORT_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
+
+  type Row = { id: string; conversationId: string; timestamp: number } & Sealed;
+  type Sealed = { iv: Uint8Array; cipherText: Uint8Array };
+
+  async function sealed(text: string, key: string): Promise<Sealed> {
+    return sealBytes(new TextEncoder().encode(text), key);
+  }
+
+  async function read(row: Sealed, key: string): Promise<string | null> {
+    const plain = await openSealedBytes(row.cipherText, row.iv, key);
+    return plain ? new TextDecoder().decode(plain) : null;
+  }
+
+  /** A storage holding one conversation, one message and one seed, all under `EXPORT_KEY`. */
+  async function exportingStorage(): Promise<IStorage> {
+    const message: Row = {
+      id: 'm1',
+      conversationId: 'c1',
+      timestamp: 1,
+      ...(await sealed('hello', EXPORT_KEY)),
+    };
+    const seed = {
+      sessionId: 's1',
+      workspaceId: 'w1',
+      channelId: 'ch1',
+      senderId: 'u1',
+      firstIndex: 0,
+      createdAt: 1,
+      ...(await sealed('seed-bytes', EXPORT_KEY)),
+    };
+    return {
+      getConversations: async () => [{ id: 'c1', name: 'one' }],
+      getAllEncryptedRows: async () => [message],
+      getAllEncryptedGraineRows: async () => [seed],
+    } as unknown as IStorage;
+  }
+
+  /** An empty storage on the importing device, recording what it was given. */
+  function importingStorage() {
+    const conversations: { id: string }[] = [];
+    const rows: Row[] = [];
+    const seeds: Sealed[] = [];
+    const store = {
+      getConversations: async () => conversations,
+      mergeConversation: async (c: { id: string }) => void conversations.push(c),
+      importEncryptedRow: async (r: Row) => void rows.push(r),
+      importEncryptedGraineRow: async (r: Sealed) => void seeds.push(r),
+    } as unknown as IStorage;
+    return { store, rows, seeds };
+  }
+
+  async function exported(mlsState?: string) {
+    const code = generateRecoveryCodeBytes();
+    const data = await exportBackup(
+      await exportingStorage(),
+      'u1',
+      EXPORT_KEY,
+      'device-1',
+      mlsState,
+      code
+    );
+    return { data, code: formatRecoveryCode(code) };
+  }
+
+  it('is written as version 3', async () => {
+    const { data } = await exported();
+    expect(backupFileVersion(data)).toBe(3);
+  });
+
+  it('opens with its code on a device whose key shares nothing with the exporter', async () => {
+    const { data, code } = await exported();
+    const target = importingStorage();
+
+    const result = await importBackup(data, IMPORT_KEY, target.store, 'device-2', code);
+
+    expect(result.isSameDevice).toBe(false);
+    expect(target.rows).toHaveLength(1);
+    expect(target.seeds).toHaveLength(1);
+    // Re-sealed under THIS device's key, and no longer under the exporter's.
+    expect(await read(target.rows[0], IMPORT_KEY)).toBe('hello');
+    expect(await read(target.seeds[0], IMPORT_KEY)).toBe('seed-bytes');
+    expect(await read(target.rows[0], EXPORT_KEY)).toBeNull();
+  });
+
+  it('carries no row the exporting key alone can open', async () => {
+    const { data } = await exported();
+    // The device key is not the file's key: a file left in a cloud drive is worth nothing to
+    // whoever holds - or can rebuild - the device key, without the code.
+    await expect(
+      importBackup(data, EXPORT_KEY, importingStorage().store, 'device-1', undefined)
+    ).rejects.toMatchObject({ code: 'code_required' });
+  });
+
+  it('names a missing or malformed code before trying anything', async () => {
+    const { data } = await exported();
+    await expect(
+      importBackup(data, IMPORT_KEY, importingStorage().store, 'device-2', 'not a code')
+    ).rejects.toMatchObject({ code: 'code_required' });
+  });
+
+  it('names a code that does not open the file', async () => {
+    const { data } = await exported();
+    const other = formatRecoveryCode(generateRecoveryCodeBytes());
+    await expect(
+      importBackup(data, IMPORT_KEY, importingStorage().store, 'device-2', other)
+    ).rejects.toMatchObject({ code: 'wrong_code' });
+  });
+
+  it('restores the MLS state only where it is sealed under the importing key', async () => {
+    const { data, code } = await exported('cafe');
+
+    const elsewhere = await importBackup(data, IMPORT_KEY, importingStorage().store, 'd2', code);
+    expect(elsewhere.mlsStateUsable).toBe(false);
+
+    const here = await importBackup(data, EXPORT_KEY, importingStorage().store, 'device-1', code);
+    expect(here.mlsStateUsable).toBe(true);
+    // The check value travels, the key never does.
+    expect(new TextDecoder().decode(data)).not.toContain(EXPORT_KEY);
+  });
+
+  it('leaves out a row that does not open under the exporting key, and says so', async () => {
+    const source = await exportingStorage();
+    const stray: Row = {
+      id: 'm2',
+      conversationId: 'c1',
+      timestamp: 2,
+      ...(await sealed('stranded', IMPORT_KEY)),
+    };
+    const rows = await source.getAllEncryptedRows();
+    (source as unknown as { getAllEncryptedRows: () => Promise<Row[]> }).getAllEncryptedRows =
+      async () => [...(rows as Row[]), stray];
+    const code = generateRecoveryCodeBytes();
+    const data = await exportBackup(source, 'u1', EXPORT_KEY, 'device-1', undefined, code);
+    const target = importingStorage();
+
+    await importBackup(data, IMPORT_KEY, target.store, 'device-2', formatRecoveryCode(code));
+
+    expect(target.rows.map((r) => r.id)).toEqual(['m1']);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('1 message(s)'));
+  });
+
+  it('refuses a version this build does not know as corrupted', async () => {
+    expect(await codeOf(file(4))).toBe('corrupted');
   });
 });

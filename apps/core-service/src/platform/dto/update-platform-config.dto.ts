@@ -1,5 +1,10 @@
 import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
-import { CALLS_MODES, type CallsMode } from '../entities/platform-config.entity';
+import {
+  CALLS_MODES,
+  LIVES_MODES,
+  type CallsMode,
+  type LivesMode,
+} from '../entities/platform-config.entity';
 
 /** Body for PATCH /api/users/admin/platform - partial platform settings update. */
 export class UpdatePlatformConfigDto {
@@ -27,4 +32,9 @@ export class UpdatePlatformConfigDto {
   @IsOptional()
   @IsIn(CALLS_MODES)
   callsMode?: CallsMode;
+
+  /** The lives kill switch: `off` makes every live route answer 404, `on` lets them answer. */
+  @IsOptional()
+  @IsIn(LIVES_MODES)
+  livesMode?: LivesMode;
 }

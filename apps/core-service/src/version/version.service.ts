@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PlatformService } from '../platform/platform.service';
 import { deployedVersion } from '../platform/deployed-version';
 import { deployBuild } from '../platform/deploy-build';
-import type { CallsMode } from '../platform/entities/platform-config.entity';
+import type { CallsMode, LivesMode } from '../platform/entities/platform-config.entity';
 
 export type AppVersionResponse = {
   version: string;
@@ -28,6 +28,22 @@ export type AppVersionResponse = {
   calls: {
     mode: CallsMode;
   };
+  /**
+   * The server's kill switch for lives (`platform_config.lives_mode`). Clients hide the live card,
+   * the viewer and the composer's Live chip while it is `off`; the refusal itself is
+   * social-service's and media-service's, on every live request.
+   */
+  lives: {
+    mode: LivesMode;
+  };
+  /**
+   * A CAPABILITY, NOT A SWITCH: this core-service forwards a PKCE `code_verifier` from
+   * `POST /api/auth/oidc/callback` to MiConnect. A client sends a `code_challenge` only to a server
+   * that says so, because a core-service older than this field drops the verifier, and MiConnect
+   * refuses a challenged code redeemed without one - a client that challenged anyway could not sign
+   * in. Always `true` from this release on; its absence is what an older server looks like.
+   */
+  oidcPkce: true;
 };
 
 /** Resolves deployed app version and platform gates from core-service. */
@@ -48,6 +64,8 @@ export class VersionService {
         message: platform.maintenanceMessage,
       },
       calls: { mode: platform.callsMode },
+      lives: { mode: platform.livesMode },
+      oidcPkce: true,
     };
   }
 }

@@ -36,6 +36,7 @@ import {
 } from './api';
 import { LIVE_MANIFEST_POLL_MS } from './constants';
 import { liveRetryDelayMs } from './liveViewerState';
+import { liveViewerCount } from './liveViewerCount';
 import { LiveChatOpenError, openLiveChatMessage, sealLiveChatMessage } from './liveChatCrypto';
 import type {
   LiveChatBlock,
@@ -612,7 +613,13 @@ export class LiveBroadcasterChatPoller {
      * Told once when the live is over and the loop stopped, with the server's verdict - the broadcast
      * machine decides the end screen from it (`endReason` included), as from its uploader's.
      */
-    private readonly onEnded?: (verdict: LiveRefusalError) => void
+    private readonly onEnded?: (verdict: LiveRefusalError) => void,
+    /**
+     * Told the live's viewer count at each poll, and `null` on a failed one (none to show, never a
+     * stale number) - the broadcaster's count
+     * rides this loop, as the viewers' rides the player's: no second request. A number, never a name.
+     */
+    private readonly onViewers?: (count: number | null) => void
   ) {
     this.deps = {
       fetchManifest: fetchLiveManifest,
@@ -644,9 +651,12 @@ export class LiveBroadcasterChatPoller {
       const manifest = await this.deps.fetchManifest(this.liveId, undefined, this.session.query());
       if (gen !== this.generation) return;
       this.attempt = 0;
+      this.onViewers?.(liveViewerCount(manifest));
       await this.session.receive(manifest.chat);
     } catch (e) {
       if (gen !== this.generation) return;
+      // No stale count: until a tick answers again, the last number is no longer known to be true.
+      this.onViewers?.(null);
       if (isLiveRefusal(e, 'ended') || isLiveRefusal(e, 'not-found')) {
         console.log(
           `[LIVE_CHAT] broadcaster chat loop on ${this.liveId} stopped: the live is over`

@@ -581,6 +581,23 @@ function worstCaseOverheadBytes(maxBytes: number): number {
 }
 
 /**
+ * Whether a file of this type and size is refused BEFORE it is prepared for upload: any type but a
+ * video, over the server's plaintext ceiling. A video is re-encoded on the device first, so its own
+ * size says nothing about what is sent. `null` limits refuse nothing (see `uploadLimits`).
+ *
+ * ONE predicate for every path that stages a file: the composer applies it to a picked file, and a
+ * share into Canari applies it to a copy still on disk, so a copy the composer would refuse is
+ * deleted unread instead of being read whole first.
+ */
+export function refusedBeforePreparation(
+  file: { type: string; size: number },
+  limits: { maxPlaintextBytes: number } | null
+): boolean {
+  if (limits === null || file.type.startsWith('video/')) return false;
+  return file.size > limits.maxPlaintextBytes;
+}
+
+/**
  * THE UPLOAD CEILING, ASKED OF THE SERVER ONCE PER PAGE, because it is the server's number.
  *
  * It used to be `VITE_MEDIA_MAX_SIZE_MB`, inlined at BUILD time. Nothing in CI ever wrote that

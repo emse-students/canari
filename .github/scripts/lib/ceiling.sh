@@ -38,18 +38,70 @@
 # self-tests can drive the comparison off fixtures rather than off today's pins.
 : "${CEILING_PROD_COMPOSE:=$(dirname "${BASH_SOURCE[0]}")/../../../infrastructure/docker-compose.prod.yml}"
 
-# Prints the MAJOR of the tag production pins for image "$1", or nothing if it names no such image.
-# `v2.3.0` and `15-alpine` both reduce to their leading integer; a digest suffix is discarded.
+# THE IDENTITY PROVIDER'S STACK IS A SECOND COMPOSE FILE WITH ITS OWN DATABASE, ON ITS OWN MAJOR.
+# `infrastructure/authentik/compose.yml` runs a PostgreSQL that is NOT production's: on 2026-10-23
+# it was 16 where production ran 18. Compared against production's file, `16-alpine -> 18-alpine`
+# there reads "same major as production" and passes - the 2026-09-01 outage, moved onto the one
+# database that holds every account's sign-in. So an update to THAT file is compared with THAT
+# file, read off the branch Dependabot pushed (`ceiling_compose_from_ref`).
+: "${CEILING_AUTHENTIK_COMPOSE:=$(dirname "${BASH_SOURCE[0]}")/../../../infrastructure/authentik/compose.yml}"
+
+# An image reference reduced to the name Dependabot and production both mean. The identity
+# provider's file spells `docker.io/library/postgres`, production's `postgres`; a table matched on
+# one spelling walks past the other, so both sides of every comparison go through this.
+ceiling_image_name() { # <image name>
+  local n="${1:-}"
+  n="${n#docker.io/}"
+  n="${n#library/}"
+  printf '%s' "$n"
+}
+
+# Prints the MAJOR of the tag a compose file pins for image "$1", or nothing if it names no such
+# image. The file is "$2", production's by default. `v2.3.0` and `15-alpine` both reduce to their
+# leading integer; a digest suffix is discarded; `docker.io/library/` is not part of the name.
 prod_image_major() {
-  awk -v want="$1" '
+  awk -v want="$(ceiling_image_name "$1")" '
     $1 == "image:" {
       ref = $2
-      name = ref; sub(/:.*$/, "", name)
+      name = ref; sub(/:.*$/, "", name); sub(/^docker\.io\//, "", name); sub(/^library\//, "", name)
       if (name != want) next
       tag = ref; sub(/^[^:]*:/, "", tag); sub(/@.*$/, "", tag); sub(/^v/, "", tag)
       if (match(tag, /^[0-9]+/)) { print substr(tag, 1, RLENGTH); exit }
     }
-  ' "$CEILING_PROD_COMPOSE" 2>/dev/null
+  ' "${2:-$CEILING_PROD_COMPOSE}" 2>/dev/null
+}
+
+# THE COMPOSE FILE AN UPDATE IS IN, read off the branch Dependabot pushed:
+# `dependabot/docker_compose/<directory>/<dependency>-<version>`. Only the identity provider's
+# directory names a file of its own; everything else - production's compose, the local one, a
+# Dockerfile, an unknown branch - is compared with production, which is what this table did before
+# a second stateful file was watched.
+ceiling_compose_from_ref() { # <head ref>
+  case "${1:-}" in
+    dependabot/docker_compose/infrastructure/authentik/*) printf '%s' "$CEILING_AUTHENTIK_COMPOSE" ;;
+    *) printf '%s' "$CEILING_PROD_COMPOSE" ;;
+  esac
+}
+
+# A TREE NO PULL-REQUEST JOB BUILDS, named by the branch an update arrives on. Prints the missing
+# gate, or nothing. It is about the DIRECTORY, not the dependency, which is why it is apart from
+# `gate_for_dependency`: every name a Gradle update to the Android app carries is equally unseen.
+#
+# `frontend/src-tauri/gen/android` is the Android app, and nothing on a pull request configures its
+# `:app` module: it applies `tauri.settings.gradle` (generated, git-ignored) and wants the
+# `google-services.json` secret, so it is compiled by `android.yml` at RELEASE time only. A green
+# suite on a Gradle bump there says nothing about the APK. `frontend/src-tauri/android-tests` is the
+# opposite case - a plain JVM project `test-android` builds and runs on every pull request that
+# touches it - so it is the ONE Gradle directory let through. An ALLOWLIST, so a Gradle directory
+# added to `dependabot.yml` later is refused until somebody shows a gate builds it.
+ceiling_gate_for_ref() { # <head ref>
+  case "${1:-}" in
+    dependabot/gradle/frontend/src-tauri/android-tests/*) ;;
+    dependabot/gradle/*)
+      echo "a pull-request job that configures and compiles the Android \`:app\` module (\`frontend/src-tauri/gen/android\`). Today only \`android.yml\` builds it, at RELEASE time, because configuring it needs the generated \`tauri.settings.gradle\` and the \`google-services.json\` secret (see \`frontend/src-tauri/android-tests/settings.gradle.kts\`); \`test-android\` compiles the JVM project \`android-tests\` and nothing else. So no gate here would see this Gradle update break the APK before a release did - see docs/wiki/cicd.md, 'Native and identity-provider manifests'"
+      ;;
+    *) ;;
+  esac
 }
 
 # Emits `<image-name> <named-volume-count>` for every service in a compose file. The image name is
@@ -212,9 +264,12 @@ dev_proven_major() {
 }
 
 # Prints the gate this repository lacks for "$1", or nothing at all when the check suite is already
-# evidence about it. The name is matched AFTER quote-stripping by the caller.
+# evidence about it. The name is matched AFTER quote-stripping by the caller, and with
+# `docker.io/library/` removed (`ceiling_image_name`). "$4" is the compose file the update is in
+# (`ceiling_compose_from_ref`), production's when absent.
 gate_for_dependency() {
-  case "$1" in
+  local __ceiling_compose="${4:-$CEILING_PROD_COMPOSE}"
+  case "$(ceiling_image_name "$1")" in
     # ---------------------------------------------------------------------------------------------
     # STATEFUL DATASTORES: THE ONE FAILURE MODE CI STRUCTURALLY CANNOT SEE
     # ---------------------------------------------------------------------------------------------
@@ -258,21 +313,26 @@ gate_for_dependency() {
         '' | docker | docker_compose) ;;
         *) return 0 ;;
       esac
-      __ceiling_current=$(prod_image_major "$1")
+      __ceiling_current=$(prod_image_major "$1" "$__ceiling_compose")
       __ceiling_proposed=$(printf '%s' "${2:-}" | sed -e 's/^v//' -e 's/[^0-9].*$//')
       if [ -n "$__ceiling_current" ] && [ -n "$__ceiling_proposed" ] &&
         [ "$__ceiling_current" = "$__ceiling_proposed" ]; then
-        # Same major: the on-disk format production already has is the one this image reads.
+        # Same major: the on-disk format the stack already has is the one this image reads.
         return 0
       fi
       # A DECLARED AND PROVEN GAP IN DEV RELEASES EXACTLY THE MAJOR IT WAS PROVEN FOR, and nothing
-      # else - not the next major, and not a sibling image that happens to sit in the same arm.
-      __ceiling_proven=$(dev_proven_major "$1")
+      # else - not the next major, not a sibling image that happens to sit in the same arm, and not
+      # another stack's database: `version-gap.yml` records rehearsals of PRODUCTION's data
+      # directory, so it says nothing about the identity provider's.
+      __ceiling_proven=''
+      if [ "$__ceiling_compose" = "$CEILING_PROD_COMPOSE" ]; then
+        __ceiling_proven=$(dev_proven_major "$(ceiling_image_name "$1")")
+      fi
       if [ -n "$__ceiling_proposed" ] && [ -n "$__ceiling_proven" ] &&
         [ "$__ceiling_proven" = "$__ceiling_proposed" ]; then
         return 0
       fi
-      echo "a test that starts this image's NEW major against a data directory written by the OLD one, and proves the documented upgrade path carries it - for postgres, \`pg_upgrade\` plus the 18+ mount move from \`/var/lib/postgresql/data\` to \`/var/lib/postgresql\`. This update crosses the major production runs (\`${__ceiling_current:-unreadable}\` -> \`${__ceiling_proposed:-unreadable}\`), and every gate here initialises an EMPTY volume - so a green suite only ever proves the new major can create a fresh cluster, while the failure mode is the cluster production already HAS, which nothing in this repository looks at. Production lost all eight services this way on 2026-09-01. A patch or minor within the same major is not refused. To retire this refusal, rehearse the upgrade in dev and record it in \`infrastructure/dev/version-gap.yml\` with \`evidence: in_place_upgrade\` - note that a green dev deploy alone is NOT that evidence, because the dev copy is logical and builds its cluster from empty; see \`docs/wiki/backlog.md\`"
+      echo "a test that starts this image's NEW major against a data directory written by the OLD one, and proves the documented upgrade path carries it - for postgres, \`pg_upgrade\` plus the 18+ mount move from \`/var/lib/postgresql/data\` to \`/var/lib/postgresql\`. This update crosses the major \`${__ceiling_compose##*/infrastructure/}\` runs (\`${__ceiling_current:-unreadable}\` -> \`${__ceiling_proposed:-unreadable}\`), and every gate here initialises an EMPTY volume - so a green suite only ever proves the new major can create a fresh cluster, while the failure mode is the cluster production already HAS, which nothing in this repository looks at. Production lost all eight services this way on 2026-09-01. A patch or minor within the same major is not refused. To retire this refusal, rehearse the upgrade in dev and record it in \`infrastructure/dev/version-gap.yml\` with \`evidence: in_place_upgrade\` - note that a green dev deploy alone is NOT that evidence, because the dev copy is logical and builds its cluster from empty; see \`docs/wiki/backlog.md\`"
       ;;
 
     # ---------------------------------------------------------------------------------------------

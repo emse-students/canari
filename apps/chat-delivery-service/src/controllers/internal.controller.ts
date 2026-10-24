@@ -33,8 +33,9 @@ import { NotificationPreference } from '../entities/notification-preference.enti
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
-import { sanitizeIdentityValue } from '../utils/sanitize';
+import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
+import { endDeviceMemberships } from '../utils/group-membership';
 import { MessagingService } from '../services/messaging.service';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
@@ -197,6 +198,36 @@ export class InternalController {
     });
     this.logger.log(`[INTERNAL_MLS_DEVICES] user=${userId.slice(0, 8)} count=${count}`);
     return { count };
+  }
+
+  /**
+   * Ends one device's push registration because the server ended that device's SESSION - called by
+   * core-service at `/api/auth/logout` and at every revocation of a session it can name a device for.
+   *
+   * THE SERVER HALF OF "A SIGN-OUT ENDS THE DEVICE'S PUSH REGISTRATION". The device deletes its own
+   * token too (`push_registration.rs`), and each half stands alone: this one holds for a device that
+   * is offline, uninstalled or never runs its sign-out, the device's for a call that never arrives
+   * here. Deleting the row removes the destination AND the push secret on it, so the background
+   * paths authenticated by that secret (`refresh-token`, `fetch-proto`, ...) are refused from here on
+   * - `refresh-token` only ever UPDATES a row, so it cannot bring one back.
+   *
+   * Idempotent: a device with no row answers `removed: 0`, which is the ordinary second call.
+   */
+  @Delete('push/users/:userId/devices/:deviceId')
+  async endDevicePushRegistration(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Param('userId') userIdRaw: string,
+    @Param('deviceId') deviceIdRaw: string
+  ): Promise<{ removed: number }> {
+    this.assertInternalSecret(headerSecret);
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw, 'deviceId');
+    const result = await this.pushTokenRepo.delete({ userId, deviceId });
+    const removed = result.affected ?? 0;
+    this.logger.log(
+      `[PUSH_SESSION_END] user=${userId.slice(0, 8)} device=${deviceId} removed=${removed}`
+    );
+    return { removed };
   }
 
   /**
@@ -452,7 +483,7 @@ export class InternalController {
       publisherUserId,
       publisherDeviceId,
       group.id,
-      { tag: 'DISTRIBUTION_PUBLISHER' }
+      { tag: 'DISTRIBUTION_PUBLISHER', authority: 'distribution_publisher' }
     );
 
     this.logger.log(
@@ -504,8 +535,11 @@ export class InternalController {
       return { evicted: false, memberships: 0, queued: 0, routes: 0 };
     }
 
-    const memberships = await this.deviceGroupRepo.delete({ groupId: group.id, userId });
-    const queued = await this.queuedMessageRepo.delete({ groupId: group.id, recipientId: userId });
+    // The rows and everything queued for them on this group - Welcomes included - go in ONE
+    // transaction ({@link endDeviceMemberships}).
+    const ended = await this.groupRepo.manager.transaction((manager) =>
+      endDeviceMemberships(manager, { userId, groupId: group.id }, 'all')
+    );
 
     const routed = await this.redis.smembers(`group:members:${group.id}`);
     const toRemove = routed.filter((m) => m.startsWith(`${userId}:`));
@@ -515,12 +549,12 @@ export class InternalController {
 
     this.logger.log(
       `[DISTRIBUTION_GROUP] evict scope=${label} group=${group.id} user=${userId.slice(0, 8)} ` +
-        `memberships=${memberships.affected ?? 0} queued=${queued.affected ?? 0} routes=${toRemove.length}`
+        `memberships=${ended.memberships} queued=${ended.queued} routes=${toRemove.length}`
     );
     return {
       evicted: true,
-      memberships: memberships.affected ?? 0,
-      queued: queued.affected ?? 0,
+      memberships: ended.memberships,
+      queued: ended.queued,
       routes: toRemove.length,
     };
   }
@@ -679,6 +713,9 @@ export class InternalController {
 
     // ── User's own records ────────────────────────────────────────────────
     const manager = this.groupRepo.manager;
+    // Every device row of the account and everything queued FOR it - Welcomes included - in ONE
+    // transaction ({@link endDeviceMemberships}).
+    const departed = await manager.transaction((tx) => endDeviceMemberships(tx, { userId }, 'all'));
     const [, sentQueued] = (await manager.query(
       `DELETE FROM queued_message
         WHERE "senderId" = $1 AND "isCommit" IS NOT TRUE AND "isWelcome" IS NOT TRUE`,
@@ -691,8 +728,6 @@ export class InternalController {
       this.groupMemberRepo.delete({ userId }),
       // The account's membership history goes with it: nothing will ever answer for this person.
       this.membershipIntervalRepo.delete({ userId }),
-      this.deviceGroupRepo.delete({ userId }),
-      this.queuedMessageRepo.delete({ recipientId: userId }),
       this.pushTokenRepo.delete({ userId }),
       this.pinVerifierRepo.delete({ userId }),
       this.revokedDeviceRepo.delete({ userId }),
@@ -703,7 +738,10 @@ export class InternalController {
       this.groupInviteRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
     ]);
 
-    this.logger.log(`[INTERNAL_DELETE] done user=${who} sentQueued=${sentQueued}`);
+    this.logger.log(
+      `[INTERNAL_DELETE] done user=${who} sentQueued=${sentQueued} ` +
+        `deviceMemberships=${departed.memberships} queuedFor=${departed.queued}`
+    );
     return { ok: true };
   }
 }

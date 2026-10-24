@@ -13,9 +13,13 @@ export class PurchaseRecord {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  /**
+   * The buyer's account, or NULL for a GUEST's payment on a public form (migration 103): a guest
+   * has no account, and the row is still the association's accounting trace of the money.
+   */
+  @Column({ type: 'varchar', nullable: true })
   @Index()
-  userId: string;
+  userId: string | null;
 
   /** Whether this purchase originated from a form or a boutique product. */
   @Column({ length: 30 })

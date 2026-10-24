@@ -178,8 +178,13 @@ describe('from sign-in to sign-out', () => {
     await signOutByChoice();
 
     expect(fetchMock.mock.calls.map(([url]) => String(url)).join(' ')).toContain('/auth/logout');
-    expect(invokeMock).toHaveBeenCalledTimes(1);
-    const url = new URL((invokeMock.mock.calls[0]![1] as { url: string }).url);
+    // The sign-out also empties the cache's `share_out/` (the decrypted file the last share out
+    // left there); every OTHER native call is the one that ends MiConnect.
+    const shareOut = 'plugin:gallery|discard_shared_out';
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === shareOut)).toHaveLength(1);
+    const ending = invokeMock.mock.calls.filter(([cmd]) => cmd !== shareOut);
+    expect(ending).toHaveLength(1);
+    const url = new URL((ending[0]![1] as { url: string }).url);
     expect(url.searchParams.get('id_token_hint')).toBe(token);
     expect(gotoMock).toHaveBeenCalledWith('/login', { replaceState: true });
     vi.unstubAllGlobals();

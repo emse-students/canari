@@ -199,7 +199,21 @@ describe('PaymentController.requestState', () => {
     await expect(
       controller.requestState({ sessionId: UUID, connectAccountId: 'v' }, SECRET)
     ).resolves.toEqual({ ok: true, state: 'paid', raw: '1' });
-    expect(read).toHaveBeenCalledWith(UUID, 'v');
+    expect(read).toHaveBeenCalledWith({ requestUuid: UUID }, 'v');
+  });
+
+  const ORDER_REF =
+    'product:11111111-1111-1111-1111-111111111111:33333333-3333-3333-3333-333333333333';
+
+  it("reads a boutique attempt by Canari's own order_ref", async () => {
+    const read = jest.fn().mockResolvedValue({ state: 'not-found', raw: 'error 2' });
+    const controller = new PaymentController({
+      getCheckoutRequestState: read,
+    } as unknown as PaymentService);
+    await expect(
+      controller.requestState({ orderRef: ORDER_REF, connectAccountId: 'v' }, SECRET)
+    ).resolves.toEqual({ ok: true, state: 'not-found', raw: 'error 2' });
+    expect(read).toHaveBeenCalledWith({ orderRef: ORDER_REF }, 'v');
   });
 
   it.each([
@@ -207,6 +221,11 @@ describe('PaymentController.requestState', () => {
     [{ sessionId: '0f8e4c3a-1b2c-4d5e-8f90-123456789abc', connectAccountId: 'v' }],
     [{ sessionId: UUID }],
     [{}],
+    // A free string is never sent to Lydia as an order_ref, and a form's is not read this way.
+    [{ orderRef: 'anything', connectAccountId: 'v' }],
+    [{ orderRef: 'form:sub-1', connectAccountId: 'v' }],
+    // Exactly one of the two.
+    [{ sessionId: UUID, orderRef: ORDER_REF, connectAccountId: 'v' }],
   ])('refuses %p before any provider call', async (body) => {
     const read = jest.fn();
     const controller = new PaymentController({

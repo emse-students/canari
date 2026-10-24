@@ -16,7 +16,7 @@ import {
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { ChannelService } from './channel.service';
 import {
-  type ChannelJoinDto,
+  type AcceptWorkspaceInviteDto,
   type ChannelInviteDto,
   type ChannelLeaveDto,
   type ChannelUpdateRoleDto,
@@ -303,11 +303,22 @@ export class ChannelsController {
     return this.service.getWorkspaceInvitePreview(token);
   }
 
-  /** Joins the calling user into the community behind an invite link. */
+  /**
+   * Joins the calling user into the community behind an invite link, keeping the admission voucher
+   * the joiner built from the link's fragment when it sent one (channel-encryption section 25).
+   */
   @UseGuards(NginxAuthGuard)
   @Post('invites/:token/accept')
-  acceptInvite(@Headers('x-user-id') xUserId: string, @Param('token') token: string) {
-    return this.service.acceptWorkspaceInvite(token, xUserId.trim().toLowerCase());
+  acceptInvite(
+    @Headers('x-user-id') xUserId: string,
+    @Param('token') token: string,
+    @Body() body: AcceptWorkspaceInviteDto
+  ) {
+    return this.service.acceptWorkspaceInvite(
+      token,
+      xUserId.trim().toLowerCase(),
+      body?.admissionVoucher
+    );
   }
 
   /** Creates a new role in a workspace on behalf of the calling user. */
@@ -329,18 +340,6 @@ export class ChannelsController {
   @Get('workspace/:workspaceId/user/me')
   listChannels(@Headers('x-user-id') xUserId: string, @Param('workspaceId') workspaceId: string) {
     return this.service.listChannelsForUser(workspaceId, xUserId.trim().toLowerCase());
-  }
-
-  /** Adds the calling user as a member of the specified channel. */
-  @UseGuards(NginxAuthGuard)
-  @Post(':channelId/members/join')
-  join(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string,
-    @Body() body: ChannelJoinDto
-  ) {
-    const userId = xUserId.trim().toLowerCase();
-    return this.service.joinChannel(channelId, { ...body, userId, actorUserId: userId });
   }
 
   /** Invites a target user to a channel on behalf of the calling user. */

@@ -38,6 +38,7 @@ export type PushContentKey =
   | 'social_live_withdrawn'
   | 'form_opening_soon'
   | 'form_open'
+  | 'form_paid_over_capacity'
   | 'event_proposed'
   | 'event_validated'
   | 'event_rejected'
@@ -116,7 +117,8 @@ export type PushContent = {
    * - `social_live_started`: nothing, always empty
    * - the three live moderation keys (`social_live_cut`, `_suspended`, `_withdrawn`): nothing, always
    *   empty - the reason is a WORD, so it stays on the in-app row, which the client words
-   * - the two form keys: nothing, always empty
+   * - the two form reminder keys: nothing, always empty
+   * - `form_paid_over_capacity`: the form's own title - never the payer's name, never the amount
    * - the five event keys: the event's own title, which is not translatable either
    */
   arg: string;
@@ -354,6 +356,24 @@ export function formOpenContent(): PushContent {
     arg: '',
     legacyTitle: 'Formulaire ouvert !',
     legacyBody: 'Le formulaire est disponible - dépêchez-vous, les places sont limitées !',
+  };
+}
+
+/**
+ * A PAYMENT LANDED ON A FORM THAT WAS ALREADY FULL, and its managers owe a refund
+ * (`paid_over_capacity`, forms.md). Told to the form's owner and its `MANAGE_FORMS` holders.
+ *
+ * THE FORM'S TITLE IS THE ONLY DATA, deliberately: a lock screen is read by whoever holds the
+ * phone, so who paid and how much stay on the responses page, behind the organiser's own session.
+ * No actor - nobody acted on the organiser; a payment provider answered.
+ */
+export function formPaidOverCapacityContent(formTitle: string): PushContent {
+  return {
+    key: 'form_paid_over_capacity',
+    actorName: '',
+    arg: formTitle,
+    legacyTitle: 'Paiement sur un formulaire complet',
+    legacyBody: `« ${formTitle} » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.`,
   };
 }
 

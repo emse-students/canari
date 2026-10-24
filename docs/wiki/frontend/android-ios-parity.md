@@ -237,6 +237,7 @@ Verified in both trees while writing this page, so nobody spends an evening re-d
 |Background drain|`MlsBackgroundWorker` + `OutboxRetryWorker`|BGTasks `cleanup` + `outboxRetry`, both registered AND submitted|
 |App-chosen language in notifications|`appLocaleContext` from `push_context.json`|the NSE reads the same `locale` field|
 |Deep links|intent-filters + `autoVerify`|`CFBundleURLTypes` + AASA|
+|Share into Canari|`SEND`/`SEND_MULTIPLE` intent-filter + `IncomingShare.kt` ([sharing](sharing.md))|**missing** - a Share Extension (lot S4)|
 |Device key at rest|Android Keystore|Keychain, `AfterFirstUnlockThisDeviceOnly`, App Group|
 
 **And one asymmetry closed BY CONSTRUCTION, which must not be given a peer**: Android flushes the
