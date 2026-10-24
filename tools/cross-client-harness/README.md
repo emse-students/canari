@@ -209,6 +209,15 @@ the server. `srvlog.mjs` classifies the whole server window - `--shapes` collaps
 `notable` into distinct sentences - and `srvclassify-selftest.mjs` pins every rule against a line
 whose bucket is known.
 
+**A 1.4.1 line is judged BY THE ROW** (`ROW_RULES` in `srvlog.mjs`, R6 of
+the 1.4.1 campaign, `docs/wiki/cross-client-campaign-1-4-1.md`): a `[COMMIT] DUPLICATE`, an
+`awaiting_admission` refusal, a `[BG_WELCOME]` or a removal-bound refusal is `expected` in the rows
+that provoke it and `outOfRow` - which breaks `clean` - in any other row and in a window no row
+named. A gated row passes its own id (`recordObserved` does it); by hand, `bun srvlog.mjs --since
+15m --row DUP-1` or `bun logs.mjs --server --row DUP-1`. A throttled line whose `repeat=` is not 1,
+10, 100... is dirt in every row: the throttle is what it would be telling you about. ERROR lines are
+never judged per row.
+
 **A network line in a client report renders as `<sentence> <- METHOD /path`**, joined through
 `Log.entryAdded`'s `networkRequestId` to the request the classifier already holds - because "the
 server responded with a status of 415" names no request, and a dirt line whose subject cannot be

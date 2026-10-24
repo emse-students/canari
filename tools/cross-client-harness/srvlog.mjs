@@ -5,6 +5,7 @@
  *   bun srvlog.mjs --since 15m                     everything in the last 15 minutes
  *   bun srvlog.mjs --since 15m --raw               every line, unclassified
  *   bun srvlog.mjs --since 15m --shapes            distinct unexplained SHAPES, with counts
+ *   bun srvlog.mjs --since 15m --row DUP-1         judge the 1.4.1 lines as DUP-1's window (`ROW_RULES`)
  *
  * WHY IT EXISTS. The campaign's bar is that every log line is expected - "y compris dans les logs
  * web, mobile, et serveur" - and two of those three had an instrument. `watch.mjs` classifies the
@@ -987,6 +988,16 @@ const NOTABLE = [
   // COMM-23 is the check that produces it - it flips a public salon private, which is exactly the
   // gesture that submits the panel's empty allowlist.
   /\[ChannelService\] \[CHANNEL_ACCESS\] settings served to manager \S+ outside the allowlist of \S+$/,
+
+  // THE HOURLY SWEEP OF INVITATION-LINK ASKS (#2358), whatever row is running: it expires asks no
+  // member answered in 14 days and says how each ended. Narration of a cron, never a row's doing -
+  // reported so a window that withdrew somebody's ask shows it.
+  /\[AppController\] \[CRON\] cleanupStalePendingInvitations: \d+ invitation-link ask\(s\) awaiting a member - \{.*\}$/,
+  // THE COMMUNITY REMOVAL LOCK (#2284), taken by every removal and every access rewrite, and its
+  // answer for a target who is no member. Bookkeeping of a serialisation; the REFUSAL it can lead to
+  // is a row-expected line (`ROW_RULES`), this is not.
+  /\[ChannelService\] \[WORKSPACE\] removal lock held workspace=\S+$/,
+  /\[ChannelService\] \[WORKSPACE\] removal of a non-member, nothing to compare workspace=\S+ target=\S+$/,
 ];
 
 /** The server asserting a loss or a failure it could not handle. These break `clean` on their own. */
@@ -1007,6 +1018,235 @@ const SEVERE = [
   /\[AuthSessionsService\] Refresh token replay detected sid=/,
 ];
 
+/**
+ * LINES THAT ARE EXPECTED IN ONE ROW AND DIRT IN EVERY OTHER (R6 of the 1.4.1 campaign, 2026-10-24).
+ *
+ * The four buckets above judge a line by itself. The mechanisms `1.4.1` added cannot be judged that
+ * way: a `[COMMIT] DUPLICATE` is the settlement doing its job in DUP-1, where a lost answer was ARMED,
+ * and a defect in FLOOR-1, where nothing should ever have been resubmitted. Before this list the broad
+ * `epoch|re-?add|revoke` NOTABLE rule took most of them everywhere, and the rest landed in `warnings`,
+ * which never gates - so a removal-bound refusal in a DM row would have read as a clean window. The
+ * plan's rule (`cross-client-campaign-1-4-1.md` section 3, R6): each line is EXPECTED for the row
+ * that provokes it, and DIRT everywhere else.
+ *
+ * HOW A LINE IS JUDGED, by {@link rowVerdict}:
+ *
+ * - `tag` says the line belongs to a family. A family line that matches NONE of its family's
+ *   `shape`s is dirt in every row: the server said something this list has not read - a new outcome,
+ *   or a throttled line whose `repeat=` is not 1, 10, 100... (the throttle of #2358 is broken, and
+ *   one line per retry is exactly what it exists to prevent).
+ * - A shape names its `rows`: an exact id (`ADM-5`) or a family (`DUP-*`). The line is `expected` in
+ *   those rows and `outOfRow` - which breaks `clean` - in any other row, AND when no row was named:
+ *   a window nobody attributed must not forgive anything.
+ * - `rows: []` is a line no row may produce: `[UNINVITED_ENTRY] kind=` is a person in a conversation
+ *   nobody admitted, and ADM-7's `PASS` is that its count stays zero.
+ * - An ERROR-level or SEVERE line is never judged here - it gates as it always did. That is why
+ *   `[ADMISSION]` (an ERROR) and `[ASK_EXPIRY] not withdrawn` have no entry: no row may expect them.
+ *
+ * EVERY FORMAT IS COPIED FROM THE MERGED SERVER SOURCE, never written from a description: #2358
+ * (`group-membership.ts` `refuseAwaitingSeat`, `messaging.service.ts`, `members.controller.ts`,
+ * `messaging.controller.ts`, `calls.service.ts`), #2287 (`push.controller.ts`), #2269
+ * (`messaging.service.ts`), #2284 and #2258 (`social-service` `channel.service.ts`). #2329 added no
+ * server line - its warm-process staging is logged by the PHONE (`[BG_WELCOME]`/`[BG_STATE]` in
+ * Rust), which the logcat window reads, and its server face is #2287's `[BG_WELCOME]` route below.
+ */
+const ADM_JOIN = ['ADM-1', 'ADM-2', 'ADM-3', 'ADM-4', 'ADM-5', 'ADM-6'];
+const THROTTLED = String.raw`repeat=10*, said at 1, 10, 100\.\.\.`;
+const ROW_RULES = [
+  // ── #2358: a new person joins a group only through a member ───────────────────────────────────
+  // A waiting seat calling a member route: WARN, said at the 1st, 10th, 100th refusal per route,
+  // group and person. Every join row has a joiner waiting; ADM-4 is the security row that calls
+  // every route on purpose.
+  {
+    name: 'awaiting-seat refusal',
+    tag: /\] REFUSED group=\S+ caller=.*awaiting_admission/,
+    shape: new RegExp(
+      String.raw`\[[A-Za-z_-]+\] REFUSED group=\S+ caller=[0-9a-f]{1,8}( target=[0-9a-f]{1,8})? - the caller's seat awaits a member's admission \(409 awaiting_admission, ${THROTTLED}\)$`
+    ),
+    rows: ADM_JOIN,
+  },
+  // The external-join base withheld from a waiting seat. A CURRENT client is told before it asks
+  // (`device-memberships`), so only the OLD joiner of ADM-5 meets it - and ADM-4, which asks.
+  {
+    name: 'external-join base withheld',
+    tag: /\[GROUP_INFO\] .*base withheld/,
+    shape: new RegExp(String.raw`\[GROUP_INFO\] group=\S+ user=\S+ awaits a member's admission - base withheld \(${THROTTLED}\)$`),
+    rows: ['ADM-4', 'ADM-5'],
+  },
+  // A waiting seat's ask relayed to a member (the ordinary START has no `ask=` and stays BENIGN).
+  {
+    name: 'waiting ask relayed',
+    tag: /\[WELCOME_REQ\]\[[^\]]+\] START .* ask=/,
+    shape: new RegExp(
+      String.raw`\[WELCOME_REQ\]\[welcome-req-[0-9a-f]+\] START group=\S+ requester=\S+ members=\d+ ask=awaiting-member repeat=10* \(said at 1, 10, 100\.\.\.\)$`
+    ),
+    rows: ADM_JOIN,
+  },
+  // A member's Decline, and its four answers (`AwaitingSeatWithdrawal`).
+  {
+    name: 'decline answered',
+    tag: /\[JOIN_DECLINE\]/,
+    shape: /\[JOIN_DECLINE\] group=\S+ caller=\S+ target=\S+ outcome=(withdrawn|already-admitted|not-awaiting|gone)$/,
+    rows: ['ADM-2', 'ADM-3'],
+  },
+  {
+    name: 'decline refused to a non-member',
+    tag: /\[JOIN_DECLINE\]/,
+    shape: /\[JOIN_DECLINE\] REJECT group=\S+ caller=\S+ target=\S+ - not an admitted member, or their own ask$/,
+    rows: ['ADM-4'],
+  },
+  // A member's Add (the commit's `admits`) or a stored Welcome lifting the flag.
+  {
+    name: 'admitted by a member',
+    tag: /\] ADMITTED group=/,
+    shape: /\[[A-Z_]+\]\[[^\]]+\] ADMITTED group=\S+ users=\d+ door=(admits|welcome) - a member's Add answered their invitation-link ask$/,
+    rows: ['ADM-1', 'ADM-3', 'ADM-5', 'ADM-6'],
+  },
+  // The waiting seat's own commit refused at the gate - nothing it does admits anyone.
+  {
+    name: 'waiting seat commit refused',
+    tag: /REJECT committer_not_member .*reason=awaiting_admission/,
+    shape: /\[COMMIT\]\[[^\]]+\] REJECT committer_not_member group=\S+ device=\S+ kind=(external|member|key-group-external \S+)( reason=departure_in_progress)? reason=awaiting_admission$/,
+    rows: ['ADM-4'],
+  },
+  // A ring that skipped a callee holding no admitted seat (presence and ring exclude the waiting).
+  {
+    name: 'ring skips an unadmitted callee',
+    tag: /\[ring\] call=\S+ group=\S+ not rung:/,
+    shape: /\[ring\] call=\S+ group=\S+ not rung: \d+ callee\(s\) hold no admitted seat: [0-9a-f,]+$/,
+    rows: ['ADM-4'],
+  },
+  // An uninvited-entry report from somebody who is not a member: the report is refused.
+  {
+    name: 'uninvited-entry report from a non-member',
+    tag: /\[UNINVITED_ENTRY\]/,
+    shape: /\[UNINVITED_ENTRY\] REJECT not-a-member reporter=\S+ group=\S+$/,
+    rows: ['ADM-4', 'ADM-7'],
+  },
+  // A PERSON IN A CONVERSATION NO MEMBER ADMITTED, and its repeat. No row may produce one.
+  {
+    name: 'uninvited entry recorded',
+    tag: /\[UNINVITED_ENTRY\]/,
+    shape: /\[UNINVITED_ENTRY\] (kind=\S+ reporter=\S+ group=\S+ entrant=\S+ epoch=\d+ key=\S+|repeat reporter=\S+ group=\S+ entrant=\S+ epoch=\d+ - already counted)$/,
+    rows: [],
+  },
+
+  // ── #2287 (and #2329's server face): the background Welcome route ─────────────────────────────
+  // A phone in the background answering a newcomer's join. DEV-7 arms it; anywhere else it means a
+  // newcomer's external join failed for a reason no row named.
+  {
+    name: 'background Welcome',
+    tag: /\[BG_WELCOME\]/,
+    shape: new RegExp(
+      [
+        String.raw`START group=\S+ sender=\S+ target=\S+ baseEpoch=-?\d+`,
+        String.raw`commit accepted -> activeEpoch=\d+`,
+        String.raw`DONE Welcome stored with the commit`,
+        String.raw`REJECT commit \S+ \(server epoch: \S+, sent base: -?\d+\) - no Welcome, answered 409`,
+        String.raw`REJECT target=\S+ not in dm_group_members \(removed\) - re-add refused`,
+        String.raw`REJECT welcome_target_not_member group=\S+ target=\S+( - the seat went before the Welcome was stored)?`,
+      ]
+        .map((s) => String.raw`\[BG_WELCOME\]\[bg-wlc-[0-9a-f]+\] (?:${s})$`)
+        .join('|')
+    ),
+    rows: ['DEV-7'],
+  },
+
+  // ── #2269: commit settlement and revocation ───────────────────────────────────────────────────
+  // OUR OWN commit resubmitted after its answer was lost: the settlement's whole point, and a defect
+  // in any row that lost no answer.
+  {
+    name: 'commit answered duplicate',
+    tag: /\] DUPLICATE group=/,
+    shape: /\[COMMIT\]\[[^\]]+\] DUPLICATE group=\S+ device=\S+ baseEpoch=\d+ - already accepted, answered again$/,
+    rows: ['DUP-*', 'OFF-*', 'KILL-*', 'TOK-*', 'NET-*', 'DEV-7'],
+  },
+  {
+    name: 'commit from a revoked device',
+    tag: /REJECT device_revoked/,
+    shape: /\[COMMIT\]\[[^\]]+\] REJECT device_revoked group=\S+ device=\S+ sender=\S+$/,
+    rows: ['DEV-2', 'DEV-3', 'DEV-6'],
+  },
+
+  // ── #2284 and #2258: the removal bound and the serialised departures (social-service) ─────────
+  {
+    name: 'removal exceeds the actor',
+    tag: /\[WORKSPACE\] refused removal/,
+    shape: /\[WORKSPACE\] refused removal - target holds more than the actor workspace=\S+ target=\S+ by=\S+ locked=(true|false)$/,
+    rows: ['RM-6', 'RM-7'],
+  },
+  {
+    name: 'access rewrite refused, salon changed',
+    tag: /\[CHANNEL_ACCESS\] refused/,
+    shape: /\[CHANNEL_ACCESS\] refused - the salon changed since it was read channel=\S+ by=\S+$/,
+    rows: ['RM-4'],
+  },
+  {
+    name: 'privacy refused, minted group kept',
+    tag: /\[CHANNEL_GRAINE\] privacy refused/,
+    shape: /\[CHANNEL_GRAINE\] privacy refused, minted group kept channel=\S+ group=\S+ by=\S+$/,
+    rows: ['RM-4'],
+  },
+  {
+    name: 'departure superseded',
+    tag: /\[KEY_DISTRIBUTION\] departure (superseded|SUPERSEDED|CANCELLED|ABANDONED)/,
+    shape: /\[KEY_DISTRIBUTION\] departure (superseded, retrying workspace=\S+ user=\S+ reason=\S+ attempt=\d+\/\d+|SUPERSEDED - granted a private salon since its read workspace=\S+ user=\S+ reason=\S+ salons=\d+)$/,
+    rows: ['RM-5'],
+  },
+  {
+    name: 'departure cancelled or abandoned',
+    tag: /\[KEY_DISTRIBUTION\] departure (superseded|SUPERSEDED|CANCELLED|ABANDONED)/,
+    shape: /\[KEY_DISTRIBUTION\] departure (CANCELLED before its roster write scope=\S+ user=\S+ departure=\S+ reason=\S+ - rolled back, retryable|ABANDONED reason=\S+ begun=\d+: .* - settling what it began)$/,
+    rows: ['RM-1', 'RM-4', 'RM-5'],
+  },
+  {
+    name: 'salon grant refused',
+    tag: /\[CHANNEL\] grant refused/,
+    shape: /\[CHANNEL\] grant refused channel=\S+ user=\S+ outcome=(gone|public|not_member|not_allowed)$/,
+    rows: ['RM-5'],
+  },
+  // A salon deleted between its read and its roster write. No row provokes it.
+  {
+    name: 'salon gone before its roster write',
+    tag: /\[CHANNEL\] salon gone before its roster write/,
+    shape: /\[CHANNEL\] salon gone before its roster write channel=\S+ user=\S+$/,
+    rows: [],
+  },
+];
+
+/** Whether `row` is one a rule's `rows` names: an exact id, or a `FAMILY-*`. */
+export function rowNamed(rows, row) {
+  if (!row) return false;
+  return rows.some((r) => (r.endsWith('-*') ? row.startsWith(r.slice(0, -1)) : r === row));
+}
+
+/** The level token every service writes for an error; such a line is never judged per row. */
+const ERROR_LEVEL = /\bERROR\b|\bERRO\b|\bERR!\b/;
+
+/**
+ * How {@link ROW_RULES} judges one line in `row`'s window.
+ *
+ * @param {string} line one server line
+ * @param {string|null} row the row whose window this is (`ADM-5`), or null when none was named
+ * @returns {null | {expected: boolean, rule: string|null, reason: string}} null when no family claims
+ *   the line (or it is an ERROR / SEVERE line, which gates as it always did)
+ */
+export function rowVerdict(line, row) {
+  if (ERROR_LEVEL.test(line) || SEVERE.some((r) => r.test(line))) return null;
+  const family = ROW_RULES.filter((r) => r.tag.test(line));
+  if (!family.length) return null;
+  const rule = family.find((r) => r.shape.test(line));
+  if (!rule) return { expected: false, rule: null, reason: 'a line of a 1.4.1 family in a shape nobody has read' };
+  if (rowNamed(rule.rows, row)) return { expected: true, rule: rule.name, reason: `expected in ${row}` };
+  return {
+    expected: false,
+    rule: rule.name,
+    reason: rule.rows.length
+      ? `${rule.name}: expected only in ${rule.rows.join(', ')}, and this window is ${row ?? 'no named row'}`
+      : `${rule.name}: no row may produce it`,
+  };
+}
+
 // THE RULE LISTS ARE EXPORTED SO THEY CAN BE TESTED WITHOUT REACHING PRODUCTION. A pattern that
 // cannot match has no symptom on a live window - it just makes the unexplained pile bigger - so the
 // only way to catch one is to assert it against a line whose bucket is known. See
@@ -1015,6 +1255,7 @@ export {
   BENIGN as BENIGN_RULES,
   NOTABLE as NOTABLE_RULES,
   SEVERE as SEVERE_RULES,
+  ROW_RULES,
 };
 
 
@@ -1043,6 +1284,8 @@ export {
  *
  * @param {string} since a docker `--since` value: an ISO instant, or `15m`
  * @param {string[]} [opts.subjects] campaign user-id prefixes; omit to leave the window unpartitioned
+ * @param {string|null} [opts.row] the row this window belongs to (`ADM-5`): decides which `ROW_RULES`
+ *   lines are `expected`; omitted, every one of them is `outOfRow` and breaks `clean`
  * @returns {{clean: boolean, since: string} & Record<string, object>}
  */
 /**
@@ -1143,7 +1386,7 @@ export function namesOnlyOthers(line, subjects) {
   return !ids.some((id) => subjects.some((s) => id.startsWith(s) || s.startsWith(id)));
 }
 
-export function srvReport(read, since = '10m', { raw = false, shapes = false, subjects = [] } = {}) {
+export function srvReport(read, since = '10m', { raw = false, shapes = false, subjects = [], row = null } = {}) {
 const result = {};
 let clean = true;
 
@@ -1208,6 +1451,19 @@ for (const service of SERVICES) {
   const dumpLines = lines.length - collapsed.length;
   lines = collapsed;
 
+  // THE 1.4.1 LINES ARE JUDGED BY THE ROW BEFORE ANY OTHER RULE (`ROW_RULES`): the broad NOTABLE
+  // and the non-gating WARN bucket would otherwise take them in every row alike.
+  const windowLines = lines;
+  const expected = [];
+  const outOfRow = [];
+  lines = lines.filter((l) => {
+    const v = rowVerdict(l, row);
+    if (!v) return true;
+    if (v.expected) expected.push(l);
+    else outOfRow.push(`${l}  <- ${v.reason}`);
+    return false;
+  });
+
   const severe = lines.filter((l) => SEVERE.some((r) => r.test(l)));
   const isError = (l) => /\bERROR\b|\bERRO\b|\bERR!\b/.test(l) && !severe.includes(l);
   const errors = lines.filter(isError);
@@ -1234,13 +1490,13 @@ for (const service of SERVICES) {
     notable.push(...unexplained.splice(unexplained.indexOf(l), 1));
   }
 
-  const ok = severe.length === 0 && errors.length === 0 && unexplained.length === 0;
+  const ok = severe.length === 0 && errors.length === 0 && unexplained.length === 0 && outOfRow.length === 0;
   clean &&= ok;
   // EVERY TRUNCATED BUCKET CARRIES ITS OWN COUNT. `errors.slice(0, 40).length` is 40 whether the
   // window held 40 errors or nine hundred, and that number was going into the summary line a reader
   // uses to decide whether to look - a cap reading as a measurement.
   result[service] = {
-    lines: lines.length,
+    lines: windowLines.length,
     clean: ok,
     // REPORTED, NEVER SILENT: a collapse that is not stated is indistinguishable from a window that
     // was quiet, and the whole point of the rule above is that a suppressed count misleads.
@@ -1253,6 +1509,9 @@ for (const service of SERVICES) {
       notable: notable.slice(0, 10),
       ...(shapes && { notableAll: notable }),
     }),
+    // A ROW'S OWN LINES ARE REPORTED, NEVER SILENT; ANOTHER ROW'S GATE (`ROW_RULES`).
+    ...(expected.length && { row, expectedCount: expected.length, expected: expected.slice(0, 20) }),
+    ...(outOfRow.length && { outOfRowCount: outOfRow.length, outOfRow: outOfRow.slice(0, 40) }),
     ...(unexplained.length && {
       unexplainedCount: unexplained.length,
       unexplained: unexplained.slice(0, 40),
@@ -1265,7 +1524,7 @@ for (const service of SERVICES) {
       thirdParty: foreign.slice(0, 20),
       ...(shapes && { thirdPartyAll: foreign }),
     }),
-    ...(raw && { raw: lines }),
+    ...(raw && { raw: windowLines }),
   };
 }
 
@@ -1334,6 +1593,8 @@ export function srvSummary(rep) {
           `${v.errorCount ? `  errors=${v.errorCount}` : ''}` +
           `${v.notableCount ? `  notable=${v.notableCount}` : ''}` +
           `${v.unexplainedCount ? `  unexplained=${v.unexplainedCount}` : ''}` +
+          `${v.outOfRowCount ? `  out-of-row=${v.outOfRowCount}` : ''}` +
+          `${v.expectedCount ? `  expected(${v.row})=${v.expectedCount}` : ''}` +
           `${v.thirdPartyCount ? `  third-party=${v.thirdPartyCount}` : ''}`
     );
 }
@@ -1362,9 +1623,11 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     raw: process.argv.includes('--raw'),
     shapes: wantShapes,
     subjects,
+    // `--row <id>`: the row this window belongs to. Omitted, every `ROW_RULES` line is `outOfRow`.
+    row: flag('row', null),
   });
   if (wantShapes) {
-    for (const bucket of ['unexplained', 'notable', 'thirdParty']) {
+    for (const bucket of ['unexplained', 'outOfRow', 'notable', 'thirdParty']) {
       for (const [service, list] of Object.entries(srvShapes(rep, bucket))) {
         console.log(`\n== ${service} - ${list.length} distinct ${bucket} shape(s)`);
         for (const l of list) console.log(l);

@@ -17,6 +17,8 @@ const BUCKETS = [
   ['severe', 'severeCount'],
   ['errors', 'errorCount'],
   ['unexplained', 'unexplainedCount'],
+  // A 1.4.1 line expected in another row (`srvlog.mjs` `ROW_RULES`): it gates like `unexplained`.
+  ['outOfRow', 'outOfRowCount'],
 ];
 
 /**
@@ -48,10 +50,11 @@ export function serverWindowDetail(rep) {
  * @param {(service: string, since: string) => string[]} read the log reader (`estate.mjs` `srvLines`)
  * @param {string} since an ISO instant, the row's own start
  * @param {string[]} [subjects] campaign user-id prefixes; omit to leave the window unpartitioned
+ * @param {string|null} [row] the row whose window this is - decides which 1.4.1 lines are expected
  */
-export function takeServerWindow(read, since, subjects = []) {
+export function takeServerWindow(read, since, subjects = [], row = null) {
   try {
-    return serverWindowDetail(srvReport(read, since, { subjects }));
+    return serverWindowDetail(srvReport(read, since, { subjects, row }));
   } catch (e) {
     return { since, clean: false, unreachable: String(e?.message ?? e).slice(0, 200) };
   }

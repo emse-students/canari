@@ -610,7 +610,8 @@ export async function recordObserved(id, verdict, detail, observers) {
   const { serverWindowSince, ...rowDetail } = detail ?? {};
   const folded = foldServerWindow(
     gated,
-    serverWindowSince ? takeServerWindow(srvLines, serverWindowSince) : null
+    // THE ROW'S OWN ID decides which 1.4.1 server lines are its own (`srvlog.mjs` `ROW_RULES`).
+    serverWindowSince ? takeServerWindow(srvLines, serverWindowSince, [], id) : null
   );
   return record(id, folded.verdict, { ...folded.detail, ...rowDetail });
 }
