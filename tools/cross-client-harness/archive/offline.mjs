@@ -211,9 +211,7 @@ const ACTIONS = {
     } finally {
       await link.restore();
     }
-    const budgetLines = consoleLines(W1)
-      .map((l) => l.text)
-      .filter((t) => t.includes(LOCK_BUDGET_SPENT) && t.includes(c.group.id.slice(0, 8)));
+    const budgetLines = consoleLines(W1).filter((t) => t.includes(LOCK_BUDGET_SPENT) && t.includes(c.group.id.slice(0, 8)));
     return {
       records: {},
       offline: [],
