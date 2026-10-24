@@ -486,3 +486,55 @@ and a lone Welcome's two lines (one device, followed by trace id). The harness c
 (`srvlog.mjs`) still match `DONE` and `FCM sent `. **Not done:** the gateway's per-delivery
 `tracing::info!` lines in `subscribers.rs` and the client-side per-frame logs - measure them against
 production before touching them.
+
+## Third pass - 2026-10-24: the key group's orphan devices
+
+**Decided by the user on 2026-10-24**, after the measurement in
+[backup](backup.md#why-the-archive-went-from-80-mb-to-700-mb-2026-10-13): revoke every device that
+holds rows of key group `1b1687d0` and has **neither a session row nor a push token**, through the
+revoke path of the first two passes, not by deleting rows. Deleting rows alone was rejected: the rows
+include commits, so a device signing in again under the same id would meet holes, and its seats
+would keep collecting new rows.
+
+**The candidates**, read-only at 18:21 UTC: **109 devices** (106 web, 3 tauri), holding 172 132 rows
+of that group and 184 457 queued rows in all, 470 seats, 109 key packages and 4 979 one-time key
+packages. None was already revoked. 70 of them belong to a user with another device holding a session
+or a push token. Their ids, row ids and seat rows were saved before the run, outside the repository.
+
+**The mechanism is the first pass's**: `DELETE /api/mls/devices/:userId/:deviceId` from inside the
+delivery container, one device at a time with a 1 s pause. Right before each call the device was
+re-checked (no session, no push token, not revoked); the run stopped on any status other than 200,
+on a purge that removed no queued row, or on a 1-minute load above 6. One device went first and was
+checked (database, Redis routing set, logs), then the other 108. **All 109 answered 200**, peak load
+2.09, 0 error lines in the delivery, gateway and core logs.
+
+| What | Before | Removed (sum of the route's counts) | After |
+| --- | --- | --- | --- |
+| `queued_message` (all groups) | 272 166 | **184 457** | 87 645 |
+| ... of key group `1b1687d0` | 204 318 | 172 132 | 32 132 |
+| Seats (`dm_device_group_memberships`) | 2 332 | **470** | 1 862 |
+| `key_package` | 1 010 | 109 | 902 |
+| `one_time_key_package` | 47 888 | 4 979 | 42 959 |
+| `revoked_device` | 428 | +109 | 537 |
+| `push_token` | 272 | 0 | 272 |
+
+The counts in the "After" column move with live traffic too (key packages republished, fan-out).
+
+**Nothing else lost a row.** Of the 202 devices with a session or a push token that held queued rows
+before, 199 held exactly the same count afterwards; the other 3 are phones with both a session and
+a push token that fetched their 12 rows meanwhile. The predicate (no session, no push token, rows of
+that group) now matches 0 rows.
+
+**Space.** `VACUUM (ANALYZE) queued_message` ran in 0.7 s. A plain `VACUUM` gives the space back to
+the table for reuse, not to the disk, so `pg_total_relation_size` stays 1 489 MB; the next nightly
+dump is what shrinks (the table's rows went from 272 166 to 87 645). The root disk went from 72 % to
+74 % during the run: the write-ahead log of the deletions, recycled at later checkpoints.
+
+**Restore.** The nightly archive of 2026-10-24 holds the whole table (273 875 rows, dump complete).
+A device that comes back registers again, the designed path; restoring one means lifting its
+`revoked_device` row and copying its rows back from that archive, as the first pass describes.
+
+**One slip, undone.** The first call of the run passed its arguments wrongly (`bun -e` drops the first
+positional argument), so it revoked a device id `undefined` under a user id that does not exist and
+purged nothing. That `revoked_device` row was deleted by its id a minute later, the arguments were
+passed through the environment instead, and the run guards against a call that purges no queued row.
