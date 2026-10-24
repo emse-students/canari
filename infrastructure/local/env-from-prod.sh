@@ -12,7 +12,7 @@
 #     substituting one would only produce failures that mean nothing.
 #   * A DATA-AT-REST key is kept as production's, because it is the only way the data can be read.
 #     `CHANNELS_ENCRYPTION_SECRET` is the one: regenerate it and every salon carried in by
-#     `dump-prod-to-local.sh` becomes undecryptable.
+#     a dumped copy becomes undecryptable.
 #   * An AUTHENTICATION secret is REGENERATED. `JWT_SECRET`, `INTERNAL_SECRET`,
 #     `INTERNAL_SHARED_SECRET` and `CALL_ROOM_SECRET` mint or verify credentials, so sharing them
 #     would make a token forged on a laptop valid in production. They carry no data, so a fresh
@@ -169,7 +169,7 @@ NEW_SECRETS=""
 # local behaviour is production's behaviour. Three things follow, and they are consequences rather
 # than warnings:
 #
-#   * A LOCAL ACTION CAN REACH A REAL THIRD PARTY. `dump-prod-to-local.sh` removes every Lydia
+#   * A LOCAL ACTION CAN REACH A REAL THIRD PARTY. a production dump restore removed every Lydia
 #     identifier (and the historic Stripe customer ids) from the copied database, so nothing real is
 #     ADDRESSABLE by accident - but the keys themselves are live. LYDIA IS THE EXCEPTION: its two
 #     Provider tokens are empty here and `LYDIA_ENV` is `homologation`, because production's pair

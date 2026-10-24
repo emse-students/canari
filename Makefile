@@ -1,4 +1,4 @@
-.PHONY: garage-reset lint-ci-scripts check-services all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod local-env dump-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-android test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
+.PHONY: garage-reset lint-ci-scripts check-services all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod local-env production production-check build-frontend reload-services test test-gateway test-history test-frontend test-android test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -269,14 +269,6 @@ local-env:
 	  "$$ssh" -o ConnectTimeout=30 -o BatchMode=yes canari 'cat /home/canari/canari/infrastructure/.env' > "$$snap"; \
 	  ./infrastructure/local/env-from-prod.sh "$$snap"
 	@echo "${GREEN}✅ .env locaux écrits${RESET}"
-
-# Copie la base de production dans la pile locale : dump lecture seule, restauration gardée par un
-# ALLOWLIST du projet compose local, effacements partagés avec la copie vers dev, puis vérification.
-dump-prod:
-	@echo "${BLUE}📦 Copie de la base de production vers la pile locale…${RESET}"
-	@dump=$$(./infrastructure/local/pull-prod-dump.sh | tail -1); \
-	  ./infrastructure/local/restore-into-local.sh "$$dump"
-	@echo "${GREEN}✅ Base locale restaurée et vérifiée${RESET}"
 
 # Cible principale
 test: test-gateway test-history test-frontend test-harness test-ci-scripts

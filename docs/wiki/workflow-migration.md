@@ -210,7 +210,7 @@ outlives them, and guards the next rotation:
 ### WP-1 - the local estate (DONE 2026-09-03)
 
 **Everything but the last box landed 2026-09-02.** The shape differs from what this list planned,
-in one way worth keeping: the plan named ONE script, `infrastructure/dev/dump-prod-to-local.sh`. It
+in one way worth keeping: the plan named ONE script, (a dump-to-local script, since removed). It
 became FOUR, because fetching, classifying and restoring fail differently and a single script would
 have had one exit code for three unrelated causes.
 
@@ -218,7 +218,7 @@ have had one exit code for three unrelated causes.
       "(PowerShell)" as this line said** - either tool reaches prod since the `ProxyCommand` was
       respelled with forward slashes, and the constraint that DOES bite is the opposite one: a
       binary pipe (`pg_dump | gzip`) must NOT go through PowerShell, which text-encodes stdout and
-      corrupts it. So `pull-prod-dump.sh` dumps on the box and `scp`s the file, and never pipes
+      corrupts it. So the dump script (removed 2026-10-24) dumped on the box and `scp`ed the file, and never piped
 - [x] `infrastructure/.env` (local) built from it by `infrastructure/local/env-from-prod.sh`:
       third-party secrets are copied, internal signing secrets are regenerated (next item), **and the
       secret the dumped data was encrypted with is kept** - without it the dumped data does
@@ -233,10 +233,10 @@ have had one exit code for three unrelated causes.
 - [x] `ALLOW_INSECURE_COOKIES=true`, `NODE_ENV=development`, `ENABLE_DEV_ROUTES=true`, localhost
       topology (ports, `ALLOW_ORIGIN`, `FRONTEND_URL`)
 - [x] `frontend/.env` (local) on the localhost ports
-- [x] **four scripts, not one**, plus `make local-env` / `make dump-prod`:
-      `local/pull-prod-dump.sh` (read-only, refuses to write inside the work tree, `gunzip -t`
-      against truncation, and a `.meta` sidecar recording what prod held AT DUMP TIME),
-      `local/env-from-prod.sh`, `local/restore-into-local.sh`, and `lib/copy-strips.sh` -
+- [x] **four scripts, not one**, plus `make local-env` and a dump make target. **The fetch script, the
+      restore script and the make target were REMOVED 2026-10-24: production data is never copied to
+      a workstation, and local work uses the fictional seed.** What remains of the four:
+      `local/env-from-prod.sh` and `lib/copy-strips.sh` -
       **factored out of `dev/copy-prod-to-dev.sh` (deleted 2026-10-16) rather than copied**, so the strip list is one
       list. The caller passes its OWN guarded sql function by name, which keeps the destructive
       allowlist with whoever owns the target

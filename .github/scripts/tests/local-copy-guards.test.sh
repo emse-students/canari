@@ -1,20 +1,14 @@
 #!/usr/bin/env bash
 #
-# Asserts the guards on the LOCAL copy of production - `infrastructure/local/pull-prod-dump.sh`
-# fetches a dump, `infrastructure/local/restore-into-local.sh` restores it into a developer's own
-# stack, and `infrastructure/lib/copy-strips.sh` holds what a copy must not carry.
+# Asserts the strip list of `infrastructure/lib/copy-strips.sh` - what a copy of production must not
+# carry - stays COMPLETE. The local copy of production was removed on 2026-10-24 (owner decision:
+# production data is never copied to a workstation); the strips remain because the dev reset
+# (`infrastructure/dev/reset-dev-to-seed.sh`) still reads the media-residue question they own.
 #
-# IT WAS `dev-copy-guards.test.sh` UNTIL 2026-10-16, when the weekly copy of production into the
-# dev.canari-emse.fr estate was deleted (owner, GDPR review) and dev moved to a fictional seed -
-# whose own guards are `dev-reset-guards.test.sh`. The local copy is the one production copy left,
-# kept for the owner to decide on, and these are the properties it still owes:
-#
-#   1. THE STRIP LIST IS COMPLETE. Its failure mode is an ABSENCE: a payment column added to an
-#      entity next month is a live identifier the copy would carry onto a developer's laptop, and
-#      nothing would say so. So the list is DERIVED from the entity declarations here and checked
-#      against the strips, the same shape as `ceiling.test.sh` and for the same reason.
-#   2. THE TARGET CANNOT INVERT. The local project is a readonly literal, every write goes through
-#      one function that re-checks its label, and the restore half never reaches production.
+# THE STRIP LIST IS COMPLETE. Its failure mode is an ABSENCE: a payment column added to an entity
+# next month is a live identifier a copy would carry, and nothing would say so. So the list is
+# DERIVED from the entity declarations here and checked against the strips, the same shape as
+# `ceiling.test.sh` and for the same reason.
 #
 # Run by `make test-ci-scripts` and by CI.
 
@@ -23,11 +17,6 @@ set -euo pipefail
 cd "$(dirname "$0")/../../.."
 
 readonly STRIPS=infrastructure/lib/copy-strips.sh
-readonly LOCAL_SCRIPT=infrastructure/local/restore-into-local.sh
-# Production's compose project, read from the file that declares it rather than typed: the local
-# target must never be that name, and a typed copy would go stale the day production is renamed
-# (it was `infrastructure` until 2026-09-24).
-prod_project=$(sed -n 's/^name:[[:space:]]*//p' infrastructure/docker-compose.prod.yml | head -1)
 
 failures=0
 checks=0
@@ -42,19 +31,7 @@ ok() {
   checks=$((checks + 1))
 }
 
-# A script's executable lines: comments and blanks removed. Several assertions below search for a
-# command or an SQL keyword, and these files EXPLAIN themselves at length - `pg_dump`, `TRUNCATE`
-# and the rest all appear in prose. A check that cannot tell an invocation from an explanation
-# punishes the explanation, so it is stripped here rather than in each pattern.
-code_lines() {
-  grep -vE '^[[:space:]]*#' "$1" | grep -vE '^[[:space:]]*$'
-}
-
-printf 'Guards on the local copy of production\n'
-
-if [ -z "$prod_project" ]; then
-  fail "no 'name:' in infrastructure/docker-compose.prod.yml - production's project cannot be compared against"
-fi
+printf 'Guards on the copy strips\n'
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. The strip list is complete, DERIVED from the entities
@@ -174,106 +151,6 @@ else
   ok "$STRIPS writes only through the function its caller passes"
 fi
 
-# The copy must actually USE it. A caller that stopped calling it would strip nothing at all, which
-# is the silent failure this whole section exists for.
-if [ ! -f "$LOCAL_SCRIPT" ]; then
-  fail "$LOCAL_SCRIPT is missing"
-elif grep -q 'copy-strips.sh' "$LOCAL_SCRIPT" && grep -q 'apply_copy_strips' "$LOCAL_SCRIPT"; then
-  ok "$LOCAL_SCRIPT sources the shared strips and applies them"
-else
-  fail "$LOCAL_SCRIPT does not apply the shared strip list"
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. The LOCAL copy, added 2026-09-02 - the target cannot invert
-# ─────────────────────────────────────────────────────────────────────────────
-# It destroys a database on a developer's machine, and the machine it runs on also holds unrelated
-# Docker projects: the one it was written on already had a project called `local` belonging to
-# something else entirely. So the allowlist matters here as it does on any shared daemon.
-printf '\nthe local copy cannot be aimed elsewhere:\n'
-
-if [ ! -f "$LOCAL_SCRIPT" ]; then
-  fail "$LOCAL_SCRIPT is missing"
-else
-  local_project=$(awk -F'"' '/^readonly LOCAL_PROJECT=/ { print $2; exit }' "$LOCAL_SCRIPT")
-  if [ -n "$local_project" ]; then
-    ok "the target project is a readonly literal ($local_project)"
-  else
-    fail "LOCAL_PROJECT must be 'readonly LOCAL_PROJECT=\"literal\"'"
-  fi
-
-  # It must not be the production project name. Production's compose project was literally called
-  # `infrastructure` until 2026-09-24, exactly the kind of name a path-derived project could collide
-  # with, which is why the comparison reads the name from production's compose file.
-  if [ -n "$prod_project" ] && [ "$local_project" != "$prod_project" ]; then
-    ok "the local target is not production's project name"
-  else
-    fail "the local target IS production's project name - a restore would destroy production"
-  fi
-
-  if awk '/^local_sql\(\)/,/^}/' "$LOCAL_SCRIPT" | grep -q 'project_of'; then
-    ok "local_sql() re-reads the target project label per call"
-  else
-    fail "local_sql() does not re-read the target project label"
-  fi
-
-  if awk '/^local_sql\(\)/,/^}/' "$LOCAL_SCRIPT" | grep -q 'DRY_RUN'; then
-    ok "local_sql() honours --dry-run"
-  else
-    fail "local_sql() ignores --dry-run, so the dry run is not dry"
-  fi
-
-  # The whole point of the split: this script has no production access, so it cannot invert.
-  # Comments are stripped first - the header explains what `pg_dump` does and why, and a test that
-  # cannot tell prose from an invocation would force the explanation out of the file.
-  if code_lines "$LOCAL_SCRIPT" | grep -qE '(^|[^-[:alnum:]_])(ssh|scp|pg_dump)([[:space:]]|$)'; then
-    fail "the local restore INVOKES ssh, scp or pg_dump - fetching is pull-prod-dump.sh's job"
-  else
-    ok "the local restore never reaches production (no ssh, scp or pg_dump invocation)"
-  fi
-
-  for probe in 'push_token' 'stripeCustomerId' 'FROM users' 'COPY_STRIPS_MEDIA_RESIDUE_SQL'; do
-    if awk '/5\. Verify, do not assert/,0' "$LOCAL_SCRIPT" | grep -q "$probe"; then
-      ok "the local verification reads $probe back"
-    else
-      fail "the local verification does not read $probe back"
-    fi
-  done
-
-  if grep -q 'is NOT trustworthy' "$LOCAL_SCRIPT"; then
-    ok "a local restore that does not verify is reported as untrustworthy"
-  else
-    fail "a failed local verification does not fail the script"
-  fi
-fi
-
-# The fetch half must stay read-only, and must never put a dump of every member's PII where
-# `git add -A` could reach it.
-readonly PULL_SCRIPT=infrastructure/local/pull-prod-dump.sh
-printf '\nthe fetch half only reads:\n'
-if [ ! -f "$PULL_SCRIPT" ]; then
-  fail "$PULL_SCRIPT is missing"
-else
-  # CASE-SENSITIVE and anchored on a following space, deliberately. `-i` made this fail on the word
-  # "truncated" in a legitimate error message about a truncated transfer, which is the failure this
-  # script exists to report: a test that cannot tell `TRUNCATE TABLE` from English prose would push
-  # the prose out.
-  if code_lines "$PULL_SCRIPT" | grep -qE 'TRUNCATE[[:space:]]+TABLE|DROP DATABASE|CREATE DATABASE|UPDATE [a-z_]+ SET|DELETE FROM'; then
-    fail "$PULL_SCRIPT contains a write statement - it is meant to read production, nothing else"
-  else
-    ok "no write statement anywhere in the fetch script"
-  fi
-  if grep -q 'refusing to write a production dump inside the repository' "$PULL_SCRIPT"; then
-    ok "it refuses to write a dump inside the work tree"
-  else
-    fail "nothing stops a production dump from landing inside the repository"
-  fi
-  if grep -q 'gunzip -t' "$PULL_SCRIPT"; then
-    ok "the transfer is checked for truncation, not just for size"
-  else
-    fail "a truncated dump would pass as valid"
-  fi
-fi
 
 printf '\n'
 if [ "$failures" -gt 0 ]; then
