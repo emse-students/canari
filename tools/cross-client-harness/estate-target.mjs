@@ -297,6 +297,15 @@ export function devLogsCommand(service, since) {
   return `${devResolveContainer(service)}; docker logs --since ${since} "$c" 2>&1`;
 }
 
+/**
+ * `<name> <State.StartedAt>` for every running container of dev's compose project, one per line -
+ * the restart witness `deploy.mjs` reads for a dev window (R4). Read-only, and an empty project
+ * prints nothing, which the reader treats as unanswered rather than as "nothing restarted".
+ */
+export const devContainerStartsCommand = () =>
+  `docker ps -q --filter label=com.docker.compose.project=${DEV_PROJECT} --filter status=running ` +
+  `| xargs -r docker inspect --format '{{.Name}} {{.State.StartedAt}}'`;
+
 /** Chrome and Nest colour their output; a rule matching a bare word must not meet an escape. */
 // oxlint-disable-next-line no-control-regex -- ESC is the character this must match; that IS the rule.
 const ANSI = /\u001b\[[0-9;]*m/g;
@@ -382,5 +391,15 @@ export function makeEstate({ site, devSshHost, docker, dockerSpawn, ssh }) {
         : `${service} -> ${ssh(devSshHost, `${devResolveContainer(service)}; echo "$c"`, { timeoutMs: 30_000 })}`,
     );
 
-  return { ESTATE, LOCAL, DEV: ESTATE === 'dev', redis, psql, srvLines, verifyTarget };
+  /**
+   * DEV's container start times as `<name> <StartedAt>` lines, over the same ssh route and the same
+   * compose label as every other dev read. The local estate's restarts are `estateRestarts` in
+   * `deploy.mjs`, which needs no machine-local name; this one does (`devSshHost`), hence here.
+   */
+  const devContainerStarts = () => {
+    if (LOCAL) throw new Error('devContainerStarts: the estate is local - its restarts are read by estateRestarts in deploy.mjs');
+    return ssh(devSshHost, devContainerStartsCommand(), { timeoutMs: 30_000 });
+  };
+
+  return { ESTATE, LOCAL, DEV: ESTATE === 'dev', redis, psql, srvLines, verifyTarget, devContainerStarts };
 }

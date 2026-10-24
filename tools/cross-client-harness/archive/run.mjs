@@ -34,7 +34,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { PHASES, devicesFor } from '../checks.mjs';
-import { awaitQuiet } from '../deploy.mjs';
+import { awaitQuiet, readEstateBuild } from '../deploy.mjs';
 import { groupTombstones, sweepDismissed } from './dismiss.mjs';
 import { ESTATE, srvLines, verifyTarget } from '../estate.mjs';
 import { SITE } from '../site.mjs';
@@ -340,6 +340,16 @@ async function preflight(devices, { quiet = false } = {}) {
   if (quietProd.unknown) console.log(`  ??   production deploy state unknown - ${quietProd.unknown}`);
   else if (quietProd.waitedFor.length)
     console.log(`  ok   production is quiet again after ${Math.round(quietProd.waitedMs / 1000)} s`);
+
+  // ON DEV, THE BUILD THIS SESSION STARTS ON, named on its first lines (R4, 2026-10-24). Every row
+  // records its own start and end build through `watch()` and `gate()`, which voids a row a
+  // pre-release redeployed; this line is what a reader compares the rows against. A dev that cannot
+  // say which build it serves is a problem, not a warning: every row would record a blind window.
+  if (ESTATE === 'dev') {
+    const b = await readEstateBuild(SITE);
+    if (b.build) console.log(`  ok   dev serves ${b.build} (${b.version}) - a row whose window sees it change is VACUOUS`);
+    else problems.push(`dev's build could not be read: ${b.error}`);
+  }
 
   // WHICH BUNDLE THE WEB CLIENTS ARE RUNNING, asked ONCE and repaired per device below.
   //

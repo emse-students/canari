@@ -98,6 +98,9 @@ export const srvLines = E.srvLines;
 /** Resolves and names the containers a run will address (read-only); throws if any is missing. */
 export const verifyTarget = E.verifyTarget;
 
+/** Dev's container start times, `<name> <StartedAt>` per line - the restart witness of a dev window (R4). */
+export const devContainerStarts = E.devContainerStarts;
+
 /** The local estate's chat gateway container: the compose project prefix plus the service name. */
 export const LOCAL_GATEWAY_CONTAINER = 'canari-local-chat-gateway-1';
 

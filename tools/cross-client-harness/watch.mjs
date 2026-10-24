@@ -18,7 +18,8 @@ import {
   originOfConsoleEvent,
   originOfUrl,
 } from './consoleorigin.mjs';
-import { describe as describeDeploy, overlapping as overlappingDeploys } from './deploy.mjs';
+import { configuredEstate, describe as describeDeploy, estateWindow, readEstateBuild } from './deploy.mjs';
+import { DEV_SITE } from './estate-target.mjs';
 import { fromWebKit, isWebKitAgent } from './webkit-console.mjs';
 
 /**
@@ -1294,7 +1295,15 @@ export async function watch(cx, label) {
   const here = await evaluate(cx, 'location.origin').catch(() => null);
   const own = originOfUrl(typeof here === 'string' ? here : '');
   const home = new Set(own ? [own, ...TAURI_ORIGINS] : []);
-  return { cx, label, since: Date.now(), home };
+  const since = Date.now();
+  // ON DEV EVERY WINDOW RECORDS THE BUILD IT OPENED ON (R4, 2026-10-24): a pre-release redeploys
+  // dev under a running row, and `gate()` compares this with the build at the end - see
+  // `estateWindow` in `deploy.mjs`. Read from Node, not the page, so it adds nothing to the
+  // network events the report classifies. DECIDED BY THE CONFIGURED ESTATE, NOT THE PAGE'S ORIGIN
+  // (R4 review): a native client's page is a Tauri scheme, and it stands on dev all the same.
+  // The local estate is asked about restarts instead.
+  const estateBuild = configuredEstate()?.estate === 'dev' ? await readEstateBuild(DEV_SITE) : undefined;
+  return { cx, label, since, home, estateBuild };
 }
 
 /**
@@ -1348,7 +1357,7 @@ export async function awaitLine(cx, needle, timeoutMs = 15000) {
 
 /** Drains what was observed and classifies it. */
 export async function report(w) {
-  const { cx, label, since, home = new Set() } = w;
+  const { cx, label, since, home = new Set(), estateBuild } = w;
   // Contexts created in an EARLIER drained window are still where their lines' origins come from.
   const ctxOrigins = contextOrigins((cx.consumed ?? []).concat(cx.events));
   const reqs = new Map();
@@ -1647,6 +1656,8 @@ export async function report(w) {
     // already in `watch()`'s handle, and a correction derivable from the evidence should not depend
     // on the caller asking for it - the same argument as the navigation forgiveness below.
     since,
+    // The build a DEV window opened on (`watch()`), for the same question asked of a deployed estate.
+    estateBuild,
     // `unexplained` BREAKS CLEAN, and that is the campaign's actual bar rather than a stricter one:
     // "tout doit etre explique, limite tu devrais savoir exactement avant de le voir". A line nobody
     // has classified is by definition a line whose meaning nobody knows, so a verdict formed over it
@@ -2898,7 +2909,8 @@ export function dirtOf(rep) {
  * @param {Record<string, object>} reports label -> the `report()` of that client
  * @param {{bundles?: {stale?: Record<string, object>, blind?: Record<string, string>}}} [observations]
  *   what was learnt about the clients themselves, as opposed to what they printed - see
- *   `observedBundles` in `bundle.mjs`, the only producer.
+ *   `observedBundles` in `bundle.mjs`, the only producer. `estateIo` replaces the estate window's
+ *   readers (`estateWindow` in `deploy.mjs`) and exists for the self-test alone.
  * @returns {{verdict: string, detail: object}} the gated verdict, and the per-client dirt to record
  */
 export function gate(verdict, reports, observations = {}) {
@@ -2922,12 +2934,23 @@ export function gate(verdict, reports, observations = {}) {
   const since = Math.min(...entries.map(([, r]) => r.since ?? Number.POSITIVE_INFINITY));
   let out = verdict === 'PASS' && dirty.length ? 'PASS-DIRTY' : verdict;
   if (Number.isFinite(since)) {
-    const window = overlappingDeploys(since);
+    // ON DEV THE QUESTION IS DEV'S OWN BUILD, start against end, and the pre-release runs - a
+    // `gh release create *-alpha.*` redeploys it under the row (R4). Locally it is the restarts.
+    const window = estateWindow(
+      entries.map(([, r]) => r),
+      since,
+      observations.estateIo
+    );
+    if (window.asked && window.builds) detail.estateBuild = window.builds;
     if (window.asked === false) {
       // A BLIND SPOT IS RECORDED, NEVER GUESSED AWAY. `gh` can be absent, logged out or rate-limited,
       // and a gate that read that as "no deploy" would be silently weaker exactly when the network is
-      // already misbehaving. The verdict stands and the reader is told what could not be asked.
+      // already misbehaving. Locally the verdict stands and the reader is told what could not be
+      // asked. ON DEV (or with no estate known) IT IS VACUOUS (R4 review): dev is redeployed and
+      // reset by gestures nobody at this machine makes, so a window nobody could read is not a
+      // window anybody may vouch for.
       detail.deployWindow = `unknown - ${window.why}`;
+      if (window.estate !== 'local') out = 'VACUOUS';
     } else if (window.overlapped.length) {
       detail.redeployedMidRun = window.overlapped.map(describeDeploy);
       out = 'VACUOUS';
