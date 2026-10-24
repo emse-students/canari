@@ -16,7 +16,7 @@
 import { spawn, execSync } from "node:child_process";
 import { join } from "node:path";
 import { connect, listTargets } from "./cdp.mjs";
-import { refuseForeignPage } from "./estate-target.mjs";
+import { EstateRefusedError, refuseForeignPage } from "./estate-target.mjs";
 import { STATE_DIR } from "./names.mjs";
 import { SITE } from "./site.mjs";
 
@@ -194,7 +194,17 @@ export async function startBrowser(which, url = `${SITE}/chat`, extraArgs = []) 
       // AND EVERY PAGE THE PROFILE CAME BACK WITH: a profile can restore the tabs it last had, one
       // of them on production. `listTargets` throws on any page off the allowlist - outside the
       // `try` above, so a refusal is never read as "not up yet".
-      await listTargets(port);
+      // AND A REFUSED BROWSER IS KILLED, not left running on the page it was refused for (R1 low
+      // finding): the refusal stops this run, and the restored tab would otherwise sit there, live.
+      try {
+        await listTargets(port);
+      } catch (e) {
+        if (e instanceof EstateRefusedError) {
+          console.log(`[launch] ${which} restored a refused page - killing it: ${e.message}`);
+          await killBrowser(which);
+        }
+        throw e;
+      }
       return Date.now() - t0;
     }
     await new Promise((r) => setTimeout(r, 250));

@@ -175,7 +175,7 @@ export const IDP_HOSTS = ['miconnect.emse.fr', 'auth.canari-emse.fr', 'cas.emse.
  * the error page Chrome shows when a navigation failed (a NET row that cut the link lands there).
  * Exact URLs - a prefix would let `about:blank#...` style tricks and any `chrome://` page through.
  */
-export const INERT_PAGES = ['about:blank', 'chrome://newtab/', 'chrome://new-tab-page/', 'chrome-error://chromewebdata/'];
+export const INERT_PAGES = ['about:blank', 'chrome://newtab/', 'chrome://new-tab-page/', 'chrome-native://newtab/', 'chrome-error://chromewebdata/'];
 
 /**
  * Whether a page may be attached to or navigated to by a rig whose estate is `estateOrigin` - an

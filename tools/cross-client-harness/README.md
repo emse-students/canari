@@ -98,6 +98,13 @@ reported them as dev's.
   `Page.navigate` / `Target.createTarget` a connection sends, and in `launch.mjs` `startBrowser`
   (its landing url, and the tabs the profile restored). With no estate registered (`site.mjs` not
   yet evaluated) `listTargets` loads it; the guard itself never passes a page by default.
+  A browser `startBrowser` launched that comes back with a refused tab is KILLED, not left running.
+  **ONE BROWSER THE RIG DOES NOT OWN is judged per target instead:** the phone's own Chrome, where
+  `login.mjs` finds the IdP form beside whatever tabs the phone's user left open. There
+  `untrustedBrowserPages` lists without judging, and `judgedTarget` judges each tab before it is
+  attached. Every page the rig drives is still judged in full. `onetab.mjs` and `iosbench.mjs`
+  report a refusal as a refusal, not as "not answering", and `onetab.mjs` closes refused tabs
+  (`/json/close`, never a navigation).
 - **A NATIVE CLIENT RUNNING A PRODUCTION BUILD IS NOT REFUSED BY THE PAGE GUARD.** A Tauri app's
   page is `http://tauri.localhost` / `tauri://localhost` whatever origins its build baked in, so
   the guard cannot see that an APK or an iPhone build talks to production. That is checked AFTER

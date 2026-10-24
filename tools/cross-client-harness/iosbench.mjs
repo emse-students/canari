@@ -24,6 +24,7 @@
  * is the instrument's answer and the caller (`phone-ios.mjs nativeStore`) reports it as one.
  */
 import { connect, listTargets } from './cdp.mjs';
+import { EstateRefusedError } from './estate-target.mjs';
 
 /** The iPhone WebView's origin - `phone-ios.mjs`'s `WEBVIEW_MATCH`, repeated so this imports nothing that reads names.mjs. */
 const ORIGIN = 'tauri://localhost';
@@ -96,6 +97,13 @@ async function main() {
   try {
     targets = await listTargets(port);
   } catch (e) {
+    // A REFUSAL IS AN ANSWER (R1 low finding): the bridge answered with a page the allowlist
+    // refuses, which is not the same repair as a bridge that is down.
+    if (e instanceof EstateRefusedError) {
+      // Still under `error`, which every reader of this line checks; `refused` says which kind.
+      say({ error: e.message, refused: true, reason: e.reason });
+      return;
+    }
     say({ error: `the inspector bridge on ${port} does not answer (${String(e?.message ?? e).slice(0, 120)}) - run pymobiledevice3 webinspector cdp --port ${port}` });
     return;
   }
