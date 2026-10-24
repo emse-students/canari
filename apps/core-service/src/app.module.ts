@@ -13,6 +13,7 @@ import { ProfileChange } from './users/entities/profile-change.entity';
 import { ProfileCorrectionRequest } from './users/entities/profile-correction-request.entity';
 import { AuthSession } from './auth/entities/auth-session.entity';
 import { RestoreChallengeSpent, RestoreCredential } from './auth/restore/restore-credential.entity';
+import { SessionPushEnding } from './auth/entities/session-push-ending.entity';
 import { PlatformConfig } from './platform/entities/platform-config.entity';
 import { PlatformAnnouncement } from './platform/entities/platform-announcement.entity';
 import { PlatformAnnouncementSeen } from './platform/entities/platform-announcement-seen.entity';
@@ -52,6 +53,7 @@ import { SkyModule } from './sky/sky.module';
           AuthSession,
           RestoreCredential,
           RestoreChallengeSpent,
+          SessionPushEnding,
           PlatformConfig,
           PlatformAnnouncement,
           PlatformAnnouncementSeen,

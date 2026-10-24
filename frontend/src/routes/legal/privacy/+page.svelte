@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="22/10/2026"
+  updated="23/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -170,6 +170,31 @@
         </dd>
       </div>
       <div>
+        <dt>Appels audio (quand la fonction est ouverte)</dt>
+        <dd>
+          Le son d'un appel est chiffré de bout en bout entre les deux appareils : ni notre serveur
+          ni Cloudflare ne peuvent l'écouter, et aucun appel n'est enregistré. Notre serveur connaît
+          en revanche l'appel lui-même : la conversation, qui appelle, qui décroche et depuis quel
+          appareil, l'heure et la durée. Il garde l'état d'un appel 4 heures au plus après son
+          début, et ses journaux techniques en gardent la trace pendant la durée indiquée en section
+          6. Une fois l'appel décroché,
+          <strong>les deux appareils échangent leurs adresses IP</strong> par l'intermédiaire de notre
+          serveur, pour se connecter directement : votre correspondant peut donc connaître votre adresse
+          IP, qui peut indiquer approximativement où vous vous trouvez (ville, fournisseur d'accès, réseau
+          de l'École). Chaque appareil contacte aussi les serveurs de connexion de Cloudflare, qui voient
+          son adresse IP et l'heure ; quand la connexion directe est impossible, le son, toujours chiffré,
+          passe par le relais de Cloudflare (section 4). Un appel que vous ne décrochez pas ne transmet
+          votre adresse IP ni à l'appelant ni à Cloudflare. Vous pouvez refuser les appels dans chaque
+          conversation, et aucun appel n'est possible entre deux membres dont l'un a bloqué l'autre. La
+          conversation garde une ligne « appel » (heure, durée), chiffrée comme vos messages. Pour un
+          appel, notre serveur envoie aussi un avis d'appel entrant à chaque appareil d'un membre qui
+          accepte les appels dans cette conversation, même si l'application est fermée : il contient en
+          clair le nom de l'appelant, le nom de la conversation s'il s'agit d'un groupe, et les identifiants
+          techniques de l'appel (sur Android ; sur iPhone, l'alerte affichée est générique, « Appel entrant
+          », sans nom). Dans cette version, un appel ne sonne que dans l'application ouverte.
+        </dd>
+      </div>
+      <div>
         <dt>Liens partagés</dt>
         <dd>
           Quand un lien est affiché avec un aperçu, son adresse est envoyée à notre serveur, qui
@@ -242,8 +267,13 @@
             <td>Exécution du service (6.1.b)</td>
           </tr>
           <tr>
+            <td>Appels audio</td>
+            <td>Établir un appel chiffré entre deux membres d'une conversation</td>
+            <td>Exécution du service (6.1.b)</td>
+          </tr>
+          <tr>
             <td>Notifications push</td>
-            <td>Vous prévenir d'un message ou d'une activité</td>
+            <td>Vous prévenir d'un message, d'une activité ou d'un appel</td>
             <td>Exécution du service (6.1.b) ; désactivables depuis l'appareil</td>
           </tr>
           <tr>
@@ -357,6 +387,15 @@
           (canari-emse.fr et dev.canari-emse.fr) passent par Cloudflare (Cloudflare Inc.,
           États-Unis), qui voit alors les requêtes, votre adresse IP et les données transmises hors
           contenu chiffré. Le nom principal, canari.emse.fr, ne passe pas par Cloudflare.
+        </p>
+        <p>
+          Pour les appels, Cloudflare (Cloudflare Inc., États-Unis) fournit aussi des serveurs de
+          connexion (STUN) et un relais (TURN). Une fois un appel décroché, chaque appareil les
+          contacte pour établir la connexion : Cloudflare voit alors son adresse IP et l'heure.
+          Quand les deux appareils ne peuvent pas se joindre directement, le son passe par ce
+          relais, qui voit aussi l'adresse IP de l'autre appareil, la durée et le volume échangé,
+          mais jamais le son, chiffré de bout en bout. Notre serveur obtient pour chaque appel un
+          accès temporaire au relais sans transmettre à Cloudflare aucun identifiant de compte.
         </p>
       </li>
       <li>
@@ -493,6 +532,13 @@
               >Supprimé à la déconnexion ou à la suppression du compte ; 90 jours au plus sans
               renouvellement</td
             >
+          </tr>
+          <tr>
+            <td>État d'un appel sur le serveur (conversation, appelant, appareils, heure)</td>
+            <td>
+              4 heures au plus après le début de l'appel ; les journaux techniques en gardent la
+              trace selon la ligne « Journaux techniques » ci-dessous
+            </td>
           </tr>
           <tr>
             <td>Notifications dans l'application</td>
@@ -636,7 +682,8 @@
         <dd>
           Canari fonctionne sur un serveur partagé de l'École des Mines de Saint-Étienne, en France,
           administré avec la DSI de l'École. Les sauvegardes sont copiées sur une seconde machine de
-          l'École. Les anciens noms de domaine passent encore par Cloudflare (section 4).
+          l'École. Les anciens noms de domaine passent encore par Cloudflare (section 4), de même
+          que les appels audio dans la mesure décrite en sections 2 et 4.
         </dd>
       </div>
       <div>
@@ -652,7 +699,8 @@
         <dt>Chiffrement de bout en bout</dt>
         <dd>
           Les messages, les fichiers et les réactions des conversations sont chiffrés sur votre
-          appareil. Le serveur ne détient aucune clé permettant de les lire.
+          appareil. Le serveur ne détient aucune clé permettant de les lire. Il en va de même du son
+          des appels audio, chiffré entre les deux appareils.
         </dd>
       </div>
       <div>

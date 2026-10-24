@@ -78,6 +78,7 @@
 - [Chat module](frontend/modules/chat.md) — Conversations, groups, channels, communities
 - [Calls module](frontend/modules/calls.md) — WebRTC audio/video calls, CallKit, SFU relay
 - [Lives in production](frontend/modules/live-production.md) - the gates, the order of the switch, the read-only preflight, the viewer-cap steps from 24 to none, and the HELD privacy wording
+- [Live scaling](frontend/modules/live-scaling.md) - no visible audience ceiling: what bounds a live's audience (the host uplink, ~24), the five options, R2 for the segments, the staged path and the owner's decisions
 - [Live](frontend/modules/live.md) — Livestream plan (R4/C9): the user's 2026-10-15 decisions, open questions, work packages; not started
 - [Associations module](frontend/modules/associations.md) — Club management, members, calendar, shop, documents
 - [Forms module](frontend/modules/forms.md) — Form builder, submissions, cash/Stripe payments

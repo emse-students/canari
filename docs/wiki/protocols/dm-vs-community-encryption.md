@@ -102,9 +102,10 @@ measured), the signing key (32 B), the endorsement (64 B) and the varints. That 
 
 At the post-launch rate, the largest community reaches the cap in about two years. Another launch
 like the first one, such as a new year group arriving in September, adds hundreds of seeds in a day.
-The cap is a refusal (`truncated`), never a silent cut, so reaching it is visible. What happens to an
-MLS application message of ~2.6 MB on the way through the gateway and the queue has not been
-measured.
+The cap is a refusal (`truncated`), never a silent cut, so reaching it is visible. **Since
+2026-10-22 an answer is bounded in bytes and paged** (255 KiB a page, about eleven pages at the cap),
+after reading every hop's limit from code and config. The binding hop is the 1 MiB pending-queue page
+([channel-encryption §4.4](channel-encryption.md#44-joining-and-what-a-share-link-is-worth)).
 
 ### "O(1) per seed" is true of the client, not of the server
 
@@ -147,9 +148,9 @@ and this page carries the reasoning.
    revoked devices still would. Expected effect: seeds return to roughly "senders x weeks", the shape
    the bundle cap was sized for. Cost: up to ~200 identities stored per outbound session, which is
    per device and per salon, not per message.
-2. **Bound the bundle in BYTES and page it.** A seed count does not bound a message size once a seed
-   is 330 B and identifiers can grow. Either page the history answer (several bundles, each under a
-   byte budget) or measure what the transport accepts and set the cap from that.
+2. **Bound the bundle in BYTES and page it - DONE 2026-10-22.** Each hop's limit was read and the
+   answer is paged under the smallest one, with a third of it as margin. Pages need no reassembly
+   ([channel-encryption §4.4](channel-encryption.md#44-joining-and-what-a-share-link-is-worth)).
 3. **Store a key-group frame once, not once per seat.** The server writes ~31 copies of each payload,
    and its 883 MB are the largest single cost in the database. A shared per-group log, read with a
    per-device cursor, would bring the DM side's `history:{groupId}` stream shape to the key groups,

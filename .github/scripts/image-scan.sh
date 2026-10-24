@@ -24,6 +24,7 @@
 #
 # Usage: image-scan.sh                    (`trivy` on PATH; `TRIVY_CACHE_DIR` honoured)
 #        image-scan.sh --allowlist-ids    (the ids the retirement check reads; no network)
+#        image-scan.sh --allowlist-purls  (the `id package version` triples it reads; no network)
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,8 +38,29 @@ allowlist_ids() {
   grep -oE "^[[:space:]]*-[[:space:]]*id:[[:space:]]*[\"']?(CVE|GHSA)-[A-Za-z0-9-]+" "$allowlist" |
     grep -oE '(CVE|GHSA)-[A-Za-z0-9-]+' | sort -u
 }
+# Every purl-scoped entry as `<id> <name> <version>`, one per line, the version percent-decoded.
+# An id alone cannot retire such an entry: one advisory can be allowlisted on two packages (brotli,
+# Alpine's `brotli-libs` and Debian's `libbrotli1`), and the id stays reported while either remains,
+# so the half that moved would sit in the file for ever. The retirement check asks about each PAIR,
+# and `image-scan-allowlist.test.mjs` compares these with a real YAML parse, as for the ids.
+allowlist_purls() {
+  awk '
+    /^[[:space:]]*-[[:space:]]*id:/ { id = $0; sub(/^[^:]*:[[:space:]]*/, "", id); gsub(/["\047[:space:]]/, "", id) }
+    /^[[:space:]]*-[[:space:]]*["\047]?pkg:/ { p = $0; sub(/^[[:space:]]*-[[:space:]]*/, "", p); gsub(/["\047[:space:]]/, "", p); print id, p }
+  ' "$allowlist" |
+    while read -r id purl; do
+      nv="${purl%%\?*}"
+      nv="${nv##*/}"
+      version="${nv#*@}"
+      printf '%s %s %b\n' "$id" "${nv%%@*}" "${version//%/\\x}"
+    done | sort -u
+}
 if [ "${1:-}" = '--allowlist-ids' ]; then
   allowlist_ids
+  exit 0
+fi
+if [ "${1:-}" = '--allowlist-purls' ]; then
+  allowlist_purls
   exit 0
 fi
 
@@ -91,6 +113,16 @@ else
   cat "$work"/raw-*.json > "$work/all.json"
   # shellcheck disable=SC2086 # `$ids` is a deliberately word-split list of advisory ids.
   bash "$here/ignored-advisories-still-reported.sh" "$work/all.json" $ids || retired=1
+  # And every purl-scoped entry on ITS package: the id check above cannot see one half of a shared id move.
+  reported="$(jq -r '.Results[]?.Vulnerabilities[]? | "\(.VulnerabilityID) \(.PkgName) \(.InstalledVersion)"' "$work/all.json" | sort -u)"
+  gone="$(allowlist_purls | grep -vxF -f <(printf '%s\n' "$reported") || true)"
+  if [ -n "$gone" ]; then
+    printf '%s\n' "$gone" | sed 's/^/    no longer reported: /'
+    echo "::error::the scan no longer reports the advisory on the package a purl-scoped allowlist entry names (listed above as id, package, version) - the image moved, so delete that purl or its entry."
+    retired=1
+  else
+    echo "    every purl-scoped entry is still reported on its package."
+  fi
 fi
 
 if [ -n "$found" ]; then

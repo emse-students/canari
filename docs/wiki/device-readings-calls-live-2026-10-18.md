@@ -102,7 +102,9 @@ installed builds are a store release and a TestFlight build, and neither can be 
    reading by hand with an uncertain time; a timed reading would narrow the 14-28 %/h.
 3. **A WKWebView reading** of `ManagedMediaSource` needs an inspectable iOS bench build
    (`tools/ios-device/sign-install.mjs`). That is the agents' to do, not a human's; it is listed so
-   that it is not mistaken for done.
+   that it is not mistaken for done. **2026-10-19**: the ANDROID app's WebView was read (the tester
+   build is inspectable), with uploads through the dev ingest; the iOS app's WKWebView is still
+   owed ([live, WP-L1](frontend/modules/live.md#wp-l1---measured-2026-10-19)).
 4. **Cellular**: no SIM in either bench phone, so every reading above is on Wi-Fi.
 
 ## See also

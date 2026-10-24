@@ -106,6 +106,14 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   { label: 'restore_credentials', sql: `DELETE FROM restore_credentials WHERE "userId" = $1` },
   // The refresh tokens die here, so no session can be renewed from this moment.
   { label: 'auth_sessions', sql: `DELETE FROM auth_sessions WHERE "userId" = $1` },
+  // A push ending still owed names the account; chat-delivery's own part of the erasure deletes
+  // every push registration the account holds, so nothing is left for it to end. AFTER the
+  // sessions: a logout racing this transaction waits on the session row, then finds it gone and
+  // records nothing, so no ending can be written behind this delete.
+  {
+    label: 'session_push_endings',
+    sql: `DELETE FROM session_push_endings WHERE "userId" = $1`,
+  },
   // Last, and in the job as well as in the request: nothing nominative is left in `users`.
   { label: 'users', sql: `DELETE FROM users WHERE id = $1` },
 ];

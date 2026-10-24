@@ -39,6 +39,7 @@ const CORE_TABLES = [
   'platform_announcements',
   'auth_sessions',
   'restore_credentials',
+  'session_push_endings',
 ];
 
 maybe('account erasure queue against PostgreSQL', () => {

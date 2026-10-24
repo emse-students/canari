@@ -11,4 +11,11 @@ ignore = [
   # run. Lifted by jsonwebtoken gaining a feature that excludes RSA, or by moving to its
   # `aws_lc_rs` backend (which needs cmake and a C compiler in the build image).
   "RUSTSEC-2023-0071",
+  # crypto-bigint 0.5.5 (RUSTSEC-2026-0387, 2026-10-23), wants >=0.7.6: operations meant to be
+  # constant-time (subtraction, division, Montgomery multiplication) may branch on secret data. No
+  # 0.5.x fix exists; 0.7 needs elliptic-curve 0.14, and its only user here, jsonwebtoken 11.1.0
+  # (p256/p384 0.13 under `rust_crypto`), is the newest release. NOT REACHABLE, for the RSA reason
+  # above: HS256 over `from_secret` only, so no EC key is ever built. Lifted by a jsonwebtoken on
+  # elliptic-curve 0.14; the retirement step of code-analysis.yml fails when it is not reported.
+  "RUSTSEC-2026-0387",
 ]
