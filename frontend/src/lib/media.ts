@@ -166,6 +166,11 @@ export interface PendingMediaFile {
   placeholder?: string;
   /** Set only by the voice recorder's own send path - see {@link MediaRef.voiceNote}. */
   voiceNote?: boolean;
+  /**
+   * Set when the chat camera filmed this video as a CanaReel (`chatReelWriter.ts`): its length in
+   * milliseconds. The send turns it into the declaration (`intent`, `durationMs`, `expiresAtMs`).
+   */
+  reelDurationMs?: number;
 }
 
 /** Per-context presets - higher quality, less aggressive resize. */

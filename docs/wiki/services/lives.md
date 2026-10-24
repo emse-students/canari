@@ -85,7 +85,7 @@ they close. What must be true before lives open in production, and in what order
 | Starts per account | 6 in a rolling hour; ONE open at a time (the partial unique index) | `LIVE_STARTS_PER_HOUR`, `LIVE_START_WINDOW_MS` | same route (`startsPerHour`) |
 | Ingests storing at once, per instance | 4 (the database pool is 10) | `LIVE_INGEST_MAX_CONCURRENT` | - |
 | Store timeout / reservation age | 30 s / 35 s | `LIVE_STORE_TIMEOUT_MS`, `LIVE_RESERVATION_TTL_MS` | - |
-| Viewer cap of the HOST, all lives together (**the user wants NO cap, 2026-10-20; the cap stays until the [plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20) is measured**) | 24 = floor(90 Mb/s `LIVE_HOST_EGRESS_BPS` x 0.8 `LIVE_EGRESS_SHARE` / 3 Mb/s `LIVE_VIEWER_BITRATE_BPS`) | `LIVE_VIEWER_CAP`, same file | same route (`viewerCap`) |
+| Viewer cap of the HOST, all lives together (**the user wants NO cap, 2026-10-20; the cap stays until the [plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20) is measured; no VISIBLE ceiling, 2026-10-21: [live-scaling](../frontend/modules/live-scaling.md)**) | 24 = floor(90 Mb/s `LIVE_HOST_EGRESS_BPS` x 0.8 `LIVE_EGRESS_SHARE` / 3 Mb/s `LIVE_VIEWER_BITRATE_BPS`) | `LIVE_VIEWER_CAP`, same file | same route (`viewerCap`) |
 | Seat lease | 30 s after the last key read or manifest poll | `LIVE_SEAT_LEASE_MS` | same route (`seatLeaseMs`) |
 | First-live rules version (L11) | **2** (raised 2026-10-21: the sheet shows the posts' publication rules) | `LIVE_RULES_VERSION` | same route (`rulesVersion`), and `GET /api/lives/rules` |
 | How long a staff cut is kept, and the strike window | **90 days** (decided 2026-10-20) - the ladder counts the cuts still on record | `LIVE_CUT_RETENTION_MS`, `LIVE_STRIKE_WINDOW_MS` (the same value) | same route (`strikeWindowMs`) |
@@ -94,8 +94,13 @@ they close. What must be true before lives open in production, and in what order
 | Longest a reported chat line is kept | 90 days from `keptAt`, or the report handled, whichever is first | `LIVE_CHAT_REPORT_MAX_KEEP_MS` | - |
 | Response commitment to a live report | 24 h of WORKING time (Monday to Friday, `Europe/Paris`) - past it, the [hourly alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e) is an `error` | `LIVE_REPORT_RESPONSE_WORKING_MS`, `LIVE_REPORT_WORKING_ZONE` | - |
 
-The 60 s window, the bitrate, the margin and the one-second segment floor are planning figures,
-**to be confirmed on the WP-L1 bench**.
+**Read against the WP-L1 bench on dev (2026-10-19,
+[live](../frontend/modules/live.md#wp-l1---measured-2026-10-19)), every bound held with no change:**
+0 refusals in ~2 200 segments (the only `409`s came after an index the bench itself gave up on, during a background test). An Android broadcaster sends 3.1 Mb/s for a 2.5 Mb/s target (0.83 of
+the 3.75 Mb/s the budget allows over an hour), an iPhone 2.3 Mb/s; the largest 2 s segment was
+1.58 MB (two merged fragments), under the 4 MiB bound (a 4 s segment reached 3.1 MB the same way - one more reason for 2 s); 2 s segments sit well inside the one-per-second
+floor, and 1 s segments (1.03 s p50 apart) drew no `429`; a broadcaster that stopped was ended 77 s after
+its last segment (the 60 s window plus the sweep).
 
 ## The API contract (`/api/lives`, signed-in members, social-service)
 
@@ -1051,6 +1056,11 @@ DEFAULT 1`, so existing cuts are strike 1, CHECK `>= 1`), and two new tables,
 
 ## What is not proven
 
+- **A scripted broadcaster on dev, through nginx, media-service and Garage, is READ (WP-L1,
+  2026-10-19)**: two phones as broadcasters, three viewers at a time, ~2 200 segments, 0 refusals;
+  a segment `GET` is ~0.1 s to first byte then ~4 Mb/s on dev's route
+  ([live](../frontend/modules/live.md#wp-l1---measured-2026-10-19)). Not read: many viewers, and
+  production's route.
 - **Nothing on a phone, nothing through the HOST proxy, nothing on a real media-service and Garage**:
   the specs are a real PostgreSQL with an in-memory store, a real Redis for the seat script,
   media-service unit specs over a fake bucket, and the HTTP client over a fake transport; the nginx
@@ -1076,7 +1086,7 @@ DEFAULT 1`, so existing cuts are strike 1, CHECK `>= 1`), and two new tables,
   the erasure) and nothing else: **not through nginx, not with a real client, not under an ingest
   sharing the row lock** - the first reading is several dev viewers chatting during a live.
 - The 60 s window, the 4 MiB bound, the 30 s seat lease, the 2.5 Mb/s budget and its 1.5 margin, and the one-second
-  segment floor are planning figures until WP-L1 measures segment sizes and reconnect times.
+  segment floor were planning figures; WP-L1 read them on dev (above) and none needed to move.
 
 ## See also
 
