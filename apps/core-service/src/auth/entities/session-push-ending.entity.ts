@@ -21,7 +21,10 @@ export class SessionPushEnding {
   @Column({ type: 'varchar', length: 128, nullable: true })
   deviceId!: string | null;
 
-  /** Why the session ended (`logout`, `revoked-by-owner`, `revoked-others`, `replay`), for the log. */
+  /**
+   * Why the session ended (`logout`, `revoked-by-owner`, `revoked-others`, `replay`, `restored`),
+   * for the log.
+   */
   @Column({ type: 'varchar', length: 32 })
   cause!: string;
 

@@ -107,6 +107,9 @@ export const CORE_ERASURE_STATEMENTS: readonly {
     sql: `UPDATE platform_announcements SET created_by = $2::uuid WHERE created_by::text = $1`,
     replacement: NIL_UUID,
   },
+  // The restore keys (WP-RESTORE-1), by their own account column rather than by the cascade from
+  // `auth_sessions` below, so this list names every table holding the id (docs/wiki/account-restore.md).
+  { label: 'restore_credentials', sql: `DELETE FROM restore_credentials WHERE "userId" = $1` },
   // The refresh tokens die here, so no session can be renewed from this moment.
   { label: 'auth_sessions', sql: `DELETE FROM auth_sessions WHERE "userId" = $1` },
   // A push ending still owed names the account; chat-delivery's own part of the erasure deletes

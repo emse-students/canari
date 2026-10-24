@@ -48,7 +48,7 @@ import {
  * so the preflight it warns about is one these requests already pay. The refresh path is still
  * deliberately not folded in.
  */
-async function sessionScopedHeaders(
+export async function sessionScopedHeaders(
   base: Record<string, string> = {}
 ): Promise<Record<string, string>> {
   if (!usesBodyRefreshTransport()) return base;
