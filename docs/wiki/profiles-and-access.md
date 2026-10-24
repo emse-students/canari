@@ -888,8 +888,9 @@ foreign key, since what it names depends on the kind.
   pending repost proposals in the same transaction. Deleting a post cascades through the foreign
   key and the trigger.
 - **The card**:
-  - `republishedBy` (oldest first) draws "Republie par X, Y +N" under the header, one card per
-    post;
+  - `republishedBy` (oldest first) draws "Republie par X, Y +N" on the line of the post's time
+    ("2 h . Republie par BDE", user 2026-10-24), one card per post - the card and the reel
+    overlay alike (`republishedByText`);
   - `canRepublish`, `canProposeRepublication` and `canUnrepublishAs` are server answers that draw
     the menu entries;
   - `RepublishDialog` offers the reader's `POST_AS_ASSO` associations (republish), or the

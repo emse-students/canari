@@ -20,6 +20,10 @@ vi.mock('$lib/reels/reelPreload', () => ({
 vi.mock('$lib/components/posts/PostMedia.svelte', async () => ({
   default: (await import('./PostMediaStub.test-helper.svelte')).default,
 }));
+vi.mock('$lib/utils/users/displayName', () => ({
+  getUserDisplayNameSync: (id: string, fallback?: string) => fallback || `User ${id}`,
+  resolveUserDisplayName: async () => null,
+}));
 vi.mock('$lib/components/shared/Avatar.svelte', async () => ({
   default: (await import('./AvatarStub.test-helper.svelte')).default,
 }));
@@ -123,6 +127,34 @@ it('a hidden author is named "Anonyme" and links nowhere', () => {
   const { q } = render(reel({ anonymous: true, authorId: undefined }));
   expect(q('a[data-reel-author]')).toBeNull();
   expect(q('[data-reel-author]')!.textContent).toContain(m.post_anonymous_label());
+});
+
+it('an anonymous reel whose author the server sent says "Anonyme", links nowhere, and names the author small under it', () => {
+  const { q } = render(reel({ anonymous: true }));
+  expect(q('a[data-reel-author]')).toBeNull();
+  expect(q('[data-reel-author]')!.textContent).toContain(m.post_anonymous_label());
+  expect(q('[data-reel-author]')!.textContent).not.toContain('Ada L');
+  const line = q('[data-revealed-author="u1"]')!;
+  expect(line.textContent).toContain('Ada L');
+  expect(line.querySelector('a[href="/profile/u1"]')).not.toBeNull();
+});
+
+it('a hidden author draws no author line', () => {
+  const { q } = render(reel({ anonymous: true, authorId: undefined }));
+  expect(q('[data-revealed-author]')).toBeNull();
+});
+
+it('a republished reel says "Republie par X" beside its time', () => {
+  const republishedBy = [{ id: 'a1', name: 'BDE', slug: 'bde', logoUrl: null }];
+  const { q } = render(reel({ republishedBy } as Partial<PostEntity>));
+  expect(q('[data-reel-time-line] [data-reel-republished-by]')!.textContent).toBe(
+    m.post_republished_by({ names: 'BDE' })
+  );
+});
+
+it('a reel nobody republished draws nothing beside its time', () => {
+  const { q } = render(reel());
+  expect(q('[data-reel-republished-by]')).toBeNull();
 });
 
 it('renders the description as the post card does, folded to two lines', () => {

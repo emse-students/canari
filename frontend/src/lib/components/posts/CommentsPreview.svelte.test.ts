@@ -98,4 +98,15 @@ describe('CommentsPreview', () => {
     link!.click();
     expect(onOpen).not.toHaveBeenCalled();
   });
+
+  it('names an anonymous comment "Anonyme", and its writer small under it only when the server sent the id', () => {
+    const hidden = mountPreview([comment('a', 1, { anonymous: true, userId: undefined })]);
+    expect(hidden.target.textContent).toContain(m.post_create_anonymous_label());
+    expect(hidden.target.querySelector('[data-revealed-author]')).toBeNull();
+
+    const served = mountPreview([comment('b', 1, { anonymous: true, userId: 'u9' })]);
+    expect(served.target.textContent).toContain(m.post_create_anonymous_label());
+    const line = served.target.querySelector('[data-revealed-author="u9"]')!;
+    expect(line.textContent).toContain('User u9');
+  });
 });

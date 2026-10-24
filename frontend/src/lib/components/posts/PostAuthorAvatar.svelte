@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
-   * THE PICTURE A POST IS PUBLISHED UNDER - the association's logo, the generic anonymous face when
-   * the identity is hidden from this reader, or the author's avatar. ONE choice, drawn by the post
+   * THE PICTURE A POST IS PUBLISHED UNDER - the association's logo, the generic anonymous face for an
+   * anonymous post (even for the reader who is served its author: the post is drawn as published,
+   * the author is the small line under "Anonyme" - `RevealedAuthorLine`), or the author's avatar. ONE choice, drawn by the post
    * header and by the reel viewer's overlay, so the two never show a different publisher. The link
    * around it is the caller's (`postAuthorHref`).
    */
@@ -25,7 +26,7 @@
     {size}
     shape="circle"
   />
-{:else if post.anonymous && !post.authorId}
+{:else if post.anonymous}
   <AnonymousAvatar {size} shape="circle" />
 {:else}
   <Avatar userId={post.authorId ?? ''} {size} />

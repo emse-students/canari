@@ -129,11 +129,15 @@ guarded by the same `assertContentModerator` pin/hide already use) clears the fl
 one-directional: an author who did not choose anonymity at creation has no route back into it
 later, and the flag is otherwise immutable on edit - like `associationId` already is.
 
-On the client, `PostHeader.svelte` never branches on `post.anonymous` alone - it branches on
-whether `authorId` is present on the payload. Absent (a regular reader): the generic icon and
-"Anonyme", nothing more. Present (moderator, admin, or self): the real avatar and name, exactly
-like any other personal post, plus a small badge next to the timestamp so the reader still knows
-the post was published anonymously.
+On the client, an anonymous post is named "Anonyme" with the mask for EVERY reader, and what
+`authorId` decides is one more line. Absent (a regular reader): "Anonyme", nothing more. Present
+(moderator, admin, or self): "Anonyme" stays the name, big, and the real author follows SMALL under
+it, linking the profile (`RevealedAuthorLine`; user, 2026-10-24 - it replaced the 2026-09-17 shape,
+the real name and photo with an "Anonyme" badge beside the time). The same holds for an anonymous
+COMMENT: `serveComment` sends its `userId` to the writer, a content moderator and a platform admin
+only, the comment stores no name, so the client resolves the name from that id
+(`commentRevealedAuthorId`). The client never decides who may see an author; it draws what the
+server sent ([posts](frontend/modules/posts.md#who-wrote-it-anonyme-big-the-real-author-small-2026-10-24)).
 
 **`mustHideAnonymousAuthor` was never wrong; the two feed queries never asked it the real
 question (2026-09-18, reported by a user who posted "test" anonymously and read their own name

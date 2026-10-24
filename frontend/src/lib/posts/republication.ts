@@ -25,6 +25,19 @@ export function republishedByLine(
 }
 
 /**
+ * The words of that line - "Republie par BDE, BDS +2" - or `null` when nobody republished the post.
+ * The post header and the reel overlay both put it beside the time, so they read it from here.
+ */
+export function republishedByText(republishedBy: PostEntity['republishedBy']): string | null {
+  const line = republishedByLine(republishedBy);
+  if (!line) return null;
+  const names = line.names.join(', ');
+  return line.extra > 0
+    ? m.post_republished_by_more({ names, count: line.extra })
+    : m.post_republished_by({ names });
+}
+
+/**
  * Only associations and institutions republish - never a promo list (the server's `REPUBLISHING_ASSOCIATION_TYPES`).
  * Archived ones are left out: they no longer speak.
  */
