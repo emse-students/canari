@@ -9,8 +9,8 @@ import {
 
 /**
  * AN ADD AND A REMOVAL OF THE SAME PERSON TAKE THEIR LOCKS IN THE SAME ORDER: `dm_group_members`
- * first, then the membership interval, then the device rows (and, on a removal, the queued
- * Welcomes). Two transactions that lock the same rows in the same order wait for each other and
+ * first, then the membership interval, then (on a removal, the queued Welcomes and) the device
+ * rows - the one delete order of `utils/seat-eviction.ts`. Two transactions that lock the same rows in the same order wait for each other and
  * never deadlock; the removal used to delete the device rows first and the add to write the
  * roster first, which is the crossing that can.
  *
@@ -51,6 +51,7 @@ describe('MembersController - lock order of an add and a removal', () => {
       repo() as never,
       repo() as never,
       repo() as never,
+      repo() as never, // RevokedDevice
       redis as never,
       recorded.dataSource
     );
@@ -79,8 +80,8 @@ describe('MembersController - lock order of an add and a removal', () => {
     expect(removeOrder).toEqual([
       'dm_group_members',
       'dm_group_membership_intervals',
-      'dm_device_group_memberships',
       'queued_message',
+      'dm_device_group_memberships',
     ]);
   });
 

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { isCoarsePointerDevice, onCoarsePointerChange } from './pointerDevice';
 

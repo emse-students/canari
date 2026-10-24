@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE FEED'S FIRST ANSWER MOUNTS EACH CARD ONCE (Mi 9T, v1.2.9-alpha.3). The `{#await}` drew the
  * answer, then its handler moved it into `postsOverride`, drawn by another block: every card mounted

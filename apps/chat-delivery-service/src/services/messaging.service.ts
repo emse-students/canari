@@ -3,6 +3,7 @@ import {
   Logger,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
   GoneException,
   ServiceUnavailableException,
   Inject,
@@ -48,6 +49,8 @@ import {
   readCommitFrame,
 } from '../utils/mls-frame-epoch';
 import {
+  askDepartureOutcome,
+  type DepartureOutcome,
   type DistributionScope,
   distributionScopeOf,
   isEntitledToDistributionGroup,
@@ -65,11 +68,25 @@ import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
+  type PayloadGroupFacts,
   materializeDeliveries,
   readSharedPayloadWrites,
   saveWithSharedPayload,
   sharesPayload,
 } from '../utils/queued-payload';
+import {
+  bumpSeatGeneration,
+  claimSeat,
+  heldKeyPackages,
+  readSeatEviction,
+  recordSeatEviction,
+  seatClaimHolds,
+  settleSeatDeparture,
+  takeSeatLock,
+  takeSharedSeatLock,
+  withSeatLock,
+  type SeatClaim,
+} from '../utils/seat-eviction';
 import {
   deleteGroupOwnedRows,
   deleteGroupRedisKeys,
@@ -263,6 +280,8 @@ export interface KeyGroupBaseForPush {
 export interface ValidateCommitResult {
   accepted: boolean;
   newEpoch?: number;
+  /** True when this exact commit had already been accepted: a resubmission, answered again. */
+  duplicate?: boolean;
   currentEpoch?: number;
   reason?: string;
 }
@@ -306,6 +325,46 @@ class WelcomeSeatGone extends Error {
     super('welcome target seat gone');
     this.name = 'WelcomeSeatGone';
   }
+}
+
+/**
+ * Thrown inside the advance's transaction when the epoch it would move is no longer the base the
+ * gate read - another commit at the same base landed first - or when the commit log already holds
+ * a commit for that base. The transaction rolls back and the commit is refused `epoch_mismatch`; a
+ * type, so the catch never reads a message.
+ */
+class EpochAdvanceLost extends Error {
+  constructor(readonly lost: 'epoch_moved' | 'log_row_exists') {
+    super(`epoch advance lost: ${lost}`);
+    this.name = 'EpochAdvanceLost';
+  }
+}
+
+/**
+ * Thrown inside the advance's transaction when a seat this commit would write - its committer's, or
+ * an admit's - stands on a claim an eviction in the group overtook (`utils/seat-eviction.ts`). The
+ * generation is the group's, so the eviction may be of someone else: the whole commit rolls back
+ * and is answered `409 SEAT_CLAIM_OVERTAKEN`, which the client rebuilds and submits again. Dropping
+ * only the seat would accept a commit whose leaf has no seat and nothing retrying it. A type, so the
+ * catch never reads a message.
+ */
+class SeatClaimOvertaken extends Error {
+  constructor(readonly seat: 'committer' | 'admit') {
+    super(`seat claim overtaken: ${seat}`);
+    this.name = 'SeatClaimOvertaken';
+  }
+}
+
+/**
+ * The seat a Welcome is stored for, as {@link MessagingService.lockWelcomeSeat} re-reads it. In a
+ * key group, `claim` is the target's seat claim, taken before social-service was asked whether the
+ * target is entitled (`utils/seat-eviction.ts`); a conversation's seat is its roster row, so null.
+ */
+interface WelcomeSeat {
+  userId: string;
+  deviceId: string;
+  keyGroup: boolean;
+  claim: SeatClaim | null;
 }
 
 const COMMIT_LOG_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
@@ -515,7 +574,13 @@ export interface NotifyHistoryRequestBody extends NotifyWelcomeRequestBody {
  * (WP-GHOST-1). The third is not about the device at all: it is the value failing to name one, and
  * it lives here rather than at each door because two of the four doors did not check it.
  */
-export type ActivationRefusal = 'revoked' | 'no_key_package' | 'unresolved_identity' | SeatRefusal;
+export type ActivationRefusal =
+  | 'revoked'
+  | 'no_key_package'
+  | 'unresolved_identity'
+  | SeatRefusal
+  /** An eviction overtook the claim the seat was to be written against (`utils/seat-eviction.ts`). */
+  | 'departed';
 
 /** Why a REPORT of `active` was refused: the device holds no seat it may promote. */
 export type SeatRefusal = 'no_seat' | 'kicked' | 'not_on_roster';
@@ -544,7 +609,10 @@ export type ActivationAuthority =
 export function activationRefusalException(
   reason: ActivationRefusal | undefined
 ): ForbiddenException | BadRequestException {
-  return reason === 'no_seat' || reason === 'kicked' || reason === 'not_on_roster'
+  return reason === 'no_seat' ||
+    reason === 'kicked' ||
+    reason === 'not_on_roster' ||
+    reason === 'departed'
     ? new ForbiddenException(
         refusalBody(RefusalCode.NOT_A_MEMBER, 'This device holds no seat in this group', { reason })
       )
@@ -685,6 +753,19 @@ export class MessagingService {
   ) {}
 
   /**
+   * Whether `userId:deviceId` is on the revocation denylist under the one active-revocation rule -
+   * read by the PAIR, on the `(userId, deviceId)` unique index. Shared by every gate that must
+   * refuse a revoked device (routing, the commit gate), so they cannot disagree on what "revoked" is.
+   */
+  private async isDeviceRevoked(userId: string, deviceId: string): Promise<boolean> {
+    const revoked = await this.revokedDeviceRepo.findOne({
+      where: activeRevocationWhere({ userId, deviceId }),
+      select: { id: true },
+    });
+    return Boolean(revoked);
+  }
+
+  /**
    * Whether a device may be given - or keep - an `active` routing membership.
    *
    * A device good enough to be MESSAGED must be at least as valid as one good enough to be
@@ -711,10 +792,7 @@ export class MessagingService {
     userId: string,
     deviceId: string
   ): Promise<{ ok: boolean; reason?: 'revoked' | 'no_key_package' }> {
-    const revoked = await this.revokedDeviceRepo.findOne({
-      where: activeRevocationWhere({ userId, deviceId }),
-    });
-    if (revoked) return { ok: false, reason: 'revoked' };
+    if (await this.isDeviceRevoked(userId, deviceId)) return { ok: false, reason: 'revoked' };
     const keyPackage = await this.keyPackageRepo.findOne({
       where: { userId, deviceId },
       select: { id: true },
@@ -1644,16 +1722,32 @@ export class MessagingService {
         // its own delivery and an `excludeDeviceIds` entry from this one send, but both are
         // routable members like any other, and leaving them out made the repair incomplete by
         // construction - a member missing from the set is unelectable for ever.
-        const routable = memberships
-          .filter((m) => liveDeviceIds.has(`${m.userId}:${m.deviceId}`))
-          .map((m) => `${m.userId}:${m.deviceId}`);
+        //
+        // WRITTEN UNDER THE SEAT LOCK, AGAINST A RE-READ: `memberships` was read with no lock, so an
+        // eviction may have deleted a seat and its route since. The missing entries are found first
+        // (one round trip, no lock on the ordinary send), and only those still active when re-read
+        // under the lock are added (`restoreRoutes`).
+        const routable = memberships.filter((m) => liveDeviceIds.has(`${m.userId}:${m.deviceId}`));
         if (routable.length > 0) {
-          const added = await this.redis.sadd(`group:members:${groupId}`, ...routable);
-          if (added > 0) {
-            this.logger.warn(
-              `[SEND][${traceId}] MEMBERS_CACHE_REPAIRED group=${groupId} added=${added} of=${routable.length}` +
-                ` - these active devices were absent from the gateway routing set and unreachable by it`
-            );
+          const present = await this.redis.smismember(
+            `group:members:${groupId}`,
+            ...routable.map((m) => `${m.userId}:${m.deviceId}`)
+          );
+          const missing = routable.filter((_, i) => present[i] !== 1);
+          if (missing.length > 0) {
+            const { restored, gone } = await this.restoreRoutes(groupId, missing);
+            if (restored.length > 0) {
+              this.logger.warn(
+                `[SEND][${traceId}] MEMBERS_CACHE_REPAIRED group=${groupId} added=${restored.length} of=${routable.length}` +
+                  ` - these active devices were absent from the gateway routing set and unreachable by it`
+              );
+            }
+            if (gone.length > 0) {
+              this.logger.log(
+                `[SEND][${traceId}] ROUTE_NOT_RESTORED group=${groupId} devices=${capLoggedDevices(gone).join(',')}` +
+                  ` - their seat was gone when re-read under the seat lock`
+              );
+            }
           }
         }
       }
@@ -1717,10 +1811,19 @@ export class MessagingService {
       );
     }
 
-    // 1. Persist ALL messages first (survives crashes / timing races)
+    // 1. Persist ALL messages first (survives crashes / timing races). What is delivered below is
+    // what was queued: a seat evicted after the recipients were read is neither (`enqueueForLiveGroup`).
+    let queuedRows: QueuedMessage[] = [];
     if (toDeliver.length > 0) {
-      await this.enqueueForLiveGroup(toDeliver, body.groupId, 'SEND', traceId, sealed);
-      this.logger.log(`[SEND][${traceId}] QUEUED count=${toDeliver.length}`);
+      queuedRows = await this.enqueueForLiveGroup(
+        toDeliver,
+        body.groupId,
+        'SEND',
+        traceId,
+        sealed,
+        { seats: { exempt: new Set(partingConsumed) } }
+      );
+      this.logger.log(`[SEND][${traceId}] QUEUED count=${queuedRows.length}`);
       if (partingConsumed.length > 0 && body.groupId) {
         await this.redis
           .hdel(partingKey(body.groupId), ...partingConsumed)
@@ -1855,7 +1958,7 @@ export class MessagingService {
     // than relying on that keeps the two facts independent.
     const silent = body.isCommit || body.isWelcome ? true : (body.silent ?? false);
     const tally: FanOutTally = { pushed: 0, pushes: [] };
-    for (const queued of toDeliver) {
+    for (const queued of queuedRows) {
       // Reuses the presence answer taken above rather than asking Redis a second time. A device
       // that went offline in between is covered the same way it always was: the row survives and
       // its next pull redelivers it.
@@ -1884,12 +1987,12 @@ export class MessagingService {
     // drops its offline recipients above, and a log that still said `ops.length` would describe rows
     // that do not exist.
     this.logger.log(
-      `[SEND][${traceId}] DONE queued=${toDeliver.length} realtime=${sentCount} offline=${tally.pushes.length}`
+      `[SEND][${traceId}] DONE queued=${queuedRows.length} realtime=${sentCount} offline=${tally.pushes.length}`
     );
 
     return {
       status: 'processed',
-      queued: toDeliver.length,
+      queued: queuedRows.length,
       sent: sentCount,
       receivedAt: receivedAt.getTime(),
     };
@@ -1923,6 +2026,25 @@ export class MessagingService {
       });
     }
     this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'COMMIT');
+    // THE DEVICE IS NOT REVOKED - asked FIRST, so a revoked device is told the reason that is true.
+    // A revocation purges the static KeyPackage, so the ownership check below would refuse it as
+    // `device_not_owned`, a coincidence of the purge and not a rule, and the answer its client acts
+    // on. A revoked device is exactly the one whose leaf members are removing, and a commit from it
+    // would move the epoch of every group it still holds, its Remove of THEIR leaves included.
+    // Refused before the lock and before the duplicate answer: a resubmission is a commit too, and a
+    // revoked device is told so rather than told it landed. Read by the pair, on the
+    // `(userId, deviceId)` unique index the denylist already carries - no migration.
+    if (await this.isDeviceRevoked(committer, deviceId)) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] REJECT device_revoked group=${groupId} device=${deviceId} ` +
+          `sender=${sanitizeLogValue(committer)}`
+      );
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.DEVICE_REVOKED, 'this device was revoked', {
+          error: 'device_revoked',
+        })
+      );
+    }
     // AND THE DEVICE IS THE CALLER'S: the commit activates `senderId:deviceId`, so a device
     // registered to anyone else is refused. The static KeyPackage row is the registry, and it is
     // unique on the PAIR - read by the pair, never by the device id alone.
@@ -2007,14 +2129,35 @@ export class MessagingService {
         message: 'this commit is not accepted',
       });
     }
-    await this.assertCommitterMayCommit(groupId, committer, deviceId, frame.external, traceId);
+    const committerClaim = await this.assertCommitterMayCommit(
+      groupId,
+      committer,
+      deviceId,
+      frame.external,
+      traceId
+    );
+    const admitAnswer = await this.claimKeyGroupAdmits(groupId, body.admits, baseEpoch, traceId);
+    if (admitAnswer && !(admitAnswer instanceof Map)) {
+      return (
+        (await this.answerIfAlreadyAccepted(
+          groupId,
+          baseEpoch,
+          commitProto,
+          deviceId,
+          traceId
+        )) ?? {
+          accepted: false,
+          currentEpoch: admitAnswer.epochMismatch,
+          reason: 'epoch_mismatch',
+        }
+      );
+    }
+    const admitClaims = admitAnswer instanceof Map ? admitAnswer : null;
 
     // A CARRIED WELCOME'S TARGET IS DECIDED BEFORE THE EPOCH MOVES, and outside the lock: a key
     // group asks social-service, a network call the 5 s lock must not wait on. A refusal here
     // records, fans out and sends nothing, so the committer discards what it staged.
-    let welcome:
-      | (NonNullable<ValidateCommitBody['welcome']> & { userId: string; keyGroup: boolean })
-      | null = null;
+    let welcome: (NonNullable<ValidateCommitBody['welcome']> & WelcomeSeat) | null = null;
     if (body.welcome) {
       const targetDeviceId = sanitizeQueryValue(body.welcome.deviceId ?? '', 'welcome.deviceId');
       const targetUserId = sanitizeQueryValue(body.welcome.userId ?? '', 'welcome.userId');
@@ -2044,6 +2187,7 @@ export class MessagingService {
         ratchetTree:
           typeof body.welcome.ratchetTree === 'string' ? body.welcome.ratchetTree : undefined,
         keyGroup: distributionScopeOf(targetGroup) !== null,
+        claim: target.claim,
       };
     }
 
@@ -2077,12 +2221,23 @@ export class MessagingService {
       }
 
       // Strict epoch gate: the submitted baseEpoch must match the server's activeEpoch exactly.
-      // A genuinely uninitialized group (just created) OR freshly re-bootstrapped
-      // (reset-epoch -> activeEpoch=0 then force_create_group restarting at MLS epoch 0)
-      // always has its first commit at baseEpoch 0: activeEpoch==0 therefore legitimately only
+      // A genuinely uninitialized group (just created) always has its first commit at
+      // baseEpoch 0: activeEpoch==0 therefore legitimately only
       // accepts baseEpoch==0. The old bypass (accepting any baseEpoch when activeEpoch==0)
       // let an inconsistent device fast-forward the counter (e.g. baseEpoch=5 -> activeEpoch=6)
       // and desynchronize everyone (H4).
+      // A RESUBMISSION OF A COMMIT THIS GATE ALREADY ACCEPTED IS ANSWERED AS ACCEPTED
+      // (`answerIfAlreadyAccepted`) - here, and at every other place that refuses on the epoch.
+      if (baseEpoch < group.activeEpoch) {
+        const duplicate = await this.answerIfAlreadyAccepted(
+          groupId,
+          baseEpoch,
+          commitProto,
+          deviceId,
+          traceId
+        );
+        if (duplicate) return duplicate;
+      }
       if (baseEpoch !== group.activeEpoch) {
         this.logger.warn(
           `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} activeEpoch=${group.activeEpoch}`
@@ -2113,7 +2268,33 @@ export class MessagingService {
       // Legacy clients send no `groupInfo`; for them this is the plain advance it always was, and
       // `republishStaleBase` on a holder remains their repair.
       const newBase = typeof body.groupInfo === 'string' && body.groupInfo ? body.groupInfo : null;
-      const admitted = await this.resolveAdmittedDevices(groupId, deviceId, body.admits, traceId);
+      const declaredAdmits = await this.resolveAdmittedDevices(
+        groupId,
+        deviceId,
+        body.admits,
+        traceId
+      );
+      let admitted = declaredAdmits;
+      // An external-commit join is the ONE path where the committing device may not be a member
+      // yet: it never receives a Welcome, so nothing ever promotes its
+      // `dm_device_group_memberships` row (the foreground `updateInvitationStatus` and the
+      // background FCM Welcome both do). Recipient resolution filters on `status='active'`, so
+      // without this promotion the freshly rejoined device stays invisible to routing: it receives
+      // neither the history bundle it is about to solicit nor any subsequent live message, while
+      // its own sends work - a silent one-way group. Read first so the seat write (and its log
+      // line) stays an event rather than a no-op on every ordinary commit.
+      //
+      // Every identity downstream of the gate is the CALLER's (`committer`), never the body's
+      // spelling of it, and every row is read by the pair, never by the device id alone.
+      const committerRow = await this.deviceGroupRepo.findOne({
+        where: { userId: committer, deviceId, groupId },
+      });
+      const committerNeedsSeat =
+        committerRow?.status !== 'active' &&
+        !isUnresolvedIdentity(committer) &&
+        !isUnresolvedIdentity(deviceId);
+      /** Whether this commit writes its committer's seat - decided, then done, in the transaction. */
+      let committerSeat = false;
       // THE ADVANCE, THE BASE AND THE REPLAYABLE COMMIT LAND TOGETHER OR NOT AT ALL.
       //
       // The log row used to be written AFTER this transaction, best-effort, on the reasoning that
@@ -2133,6 +2314,90 @@ export class MessagingService {
       let queuedWelcome: QueuedMessage | null = null;
       try {
         await this.groupRepo.manager.transaction(async (m) => {
+          // THE ADMITS WRITE SEATS, SO THEY TAKE THE SEAT LOCK - first, before any row, so this
+          // transaction and an eviction always take their locks in the same order. In a key group
+          // each admitted person was asked of social-service before any lock, against a claim
+          // (`claimKeyGroupAdmits`); here the claim is re-read, a database read only, and a person
+          // not entitled, evicted since, or departing is not admitted.
+          await takeSeatLock(m, groupId);
+          // THE COMMITTER'S SEAT IS WRITTEN IN THIS TRANSACTION, against its claim re-read here. An
+          // external commit's leaf enters the tree with this advance, and so does a pending device's
+          // first commit: written later, in a transaction of its own, the seat would meet any
+          // eviction of the group since - the generation is the group's - and leave a leaf with no
+          // seat after an accepted commit. So the claim decides here, before the epoch moves:
+          // overtaken by an eviction, the whole commit is refused and retried
+          // ({@link SeatClaimOvertaken}); a departure of the committer's own refuses an external join,
+          // and leaves a member's commit standing with no seat, as it always has.
+          if (frame.external || committerNeedsSeat) {
+            const refusal = await seatClaimHolds(m, committerClaim);
+            if (refusal === 'evicted_since_claim') {
+              this.logger.warn(
+                `[COMMIT][${traceId}] REJECT seat_claim_overtaken group=${groupId} ` +
+                  `device=${sanitizeLogValue(committer)}:${deviceId} seat=committer ` +
+                  `claimedAt=${committerClaim.generation} - an eviction in the group overtook it`
+              );
+              throw new SeatClaimOvertaken('committer');
+            }
+            if (refusal !== null && frame.external) {
+              this.logger.warn(
+                `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
+                  `device=${sanitizeLogValue(committer)}:${deviceId} kind=external reason=${refusal}`
+              );
+              throw new ForbiddenException(
+                refusalBody(RefusalCode.NOT_A_MEMBER, 'this commit is not accepted', {
+                  error: 'committer_not_member',
+                })
+              );
+            }
+            if (refusal !== null) {
+              this.logger.warn(
+                `[COMMIT][${traceId}] committer seat NOT written group=${groupId} ` +
+                  `device=${sanitizeLogValue(committer)}:${deviceId} reason=${refusal}`
+              );
+            } else {
+              committerSeat = committerNeedsSeat;
+            }
+          }
+          if (admitClaims) {
+            const kept: typeof declaredAdmits = [];
+            for (const a of declaredAdmits) {
+              const claim = admitClaims.get(a.userId);
+              const refusal = claim ? await seatClaimHolds(m, claim) : 'not_entitled';
+              if (refusal === null) {
+                kept.push(a);
+                continue;
+              }
+              // An eviction overtook an ENTITLED person's claim - possibly someone else's eviction.
+              // Dropping the admit would accept a commit that puts their leaf in the tree with no
+              // seat and nothing retrying it, so the whole commit is refused instead.
+              if (refusal === 'evicted_since_claim') {
+                this.logger.warn(
+                  `[COMMIT][${traceId}] REJECT seat_claim_overtaken group=${groupId} ` +
+                    `device=${a.userId}:${a.deviceId} seat=admit - an eviction in the group overtook it`
+                );
+                throw new SeatClaimOvertaken('admit');
+              }
+              this.logger.warn(
+                `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${a.userId}:${a.deviceId} reason=${refusal}`
+              );
+            }
+            admitted = kept;
+          }
+          // EVERY ADMIT INSERTS A ROW, SO EACH IS WRITTEN ONLY BESIDE ITS KEY PACKAGE, read `FOR
+          // SHARE` here, in any kind of group ({@link heldKeyPackages}): a device whose account is
+          // being erased gets no row, which the erasure could no longer find. The admit is DROPPED
+          // and the commit still accepted, unlike an overtaken claim above: the leaf it adds belongs
+          // to an account that is going, so no one is owed a seat or a retry, and refusing the
+          // commit would stall every other change it carries for the group.
+          const keyed = await heldKeyPackages(m, admitted);
+          admitted = admitted.filter((a) => {
+            if (keyed.has(`${a.userId}:${a.deviceId}`)) return true;
+            this.logger.warn(
+              `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${a.userId}:${a.deviceId} ` +
+                `reason=no_key_package (read under the seat lock - the account or device is being erased)`
+            );
+            return false;
+          });
           // A WELCOME IS NEVER STORED FOR A GROUP THAT ENDED while this commit was in flight - the
           // device handed one asks for a group nobody can serve, on every reconnection. Read under a
           // row lock so the deletion and this write cannot interleave (the guard of
@@ -2150,19 +2415,30 @@ export class MessagingService {
               );
               throw new GoneException({ error: 'group_deleted', groupId });
             }
-            // ...AND THE TARGET STILL HOLDS ITS SEAT, re-read under a share lock before anything is
-            // written, so a removal racing this commit serialises with it ({@link lockWelcomeSeat}).
+            // ...AND THE TARGET STILL HOLDS ITS SEAT, re-read under the locks this transaction holds
+            // before anything is written, so a removal or an eviction racing this commit serialises
+            // with it ({@link lockWelcomeSeat}).
             if (!(await this.lockWelcomeSeat(m, welcome, groupId, traceId, 'COMMIT'))) {
               throw new WelcomeSeatGone();
             }
           }
-          await m.getRepository(Group).update({ id: groupId }, { activeEpoch: baseEpoch + 1 });
+          // THE ADVANCE IS CONDITIONAL ON THE BASE THE GATE READ. The gate reads the epoch outside
+          // this transaction and the advance may wait on the seat lock above, longer than the
+          // Redis lock's 5 s: two commits at one base can both pass the read. Only one can move the
+          // epoch from it - the second waits on the row, then matches nothing - so the epoch never
+          // forks, whatever a timer did.
+          const advance = await m
+            .getRepository(Group)
+            .update({ id: groupId, activeEpoch: baseEpoch }, { activeEpoch: baseEpoch + 1 });
+          if ((advance.affected ?? 0) !== 1) throw new EpochAdvanceLost('epoch_moved');
           if (newBase) {
             await this.putGroupInfo(groupId, newBase, baseEpoch + 1, m);
           }
-          // Keyed by baseEpoch: only one commit can advance from a given epoch (linearization), so
-          // ON CONFLICT DO NOTHING keeps an idempotent retry safe.
-          await m
+          // Keyed by baseEpoch: only one commit can advance from a given epoch (the update above). A
+          // row already there is another commit's for this base, and replaying it in place of this
+          // one forks every device that catches up - so the advance is refused with it, never
+          // accepted beside it.
+          const logged = await m
             .getRepository(MlsCommitLog)
             .createQueryBuilder()
             .insert()
@@ -2173,7 +2449,24 @@ export class MessagingService {
               senderDeviceId: deviceId,
             })
             .orIgnore()
+            .returning(['baseEpoch'])
             .execute();
+          if (!Array.isArray(logged.raw) || logged.raw.length !== 1) {
+            throw new EpochAdvanceLost('log_row_exists');
+          }
+          // THE COMMITTER'S SEAT, whose claim held above (`committerSeat`): written here, with the
+          // advance, through the one writer of an active seat - its key package read
+          // first, before any device row, the order an account erasure deletes in.
+          if (committerSeat) {
+            committerSeat =
+              (await this.writeClaimedSeat(
+                m,
+                committer,
+                deviceId,
+                groupId,
+                'MEMBERSHIP_ACTIVE'
+              )) === null;
+          }
           // THE NEWCOMERS THIS COMMIT ADMITS, written before the fan-out below makes the new epoch
           // reachable by anyone (see `ValidateCommitBody.admits`). The insert only guarantees the
           // row; the update is guarded on `pending` so an `active` device - already routed by its
@@ -2231,6 +2524,36 @@ export class MessagingService {
           }
         });
       } catch (e) {
+        // EVERY REFUSAL BELOW FIRST ASKS WHETHER THESE BYTES ALREADY LANDED. This transaction may
+        // have waited on the seat lock past the Redis lock's 5 s, behind an EARLIER request of the
+        // same commit from the same device that has since committed: its row is then in the log,
+        // and what failed here is only this copy of an accepted commit. NOT asked on
+        // `log_row_exists`: that advance found the epoch still on the base, so no request of ours
+        // advanced from it, and the row it collided with is a defect the error line below reports.
+        if (
+          e instanceof SeatClaimOvertaken ||
+          e instanceof WelcomeSeatGone ||
+          (e instanceof EpochAdvanceLost && e.lost === 'epoch_moved')
+        ) {
+          const duplicate = await this.answerIfAlreadyAccepted(
+            groupId,
+            baseEpoch,
+            commitProto,
+            deviceId,
+            traceId
+          );
+          if (duplicate) return duplicate;
+        }
+        // A seat this commit writes stood on a claim an eviction overtook: nothing was written, and
+        // the client rebuilds the commit and submits it again (`RefusalCode.SEAT_CLAIM_OVERTAKEN`).
+        if (e instanceof SeatClaimOvertaken) {
+          throw new ConflictException(
+            refusalBody(RefusalCode.SEAT_CLAIM_OVERTAKEN, 'this commit is not accepted', {
+              error: 'seat_claim_overtaken',
+              seat: e.seat,
+            })
+          );
+        }
         // The seat went between the target check and this transaction: nothing was written.
         if (e instanceof WelcomeSeatGone) {
           return {
@@ -2238,6 +2561,24 @@ export class MessagingService {
             currentEpoch: group.activeEpoch,
             reason: 'welcome_target_not_member',
           };
+        }
+        // Another commit at this base got there first: nothing of this one was written.
+        if (e instanceof EpochAdvanceLost) {
+          const now = await this.groupRepo.findOne({ where: { id: groupId } });
+          const currentEpoch = now?.activeEpoch ?? group.activeEpoch;
+          if (e.lost === 'log_row_exists') {
+            this.logger.error(
+              `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} ` +
+                `activeEpoch=${currentEpoch} reason=log_row_exists - the log already holds a commit ` +
+                `for this base while the epoch still stood on it`
+            );
+          } else {
+            this.logger.warn(
+              `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} ` +
+                `activeEpoch=${currentEpoch} reason=epoch_moved - another commit at this base landed first`
+            );
+          }
+          return { accepted: false, currentEpoch, reason: 'epoch_mismatch' };
         }
         throw e;
       }
@@ -2254,26 +2595,12 @@ export class MessagingService {
         );
       }
 
-      // An external-commit join is the ONE path where the committing device may not be a member
-      // yet: it never receives a Welcome, so nothing ever promotes its
-      // `dm_device_group_memberships` row (the foreground `updateInvitationStatus` and the
-      // background FCM Welcome both do). Recipient resolution filters on `status='active'`, so
-      // without this promotion the freshly rejoined device stays invisible to routing: it receives
-      // neither the history bundle it is about to solicit nor any subsequent live message, while
-      // its own sends work - a silent one-way group. Checked first so the promotion (and its log
-      // line) stays an event rather than a no-op on every ordinary commit.
-      //
-      // Every identity downstream of the gate is the CALLER's (`committer`), never the body's
-      // spelling of it, and every row is read by the pair, never by the device id alone.
-      const committerRow = await this.deviceGroupRepo.findOne({
-        where: { userId: committer, deviceId, groupId },
-      });
-      if (committerRow?.status !== 'active') {
-        await this.activateDeviceMembership(committer, deviceId, groupId, {
-          authority: 'accepted_commit',
-        }).catch((e) =>
+      // The committer's seat committed with the advance; its route follows, under the lock again
+      // and only if the seat is still active ({@link routeActiveSeat}).
+      if (committerSeat) {
+        await this.routeActiveSeat(committer, deviceId, groupId, 'MEMBERSHIP_ACTIVE').catch((e) =>
           this.logger.warn(
-            `[COMMIT][${traceId}] membership activation failed group=${groupId} device=${deviceId}: ${String(e)}`
+            `[COMMIT][${traceId}] committer route NOT written group=${groupId} device=${deviceId}: ${String(e)}`
           )
         );
       }
@@ -2814,6 +3141,13 @@ export class MessagingService {
    *
    * Every caller runs this before the epoch moves, so a refusal also stops the activation an
    * accepted commit grants its committer.
+   *
+   * THE SEAT CLAIM IS READ FIRST, BEFORE THE CHECK ({@link claimSeat}). The activation that follows
+   * an accepted commit is written under the seat lock against it, so an eviction that lands after
+   * this check - including one social-service makes while its entitlement still answered `true` -
+   * leaves no seat behind, and the check itself is never repeated under a lock.
+   *
+   * @returns the claim the committer's activation is written against.
    */
   private async assertCommitterMayCommit(
     groupId: string,
@@ -2821,24 +3155,31 @@ export class MessagingService {
     deviceId: string,
     external: boolean,
     traceId: string
-  ): Promise<void> {
+  ): Promise<SeatClaim> {
+    const claim = await claimSeat(this.groupRepo.manager, groupId, userId);
     const scope = external ? await this.keyDistributionScope(groupId) : null;
-    const allowed = scope
-      ? await isEntitledToDistributionGroup(scope, userId, traceId)
-      : external
-        ? await this.isOnRoster(groupId, userId)
-        : !!(await this.deviceGroupRepo.findOne({
-            where: [
-              { groupId, userId, deviceId, status: 'active' as const },
-              { groupId, userId, deviceId, status: 'pending' as const, kickedAt: IsNull() },
-            ],
-            select: { deviceId: true },
-          }));
-    if (allowed) return;
+    // A DEPARTURE IN PROGRESS IS REFUSED HERE, before the epoch moves - not at the activation that
+    // follows, which would leave the committer in the tree with no seat. Read from the claim, so no
+    // second query, and the activation's re-read under the lock still catches one that begins later.
+    const allowed =
+      !claim.owed &&
+      (scope
+        ? await isEntitledToDistributionGroup(scope, userId, traceId)
+        : external
+          ? await this.isOnRoster(groupId, userId)
+          : !!(await this.deviceGroupRepo.findOne({
+              where: [
+                { groupId, userId, deviceId, status: 'active' as const },
+                { groupId, userId, deviceId, status: 'pending' as const, kickedAt: IsNull() },
+              ],
+              select: { deviceId: true },
+            })));
+    if (allowed) return claim;
     this.logger.warn(
       `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
         `device=${sanitizeLogValue(userId)}:${deviceId} ` +
-        `kind=${scope ? `key-group-external ${scope.kind}=${scope.id}` : external ? 'external' : 'member'}`
+        `kind=${scope ? `key-group-external ${scope.kind}=${scope.id}` : external ? 'external' : 'member'}` +
+        (claim.owed ? ' reason=departure_in_progress' : '')
     );
     // `code` is what a client's typed refusal reads; `error` is kept for the clients that read it.
     throw new ForbiddenException(
@@ -2846,6 +3187,301 @@ export class MessagingService {
         error: 'committer_not_member',
       })
     );
+  }
+
+  /**
+   * The answer to a commit this gate ALREADY ACCEPTED from this device at `baseEpoch` - accepted,
+   * `duplicate` - or `null` when it did not.
+   *
+   * A committer whose first submission got no answer cannot tell "not landed yet" from "never
+   * landed", and resending the SAME bytes is how it learns which - only if EVERY refusal on the epoch
+   * recognises them. The log row is the proof: keyed by base epoch, written in the transaction that
+   * moves the epoch, holding the bytes verbatim, so it exists exactly when that advance committed.
+   * Nothing is advanced or fanned out again; the first acceptance did both. Called by each place that
+   * would otherwise refuse on the epoch or on a seat - the admits pre-check, the strict gate, and the
+   * advance's lost or rolled-back transaction - because a client reads any of those as a refusal and
+   * clears a commit the group holds.
+   */
+  private async answerIfAlreadyAccepted(
+    groupId: string,
+    baseEpoch: number,
+    commitProto: string,
+    deviceId: string,
+    traceId: string
+  ): Promise<ValidateCommitResult | null> {
+    const prior = await this.commitLogRepo.findOne({ where: { groupId, baseEpoch } });
+    if (!prior || prior.commit !== commitProto || prior.senderDeviceId !== deviceId) return null;
+    this.logger.log(
+      `[COMMIT][${traceId}] DUPLICATE group=${groupId} device=${deviceId} baseEpoch=${baseEpoch} ` +
+        '- already accepted, answered again'
+    );
+    return { accepted: true, newEpoch: baseEpoch + 1, duplicate: true };
+  }
+
+  /**
+   * The claims a key group's commit writes its admits against, taken BEFORE any lock - or `null` for
+   * a conversation, whose admits the roster already governs, and for a commit that admits nobody.
+   *
+   * An admit writes a `pending` seat its device later promotes by reporting itself, so it is a door
+   * into the group like an external join, and in a key group it is held to the same question: is
+   * this person entitled, asked of social-service per distinct person. Each claim is read before
+   * that question ({@link claimSeat}) and re-read under the seat lock, so a departure that lands in
+   * between refuses the admit there, and the HTTP call is never made under a lock.
+   *
+   * An unanswered question is a retryable 503 for the whole commit, before the epoch moves - the
+   * gate's rule, never an acceptance.
+   *
+   * ASKED ONLY OF A COMMIT THAT CAN STILL LAND, AND ALL AT ONCE. The group's epoch is read first: a
+   * commit built on another epoch is refused by the strict gate anyway, so it is answered
+   * `epoch_mismatch` here without asking anyone (the gate re-checks under its lock). The distinct
+   * people are then asked in parallel, so a commit's wait is one round trip, not one per person.
+   *
+   * @returns per admitted person, the claim when entitled and `null` when not; or the group's epoch
+   *   when the commit's base is not it.
+   */
+  private async claimKeyGroupAdmits(
+    groupId: string,
+    declared: ValidateCommitBody['admits'],
+    baseEpoch: number,
+    traceId: string
+  ): Promise<Map<string, SeatClaim | null> | { epochMismatch: number } | null> {
+    if (!Array.isArray(declared) || declared.length === 0) return null;
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      select: {
+        id: true,
+        activeEpoch: true,
+        distributionWorkspaceId: true,
+        distributionChannelId: true,
+      },
+    });
+    const scope = distributionScopeOf(group);
+    if (!scope || !group) return null;
+    if (group.activeEpoch !== baseEpoch) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} ` +
+          `activeEpoch=${group.activeEpoch} - before asking about its admits`
+      );
+      return { epochMismatch: group.activeEpoch };
+    }
+    const people = new Set<string>();
+    for (const d of declared) {
+      const userId = sanitizeQueryValue(d?.userId ?? '', 'admits.userId');
+      if (!isUnresolvedIdentity(userId)) people.add(userId);
+    }
+    const answered = await Promise.all(
+      [...people].map(async (userId) => {
+        const claim = await claimSeat(this.groupRepo.manager, groupId, userId);
+        const entitled = await isEntitledToDistributionGroup(scope, userId, traceId);
+        return [userId, entitled ? claim : null] as const;
+      })
+    );
+    const claims = new Map<string, SeatClaim | null>(answered);
+    this.logger.log(
+      `[COMMIT][${traceId}] ADMITS_ASKED group=${groupId} ${scope.kind}=${scope.id} people=${people.size} ` +
+        `entitled=${[...claims.values()].filter(Boolean).length}`
+    );
+    return claims;
+  }
+
+  /**
+   * Takes a claim on a seat of `userId` in `groupId` - read BEFORE the check that decides an
+   * activation ({@link claimSeat}). For the doors outside this service that create a seat.
+   */
+  async claimSeat(groupId: string, userId: string): Promise<SeatClaim> {
+    return claimSeat(this.groupRepo.manager, groupId, userId);
+  }
+
+  /**
+   * Cuts `userId` off every seat of `groupId`, under the seat lock, and RECORDS it: the group's seat
+   * generation moves so no claim taken before this is honoured after it ({@link bumpSeatGeneration}),
+   * then the membership rows, the frames queued to them, the Redis routes, and the person's eviction
+   * row, which names a key group's departure ({@link recordSeatEviction}).
+   *
+   * Idempotent: every step is a delete keyed on the pair, and the generations only move.
+   *
+   * @param departure `'begin'` for a key group's eviction made BEFORE social-service's roster write:
+   *   it begins a departure, named by the generation returned. `{ settles }` for the eviction made
+   *   after it, which settles THAT departure (a later one that began meanwhile stays owed).
+   */
+  async evictSeats(
+    groupId: string,
+    userId: string,
+    departure: 'begin' | { settles: number }
+  ): Promise<{
+    memberships: number;
+    queued: number;
+    toRemove: number;
+    generation: number;
+    settled: boolean;
+  }> {
+    return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      // The group's generation, the deletes, then the record: the one order (`utils/seat-eviction.ts`).
+      await bumpSeatGeneration(m, groupId);
+      const cut = await this.deleteSeats(m, groupId, userId);
+      const generation = await recordSeatEviction(m, groupId, userId, departure === 'begin');
+      const settled =
+        departure !== 'begin' && (await settleSeatDeparture(m, groupId, userId, departure.settles));
+      return { ...cut, generation, settled };
+    });
+  }
+
+  /**
+   * An account erasure's cut of every seat `userId` holds in `groupId`, under the seat lock: the
+   * GROUP's seat generation moves ({@link bumpSeatGeneration}), so a claim or a route read the
+   * account took before the erasure never writes after it, then the queue, the device rows and the
+   * Redis routes go ({@link deleteSeats}). Nothing naming the account is written: what refuses the
+   * old claim is the group's, and the account's eviction rows are deleted by the erasure.
+   *
+   * Idempotent: a retry deletes nothing more and moves the generation again, which only refuses more.
+   */
+  async eraseSeats(
+    groupId: string,
+    userId: string
+  ): Promise<{ memberships: number; queued: number; toRemove: number }> {
+    return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      await bumpSeatGeneration(m, groupId);
+      const cut = await this.deleteSeats(m, groupId, userId);
+      this.logger.log(
+        `[INTERNAL_DELETE] seats erased group=${groupId} user=${userId.slice(0, 8)} ` +
+          `memberships=${cut.memberships} queued=${cut.queued} routes=${cut.toRemove}`
+      );
+      return cut;
+    });
+  }
+
+  /**
+   * Deletes every seat of `userId` in `groupId` - the membership rows, the frames queued to them and
+   * the Redis routes - in the transaction `m` (which holds the seat lock). The rows and the queue go
+   * through the one departure ({@link endDeviceMemberships}), Welcomes included.
+   */
+  private async deleteSeats(
+    m: EntityManager,
+    groupId: string,
+    userId: string
+  ): Promise<{ memberships: number; queued: number; toRemove: number }> {
+    const { memberships, queued } = await endDeviceMemberships(m, { userId, groupId }, 'all');
+    const toRemove = await this.removeRoutesOf(groupId, userId);
+    return { memberships, queued, toRemove };
+  }
+
+  /** Removes every route of `userId` in `groupId`'s routing set, by prefix; how many went. */
+  private async removeRoutesOf(groupId: string, userId: string): Promise<number> {
+    const routed = await this.redis.smembers(`group:members:${groupId}`);
+    const routes = routed.filter((r) => r.startsWith(`${userId}:`));
+    if (routes.length > 0) {
+      await this.redis.srem(`group:members:${groupId}`, ...routes);
+    }
+    return routes.length;
+  }
+
+  /**
+   * SETTLES THE KEY-GROUP DEPARTURES WHOSE SECOND EVICTION NEVER ARRIVED (hourly, beside the stale
+   * device detection).
+   *
+   * A row with an `owedDeparture` is a departure social-service began - it evicted before its roster
+   * write - and did not finish telling: the eviction after the roster write failed, or the roster
+   * write itself did. Each is asked of social-service BY ITS NAME, OUTSIDE any lock
+   * ({@link askDepartureOutcome}). The entitlement is not asked: it answers `true` both while the
+   * roster write has not committed and after a rejoin, and settling on the first lets a seat be
+   * written for a person whose departure then commits. The outcome is final - asking decides an
+   * undecided departure as `cancelled`, and its roster write can then no longer commit under that
+   * name - and is applied under the seat lock only if that departure is still the one owed:
+   *
+   * - `departed`: the seats are cut again (anything written since the first eviction goes) and the
+   *   departure is settled.
+   * - `cancelled`: the departure never committed and now never will; the person is still on the
+   *   roster. The departure is settled and they may hold a seat again.
+   * - unanswered: left as it is, for the next pass, and logged.
+   *
+   * A row whose group is gone, or is not a key group, is settled as it stands. Each row is caught on
+   * its own, so one failure never stops the batch.
+   *
+   * @returns how many rows were settled, for the caller's log line.
+   */
+  async drainOwedSeatEvictions(): Promise<number> {
+    const owed = (await this.groupRepo.manager.query(
+      `SELECT "groupId", "userId", "owedDeparture" FROM dm_seat_evictions
+       WHERE "owedDeparture" IS NOT NULL LIMIT 500`
+    )) as Array<{ groupId: string; userId: string; owedDeparture: number | string }>;
+    let settled = 0;
+    for (const row of owed) {
+      const traceId = this.makeTraceId('seat-drain');
+      const departure = Number(row.owedDeparture);
+      try {
+        // RE-READ RIGHT BEFORE ASKING: a row an account erasure or a settlement removed since the
+        // batch was read is not asked about - asking would have social-service record a decision
+        // for a departure nothing owes any more.
+        const current = await readSeatEviction(this.groupRepo.manager, row.groupId, row.userId);
+        if (current.owedDeparture !== departure) {
+          this.logger.log(
+            `[SEAT_DRAIN][${traceId}] group=${row.groupId} user=${cutUserId(row.userId)} departure=${departure} outcome=moved (before asking)`
+          );
+          continue;
+        }
+        const scope = await this.keyDistributionScope(row.groupId);
+        let decided: DepartureOutcome | null = null;
+        if (scope) {
+          try {
+            decided = await askDepartureOutcome(row.groupId, row.userId, departure, traceId);
+          } catch (e) {
+            this.logger.warn(
+              `[SEAT_DRAIN][${traceId}] group=${row.groupId} user=${cutUserId(row.userId)} departure=${departure} left owed - outcome unanswered: ${String(e)}`
+            );
+            continue;
+          }
+        }
+        const outcome = await withSeatLock(this.groupRepo.manager, row.groupId, async (m) => {
+          const now = await readSeatEviction(m, row.groupId, row.userId);
+          if (now.owedDeparture !== departure) return 'moved';
+          if (decided === 'departed') {
+            // The one order: the group's generation, the deletes, the person's record.
+            await bumpSeatGeneration(m, row.groupId);
+            await this.deleteSeats(m, row.groupId, row.userId);
+            await recordSeatEviction(m, row.groupId, row.userId, false);
+          }
+          await settleSeatDeparture(m, row.groupId, row.userId, departure);
+          return decided ?? 'not_a_key_group';
+        });
+        if (outcome !== 'moved') settled++;
+        this.logger.log(
+          `[SEAT_DRAIN][${traceId}] group=${row.groupId} user=${cutUserId(row.userId)} departure=${departure} outcome=${outcome}`
+        );
+      } catch (e) {
+        this.logger.error(
+          `[SEAT_DRAIN][${traceId}] group=${row.groupId} user=${cutUserId(row.userId)} FAILED: ${String(e)}`
+        );
+      }
+    }
+    if (owed.length > 0) {
+      this.logger.log(`[SEAT_DRAIN] owed=${owed.length} settled=${settled}`);
+    }
+    return settled;
+  }
+
+  /**
+   * Settles a key-group departure social-service ABANDONED before its roster write committed - the
+   * departure was recorded `cancelled` there, so its roster write can never commit under that name.
+   * Nothing is evicted: the person is still on the roster, and no seat was written for them while
+   * the departure was in progress. A later departure that began meanwhile is left owed.
+   *
+   * The hourly drain reaches the same end by asking; this is social-service telling it at once.
+   *
+   * @returns whether that departure was the one in progress and is now settled
+   */
+  async settleCancelledDeparture(
+    groupId: string,
+    userId: string,
+    departure: number
+  ): Promise<boolean> {
+    const settled = await withSeatLock(this.groupRepo.manager, groupId, (m) =>
+      settleSeatDeparture(m, groupId, userId, departure)
+    );
+    this.logger.log(
+      `[DISTRIBUTION_GROUP] departure cancelled group=${groupId} user=${cutUserId(userId)} ` +
+        `departure=${departure} settled=${settled}`
+    );
+    return settled;
   }
 
   /** Whether `groupId` is a Graine key-distribution group (a community's or a private salon's). */
@@ -2890,19 +3526,63 @@ export class MessagingService {
    * then deletes the stored Welcome with the membership ({@link endDeviceMemberships}). Read after
    * the group row and before any write - the order every membership writer takes.
    *
-   * A KEY-DISTRIBUTION GROUP HAS NO SEAT HERE: its roster is social-service's, and its target is
-   * checked by the entitlement read in {@link resolveWelcomeTarget}, so this answers `true`.
+   * A KEY-DISTRIBUTION GROUP HAS NO ROSTER ROW HERE: its roster is social-service's, asked in
+   * {@link resolveWelcomeTarget} against a claim read before the question. The caller holds the
+   * group's seat lock, the one an eviction takes, and the claim is re-read under it
+   * ({@link seatClaimHolds}): an eviction that committed after the answer, or a departure still in
+   * progress, refuses the store; one that comes after waits for this transaction, then deletes
+   * the stored Welcome with the seats.
+   *
+   * The target's key package is read `FOR SHARE` after it ({@link heldKeyPackages}): both callers
+   * insert the target's pending row, and a device being erased gets none.
    *
    * @returns false when the seat is gone, logged; the caller rolls its transaction back.
    */
   private async lockWelcomeSeat(
     m: EntityManager,
-    target: { userId: string; keyGroup: boolean },
+    target: WelcomeSeat,
     groupId: string,
     traceId: string,
     tag: string
   ): Promise<boolean> {
-    if (target.keyGroup) return true;
+    if (!(await this.seatStandsFor(m, target, groupId, traceId, tag))) return false;
+    // ...AND THE TARGET'S KEY PACKAGE, read `FOR SHARE` last: both stores insert the target's
+    // pending row in this transaction, and a row inserted after an account erasure took the key
+    // packages would outlive it ({@link heldKeyPackages}).
+    if ((await heldKeyPackages(m, [target])).has(`${target.userId}:${target.deviceId}`))
+      return true;
+    this.logger.warn(
+      `[${tag}][${traceId}] REJECT welcome_target_not_member group=${groupId} ` +
+        `target=${sanitizeLogValue(target.userId)}:${sanitizeLogValue(target.deviceId)} ` +
+        `reason=no_key_package (read under the seat lock - the account or device is being erased)`
+    );
+    return false;
+  }
+
+  /** {@link lockWelcomeSeat}'s first half: whether the target still holds its seat, logged when not. */
+  private async seatStandsFor(
+    m: EntityManager,
+    target: WelcomeSeat,
+    groupId: string,
+    traceId: string,
+    tag: string
+  ): Promise<boolean> {
+    if (target.keyGroup) {
+      if (!target.claim) {
+        this.logger.error(
+          `[${tag}][${traceId}] REJECT welcome_target_not_member group=${groupId} ` +
+            `target=${sanitizeLogValue(target.userId)} - a key-group Welcome reached the store with no seat claim`
+        );
+        return false;
+      }
+      const refusal = await seatClaimHolds(m, target.claim);
+      if (refusal === null) return true;
+      this.logger.warn(
+        `[${tag}][${traceId}] REJECT welcome_target_not_member group=${groupId} ` +
+          `target=${sanitizeLogValue(target.userId)} reason=${refusal} - evicted after the entitlement answer`
+      );
+      return false;
+    }
     const seat = await m.getRepository(GroupMember).findOne({
       where: { groupId, userId: target.userId },
       lock: { mode: 'pessimistic_read' },
@@ -2935,7 +3615,7 @@ export class MessagingService {
     targetDeviceId: string,
     traceId: string,
     tag: string
-  ): Promise<{ userId: string } | { refused: WelcomeTargetRefusal }> {
+  ): Promise<{ userId: string; claim: SeatClaim | null } | { refused: WelcomeTargetRefusal }> {
     const query: Record<string, string> = { deviceId: targetDeviceId };
     if (targetUserId) {
       query.userId = targetUserId;
@@ -2949,6 +3629,11 @@ export class MessagingService {
       return { refused: 'welcome_target_unknown' };
     }
     const scope = distributionScopeOf(group);
+    // A key group's answer is taken against a CLAIM read before the question, so the store can tell
+    // whether an eviction committed after it ({@link lockWelcomeSeat}).
+    const claim = scope
+      ? await claimSeat(this.groupRepo.manager, groupId, deviceInfo.userId)
+      : null;
     const admissible = scope
       ? await isEntitledToDistributionGroup(scope, deviceInfo.userId, traceId)
       : await this.isOnRoster(groupId, deviceInfo.userId);
@@ -2959,7 +3644,7 @@ export class MessagingService {
       );
       return { refused: 'welcome_target_not_member' };
     }
-    return { userId: deviceInfo.userId };
+    return { userId: deviceInfo.userId, claim };
   }
 
   /** The queued row of a Welcome, as both doors that store one write it. */
@@ -3206,40 +3891,17 @@ export class MessagingService {
     // write is worse than an undeliverable message - the device that receives it asks for a group
     // nobody can hand it, on every reconnection. See {@link enqueueForLiveGroup}.
     await this.enqueueForLiveGroup([queuedWelcome], safeGroupId, 'WELCOME', traceId, undefined, {
-      userId: deviceInfo.userId,
-      keyGroup: distributionScopeOf(group) !== null,
+      welcome: {
+        userId: deviceInfo.userId,
+        deviceId: targetDeviceId,
+        keyGroup: distributionScopeOf(group) !== null,
+        claim: deviceInfo.claim,
+      },
     });
     this.logger.log(
       `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`
     );
     await this.deliverWelcome(queuedWelcome, traceId);
-
-    // Ensure a DeviceGroupMembership row EXISTS, and never demote one that is already active.
-    // INSERT ... ON CONFLICT guarantees record creation even when no prior invitation existed
-    // (bootstrap case: brand-new group, no pending record). A plain UPDATE WHERE status='pending'
-    // would touch 0 rows in that case, leaving the device without a record ->
-    // processPendingInvitations would incorrectly kick it.
-    //
-    // **AN EXISTING ROW IS NEVER TOUCHED.** The conflict clause used to overwrite `status` with the
-    // literal `'pending'` - and `skipUpdateIfNoValuesChanged` does not protect a row whose value
-    // CHANGES - so a Welcome to an `active` device DEMOTED it out of the fan-out. Then it overwrote
-    // `kickedAt` with null, which let a Welcome undo a kick no commit had answered: a kicked device
-    // is refused at the commit gate, and a Welcome is bytes, not an Add. The Add that answers a
-    // kick is the admitting commit, which clears `kickedAt` itself (`validateCommit`), and
-    // `activateDeviceMembership` clears it on activation.
-    await this.deviceGroupRepo
-      .createQueryBuilder()
-      .insert()
-      .into(DeviceGroupMembership)
-      .values({
-        deviceId: targetDeviceId,
-        groupId: safeGroupId,
-        userId: deviceInfo.userId,
-        status: 'pending' as const,
-        kickedAt: null,
-      })
-      .orIgnore()
-      .execute();
 
     // THE ROUTING SET IS NOT WRITTEN HERE, AND THE `sadd` THAT USED TO BE ON THIS LINE IS THE
     // REASON THIS FUNCTION COULD LEAVE SQL AND REDIS DISAGREEING.
@@ -3287,26 +3949,31 @@ export class MessagingService {
     groupId: string,
     tag: string
   ): Promise<ActivationOutcome> {
-    const result = await this.deviceGroupRepo
-      .createQueryBuilder()
-      .update(DeviceGroupMembership)
-      .set({ status: 'active' as const, kickedAt: null, admittedAtEpoch: null })
-      .where('"userId" = :userId AND "deviceId" = :deviceId AND "groupId" = :groupId', {
-        userId,
-        deviceId,
-        groupId,
-      })
-      .andWhere(`(status = 'active' OR "kickedAt" IS NULL)`)
-      .andWhere(
-        `(EXISTS (SELECT 1 FROM dm_groups g WHERE g.id = :groupId
+    // UNDER THE SEAT LOCK, like every other seat write, so an eviction is wholly before (the row is
+    // gone and nothing matches) or wholly after (it deletes what this promoted).
+    const result = await withSeatLock(this.groupRepo.manager, groupId, (m) =>
+      m
+        .getRepository(DeviceGroupMembership)
+        .createQueryBuilder()
+        .update(DeviceGroupMembership)
+        .set({ status: 'active' as const, kickedAt: null, admittedAtEpoch: null })
+        .where('"userId" = :userId AND "deviceId" = :deviceId AND "groupId" = :groupId', {
+          userId,
+          deviceId,
+          groupId,
+        })
+        .andWhere(`(status = 'active' OR "kickedAt" IS NULL)`)
+        .andWhere(
+          `(EXISTS (SELECT 1 FROM dm_groups g WHERE g.id = :groupId
             AND (g."distributionWorkspaceId" IS NOT NULL OR g."distributionChannelId" IS NOT NULL))
           OR EXISTS (SELECT 1 FROM dm_group_members m
             WHERE m."groupId" = :groupId AND m."userId" = :userId))`
-      )
-      .execute();
+        )
+        .execute()
+    );
     if (result.affected === 1) {
-      await this.redis.sadd(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
       this.logger.log(`[${tag}] group=${groupId} device=${userId}:${deviceId}`);
+      await this.routeActiveSeat(userId, deviceId, groupId, tag);
       return { ok: true };
     }
     // The statement decided; this read only NAMES why, for the log and the answer. If the row moved
@@ -3386,7 +4053,21 @@ export class MessagingService {
     userId: string,
     deviceId: string,
     groupId: string,
-    { tag = 'MEMBERSHIP_ACTIVE', authority }: { tag?: string; authority: ActivationAuthority }
+    {
+      tag = 'MEMBERSHIP_ACTIVE',
+      authority,
+      claim,
+    }: {
+      tag?: string;
+      authority: ActivationAuthority;
+      /**
+       * The claim this seat is written against ({@link claimSeat}), taken by the caller BEFORE the
+       * check that decided the activation. REQUIRED of the two authorities whose check is made
+       * outside this service's lock - `accepted_commit` and `distribution_publisher` - and the seat
+       * is then written under the group's seat lock only if no eviction overtook the claim.
+       */
+      claim?: SeatClaim;
+    }
   ): Promise<ActivationOutcome> {
     // A NON-IDENTITY IS REFUSED HERE, BECAUSE THE GATE BELOW CANNOT SEE IT AND TWO DOORS DID NOT
     // LOOK. `deviceAddressability` asks whether this pair is reachable; a placeholder that
@@ -3422,9 +4103,139 @@ export class MessagingService {
 
     if (authority === 'report') return this.promoteReportedSeat(userId, deviceId, groupId, tag);
 
+    // The group's creation needs no claim - nobody can evict from a group nobody else knows yet -
+    // but its seat is an INSERT like any other, so it is written under the seat lock beside its key
+    // package ({@link writeClaimedSeat}): created while its account is erased, it gets no seat.
+    if (authority === 'group_creator') {
+      const refused = await withSeatLock(this.groupRepo.manager, groupId, (m) =>
+        this.writeClaimedSeat(m, userId, deviceId, groupId, tag)
+      );
+      if (refused !== null) return { ok: false, reason: refused };
+      await this.routeActiveSeat(userId, deviceId, groupId, tag);
+      return { ok: true };
+    }
+
+    // A CLAIMED AUTHORITY WITH NO CLAIM IS A CALLER BUG, refused loudly rather than written: the
+    // seat would stand against no eviction at all.
+    if (!claim || claim.groupId !== groupId || claim.userId !== userId) {
+      this.logger.error(
+        `[${tag}] REFUSED group=${groupId} device=${userId}:${deviceId} reason=unclaimed authority=${authority}`
+      );
+      return { ok: false, reason: 'departed' };
+    }
+    const outcome = await withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      const overtaken = await seatClaimHolds(m, claim);
+      if (overtaken) {
+        this.logger.warn(
+          `[${tag}] REFUSED group=${groupId} device=${userId}:${deviceId} reason=departed ` +
+            `(${overtaken}, claimed at generation ${claim.generation})`
+        );
+        return { ok: false, reason: 'departed' } as const;
+      }
+      const refused = await this.writeClaimedSeat(m, userId, deviceId, groupId, tag);
+      return refused === null ? ({ ok: true } as const) : ({ ok: false, reason: refused } as const);
+    });
+    if (outcome.ok) await this.routeActiveSeat(userId, deviceId, groupId, tag);
+    return outcome;
+  }
+
+  /**
+   * Writes the active seat of a claim that held, in the transaction `m` holding the group's seat
+   * lock - IF the device still has its KeyPackage row, read `FOR SHARE` here ({@link heldKeyPackages},
+   * which says why). Read before the lock ({@link deviceAddressability}) it could not decide that: a
+   * device with no trace in the group yet, whose seat the erasure has nothing to cut, would get one
+   * after it.
+   *
+   * The revocation denylist is read here too (WP-GHOST-1): a commit writes its committer's seat
+   * through this alone, with no {@link deviceAddressability} before it.
+   *
+   * @returns null when the seat was written; otherwise why not (logged).
+   */
+  private async writeClaimedSeat(
+    m: EntityManager,
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    tag: string
+  ): Promise<null | 'revoked' | 'no_key_package'> {
+    const revoked = await m.getRepository(RevokedDevice).findOne({
+      where: activeRevocationWhere({ userId, deviceId }),
+    });
+    if (revoked) {
+      this.logger.warn(
+        `[${tag}] REFUSED group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} reason=revoked`
+      );
+      return 'revoked';
+    }
+    if (!(await heldKeyPackages(m, [{ userId, deviceId }])).has(`${userId}:${deviceId}`)) {
+      this.logger.warn(
+        `[${tag}] REFUSED group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+          `reason=no_key_package (read under the seat lock - the account or device is being erased)`
+      );
+      return 'no_key_package';
+    }
+    await this.writeActiveSeat(
+      m.getRepository(DeviceGroupMembership),
+      userId,
+      deviceId,
+      groupId,
+      tag
+    );
+    return null;
+  }
+
+  /**
+   * Adds a seat's Redis route - AFTER the seat's own write committed, and only if the seat is still
+   * `active`, re-read under the seat lock.
+   *
+   * WHY NOT WITH THE WRITE. The route written inside the seat's transaction would survive that
+   * transaction failing to commit; written after the commit with no lock, it could land after an
+   * eviction deleted the seat and removed its route. The gateway reads this set alone - its live
+   * broadcast and its election of a peer to answer a request re-check nothing in the database - so
+   * a route left for a seat that is gone is a device still reached. Under the lock, an eviction is
+   * wholly before this (the seat is gone, no route) or wholly after (it removes the route).
+   */
+  private async routeActiveSeat(
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    tag: string
+  ): Promise<void> {
+    await withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      const seat = await m.getRepository(DeviceGroupMembership).findOne({
+        where: { userId, deviceId, groupId, status: 'active' as const },
+        select: { deviceId: true },
+      });
+      if (!seat) {
+        this.logger.warn(
+          `[${tag}] route NOT written group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} - the seat was evicted after its write`
+        );
+        return;
+      }
+      await this.redis
+        .sadd(`group:members:${groupId}`, `${userId}:${deviceId}`)
+        .catch((e) =>
+          this.logger.error(
+            `[${tag}] route write FAILED group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)}: ${String(e)} - the send path's reconciliation repairs it`
+          )
+        );
+    });
+  }
+
+  /**
+   * Writes the `active` seat - the write itself, for {@link activateDeviceMembership} only, which
+   * decides whether it may happen. Its Redis route follows the commit ({@link routeActiveSeat}).
+   */
+  private async writeActiveSeat(
+    seats: Repository<DeviceGroupMembership>,
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    tag: string
+  ): Promise<void> {
     // `kickedAt: null`: the device is IN, so nothing is owed to it and no kick is outstanding.
     // `admittedAtEpoch: null`: its status routes it from here on, so its admission has done its job.
-    await this.deviceGroupRepo.upsert(
+    await seats.upsert(
       {
         userId,
         deviceId,
@@ -3435,11 +4246,7 @@ export class MessagingService {
       },
       { conflictPaths: ['deviceId', 'groupId'] }
     );
-    // Immediate routing: add to Redis set without waiting for a cache rebuild.
-    await this.redis.sadd(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
     this.logger.log(`[${tag}] group=${groupId} device=${userId}:${deviceId}`);
-
-    return { ok: true };
   }
 
   /**
@@ -3584,14 +4391,50 @@ export class MessagingService {
     });
     if (rows.length === 0) return cached;
 
-    const members = rows.map((m) => `${m.userId}:${m.deviceId}`);
-    await this.redis.sadd(`group:members:${groupId}`, ...members);
+    // Written under the seat lock against a re-read, like every route: a seat evicted since the
+    // read above is not routed again (`restoreRoutes`).
+    const { restored, gone } = await this.restoreRoutes(groupId, rows);
     this.logger.warn(
-      `[${tag}][${traceId}] MEMBERS_CACHE_RELOADED group=${groupId} members=${members.length}` +
+      `[${tag}][${traceId}] MEMBERS_CACHE_RELOADED group=${groupId} members=${restored.length}` +
+        (gone.length > 0 ? ` evictedSinceRead=${gone.length}` : '') +
         ` - the gateway routing set was empty for a group with active devices, so it was rebuilt` +
         ` from the rows; anything routed on it before this point reached nobody`
     );
-    return members;
+    return restored;
+  }
+
+  /**
+   * Adds to `groupId`'s routing set those of `candidates` whose seat is still ACTIVE when re-read
+   * under the seat lock.
+   *
+   * The routing set is what the gateway delivers on, and an eviction deletes a seat and its route
+   * under that lock. A route written from a read taken BEFORE the lock could put back the route of a
+   * seat evicted in between, and nothing would ever take it out again: the gateway reads the set
+   * alone. So the re-read and the write happen while no eviction can run.
+   *
+   * @returns the entries written, and the candidates whose seat was gone
+   */
+  private async restoreRoutes(
+    groupId: string,
+    candidates: ReadonlyArray<{ userId: string; deviceId: string }>
+  ): Promise<{ restored: string[]; gone: string[] }> {
+    const wanted = candidates.map((c) => `${c.userId}:${c.deviceId}`);
+    return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      const rows = await m.getRepository(DeviceGroupMembership).find({
+        where: {
+          groupId,
+          status: 'active' as const,
+          deviceId: In([...new Set(candidates.map((c) => c.deviceId))]),
+        },
+      });
+      const active = new Set(rows.map((r) => `${r.userId}:${r.deviceId}`));
+      const restored = wanted.filter((k) => active.has(k));
+      const gone = wanted.filter((k) => !active.has(k));
+      if (restored.length > 0) {
+        await this.redis.sadd(`group:members:${groupId}`, ...restored);
+      }
+      return { restored, gone };
+    });
   }
 
   async notifyHistoryRequest(
@@ -4039,10 +4882,18 @@ export class MessagingService {
     tag: string,
     traceId: string,
     sealed?: SealedFrame,
-    welcomeSeat?: { userId: string; keyGroup: boolean }
+    opts: { seats?: { exempt: ReadonlySet<string> }; welcome?: WelcomeSeat } = {}
   ): Promise<QueuedMessage[]> {
+    const { seats, welcome } = opts;
     if (!groupId) return this.queuedMessageRepo.save(rows);
     return this.queuedMessageRepo.manager.transaction(async (manager) => {
+      // THE SEAT LOCK, SHARED, BEFORE THE GROUP ROW - the order every seat writer takes them in. The
+      // recipients were read with no lock, so an eviction may have deleted a seat and its queued
+      // frames since; holding the lock shared, no eviction runs until these rows are written, and the
+      // re-read below drops a seat already gone. Sends into one group never wait for each other.
+      // The Welcome store and the key-group eviction take the same seat lock: the target's seat is
+      // re-read under it, and the pending row is written under it.
+      if ((seats && rows.length > 0) || welcome) await takeSharedSeatLock(manager, groupId);
       const [group] = await manager.getRepository(Group).find({
         where: { id: groupId },
         select: {
@@ -4080,10 +4931,7 @@ export class MessagingService {
       }
       // A Welcome is stored only while its target still holds its seat, read under this same
       // transaction so a removal racing it serialises with it ({@link lockWelcomeSeat}).
-      if (
-        welcomeSeat &&
-        !(await this.lockWelcomeSeat(manager, welcomeSeat, groupId, traceId, tag))
-      ) {
+      if (welcome && !(await this.lockWelcomeSeat(manager, welcome, groupId, traceId, tag))) {
         throw new ForbiddenException({
           error: 'welcome_target_not_member',
           message: 'this Welcome is not accepted',
@@ -4091,20 +4939,109 @@ export class MessagingService {
       }
       // An empty batch is a liveness check alone (an emptied roster, see `sendMessage`).
       if (rows.length === 0) return [];
-      // A KEY-GROUP FAN-OUT STORES ITS CIPHERTEXT ONCE, under the same lock and in the same
-      // transaction as its records, so the group cannot end between the two and the collector never
-      // sees a payload without them (`utils/queued-payload.ts`).
-      // ONLY WHILE THE WRITER'S SWITCH IS ON: off, every fan-out is the inline per-seat write, the
-      // shape an image older than the readers can still serve (`readSharedPayloadWrites`).
-      if (this.sharedPayloadWrites && sharesPayload(group, rows)) {
-        // Expected on every key-group fan-out, so debug: `QUEUED count=` already reports the send.
-        this.logger.debug(
-          `[${tag}][${traceId}] SHARED_PAYLOAD group=${groupId} records=${rows.length} ` +
-            `bytes=${rows[0].proto?.length ?? 0} - one stored copy instead of ${rows.length}`
+      const kept = seats ? await this.keepSeatedRows(manager, rows, groupId, seats.exempt) : rows;
+      if (kept.length < rows.length) {
+        const dropped = rows
+          .filter((r) => !kept.includes(r))
+          .map((r) => `${r.recipientId}:${r.deviceId}`);
+        this.logger.log(
+          `[${tag}][${traceId}] SEAT_GONE_NOT_QUEUED group=${groupId} count=${dropped.length} ` +
+            `devices=${capLoggedDevices(dropped).join(',')} - evicted after this send read its recipients`
         );
-        return saveWithSharedPayload(manager, groupId, rows);
       }
-      return manager.getRepository(QueuedMessage).save(rows);
+      if (kept.length === 0) return [];
+      const saved = await this.saveQueuedRows(manager, group, kept, groupId, tag, traceId);
+      if (welcome) await this.ensurePendingSeat(manager, groupId, welcome);
+      return saved;
+    });
+  }
+
+  /**
+   * Stores the rows a send keeps, in the transaction `m` that holds the seat lock and the group row.
+   *
+   * A KEY-GROUP FAN-OUT STORES ITS CIPHERTEXT ONCE, under the same lock and in the same transaction
+   * as its records, so the group cannot end between the two and the collector never sees a payload
+   * without them (`utils/queued-payload.ts`). ONLY WHILE THE WRITER'S SWITCH IS ON: off, every
+   * fan-out is the inline per-seat write, the shape an image older than the readers can still serve
+   * (`readSharedPayloadWrites`).
+   */
+  private async saveQueuedRows(
+    m: EntityManager,
+    group: PayloadGroupFacts,
+    rows: QueuedMessage[],
+    groupId: string,
+    tag: string,
+    traceId: string
+  ): Promise<QueuedMessage[]> {
+    if (this.sharedPayloadWrites && sharesPayload(group, rows)) {
+      // Expected on every key-group fan-out, so debug: `QUEUED count=` already reports the send.
+      this.logger.debug(
+        `[${tag}][${traceId}] SHARED_PAYLOAD group=${groupId} records=${rows.length} ` +
+          `bytes=${rows[0].proto?.length ?? 0} - one stored copy instead of ${rows.length}`
+      );
+      return saveWithSharedPayload(m, groupId, rows);
+    }
+    return m.getRepository(QueuedMessage).save(rows);
+  }
+
+  /**
+   * Ensures the Welcome's target device has a membership row, in the transaction `m` that stores
+   * the Welcome and holds the seat lock - so an eviction cannot run between the two and leave a
+   * pending row behind for a person it just cut off.
+   *
+   * INSERT ... ON CONFLICT guarantees record creation even when no prior invitation existed
+   * (bootstrap case: brand-new group, no pending record). A plain UPDATE WHERE status='pending'
+   * would touch 0 rows in that case, leaving the device without a record ->
+   * processPendingInvitations would incorrectly kick it.
+   *
+   * **AN EXISTING ROW IS NEVER TOUCHED.** The conflict clause used to overwrite `status` with the
+   * literal `'pending'` - and `skipUpdateIfNoValuesChanged` does not protect a row whose value
+   * CHANGES - so a Welcome to an `active` device DEMOTED it out of the fan-out. Then it overwrote
+   * `kickedAt` with null, which let a Welcome undo a kick no commit had answered: a kicked device
+   * is refused at the commit gate, and a Welcome is bytes, not an Add. The Add that answers a
+   * kick is the admitting commit, which clears `kickedAt` itself (`validateCommit`), and
+   * `activateDeviceMembership` clears it on activation.
+   */
+  private async ensurePendingSeat(
+    m: EntityManager,
+    groupId: string,
+    target: WelcomeSeat
+  ): Promise<void> {
+    await m
+      .getRepository(DeviceGroupMembership)
+      .createQueryBuilder()
+      .insert()
+      .into(DeviceGroupMembership)
+      .values({
+        deviceId: target.deviceId,
+        groupId,
+        userId: target.userId,
+        status: 'pending' as const,
+        kickedAt: null,
+      })
+      .orIgnore()
+      .execute();
+  }
+
+  /**
+   * The rows of `rows` whose recipient still holds a seat (a membership row, any status) in
+   * `groupId`, read in the transaction `m`, which holds the seat lock. A key in `exempt` is kept
+   * without one: a commit reaches the devices it removes, whose seats were deleted on purpose.
+   */
+  private async keepSeatedRows(
+    m: EntityManager,
+    rows: QueuedMessage[],
+    groupId: string,
+    exempt: ReadonlySet<string>
+  ): Promise<QueuedMessage[]> {
+    const seated = await m.getRepository(DeviceGroupMembership).find({
+      where: { groupId, deviceId: In([...new Set(rows.map((r) => r.deviceId))]) },
+      select: { userId: true, deviceId: true },
+    });
+    const held = new Set(seated.map((s) => `${s.userId}:${s.deviceId}`));
+    return rows.filter((r) => {
+      const k = `${r.recipientId}:${r.deviceId}`;
+      return held.has(k) || exempt.has(k);
     });
   }
 

@@ -1,5 +1,6 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { GroupRosterBatch } from '$lib/mls-client/mlsDeliveryApi';
+import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import { removeStrayLeaves } from './strayLeaves';
 
 /**
@@ -18,6 +19,7 @@ let getGroupMemberIdentities: ReturnType<typeof vi.fn>;
 let getGroupRosters: ReturnType<typeof vi.fn>;
 let getGroupUserMembers: ReturnType<typeof vi.fn>;
 let removeMember: ReturnType<typeof vi.fn>;
+let removeMemberDevice: ReturnType<typeof vi.fn>;
 let getLocalGroups: ReturnType<typeof vi.fn>;
 let calls: string[];
 let lines: string[];
@@ -30,13 +32,20 @@ const mls = () =>
     getGroupRosters,
     getGroupUserMembers,
     removeMember,
+    removeMemberDevice,
     getLocalGroups,
+    getDeviceId: () => 'web-1',
     getEpoch: () => 12,
   }) as unknown as IMlsService;
 
-const answered = (rosters: Record<string, string[]>, refused: string[] = []): GroupRosterBatch => ({
+const answered = (
+  rosters: Record<string, string[]>,
+  refused: string[] = [],
+  revoked: Record<string, string[]> = {}
+): GroupRosterBatch => ({
   rosters: new Map(Object.entries(rosters)),
   refused: new Set(refused),
+  revoked: new Map(Object.entries(revoked)),
 });
 
 beforeEach(() => {
@@ -57,6 +66,7 @@ beforeEach(() => {
     return [{ userId: 'alice' }, { userId: 'bob' }];
   });
   removeMember = vi.fn().mockResolvedValue(undefined);
+  removeMemberDevice = vi.fn().mockResolvedValue(undefined);
   getLocalGroups = vi.fn().mockReturnValue(['g1', 'g2', 'g3']);
 });
 
@@ -188,5 +198,131 @@ describe('removeStrayLeaves', () => {
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
     expect(lines.join(' | ')).toContain('their leaves stay');
+  });
+
+  it('says the departed leaves are gone when another member removed them first', async () => {
+    trees.g1 = ['alice:web-1', 'bob:web-1'];
+    batch = answered({ g1: ['alice'] });
+    getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }]);
+    removeMember.mockImplementation(async () => {
+      trees.g1 = ['alice:web-1'];
+      throw new Error('epoch_mismatch');
+    });
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    const said = lines.join(' | ');
+    expect(said).not.toContain('their leaves stay');
+    expect(said).toContain('already gone from the tree');
+  });
+});
+
+/**
+ * A REVOKED DEVICE'S LEAF OUTLIVES THE REVOCATION, which purges routing and cannot touch a tree.
+ * The collector removes it - and ONLY a leaf the server names as revoked (an allowlist): a leaf the
+ * routing table merely forgot is a device fresh-start, not a revocation.
+ */
+describe('removeStrayLeaves - revoked devices', () => {
+  it('removes the leaf of a revoked device whose owner stays in the conversation', async () => {
+    trees.g1 = ['alice:web-1', 'bob:web-1', 'bob:phone-1'];
+    batch = answered({ g1: ['alice', 'bob'] }, [], { g1: ['bob:phone-1'] });
+
+    const changed = await removeStrayLeaves(mls(), ['g1'], 'alice', log);
+
+    expect(changed).toEqual(['g1']);
+    // Decided again on a fresh tree and a fresh answer before the commit, like a departure.
+    expect(calls).toEqual(['tree:g1', 'rosters:g1', 'tree:g1', 'rosters:g1']);
+    expect(removeMemberDevice).toHaveBeenCalledExactlyOnceWith('g1', ['bob:phone-1']);
+    // bob is still a member: his other device keeps its leaf, and nobody is removed by user.
+    expect(removeMember).not.toHaveBeenCalled();
+    expect(lines.join(' | ')).toContain('revoked');
+  });
+
+  it('removes another revoked device of this user, never this device itself', async () => {
+    trees.g1 = ['alice:web-1', 'alice:android-2', 'bob:web-1'];
+    batch = answered({ g1: ['alice', 'bob'] }, [], { g1: ['alice:web-1', 'alice:android-2'] });
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual(['g1']);
+    expect(removeMemberDevice).toHaveBeenCalledExactlyOnceWith('g1', ['alice:android-2']);
+    expect(lines.join(' | ')).toContain('THIS device is listed as revoked');
+  });
+
+  it('removes nothing the server did not name as revoked', async () => {
+    // A revoked identity absent from the tree, and a leaf present with no revocation: no commit.
+    trees.g1 = ['alice:web-1', 'bob:web-1'];
+    batch = answered({ g1: ['alice', 'bob'] }, [], { g1: ['bob:old-phone'] });
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    expect(removeMemberDevice).not.toHaveBeenCalled();
+    expect(calls).toEqual(['tree:g1', 'rosters:g1']);
+  });
+
+  it('removes nothing when the fresh read no longer names the device', async () => {
+    trees.g1 = ['alice:web-1', 'bob:web-1', 'bob:phone-1'];
+    batch = answered({ g1: ['alice', 'bob'] }, [], { g1: ['bob:phone-1'] });
+    getGroupRosters
+      .mockImplementationOnce(async (ids: string[]) => {
+        calls.push(`rosters:${ids.join(',')}`);
+        return batch;
+      })
+      .mockImplementationOnce(async (ids: string[]) => {
+        calls.push(`rosters:${ids.join(',')}`);
+        return answered({});
+      });
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    expect(removeMemberDevice).not.toHaveBeenCalled();
+    expect(lines.join(' | ')).toContain('no revoked leaf left on a fresh read');
+  });
+
+  it('reports a refused removal rather than claiming the leaf is gone', async () => {
+    trees.g1 = ['alice:web-1', 'bob:web-1', 'bob:phone-1'];
+    batch = answered({ g1: ['alice', 'bob'] }, [], { g1: ['bob:phone-1'] });
+    removeMemberDevice.mockRejectedValue(new Error('epoch_mismatch'));
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    expect(lines.join(' | ')).toContain('could not remove 1 revoked device(s)');
+  });
+
+  it('removes nothing from a state the published base cannot vouch for, and says why', async () => {
+    // The removal is a commit nobody asked for: on a forked device it would be accepted by the
+    // epoch gate and break every healthy member, so the service stages nothing and says so.
+    trees.g1 = ['alice:web-1', 'bob:web-1', 'bob:phone-1'];
+    batch = answered({ g1: ['alice', 'bob'] }, [], { g1: ['bob:phone-1'] });
+    removeMemberDevice.mockRejectedValue(
+      new UnpublishedBranchError('g1', 'diverged', 'revoked-leaf removal')
+    );
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    const said = lines.join(' | ');
+    expect(said).toContain('NOT removed: the published base cannot vouch');
+    expect(said).toContain('(diverged)');
+    // Not reported as a refusal that left leaves: nothing was staged, the tree is not re-read.
+    expect(said).not.toContain('could not remove');
+  });
+
+  it('says the leaf is gone, not that it stays, when another member removed it first', async () => {
+    // Two members' collectors race; the loser's commit is refused BECAUSE the winner's removed the
+    // leaf. "Their leaves stay" would then be false - the tree is read again and says what happened.
+    trees.g1 = ['alice:web-1', 'bob:web-1', 'bob:phone-1'];
+    batch = answered({ g1: ['alice', 'bob'] }, [], { g1: ['bob:phone-1'] });
+    removeMemberDevice.mockImplementation(async () => {
+      trees.g1 = ['alice:web-1', 'bob:web-1'];
+      throw new Error('epoch_mismatch');
+    });
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    const said = lines.join(' | ');
+    expect(said).not.toContain('their leaves stay');
+    expect(said).toContain('already gone from the tree');
+  });
+
+  it('removes a departed member first, then a revoked device of one who stays', async () => {
+    trees.g1 = ['alice:web-1', 'bob:web-1', 'bob:phone-1', 'carol:web-1'];
+    batch = answered({ g1: ['alice', 'bob'] }, [], { g1: ['bob:phone-1'] });
+    getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual(['g1']);
+    expect(removeMember).toHaveBeenCalledExactlyOnceWith('g1', ['carol']);
+    expect(removeMemberDevice).toHaveBeenCalledExactlyOnceWith('g1', ['bob:phone-1']);
   });
 });

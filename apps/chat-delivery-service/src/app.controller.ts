@@ -137,10 +137,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     // Detect stale devices: devices whose membership hasn't been updated
     // within MESSAGE_RETENTION_MS are reset to pending for re-invite.
+    // The same hourly membership pass settles the key-group departures whose post-roster eviction
+    // never arrived (`dm_seat_evictions.owedDeparture`) - see MessagingService.drainOwedSeatEvictions.
     this.staleDeviceInterval = setInterval(() => {
       void this.detectStaleDevices().catch((e) =>
         this.logger.error('[CRON] detectStaleDevices failed', e)
       );
+      void this.messagingService
+        .drainOwedSeatEvictions()
+        .catch((e) => this.logger.error('[CRON] drainOwedSeatEvictions failed', e));
     }, ONE_HOUR);
 
     // Cleanup expired queued messages older than MESSAGE_RETENTION_MS
@@ -290,6 +295,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     this.logger.log('[CRON] initial sweep: running every GC job once');
     const jobs: [string, () => Promise<unknown>][] = [
       ['detectStaleDevices', () => this.detectStaleDevices()],
+      ['drainOwedSeatEvictions', () => this.messagingService.drainOwedSeatEvictions()],
       ['cleanupExpiredQueuedMessages', () => this.cleanupExpiredQueuedMessages()],
       ['cleanupStaleDevices', () => this.cleanupStaleDevices()],
       ['cleanupOrphanGroups', () => this.cleanupOrphanGroups()],
@@ -1258,6 +1264,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const ids = deadGroups.map((g) => g.id);
 
     const counts = await this.groupRepo.manager.transaction(async (tx) => {
+      // The `dm_groups` rows FIRST, before any row they own: the one order of
+      // `utils/seat-eviction.ts`, which an eviction also takes (it moves the group's seat generation
+      // before it deletes seats). Deleting the owned rows first would wait on it in a cycle.
+      await tx.getRepository(Group).find({
+        where: { id: In(ids) },
+        select: { id: true },
+        lock: { mode: 'pessimistic_write' },
+      });
       const removed = await deleteGroupOwnedRows(tx, ids);
       await tx.getRepository(Group).delete(ids);
       return removed;

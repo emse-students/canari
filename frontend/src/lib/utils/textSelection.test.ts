@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { hasActiveTextSelection, onTextSelectionActive } from './textSelection';
 
 /** The three fields the predicate reads; happy-dom's own Selection cannot be driven from a test. */

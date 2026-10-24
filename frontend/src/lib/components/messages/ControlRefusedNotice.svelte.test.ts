@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /** The mention a refused control action leaves on a message, and its Retry (WP-CONTROL-NOTICE). */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';

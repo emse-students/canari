@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * EVERY CONTROL ON THE ACCESS TAB IS WRITTEN WHEN IT CHANGES, AND IT BELONGS TO ONE CHANNEL.
  *

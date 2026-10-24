@@ -500,10 +500,11 @@ pub(crate) fn mls_state_size(app: tauri::AppHandle) -> u64 {
     }
 }
 
-/// Entries at the top of `{app_data_dir}` that this must NOT empty wholesale, for one of two
-/// reasons: they belong to a framework, or Canari only owns part of what is inside (`files` and
+/// Entries at the top of `{app_data_dir}` that this must NOT empty wholesale, for one of three
+/// reasons: they belong to a framework, Canari only owns part of what is inside (`files` and
 /// `shared_prefs`, both emptied selectively below - and a first draft of this constant omitted
-/// those two, which deleted Firebase's installation id and left both prefix lists dead code).
+/// those two, which deleted Firebase's installation id and left both prefix lists dead code), or the
+/// entry is an order a reset would move backwards (`share_epoch`).
 ///
 /// Everything else at that level is deleted, so the default for a file added tomorrow is ERASED.
 /// The filter this replaced kept only `*.db`, which is why a device revoked on 2026-08-28 was
@@ -533,6 +534,11 @@ const KEPT_AT_TOP_LEVEL: &[&str] = &[
     // Shared with Firebase - emptied by prefix, not wholesale.
     "files",
     "shared_prefs",
+    // The share EPOCH is an ORDER that never moves back (`commands/handoff.rs`): reset to 0 here, a
+    // share captured before the wipe - on iOS, stamped from the App Group copy this wipe never
+    // reaches - would read as NEWER than the current session and be offered to the next account.
+    // It names no account and holds no secret.
+    "share_epoch",
 ];
 
 /// Names inside `{app_data_dir}/files`, a directory Canari SHARES with Firebase, that are ours.
@@ -560,9 +566,19 @@ pub(crate) fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
     // after everything else was removed.
     #[cfg(target_os = "ios")]
     {
-        let group = crate::app_group::app_group_dir().and_then(|g| wipe_group_names(&g));
+        // The names copy, and the share the Share Extension left there - its manifest and its
+        // copies - which no sign-out reaches if nobody signed in (`app_group_share`).
+        let group = crate::app_group::app_group_dir().and_then(|g| {
+            let names = wipe_group_names(&g);
+            let share = crate::commands::app_group_share::wipe_group_share(&g);
+            match (names, share) {
+                (Ok(()), Ok(())) => Ok(()),
+                (Err(a), Err(b)) => Err(format!("{a}; {b}")),
+                (Err(e), Ok(())) | (Ok(()), Err(e)) => Err(e),
+            }
+        });
         if let Err(e) = group {
-            log::error!("[RESET] the App Group names copy was not removed: {e}");
+            log::error!("[RESET] the App Group was not entirely wiped: {e}");
             return match wiped {
                 Ok(()) => Err(e),
                 Err(w) => Err(format!("{w}; {e}")),
@@ -1356,6 +1372,24 @@ mod tests {
         assert!(dir.join("app_textures/x").exists());
         assert!(dir.join("databases/x").exists());
         assert!(!dir.join("graine_seeds.json").exists(), "ours was kept");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The share epoch survives a wipe: a counter that restarted at 0 would make every share captured
+    /// before it look current again.
+    #[test]
+    fn keeps_the_share_epoch_which_never_moves_back() {
+        let dir = temp_dir("share-epoch");
+        file(&dir, "share_epoch");
+        file(&dir, "pending_share.json");
+
+        wipe_app_data(&dir).unwrap();
+
+        assert!(dir.join("share_epoch").exists(), "the epoch was reset");
+        assert!(
+            !dir.join("pending_share.json").exists(),
+            "a waiting share survived"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

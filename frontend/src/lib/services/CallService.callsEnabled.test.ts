@@ -1,8 +1,10 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { get } from 'svelte/store';
 import type { IMlsService } from '$lib/mls-client';
 import { CallService } from './CallService';
 import { isBlockedWith } from '$lib/users/blocks';
+import { leafRefreshHold } from '$lib/mls-client/leafRefresh';
 
 /**
  * The other half of CallService.disabled.test.ts: the same invite, with CALLS_ENABLED on. It proves
@@ -33,7 +35,7 @@ vi.mock('$lib/users/blocks', async (importOriginal) => ({
 vi.mock('../workers/encryption.worker?worker', () => ({ default: class {} }));
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ appendLog: vi.fn() }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
-vi.mock('$lib/utils/callPresence', () => ({ publishCallPresence: vi.fn() }));
+vi.mock('$lib/utils/callPresence', () => ({ publishCallPresence: vi.fn(async () => {}) }));
 vi.mock('$lib/utils/chat/callSystemMessages', () => ({
   getCallSystemMessageContext: () => null,
   recordCallMissed: vi.fn(),
@@ -173,6 +175,29 @@ describe('CallService with calls enabled', () => {
     expect(get(service.callState)).toBe('idle');
     expect(error).toHaveBeenCalled();
     error.mockRestore();
+  });
+
+  it('holds the group leaf refresh from the ring until the call is over', async () => {
+    // Each end derives the call keys from the group's CURRENT epoch, one after the other: a leaf
+    // refresh between the two (a read receipt sent while it rings) gives them different keys.
+    // A group of its own: the holds are process-wide, and the cases above leave calls ringing.
+    const service = new CallService(fakeMls);
+    expect(leafRefreshHold('group-held')).toBeNull();
+
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-held',
+      INVITE,
+      'me@example.org',
+      'device-1'
+    );
+    expect(get(service.callState)).toBe('incoming');
+    expect(leafRefreshHold('group-held')).toBe('call');
+    expect(leafRefreshHold('group-other')).toBeNull();
+
+    service.endCall(false);
+    expect(get(service.callState)).toBe('idle');
+    expect(leafRefreshHold('group-held')).toBeNull();
   });
 
   it('does not ring on an invite from a build before the ring window', async () => {

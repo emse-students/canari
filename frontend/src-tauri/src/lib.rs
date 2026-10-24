@@ -41,17 +41,19 @@ use crate::commands::display_names::store_display_names;
 use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share};
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit,
-    cles_signature_epinglees, confirmer_commit, creer_groupe, envoyer_message_bytes,
-    epoques_departs, exporter_group_info, exporter_ratchet_tree, exporter_secret,
-    feuille_portant_cle, generer_key_packages_et_persister, graine_member_signature_key,
-    graine_run, graine_session_keypair, graine_sign_with_device_credential,
-    graine_sign_with_session_key, graine_verify_signature, graine_verify_signatures, groupe_actif,
+    cles_signature_epinglees, confirmer_commit, confirmer_commit_welcome_du,
+    contexte_correspond_base, creer_groupe, date_feuille, envoyer_message_bytes, epoques_departs,
+    exporter_group_info, exporter_ratchet_tree, exporter_secret, feuille_portant_cle,
+    generer_key_packages_et_persister, graine_member_signature_key, graine_run,
+    graine_session_keypair, graine_sign_with_device_credential, graine_sign_with_session_key,
+    graine_verify_signature, graine_verify_signatures, groupe_actif, groupes_commit_en_attente,
     initialiser_mls, key_package_a_clef_privee, lister_groupes, lister_identites_membres,
     obtenir_epoch, oublier_groupe, oublier_key_packages, prendre_constats_fork,
-    prendre_evenements_appareils, recenser_key_packages, recevoir_message_bytes,
-    recevoir_messages_batch, recuperer_cle_session_mls, rejoindre_par_commit_externe,
-    remplacer_appareil, retirer_membres, retirer_membres_par_appareil,
-    sauvegarder_mls_et_persister, skip_send_generations, trailer_welcome, verifier_key_package,
+    prendre_evenements_appareils, rafraichir_feuille, recenser_key_packages,
+    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
+    rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
+    retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
+    soumission_en_attente, trailer_welcome, verifier_key_package, welcome_remis, welcomes_dus,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::discard_picked_file;
@@ -1318,7 +1320,9 @@ pub fn run() {
         .plugin(tauri_plugin_keystore::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_customtabs::init())
-        .plugin(tauri_plugin_gallery::init());
+        .plugin(tauri_plugin_gallery::init())
+        // Android's Restore Credentials (WP-RESTORE-1); its commands answer Unsupported on iOS.
+        .plugin(tauri_plugin_restore::init());
 
     // The native tab bar, iOS only: see the dependency's comment in Cargo.toml.
     #[cfg(target_os = "ios")]
@@ -1570,6 +1574,14 @@ pub fn run() {
             lister_identites_membres,
             retirer_membres,
             retirer_membres_par_appareil,
+            rafraichir_feuille,
+            date_feuille,
+            contexte_correspond_base,
+            soumission_en_attente,
+            groupes_commit_en_attente,
+            confirmer_commit_welcome_du,
+            welcomes_dus,
+            welcome_remis,
             confirmer_commit,
             annuler_commit,
             exporter_ratchet_tree,

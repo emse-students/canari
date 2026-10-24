@@ -34,6 +34,15 @@ pub struct PersistedState {
     /// #[serde(default)] ensures compatibility with states saved before this field was added.
     #[serde(default)]
     pub forgotten_group_min_epochs: HashMap<String, u64>,
+    /// The submission of each group's staged commit, by group id (`pending_submission.rs`). Only
+    /// those whose staged commit is still pending are written. `#[serde(default)]`: a state saved
+    /// before this field reads as none, and a build before it ignores the field.
+    #[serde(default, with = "crate::byte_compat::bytes_map")]
+    pub pending_submissions: HashMap<Vec<u8>, Vec<u8>>,
+    /// The Welcome each settled Add still owes, by group id (`owed_welcome.rs`).
+    /// `#[serde(default)]`, like the field above.
+    #[serde(default, with = "crate::byte_compat::bytes_map")]
+    pub owed_welcomes: HashMap<Vec<u8>, Vec<u8>>,
     /// The signature key each device identity was first seen with (`crate::device_trust`).
     /// `#[serde(default)]`: a state written before pins existed loads with none, and its trees are
     /// pinned at that load. An older build reading this state ignores the field and drops it on its
@@ -75,6 +84,10 @@ pub(crate) struct PersistedStateSer<'a> {
     #[serde(with = "crate::byte_compat::bytes_vec")]
     pub(crate) group_ids: &'a [Vec<u8>],
     pub(crate) forgotten_group_min_epochs: &'a HashMap<String, u64>,
+    #[serde(with = "crate::byte_compat::bytes_map")]
+    pub(crate) pending_submissions: &'a HashMap<Vec<u8>, Vec<u8>>,
+    #[serde(with = "crate::byte_compat::bytes_map")]
+    pub(crate) owed_welcomes: &'a HashMap<Vec<u8>, Vec<u8>>,
     pub(crate) device_pins: &'a [crate::device_trust::PersistedPin],
     pub(crate) device_events: &'a [crate::device_trust::DeviceEvent],
     pub(crate) device_departures: &'a [crate::device_trust::Departure],
@@ -195,6 +208,12 @@ pub struct MlsManager {
     /// Set by forget_group to prevent a stale Welcome (from a device itself behind on epoch)
     /// from putting this device back on the wrong branch.
     pub(crate) forgotten_group_min_epochs: HashMap<String, u64>,
+
+    /// The submission of each group's staged commit, kept with it (`pending_submission.rs`).
+    pub(crate) pending_submissions: HashMap<String, Vec<u8>>,
+
+    /// The Welcome each settled Add still owes (`owed_welcome.rs`), encoded.
+    pub(crate) owed_welcomes: HashMap<String, Vec<u8>>,
 
     /// Pinned device signature keys and pending device events - see [`crate::device_trust`].
     pub(crate) device_trust: crate::device_trust::DeviceTrust,
@@ -826,6 +845,16 @@ impl MlsManager {
                 credential,
                 groups,
                 forgotten_group_min_epochs: state.forgotten_group_min_epochs,
+                pending_submissions: state
+                    .pending_submissions
+                    .into_iter()
+                    .map(|(id, s)| (String::from_utf8_lossy(&id).to_string(), s))
+                    .collect(),
+                owed_welcomes: state
+                    .owed_welcomes
+                    .into_iter()
+                    .map(|(id, w)| (String::from_utf8_lossy(&id).to_string(), w))
+                    .collect(),
                 device_trust,
                 pending_external_joins,
                 graine_runs: state.graine_runs,
@@ -945,6 +974,8 @@ impl MlsManager {
                 credential,
                 groups: HashMap::new(),
                 forgotten_group_min_epochs: HashMap::new(),
+                pending_submissions: HashMap::new(),
+                owed_welcomes: HashMap::new(),
                 device_trust,
                 pending_external_joins: Default::default(),
                 graine_runs: HashMap::new(),
@@ -996,7 +1027,14 @@ impl MlsManager {
             .collect();
         group_ids.sort();
 
-        // 4. Encode the global state without copying storage_values
+        // 4. Encode the global state without copying storage_values. The submissions are filtered
+        //    to the groups still holding their staged commit, so the two cannot disagree on disk.
+        let pending_submissions = self.live_pending_submissions();
+        let owed_welcomes: HashMap<Vec<u8>, Vec<u8>> = self
+            .owed_welcomes
+            .iter()
+            .map(|(id, w)| (id.as_bytes().to_vec(), w.clone()))
+            .collect();
         let device_pins = self.device_trust.persisted_pins();
         let device_events = self.device_trust.persisted_events();
         let device_departures = self.device_trust.persisted_departures();
@@ -1009,6 +1047,8 @@ impl MlsManager {
             storage_values: &storage_lock,
             group_ids: &group_ids,
             forgotten_group_min_epochs: &self.forgotten_group_min_epochs,
+            pending_submissions: &pending_submissions,
+            owed_welcomes: &owed_welcomes,
             device_pins: &device_pins,
             device_events: &device_events,
             device_departures: &device_departures,

@@ -201,6 +201,9 @@ min_length() {
   # report with 503 LIVE_REPORT_SIGNING_UNAVAILABLE.
   LIVE_REPORT_SIGNING_KEY) printf '32' ;;
   LYDIA_KEY_ENCRYPTION_SECRET) printf '32' ;;
+  # Seals each live's key at rest (migration 110); shorter, social-service refuses every live start
+  # with 503 LIVE_KEY_SEALING_UNAVAILABLE.
+  LIVE_KEY_ENCRYPTION_SECRET) printf '32' ;;
   esac
 }
 

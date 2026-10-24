@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';

@@ -203,6 +203,15 @@
   }
 
   /**
+   * What a failed access write tells the user - ONE mapping for every control that changes who
+   * reads the salon (visibility, write policy, adding and removing a member). A coded refusal (someone
+   * losing access holds more than the actor, the salon changed meanwhile) is named; anything else is the control's own generic error.
+   */
+  function accessWriteError(e: unknown, generic: string): string {
+    return describeCommunityRefusal(refusalCode(e)) ?? generic;
+  }
+
+  /**
    * Flips visibility ON THE SERVER, at once, behind a confirmation - the same shape as removing a
    * member (below): both change who can read the channel, and both used to be deferred to
    * "Enregistrer", which production went five hours without a single member ever pressing (see
@@ -210,15 +219,6 @@
    * `accessIsPrivate` is not flipped until the write succeeds, so it stays the server's truth at
    * every moment nothing is in flight - there is no separate "pending" toggle state to track.
    */
-  /**
-   * What a failed access write tells the user - ONE mapping for every control that changes who
-   * reads the salon (visibility, write policy, adding and removing a member). A coded refusal (the
-   * member holds more than the actor) is named; anything else is the control's own generic error.
-   */
-  function accessWriteError(e: unknown, generic: string): string {
-    return describeCommunityRefusal(refusalCode(e)) ?? generic;
-  }
-
   async function handleTogglePrivacy() {
     if (privacySaving) return;
     const next = !accessIsPrivate;

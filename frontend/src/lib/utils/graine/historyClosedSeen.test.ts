@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { ACCOUNT_KEY } from '../accountLocalKeys';
 import {
   beginHistoryWidening,

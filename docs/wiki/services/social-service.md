@@ -1334,39 +1334,44 @@ returning the union of what the actor holds) and then `actorMayGrantRole`:
 | `createRole` | the new role grants nothing the actor lacks; it ranks just above the base role (`priority` is the server's, the body's is not read) | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
 
 **Removals are bounded by the actor's own permissions, by the sibling predicate.**
-`kickFromWorkspace`, `removeMemberFromChannel` and every member an access-list rewrite takes the
-salon from (`updateChannelAccess`: the audience before - the allowlist, or the whole community while
-the salon is public - minus the allowlist after, so going private counts every member left off)
-share one gate, `assertActorMayRemoveMembers`: the actor holds
-`member.kick`, `channel.manage` or `workspace.manage`, and `permissionsCover` - the "holds at least
-as much" that `actorMayGrantRole` is built on - holds between the actor's permissions and each
-target's. Otherwise `403 REMOVAL_EXCEEDS_ACTOR`, which the client names (`COMMUNITY_REFUSALS`, as
+`kickFromWorkspace`, `removeMemberFromChannel`, every member an access-list rewrite takes the salon
+from (`updateChannelAccess`: the audience before - the allowlist, or the whole community while the
+salon is public - minus the allowlist after, so going private counts every member left off), and
+every member a private salon's creation leaves off (`createChannel`: everyone but the creator) share
+one gate, `assertActorMayRemoveMembers`: the actor holds `member.kick`, `channel.manage` or
+`workspace.manage`, and `permissionsCover` - the "holds at least as much" that `actorMayGrantRole`
+is built on - holds between the actor's permissions and each target's. Otherwise
+`403 REMOVAL_EXCEEDS_ACTOR`, which the client names (`COMMUNITY_REFUSALS`, as
 `ROLE_CHANGE_EXCEEDS_ACTOR` and `INVITE_ROLE_NOT_GRANTABLE`). An allowlist entry whose user is no
-longer a member has nothing to compare and is dropped. A consequence worth knowing: a member who
-holds only `channel.manage` cannot make a salon private while it would leave off someone who
-outranks them, unless that member is on the list.
+longer a member has nothing to compare and is dropped. **Only high ranks make a salon private while
+an administrator exists** (user, 2026-10-24): a member holding only `channel.manage` can neither
+create a private salon nor make one private while it leaves off someone who outranks them.
 
-The check and the save run in ONE transaction holding the community's removal lock
-(`withCommunityRemovalLock`: `pg_advisory_xact_lock` on `community_removal:<workspace id>`), and the
-gate reads the actor's and every target's membership and role rows `FOR SHARE`. A role change
-writing any of those rows waits for the removal to commit, and a removal that started after a role
-change waits for it and reads the committed roles - so what was compared is what holds when the
-removal is saved. Pinned by `removal-bound.integration.spec.ts`, which parks the gate on an
-uncommitted role change through `pg_blocking_pids`.
+**The gate is asked twice: early, then under the lock.** The early answer comes before any call to
+chat-delivery, so a refused removal mints no group and begins no departure. The authoritative one
+runs inside the roster write of the departure (`departDistributionGroups`, which opens its
+transaction with the community removal lock, `pg_advisory_xact_lock` on
+`community_removal:<workspace id>`), or inside `withCommunityRemovalLock` for a private creation,
+and reads the actor's and every target's membership and role rows `FOR SHARE`. A role change writing
+any of those rows waits for the removal to commit, and a removal that started after a role change
+waits for it and reads the committed roles - so what was compared is what holds when the removal is
+saved. A refusal there abandons the departure, which is settled `cancelled`. No call to
+chat-delivery runs under the lock: the first evictions precede it, the second follow the commit
+([channel-encryption](../protocols/channel-encryption.md), "WP-21, and the gate it had nowhere to
+live").
 
-**No call to chat-delivery is made while that lock is held.** The key-distribution evictions a
-removal causes are recorded as rows of `distribution_evictions_owed` (migration 109) in the same
-transaction - the community's group for a kick, each private salon's group the user leaves - and
-`settleOwedEvictions` makes the calls after the commit, deleting each row once its call succeeded.
-A failed call is logged at ERROR and its row stays owed; every later pass retries it: after each
-removal, at boot, and every minute. The minute is a trigger only - what is owed is read from the
-rows. A user the scope entitles again before the pass (re-invited, re-granted) is not evicted, and
-the row is closed with a warning. The message fan-out outbox (`channel_message_fanout`, migration
-093) was not reused: it is keyed by a message and cascades with it. Leaving a community or a salon,
-and an account deletion, still call chat-delivery before their save, outside any lock.
+**The salon row is re-read `FOR UPDATE` in that transaction.** A roster write (`stripFromChannels`)
+removes the user from the locked row, never from the copy read before the lock, so an add granted in
+between is kept. An access-list rewrite compares the locked row with the copy its removals and first
+evictions were computed from; if the visibility or the allowlist changed, it is refused whole with
+`409 CHANNEL_ACCESS_CHANGED` (nothing saved, nobody cut off, retryable), which the settings panel
+names. A public salon made private gets its distribution group before the lock; when the change is
+then refused, the group is left, not retired: inert while the salon is public, reused by the next
+flip (the mint is idempotent), and possibly the group of a concurrent flip that did commit.
 
-A public salon made private gets its distribution group before the lock is taken; when the check
-then refuses, the salon stays public and the group is retired again.
+Pinned by `removal-bound.integration.spec.ts` (PostgreSQL: the gate parked on an uncommitted role
+change through `pg_blocking_pids`, the removal lock, a rewrite raced by another, a private creation,
+no advisory lock held at any call to chat-delivery) and `removal-bound.spec.ts`.
 
 `workspace.manage` holds every permission, so an administrator keeps all of it. Pinned by
 `role-change-bound.spec.ts` and `removal-bound.spec.ts`.

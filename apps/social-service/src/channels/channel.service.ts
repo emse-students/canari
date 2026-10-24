@@ -13,8 +13,7 @@ import {
 import { isUniqueViolation } from '../common/pg-errors';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Cron, CronExpression } from '@nestjs/schedule';
-import { EntityManager, Repository, In, And, LessThan, MoreThanOrEqual } from 'typeorm';
+import { Repository, In, And, LessThan, MoreThanOrEqual, type EntityManager } from 'typeorm';
 import * as crypto from 'crypto';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
@@ -28,6 +27,7 @@ import { isBlockedBetween } from '../common/user-blocks';
 import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
 import { fetchUserDeviceCount } from '../internal/delivery.client';
 import {
+  cancelDistributionDeparture,
   channelScope,
   createDistributionGroup,
   deleteDistributionGroup,
@@ -36,7 +36,15 @@ import {
   readDistributionGroup,
   workspaceScope,
   type DistributionGroupRef,
+  type DistributionScope,
 } from './distribution-group.client';
+import {
+  READ_OUTCOME_SQL,
+  COMMUNITY_REMOVAL_LOCK_SQL,
+  DELETE_GROUP_DEPARTURES_SQL,
+  RECORD_CANCELLED_SQL,
+  RECORD_DEPARTED_SQL,
+} from './distribution-departures';
 
 import {
   actorMayGrantRole,
@@ -71,6 +79,31 @@ import {
   type HistoryVisibility,
   type WorkspaceInviteDto,
 } from './dto/channel.dto';
+
+/** One person to cut off one key-distribution group, in a departure. */
+interface DepartureCut {
+  scope: DistributionScope;
+  userId: string;
+}
+
+/**
+ * Why someone leaves a key-distribution group - the `reason` every departure line carries, so a log
+ * reader can tell a kick from an access edit. A closed list: a misspelt reason is a compile error,
+ * never a line no search finds.
+ */
+type DepartureReason =
+  | 'left'
+  | 'kicked'
+  | 'account_deleted'
+  | 'access_updated'
+  | 'left_channel'
+  | 'removed_from_channel';
+
+/** A cut whose first eviction began a departure on chat-delivery, with the name it answered. */
+interface BegunDeparture extends DepartureCut {
+  groupId: string;
+  departure: number;
+}
 
 /** Manages workspaces, channels, roles, members and encrypted messages. */
 /**
@@ -126,6 +159,13 @@ const CLIENT_MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
  * so the tests name the refusal by its code, never by its sentence.
  */
 export const CHANNEL_SIGNATURE_REQUIRED = 'CHANNEL_SIGNATURE_REQUIRED';
+
+/**
+ * 409 code: an access-list rewrite refused because the salon's visibility or allowlist changed
+ * between the read it was computed from and the row lock it is saved under. Nothing was written and
+ * nobody was cut off; the same edit may be retried against the new row.
+ */
+export const CHANNEL_ACCESS_CHANGED = 'CHANNEL_ACCESS_CHANGED';
 
 /**
  * THE one rule for who may READ a channel, with no database in it.
@@ -204,15 +244,6 @@ export function sortChannels<T extends Pick<Channel, 'id' | 'sortOrder' | 'creat
 export const UNREAD_TRACKED_SINCE_MS = Date.UTC(2026, 9, 8);
 
 /** What the outbox entry of a salon row keeps for its push (migration 093). */
-/** One row of `distribution_evictions_owed` (migration 109), as {@link ChannelService.settleOwedEvictions} reads it. */
-interface OwedEviction {
-  kind: 'workspace' | 'channel';
-  scopeId: string;
-  userId: string;
-  reason: string;
-  token: string;
-}
-
 export interface ChannelFanoutPayload {
   mentionedUserIds?: string[];
   seedFrame?: string;
@@ -477,49 +508,277 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
-   * Stops the community's seeds reaching someone who is about to stop being a member.
-   *
-   * BEFORE THE MEMBERSHIP ROW GOES, AND ALLOWED TO ABORT THE REMOVAL. The two halves of a departure
-   * are not symmetric: this one is immediate and needs nobody online, while removing their MLS leaf
-   * is a commit only a remaining member's device can produce, and lands whenever one next loads the
-   * community. If this call fails and the removal went through anyway, the leaver would go on being
-   * routed every seed frame with no row left anywhere to say they should not be - unfindable and
-   * permanent. Failing here instead leaves them a member and the whole departure retryable, which
-   * is the only outcome that stays reconcilable (same rule as {@link hardDeleteWorkspace}).
-   *
-   * Both ends of a removal come through here, because they are the same removal seen from two
-   * sides - exactly like {@link assertRemovalKeepsAnAdmin}.
+   * Runs `work` in ONE transaction that first takes the community's removal lock
+   * ({@link COMMUNITY_REMOVAL_LOCK_SQL}, transaction-scoped), so every removal and every private
+   * creation in one community is serialised, and a permission checked inside `work` against rows
+   * read `FOR SHARE` still holds when `work` writes. No call to another service belongs in `work`.
    */
-  private async cutOffKeyDistribution(
+  private withCommunityRemovalLock<T>(
     workspaceId: string,
-    userId: string,
-    reason: string
+    work: (m: EntityManager) => Promise<T>
+  ): Promise<T> {
+    return this.memberRepo.manager.transaction(async (m) => {
+      await m.query(COMMUNITY_REMOVAL_LOCK_SQL, [workspaceId]);
+      this.logger.debug(`[WORKSPACE] removal lock held workspace=${workspaceId}`);
+      return work(m);
+    });
+  }
+
+  /**
+   * THE ONE WAY ANYONE LEAVES A KEY-DISTRIBUTION GROUP - a community's or a private salon's, by
+   * leaving, being kicked or removed, losing access, or having their account erased. Every departure
+   * in this file comes through here, so the next one cannot forget a step.
+   *
+   * 1. FIRST EVICTION, BEFORE THE ROSTER WRITE, AND ALLOWED TO ABORT THE DEPARTURE. The two halves
+   *    of a departure are not symmetric: this one is immediate and needs nobody online, while
+   *    removing their MLS leaf is a commit only a remaining member's device can produce. If this
+   *    failed and the roster write went through anyway, the leaver would go on being routed every
+   *    seed frame with no row left anywhere to say they should not be. Failing here leaves them a
+   *    member and the departure retryable. chat-delivery records the departure as IN PROGRESS
+   *    (no seat is written for them meanwhile) and answers its NAME.
+   * 2. THE ROSTER WRITE AND THE NAMES, IN ONE TRANSACTION. `rosterWrite` removes the roster rows,
+   *    and each departure's name is recorded `departed` beside it (`distribution_departures`) - so
+   *    the record exists exactly when the roster write committed. If chat-delivery's drain already
+   *    decided that name `cancelled`, the record is refused and the whole departure rolls back:
+   *    the person stays a member, and a retry begins a new departure.
+   * 3. SECOND EVICTION, AFTER THE COMMIT, naming the departure it settles. Between 1 and 3 the
+   *    entitlement still answers `true` (the leaver is on the roster until 2 commits), so the first
+   *    eviction alone cannot exclude a seat claimed in that gap; the second one cuts it. It cannot
+   *    abort anything - the roster write is done - so a failure is logged at error, and
+   *    chat-delivery's hourly drain asks {@link decideDistributionDeparture} how it ended.
+   *
+   * ABANDONED, IT IS SETTLED AT ONCE. When a later first eviction or the transaction fails, every
+   * departure already begun is decided `cancelled` here ({@link decideDistributionDeparture}) and
+   * chat-delivery is told, so the person - still a member - is not held seatless until the drain.
+   * The original error is rethrown; a step that fails here is logged and left to the drain.
+   *
+   * AN UNNAMED FIRST EVICTION (a chat-delivery build that does not name departures, during a
+   * rolling deploy) is logged and followed, after the roster write, by a plain eviction - the
+   * cut-twice shape that build understands.
+   *
+   * THE COMMUNITY'S REMOVAL LOCK OPENS THE TRANSACTION ({@link COMMUNITY_REMOVAL_LOCK_SQL}), so a
+   * caller may re-check a permission inside `rosterWrite` against writes serialised on the same
+   * community. A refusal thrown there is an abandoned departure like any other: the transaction
+   * rolls back (no `departed` record, no roster change) and the departure is settled `cancelled`.
+   * The first evictions stay before the transaction, so no HTTP call runs under the lock.
+   *
+   * channel-encryption, "WP-21, and the gate it had nowhere to live".
+   *
+   * @param cuts the groups and people to cut, one entry per person per scope
+   * @param workspaceId the community the departure belongs to, whose removal lock the roster write
+   *   holds
+   * @param rosterWrite the roster change, written through the transaction's manager, under the lock
+   */
+  private async departDistributionGroups(
+    cuts: DepartureCut[],
+    reason: DepartureReason,
+    workspaceId: string,
+    rosterWrite: (m: EntityManager) => Promise<void>
   ): Promise<void> {
-    const cut = await evictFromDistributionGroup(
-      this.internalSecret,
-      workspaceScope(workspaceId),
-      userId
-    );
-    if (!cut.evicted) {
-      // NOT the same line as a cut that found nothing, and the difference is the whole report: a
-      // community with no distribution group has no key distribution to stop, while three zeros
-      // under the sentence below would read as one that was cut clean. Warn, because on a
-      // post-Graine community it means the group is missing and every seed frame is unrouted.
+    const begun: BegunDeparture[] = [];
+    const unnamed: DepartureCut[] = [];
+    try {
+      for (const cut of cuts) {
+        const first = await evictFromDistributionGroup(this.internalSecret, cut.scope, cut.userId);
+        if (!first.evicted) {
+          // NOT the same line as a cut that found nothing, and the difference is the whole report: a
+          // scope with no distribution group has no key distribution to stop, while three zeros
+          // under the line below would read as one that was cut clean. A community warns, because on
+          // a post-Graine community it means the group is missing and every seed frame is unrouted.
+          const line =
+            `[KEY_DISTRIBUTION] no distribution group to cut scope=${cut.scope.kind}:${cut.scope.id} ` +
+            `user=${cut.userId.slice(0, 8)} reason=${reason}`;
+          if (cut.scope.kind === 'workspace')
+            this.logger.warn(`${line} - pre-Graine community, or its group is gone`);
+          else this.logger.log(line);
+          continue;
+        }
+        // ALL THREE COUNTS, EACH UNDER ITS OWN NAME: rows are what a reconnect reads, the Redis set
+        // is what a live fanout reads, and the queue is what an offline device collects next.
+        this.logger.log(
+          `[KEY_DISTRIBUTION] key distribution cut scope=${cut.scope.kind}:${cut.scope.id} ` +
+            `user=${cut.userId.slice(0, 8)} reason=${reason} memberships=${first.memberships} ` +
+            `routes=${first.routes} queued=${first.queued} departure=${first.begun?.departure ?? 'none'}`
+        );
+        if (first.begun) begun.push({ ...cut, ...first.begun });
+        else {
+          this.logger.warn(
+            `[KEY_DISTRIBUTION] first eviction named NO departure scope=${cut.scope.kind}:${cut.scope.id} ` +
+              `user=${cut.userId.slice(0, 8)} reason=${reason} - an older chat-delivery; a plain ` +
+              `eviction follows the roster write`
+          );
+          unnamed.push(cut);
+        }
+      }
+
+      await this.withCommunityRemovalLock(workspaceId, async (m) => {
+        for (const b of begun) {
+          const recorded = (await m.query(RECORD_DEPARTED_SQL, [
+            b.groupId,
+            b.userId,
+            b.departure,
+          ])) as unknown[];
+          if (recorded.length === 0) {
+            this.logger.warn(
+              `[KEY_DISTRIBUTION] departure CANCELLED before its roster write scope=${b.scope.kind}:${b.scope.id} ` +
+                `user=${b.userId.slice(0, 8)} departure=${b.departure} reason=${reason} - rolled back, retryable`
+            );
+            throw new ConflictException({
+              code: 'DEPARTURE_SUPERSEDED',
+              message: 'The departure could not be completed, retry.',
+            });
+          }
+        }
+        await rosterWrite(m);
+      });
+    } catch (e) {
       this.logger.warn(
-        `[WORKSPACE] no distribution group to cut workspace=${workspaceId} ` +
-          `user=${userId.slice(0, 8)} reason=${reason} - pre-Graine community, or its group is gone`
+        `[KEY_DISTRIBUTION] departure ABANDONED reason=${reason} begun=${begun.length}: ` +
+          `${e instanceof Error ? e.message : String(e)} - settling what it began`
       );
-      return;
+      await this.settleAbandonedDepartures(begun, reason);
+      throw e;
     }
-    // ALL THREE COUNTS, EACH UNDER ITS OWN NAME. This line used to print `routes=` and pass
-    // `memberships`, which read as consistent for as long as the two happened to agree - and the
-    // day they did not, it would have named the store it had not measured. Three stores are cut
-    // and none stands in for the others: rows are what a reconnect reads, the Redis set is what a
-    // live fanout reads, and the queue is what an offline device collects on its next connection.
+
+    for (const cut of unnamed) {
+      try {
+        const second = await evictFromDistributionGroup(this.internalSecret, cut.scope, cut.userId);
+        this.logger.log(
+          `[KEY_DISTRIBUTION] second eviction (unnamed) scope=${cut.scope.kind}:${cut.scope.id} ` +
+            `user=${cut.userId.slice(0, 8)} reason=${reason} evicted=${second.evicted} ` +
+            `departure=${second.begun?.departure ?? 'none'}`
+        );
+      } catch (e) {
+        this.logger.error(
+          `[KEY_DISTRIBUTION] second eviction (unnamed) FAILED scope=${cut.scope.kind}:${cut.scope.id} ` +
+            `user=${cut.userId.slice(0, 8)} reason=${reason}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+
+    for (const b of begun) {
+      try {
+        const second = await evictFromDistributionGroup(
+          this.internalSecret,
+          b.scope,
+          b.userId,
+          b.departure
+        );
+        this.logger.log(
+          `[KEY_DISTRIBUTION] second eviction scope=${b.scope.kind}:${b.scope.id} user=${b.userId.slice(0, 8)} ` +
+            `reason=${reason} departure=${b.departure} evicted=${second.evicted} ` +
+            `memberships=${second.memberships} routes=${second.routes}`
+        );
+      } catch (e) {
+        this.logger.error(
+          `[KEY_DISTRIBUTION] second eviction FAILED scope=${b.scope.kind}:${b.scope.id} ` +
+            `user=${b.userId.slice(0, 8)} reason=${reason} departure=${b.departure}: ` +
+            `${e instanceof Error ? e.message : String(e)} - the departure stays in progress on ` +
+            `chat-delivery until its hourly drain asks how it ended`
+        );
+      }
+    }
+  }
+
+  /**
+   * Settles the departures an abandoned {@link departDistributionGroups} had begun: each is decided
+   * ({@link decideDistributionDeparture}) and chat-delivery is told - `cancelled` settles it with
+   * nothing evicted, `departed` (a roster write that did commit before the error) gets its second
+   * eviction. Each step is caught and logged on its own; one left unsettled is the drain's.
+   */
+  private async settleAbandonedDepartures(
+    begun: BegunDeparture[],
+    reason: DepartureReason
+  ): Promise<void> {
+    for (const b of begun) {
+      const where =
+        `scope=${b.scope.kind}:${b.scope.id} user=${b.userId.slice(0, 8)} ` +
+        `departure=${b.departure} reason=${reason}`;
+      try {
+        const outcome = await this.decideDistributionDeparture(b.groupId, b.userId, b.departure);
+        const settled =
+          outcome === 'cancelled'
+            ? await cancelDistributionDeparture(this.internalSecret, b.scope, b.userId, b.departure)
+            : (
+                await evictFromDistributionGroup(
+                  this.internalSecret,
+                  b.scope,
+                  b.userId,
+                  b.departure
+                )
+              ).evicted;
+        this.logger.log(
+          `[KEY_DISTRIBUTION] abandoned departure settled ${where} outcome=${outcome} settled=${settled}`
+        );
+      } catch (e) {
+        this.logger.error(
+          `[KEY_DISTRIBUTION] abandoned departure NOT settled ${where}: ` +
+            `${e instanceof Error ? e.message : String(e)} - chat-delivery's hourly drain settles it`
+        );
+      }
+    }
+  }
+
+  /**
+   * How the departure `departure` of `userId` from chat-delivery's group `groupId` ended - asked by
+   * chat-delivery's hourly drain for a departure whose second eviction never arrived, and by an
+   * abandoned departure ({@link settleAbandonedDepartures}).
+   *
+   * IT DECIDES AS IT ANSWERS. When the roster write has not recorded the departure, this records it
+   * `cancelled`, and the shared primary key then refuses the roster write's record, rolling the
+   * departure back ({@link departDistributionGroups}). So the answer is final, never "not yet". Two
+   * statements, not one: the insert waits for a roster write in flight to commit or roll back, and
+   * only a statement started AFTER that wait sees its row.
+   *
+   * A PERSON NO LONGER ENTITLED, WITH NOTHING RECORDED, IS ANSWERED `departed` AND NOTHING IS
+   * WRITTEN. Their roster rows are gone - by another departure, by the group's scope ending, or by an
+   * account erasure - so no roster write can restore them under this name, and cutting their seats
+   * is right whatever ended it. Recording nothing is what keeps an erased account's id out of this
+   * table after its erasure deleted its rows. A roster write still in flight leaves the person
+   * visible as entitled, so it takes the recording path and waits for it.
+   */
+  async decideDistributionDeparture(
+    groupId: string,
+    userId: string,
+    departure: number
+  ): Promise<'departed' | 'cancelled'> {
+    const manager = this.memberRepo.manager;
+    if (!(await this.isEntitledToDistributionGroupId(groupId, userId))) {
+      const recorded = (await manager.query(READ_OUTCOME_SQL, [
+        groupId,
+        userId,
+        departure,
+      ])) as Array<{
+        outcome: 'departed' | 'cancelled';
+      }>;
+      const outcome = recorded[0]?.outcome ?? 'departed';
+      this.logger.log(
+        `[KEY_DISTRIBUTION] departure outcome group=${groupId} user=${userId.slice(0, 8)} departure=${departure} ` +
+          `outcome=${outcome} entitled=false recorded=${recorded.length > 0}`
+      );
+      return outcome;
+    }
+    await manager.query(RECORD_CANCELLED_SQL, [groupId, userId, departure]);
+    const rows = (await manager.query(READ_OUTCOME_SQL, [groupId, userId, departure])) as Array<{
+      outcome: 'departed' | 'cancelled';
+    }>;
+    const outcome = rows[0]?.outcome;
+    if (outcome !== 'departed' && outcome !== 'cancelled') {
+      this.logger.error(
+        `[KEY_DISTRIBUTION] departure outcome UNREADABLE group=${groupId} user=${userId.slice(0, 8)} departure=${departure}`
+      );
+      throw new ServiceUnavailableException('The departure outcome could not be read.');
+    }
     this.logger.log(
-      `[WORKSPACE] key distribution cut workspace=${workspaceId} user=${userId.slice(0, 8)} ` +
-        `reason=${reason} memberships=${cut.memberships} routes=${cut.routes} queued=${cut.queued}`
+      `[KEY_DISTRIBUTION] departure outcome group=${groupId} user=${userId.slice(0, 8)} departure=${departure} outcome=${outcome}`
     );
+    return outcome;
+  }
+
+  /** The cut of a salon's own group: none for a public salon, or one that has no group. */
+  private channelCuts(channel: Channel, userIds: readonly string[]): DepartureCut[] {
+    if (!channel.isPrivate || !channel.distributionGroupId) return [];
+    return userIds.map((userId) => ({ scope: channelScope(channel.id), userId }));
   }
 
   /**
@@ -570,6 +829,7 @@ export class ChannelService implements OnApplicationBootstrap {
       await deleteDistributionGroup(this.internalSecret, channelScope(channel.id));
       channel.distributionGroupId = null;
       await this.channelRepo.save(channel);
+      await this.memberRepo.manager.query(DELETE_GROUP_DEPARTURES_SQL, [[groupId]]);
       this.logger.log(
         `[CHANNEL_GRAINE] group retired channel=${channel.id} group=${groupId} reason=${reason}`
       );
@@ -579,135 +839,6 @@ export class ChannelService implements OnApplicationBootstrap {
           `${e instanceof Error ? e.message : String(e)} - the group outlives its salon and must be reaped by hand`
       );
     }
-  }
-
-  /**
-   * Stops a private salon's seeds reaching someone who may no longer open it.
-   *
-   * The salon-scoped twin of {@link cutOffKeyDistribution}, and it fails the same way: allowed to
-   * abort the removal, because a routing row left behind has nothing that would ever come back for
-   * it. A public salon has no group of its own and this is a no-op by construction.
-   */
-  private async cutOffChannelKeyDistribution(
-    channel: Channel,
-    userId: string,
-    reason: string
-  ): Promise<void> {
-    if (!channel.isPrivate || !channel.distributionGroupId) return;
-    await this.evictFromChannelGroup(channel.id, userId, reason);
-  }
-
-  /** The salon-scoped eviction call itself, shared by the cut-off above and the owed-eviction drain. */
-  private async evictFromChannelGroup(
-    channelId: string,
-    userId: string,
-    reason: string
-  ): Promise<void> {
-    const cut = await evictFromDistributionGroup(
-      this.internalSecret,
-      channelScope(channelId),
-      userId
-    );
-    this.logger.log(
-      `[CHANNEL_GRAINE] key distribution cut channel=${channelId} user=${userId.slice(0, 8)} ` +
-        `reason=${reason} evicted=${cut.evicted} memberships=${cut.memberships} routes=${cut.routes} queued=${cut.queued}`
-    );
-  }
-
-  /**
-   * Records, in the caller's transaction `tx`, that `userId` is OWED an eviction from the key
-   * distribution group of a scope - the durable half of a removal decided under the community lock.
-   *
-   * The eviction itself is an HTTP call to chat-delivery, and no call leaves this service while the
-   * lock is held. So the removal commits this row WITH the roster change, and
-   * {@link settleOwedEvictions} performs the call after the commit and deletes the row once it
-   * succeeded. A failed call leaves the row, which every later pass retries: the row, not a clock,
-   * is what says the eviction is still owed. Owed again while still owed, the row takes a new
-   * `token`, so a pass that read the previous one cannot delete it.
-   */
-  private async oweEviction(
-    tx: EntityManager,
-    kind: 'workspace' | 'channel',
-    scopeId: string,
-    userId: string,
-    reason: string
-  ): Promise<void> {
-    await tx.query(
-      `INSERT INTO distribution_evictions_owed (kind, "scopeId", "userId", reason)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (kind, "scopeId", "userId")
-       DO UPDATE SET reason = EXCLUDED.reason, token = gen_random_uuid(), "createdAt" = now()`,
-      [kind, scopeId, userId, reason]
-    );
-    this.logger.debug(
-      `[DISTRIBUTION_GROUP] eviction owed ${kind}=${scopeId} user=${userId.slice(0, 8)} reason=${reason}`
-    );
-  }
-
-  /**
-   * Performs every owed key-distribution eviction (see {@link oweEviction}), deleting each row once
-   * its call succeeded. Never throws: a failed call is logged at ERROR and its row stays owed for
-   * the next pass. Passes run after every removal that owed one, at boot, and every minute - a
-   * trigger only; what is owed is read from the rows each time.
-   *
-   * A user the scope entitles AGAIN by the time the row is read (re-invited, re-granted) is not
-   * evicted - that would cut a member off - and the row is closed with a warning naming it.
-   *
-   * @returns how many rows this pass settled
-   */
-  async settleOwedEvictions(): Promise<number> {
-    let owed: OwedEviction[];
-    try {
-      owed = await this.memberRepo.query(
-        `SELECT kind, "scopeId", "userId", reason, token
-         FROM distribution_evictions_owed ORDER BY "createdAt"`
-      );
-    } catch (e) {
-      this.logger.error(
-        `[DISTRIBUTION_GROUP] owed evictions could not be read, retried by the next pass: ` +
-          `${e instanceof Error ? e.message : String(e)}`
-      );
-      return 0;
-    }
-    if (owed.length === 0) return 0;
-    let settled = 0;
-    for (const row of owed) {
-      try {
-        await this.settleOwedEviction(row);
-        settled += 1;
-      } catch (e) {
-        this.logger.error(
-          `[DISTRIBUTION_GROUP] eviction still OWED ${row.kind}=${row.scopeId} ` +
-            `user=${row.userId.slice(0, 8)} reason=${row.reason}: ` +
-            `${e instanceof Error ? e.message : String(e)} - kept, retried by the next pass`
-        );
-      }
-    }
-    this.logger.log(`[DISTRIBUTION_GROUP] owed evictions settled=${settled}/${owed.length}`);
-    return settled;
-  }
-
-  /** One owed eviction: the call (unless the scope entitles the user again), then the row goes. */
-  private async settleOwedEviction(row: OwedEviction): Promise<void> {
-    if (await this.isDistributionGroupEntitled(row.kind, row.scopeId, row.userId)) {
-      this.logger.warn(
-        `[DISTRIBUTION_GROUP] owed eviction closed WITHOUT a call ${row.kind}=${row.scopeId} ` +
-          `user=${row.userId.slice(0, 8)} reason=${row.reason} - entitled again before it was settled`
-      );
-    } else if (row.kind === 'workspace') {
-      await this.cutOffKeyDistribution(row.scopeId, row.userId, row.reason);
-    } else {
-      await this.evictFromChannelGroup(row.scopeId, row.userId, row.reason);
-    }
-    await this.memberRepo.query(`DELETE FROM distribution_evictions_owed WHERE token = $1`, [
-      row.token,
-    ]);
-  }
-
-  /** Runs {@link settleOwedEvictions} on a timer - a trigger only, the rows carry what is owed. */
-  @Cron(CronExpression.EVERY_MINUTE)
-  async settleOwedEvictionsPeriodically(): Promise<void> {
-    await this.settleOwedEvictions();
   }
 
   /**
@@ -748,83 +879,91 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
-   * Takes one user out of EVERY private salon of a community they are leaving - roster and routing
-   * both.
+   * The private salons of a community that name `userId` - what a departure from the community must
+   * take them out of, roster and routing both.
    *
    * The community's own cut says nothing about these: each private salon has its own group and its
    * own routing rows, so a departure that only cut the community's would leave the leaver routed
-   * every seed of every private salon they were in. Run for the same reasons and at the same
-   * moment, before the membership row goes.
+   * every seed of every private salon they were in.
    *
-   * THE ROSTER GOES TOO, and that is not tidiness. `allowedUsers` is the authorization, so a leaver
-   * still named there would have private access restored the moment they rejoined the community -
-   * and, worse, `reconcileDistributionGroupRoster` diffs the MLS tree against exactly this list, so
-   * their leaf would be re-authorised at every reconciliation and never removed. A departure that
-   * leaves the roster untouched is a departure the tree undoes.
-   *
-   * PER SALON AND SEQUENTIAL, so one failure aborts the departure rather than half of them. The
-   * count is logged even at zero - a sweep that reports nothing is a sweep nobody can tell ran.
+   * THE ROSTER GOES TOO ({@link stripFromChannels}), and that is not tidiness. `allowedUsers` is the
+   * authorization, so a leaver still named there would have private access restored the moment they
+   * rejoined the community - and `reconcileDistributionGroupRoster` diffs the MLS tree against
+   * exactly this list, so their leaf would be re-authorised at every reconciliation. The count is
+   * logged even at zero - a sweep that reports nothing is a sweep nobody can tell ran.
    */
-  private async cutOffEveryPrivateChannel(
+  private async heldPrivateChannels(
     workspaceId: string,
     userId: string,
-    reason: string
-  ): Promise<void> {
-    const { held, total, normalised } = await this.privateChannelsHolding(
-      this.channelRepo,
-      workspaceId,
-      userId
-    );
-    for (const channel of held) {
-      await this.cutOffChannelKeyDistribution(channel, userId, reason);
-      channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalised);
-      await this.channelRepo.save(channel);
-    }
+    reason: DepartureReason
+  ): Promise<Channel[]> {
+    const normalised = userId.trim().toLowerCase();
+    const privateChannels = await this.channelRepo.find({
+      where: { workspaceId, isPrivate: true },
+    });
+    const held = privateChannels.filter((c) => (c.allowedUsers || []).includes(normalised));
     this.logger.log(
-      `[CHANNEL_GRAINE] private salons cut workspace=${workspaceId} user=${userId.slice(0, 8)} ` +
-        `reason=${reason} salons=${held.length}/${total}`
+      `[CHANNEL_GRAINE] private salons to cut workspace=${workspaceId} user=${userId.slice(0, 8)} ` +
+        `reason=${reason} salons=${held.length}/${privateChannels.length}`
     );
+    return held;
   }
 
   /**
-   * {@link cutOffEveryPrivateChannel} inside a removal's transaction `tx`: the user leaves every
-   * private salon's roster in that transaction, and each salon's eviction is OWED rather than
-   * called ({@link oweEviction}), so no call leaves this service while the community lock is held.
+   * Removes `userId` from each salon's `allowedUsers`, through the departure's transaction `m`.
+   *
+   * EACH ROW IS RE-READ `FOR UPDATE` before it is written. `channels` was read before the lock, and
+   * saving that copy would write back an allowlist another request changed meanwhile - an add
+   * granted in between would be lost. The caller's copy is brought up to date, since it goes on to
+   * name the salon's audience.
    */
-  private async withdrawFromEveryPrivateChannel(
-    tx: EntityManager,
-    workspaceId: string,
-    userId: string,
-    reason: string
+  private async stripFromChannels(
+    m: EntityManager,
+    channels: Channel[],
+    userId: string
   ): Promise<void> {
-    const { held, total, normalised } = await this.privateChannelsHolding(
-      tx.getRepository(Channel),
-      workspaceId,
-      userId
-    );
-    for (const channel of held) {
-      channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalised);
-      await tx.getRepository(Channel).save(channel);
-      if (channel.distributionGroupId) {
-        await this.oweEviction(tx, 'channel', channel.id, userId, reason);
+    const normalised = userId.trim().toLowerCase();
+    for (const channel of channels) {
+      const locked = await m.getRepository(Channel).findOne({
+        where: { id: channel.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked) {
+        this.logger.warn(
+          `[CHANNEL] salon gone before its roster write channel=${channel.id} user=${userId.slice(0, 8)}`
+        );
+        continue;
       }
+      locked.allowedUsers = (locked.allowedUsers || []).filter((u) => u !== normalised);
+      await m.getRepository(Channel).save(locked);
+      channel.allowedUsers = locked.allowedUsers;
     }
-    this.logger.log(
-      `[CHANNEL_GRAINE] private salons withdrawn workspace=${workspaceId} user=${userId.slice(0, 8)} ` +
-        `reason=${reason} salons=${held.length}/${total}`
-    );
   }
 
-  /** The private salons of a community whose roster names `userId`, read through `channels`. */
-  private async privateChannelsHolding(
-    channels: Repository<Channel>,
+  /**
+   * Takes `userId` out of a community: its key group, every private salon naming them (roster and
+   * group), and their membership row - one departure ({@link departDistributionGroups}). Shared by
+   * leaving, being kicked and an account erasure, which are the same removal seen from three ends.
+   *
+   * @param guard a check re-run under the community removal lock before the roster write (a kick's
+   *   removal bound); a refusal there abandons the departure
+   */
+  private async removeFromWorkspace(
     workspaceId: string,
-    userId: string
-  ): Promise<{ held: Channel[]; total: number; normalised: string }> {
-    const normalised = userId.trim().toLowerCase();
-    const privateChannels = await channels.find({ where: { workspaceId, isPrivate: true } });
-    const held = privateChannels.filter((c) => (c.allowedUsers || []).includes(normalised));
-    return { held, total: privateChannels.length, normalised };
+    userId: string,
+    reason: DepartureReason,
+    guard?: (m: EntityManager) => Promise<void>
+  ): Promise<void> {
+    const held = await this.heldPrivateChannels(workspaceId, userId, reason);
+    const cuts: DepartureCut[] = [
+      { scope: workspaceScope(workspaceId), userId },
+      ...held.flatMap((c) => this.channelCuts(c, [userId])),
+    ];
+    await this.departDistributionGroups(cuts, reason, workspaceId, async (m) => {
+      if (guard) await guard(m);
+      await this.stripFromChannels(m, held, userId);
+      await m.getRepository(ChannelMember).delete({ workspaceId, userId });
+    });
   }
 
   /**
@@ -862,7 +1001,17 @@ export class ChannelService implements OnApplicationBootstrap {
       await deleteDistributionGroup(this.internalSecret, channelScope(channel.id));
     }
 
+    const workspace = await this.workspaceRepo.findOne({
+      where: { id: workspaceId },
+      select: { id: true, distributionGroupId: true },
+    });
+    const groupIds = [
+      workspace?.distributionGroupId,
+      ...channels.map((c) => c.distributionGroupId),
+    ].filter((g): g is string => !!g);
+
     await this.workspaceRepo.manager.transaction(async (mgr) => {
+      if (groupIds.length > 0) await mgr.query(DELETE_GROUP_DEPARTURES_SQL, [groupIds]);
       await mgr.delete(ChannelMessage, { workspaceId });
       await mgr.delete(ChannelMember, { workspaceId });
       await mgr.delete(ChannelRole, { workspaceId });
@@ -885,11 +1034,13 @@ export class ChannelService implements OnApplicationBootstrap {
    * THE ORDER IS WHAT MAKES THE RETRY WORK. This used to delete every membership row first and
    * repair afterwards from a list captured in memory, swallowing a failed repair - so a community
    * whose repair failed was left without an admin, or empty, and the retry found no membership left
-   * to point at it. Now, per community: the private salons are cut (idempotent), the community is
-   * repaired AS IF the account were already gone, and only then is the account's row deleted. A
+   * to point at it. Now, per community: the community is repaired AS IF the account were already
+   * gone, and only then does the account leave it - through {@link removeFromWorkspace}, the same
+   * departure every other path takes, the community's key group and its private salons included. A
    * failure at any step leaves the row, so the next attempt starts that community over; a repair
-   * that already happened is a no-op the second time. Failures are collected and THROWN after every
-   * community has been tried, so one stuck community neither strands the others nor reports success.
+   * that already happened is a no-op the second time. A repair that deleted the community leaves
+   * nothing to leave. Failures are collected and THROWN after every community has been tried, so
+   * one stuck community neither strands the others nor reports success.
    *
    * This is the one path where the postcondition cannot be a refusal - the account is being
    * deleted and there is nothing left to refuse - so it is the one place a repair exists, and it
@@ -925,9 +1076,11 @@ export class ChannelService implements OnApplicationBootstrap {
     let transient = false;
     for (const workspaceId of workspaceIds) {
       try {
-        await this.cutOffEveryPrivateChannel(workspaceId, deletedUserId, 'account_deleted');
-        await this.repairOneWorkspaceAfterAccountDeletion(workspaceId, deletedUserId);
-        await this.memberRepo.delete({ workspaceId, userId: deletedUserId });
+        const deleted = await this.repairOneWorkspaceAfterAccountDeletion(
+          workspaceId,
+          deletedUserId
+        );
+        if (!deleted) await this.removeFromWorkspace(workspaceId, deletedUserId, 'account_deleted');
       } catch (err) {
         failed.push(workspaceId);
         transient ||= isTransientFailure(err);
@@ -987,23 +1140,26 @@ export class ChannelService implements OnApplicationBootstrap {
   /**
    * Repairs one community for the departure of `leavingUserId`, whose membership row still exists
    * and is treated as gone. Idempotent: a community that already has another admin is left alone.
+   *
+   * @returns true when the repair deleted the community outright (nobody else was in it), so there
+   *   is nothing left for the account to leave.
    */
   private async repairOneWorkspaceAfterAccountDeletion(
     workspaceId: string,
     leavingUserId: string
-  ): Promise<void> {
+  ): Promise<boolean> {
     const members = (await this.memberRepo.find({ where: { workspaceId } })).filter(
       (m) => m.userId !== leavingUserId
     );
     if (members.length === 0) {
       await this.hardDeleteWorkspace(workspaceId, 'account_deletion_left_no_members');
-      return;
+      return true;
     }
 
     const adminIds = (await this.listWorkspaceAdminIds(workspaceId)).filter(
       (id) => id !== leavingUserId
     );
-    if (adminIds.length > 0) return;
+    if (adminIds.length > 0) return false;
 
     const roles = await this.roleRepo.find({ where: { workspaceId } });
     const adminRole = roles
@@ -1015,7 +1171,7 @@ export class ChannelService implements OnApplicationBootstrap {
       this.logger.error(
         `[WORKSPACE] cannot promote a successor workspace=${workspaceId} - no role carries MANAGE_WORKSPACE`
       );
-      return;
+      return false;
     }
 
     // RANK FIRST, then what the roles grant, then the user id. Priority keeps a Moderateur above a
@@ -1038,6 +1194,7 @@ export class ChannelService implements OnApplicationBootstrap {
     this.logger.warn(
       `[WORKSPACE] promoted a successor admin workspace=${workspaceId} user=${successor.userId.slice(0, 8)} role="${adminRole.name}" members=${members.length} reason=account_deletion`
     );
+    return false;
   }
 
   constructor(
@@ -1553,6 +1710,25 @@ export class ChannelService implements OnApplicationBootstrap {
    * accepted exactly when the base it was built on could have been served to its author. A scope
    * that no longer exists, or a salon that is no longer private, entitles nobody.
    */
+  /**
+   * {@link isDistributionGroupEntitled} for chat-delivery's group id: the community or private salon
+   * holding that group, and none - so nobody entitled - when no scope holds it any more.
+   */
+  private async isEntitledToDistributionGroupId(groupId: string, userId: string): Promise<boolean> {
+    const normalised = userId.trim().toLowerCase();
+    const workspace = await this.workspaceRepo.findOne({
+      where: { distributionGroupId: groupId },
+      select: { id: true },
+    });
+    if (workspace) return this.isDistributionGroupEntitled('workspace', workspace.id, normalised);
+    const channel = await this.channelRepo.findOne({
+      where: { distributionGroupId: groupId },
+      select: { id: true },
+    });
+    if (channel) return this.isDistributionGroupEntitled('channel', channel.id, normalised);
+    return false;
+  }
+
   async isDistributionGroupEntitled(
     kind: 'workspace' | 'channel',
     scopeId: string,
@@ -2193,7 +2369,10 @@ export class ChannelService implements OnApplicationBootstrap {
 
   // ================= CHANNELS =================
 
-  /** Creates a channel inside a workspace. Private channels restrict access to Admin and Moderator roles by default. */
+  /**
+   * Creates a channel inside a workspace. A private one is listed to its creator alone, so it is
+   * refused (`REMOVAL_EXCEEDS_ACTOR`) when a member it leaves off holds more than the creator.
+   */
   async createChannel(input: CreateChannelDto) {
     // Check actor has permission to manage channels in this workspace
     const actorMember = await this.memberRepo.findOne({
@@ -2207,16 +2386,37 @@ export class ChannelService implements OnApplicationBootstrap {
     const channelName = validateChannelName(input.name);
 
     const isPrivate = input.visibility === 'private';
+    const creator = input.actorUserId.trim().toLowerCase();
 
     const channel = this.channelRepo.create({
       workspaceId: input.workspaceId,
       name: channelName,
       isPrivate,
-      allowedUsers: isPrivate ? [input.actorUserId.trim().toLowerCase()] : [],
+      allowedUsers: isPrivate ? [creator] : [],
       // LAST in the community's order: a new salon never lands between two the bureau arranged.
       sortOrder: await this.nextChannelSortOrder(input.workspaceId),
     });
-    const savedChannel = await this.channelRepo.save(channel);
+    // A PRIVATE SALON IS HIDDEN FROM EVERY MEMBER BUT ITS CREATOR, the same removal a salon made
+    // private is (`updateChannelAccess`), so it faces the same bound under the same lock: nobody it
+    // leaves off may hold more than the creator (user, 2026-10-24: only high ranks make a salon
+    // private when an admin exists).
+    const savedChannel = isPrivate
+      ? await this.withCommunityRemovalLock(input.workspaceId, async (m) => {
+          const leftOff = (
+            await m.getRepository(ChannelMember).find({ where: { workspaceId: input.workspaceId } })
+          )
+            .map((member) => member.userId)
+            .filter((u) => u.trim().toLowerCase() !== creator);
+          await this.assertActorMayRemoveMembers(
+            input.workspaceId,
+            input.actorUserId,
+            leftOff,
+            'skip',
+            m
+          );
+          return m.getRepository(Channel).save(channel);
+        })
+      : await this.channelRepo.save(channel);
 
     if (isPrivate) {
       // UNWOUND ON FAILURE, exactly as `createWorkspace` unwinds a community whose distribution
@@ -2375,10 +2575,7 @@ export class ChannelService implements OnApplicationBootstrap {
 
     await this.assertRemovalKeepsAnAdmin(workspaceId, userId);
 
-    await this.cutOffKeyDistribution(workspaceId, userId, 'left');
-    await this.cutOffEveryPrivateChannel(workspaceId, userId, 'left_workspace');
-
-    await this.memberRepo.delete({ workspaceId, userId });
+    await this.removeFromWorkspace(workspaceId, userId, 'left');
 
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
     // Published before any deletion: the event is what tells the leaver's own devices to drop the
@@ -2585,59 +2782,103 @@ export class ChannelService implements OnApplicationBootstrap {
     // access as ordinary community members would be work with no reader.
     const dropped =
       wasPrivate && isPrivate ? [...previousAllowed].filter((u) => !nextAllowed.includes(u)) : [];
-    // EVERYONE WHO LOSES SIGHT OF THE SALON IS REMOVED FROM IT, and faces the removal gate - not only
-    // a private allowlist's diff. Going private takes the salon away from every member left off the
-    // list, so the population is the audience before (the allowlist, or the whole community while
-    // public) minus the audience after; going public takes it from nobody.
-    const audienceBefore = wasPrivate
-      ? [...previousAllowed]
-      : await this.getWorkspaceMemberIds(channel.workspaceId);
-    const losingSight = isPrivate ? audienceBefore.filter((u) => !nextAllowed.includes(u)) : [];
 
-    // BEFORE THE SAVE, and allowed to abort it. Going private without a group would leave the
-    // salon's seeds nowhere to go. It is a call to chat-delivery, so it runs before the lock is
-    // taken; a flip the check then refuses retires the group again (below).
+    // EVERYONE WHO LOSES SIGHT OF THE SALON IS REMOVED FROM IT, and faces the removal bound - not
+    // only a private allowlist's diff. Going private takes the salon from every member left off the
+    // list, so the population is the audience before (the allowlist, or the whole community while
+    // public) minus the audience after; going public takes it from nobody. So a member holding only
+    // `channel.manage` cannot make a salon private while it leaves off someone who outranks them
+    // (user, 2026-10-24: only high ranks make a salon private when an admin exists).
+    const losingSight = (communityMemberIds: readonly string[]): string[] =>
+      isPrivate
+        ? (wasPrivate ? [...previousAllowed] : communityMemberIds).filter(
+            (u) => !nextAllowed.includes(u.trim().toLowerCase())
+          )
+        : [];
+    // Answered BEFORE any call to chat-delivery (the group minted below, the first evictions), so a
+    // refused rewrite mints and cuts nothing; asked again under the lock before the save.
+    await this.assertActorMayRemoveMembers(
+      channel.workspaceId,
+      actorUserId,
+      losingSight(wasPrivate ? [] : await this.getWorkspaceMemberIds(channel.workspaceId)),
+      'skip'
+    );
+
+    // BEFORE THE SAVE, and allowed to abort it - the same asymmetry as a community departure. Going
+    // private without a group would leave the salon's seeds nowhere to go; the people this save
+    // drops leave the salon's group as one departure, the save being its roster write.
+    // `dropped` is non-empty only while the salon stays private, so its group is the one cut.
     const mintedGroup = isPrivate && !wasPrivate;
     if (mintedGroup) await this.ensureChannelDistributionGroup(channel, isPrivate);
-
-    // CHECK, SAVE AND THE OWED CUT-OFFS IN ONE TRANSACTION under the community's removal lock, the
-    // gate reading every role it compares with a shared row lock - so no role change can land
-    // between the check and the save. The evictions are recorded there and CALLED after the commit
-    // ({@link settleOwedEvictions}): a routing row left by a failed call is still named by its owed
-    // row, never unfindable.
     try {
-      await this.withCommunityRemovalLock(channel.workspaceId, async (tx) => {
-        await this.assertActorMayRemoveMembers(
-          tx,
-          channel.workspaceId,
-          actorUserId,
-          losingSight,
-          'skip'
-        );
-        if (channel.distributionGroupId) {
-          for (const userId of dropped) {
-            await this.oweEviction(tx, 'channel', channel.id, userId, 'access_updated');
+      await this.departDistributionGroups(
+        this.channelCuts(channel, dropped),
+        'access_updated',
+        channel.workspaceId,
+        async (m) => {
+          // THE ROW IS RE-READ `FOR UPDATE` UNDER THE LOCK. `dropped` and the first evictions came
+          // from the copy read above; if another rewrite changed the salon's visibility or list since,
+          // they name the wrong people, and saving this copy would erase that rewrite. Refused whole
+          // and retryable: the departure is abandoned, so nobody is cut off.
+          const locked = await m.getRepository(Channel).findOne({
+            where: { id: channelId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (!locked) throw new NotFoundException('Channel not found');
+          const lockedAllowed = new Set(locked.allowedUsers || []);
+          if (
+            locked.isPrivate !== wasPrivate ||
+            lockedAllowed.size !== previousAllowed.size ||
+            [...previousAllowed].some((u) => !lockedAllowed.has(u))
+          ) {
+            this.logger.warn(
+              `[CHANNEL_ACCESS] refused - the salon changed since it was read channel=${channelId} ` +
+                `by=${actorUserId.slice(0, 8)}`
+            );
+            throw new ConflictException({
+              code: CHANNEL_ACCESS_CHANGED,
+              message: 'The salon access changed meanwhile, retry.',
+            });
           }
+          const communityMemberIds = wasPrivate
+            ? []
+            : (
+                await m.getRepository(ChannelMember).find({
+                  where: { workspaceId: channel.workspaceId },
+                })
+              ).map((member) => member.userId);
+          await this.assertActorMayRemoveMembers(
+            channel.workspaceId,
+            actorUserId,
+            losingSight(communityMemberIds),
+            'skip',
+            m
+          );
+          locked.isPrivate = isPrivate;
+          locked.allowedUsers = nextAllowed;
+          if (writePolicy) {
+            locked.writePolicy = writePolicy;
+          }
+          await m.getRepository(Channel).save(locked);
         }
-
-        // A COPY is saved and only adopted once committed, so a refusal leaves `channel` as the
-        // row still is - which is what the retirement below saves.
-        await tx.getRepository(Channel).save({
-          ...channel,
-          isPrivate,
-          allowedUsers: nextAllowed,
-          writePolicy: writePolicy ?? channel.writePolicy,
-        });
-      });
+      );
     } catch (e) {
-      // The salon stays public: the group minted for it has no reader, so it goes again.
-      if (mintedGroup) await this.retireChannelDistributionGroup(channel, 'privacy_refused');
+      // THE GROUP MINTED ABOVE IS LEFT, NOT RETIRED. While the salon stays public it is inert, and
+      // the next flip gets it back (the mint is idempotent). Retiring it from here would be a call
+      // outside the lock, and a concurrent flip that did commit may be using the very same group.
+      if (mintedGroup) {
+        this.logger.warn(
+          `[CHANNEL_GRAINE] privacy refused, minted group kept channel=${channelId} ` +
+            `group=${channel.distributionGroupId} by=${actorUserId.slice(0, 8)}`
+        );
+      }
       throw e;
     }
     channel.isPrivate = isPrivate;
     channel.allowedUsers = nextAllowed;
-    if (writePolicy) channel.writePolicy = writePolicy;
-    if (dropped.length > 0) await this.settleOwedEvictions();
+    if (writePolicy) {
+      channel.writePolicy = writePolicy;
+    }
 
     // AFTER the save, and best-effort: the salon is public now, so its own group distributes to a
     // roster nothing consults - inert if it survives, and refusing the change over it would be
@@ -3061,17 +3302,18 @@ export class ChannelService implements OnApplicationBootstrap {
       );
     }
 
-    // BEFORE the roster is written, and allowed to abort the departure - the same asymmetry as a
-    // community's. Once `allowedUsers` no longer names them, nothing left anywhere would ever go
-    // looking for their routing rows again.
-    await this.cutOffChannelKeyDistribution(channel, input.userId, 'left_channel');
-
+    // One departure, the same as a community's: once `allowedUsers` no longer names them, nothing
+    // left anywhere would ever go looking for their routing rows again.
+    //
     // Access is the only thing this revokes. Nothing here rotates a key: a channel message is
     // sealed under a Graine session, and what shuts the leaver out is the senders minting a fresh
     // session on the next send - which they do because a departure is what rotates a Graine.
-    const normalized = input.userId.trim().toLowerCase();
-    channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
-    await this.channelRepo.save(channel);
+    await this.departDistributionGroups(
+      this.channelCuts(channel, [input.userId]),
+      'left_channel',
+      channel.workspaceId,
+      (m) => this.stripFromChannels(m, [channel], input.userId)
+    );
 
     return { success: true };
   }
@@ -3079,8 +3321,9 @@ export class ChannelService implements OnApplicationBootstrap {
   /**
    * The actor's right to remove each of `targetUserIds` from this workspace or one of its salons -
    * refused here, never returned. THE ONE GATE of every removal: `kickFromWorkspace`,
-   * `removeMemberFromChannel`, and the members an access-list rewrite drops
-   * (`updateChannelAccess`), so no path can disagree about who may remove whom.
+   * `removeMemberFromChannel`, every member an access-list rewrite takes the salon from
+   * (`updateChannelAccess`), and every member a private salon's creation leaves off
+   * (`createChannel`) - so no path can disagree about who may remove whom.
    *
    * The actor holds `member.kick`, `channel.manage` or `workspace.manage`, and each target's roles
    * grant nothing the actor does not hold (`permissionsCover`, the bound every role change asks): an
@@ -3088,27 +3331,30 @@ export class ChannelService implements OnApplicationBootstrap {
    * found when `absentTarget` is `'refuse'` (a removal NAMING someone), and has nothing to compare
    * when it is `'skip'` (an allowlist entry that outlived its membership).
    *
-   * Runs inside `withCommunityRemovalLock`'s transaction `tx`, and reads the actor's and every
-   * target's membership and roles with a SHARED ROW LOCK: a role change writing any of them waits
-   * for this transaction, so what was compared is what holds when the removal is saved.
+   * GIVEN `m`, the transaction of {@link withCommunityRemovalLock}, the actor's and every target's
+   * membership and role rows are read with a SHARED ROW LOCK: a role change writing any of them waits
+   * for the removal to commit, so what was compared is what holds when the removal is saved. Without
+   * `m` it is the early answer a removal gives before it calls chat-delivery, asked again under the
+   * lock.
    *
    * @throws ForbiddenException `REMOVAL_EXCEEDS_ACTOR` when a target holds more than the actor
    */
   private async assertActorMayRemoveMembers(
-    tx: EntityManager,
     workspaceId: string,
     actorUserId: string,
     targetUserIds: readonly string[],
-    absentTarget: 'refuse' | 'skip'
+    absentTarget: 'refuse' | 'skip',
+    m?: EntityManager
   ): Promise<void> {
-    const members = tx.getRepository(ChannelMember);
+    const members = m ? m.getRepository(ChannelMember) : this.memberRepo;
+    const lock = m ? { lock: { mode: 'pessimistic_read' as const } } : {};
     const actorMember = await members.findOne({
       where: { workspaceId, userId: actorUserId },
-      lock: { mode: 'pessimistic_read' },
+      ...lock,
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    const actorPermissions = await this.permissionsOfMember(actorMember, tx);
+    const actorPermissions = await this.permissionsOfMember(actorMember, m);
     const hasPerm =
       actorPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
       actorPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
@@ -3118,7 +3364,7 @@ export class ChannelService implements OnApplicationBootstrap {
     for (const targetUserId of targetUserIds) {
       const targetMember = await members.findOne({
         where: { workspaceId, userId: targetUserId },
-        lock: { mode: 'pessimistic_read' },
+        ...lock,
       });
       if (!targetMember) {
         if (absentTarget === 'refuse') {
@@ -3129,9 +3375,9 @@ export class ChannelService implements OnApplicationBootstrap {
         );
         continue;
       }
-      if (!permissionsCover(actorPermissions, await this.permissionsOfMember(targetMember, tx))) {
+      if (!permissionsCover(actorPermissions, await this.permissionsOfMember(targetMember, m))) {
         this.logger.warn(
-          `[WORKSPACE] refused removal - target holds more than the actor workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`
+          `[WORKSPACE] refused removal - target holds more than the actor workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)} locked=${m !== undefined}`
         );
         throw new ForbiddenException({
           code: REMOVAL_EXCEEDS_ACTOR,
@@ -3145,35 +3391,15 @@ export class ChannelService implements OnApplicationBootstrap {
    * What a member's roles grant, as one de-duplicated list (empty for a member with no role). Given
    * a transaction, the role rows are read with a shared row lock, held until it ends.
    */
-  private async permissionsOfMember(member: ChannelMember, tx?: EntityManager): Promise<string[]> {
+  private async permissionsOfMember(member: ChannelMember, m?: EntityManager): Promise<string[]> {
     if (!member.roleIds?.length) return [];
-    const roles = tx
-      ? await tx.getRepository(ChannelRole).find({
+    const roles = m
+      ? await m.getRepository(ChannelRole).find({
           where: { id: In(member.roleIds) },
           lock: { mode: 'pessimistic_read' },
         })
       : await this.roleRepo.find({ where: { id: In(member.roleIds) } });
     return [...new Set(roles.flatMap((r) => r.permissions))];
-  }
-
-  /**
-   * Runs `work` in ONE transaction holding the community's removal lock - a transaction-scoped
-   * advisory lock keyed by the workspace id, so two removals in one community (a kick, an
-   * access-list rewrite, a salon removal) are serialised, and the check, the cut-offs and the save
-   * of each commit together or not at all.
-   */
-  private withCommunityRemovalLock<T>(
-    workspaceId: string,
-    work: (tx: EntityManager) => Promise<T>
-  ): Promise<T> {
-    return this.memberRepo.manager.transaction(async (tx) => {
-      await tx.query(
-        `SELECT pg_advisory_xact_lock(hashtextextended('community_removal:' || $1, 0))`,
-        [workspaceId]
-      );
-      this.logger.debug(`[WORKSPACE] removal lock held workspace=${workspaceId}`);
-      return work(tx);
-    });
   }
 
   /**
@@ -3184,32 +3410,17 @@ export class ChannelService implements OnApplicationBootstrap {
     const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
-    await this.withCommunityRemovalLock(workspaceId, async (tx) => {
-      await this.assertActorMayRemoveMembers(
-        tx,
-        workspaceId,
-        actorUserId,
-        [targetUserId],
-        'refuse'
-      );
+    // Answered BEFORE the departure calls chat-delivery, so a refused kick cuts nobody off; the
+    // bound is asked again under the removal lock, against row-locked roles, before the save.
+    await this.assertActorMayRemoveMembers(workspaceId, actorUserId, [targetUserId], 'refuse');
 
-      // The actor's permission was checked; the TARGET's roles never were, so KICK_MEMBERS alone
-      // used to remove the sole Administrateur.
-      await this.assertRemovalKeepsAnAdmin(workspaceId, targetUserId);
+    // The actor's permission was checked; the TARGET's roles never were, so KICK_MEMBERS alone
+    // used to remove the sole Administrateur.
+    await this.assertRemovalKeepsAnAdmin(workspaceId, targetUserId);
 
-      // The membership, the private rosters and the OWED evictions commit together; the calls to
-      // chat-delivery run after the commit, from those rows.
-      await this.oweEviction(tx, 'workspace', workspaceId, targetUserId, 'kicked');
-      await this.withdrawFromEveryPrivateChannel(
-        tx,
-        workspaceId,
-        targetUserId,
-        'kicked_from_workspace'
-      );
-
-      await tx.getRepository(ChannelMember).delete({ workspaceId, userId: targetUserId });
-    });
-    await this.settleOwedEvictions();
+    await this.removeFromWorkspace(workspaceId, targetUserId, 'kicked', (m) =>
+      this.assertActorMayRemoveMembers(workspaceId, actorUserId, [targetUserId], 'refuse', m)
+    );
 
     // Notify the kicked user and remaining workspace members
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
@@ -3364,27 +3575,33 @@ export class ChannelService implements OnApplicationBootstrap {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
-    await this.withCommunityRemovalLock(channel.workspaceId, async (tx) => {
-      await this.assertActorMayRemoveMembers(
-        tx,
-        channel.workspaceId,
-        actorUserId,
-        [targetUserId],
-        'refuse'
-      );
+    await this.assertActorMayRemoveMembers(
+      channel.workspaceId,
+      actorUserId,
+      [targetUserId],
+      'refuse'
+    );
 
-      // Remove from private channel's allowedUsers list. The eviction is OWED in the same
-      // transaction, so the routing row stays named until the call after the commit removes it.
-      if (channel.isPrivate) {
-        if (channel.distributionGroupId) {
-          await this.oweEviction(tx, 'channel', channel.id, targetUserId, 'removed_from_channel');
+    // Remove from private channel's allowedUsers list
+    if (channel.isPrivate) {
+      // One departure: the cut goes first and may abort the removal, because after the save there
+      // is no row left naming this person for the salon. The bound is asked again under the lock.
+      await this.departDistributionGroups(
+        this.channelCuts(channel, [targetUserId]),
+        'removed_from_channel',
+        channel.workspaceId,
+        async (m) => {
+          await this.assertActorMayRemoveMembers(
+            channel.workspaceId,
+            actorUserId,
+            [targetUserId],
+            'refuse',
+            m
+          );
+          await this.stripFromChannels(m, [channel], targetUserId);
         }
-        const normalized = targetUserId.trim().toLowerCase();
-        channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
-        await tx.getRepository(Channel).save(channel);
-      }
-    });
-    if (channel.isPrivate) await this.settleOwedEvictions();
+      );
+    }
 
     // Notify the removed user and everyone who can still see the salon. `allowedUsers` was
     // stripped just above, so the target is no longer in the audience and is added back by name -
@@ -3908,8 +4125,6 @@ export class ChannelService implements OnApplicationBootstrap {
         `[CHANNEL_FANOUT] boot drain failed, retried at the next boot: ${String(err)}`
       )
     );
-    // Never throws: a failed eviction stays owed and the next pass retries it.
-    void this.settleOwedEvictions();
   }
 
   /**

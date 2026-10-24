@@ -129,6 +129,86 @@ fn burning_more_than_was_spent_is_free() {
     assert_eq!(out.as_deref(), Some(b"overshot".as_ref()));
 }
 
+/// The reload of a STAGE (the checkpoint awaited before a commit's first request), after the merge
+/// and two frames in the epoch it created: the settle merges the same staged commit again, and that
+/// epoch's ratchet starts at generation 0 a second time. The frames spent there are owed THERE -
+/// burnt before the merge they move a ratchet nobody reads, and the peer refuses the next frame.
+/// `BaseMlsService.sendRatchet.test.ts` models exactly this; these are its premises, on real clients.
+#[test]
+fn frames_sent_after_a_merge_are_owed_in_the_epoch_it_created_not_the_restored_one() {
+    let gid = "g-burn-after-merge";
+    let (mut alice, mut bob) = pair_in_group(gid);
+
+    let (commit, _base) = alice.stage_self_update(gid).expect("stage");
+    let stage = alice
+        .save_state()
+        .expect("the checkpoint before the first request");
+    alice.merge_pending_commit_for(gid).expect("merge");
+    bob.process_incoming_message(gid, &commit)
+        .expect("bob applies the commit");
+    for i in 0..2u32 {
+        let ciphertext = alice
+            .send_message(gid, format!("after{i}").as_bytes())
+            .expect("encrypt");
+        bob.process_incoming_message(gid, &ciphertext)
+            .expect("bob consumes the generation");
+    }
+
+    // Burnt in the restored epoch, then merged: the merged epoch re-issues generation 0.
+    let mut wrong = reload(stage.clone());
+    wrong.skip_send_generations(gid, 2).expect("burn");
+    wrong.merge_pending_commit_for(gid).expect("settle merges");
+    let doomed = wrong.send_message(gid, b"doomed").expect("encrypt");
+    let err = bob
+        .process_incoming_message(gid, &doomed)
+        .expect_err("a burn in the wrong epoch repairs nothing");
+    assert_eq!(err.decrypt_kind(), DecryptErrorKind::SecretReuse, "{err}");
+
+    // Merged, then burnt in the epoch the frames were sent in: the next frame decrypts.
+    let mut right = reload(stage);
+    right.merge_pending_commit_for(gid).expect("settle merges");
+    right.skip_send_generations(gid, 2).expect("burn");
+    let frame = right.send_message(gid, b"repaired").expect("encrypt");
+    let out = bob
+        .process_incoming_message(gid, &frame)
+        .expect("the burn in the merged epoch is the repair");
+    assert_eq!(out.as_deref(), Some(b"repaired".as_ref()));
+}
+
+/// `sealedFrameEpoch.ts` reads a sealed frame's epoch WITHOUT openmls: two `uint16`s (version,
+/// wire format), `group_id<V>` with RFC 9420's variable-length prefix, then the `uint64` epoch.
+/// Pinned here against openmls's own reading of a real application frame, at an epoch past 255 so
+/// a wrong byte order could not pass by luck.
+#[test]
+fn a_sealed_frame_carries_its_epoch_where_the_web_reader_looks_for_it() {
+    let gid = "g-frame-epoch-layout";
+    let (mut alice, mut bob) = pair_in_group(gid);
+    for _ in 0..300 {
+        let (commit, _base) = alice.stage_self_update(gid).expect("stage");
+        alice.merge_pending_commit_for(gid).expect("merge");
+        bob.process_incoming_message(gid, &commit)
+            .expect("bob follows");
+    }
+    let frame = alice
+        .send_message(gid, b"where is my epoch")
+        .expect("encrypt");
+
+    assert_eq!(&frame[0..2], &[0, 1], "version mls10");
+    assert_eq!(&frame[2..4], &[0, 2], "wire format: private message");
+    let first = frame[4];
+    let prefix = 1usize << (first >> 6);
+    let mut length = (first & 0x3f) as usize;
+    for i in 1..prefix {
+        length = length * 256 + frame[4 + i] as usize;
+    }
+    assert_eq!(length, gid.len(), "the group id's length");
+    let at = 4 + prefix + length;
+    let epoch = u64::from_be_bytes(frame[at..at + 8].try_into().expect("8 bytes"));
+    assert_eq!(Some(epoch), MlsManager::parse_message_epoch(&frame));
+    assert_eq!(epoch, alice.get_epoch(gid).expect("epoch"));
+    assert!(epoch > 255);
+}
+
 #[test]
 fn burning_zero_does_nothing_and_an_unknown_group_is_refused() {
     let gid = "g-burn-edges";

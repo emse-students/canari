@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The camera tab draws one clear state per outcome of the first open (CanaReels, C5): opening, each of
  * the three refusals with its own sentence and a retry, and the live preview with its lens controls.
@@ -10,6 +11,9 @@ import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import { CameraAccessError, type CameraFacing, type CameraFault } from '$lib/reels/cameraAccess';
 import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { m } from '$lib/paraglide/messages';
+import { giveMediaStreamGetTracks } from '$lib/reels/mediaStreamTracks.test-helper';
+
+giveMediaStreamGetTracks();
 
 const nav = vi.hoisted(() => ({
   goto: vi.fn(),
@@ -327,5 +331,139 @@ describe('CameraScreen and the theme', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('CameraScreen - zoom and the double tap (user, 2026-10-22)', () => {
+  /** A lens with no zoom capability (WKWebView) and a live microphone, as the reel tab opens it. */
+  function lensWithMic() {
+    const lens = {
+      kind: 'video',
+      readyState: 'live',
+      stop: vi.fn(),
+      getCapabilities: () => ({}),
+      addEventListener: vi.fn(),
+    };
+    const mic = { kind: 'audio', readyState: 'live', stop: vi.fn(), addEventListener: vi.fn() };
+    return { lens, mic, stream: new MediaStream([lens, mic] as unknown as MediaStreamTrack[]) };
+  }
+
+  async function mountLive(props: Record<string, unknown>, session: CameraSession) {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(mount(CameraScreen, { target, props: { session, ...props } }));
+    flushSync();
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    flushSync();
+    return target;
+  }
+
+  /** Two quick taps of the finger `pointerId` on the preview. */
+  function doubleTap(target: HTMLElement, pointerId = 2) {
+    const video = target.querySelector('video')!;
+    for (const t of [0, 100]) {
+      for (const [type, at] of [
+        ['pointerdown', t],
+        ['pointerup', t + 40],
+      ] as const) {
+        const event = new PointerEvent(type, {
+          pointerId,
+          bubbles: true,
+          clientX: 50,
+          clientY: 50,
+        });
+        Object.defineProperty(event, 'timeStamp', { value: 10_000 + at });
+        video.dispatchEvent(event);
+      }
+    }
+  }
+
+  it('a DIGITAL zoom enlarges the preview about its centre, and only above 1x', async () => {
+    const { stream } = lensWithMic();
+    const session = new CameraSession(() => Promise.resolve(stream));
+    const target = await mountLive({}, session);
+    const video = () => target.querySelector('video')!;
+    expect(session.zoomRange.mode).toBe('digital');
+    expect(video().style.transform).toBe('');
+
+    session.setZoom(2.5);
+    flushSync();
+    expect(video().style.transform).toBe('scale(2.5)');
+    expect(video().dataset.cameraZoom).toBe('2.50');
+
+    session.resetZoom();
+    flushSync();
+    expect(video().style.transform).toBe('');
+  });
+
+  it('a double tap on the preview flips the lens outside a take', async () => {
+    const { stream } = lensWithMic();
+    const open = vi.fn((_facing: CameraFacing) => Promise.resolve(stream));
+    const session = new CameraSession(open);
+    const target = await mountLive({}, session);
+    doubleTap(target);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(open).toHaveBeenLastCalledWith('environment');
+    expect(session.facing).toBe('environment');
+  });
+
+  it('DURING A TAKE a double tap flips only the lens: the microphone runs on, the zoom is back at 1x', async () => {
+    const first = lensWithMic();
+    const back = lensWithMic().lens;
+    const openLens = vi.fn((_facing: CameraFacing) =>
+      Promise.resolve(new MediaStream([back] as unknown as MediaStreamTrack[]))
+    );
+    const session = new CameraSession(() => Promise.resolve(first.stream), openLens);
+    const target = await mountLive({ recording: true }, session);
+    session.setZoom(3);
+
+    doubleTap(target);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    flushSync();
+
+    expect(openLens).toHaveBeenCalledWith('environment');
+    expect(first.lens.stop).toHaveBeenCalled();
+    expect(first.mic.stop).not.toHaveBeenCalled();
+    expect(session.stream!.getAudioTracks()).toEqual([first.mic]);
+    expect(session.phase).toBe('live');
+    expect(session.zoom).toBe(1);
+    // The lens button is offered during the take too, and the close button stands down.
+    expect(target.querySelector(`[aria-label="${m.reels_camera_switch()}"]`)).not.toBeNull();
+    expect(target.querySelector(`[aria-label="${m.reels_camera_close()}"]`)).toBeNull();
+  });
+
+  it('a single tap on the preview does nothing', async () => {
+    const { stream } = lensWithMic();
+    const open = vi.fn((_facing: CameraFacing) => Promise.resolve(stream));
+    const session = new CameraSession(open);
+    const target = await mountLive({}, session);
+    const video = target.querySelector('video')!;
+    video.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 3, bubbles: true }));
+    video.dispatchEvent(new PointerEvent('pointerup', { pointerId: 3, bubbles: true }));
+    // A double tap flips on its second lift, synchronously; nothing waits for a window to close
+    // (previewDoubleTap.ts), so the microtasks a flip would run are all there is to wait for.
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(session.facing).toBe('user');
+  });
+
+  it('while the capture forbids a flip, the double tap and the lens button both stand down', async () => {
+    const { stream } = lensWithMic();
+    const open = vi.fn((_facing: CameraFacing) => Promise.resolve(stream));
+    const openLens = vi.fn((_facing: CameraFacing) => Promise.resolve(stream));
+    const session = new CameraSession(open, openLens);
+    const target = await mountLive({ recording: true, flipAllowed: false }, session);
+    const button = target.querySelector<HTMLButtonElement>(
+      `[aria-label="${m.reels_camera_switch()}"]`
+    )!;
+    expect(button.disabled).toBe(true);
+
+    doubleTap(target);
+    button.click();
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(openLens).not.toHaveBeenCalled();
+    expect(session.facing).toBe('user');
   });
 });

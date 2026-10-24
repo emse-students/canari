@@ -29,21 +29,29 @@
     takeFramedPhoto,
     takeFramedThumbnail,
     type CameraCapture,
+    type FrameSource,
     type PreviewBox,
   } from '$lib/reels/framedCapture';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
+  import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
   import ReelFrame from './ReelFrame.svelte';
 
   interface Props {
     /** The session, injectable for tests; the route lets the component make its own. */
     session?: CameraSession;
     /**
-     * True during a take: the lens cannot change (a recorder cannot swap a track mid-file) and the
-     * close button stands down.
+     * True during a take: the close button stands down, and a lens flip keeps the take's microphone
+     * and recorder (`CameraSession.flipDuringTake`) instead of reopening everything.
      */
-    lensLocked?: boolean;
+    recording?: boolean;
+    /**
+     * Whether the capture lets the lens flip now (`lensFlipAllowed`): the button and the preview's
+     * double tap both stand down while a press is being decided or a take is finishing, where a
+     * reopen would release the microphone under the recorder. Default true (no capture around it).
+     */
+    flipAllowed?: boolean;
     /** What sits over the live preview at the bottom: the shutter and its neighbours. */
     controls?: Snippet;
     /**
@@ -78,7 +86,8 @@
 
   let {
     session = new CameraSession(),
-    lensLocked = false,
+    recording = false,
+    flipAllowed = true,
     controls,
     faultActions,
     paused = false,
@@ -116,7 +125,28 @@
       height: el.clientHeight,
       dpr: window.devicePixelRatio || 1,
       mirror: shouldMirrorCapture(session.facing),
+      zoom: digitalZoom,
     };
+  }
+
+  /**
+   * The DIGITAL zoom the preview is enlarged by (`cameraZoom.ts`), 1 on a lens zoomed by its hardware
+   * (its frame arrives zoomed). The preview scales by it about its centre and every capture draws the
+   * same centred part (`PreviewBox.zoom`), so the file shows what the preview shows.
+   */
+  const digitalZoom = $derived(session.zoomRange.mode === 'digital' ? session.zoom : 1);
+
+  /**
+   * The other lens: outside a take the session reopens everything; DURING one only the lens is
+   * replaced and the microphone and the recorder run on (`flipDuringTake`). The flip resets the zoom.
+   */
+  function flip() {
+    if (!flipAllowed) {
+      console.debug('[camera] flip asked while the capture forbids it - ignored');
+      return;
+    }
+    console.debug(`[camera] flip ${recording ? 'during a take' : 'outside a take'}`);
+    void (recording ? session.flipDuringTake() : session.switchFacing());
   }
 
   /**
@@ -146,7 +176,12 @@
         console.warn('[camera] a take was asked for before the first frame');
         return null;
       }
-      return FramedStream.start(video, previewBox(video), session.stream?.getAudioTracks() ?? []);
+      // The take reads its frame from WHATEVER element shows the current lens, every frame: a flip
+      // during the take replaces the element (keyed by the stream), and until the new lens has a
+      // decoded frame there is nothing to read, so the take holds its last picture.
+      const source: FrameSource = () =>
+        session.flipping || !frameReady || !video ? null : { video, box: previewBox(video) };
+      return FramedStream.start(source, session.stream?.getAudioTracks() ?? []);
     },
   };
 
@@ -254,8 +289,11 @@
   }
 </script>
 
+<!-- A DOUBLE TAP ON THE PREVIEW FLIPS THE LENS, during a take too (previewDoubleTap.ts), never
+     while the capture forbids it (`flipAllowed`). -->
 <section
   class="relative h-full w-full overflow-hidden bg-black text-white"
+  use:previewDoubleTap={{ onDoubleTap: flip, enabled: session.phase === 'live' && flipAllowed }}
   aria-label={m.reels_camera_title()}
   data-camera-phase={session.phase}
   data-camera-fault={session.fault ?? undefined}
@@ -277,6 +315,8 @@
           : ''} {session.phase === 'live' && frameReady
           ? 'opacity-100'
           : 'opacity-0'} transition-opacity duration-200 motion-reduce:transition-none"
+        style:transform={digitalZoom > 1 ? `scale(${digitalZoom})` : undefined}
+        data-camera-zoom={session.zoom.toFixed(2)}
         poster={TRANSPARENT_VIDEO_POSTER}
         onloadeddata={onFrame}
         onplaying={onFrame}
@@ -343,7 +383,7 @@
   <div
     class="absolute inset-x-0 top-0 flex items-start justify-between p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
   >
-    {#if lensLocked}
+    {#if recording}
       <span></span>
     {:else}
       <button
@@ -359,17 +399,16 @@
 
     {#if session.phase === 'live'}
       <div class="flex flex-col gap-3">
-        {#if !lensLocked}
-          <button
-            type="button"
-            class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
-            aria-label={m.reels_camera_switch()}
-            title={m.reels_camera_switch()}
-            onclick={() => void session.switchFacing()}
-          >
-            <SwitchCamera size={22} strokeWidth={2.25} />
-          </button>
-        {/if}
+        <button
+          type="button"
+          class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+          aria-label={m.reels_camera_switch()}
+          title={m.reels_camera_switch()}
+          disabled={session.flipping || !flipAllowed}
+          onclick={flip}
+        >
+          <SwitchCamera size={22} strokeWidth={2.25} />
+        </button>
         {#if session.torchAvailable}
           <button
             type="button"
@@ -391,7 +430,12 @@
   </div>
 
   {#if controls && session.phase === 'live'}
-    <div class="absolute inset-x-0 bottom-0 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]">
+    <!-- The shutter row is never part of the preview's double tap: the finger holding a take is
+         down here for the whole take. -->
+    <div
+      class="absolute inset-x-0 bottom-0 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]"
+      data-no-double-tap
+    >
       {@render controls()}
     </div>
   {/if}

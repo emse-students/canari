@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE GLASS BUTTON THAT GROWS INTO ITS OPTIONS (user, 2026-09-30) - the conversation header's menu
  * and the composer's "+". What these pin is behaviour, not the glass: it opens on a tap, runs the

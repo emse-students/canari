@@ -31,6 +31,7 @@ import { LIVE_ENTITIES } from './lives.module';
 import { LivesService } from './lives.service';
 import { LiveChatService } from './live-chat.service';
 import { liveChatAad } from './live-chat-seal';
+import { LIVE_KEY_ENCRYPTION_SECRET_ENV } from './live-key-at-rest';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
 import { LiveReportAgeScheduler } from './live-report-age.scheduler';
 import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
@@ -72,6 +73,12 @@ const LADDER = readFileSync(
   join(__dirname, '..', 'migrations', '099_live_strikes_and_reported_chat_lines.sql'),
   'utf8'
 );
+const KEY_AT_REST = readFileSync(
+  join(__dirname, '..', 'migrations', '110_live_key_at_rest.sql'),
+  'utf8'
+);
+/** The secret live keys are sealed under in this file (migration 110). */
+const KEY_SECRET = 'live-key-it-throwaway-secret-0123456789abcdef';
 
 const ALICE = 'a'.repeat(64);
 const BOB = 'b'.repeat(64);
@@ -214,7 +221,7 @@ async function refusal(p: Promise<unknown>): Promise<{ status: number; code?: st
   throw new Error('expected a refusal, got an answer');
 }
 
-maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
+maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () => {
   const schema = `lives_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -240,6 +247,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
     },
   } as unknown as PostNotificationsService;
   const liveEnabledBefore = process.env.LIVE_ENABLED;
+  const keySecretBefore = process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV];
   let seats: MemorySeats;
   const muted = new Set<string>();
   const mayActAs = new Set<string>();
@@ -312,7 +320,10 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
     // 099 references content_reports (the kept line's report), created above as core-service's.
     await q(LADDER);
     await q(LADDER);
+    await q(KEY_AT_REST);
+    await q(KEY_AT_REST);
     process.env.LIVE_ENABLED = 'true';
+    process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV] = KEY_SECRET;
   });
 
   beforeEach(async () => {
@@ -364,6 +375,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
   afterAll(async () => {
     if (liveEnabledBefore === undefined) delete process.env.LIVE_ENABLED;
     else process.env.LIVE_ENABLED = liveEnabledBefore;
+    if (keySecretBefore === undefined) delete process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV];
+    else process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV] = keySecretBefore;
     await lives?.announcementsSettled();
     await ds?.destroy();
     await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
@@ -486,6 +499,102 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         status: HttpStatus.NOT_FOUND,
         code: 'LIVE_NOT_FOUND',
       });
+    });
+  });
+
+  describe('the live key at rest (migration 110)', () => {
+    type KeyColumns = {
+      liveKey: string | null;
+      liveKeyCiphertext: string | null;
+      liveKeyVersion: number | null;
+    };
+    const stored = async (id: string): Promise<KeyColumns> =>
+      (
+        (await q(
+          `SELECT "liveKey", "liveKeyCiphertext", "liveKeyVersion" FROM lives WHERE id = $1`,
+          [id]
+        )) as KeyColumns[]
+      )[0];
+    /** A row as the previous release wrote it: the key in the clear, nothing sealed. */
+    const legacyLive = async (who: string): Promise<string> =>
+      (
+        (await q(`INSERT INTO lives ("broadcasterId", "liveKey") VALUES ($1, $2) RETURNING id`, [
+          who,
+          KEY,
+        ])) as { id: string }[]
+      )[0].id;
+
+    it('A STARTED LIVE STORES ITS KEY SEALED ONLY - and still serves it to a viewer', async () => {
+      const live = await start();
+      const row = await stored(live.id);
+      expect(row.liveKey).toBeNull();
+      expect(row.liveKeyVersion).toBe(1);
+      expect(row.liveKeyCiphertext).not.toContain(KEY);
+      expect(row.liveKeyCiphertext).not.toContain(Buffer.from(KEY, 'hex').toString('base64url'));
+      await expect(lives.get(BOB, live.id)).resolves.toMatchObject({ key: KEY });
+    });
+
+    it('a ciphertext copied to another live does not open: 503 LIVE_KEY_UNAVAILABLE, no seat', async () => {
+      const a = await start(ALICE);
+      const b = await start(BOB);
+      await q(
+        `UPDATE lives SET "liveKeyCiphertext" = (SELECT "liveKeyCiphertext" FROM lives WHERE id = $1)
+          WHERE id = $2`,
+        [a.id, b.id]
+      );
+      expect(await refusal(lives.get(CAROL, b.id))).toEqual({
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        code: 'LIVE_KEY_UNAVAILABLE',
+      });
+      expect(seats.held.has(seatMember(b.id, CAROL))).toBe(false);
+    });
+
+    it('the database holds exactly one form of a key, and a ciphertext always names its version', async () => {
+      const live = await start();
+      await expect(
+        q(`UPDATE lives SET "liveKey" = $2 WHERE id = $1`, [live.id, KEY])
+      ).rejects.toThrow(/lives_key_one_form/);
+      await expect(
+        q(`UPDATE lives SET "liveKeyVersion" = NULL WHERE id = $1`, [live.id])
+      ).rejects.toThrow(/lives_key_version/);
+    });
+
+    it('THE BACKFILL: a plaintext row is read at once, sealed by the sweep, and a re-run touches nothing', async () => {
+      const ids = [await legacyLive(BOB), await legacyLive(CAROL), await legacyLive(DAVE)];
+      // The previous form is still served while it waits for the sweep.
+      await expect(lives.get(EVE, ids[0])).resolves.toMatchObject({ key: KEY });
+      // An INTERRUPTED run: one row was sealed before it stopped. The rest is the next run's.
+      expect(await lives.sealPlaintextKeys()).toEqual({ sealed: 3, failed: 0 });
+      const first = await stored(ids[0]);
+      await q(
+        `UPDATE lives SET "liveKey" = $2, "liveKeyCiphertext" = NULL, "liveKeyVersion" = NULL
+          WHERE id = ANY($1::uuid[])`,
+        [ids.slice(1), KEY]
+      );
+      expect(await sweeper.sweepOnce()).toMatchObject({ keysSealed: 2, keysUnsealed: 0 });
+      // The row the interrupted run had sealed was not touched again.
+      expect(await stored(ids[0])).toEqual(first);
+      for (const id of ids) {
+        expect(await stored(id)).toMatchObject({ liveKey: null, liveKeyVersion: 1 });
+        await expect(lives.get(EVE, id)).resolves.toMatchObject({ key: KEY });
+      }
+      expect(await sweeper.sweepOnce()).toMatchObject({ keysSealed: 0, keysUnsealed: 0 });
+    });
+
+    it('WITHOUT THE SECRET: no live starts (503, nothing written), and a plaintext row stays as it is', async () => {
+      const id = await legacyLive(BOB);
+      delete process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV];
+      try {
+        expect(await refusal(start(ALICE))).toEqual({
+          status: HttpStatus.SERVICE_UNAVAILABLE,
+          code: 'LIVE_KEY_SEALING_UNAVAILABLE',
+        });
+        expect(await q(`SELECT 1 FROM lives WHERE "broadcasterId" = $1`, [ALICE])).toEqual([]);
+        expect(await sweeper.sweepOnce()).toMatchObject({ keysSealed: 0, keysUnsealed: 1 });
+        expect(await stored(id)).toMatchObject({ liveKey: KEY, liveKeyCiphertext: null });
+      } finally {
+        process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV] = KEY_SECRET;
+      }
     });
   });
 
@@ -1196,6 +1305,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
+        keysSealed: 0,
+        keysUnsealed: 0,
       });
       expect(store.countFor(silent.id)).toBe(0);
       await expect(lives.get(CAROL, talking.id)).resolves.toBeDefined();
@@ -1214,6 +1325,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
+        keysSealed: 0,
+        keysUnsealed: 0,
       });
     });
 
@@ -1252,6 +1365,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
+        keysSealed: 0,
+        keysUnsealed: 0,
       });
       expect(store.countFor(live.id)).toBe(1);
 
@@ -1263,6 +1378,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
+        keysSealed: 0,
+        keysUnsealed: 0,
       });
       expect(store.objects.size).toBe(0);
       for (const table of ['lives', 'live_segments', 'live_removed_viewers']) {
@@ -1276,6 +1393,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
+        keysSealed: 0,
+        keysUnsealed: 0,
       });
     });
 
@@ -1291,6 +1410,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
+        keysSealed: 0,
+        keysUnsealed: 0,
       });
       expect(await q(`SELECT "endReason" FROM lives WHERE id = $1`, [live.id])).toEqual([
         { endReason: 'broadcaster' },
@@ -1303,6 +1424,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
+        keysSealed: 0,
+        keysUnsealed: 0,
       });
     });
 
@@ -1689,6 +1812,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
+        keysSealed: 0,
+        keysUnsealed: 0,
       });
       expect(store.countFor(own.id)).toBe(0);
       await expect(lives.get(BOB, other.id)).resolves.toBeDefined();

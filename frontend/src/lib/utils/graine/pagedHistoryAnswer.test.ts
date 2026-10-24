@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GRAINE_BUNDLE_MAX_PAGES } from '$lib/crypto/graineConstants';
 import { ACCOUNT_KEY } from '../accountLocalKeys';

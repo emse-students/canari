@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -110,6 +111,38 @@ int canari_native_cleanup_pending_db(const char *files_dir);
 
 void canari_ios_on_resume(void);
 void canari_ios_on_pause(void);
+
+/* A share INTO Canari left by the Share Extension in the App Group (commands/app_group_share.rs):
+   carried into the app data and cache directories. Answers one of the codes below, which the
+   caller NSLogs - the launch call runs before the Rust logger exists. Pinned against the Rust
+   IMPORT_* constants by iosShareExtension.test.ts. */
+#define CANARI_SHARE_IMPORT_IMPORTED 1
+#define CANARI_SHARE_IMPORT_NOTHING 0
+#define CANARI_SHARE_IMPORT_BUSY 2
+#define CANARI_SHARE_IMPORT_DROPPED 3
+#define CANARI_SHARE_IMPORT_NO_DIRS (-1)
+#define CANARI_SHARE_IMPORT_NO_GROUP (-2)
+#define CANARI_SHARE_IMPORT_FAILED (-3)
+int canari_ios_import_app_group_share(const char *data_dir, const char *cache_dir);
+
+/* Once per process, before the page exists: deletes the share copies no current manifest names,
+   the App Group's leftover claim files, and repairs an App Group epoch behind the app's. The
+   report is NSLogged by the caller (Rust's CanariShareSweep, same layout; flags are SWEEP_*). */
+typedef struct {
+  int32_t deleted;
+  int32_t leftovers;
+  uint32_t flags;
+} CanariShareSweep;
+#define CANARI_SHARE_SWEEP_ALREADY_RAN (1u << 0)
+#define CANARI_SHARE_SWEEP_NO_DIRS (1u << 1)
+#define CANARI_SHARE_SWEEP_NO_GROUP (1u << 2)
+#define CANARI_SHARE_SWEEP_GROUP_BUSY (1u << 3)
+#define CANARI_SHARE_SWEEP_GROUP_LOCK_FAILED (1u << 4)
+#define CANARI_SHARE_SWEEP_EPOCH_UNREADABLE (1u << 5)
+#define CANARI_SHARE_SWEEP_EPOCH_REPAIRED (1u << 6)
+#define CANARI_SHARE_SWEEP_EPOCH_REPAIR_FAILED (1u << 7)
+#define CANARI_SHARE_SWEEP_LEFTOVER_FAILED (1u << 8)
+CanariShareSweep canari_ios_sweep_shared_inboxes(const char *data_dir, const char *cache_dir);
 
 #ifdef __cplusplus
 }

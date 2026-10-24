@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The fact `routes/posts/+page.svelte` depends on to replace the cached paint with the answer.
  *

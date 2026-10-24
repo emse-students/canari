@@ -18,6 +18,7 @@ import {
   KeyChangeInterruptedError,
   KeyChangeSupersededError,
   LocalStateUnopenableError,
+  LocalStateUnreadableNowError,
   moveSealedStoresOnly,
   performPinChange,
   thisTabMayChangeDeviceKey,
@@ -76,6 +77,12 @@ import {
 } from '$lib/stores/auth';
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
+import { ensureRestoreKey } from '$lib/services/restoreCredential';
+import {
+  clearRestoreKey,
+  forgetRestoreKeyRegistrations,
+  markRestoreAttempted,
+} from '$lib/services/restoreKey';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { noteUnlockUnattended } from '$lib/stores/unlockPath.svelte';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
@@ -521,6 +528,9 @@ export function savedStateFailure(
   }
   if (reason.reason === 'rotated') {
     return new LoginFailure('local_state_sealed_under_old_pin', m.auth_local_state_old_pin());
+  }
+  if (reason.reason === 'unreadable_now') {
+    return new LoginFailure('local_state_unreadable_now', m.auth_local_state_unreadable_now());
   }
   return new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
 }
@@ -1595,6 +1605,12 @@ export async function loginImpl(
       void bindCurrentSessionDevice(ctx.getMyDeviceId()).catch((e) =>
         cb.log(`[WARN] Session/device binding failed: ${String(e)}`)
       );
+      // The restore key of this session (WP-RESTORE-1, Android only), for the same reason and on the
+      // same terms: fire-and-forget, a failure is logged and the next start tries again. Skipped
+      // offline: promoteOfflineSession runs it once a token exists.
+      void ensureRestoreKey(ctx.getUserId()).catch((e) =>
+        cb.log(`[WARN] Restore key registration failed: ${String(e)}`)
+      );
     }
 
     // Check push health AFTER registration so pending_push_secret.txt is present
@@ -2379,6 +2395,12 @@ export async function loginImpl(
     // device needs nothing here either: `wipeRevokedDevice` has already forgotten it.
     if (_e instanceof SessionExpiredError) {
       clearUserLocally();
+      // The server ended this session, and its restore key with it (WP-RESTORE-1): the platform's
+      // copy goes too. Here and not only in `clearAuth`, because with no callback wired this branch
+      // forgets the user without passing through it.
+      forgetRestoreKeyRegistrations();
+      markRestoreAttempted();
+      void clearRestoreKey('session expired');
       if (cb.onSessionExpired) cb.onSessionExpired();
       else void goto(resolve('/login'), { replaceState: true });
     } else if (cb.onLoginFailed) {
@@ -2883,6 +2905,12 @@ export async function recoverPinImpl(
     if (e instanceof DeviceKeyMismatchError) {
       cb.log('[PIN_RECOVER] The old PIN does not open the local MLS state - nothing was changed.');
       throw new LocalizedError(m.auth_pin_old_incorrect());
+    }
+    if (e instanceof LocalStateUnreadableNowError) {
+      cb.log(
+        '[PIN_RECOVER] The local MLS state could not be read right now - nothing changed, no reset offered.'
+      );
+      throw new LocalizedError(m.auth_local_state_unreadable_now());
     }
     if (e instanceof LocalStateUnopenableError) {
       cb.log(

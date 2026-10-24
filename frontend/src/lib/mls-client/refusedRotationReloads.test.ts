@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import {
   REFUSED_ROTATION_RELOADS_KEY,
   forgetRefusedRotationReloads,

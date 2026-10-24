@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$lib/utils/hex', () => ({ bytesToHex: (b: Uint8Array) => Array.from(b).join('') }));

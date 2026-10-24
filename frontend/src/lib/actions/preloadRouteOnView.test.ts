@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A navigation link preloads its route the first time it is on screen, and never again in the same
  * document - however many times the bar is re-drawn by a navigation (`routeCodePreload.ts`).

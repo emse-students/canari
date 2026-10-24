@@ -239,6 +239,32 @@ export class MlsStateWriteRefusedError extends Error {
 }
 
 /**
+ * A checkpoint that failed where NOTHING can have been stored: the snapshot did not export or seal,
+ * or the IndexedDB transaction that carried it failed (a transaction is atomic - one that does not
+ * complete stored nothing). Thrown by the web checkpoint, whose store has no other path; a native
+ * checkpoint is one call that exports, seals and writes a file, so its failure proves nothing about
+ * the file and stays untyped.
+ */
+export class MlsCheckpointNotWrittenError extends Error {
+  constructor(
+    readonly step: 'export' | 'store',
+    readonly cause: unknown
+  ) {
+    super(`the MLS checkpoint failed at its ${step} - nothing was stored: ${String(cause)}`);
+    this.name = 'MlsCheckpointNotWrittenError';
+  }
+}
+
+/**
+ * Whether a failed checkpoint PROVES the state it carried is not on disk from this write: the guard
+ * or the document refused it ({@link MlsStateWriteRefusedError}), or it failed before anything could
+ * be stored ({@link MlsCheckpointNotWrittenError}). Anything else is ambiguous.
+ */
+export function checkpointWroteNothing(e: unknown): boolean {
+  return e instanceof MlsStateWriteRefusedError || e instanceof MlsCheckpointNotWrittenError;
+}
+
+/**
  * Persists the PIN-encrypted MLS checkpoint. Used at login and on critical flush.
  *
  * THROUGH THE DEVICE-KEY GATE (`db/deviceKeyGate.ts`): a write waits while another tab changes the

@@ -1,11 +1,12 @@
 /**
  * A REMOVAL'S CHECK AND ITS SAVE, AGAINST A REAL POSTGRESQL - one transaction, under one lock.
  *
- * `updateChannelAccess`, `kickFromWorkspace` and `removeMemberFromChannel` compare the actor's
- * permissions with the target's, then cut off and save. The three run in ONE transaction holding the
- * community's removal lock (a transaction-scoped advisory lock), and the comparison reads every
+ * `updateChannelAccess`, `kickFromWorkspace`, `removeMemberFromChannel` and a private
+ * `createChannel` compare the actor's permissions with the target's, then save. Each save runs in ONE
+ * transaction holding the community's removal lock (a transaction-scoped advisory lock, opened by
+ * `departDistributionGroups` or `withCommunityRemovalLock`), and the comparison reads every
  * membership and role row it uses with a shared row lock - so a role change cannot land between the
- * check and the save. A mock cannot judge a lock, so the interleavings are made deterministic here:
+ * check and the save. An access-list rewrite also re-reads the salon `FOR UPDATE` there. A mock cannot judge a lock, so the interleavings are made deterministic here:
  * a raw client holds the conflicting write open, and the test waits until the server reports the
  * service PARKED on it (never a sleep) before committing.
  *
@@ -17,21 +18,28 @@
  * Everything happens in a throwaway schema created BEFORE the DataSource initializes (see
  * `channel-unread-clear.integration.spec.ts` for why that order), dropped at the end.
  */
-import { ForbiddenException } from '@nestjs/common';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { HttpException, Logger } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
-import { ChannelService } from './channel.service';
+import { CHANNEL_ACCESS_CHANGED, ChannelService } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
-import { DistributionEvictionOwed } from './entities/distribution-eviction-owed.entity';
 import type { RedisService } from '../common/redis';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
+
+/** `distribution_departures`, as production gets it: every removal's roster write records into it. */
+const DEPARTURES_MIGRATION = readFileSync(
+  join(__dirname, '..', 'migrations', '108_distribution_departures.sql'),
+  'utf8'
+);
 
 const WS = '00000000-0000-4000-8000-0000000000f1';
 const ADMIN_ROLE = '00000000-0000-4000-8000-0000000000f2';
@@ -45,6 +53,10 @@ maybe('a removal against PostgreSQL', () => {
   let ds: DataSource;
   let service: ChannelService;
   let salonSeq = 0;
+  let previousFetch: typeof fetch;
+  let previousSecret: string | undefined;
+  /** How many advisory locks the server held at each call to chat-delivery. */
+  const locksAtCall: number[] = [];
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
   /** Adds a member holding `roleId`, so every test names its own targets. */
@@ -68,24 +80,22 @@ maybe('a removal against PostgreSQL', () => {
   const allowedOn = async (channelId: string): Promise<string[]> =>
     (await ds.getRepository(Channel).findOneByOrFail({ id: channelId })).allowedUsers;
   const codeOf = (e: unknown): unknown =>
-    e instanceof ForbiddenException ? (e.getResponse() as { code?: unknown }).code : e;
+    e instanceof HttpException ? (e.getResponse() as { code?: unknown }).code : e;
 
   beforeAll(async () => {
+    previousSecret = process.env.INTERNAL_SECRET;
+    process.env.INTERNAL_SECRET = 'it-secret';
+    previousFetch = global.fetch;
+    for (const level of ['log', 'warn', 'debug'] as const) {
+      jest.spyOn(Logger.prototype, level).mockImplementation(() => undefined);
+    }
     admin = new Client({ connectionString: URL });
     await admin.connect();
     await admin.query(`CREATE SCHEMA ${schema}`);
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [
-        Workspace,
-        Channel,
-        ChannelRole,
-        ChannelMember,
-        ChannelMessage,
-        WorkspaceInvite,
-        DistributionEvictionOwed,
-      ],
+      entities: [Workspace, Channel, ChannelRole, ChannelMember, ChannelMessage, WorkspaceInvite],
       synchronize: false,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
@@ -93,6 +103,7 @@ maybe('a removal against PostgreSQL', () => {
     });
     await ds.initialize();
     await ds.synchronize();
+    await q(DEPARTURES_MIGRATION);
     service = new ChannelService(
       ds.getRepository(Workspace),
       ds.getRepository(Channel),
@@ -102,14 +113,17 @@ maybe('a removal against PostgreSQL', () => {
       ds.getRepository(WorkspaceInvite),
       { publishChannelEvent: jest.fn().mockResolvedValue(undefined) } as unknown as RedisService
     );
-    // The key-distribution cut-offs and the grant announcements call chat-delivery; what is judged
-    // here is the check and the rows.
-    for (const name of [
-      'cutOffKeyDistribution',
-      'cutOffEveryPrivateChannel',
-      'evictFromChannelGroup',
-      'announceChannelAccessGranted',
-    ]) {
+    // chat-delivery, as a departure sees it: every eviction finds no group (the salons here have
+    // none), and each call records how many advisory locks the server held when it was made.
+    global.fetch = jest.fn(async () => {
+      locksAtCall.push(
+        Number((await q(`SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory'`))[0].n)
+      );
+      return new Response(JSON.stringify({ evicted: false }), { status: 200 });
+    }) as unknown as typeof fetch;
+    // The grant announcements and a private creation's group mint call chat-delivery for things
+    // this file does not judge.
+    for (const name of ['announceChannelAccessGranted', 'ensureChannelDistributionGroup']) {
       jest.spyOn(service as never, name as never).mockResolvedValue(undefined as never);
     }
     await q(
@@ -131,6 +145,9 @@ maybe('a removal against PostgreSQL', () => {
   });
 
   afterAll(async () => {
+    global.fetch = previousFetch;
+    if (previousSecret === undefined) delete process.env.INTERNAL_SECRET;
+    else process.env.INTERNAL_SECRET = previousSecret;
     jest.restoreAllMocks();
     if (ds?.isInitialized) await ds.destroy();
     if (!admin) return;
@@ -258,38 +275,50 @@ maybe('a removal against PostgreSQL', () => {
       await other.client.end();
     }
   });
-  it('records the eviction a salon removal owes, and calls it only after the commit', async () => {
-    // The call fails the first time: the removal stays committed, the row stays owed, and the next
-    // pass completes it. Neither call runs while any advisory lock is held.
-    await member('evicted', BASE_ROLE);
-    const id = await salon(['salons', 'evicted']);
-    await q(`UPDATE channels SET "distributionGroupId" = gen_random_uuid() WHERE id = $1`, [id]);
-    const owed = () =>
-      q(
-        `SELECT "userId" FROM distribution_evictions_owed WHERE kind = 'channel' AND "scopeId" = $1`,
-        [id]
-      );
-    const evict = (service as unknown as { evictFromChannelGroup: jest.Mock })
-      .evictFromChannelGroup;
-    const locksAtCall: number[] = [];
-    const advisoryLocks = async () =>
-      Number((await q(`SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory'`))[0].n);
-    evict.mockImplementationOnce(async () => {
-      locksAtCall.push(await advisoryLocks());
-      throw new Error('chat-delivery down');
-    });
+  it('calls chat-delivery for a kick with no advisory lock held', async () => {
+    // The first eviction runs before the removal lock is taken, the second after its commit.
+    await member('cut', BASE_ROLE);
+    locksAtCall.length = 0;
+    expect(await started(service.kickFromWorkspace(WS, 'cut', 'kicker')).outcome).toBe('allowed');
+    expect(locksAtCall.length).toBeGreaterThan(0);
+    expect(locksAtCall.every((n) => n === 0)).toBe(true);
+  });
 
-    expect(await started(service.removeMemberFromChannel(id, 'evicted', 'salons')).outcome).toBe(
-      'allowed'
-    );
-    expect(await allowedOn(id)).toEqual(['salons']);
-    expect(await owed()).toEqual([{ userId: 'evicted' }]);
+  it('refuses a rewrite whose salon changed after it was read, and saves nothing', async () => {
+    // Another rewrite holds the row and adds 'late'; this one computed its removals from the row
+    // before it, so it waits on the row lock, sees the change, and is refused whole.
+    await member('late', BASE_ROLE);
+    await member('kept', BASE_ROLE);
+    const id = await salon(['salons', 'kept']);
+    const other = await holder();
+    try {
+      await other.client.query('BEGIN');
+      await other.client.query(`UPDATE channels SET "allowedUsers" = $1 WHERE id = $2`, [
+        'salons,kept,late',
+        id,
+      ]);
+      const rewrite = started(service.updateChannelAccess(id, 'salons', true, ['salons']));
+      await blockedBy(other.pid, rewrite.settled);
+      await other.client.query('COMMIT');
+      expect(await rewrite.outcome).toBe(CHANNEL_ACCESS_CHANGED);
+      expect(await allowedOn(id)).toEqual(['salons', 'kept', 'late']);
+    } finally {
+      await other.client.query('ROLLBACK').catch(() => undefined);
+      await other.client.end();
+    }
+  });
 
-    evict.mockImplementationOnce(async () => {
-      locksAtCall.push(await advisoryLocks());
-    });
-    expect(await service.settleOwedEvictions()).toBe(1);
-    expect(await owed()).toEqual([]);
-    expect(locksAtCall).toEqual([0, 0]);
+  it('refuses a private creation that leaves off someone who holds more than its creator', async () => {
+    // 'owner' is an administrator: a member holding only `channel.manage` cannot hide a salon from
+    // them, and an administrator can.
+    const named = async (name: string): Promise<number> =>
+      Number((await q(`SELECT count(*) AS n FROM channels WHERE name = $1`, [name]))[0].n);
+    const create = (name: string, actorUserId: string) =>
+      started(service.createChannel({ workspaceId: WS, name, visibility: 'private', actorUserId }))
+        .outcome;
+    expect(await create('cache', 'salons')).toBe('REMOVAL_EXCEEDS_ACTOR');
+    expect(await named('cache')).toBe(0);
+    expect(await create('bureau', 'owner')).toBe('allowed');
+    expect(await named('bureau')).toBe(1);
   });
 });

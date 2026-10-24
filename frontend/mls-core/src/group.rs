@@ -182,6 +182,8 @@ impl MlsManager {
     /// Without this purge, the "forget + re-Welcome" recovery never converges.
     pub fn forget_group(&mut self, group_id: &str, min_epoch: u64) {
         self.groups.remove(group_id);
+        self.drop_pending_submission(group_id);
+        self.drop_owed_welcome(group_id);
         self.pending_external_joins.remove(group_id);
         self.device_trust.forget_unseeded(group_id);
         // NO PRUNING HERE: a forget is also the first half of a forget-and-re-Welcome HEAL, and a pin

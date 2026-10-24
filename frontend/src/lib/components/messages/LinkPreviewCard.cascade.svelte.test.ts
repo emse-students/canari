@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A DECLARED IMAGE IS NOT A DRAWN IMAGE, AND THE CASCADE HAS TO COME BACK DOWN.
  *

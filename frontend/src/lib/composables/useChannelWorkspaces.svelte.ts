@@ -52,6 +52,7 @@ import {
   ensureCommunityDistributionGroup,
   enterPrivateSalonGroup,
 } from '$lib/utils/graine/distributionGroup';
+import { leaveKeyGroupToMainTab } from '$lib/utils/graine/followerTabKeyGroup';
 import { requestCommunityHistory } from '$lib/utils/graine/repair';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
@@ -561,7 +562,9 @@ export function useChannelWorkspaces() {
         viewerHasAccess,
         ensureMls: ctx.ensureMls,
         log: ctx.log,
-      });
+      }).catch((e: unknown) =>
+        leaveKeyGroupToMainTab(e, `the salon ${actualId}`, { gesture: false, log: ctx.log })
+      );
       assertListingSession(session, `the salon ${actualId}`);
       // ENTERED: a send typed into this salon before the walk reached it goes now (`salonSendGate`).
       openSalonSendGate(actualId);
@@ -597,7 +600,12 @@ export function useChannelWorkspaces() {
     assertListingSession(session, `the key group of ${workspaceId}`);
     const mls = await ctx.ensureMls();
     assertListingSession(session, `the key group of ${workspaceId}`);
-    await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
+    await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log).catch((e: unknown) =>
+      leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, {
+        gesture: false,
+        log: ctx.log,
+      })
+    );
   }
 
   /**
@@ -1109,6 +1117,22 @@ export function useChannelWorkspaces() {
     // group, and the community's still carries every public salon of the same community. The join
     // itself is idempotent and coalesced per scope (`ensureDistributionGroupFor`), so a second
     // channel joined in the same session costs one shared promise and no second external commit.
+    // A follower tab may enter neither group: said once to the member, and the join goes on without.
+    try {
+      await enterJoinedChannelGroups(channelId, workspaceId, isPrivate, ensureMls, log);
+    } catch (e) {
+      leaveKeyGroupToMainTab(e, `the salon ${channelId}`, { gesture: true });
+    }
+  }
+
+  /** The two groups {@link enterJoinedChannel} enters, in order. */
+  async function enterJoinedChannelGroups(
+    channelId: string,
+    workspaceId: string,
+    isPrivate: boolean,
+    ensureMls: (() => IMlsService | Promise<IMlsService>) | undefined,
+    log: (message: string) => void
+  ): Promise<void> {
     if (ensureMls) {
       const mls = await ensureMls();
       await ensureCommunityDistributionGroup(mls, service, workspaceId, log);
@@ -1564,7 +1588,10 @@ export function useChannelWorkspaces() {
     // sidebar, and `ensureCommunityDistributionGroup` logs the cause.
     if (workspaceId && ctx.ensureMls) {
       const mls = await ctx.ensureMls();
-      await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
+      await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log).catch(
+        (e: unknown) =>
+          leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, { gesture: true })
+      );
     }
 
     // Immediately load the channels the backend created (e.g. the default "general" channel)
@@ -1670,7 +1697,9 @@ export function useChannelWorkspaces() {
         viewerHasAccess: true,
         ensureMls: ctx.ensureMls,
         log: ctx.log,
-      });
+      }).catch((e: unknown) =>
+        leaveKeyGroupToMainTab(e, `the salon ${actualId}`, { gesture: true })
+      );
       openSalonSendGate(actualId);
 
       const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * AN ATTACHMENT'S NAME IS WRITTEN ONCE, AND A RECORDING IS NOT WRITTEN AT ALL.
  *

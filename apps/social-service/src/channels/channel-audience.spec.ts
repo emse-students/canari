@@ -1,6 +1,5 @@
 import { Repository } from 'typeorm';
 import { ChannelService, channelIsReadableBy } from './channel.service';
-import { installRemovalLock } from './removal-lock.fixture-spec';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -8,6 +7,7 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
+import { fakeDepartureManager } from './departure-transaction.fake-spec';
 
 /** A well-formed Graine v2 signature: every salon row carries one (channel-encryption 21.8). */
 const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
@@ -96,8 +96,9 @@ describe('channel audience', () => {
     );
     const redis = { publishChannelEvent: jest.fn(() => Promise.resolve()) };
 
-    // The community removal lock and its owed evictions (`removal-lock.fixture-spec.ts`).
-    installRemovalLock({ memberRepo, roleRepo, channelRepo });
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
+    });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,

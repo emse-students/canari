@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A LIVE DELIVERY DURING THE RESTORE'S SECOND PHASE SURVIVES IT.
  *

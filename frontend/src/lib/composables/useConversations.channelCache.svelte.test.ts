@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A salon's in-memory history is current exactly as long as the live stream that keeps it current
  * has had no gap - never "for five minutes after its load", which is what it used to be. Measured

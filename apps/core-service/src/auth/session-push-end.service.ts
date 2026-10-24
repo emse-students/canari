@@ -28,8 +28,16 @@ export interface EndedSession {
   deviceId?: string | null;
 }
 
-/** Why a session ended - for the log line only. */
-export type SessionEndCause = 'logout' | 'revoked-by-owner' | 'revoked-others' | 'replay';
+/**
+ * Why a session ended - for the log line only. `restored`: a restore key consumed on a new phone
+ * ended the session it was bound to (`RestoreCredentialsService.consume`).
+ */
+export type SessionEndCause =
+  | 'logout'
+  | 'revoked-by-owner'
+  | 'revoked-others'
+  | 'replay'
+  | 'restored';
 
 interface ClaimedEnding {
   sessionId: string;

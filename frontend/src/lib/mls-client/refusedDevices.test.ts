@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { DeviceTrustRefusedError, type DevicePin } from './deviceTrust';
 import {

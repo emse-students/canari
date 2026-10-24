@@ -47,9 +47,11 @@ describe('syncConnectionAfterWsOpen - a departed leaf is collected by a holder',
       getLocalGroups: vi.fn().mockReturnValue(['g-live']),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['u1:dev-1', 'gone:web-7']),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'u1' }]),
-      getGroupRosters: vi
-        .fn()
-        .mockResolvedValue({ rosters: new Map([['g-live', ['u1']]]), refused: new Set() }),
+      getGroupRosters: vi.fn().mockResolvedValue({
+        rosters: new Map([['g-live', ['u1']]]),
+        refused: new Set(),
+        revoked: new Map(),
+      }),
       removeMember,
       getEpoch: vi.fn().mockReturnValue(9),
       ...forgetPair(),

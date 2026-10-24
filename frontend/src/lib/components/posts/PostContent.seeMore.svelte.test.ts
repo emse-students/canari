@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * "VOIR PLUS" CLAMPS THE RENDERED POST - IT NEVER CUTS ITS MARKDOWN (user, 2026-09-28).
  *

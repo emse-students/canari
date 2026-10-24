@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Two voters may share a display name; the voter list must still draw both, once each.
  *

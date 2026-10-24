@@ -87,12 +87,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     action: 'kept',
     reason: 'a transient outbox entry, deleted at hand-off and with its message',
   },
-  // An eviction a removal owes (migration 109): it lives only until chat-delivery confirmed it, and
-  // the eviction it records is what removes the delivery rows that name the same account.
-  'distribution_evictions_owed.userId': {
-    action: 'kept',
-    reason: 'a transient record, deleted once the eviction it owes is confirmed',
-  },
+  // How the account's key-group departures ended (migration 108). Once the account is gone no
+  // device of it can take a seat, so the outcomes have nothing left to decide.
+  'distribution_departures.userId': { action: 'delete' },
   'channel_members.userId': {
     action: 'code',
     by: 'ChannelService.removeAccountFromWorkspaces (governance repair before each removal)',
@@ -453,6 +450,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `DELETE FROM minesweeper_challenges WHERE "userId" = $1`,
   },
   { label: 'minesweeper_bans', sql: `DELETE FROM minesweeper_bans WHERE "userId" = $1` },
+  {
+    label: 'distribution_departures',
+    sql: `DELETE FROM distribution_departures WHERE "userId" = $1`,
+  },
   { label: 'reviewer_grants', sql: `DELETE FROM document_reviewer_grants WHERE "userId" = $1` },
   { label: 'read_grants', sql: `DELETE FROM read_grants WHERE user_id = $1` },
   {
@@ -579,9 +580,13 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     label: 'minesweeper_banned',
     sql: `UPDATE minesweeper_bans SET "bannedBy" = $2 WHERE "bannedBy" = $1`,
   },
-  // `simple-array`: comma-joined text, ids stored lower-cased (`cutOffEveryPrivateChannel`). The
-  // salons of communities the account was still in are cut with their key distribution before
-  // this runs; this catches a grant left in any other salon.
+  // `simple-array`: comma-joined text, ids stored lower-cased (`ChannelService.stripFromChannels`).
+  // NOT a departure, deliberately: the salons of every community the account was still in were left
+  // through `ChannelService.removeFromWorkspace` (step 1 of the erasure route), which cut their key
+  // groups and stripped these lists in its own departure. What remains here is a grant in a salon of
+  // a community the account had already left - a name no key group can act on, because a salon's
+  // group entitles only members of its community (`isDistributionGroupEntitled`) and that earlier
+  // departure already cut its seats. So there is no key distribution to cut, only the name to drop.
   {
     label: 'channel_allowed_users',
     sql: `UPDATE channels

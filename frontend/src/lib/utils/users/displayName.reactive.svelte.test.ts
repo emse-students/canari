@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 vi.mock('$lib/paraglide/messages', () => ({
   m: { user_unknown_label: () => 'Utilisateur inconnu' },
 }));

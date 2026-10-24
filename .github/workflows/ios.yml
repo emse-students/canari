@@ -145,6 +145,16 @@ jobs:
         with:
           xcode-version: '^26.0'
 
+      # THE HAND-MAINTAINED PROJECT IS READ BY XCODE FIRST, IN SECONDS, not at the archive twenty
+      # minutes in: a pbxproj with an unclosed object once got past every check on Windows. `plutil`
+      # parses its old-style plist syntax; `xcodebuild -list` reads it as a project (targets,
+      # configurations). The structure is also pinned by `iosShareExtension.test.ts`'s parser.
+      - name: Lint the Xcode project
+        run: |
+          set -euo pipefail
+          plutil -lint frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj
+          xcodebuild -list -project frontend/src-tauri/gen/apple/canari.xcodeproj
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -219,6 +229,7 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
           APPLE_PROVISIONING_PROFILE_NSE: ${{ secrets.APPLE_PROVISIONING_PROFILE_NSE }}
+          APPLE_PROVISIONING_PROFILE_SHARE: ${{ secrets.APPLE_PROVISIONING_PROFILE_SHARE }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -226,15 +237,17 @@ jobs:
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
         run: |
-          # Two provisioning profiles are required because the project signs two bundles
-          # manually: the app (fr.emse.canari, profile "Canari") and the Notification
-          # Service Extension (fr.emse.canari.notifications, profile "CanariNotifications").
+          # Three provisioning profiles are required because the project signs three bundles
+          # manually: the app (fr.emse.canari, profile "Canari"), the Notification Service
+          # Extension (fr.emse.canari.notifications, profile "CanariNotifications") and the
+          # Share Extension (fr.emse.canari.share, profile "CanariShare").
           required=(
             APPLE_SIGNING_IDENTITY
             APPLE_CERTIFICATE_BASE64
             APPLE_CERTIFICATE_PASSWORD
             APPLE_PROVISIONING_PROFILE
             APPLE_PROVISIONING_PROFILE_NSE
+            APPLE_PROVISIONING_PROFILE_SHARE
             APPLE_TEAM_ID
             GOOGLE_SERVICE_INFO_PLIST
             JWT_SECRET
@@ -282,10 +295,11 @@ jobs:
         env:
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
           APPLE_PROVISIONING_PROFILE_NSE: ${{ secrets.APPLE_PROVISIONING_PROFILE_NSE }}
+          APPLE_PROVISIONING_PROFILE_SHARE: ${{ secrets.APPLE_PROVISIONING_PROFILE_SHARE }}
         run: |
-          # Install BOTH profiles into the runner's profile store. xcodebuild resolves the
-          # PROVISIONING_PROFILE_SPECIFIER names ("Canari", "CanariNotifications") set in
-          # the project by scanning these installed profiles, so both must be present.
+          # Install ALL THREE profiles into the runner's profile store. xcodebuild resolves the
+          # PROVISIONING_PROFILE_SPECIFIER names ("Canari", "CanariNotifications", "CanariShare")
+          # set in the project by scanning these installed profiles, so all three must be present.
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILES_DIR"
 
@@ -304,6 +318,7 @@ jobs:
 
           install_profile "$APPLE_PROVISIONING_PROFILE" "app"
           install_profile "$APPLE_PROVISIONING_PROFILE_NSE" "nse"
+          install_profile "$APPLE_PROVISIONING_PROFILE_SHARE" "share"
 
       - name: Write GoogleService-Info.plist
         env:
@@ -580,10 +595,8 @@ jobs:
             echo "::error::the archive holds no .app"
             exit 1
           fi
-          if [ ! -d "$APP/PlugIns/canari_NSE.appex" ] && [ -z "$(find "$APP/PlugIns" -maxdepth 1 -name '*.appex' | head -1)" ]; then
-            echo "::error::the app carries no notification extension - a local build must keep it"
-            exit 1
-          fi
+          # EXACTLY the two extensions (notifications, share): a local build must keep both.
+          bash ../.github/scripts/ios-extensions.sh "$APP"
           # Every bench observable IS in this bundle - which is what makes the store build's
           # "absent" below a measurement rather than a search that cannot find anything.
           bash ../.github/scripts/bench-observables.sh "$APP" present
@@ -630,8 +643,8 @@ jobs:
 
           # Archive directly with xcodebuild, bypassing Tauri's export step which fails
           # with "requires a provisioning profile with the App Groups feature" because
-          # Tauri's generated ExportOptions.plist cannot express a two-target
-          # (app + appex) manual-signing profile map.
+          # Tauri's generated ExportOptions.plist cannot express a three-target
+          # (app + two appex) manual-signing profile map.
           ARCHIVE_DIR="src-tauri/gen/apple/build"
           ARCHIVE_NAME="canari_iOS.xcarchive"
           ARCHIVE_PATH="${ARCHIVE_DIR}/${ARCHIVE_NAME}"
@@ -659,6 +672,11 @@ jobs:
           # A STORE ARCHIVE CARRIES NONE OF THE BENCH RIG'S OBSERVABLES - asserted on the binaries
           # that would ship, not on the flags meant to produce them (bench-observables.sh).
           bash ../.github/scripts/bench-observables.sh "$ARCHIVE_PATH/Products/Applications" absent
+
+          # THE STORE APP EMBEDS EXACTLY ITS TWO EXTENSIONS - one missing still archives, uploads and
+          # launches; only a phone would show the share sheet without Canari (ios-extensions.sh).
+          STORE_APP="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name '*.app' | head -1)"
+          bash ../.github/scripts/ios-extensions.sh "$STORE_APP"
 
           # THE ICON IS AN ICON COMPOSER DOCUMENT (gen/apple/AppIcon.icon), written without the Mac app
           # that normally authors it, and nothing but Xcode 26 can say whether it means what it was
@@ -699,7 +717,7 @@ jobs:
         run: |
           # Re-export the archive produced by the previous step with an ExportOptions.plist
           # that pins manual signing and maps EACH bundle id to its named distribution
-          # profile. Both profiles are already installed in the runner store (by name) and
+          # profile. All three profiles are already installed in the runner store (by name) and
           # carry the required entitlements (App Groups, Associated Domains, aps-environment).
           ARCHIVE="build/canari_iOS.xcarchive"
           if [ ! -d "$ARCHIVE" ]; then
@@ -728,6 +746,8 @@ jobs:
               <string>Canari</string>
               <key>fr.emse.canari.notifications</key>
               <string>CanariNotifications</string>
+              <key>fr.emse.canari.share</key>
+              <string>CanariShare</string>
             </dict>
             <key>stripSwiftSymbols</key>
             <true/>

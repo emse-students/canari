@@ -47,7 +47,7 @@ export interface IncomingSharePayload {
 
 let pending = $state<IncomingSharePayload | null>(null);
 let target = $state<string | null>(null);
-/** The share epoch of the held share (0 outside the Android app, which has none). */
+/** The share epoch of the held share (0 outside the mobile apps, which have none). */
 let pendingEpoch = 0;
 /**
  * The epoch of the last sign-out this page saw (`fence`): an offer from an older epoch is refused.

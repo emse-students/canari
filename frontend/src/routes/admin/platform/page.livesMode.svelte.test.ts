@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE LIVES KILL SWITCH ON /admin/platform - the same safety as the calls control
  * (`page.minClientVersion.svelte.test.ts`): it shows what the server holds, a move sends ONLY that

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Stub Tauri internals before any import so the CJS module picks them up.
 // Vitest v4 does not support vi.mock for CJS modules like @tauri-apps/api/core.
 // We therefore stub the global object that the CJS module uses internally.

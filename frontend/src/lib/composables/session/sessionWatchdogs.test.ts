@@ -63,6 +63,8 @@ vi.mock('./sessionAuth', () => ({
 }));
 
 const { startSyncWatchdogImpl } = await import('./sessionWatchdogs');
+const { noteCommitRateLimited, resetCommitRateLimit } =
+  await import('$lib/mls-client/commitRateLimit');
 
 const TICK_MS = 5_000;
 const SWEEP_MS = 5 * 60_000;
@@ -88,8 +90,10 @@ describe('startSyncWatchdogImpl - what a quiet tab costs', () => {
     isDistributionGroup.mockReturnValue(false);
     externalJoin.mockResolvedValue({ joined: true });
     enumerateNotReadyGroups.mockReturnValue([]);
+    resetCommitRateLimit();
   });
   afterEach(() => {
+    resetCommitRateLimit();
     vi.useRealTimers();
   });
 
@@ -281,6 +285,36 @@ describe('startSyncWatchdogImpl - what a quiet tab costs', () => {
 
     expect(isReAddDue).toHaveBeenCalledWith('g1');
     expect(requestReAdd).not.toHaveBeenCalled();
+  });
+
+  it('stops the recovery sweep while the commit rate limit holds, rather than collecting one 429 per group', () => {
+    // Re-adds are commits, and the server's limit is per ACCOUNT: once it has answered 429, every
+    // further group in the sweep would be refused the same way.
+    const { ctx, cb } = harness([{ id: 'g1' }, { id: 'g2' }, { id: 'g3' }]);
+    noteCommitRateLimited(60_000);
+    startSyncWatchdogImpl(ctx, cb);
+
+    vi.advanceTimersByTime(TICK_MS);
+
+    expect(requestReAdd).not.toHaveBeenCalled();
+    const said = vi
+      .mocked(cb.log)
+      .mock.calls.map((c: unknown[]) => String(c[0]))
+      .join(' | ');
+    expect(said).toContain('recovery sweep paused');
+  });
+
+  it('holds a stuck-gap escalation while the commit rate limit holds, and keeps the gap marked', () => {
+    const { ctx, cb } = harness([{ id: 'g1' }]);
+    getLocalGroups.mockReturnValue(['g1']);
+    gaps.set('g1', Date.now() - 46_000);
+    noteCommitRateLimited(60_000);
+    startSyncWatchdogImpl(ctx, cb);
+
+    vi.advanceTimersByTime(TICK_MS);
+
+    expect(recoverForkedGroup).not.toHaveBeenCalled();
+    expect(gaps.has('g1')).toBe(true);
   });
 
   it('does nothing at all when this tab is not the leader', () => {

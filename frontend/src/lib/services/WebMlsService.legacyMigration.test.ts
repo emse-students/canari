@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 const migrateLegacyMlsStateBlob = vi.hoisted(() => vi.fn());
 const saveMlsState = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
@@ -56,6 +57,11 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     saveState: vi.fn().mockResolvedValue(new Uint8Array([7])),
     deleteDevice: vi.fn().mockResolvedValue(undefined),
     endDocumentAfterRefusedRotation: vi.fn(),
+    // A rotation drops the burns owed to epochs ahead of the state, with the ledger.
+    owedSendBurns: new Map(),
+    unprovenSendRatchets: new Set(),
+    owedBurnInFlight: new Map(),
+    sendRatchetsNotDurable: WebMlsService.prototype['sendRatchetsNotDurable'],
     // Real implementations, not mocks: the fresh-start assertions below (new id persisted, old
     // device deleted) are assertions ABOUT the rotation, so stubbing it would test nothing.
     rotateDeviceIdentity: WebMlsService.prototype['rotateDeviceIdentity'],

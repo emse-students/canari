@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The one fact a native mobile WebView cannot work out for itself.
  *

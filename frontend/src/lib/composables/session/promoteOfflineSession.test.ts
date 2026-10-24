@@ -10,6 +10,7 @@ const runGroupDiscoveryImpl = vi.hoisted(() => vi.fn());
 const startConnectionWatchdogImpl = vi.hoisted(() => vi.fn());
 const startSyncWatchdogImpl = vi.hoisted(() => vi.fn());
 const bindCurrentSessionDevice = vi.hoisted(() => vi.fn(async () => {}));
+const ensureRestoreKey = vi.hoisted(() => vi.fn(async () => {}));
 
 // A promotion loads the account's notification preferences; that read is its own seam.
 vi.mock('$lib/notifications/preferencesApi', () => ({
@@ -36,6 +37,8 @@ vi.mock('./sessionWatchdogs', () => ({ startSyncWatchdogImpl }));
 // a real deployment if a cookie ever exists here, and its console noise is what the next real
 // warning would hide behind.
 vi.mock('$lib/services/authSessions', () => ({ bindCurrentSessionDevice }));
+// The same isolation for the restore key's registration (WP-RESTORE-1), which calls the server too.
+vi.mock('$lib/services/restoreCredential', () => ({ ensureRestoreKey }));
 
 const { promoteOfflineSession, registerOfflinePromotion, unregisterOfflinePromotion } =
   await import('./promoteOfflineSession');
@@ -60,6 +63,7 @@ function makeCtx(over: { loggedIn?: boolean; offline?: boolean } = {}) {
       },
       getHistoryBaseUrl: () => 'https://example.test',
       getMyDeviceId: () => 'device-1',
+      getUserId: () => 'user-1',
       ensureMls: () => ({}),
     } as any,
   };
@@ -103,6 +107,8 @@ describe('promoteOfflineSession', () => {
     // A promotion is the first moment an offline session can name its own device, so the binding
     // belongs here and nowhere else - and it is asserted rather than merely silenced.
     expect(bindCurrentSessionDevice).toHaveBeenCalledWith('device-1');
+    // And the restore key, skipped at an offline login for the same reason (no token).
+    expect(ensureRestoreKey).toHaveBeenCalledWith('user-1');
   });
 
   it('flushes the outbox only AFTER the connection is open', async () => {
@@ -146,6 +152,7 @@ describe('promoteOfflineSession', () => {
     expect(flushOutbox).not.toHaveBeenCalled();
     // And no session is stamped with a device when there is no session left to stamp.
     expect(bindCurrentSessionDevice).not.toHaveBeenCalled();
+    expect(ensureRestoreKey).not.toHaveBeenCalled();
   });
 
   it('stops quietly when a sign-out is in progress - no second sign-out, no "unreachable"', async () => {

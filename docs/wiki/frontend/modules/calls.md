@@ -333,6 +333,14 @@ two clients, with Cloudflare TURN as the last resort, and the host carries only 
 connect from production ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md#8-what-works-with-no-port-opened-by-the-dsi-measured-2026-10-16)).
 Nothing in this lot needs the DSI.
 
+**The call keys and the group's epoch (2026-10-22).** Each end derives the media keys from the
+conversation's CURRENT MLS epoch (`setupEncryption`), the caller before the ring and the callee after
+the answer, so an epoch move in between gives the two ends different keys. `CallService` holds the
+periodic leaf refresh of its call's group from leaving `idle` until the call is over
+([mls-protocol](../../protocols/mls-protocol.md#the-periodic-leaf-refresh)). It holds only THIS
+device: another device or another member can still move the epoch while a call is being set up - the
+class `onUndecryptable` reports. Calls are dev builds only, and that is accepted for now.
+
 **The switches** (`frontend/src/lib/features.ts`, pinned by `features.test.ts`):
 
 | Constant | Value | Holds |

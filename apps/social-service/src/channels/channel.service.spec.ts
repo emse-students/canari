@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { CHANNEL_SIGNATURE_REQUIRED, ChannelService, clientIdLockSql } from './channel.service';
-import { installRemovalLock } from './removal-lock.fixture-spec';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -22,6 +21,7 @@ import {
   DEFAULT_MODERATOR_PERMISSIONS,
   PIN_REQUIRES_MODERATION,
 } from './permissions';
+import { fakeDepartureManager } from './departure-transaction.fake-spec';
 
 /** A well-formed Graine v2 signature: every salon row carries one (channel-encryption 21.8). */
 const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
@@ -133,8 +133,9 @@ describe('ChannelService security hardening', () => {
       ),
     };
 
-    // The community removal lock and its owed evictions (`removal-lock.fixture-spec.ts`).
-    installRemovalLock({ memberRepo, roleRepo, channelRepo });
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
+    });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,

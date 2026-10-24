@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The saved community list is a copy of a listing, owned by ONE account, and refused whole when it
  * is not exactly what this module wrote (community-open-budget F1).

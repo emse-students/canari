@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE CONVERSATION RESTORE OWNS THE ROWS IT READS FROM STORAGE, AND ONLY THOSE.
  *

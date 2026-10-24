@@ -25,7 +25,6 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { IsNull } from 'typeorm';
-import { ensureGroupMember } from '../utils/group-membership';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import {
   sanitizeIdentityValue,
@@ -39,7 +38,11 @@ import { activeRevocationWhere } from '../utils/revocation';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
-import { endDeviceMemberships, type DepartureScope } from '../utils/group-membership';
+import {
+  endDeviceMemberships,
+  writePendingSeats,
+  type DepartureScope,
+} from '../utils/group-membership';
 
 /** Device-group membership management: pending invitations, status updates, kick-stale. */
 @Controller()
@@ -194,24 +197,24 @@ export class InvitationsController {
       );
     }
 
-    // 1. User-level membership (authoritative "who belongs to the group").
-    await ensureGroupMember(this.groupMemberRepo.manager, group.id, callerId);
-
-    // 2. Pending device memberships → fulfilled by processPendingInvitations on members.
-    await this.deviceGroupRepo
-      .createQueryBuilder()
-      .insert()
-      .into(DeviceGroupMembership)
-      .values(
-        deviceIds.map((deviceId) => ({
-          userId: callerId,
-          deviceId,
-          groupId: group.id,
-          status: 'pending' as const,
-        }))
-      )
-      .orIgnore()
-      .execute();
+    // The user-level membership (authoritative "who belongs to the group") and the pending device
+    // memberships (fulfilled by processPendingInvitations on members) in ONE transaction under the
+    // group's seat lock, after re-reading that the group still lives (`writePendingSeats`): a
+    // group's end or a removal racing this acceptance never leaves a seat behind it.
+    const outcome = await writePendingSeats(
+      this.deviceGroupRepo.manager,
+      group.id,
+      callerId,
+      deviceIds,
+      true
+    );
+    if (outcome !== 'written') {
+      this.logger.warn(
+        `[GROUP_INVITE] REJECT group=${group.id} user=${callerId.slice(0, 8)} reason=${outcome} - ` +
+          `the group ended while the invite was being accepted`
+      );
+      throw new NotFoundException('Group not found');
+    }
 
     await this.groupInviteRepo.increment({ id: invite.id }, 'uses', 1);
     this.logger.log(

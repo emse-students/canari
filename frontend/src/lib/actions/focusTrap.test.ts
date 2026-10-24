@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { focusTrap } from './focusTrap.svelte';
 
 /**

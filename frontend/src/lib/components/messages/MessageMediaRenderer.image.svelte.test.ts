@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * EVERY PHOTO IN A CONVERSATION WAS HANDED TO A `<video>` (#1229, shipped in `v0.18.32`).
  *

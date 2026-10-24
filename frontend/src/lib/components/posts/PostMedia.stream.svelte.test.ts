@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A FEED VIDEO THAT STREAMS IS PACED, AND GIVES EVERYTHING BACK WHEN ITS CARD LEAVES THE BAND
  * (reels audit, 2026-10-11: every reel scrolled near was downloaded whole and kept its decoder).

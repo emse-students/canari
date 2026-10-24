@@ -2771,6 +2771,51 @@ function that cannot see the durable row. **A classifier is only installed where
 travelling** - enumerate the frames between the throw and the reader, because one `catch` anywhere
 between them makes the reader unreachable while every test of the reader still passes.
 
+### An exit takes the group's queue with it, before its server step (GRP-6, 2026-10-22)
+
+GRP-6 recorded `[OUTBOX] … REFUSED with 403 … parked, no retry until the next sign-in` on the
+leaver: an entry written at +0 ms, the local state dropped at +26 ms, the refusal at +54 ms. **It was
+not the `memberLeft` notice.** The notice is a direct `mlsService.sendMessage`, which resolves on the
+`POST /api/mls/send` answer (`BaseMlsService.emitFrame` awaits `postApplicationMessage`), so the
+server exit already waited for its DELIVERY. The refused entry was another frame of the same group in
+the durable outbox: dropping the selection ends the open conversation's read debounce, whose cleanup
+hands the owed read watermark to the outbox, and that flush lost the race to the membership's end.
+
+So `exitGroupAndCleanup`, for a leave and a delete alike:
+
+- revokes the group's owed read mark (`forgetDmReadMark`) synchronously, before any await, so the
+  debounce cleanup no longer names the group and no sign-in re-queues it;
+- after recording the owed exit and BEFORE the server step, SETTLES the group's outbox
+  (`drainOutboxForExit` -> `OutboxController.drainForExit`). A lane already running for the group is
+  AWAITED, so a send in flight settles before the membership ends rather than racing it. The exit
+  then claims the lane and drains it in queue order, each entry skipping its backoff once: the
+  membership and the MLS state still exist, so a text written just before leaving is SENT. What
+  cannot go (offline, held, an upload still running) is withdrawn under the same claim - so nothing
+  withdrawn can be on the wire - and logged by kind as lost
+  (`[OUTBOX] leave of <id>…: N of M queued entries sent before the server step, K lost (1 text)`);
+- every enqueue reads the DURABLE owed exit (`pendingGroupExits`) and refuses a group whose exit is
+  owed, before its write and again after it - whichever of the exit and the write comes second sees
+  the other, so no clock is involved. A refused read mark then leaves the owed-mark ledger too; a
+  refused text or file is said at `warn`, since only an exit refused for ever can reach that;
+- every ordinary flush reads the same owed exit, once per lane pass, and WITHDRAWS the group's rows
+  instead of sending them (`[OUTBOX] lane <id>…: this device owes the leave of the group ... N queued
+  entries withdrawn, never sent into the refusal`, at `warn`). Only the exit's own drain (`exiting`)
+  may still send. This covers a KILL between `recordPendingGroupExit` and that drain: on relaunch the
+  replay of the owed exit may end the membership before or after the first flush, and either way no
+  row of the group is posted into the 403 (review of #2259). The replay itself is unchanged and needs
+  no live outbox controller, so its order against the outbox at start-up does not matter;
+- a withdrawn entry whose send fails is dropped, and the line says what that means for who withdrew
+  it: an author's delete, a newer read mark superseding it, the exit, or another tab.
+
+**A notice that fails is LOST, not sent later, and the exit goes on.** It cannot be queued - a frame
+needs the MLS state and the membership the exit removes - and holding the exit for it would keep a
+user in a group they asked to leave for as long as the link is down. The failure is logged
+(`[GROUP] memberLeft notice … NOT delivered`, `[DELETE] groupDeleted notice … NOT delivered`), where
+it used to be a bare `catch`. What the others lose is the visible line only: the roster changes with
+the server half (replayed by the owed exit when it failed too), and `removeStrayLeaves` collects the
+leaver's leaf. An eviction is NOT this seam: the evicted device did not ask to be out, a re-add can
+reverse it, and its queued entries stay for that case.
+
 ## The render window is a pointer into an array the component does not own (WP-EMPTYVIEW-1)
 
 `ChatArea` never renders a whole conversation. It renders a WINDOW - `messageGroups.slice(start,

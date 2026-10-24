@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The staged save: the video crosses the IPC in offset-tagged base64 chunks that reassemble to the
  * same bytes, the platform's answer is an outcome, and a failure before the import discards the

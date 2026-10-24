@@ -2,8 +2,11 @@
   /**
    * Asks where a share from another app goes ("Envoyer a..."), on every route.
    *
-   * It drains the share the native layer left (`drainNativeShare`) when it mounts, when Android says
-   * a new one is ready (`canari:incoming-share`) and when the app comes back to the foreground. The
+   * It drains the share the native layer left (`drainNativeShare`) when it mounts, when the native
+   * side says a new one is ready (`canari:incoming-share` - Android's MainActivity, and on iOS
+   * `canari_ios.mm` once it has carried the Share Extension's share out of the App Group) and when
+   * the app comes back to the foreground (`canari:foreground`, Android; iOS imports and announces
+   * on its own activation). The
    * picker opens only once the session is up - the PIN gate comes first. The pick is published as a
    * deep-link landing, so the conversation opens exactly as a tapped notification would, and the
    * chat page then stages the share in its composer (`incomingShare.takeFor`).
@@ -24,7 +27,7 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { landShareOn } from '$lib/sharing/shareLanding';
-  import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+  import { isAndroidTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
   import { drainNativeShare } from '$lib/mobile/incomingShareDrain';
   import { syncShareTargets } from '$lib/sharing/shareTargets';
   import { suggestionIfHeld } from '$lib/sharing/shareDestinations';
@@ -99,7 +102,7 @@
   }
 
   onMount(() => {
-    if (!isAndroidTauriRuntime()) return;
+    if (!isMobileTauriRuntime()) return;
     // Listen BEFORE the first drain: a share whose copy finishes between the two is then announced
     // to a listener rather than to nobody.
     const onShare = () => void drain('native announced a share');

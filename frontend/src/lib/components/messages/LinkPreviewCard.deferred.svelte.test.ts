@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A CARD NOBODY HAS SCROLLED TO MUST NOT COST A REQUEST.
  *

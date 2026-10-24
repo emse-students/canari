@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * ELEVEN REACTORS SPILLED OUT OF THE FRAME (user report, 2026-10-09, post "Le Pic qui Chante").
  *

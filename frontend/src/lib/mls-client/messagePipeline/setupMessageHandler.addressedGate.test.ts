@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * STEP A, RULE 5 (docs/wiki/protocols/history-answer-addressing.md): in a conversation, a frame the
  * server routed to THIS device alone may only be a history answer. A message, an edit or a reaction

@@ -166,6 +166,10 @@ if (!chatIt) {
   else bad(`chat-delivery integration job runs ${image}, production runs ${prod} - bump them together`);
   if (/CHAT_DELIVERY_IT_DATABASE_URL: postgres:\/\//.test(chatIt)) ok('it sets CHAT_DELIVERY_IT_DATABASE_URL');
   else bad('it does not set CHAT_DELIVERY_IT_DATABASE_URL - every spec would skip, and pass');
+  // The seat lock's orderings run here too (`seat-lock.integration.spec.ts`): a spec that skipped
+  // must fail the job, never pass it.
+  if (/numPendingTests/.test(chatIt)) ok('it refuses a skipped test');
+  else bad('it does not read the skipped count - a spec that skipped would pass');
 }
 
 console.log('every Redis CI runs is the one production runs:');

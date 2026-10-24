@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A HISTORY PAGE IS THE PROOF THAT SETTLES A SALON ECHO WHOSE POST REPLY WAS LOST (WP-OFF-2).
  *

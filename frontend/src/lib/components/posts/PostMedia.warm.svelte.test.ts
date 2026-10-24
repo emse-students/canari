@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A MEDIA ALREADY DECRYPTED IN MEMORY IS DRAWN AT ONCE, DEFERRED OR NOT (Mi 9T, 2026-09-29).
  *

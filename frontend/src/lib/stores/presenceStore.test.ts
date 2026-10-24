@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { get } from 'svelte/store';
 import {
   checkPresenceNow,
