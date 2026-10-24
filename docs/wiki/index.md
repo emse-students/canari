@@ -152,10 +152,12 @@
 - [Testing methodology](testing-methodology.md) — How a result earns belief: the harness faults distilled into rules, plus the environment traps that read as application bugs
 - [Test suite reform](test-suite-reform.md) — The whole test estate measured (2026-10-18): where the 16-minute frontend job goes, the gaps found, and the ordered work packages WP-T1..T8, and the generated inventory of every suite with its deletion candidates (`tools/test-inventory`)
 - [Mechanism audit](mechanism-audit.md) - What every part of the app is covered by, measured across the board, the unit tests and the hand pass - and the five things nothing watches
-- [Cross-client testing](cross-client-testing.md) — The campaign board, state only: every check, its verdict, and the commit it ran on
+- [Cross-client testing](cross-client-testing.md) — The campaign board, state only: the `1.4.1` campaign's rows on dev, each verdict and the commit it ran on
+- [The board up to 1.4.0, archived](cross-client-testing-archive-1-4-0.md) — the local-estate ladder from `0.16.3` to `1.4.0`, archived verbatim on 2026-10-24 (Q6): where to look first when a re-run disagrees, worth nothing as a gate
 - [Cross-client rig findings](cross-client-harness-findings.md) — Open findings about the instrument itself: debris sweep, the starting-point contract, duplicated helpers, the PIN-verifier strand, the two `canari-harness` directories
 - [Cross-client campaign](cross-client-campaign.md) — The campaign's design: the ladder, what it is allowed to contain, the standing rules, the preflight, and what does NOT exist
 - [The 1.4.1 campaign on dev](cross-client-campaign-1-4-1.md) - PLANNED: the verdict on the campaign documents, the rig gaps that block a dev run, the MLS core matrix that blocks the `1.4.1` stable (pathological cases included) and what runs after
+- [The 1.4.1 campaign - runners](cross-client-campaign-1-4-1-runners.md) - row by row, how each blocking row is run and recorded, the atom covering it, what is missing, who must be present, and the ten table-driven runners
 - [The LITHIUM board, archived](cross-client-testing-archive.md) — every verdict taken between 2026-08-14 and 2026-08-30, against production, on a rig whose ledger was lost: where to look first when a re-run disagrees, and worth nothing as a gate
 - [The campaign on the iPhone](cross-client-ios.md) — Every board row classified for the iPhone 12 (runs with the adapter / needs a named observable / not an iOS row), the `phone-ios.mjs` adapter and what is still owed
 - [Resuming the cross-client campaign](cross-client-campaign-resume.md) — The delta since the 2026-08-30 pause and the ordered restart: what the dev estate and the dependency sweep do to a run, and what they do not
