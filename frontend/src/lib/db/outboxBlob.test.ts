@@ -10,6 +10,7 @@
 import 'fake-indexeddb/auto';
 import { IndexedDbStorage } from './indexeddb';
 import { SqliteStorage } from './sqlite';
+import { attachFakeOutboxSql } from '../../test/outboxSqlFake';
 import {
   BLOB_SWEEP_GRACE_MS,
   idbCommitted,
@@ -53,77 +54,10 @@ function mediaEntry(id: string, bytes: Uint8Array): OutboxEntry {
   };
 }
 
-/** The slice of the SQL plugin the outbox statements use, over a Map. */
-function fakeSql() {
-  const rows = new Map<string, Record<string, any>>();
-  const executed: Array<{ sql: string; params: unknown[] }> = [];
-  const db = {
-    async execute(sql: string, params: any[] = []) {
-      executed.push({ sql, params });
-      if (sql.includes('INSERT OR REPLACE INTO outbox')) {
-        const [
-          id,
-          conv,
-          sent,
-          kind,
-          status,
-          attempts,
-          last,
-          next,
-          serverErrors,
-          created,
-          iv,
-          cipher,
-        ] = params;
-        rows.set(id, {
-          id,
-          conversation_id: conv,
-          sent_at: sent,
-          kind,
-          status,
-          attempts,
-          last_attempt_at: last,
-          next_attempt_at: next,
-          server_errors: serverErrors,
-          created_at: created,
-          iv,
-          cipher_text: cipher,
-        });
-      } else if (sql.includes('DELETE FROM outbox WHERE id')) {
-        rows.delete(params[0]);
-      } else if (sql.includes('UPDATE outbox SET')) {
-        const row = rows.get(params[0]);
-        if (row) {
-          row.status = params[1] ?? row.status;
-          row.attempts = params[2] ?? row.attempts;
-        }
-      }
-      return { rowsAffected: 1 };
-    },
-    async select(sql: string, params: any[] = []) {
-      if (sql.includes('SELECT id FROM outbox WHERE id')) {
-        return rows.has(params[0]) ? [{ id: params[0] }] : [];
-      }
-      if (sql.includes('SELECT id FROM outbox')) return [...rows.keys()].map((id) => ({ id }));
-      if (sql.includes('SELECT kind FROM outbox')) {
-        const r = rows.get(params[0]);
-        return r ? [{ kind: r.kind }] : [];
-      }
-      if (sql.includes('SELECT * FROM outbox WHERE id')) {
-        const r = rows.get(params[0]);
-        return r ? [r] : [];
-      }
-      throw new Error(`unexpected select: ${sql}`);
-    },
-  };
-  return { db, rows, executed };
-}
-
+/** The real `SqliteStorage` over a Map-backed SQL fake (shared with the RC-5 outbox suite). */
 function sqliteStorage(userId = uid()) {
   const storage = new SqliteStorage(userId);
-  const sql = fakeSql();
-  (storage as unknown as { db: unknown }).db = sql.db;
-  return { storage, sql, userId };
+  return { storage, sql: attachFakeOutboxSql(storage), userId };
 }
 
 /** The blob store a storage instance writes to, to look behind it. */
@@ -462,6 +396,121 @@ describe('IndexedDbStorage (web build): same contract', () => {
   });
 });
 
+describe("REPLACING an entry's bytes (RC-5: the raw take by the prepared file) never overwrites what the row names", () => {
+  /** The prepared file's patch, as the outbox writes it: new bytes, the description, no blob ref. */
+  const preparedPatch = (bytes: Uint8Array): Partial<OutboxEntry> => ({
+    media: { kind: 2, mimeType: 'video/mp4', size: bytes.length, fileBytes: bytes },
+  });
+
+  it('SQLite: the new bytes go to the OTHER slot, the row names it, the old slot is deleted - and back again', async () => {
+    const { storage } = sqliteStorage();
+    const blobs = blobsOf(storage);
+    const raw = pattern(30_000);
+    await storage.saveOutboxEntry(mediaEntry('m1', raw), KEY);
+    expect((await blobs.list()).map((b) => b.id)).toEqual(['m1']);
+
+    const prepared = pattern(12_000).map((v) => v ^ 0x55);
+    await storage.updateOutboxEntry('m1', preparedPatch(prepared), KEY);
+    expect((await blobs.list()).map((b) => b.id)).toEqual(['m1#b']);
+    const full = (await storage.getOutboxEntry('m1', KEY))!;
+    expect(sameBytes(full.media?.fileBytes, prepared)).toBe(true);
+    expect(full.media?.blob?.slot).toBe('b');
+    expect(full.media?.mimeType).toBe('video/mp4');
+
+    const again = pattern(5_000);
+    await storage.updateOutboxEntry('m1', preparedPatch(again), KEY);
+    expect((await blobs.list()).map((b) => b.id)).toEqual(['m1']);
+    expect(sameBytes((await storage.getOutboxEntry('m1', KEY))?.media?.fileBytes, again)).toBe(
+      true
+    );
+  });
+
+  it('KILL AFTER THE NEW BLOB, BEFORE THE ROW: the row still opens the RAW take - nothing is lost', async () => {
+    const { storage, sql } = sqliteStorage();
+    const raw = pattern(30_000);
+    await storage.saveOutboxEntry(mediaEntry('m1', raw), KEY);
+    const execute = sql.db.execute;
+    sql.db.execute = async (q: string, p?: any[]) => {
+      if (q.includes('INSERT OR REPLACE INTO outbox')) throw new Error('killed');
+      return execute(q, p);
+    };
+    await expect(
+      storage.updateOutboxEntry('m1', preparedPatch(pattern(9_000)), KEY)
+    ).rejects.toThrow('killed');
+    sql.db.execute = execute;
+
+    const full = (await storage.getOutboxEntry('m1', KEY))!;
+    expect(sameBytes(full.media?.fileBytes, raw)).toBe(true);
+    // The orphaned slot is the entry's: kept by the sweep while its row lives, gone with the entry.
+    const blobs = blobsOf(storage);
+    expect(
+      await blobs.sweep(async () => [...sql.rows.keys()], Date.now() + BLOB_SWEEP_GRACE_MS)
+    ).toEqual([]);
+    await storage.deleteOutboxEntry('m1');
+    expect(await blobs.list()).toEqual([]);
+  });
+
+  it('KILL AFTER THE ROW, BEFORE THE OLD SLOT IS DELETED: the row opens the prepared file, the old slot dies with the entry', async () => {
+    const { storage } = sqliteStorage();
+    const blobs = blobsOf(storage);
+    await storage.saveOutboxEntry(mediaEntry('m1', pattern(30_000)), KEY);
+    vi.spyOn(blobs, 'delete').mockRejectedValueOnce(new Error('killed'));
+    const prepared = pattern(7_000).map((v) => v ^ 0x0f);
+    await storage.updateOutboxEntry('m1', preparedPatch(prepared), KEY);
+
+    expect((await blobs.list()).map((b) => b.id).sort()).toEqual(['m1', 'm1#b']);
+    expect(sameBytes((await storage.getOutboxEntry('m1', KEY))?.media?.fileBytes, prepared)).toBe(
+      true
+    );
+    await storage.deleteOutboxEntry('m1');
+    expect(await blobs.list()).toEqual([]);
+  });
+
+  it('the upload releases BOTH slots once the ref is recorded', async () => {
+    const { storage } = sqliteStorage();
+    const blobs = blobsOf(storage);
+    await storage.saveOutboxEntry(mediaEntry('m1', pattern(3_000)), KEY);
+    await storage.updateOutboxEntry('m1', preparedPatch(pattern(2_000)), KEY);
+    await storage.updateOutboxEntry(
+      'm1',
+      {
+        media: {
+          kind: 2,
+          mimeType: 'video/mp4',
+          size: 2_000,
+          uploadedRef: { mediaId: 's', key: 'k', iv: 'i' },
+          fileBytes: undefined,
+        },
+      },
+      KEY
+    );
+    expect(await blobs.list()).toEqual([]);
+  });
+
+  it('a second-slot blob with no row is garbage the sweep removes', async () => {
+    const store = new OutboxBlobStore(uid());
+    await store.put('gone#b', pattern(10));
+    expect(await store.sweep(async () => [], Date.now() + BLOB_SWEEP_GRACE_MS)).toEqual(['gone#b']);
+    await store.close();
+  });
+
+  it('IndexedDB: the same replacement contract', async () => {
+    const storage = new IndexedDbStorage(uid());
+    await storage.init();
+    const blobs = blobsOf(storage);
+    await storage.saveOutboxEntry(mediaEntry('m1', pattern(20_000)), KEY);
+    const prepared = pattern(6_000).map((v) => v ^ 0x33);
+    await storage.updateOutboxEntry('m1', preparedPatch(prepared), KEY);
+    expect((await blobs.list()).map((b) => b.id)).toEqual(['m1#b']);
+    expect(sameBytes((await storage.getOutboxEntry('m1', KEY))?.media?.fileBytes, prepared)).toBe(
+      true
+    );
+    await storage.deleteOutboxEntry('m1');
+    expect(await blobs.list()).toEqual([]);
+    await storage.close();
+  });
+});
+
 describe('account reset: rows first, the blob store LAST, and a blob failure skips nothing', () => {
   const ROW_DELETES = [
     'DELETE FROM messages',
@@ -650,4 +699,72 @@ describe('a cancel cannot fail on the blob bookkeeping', () => {
     await expect(storage.deleteOutboxEntry('m1')).resolves.toBeUndefined();
     expect(sql.rows.has('m1')).toBe(false);
   });
+});
+
+describe('getOutboxEntry(..., { withFile: false }): the description without the file (RC-5 withdrawal)', () => {
+  /** A queued reel whose resumable session is recorded in the row. */
+  function reelWithSession(id: string, bytes: Uint8Array): OutboxEntry {
+    const entry = mediaEntry(id, bytes);
+    entry.media = {
+      ...entry.media!,
+      upload: {
+        keyHex: '11'.repeat(32),
+        ivHex: '22'.repeat(12),
+        plaintextSha256: '33'.repeat(32),
+        plaintextBytes: bytes.length,
+        uploadId: 'session-1',
+        partBytes: 1024,
+      },
+    };
+    return entry;
+  }
+
+  const backends = {
+    sqlite: async () => sqliteStorage().storage,
+    indexeddb: async () => {
+      const storage = new IndexedDbStorage(uid());
+      await storage.init();
+      return storage;
+    },
+  };
+
+  for (const [name, open] of Object.entries(backends)) {
+    it(`${name}: returns the recorded session and NO bytes, and never reads the blob`, async () => {
+      const storage = await open();
+      const bytes = pattern(300_000);
+      await storage.saveOutboxEntry(reelWithSession('m1', bytes), KEY);
+      const get = vi.spyOn(blobsOf(storage), 'get');
+      const described = await storage.getOutboxEntry('m1', KEY, { withFile: false });
+      expect(described?.media?.upload?.uploadId).toBe('session-1');
+      expect(described?.media?.fileBytes).toBeUndefined();
+      expect(get).not.toHaveBeenCalled();
+      // The default still attaches the file.
+      expect(sameBytes((await storage.getOutboxEntry('m1', KEY))?.media?.fileBytes, bytes)).toBe(
+        true
+      );
+      expect(get).toHaveBeenCalledTimes(1);
+    });
+
+    it(`${name}: reads the description even when the blob is gone (an evicted take can still be withdrawn)`, async () => {
+      const storage = await open();
+      await storage.saveOutboxEntry(reelWithSession('m1', pattern(2000)), KEY);
+      await blobsOf(storage).delete('m1');
+      const described = await storage.getOutboxEntry('m1', KEY, { withFile: false });
+      expect(described?.media?.upload?.uploadId).toBe('session-1');
+      await expect(storage.getOutboxEntry('m1', KEY)).rejects.toBeInstanceOf(
+        OutboxPayloadUnreadableError
+      );
+    });
+
+    it(`${name}: an absent row is null, an undecryptable one is still typed`, async () => {
+      const storage = await open();
+      expect(await storage.getOutboxEntry('nope', KEY, { withFile: false })).toBeNull();
+      await storage.saveOutboxEntry(reelWithSession('m1', pattern(2000)), KEY);
+      await expect(
+        storage.getOutboxEntry('m1', 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=', {
+          withFile: false,
+        })
+      ).rejects.toBeInstanceOf(OutboxPayloadUnreadableError);
+    });
+  }
 });

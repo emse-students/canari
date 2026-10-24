@@ -1,6 +1,6 @@
 /**
- * The one way a per-community record store (`historyAnswered.ts`, `pagedHistoryAnswer.ts`) forgets
- * a community, so the two cannot drift apart.
+ * The one way a per-community record store (`historyAnswered.ts`, `historyClosedSeen.ts`,
+ * `pagedHistoryAnswer.ts`) forgets a community, so they cannot drift apart.
  */
 
 /**

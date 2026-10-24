@@ -1,4 +1,4 @@
-# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09; RC-1 reader in review; RC-4 writer wiring in draft, OFF)
+# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09; RC-1 reader in review; RC-4 writer wiring and RC-5 resumable outbox in draft, OFF)
 
 **Decided by the user, 2026-10-09** (French, relayed): generalise CanaReels *like Snapchat*, so a
 member can SEND a reel in a group, a DM or a community salon. **The chosen form is an EPHEMERAL VIDEO
@@ -650,10 +650,157 @@ reel message does, and nothing sends one until RC-4 (behind its OFF switch); the
 
 ## 13. What the writer wiring (RC-4) built, and what it did not (2026-10-18)
 
-**Draft, and OFF: `CHAT_REEL_WRITER_ENABLED = false` in `reels/chatReelWriter.ts` is the whole of its safety**, the precedent of `SEGMENTED_MEDIA_WRITER_ENABLED`. Flipping that one line needs RC-3 (#2049), RC-5 and RC-7 shipped and the readers at the `minClientVersion` floor; a test pins it `false`.
+**Draft, and OFF: `CHAT_REEL_WRITER_ENABLED = false` in `reels/chatReelWriter.ts` is the whole of its safety**, the precedent of `SEGMENTED_MEDIA_WRITER_ENABLED`. Flipping that one line needs RC-3 (#2049) wired into the queued preparation (`profile: 'chat'` and the 60 s cap, section 14), RC-5 and RC-7 shipped and the readers at the `minClientVersion` floor; a test pins it `false`.
 
 - **The camera**: `destinationRules('chat', chatFilms)` lets a chat camera film (`photoOnly` off, the microphone asked `separate`, as the post camera does, so a refused microphone keeps the photos). `ChatArea` passes `reelMessages = !isChannel`, so **a salon never films** (its send path is RC-8's); `ChatComposer` asks `chatReelAllowed(...)`.
 - **The mark**: a video handed back by the chat camera is marked on the FILE (`markChatReelTake`, a `WeakSet` like `capturePoster.ts`), because the composers' one attachment path is `File[]`. A gallery pick is never marked.
 - **The declaration**: `prepareOneChatVideo` carries the mark onto the PREPARED file with its length; the MLS send builds `intent`, `durationMs` and `expiresAtMs` (send time + 30 days, `chatReelDeclaration`, the clock passed in) into BOTH the optimistic envelope and the outbox payload, so the tile draws at once. The ThumbHash comes from the camera's poster.
 - **The class**: the outbox uploader names `chat-reel` for a declared reel (`uploadClassFor`), `ephemeral` for everything else.
-- **Not built**: the cap and the chat encoding profile (RC-3, #2049 - the take still reads `reel-limits`' 90 s until it merges), the raw-take store and resumable outbox states (RC-5), "Envoyer" sending at once (the take is STAGED like a picked video and goes with the next send, caption included), the salon path (RC-8), push (RC-7).
+- **Not built**: the cap and the chat encoding profile (RC-3, #2049 - the take still reads `reel-limits`' 90 s until it merges), the salon path (RC-8), push (RC-7). The raw-take store, the resumable outbox states and "Envoyer" sending at once are RC-5's (section 14) - since RC-5 a filmed take is no longer STAGED.
+
+## 14. What the resumable outbox (RC-5) built, and what it owes on devices (2026-10-19)
+
+**Draft, stacked on RC-4 (#2098), and OFF behind the same switch**: nothing creates a raw-take entry
+while `CHAT_REEL_WRITER_ENABLED` is `false`, because the chat camera cannot film. No migration: every
+new field lives in the encrypted outbox payload.
+
+**The path of a take, and the states the bubble shows:**
+
+```
+ "Envoyer" in the review (the gesture IS the send, like a voice note)
+   -> sendChatReelTake: the RAW take queued at once, `media.prepare = 'chat-reel'`,
+      the declaration WITHOUT its length (chatReelPendingDeclaration), the poster's ThumbHash
+   -> [blob slot A = raw take, row names A]                                    bubble: queued
+   -> upload task (holds an upload slot, outside the lane - WP-OFF-9):
+        prepareQueued: prepareVideoForUpload, cancellable          bubble: preparing NN %
+        -> prepared bytes written to slot B, THEN the row names B,
+           THEN slot A deleted (writeOutboxWithBlob)
+        -> uploadResumable (media.ts uploadResumably):
+             POST /upload/session -> `media.upload` recorded in the row
+             BEFORE the first part                                 bubble: sending NN %
+             PUT /parts/:i (1 MiB, sealed one part at a time)
+             POST /complete
+        -> uploadedRef recorded, `upload` dropped, both slots deleted
+   -> the MLS send (durationMs now known)                                      bubble: sent
+ failures: transport (or an EDGE 404/409 page) -> waiting, Retry resumes the session;
+ preparation failed this time (`encode`) or its result not stored -> error, take KEPT, Retry
+ prepares again; preparation REFUSED for good (unreadable, too long, unsupported) -> failed for
+ good, the composer's sentence in the thread; app refusal (400/403/404/422) -> failed for good;
+ cancel at any stage (running, in backoff, parked, after a relaunch) -> row and both slots gone,
+ the server session DELETEd by the WITHDRAWAL (its budget given back)
+```
+
+**What each piece is, and where:**
+
+- **The raw-take store is the outbox blob store** (`db/outboxBlob.ts`, offline-and-weak-network
+  13.7): AES-256-GCM under a per-entry key that lives only in the encrypted row, in
+  `CanariDBOutbox_<userId>`, so the take and the prepared file follow the media-at-rest rule that
+  already exists - encrypted at rest, deleted with the entry, erased by the account wipe
+  (`accountLocalWipe`) and the device reset (every `CanariDB*` database). Nothing new to erase.
+- **Two blob SLOTS per entry** (`<id>` and `<id>#b`, `OutboxBlobRef.slot`). Replacing an entry's
+  bytes writes the slot the committed row does NOT name, then the row, then deletes the old slot.
+  Overwriting in place put new bytes under a new key while the committed row still held the old one:
+  a kill between the two and the take could never be opened again. Entry delete and upload release
+  delete both slots; the sweep reads a blob's owner as the id before `#`.
+- **Preparation runs in the upload task** (`OutboxDeps.prepareMedia`, wired in `sessionAuth.ts` to
+  `prepareVideoForUpload` with the server's plaintext ceiling, the options RC-4 used). Its progress is
+  `UploadView.prepared` (`upload_preparing_progress`). A cancel or a Retry aborts the encoder. A
+  fault that is a FACT of the take or the engine (`isUnpreparableFault`: unreadable, no video track,
+  too long, too large, unsupported) is classified at the preparer's throw as
+  `OutboxPrepareRefusedError` and FAILS FOR GOOD (`failPermanently` cause `unpreparable`, the
+  composer's own sentence posted in the thread) - a Retry would be refused the same way. `encode`
+  (the encoder failing while working) and any other failure is `OutboxPrepareError`, parked as
+  `error` with the take kept. A prepared file whose row write fails is NEVER uploaded
+  (`OutboxPrepareError` too): a kill after such an upload would prepare again and send a second
+  file under the same message.
+- **The resumable upload** (`utils/resumableUpload.ts`) is the first client of media-service's upload
+  sessions (WP-S1, [media-streaming-upload](../../services/media-streaming-upload.md)) - no server
+  change was needed. The SERVER's status says which parts it holds; only the others are sent. The
+  state (`OutboxResumableUpload`: CEK, IV, session id, part size, and the SHA-256 and length of the
+  plaintext) is persisted before the first part. Parts are sealed on demand (`sealBlobRange`, one
+  segment-aligned slice in memory, never the whole blob); the same CEK, IV and plaintext give the
+  same bytes, so a re-sent part is harmless. **The digest is the nonce-reuse guard**: a state opened
+  for other bytes is discarded (new key, new session), never resumed. A session the server no longer
+  has (a JSON 404 from media-service: the 24 h window, the 15 min empty window, a withdrawal) is
+  reopened under the SAME key, every part again, said once in the log. **"Gone" is read from the
+  ORIGIN as well as the status** (`responseOrigin`, mediaErrors.ts): a non-JSON 404/409 is the edge
+  or a proxy during a deploy, says nothing about the session, and is thrown and retried like any edge
+  answer - the session kept. The uploader releases a session on a REFUSAL FOR GOOD only; a transport
+  failure, a 5xx, an edge page, a local failure and EVERY abort keep it - a teardown (`dispose`, a
+  sign-out's controller swap) aborts with the same reason a cancel uses, and its row resumes next
+  launch.
+- **The WITHDRAWAL releases the session** (`outbox.ts` `withdraw` -> `releaseSessionOf` ->
+  `OutboxDeps.releaseUpload` -> `MediaService.releaseResumableUpload`, a `DELETE`). It reads the id
+  BEFORE the row goes - this page life's (`openSessions`, which a failed row write cannot lose), else
+  the row's `media.upload.uploadId` decoded WITHOUT its file (`getOutboxEntry(..., { withFile: false
+  })`, so a cancel never decrypts a 90 s video to learn an id). So a cancel releases whatever the
+  entry was doing: a transfer running, waiting in backoff, parked as failed, or never restarted since
+  a relaunch - the cases where no abort exists to reach an uploader. A session whose init was in
+  flight at the withdrawal is released when that transfer ends - IF its answer arrived. **An init the
+  server created whose answer never reached the client** (the abort, a kill or a cut landing between
+  the server's write and the response) leaves a session whose id the client never learns, so nothing
+  here can release it: it holds an open slot until the server's 15-minute empty-session sweep, the
+  only mechanism that covers it (no part was ever staged, so no bytes and no budget beyond the
+  slot). A permanent failure that deletes the
+  row (group deleted, eviction, an unpreparable take) releases it the same way.
+  **Best effort, and what it does not cover**: a `DELETE` that gets no answer (the cancel was made
+  offline, on the weak link the reel was stuck on) is logged `NOT released` and left to the server's
+  sweep - 24 h holding one of the owner's 4 open sessions, up to 256 MiB staged and its share of the
+  daily `chat-reel` budget. Four such cancels in a day would be answered 429 until the sweep. A
+  sign-out, an account erasure and an account deletion wipe the outbox without a `DELETE` either:
+  the same sweep holds those sessions. **Filed as a P2 owed BEFORE the writer is switched on**
+  ([backlog](../../backlog.md#p2---a-withdrawn-or-wiped-chat-reel-can-leak-its-upload-session-for-24-h-owed-before-chat_reel_writer_enabled)):
+  a durable "to release" mark swept at the next start or sign-in.
+- **The tile** shows the sender's own unsent reel with the attachment bubble's figure, cancel and
+  retry (`ChatReelTile` `upload`/`uploadFailed`/`orphan`); with no `mediaId` there is nothing to open,
+  so no tap is offered. Queued with no transfer running yet it still offers the cancel. Drawn with
+  the theme tokens (`cn-scrim`, `red-err`, `cn-yellow`), no raw palette class.
+- **Memory**: the upload task takes the payload out of a holder (`launchUpload`), so no closure keeps
+  the raw take alive beside its prepared file through the transfer, and a chat reel is sealed from the
+  outbox's own `Uint8Array` (`uploadResumably(plaintext, ...)`), no `File` copy. What is left: the
+  preparation reads the raw take into a `File` for mediabunny (one copy), and the prepared `File` is
+  read into bytes once before it is stored - the peak is about raw + 2 x prepared during the
+  preparation's last step, unmeasured on a phone (device table below).
+- **RC-4's foreground reel path is DELETED**: a DM or group take never reaches the composer's
+  `prepareChatVideo` any more, so `PendingMediaFile.reelDurationMs`, its declaration in
+  `handleSendChat`, its poster block in `prepareMediaFiles` and `chatReelDeclaration` are gone. A take
+  in a salon (none can be filmed there, RC-8) would be an ordinary video, as it always was.
+- **Only chat reels take this path** (`uploadClassFor(media) === 'chat-reel'`); every other attachment
+  keeps the one-shot `encryptAndUpload`.
+
+**Tests**: `outbox.reelResume.test.ts` kills the app at each stage on the REAL `SqliteStorage` (a
+Map-backed SQL fake, `src/test/outboxSqlFake.ts`) and the real `uploadResumable` against a faithful
+fake of the sessions (`src/test/fakeUploadSessionServer.ts`): during preparation, after the prepared
+blob before its row, after the row before the raw slot's delete, mid-upload, after `complete` before
+its answer, after the ref before the MLS send - each time no take lost and no part sent again beyond
+the one cut. Plus cancel during preparation, during upload, in backoff, parked as failed (the
+backoff timer advanced by hand) and after a relaunch - each one a `DELETE` the server sees; a
+teardown that releases nothing; a prepared file whose row write fails (no PUT, parked); a failed
+preparation and its Retry; a refused one that fails for good; and a seeded flaky link.
+`resumableUpload.test.ts` pins the protocol, the edge-404/409 cases included; `outboxBlob.test.ts` the slots;
+media-service's `upload-session.service.spec.ts` walks the client's resume sequence across server
+restarts.
+
+**A BLOCKER OF `CHAT_REEL_WRITER_ENABLED`, owed at the switch-on and not before**: RC-3 (#2049)
+merged the chat profile after #2098 branched, so `prepareQueuedChatReel` must pass `profile: 'chat'`
+and RC-3's 60 s cap before the switch is flipped. Nothing on this branch needs it while the switch is
+off.
+
+**Not built**: a caption on a reel (the review has no text field; "Envoyer" sends the take alone),
+preparing while the member reviews (RC-11), and a background upload a suspended app continues (the
+upload runs in the WebView; a backgrounded iOS app pauses it, and the next foreground resumes it).
+
+**Owed on devices - nothing below has run on a phone:**
+
+| Check | Phone | What it proves |
+|---|---|---|
+| Kill the app during "Preparation NN %", relaunch | Mi 9T, iPhone | the raw take is read back from IndexedDB and prepared again |
+| Kill mid-"Envoi", relaunch | Mi 9T, iPhone | `[UPLOAD-RESUME] session ... resumed: the server holds k/n` and only n-k PUTs |
+| A weak link (airplane toggles during the send) | Mi 9T, iPhone | each Retry resumes, one object on the server |
+| Progress of a PUT through WKWebView's XHR | iPhone | `xhrUpload` progress events on a raw `Blob` body |
+| A 90 s take's real preparation time inside the upload task | Mi 9T, iPhone | the bubble's percent moves, the slot is held, a text sent meanwhile is not held back |
+| IndexedDB eviction of a queued take under storage pressure | iPhone | the typed "no longer readable" park, not a ghost |
+| The part size through the dev estate's relay | dev, any phone | 1 MiB bodies pass the relay that refused over 1 MiB |
+| Peak memory while a 90 s take is prepared and stored | Mi 9T, iPhone | raw + about 2 x prepared at the last step stays under the WebView's ceiling |
+| A take prepared while the app is BACKGROUNDED, on Android | Mi 9T | hypothesis to refute: a WebView that reports the AVC/AAC encoder unavailable for a moment (backgrounded, the codec taken by another app) gets `unsupported`, which `isUnpreparableFault` treats as FINAL - the reel would fail for good where a later attempt would have worked. Look for `REFUSED by the preparer` with `unsupported` after a background/foreground cycle |
+| Cancel while offline, then online | any phone | `NOT released` logged; the session is the server sweep's, and a later reel still opens a session |

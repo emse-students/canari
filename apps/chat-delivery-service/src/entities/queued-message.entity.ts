@@ -1,4 +1,13 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  Index,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
+import { QueuedPayload } from './queued-payload.entity';
 
 /**
  * A server-side envelope holding an MLS message that has not yet been
@@ -20,9 +29,34 @@ export class QueuedMessage {
   @Column()
   deviceId: string;
 
-  /** Base64-encoded serialised MLS PrivateMessage or PublicMessage protobuf blob. */
+  /**
+   * Base64-encoded serialised MLS PrivateMessage or PublicMessage protobuf blob. NULL in storage
+   * when {@link payloadId} is set; every reader materialises it through
+   * `materializeDeliveries` before handing the row to a device.
+   */
   @Column({ nullable: true })
   proto?: string;
+
+  /**
+   * The shared ciphertext this delivery record points at (`queued_payload`), set on a key-group
+   * fan-out so one frame is stored once and not once per seat. NULL on every other row, and on
+   * every row written before migration 034 - those carry `proto` inline and are read as before.
+   * Storage-only: removed from the row before it leaves the service. The index is PARTIAL, as
+   * migration 034 builds it: only the shared records are ever looked up by payload.
+   */
+  @Index('IDX_queued_message_payloadId', { where: '"payloadId" IS NOT NULL' })
+  @Column({ type: 'uuid', nullable: true })
+  payloadId?: string | null;
+
+  /**
+   * The payload itself, JOINED in the same statement that reads the record so the pair is one
+   * snapshot: a separate read could find the payload collected after the record was acknowledged.
+   * Read-only on this side - the writer sets {@link payloadId}. No foreign key, like every other
+   * column joining this service's tables (`createForeignKeyConstraints: false`, migration 034).
+   */
+  @ManyToOne(() => QueuedPayload, { nullable: true, createForeignKeyConstraints: false })
+  @JoinColumn({ name: 'payloadId' })
+  payload?: QueuedPayload | null;
 
   /** True when this envelope carries an MLS Welcome message (initial group join). */
   @Column({ nullable: true })
