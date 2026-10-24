@@ -12,6 +12,7 @@
  */
 import { clickAtPoint, evaluate, goto, PANE_HAS_CONVERSATION, realClick, until } from './chat.mjs';
 import { pressKey } from './cdp.mjs';
+import { assertCampaignOwned, recordCreated } from './campaign.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const COMPOSER = '.chat-composer-footer .chat-composer-editor';
@@ -313,6 +314,9 @@ export async function createGroup(cx, name, { label = 'createGroup' } = {}) {
     await realClick(cx, 'text=Créer le groupe');
 
     await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`, 25000);
+    // OWNED FROM THE MOMENT IT EXISTS (R5): every group a runner mints is recorded here, once, so a
+    // later delete of it on the shared dev estate passes the ownership guard and nothing else does.
+    recordCreated({ kind: 'group', name, by: label });
     await sleep(2500);
     return name;
   } catch (e) {
@@ -407,6 +411,7 @@ export async function createDM(cx, contact, { label = 'createDM' } = {}) {
   // The SIDEBAR row is what "the DM exists" implies - not the composer, for the reason `createGroup`
   // records: with several conversations listed the sidebar re-sorts and the selection is lost.
   await until(cx, listed, 25000);
+  recordCreated({ kind: 'dm', name: contact, by: label });
   await sleep(2500);
   return 'created';
 }
@@ -450,6 +455,9 @@ export async function dismissLocally(cx, name) {
  *   ANSWER for a teardown asking "is it gone", and never an error.
  */
 export async function deleteGroup(cx, name) {
+  // THE OWNERSHIP GUARD FIRST (R5), before even a navigation: on dev a group the campaign did not
+  // create is a tester's, whatever its name looks like.
+  assertCampaignOwned({ kind: 'group', name }, 'deleteGroup');
   await closeOverlays(cx);
   if ((await evaluate(cx, 'location.pathname')) !== '/chat') await goto(cx, '/chat');
   const listed = await evaluate(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`);

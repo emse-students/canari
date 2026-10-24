@@ -84,6 +84,7 @@ const MINTERS = new Set([
   'archive/notif17b.mjs', // N17B-<mark tail>         -> /^N17B-.../
   'archive/read.mjs', // READ10-<base36>          -> /^READ10-.../
   'newgroup.mjs', // HEALW2-<base36>, or --name (a person's, deliberately unswept)
+  'campaign-fixtures.mjs', // campaign-g2/-g4/-big: EQUIPMENT, deliberately unswept (spared below)
 ]);
 // `groupnav.mjs` DEFINES it and `atoms.mjs` re-exports it; neither names a group. This file quotes
 // the call in its own message.
@@ -120,6 +121,8 @@ for (const f of MINTERS)
 // ---------------------------------------------------------------- what must survive a sweep
 
 spared('Projet Canari', 'a group a person made');
+// THE CAMPAIGN'S FIXTURE GROUPS (R5) are equipment every row stands on, never debris.
+for (const g of ['campaign-g2', 'campaign-g4', 'campaign-big']) spared(g, 'campaign-fixtures.mjs fixture');
 spared('Famille', 'a group a person made');
 spared('canari', 'a lowercase word, not a stamp');
 spared('GRP', 'the bare prefix names no run');

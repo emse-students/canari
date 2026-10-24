@@ -46,6 +46,7 @@ import {
 } from "./devices.mjs";
 import { APP_TAB, client, ensureChat } from "./chat.mjs";
 import { evaluate, until } from "./cdp.mjs";
+import { recordCreated } from "./campaign.mjs";
 import { PORTS } from "./names.mjs";
 import { ORIGIN } from "./site.mjs";
 import { recordObserved } from "./results.mjs";
@@ -413,6 +414,8 @@ export async function confirmEnrolment({
   );
 
   const aFreshIdWasMinted = !!now && (!was || now.deviceId !== was.deviceId);
+  // THE DEVICE THIS MINT CREATED IS THE CAMPAIGN'S (R5), so a later purge of it on dev passes the guard.
+  if (aFreshIdWasMinted) recordCreated({ kind: "device", id: now.deviceId, by: "newdevice" });
   const theServerHadNeverSeenIt = !!now && !knownBefore.has(now.deviceId);
   const theSameAccountCameBack = !!now && !!was && now.userId === was.userId;
 

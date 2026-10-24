@@ -54,6 +54,7 @@ export {
   wordingsOf,
 } from './messages.mjs';
 import { caption, captionWith, control, pluralPattern } from './messages.mjs';
+import { assertCampaignOwned, recordCreated } from './campaign.mjs';
 
 
 /**
@@ -222,6 +223,7 @@ export async function createCommunity(cx, name) {
   // CREATING SELECTS IT, so this leaves the client ready for the settings gestures - but that is
   // the app's behaviour and not this function's promise, so it is READ rather than assumed.
   await provesOpen(cx, name, 10000);
+  recordCreated({ kind: 'community', name, by: 'createCommunity' });
   return name;
 }
 
@@ -315,6 +317,7 @@ export async function createChannel(cx, name, { visibility = 'public' } = {}) {
   );
   await realClick(cx, `text=${submit}`);
   await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) >= 0`, 20000);
+  recordCreated({ kind: 'salon', name, parent: String(await openCommunityName(cx)), by: 'createChannel' });
   return name;
 }
 
@@ -337,6 +340,10 @@ export async function openCommunitySettings(cx) {
       `openCommunitySettings: the panel now names ${JSON.stringify(shown)}, not ${JSON.stringify(expected)}`
     );
   }
+  // AND THE COMMUNITY MUST BE THE CAMPAIGN'S (R5). This panel is where a community is deleted, left,
+  // re-roled, purged of members and re-permissioned, so it is the one place that can refuse all of
+  // them on a tester's community of the shared dev estate.
+  assertCampaignOwned({ kind: 'community', name: expected }, 'openCommunitySettings');
   // IDEMPOTENT, because the gear is COVERED once the modal is up: clicking it a second time lands
   // on the overlay and the wait then times out on a modal that was already open. Detected by
   // "Quitter la communaute", which only this modal draws - the three tab captions are ordinary
@@ -454,6 +461,10 @@ export async function inPanel(cx, open, body) {
  */
 export async function openChannelSettings(cx) {
   await awaitAppSettled(cx);
+  // THE SALON'S PANEL IS WHERE IT IS DELETED AND ITS ACCESS REVOKED, so it is guarded like the
+  // community's (R5): the salon open now, in the community open now, must be the campaign's.
+  const salon = await selectedChannel(cx);
+  assertCampaignOwned({ kind: 'salon', name: salon, parent: String(await openCommunityName(cx)) }, 'openChannelSettings');
   await realClick(cx, `[aria-label=${JSON.stringify(caption('chat_channel_settings_label'))}]`);
   await until(
     cx,

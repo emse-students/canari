@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-87 scripts.
+90 scripts.
 
 | script | what it is |
 |---|---|
@@ -31,6 +31,9 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `buildstamp.mjs` | The identity a frontend build gives itself, read back. |
 | `bundle.mjs` | WHICH BUNDLE A WEB CLIENT IS RUNNING, and the repair when it is not the deployed one. |
 | `callpeer.mjs` | A desktop Chrome as the OTHER END of a phone call, and the receiver's numbers read from it. |
+| `campaign-fixtures.mjs` | THE CAMPAIGN'S FIXTURES ON THE ESTATE `SITE` NAMES, BUILT THROUGH THE PRODUCT AND RECORDED AS OWNED. |
+| `campaign-ledger.mjs` | WHAT THE CAMPAIGN OWNS ON AN ESTATE, AND WHETHER A DESTRUCTIVE GESTURE MAY TOUCH A THING - pure. |
+| `campaign.mjs` | THE CAMPAIGN LEDGER ON DISK, AND THE ONE GUARD EVERY DESTRUCTIVE GESTURE CALLS. |
 | `cdp.mjs` | Dependency-free Chrome DevTools Protocol driver for the cross-client test campaign |
 | `chat.mjs` | Chat primitives shared by every check in the campaign. |
 | `checks.mjs` | THE MANIFEST: which script covers which phase, and what each phase needs to be meaningful. |
@@ -214,11 +217,12 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-46 scripts.
+47 scripts.
 
 | script | what it is |
 |---|---|
 | `archive/a1plan-selftest.mjs` | THE A1 APK IS BUILT FOR THE ESTATE `SITE` NAMES, AND NEVER FOR PRODUCTION. |
+| `archive/campaign-selftest.mjs` | ON DEV, A DESTRUCTIVE GESTURE TOUCHES ONLY WHAT THE CAMPAIGN CREATED - pinned (R5, 2026-10-24). |
 | `archive/caption-selftest.mjs` | EVERY PARAGLIDE KEY THE RIG NAMES MUST STILL RESOLVE THROUGH THE HELPER THAT NAMES IT. |
 | `archive/checks-selftest.mjs` | Asserts that every phase DECLARES the devices its scripts actually drive. |
 | `archive/classify-selftest.mjs` | THE CLASSIFIER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
@@ -318,4 +322,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-257 scripts in total.
+261 scripts in total.
