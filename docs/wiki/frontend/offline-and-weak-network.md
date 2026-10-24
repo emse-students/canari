@@ -647,10 +647,10 @@ makes long - and one detail page awaits its own data.
 | 0 | **P1** Any upload body over 10 MiB is dropped by the host WAF (403 HTML) and was retried for ever | **BUILT: WP-OFF-8** (8 MiB budget, chunk route above it, a refusal ends the entry with an explicit bubble) | [host-waf-body-limit](../infrastructure/host-waf-body-limit.md) |
 | 1 | **P1** An attachment bubble is blind: no progress, cancel or retry, no deadline on the upload | **BUILT: WP-OFF-8** ([13.4](#134-wp-off-8-built-a-bubble-that-says-how-much-has-gone-and-can-be-ended)) | this page |
 | 2 | **P1** Navigation waits on a profile call (root layout) and on one post (detail page) | **BUILT: WP-NAV-1** (a separate pull request; [posts](modules/posts.md)) | `routes/+layout.ts`, `routes/posts/[postId]` |
-| 3 | **P2** Every failed upload restarts at byte 0; a 50 MB body is ONE request | open: the resumable chunk upload with a server offset route is reels-in-chat RC-5, and RC-5 now only has to reuse `xhrUpload` | [reels-in-chat](modules/reels-in-chat.md), [media-service](../services/media-service.md) |
+| 3 | **P2** Every failed upload restarts at byte 0; a 50 MB body is ONE request | open for every attachment but one: a CHAT REEL resumes since RC-5 (draft) through media-service's upload sessions, sending only the parts the server lacks ([reels-in-chat](modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19)); the general writer is S2 of [media-streaming-upload](../services/media-streaming-upload.md) | [reels-in-chat](modules/reels-in-chat.md), [media-service](../services/media-service.md) |
 | 4 | **P2** The upload holds the conversation's lane and a send slot, so text sent behind a big file waits for it | **BUILT: WP-OFF-9** ([13.8](#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18)) | this page |
 | 5 | **P2** A salon (channel) attachment blocks the composer with no progress and no cancel (`isUploadingMedia`) | open: it needs WP-OFF-2/3's salon row; `xhrUpload` is ready for it | [backlog](../backlog.md) |
-| 6 | **P2** The 13 MB file lives in the outbox row and three times in memory per attempt | open: RC-5 ("the file outside the row") | [reels-in-chat](modules/reels-in-chat.md) |
+| 6 | **P2** The 13 MB file lives in the outbox row and three times in memory per attempt | the file is outside the row since 13.7; RC-5 (draft) adds the raw take in the same store and a second blob slot, so replacing the bytes never overwrites what the committed row names | [reels-in-chat](modules/reels-in-chat.md) |
 | 7 | **P2** First list render waits for the WASM (R7) | diagnosed, not built: WP-W3 | section 10.3 |
 | 8 | **P3** Chat images have no thumbnail, a 300 px bubble downloads the whole blob | open: WP-W7 | section 5 |
 | 9 | Covered already: REST and MLS-POST deadlines, the `slow` state, one lane per conversation (OFF-5, #1652); prompt resume (OFF-6); compression and WASM preload (W1, W2); salon optimistic row (OFF-2, #1649, draft) | | sections 10-12 |
@@ -740,7 +740,7 @@ request carries more. Every upload surface (chat, salon, posts, comments, reels,
 `encryptAndUpload`, so one place covers them; the other large-body POSTs are listed in the
 [host-waf-body-limit](../infrastructure/host-waf-body-limit.md#what-else-posts-a-big-body) page.
 
-**Not done, on purpose:** resume (needs a server offset route, RC-5), the lane decoupling (WP-OFF-9,
+**Not done, on purpose:** resume (a chat reel resumes since RC-5, draft; the other attachments do not), the lane decoupling (WP-OFF-9,
 built since: 13.8), the salon composer, and any hardware reading: **owed ONE look on the iPhone** with a real 13 MB file on
 a bad link, because every gate here is blind to what a WKWebView `XMLHttpRequest` upload reports on a
 cellular radio.

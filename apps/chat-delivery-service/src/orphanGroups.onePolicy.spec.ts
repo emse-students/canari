@@ -8,6 +8,7 @@ import { MessagingService } from './services/messaging.service';
 import { GROUP_REDIS_KEY_PREFIXES, groupRedisKeys } from './utils/group-purge';
 import { Group } from './entities/group.entity';
 import { QueuedMessage } from './entities/queued-message.entity';
+import { QueuedPayload } from './entities/queued-payload.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
@@ -46,6 +47,7 @@ const TOMBSTONED = 'g-dead';
 /** What a purge takes, in order. A HARD delete: the group row is already gone, so the marker goes. */
 const SWEPT = [
   QueuedMessage,
+  QueuedPayload,
   GroupMember,
   DeviceGroupMembership,
   MlsCommitLog,
@@ -63,6 +65,7 @@ const SWEPT = [
 const FAKE_TABLE = new Map<unknown, string>([
   [Group, 'table_of_group'],
   [QueuedMessage, 'table_of_queued_message'],
+  [QueuedPayload, 'table_of_queued_payload'],
   [GroupMember, 'table_of_group_member'],
   [DeviceGroupMembership, 'table_of_device_membership'],
   [MlsCommitLog, 'table_of_commit_log'],
@@ -132,14 +135,16 @@ describe('an orphan group - one repair, three paths', () => {
   const queryBuilder = () => {
     const state = { skip: 0, take: 0 };
     const qb = {
+      leftJoinAndSelect: () => qb,
       where: () => qb,
       andWhere: () => qb,
       orderBy: () => qb,
-      skip: (n: number) => {
+      addOrderBy: () => qb,
+      offset: (n: number) => {
         state.skip = n;
         return qb;
       },
-      take: (n: number) => {
+      limit: (n: number) => {
         state.take = n;
         return qb;
       },
