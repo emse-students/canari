@@ -197,7 +197,7 @@
   "chat_community_history_shared_option": "Shared - new members read the past",
   "chat_community_history_joined_option": "From joining - nothing older",
   "chat_community_history_shared_note": "A leaked invite link grants the past too. Keep the link time-limited and use-limited.",
-  "chat_community_history_joined_note": "Messages sent before a member arrived stay unreadable to them, permanently.",
+  "chat_community_history_joined_note": "Messages sent before a member arrived stay unreadable to them while this setting is on. It does not take back the past already handed to members who arrived earlier.",
   "chat_community_members_description": "Manage club members and their global roles.",
   "chat_community_member_count_label": [
     {
@@ -760,6 +760,7 @@
   "media_error_corrupt": "This media is damaged and cannot be decrypted.",
   "media_retry_button": "Try again",
   "upload_preparing": "Preparing the file…",
+  "upload_preparing_progress": "Preparing the video {percent}%",
   "upload_progress": "Sending {percent}% - {sent} of {total}",
   "upload_sending": "Sending - {total}",
   "upload_stalled": "Nothing is getting through - {sent} of {total} sent",
@@ -3613,6 +3614,7 @@
   "reels_review_discard": "Discard and film again",
   "reels_review_edit": "Edit the photo or video",
   "reels_review_add": "Add",
+  "reel_chat_send": "Send",
   "reels_review_next": "Next",
   "reels_editor_title": "Edit capture",
   "reels_editor_back": "Back to preview",
