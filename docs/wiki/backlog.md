@@ -2245,6 +2245,21 @@ All taken in session on 2026-10-23. Bookings rows are D44-D54 in [bookings-chant
 
 **#2273.** The cut date is the day the production stable carrying it ships (fixed constant `ADMISSION_PROOF_SINCE`, re-checked before the stable's final pre-release). Old invite links are accepted as a "from arrival" reading. A removed signer's voucher counts only if the device saw it BEFORE the removal. The invite-link grant expires with the link (30 days when it has none). Migration social-service 107 may ride the stable.
 
+## Decided by the user on 2026-10-23 - the night of the open pull requests
+
+Taken in session on 2026-10-23, one decision per open pull request.
+
+1. **#2260** (key-group frame stored once, table `queued_payload`, a migration) ships in the NEXT STABLE, after an Opus review.
+2. **#2322** (Trivy image scan, with the `postgres:18-alpine` digest and the nginx tag in `docker-compose.prod.yml`) merges as is. The user accepts a short availability break when production's database container is recreated.
+3. **#2321** (MiConnect password-sign-in guard) merges as is. The only accounts with a password are test accounts, recreatable at will, so the per-username lockout and the admin-name distinguishability are accepted.
+4. **#2299** (in-app 1:1 audio calls) is in the next stable with `calls_mode` left OFF server side. Master opens it after a reading on both bench phones and tells the user at once.
+5. **#2269** (periodic MLS key refresh, post-compromise security, 93 files) ships IN the next stable, after a full Opus review and a reading on the Mi 9T and the iPhone.
+6. **#2282** (CLAUDE.md cleanup) merges LAST, rebased just before.
+7. **#2183** (public privacy policy and GDPR register for calls) is published with the next stable. The Cloudflare data-processing-addendum row of the register stays OPEN.
+8. **Housekeeping.** Merged pull requests' remote branches are deleted in one pass, and obsolete drafts (#2316, superseded by #2329) are closed, each head archived as a tag first.
+9. **Review of #2264** (history visibility reconciled with the proven-admission gate): an unknown rule parks the ask; `unverifiable` answers with silence on both paths; the "nothing for you" stays lasting, and only the repair path recovers the past.
+10. **P3 - CI: split the 15-minute `Test Frontend (Svelte)` job into parallel jobs.** Not started ([cicd](cicd.md)).
+
 ## P3 - the vendored websocket plugin: four upstream behaviours found by the review of #2167
 
 All four are upstream behaviour kept by the vendored copy (`frontend/src-tauri/patches/tauri-plugin-websocket/src/lib.rs`), none introduced by the happy-eyeballs patch.
