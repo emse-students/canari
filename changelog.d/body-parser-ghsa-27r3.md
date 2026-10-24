@@ -1,3 +1,3 @@
-### Security - body-parser 2.4.0, multer 2.5.0 and fast-uri 3.1.9 in the four NestJS services
+### Security - the dependency audits and the image scan answer the advisories of 2026-10-23
 
-New advisories (GHSA-27r3-jxmh-p828 on body-parser, GHSA-q7qp-rjg7-q26m on multer, GHSA-w74x-v6f9-j3xg and GHSA-wjr9-j795-jxcr on fast-uri) turned every pull request's dependency audit red; each service now overrides the three to their fixed releases. See [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them).
+The four NestJS services override body-parser 2.4.0, multer 2.5.0 and fast-uri 3.1.9 (GHSA-27r3-jxmh-p828, GHSA-q7qp-rjg7-q26m, GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr). The frontend ignores two low SvelteKit advisories fixed only in kit 3, until that chantier (#2154). `frontend-ssr` is back on Node 24 (Node 25 is out of support), and the 30 image-scan allowlist entries that authentik 2026.8.5 fixed are deleted. See [cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23).
