@@ -11,7 +11,10 @@ import {
 } from '$lib/db/outboxBlob';
 import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
 import type { MediaRef } from '$lib/media';
+import { recordOwnAuthorship, type RecordedAuthorship } from '$lib/crypto/messageAuthorship';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import {
+  decodeAppMessage,
   encodeAppMessage,
   mediaEncodingProtoField,
   mediaReelProtoFields,
@@ -199,6 +202,14 @@ export function isLocalAttachmentFailure(e: unknown): boolean {
 }
 
 const textEncoder = new TextEncoder();
+
+/** The author proofs a stored row carries, which only the stored row holds. */
+interface StoredProofs {
+  authorship?: RecordedAuthorship;
+  editProof?: RecordedAuthorship;
+  deleteProof?: RecordedAuthorship;
+  restoredUnverified?: boolean;
+}
 
 /**
  * True when `entry` cannot go out while any of `ids` is unsent: a reply quoting one of them, or a
@@ -739,15 +750,73 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     conversations.set(found.key, { ...found.convo, messages });
   }
 
-  /** Persist the sent message to the encrypted messages store under the live conversation key. */
-  async function persistSent(liveConvId: string, messageId: string): Promise<void> {
+  /**
+   * The author proofs the stored row already holds, so the full-row write below keeps them. A read
+   * failure is logged and answers none: the row it would have kept is unreadable anyway.
+   */
+  async function storedProofs(messageId: string): Promise<StoredProofs> {
+    if (!storage) return {};
+    const row = await storage.getMessage(messageId, deviceKey()).catch((e: unknown) => {
+      log(
+        `[OUTBOX] ${messageId.slice(0, 8)}… stored row unreadable - its author proofs are not carried: ${String(e)}`
+      );
+      return null;
+    });
+    if (!row) return {};
+    return {
+      authorship: row.authorship ?? undefined,
+      editProof: row.editProof ?? undefined,
+      deleteProof: row.deleteProof ?? undefined,
+      restoredUnverified: row.restoredUnverified,
+    };
+  }
+
+  /**
+   * Persist the sent message to the encrypted messages store under the live conversation key, with
+   * THIS DEVICE'S OWN SIGNATURE on what it just sent (`own`): the message's proof for a message, the
+   * edit's or the deletion's for a control frame, the reaction's on the reaction it set - so a
+   * history bundle this device writes later proves its own words too.
+   */
+  async function persistSent(
+    liveConvId: string,
+    messageId: string,
+    own?: { body: Uint8Array; proof: Uint8Array; control: boolean }
+  ): Promise<void> {
     if (!storage) return;
     const found = findMessage(messageId);
     if (!found) return;
     const m = found.convo.messages[found.idx];
+    const proofs = await storedProofs(messageId);
+    let reactions = m.reactions;
+    if (own) {
+      const mine = recordOwnAuthorship(own.body, own.proof, liveConvId);
+      if (!own.control) {
+        proofs.authorship = mine;
+      } else {
+        const frame = decodeAppMessage(own.body);
+        const event = frame?.system?.event;
+        if (event === 'edit_message') proofs.editProof = mine;
+        else if (event === 'delete_message') {
+          // The original bytes go with the message; only the author's signed tombstone stays.
+          proofs.deleteProof = mine;
+          proofs.authorship = undefined;
+          proofs.editProof = undefined;
+        } else if (frame?.reaction) {
+          const r = frame.reaction;
+          reactions = reactions?.map((x) =>
+            canonicalUserId(x.userId) === canonicalUserId(deps.userId) &&
+            x.emoji === r.emoji &&
+            (x.at ?? 0) === Number(r.at ?? 0)
+              ? { ...x, proof: mine }
+              : x
+          );
+        }
+      }
+    }
     // A full-row write, not a patch: `liveConvId` may differ from the key the optimistic row was
     // written under (the group was re-keyed mid-send), and a patch cannot move a row. So every
-    // field the in-memory message still carries is written back rather than dropped.
+    // field the in-memory message still carries is written back rather than dropped - the proofs
+    // included, which live only in the stored row.
     await storage
       .saveMessage(
         {
@@ -756,11 +825,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           senderId: m.senderId,
           content: m.content,
           timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
-          reactions: m.reactions,
+          reactions,
           serverTimestamp: m.serverTimestamp,
           isDeleted: m.isDeleted,
           isEdited: m.isEdited,
           ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
+          ...(proofs.authorship ? { authorship: proofs.authorship } : {}),
+          ...(proofs.editProof ? { editProof: proofs.editProof } : {}),
+          ...(proofs.deleteProof ? { deleteProof: proofs.deleteProof } : {}),
+          ...(proofs.restoredUnverified ? { restoredUnverified: true } : {}),
         },
         deviceKey()
       )
@@ -1665,7 +1738,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           else log(`[OUTBOX] ${entry.id.slice(0, 8)}… sent, the server answered no receive time`);
         }
         // The media envelope was installed immediately after upload, before the MLS send.
-        await persistSent(terminalId, entry.id);
+        await persistSent(terminalId, entry.id, {
+          body: proto,
+          proof: sent.authorProof,
+          control: entry.kind === 'control',
+        });
         patchStatus(entry.id, 'sent');
         clearUpload(entry.id);
         transportHeld.delete(entry.id);

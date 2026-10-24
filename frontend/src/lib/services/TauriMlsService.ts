@@ -20,7 +20,14 @@ import {
   type BatchDecryptRow,
 } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
-import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
+import type { ForkFinding } from '$lib/mls-client/integrityFindings';
+import type {
+  DecryptedApplication,
+  GraineRunReading,
+  MlsBatchProcessResult,
+} from '$lib/mls-client/IMlsService';
+import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
@@ -1447,14 +1454,28 @@ export class TauriMlsService extends BaseMlsService {
     return groupId;
   }
 
-  /** Tauri-native `invoke` wrapper - encrypts plaintext via `envoyer_message_bytes`, then POSTs the ciphertext to the delivery service. */
-  /** Native `invoke` wrapper - advances the live send ratchet. Ordering and persistence: `sendMessage`. */
-  protected async encryptForSend(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array> {
-    const res = await invoke<number[]>('envoyer_message_bytes', {
-      groupId,
-      messageBytes: Array.from(messageBytes),
-    });
-    return Uint8Array.from(res);
+  /**
+   * Native `invoke` wrapper - encrypts via `envoyer_message_bytes`, which appends this device's
+   * author signature (`mls-core/src/authorship.rs`) and advances the live send ratchet. Ordering
+   * and persistence: `sendMessage`.
+   */
+  protected async encryptForSend(
+    groupId: string,
+    messageBytes: Uint8Array
+  ): Promise<AuthoredFrame> {
+    const res = await invoke<{ ciphertext: number[]; authorProof: number[] }>(
+      'envoyer_message_bytes',
+      { groupId, messageBytes: Array.from(messageBytes) }
+    );
+    return {
+      sealed: Uint8Array.from(res.ciphertext),
+      authorProof: Uint8Array.from(res.authorProof),
+    };
+  }
+
+  /** Native `invoke` wrapper - see {@link IMlsService.takeForkFindings}. */
+  async takeForkFindings(): Promise<ForkFinding[]> {
+    return invoke<ForkFinding[]>('prendre_constats_fork');
   }
 
   /** Tauri-native `invoke` wrapper - decrypts a raw MLS ciphertext via `recevoir_message_bytes`; returns null for commit or proposal frames. */
@@ -1462,11 +1483,12 @@ export class TauriMlsService extends BaseMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     envelope?: EnvelopeSender
-  ): Promise<Uint8Array | null> {
-    const res = await invoke<{ data: number[]; sender: string | null } | null>(
-      'recevoir_message_bytes',
-      { groupId, messageBytes: Array.from(messageBytes) }
-    );
+  ): Promise<DecryptedApplication | null> {
+    const res = await invoke<{
+      data: number[];
+      sender: string | null;
+      author: AuthorVerdict;
+    } | null>('recevoir_message_bytes', { groupId, messageBytes: Array.from(messageBytes) });
     // Null is a commit or a proposal - the one result that may have moved the epoch, and the
     // commit replay reads `getEpoch` on the very next line (see `refreshEpochCache`).
     if (!res) {
@@ -1474,7 +1496,7 @@ export class TauriMlsService extends BaseMlsService {
       return null;
     }
     assertVerifiedSender(groupId, envelope, res.sender);
-    return Uint8Array.from(res.data);
+    return { plaintext: Uint8Array.from(res.data), author: res.author };
   }
 
   /** Single IPC crossing for an ordered page of ciphertexts (history catch-up on native MLS). */
