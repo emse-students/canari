@@ -678,7 +678,9 @@
         ondiscard={() => void discardFromReview()}
         onedit={() => (editorOpen = true)}
         soundRemoval={rules.soundRemoval}
-        nextLabel={m.reels_review_add()}
+        nextLabel={destination === 'chat' && clip.blob.type.startsWith('video/')
+          ? m.reel_chat_send()
+          : m.reels_review_add()}
         onnext={() => handBack(clip.blob, clip.poster)}
       />
     {:else if publishOpen && limits}
