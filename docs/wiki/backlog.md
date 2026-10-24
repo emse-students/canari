@@ -94,9 +94,10 @@ admitted seat`) - [calls](frontend/modules/calls.md).
 
 `prepare_welcome_background_with_key` refuses a `welcome_request` from a user absent from the tree
 (`newcomer`) and raises no local notification, so a member whose phone is shut learns of the ask
-only when the app is next opened and the foreground sweep raises it. Owed: a local notification
-"X asks to join" from the background engine (both platforms, one ledger with the new-device
-notices), which is more than a small change - [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+only when the app is next opened and the foreground sweep raises it - in the conversation, where the
+ask is a card (`JoinRequestRow`, 2026-10-24), and in the global banner. DECIDED 2026-10-24: no push
+for it, the ask lives in the thread. A phone shut tells its member nothing until opened; a
+notification would be a visible push per platform and is not planned - [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
 
 ## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
 

@@ -3,13 +3,12 @@
   import Banner from './Banner.svelte';
   import { globalConvs, globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import {
-    answerJoinRequest,
     canAnswerJoinRequests,
     pendingJoinRequests,
     type JoinRequest,
   } from '$lib/utils/chat/joinRequests.svelte';
+  import { answerJoinRequestOrToast } from '$lib/utils/chat/joinRequestAnswer';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-  import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -22,8 +21,15 @@
    * ask at a time, the oldest first; it stays until answered, or until a sweep finds another member
    * answered it - and it is shown only while the chat page that answers it is mounted.
    */
+  // The conversation on screen draws its own asks at the end of its thread (`JoinRequestRow`), so
+  // the banner carries only those of the OTHER conversations - never the same ask twice.
+  const openGroupId = $derived(
+    globalConvs.conversations.get(globalConvs.selectedContact ?? '')?.id ?? null
+  );
   const request = $derived(
-    session.isLoggedIn && canAnswerJoinRequests() ? pendingJoinRequests()[0] : undefined
+    session.isLoggedIn && canAnswerJoinRequests()
+      ? pendingJoinRequests().find((r) => r.groupId !== openGroupId)
+      : undefined
   );
   const groupName = $derived(
     request ? (globalConvs.conversations.get(request.groupId)?.name ?? '') : ''
@@ -33,7 +39,7 @@
   async function answer(target: JoinRequest, choice: 'approve' | 'decline') {
     busy = true;
     try {
-      if (!(await answerJoinRequest(target, choice))) showToast(m.join_request_failed(), 'error');
+      await answerJoinRequestOrToast(target, choice);
     } finally {
       busy = false;
     }
