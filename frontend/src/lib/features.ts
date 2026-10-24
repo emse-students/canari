@@ -15,7 +15,7 @@ import { deployEnvironment } from '$lib/utils/deployEnvironment';
 /**
  * Calling as the STORE BINARIES carry it: in-app calls ({@link CALLS_ENABLED}) and the call kept
  * alive in the background - the iOS `audio` background mode, the Android microphone foreground
- * service (`src/calls/`, merged by `build.gradle.kts`) and the microphone purpose strings that name
+ * service (declared in the main manifest) and the microphone purpose strings that name
  * calls. `callsCompiled.test.ts` and `androidCallServiceManifest.test.ts` assert that each of those
  * agrees with this constant.
  *
@@ -24,21 +24,16 @@ import { deployEnvironment } from '$lib/utils/deployEnvironment';
  * {@link CALLS_NATIVE_RING_COMPILED}, a fact of its own: the owner decided on 2026-10-21 that the
  * first production calls (audio 1:1) ship WITHOUT it, so the two must be able to move apart.
  *
- * **OFF.** The whole calling surface has never been exercised on hardware: the campaign board
- * carries twenty CALL rows and NOT ONE has ever run (`docs/wiki/mechanism-audit.md`), the SFU has
- * never had a peer connection opened against it (measured on prod 2026-09-01: one log line since
- * start, and `resolve_ice_servers()` only runs per peer connection), and no iPhone has ever
- * received a CallKit ring because no iOS device ever registered a PushKit token. App Review then
- * refused the `voip` UIBackgroundModes declaration under guideline 2.5.4 for a feature it could not
- * locate - correctly, on the build it tested. Shipping a surface in that state costs users a button
- * that may fail in ways nothing here can observe.
+ * **ON since the flip PR (owner, 2026-10-22: calls reach production fast; 1:1 audio, in-app).** The
+ * flip moved the `audio` mode, the microphone service and the purpose strings in one commit; the
+ * native ring did NOT move with it. What keeps the surface closed in production is the server's
+ * kill switch (`platform_config.calls_mode`, `off` at deploy), not this constant. Video stays dev
+ * only ({@link CALLS_VIDEO_ENABLED}).
  *
- * **Turns back on when** rung 15 CALL and CALL-13 have both passed on real hardware
- * (`docs/wiki/cross-client-testing.md`) and the blockers of the audio enablement are lifted
- * (`docs/wiki/frontend/modules/calls.md`). Its flip moves the `audio` mode, the microphone service
- * and the purpose strings in the same commit; the native ring does NOT move with it.
+ * **Turn it off again only** together with the `audio` mode, the microphone service and the purpose
+ * strings: `callsCompiled.test.ts` and `androidCallServiceManifest.test.ts` fail on a partial move.
  */
-export const CALLS_COMPILED = false;
+export const CALLS_COMPILED = true;
 
 /**
  * The NATIVE RING as the store binaries carry it: a call rings a phone whose app is closed or in
@@ -71,12 +66,12 @@ export const CALLS_NATIVE_RING_COMPILED = false;
  * web estate and every pre-release app, which the pipelines refuse to point anywhere else - carries
  * `VITE_DEPLOY_ENVIRONMENT=development`, and that is the whole test. Production builds never set it
  * (unset MEANS production, `deployEnvironment.ts`), so a stable can only call once
- * {@link CALLS_COMPILED} is flipped. What is on is the in-app half only: the invite rings an OPEN
- * app over the chat socket; a killed or backgrounded phone is not rung, because the native ring is
- * {@link CALLS_COMPILED}'s and stays off.
+ * {@link CALLS_COMPILED} is flipped (it is, since 2026-10-22). What is on is the in-app half only:
+ * the invite rings an OPEN app over the chat socket; a killed or backgrounded phone is not rung,
+ * because the native ring is {@link CALLS_NATIVE_RING_COMPILED}'s and stays off.
  *
- * **Turns into `CALLS_COMPILED` alone when** the revival's Tier B cells pass on real hardware
- * (`docs/wiki/frontend/modules/calls-revival-plan.md` section 7).
+ * **A dev build keeps its own clause** only for video ({@link CALLS_VIDEO_ENABLED}); for audio the
+ * expression is now `CALLS_COMPILED` alone in effect.
  */
 export const CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'development';
 

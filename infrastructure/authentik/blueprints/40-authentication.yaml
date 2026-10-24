@@ -121,6 +121,78 @@ entries:
       target: !Find [authentik_flows.flow, [slug, "password-login"]]
       stage: !Find [authentik_stages_user_login.userloginstage, [name, "default-source-authentication-login"]]
       order: 20
+  # A PASSWORD SIGN-IN IS GUARDED ON BOTH FLOWS THAT TAKE ONE (2026-10-23): `password-login` (the test
+  # campaign and the store review) and authentik's own `default-authentication-flow`, both reachable
+  # by URL. Between the identification and the password, `miconnect-password-refused` stops:
+  #   - an address or a username whose reputation has fallen to the threshold (each failed password
+  #     costs 1, the tenant floors the score at -5, a score expires after a day), and
+  #   - a SUPERUSER: an admin signs in through the CAS (`miconnect-auth`), never by password alone.
+  # And `password-login` asks for the second factor of an account that has one, as the default flow
+  # already does (`default-authentication-mfa-validation` skips an account with none).
+  # Driven by test-password-guard.py; the reasoning is in docs/wiki/infrastructure/authentik.md.
+  - model: authentik_policies_reputation.reputationpolicy
+    identifiers:
+      name: "miconnect-password-reputation"
+    attrs:
+      execution_logging: true
+      check_ip: true
+      check_username: true
+      threshold: -5
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-password-superuser"
+    attrs:
+      execution_logging: true
+      # In a stage binding evaluated after identification, `request.user` is the PENDING user.
+      expression: "return bool(getattr(request.user, 'is_superuser', False))"
+  - model: authentik_stages_deny.denystage
+    identifiers:
+      name: "miconnect-password-refused"
+    attrs:
+      deny_message: "La connexion par mot de passe n'est pas possible pour ce compte en ce moment. Connecte-toi avec le CAS de l'école."
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "password-login"]]
+      stage: !Find [authentik_stages_deny.denystage, [name, "miconnect-password-refused"]]
+      order: 12
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+      policy_engine_mode: "any"
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "default-authentication-flow"]]
+      stage: !Find [authentik_stages_deny.denystage, [name, "miconnect-password-refused"]]
+      order: 15
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+      policy_engine_mode: "any"
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "password-login"], [flowstagebinding__stage__name, "miconnect-password-refused"], [flowstagebinding__order, 12]]
+      policy: !Find [authentik_policies_reputation.reputationpolicy, [name, "miconnect-password-reputation"]]
+      order: 0
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "password-login"], [flowstagebinding__stage__name, "miconnect-password-refused"], [flowstagebinding__order, 12]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-password-superuser"]]
+      order: 1
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "default-authentication-flow"], [flowstagebinding__stage__name, "miconnect-password-refused"], [flowstagebinding__order, 15]]
+      policy: !Find [authentik_policies_reputation.reputationpolicy, [name, "miconnect-password-reputation"]]
+      order: 0
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "default-authentication-flow"], [flowstagebinding__stage__name, "miconnect-password-refused"], [flowstagebinding__order, 15]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-password-superuser"]]
+      order: 1
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "password-login"]]
+      stage: !Find [authentik_stages_authenticator_validate.authenticatorvalidatestage, [name, "default-authentication-mfa-validation"]]
+      order: 18
   - model: authentik_flows.flowstagebinding
     identifiers:
       target: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-signout"]]
