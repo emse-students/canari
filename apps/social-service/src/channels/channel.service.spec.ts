@@ -74,6 +74,7 @@ describe('ChannelService security hardening', () => {
       // salon a leaver must be cut from), and a bare `jest.fn()` there fails as a TypeError deep
       // inside the service instead of as the assertion the test is about.
       find: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       save: jest.fn(),
     };
     const roleRepo = {
@@ -513,7 +514,7 @@ describe('ChannelService security hardening', () => {
     workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
     roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
-    memberRepo.find.mockResolvedValue([{ userId: 'u1' }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
 
     await service.kickFromWorkspace('ws1', 'u-bob', 'u1');
 
@@ -539,7 +540,7 @@ describe('ChannelService security hardening', () => {
     });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
     roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
-    memberRepo.find.mockResolvedValue([{ userId: 'u1' }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
 
     await service.removeMemberFromChannel('ch1', 'u-bob', 'u1');
 

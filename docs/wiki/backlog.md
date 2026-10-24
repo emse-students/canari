@@ -133,6 +133,19 @@ a device reads its key package under the lock" ([channel-encryption](protocols/c
 `heldKeyPackages`; and refuse the target itself, either by a roster-level tombstone that the erasure
 writes and that names no one once its own window ends, or by asking core whether the account exists.
 
+## P3 - Two edges of the community removal lock, left by the review of #2284 (2026-10-24)
+
+- **A salon reorder and a removal can deadlock.** The reorder transaction writes several salon rows;
+  a kick's `stripFromChannels` locks the private salons it strips one by one, and
+  `hardDeleteWorkspace` deletes them, each in its own order. Two of them crossing two salons can
+  deadlock; PostgreSQL aborts one side, and an aborted departure settles `cancelled` cleanly, so the
+  cost is a refused request to retry. The fix is one lock order (salon rows by id) on all three.
+- **`assertRemovalKeepsAnAdmin` is not asked again under the lock** (pre-existing): two admins
+  kicking each other at the same moment both pass it and can leave a community with members and no
+  admin. The fix is to re-ask it inside the kick's `guard`, reading the admin set `FOR SHARE`.
+
+([social-service](services/social-service.md#removals-are-bounded-by-the-actor-and-so-is-hiding-a-salon-2026-10-24))
+
 ## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
 
 `deleteUserData` tombstones the DMs its discovery found. A DM opened with the account after that

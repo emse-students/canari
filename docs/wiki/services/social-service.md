@@ -1333,6 +1333,8 @@ returning the union of what the actor holds) and then `actorMayGrantRole`:
 | `setRoleBasePermission` | the role being edited grants nothing the actor lacks (their own role included), and a granted key is one they hold; checked on the LOCKED row | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
 | `createRole` | the new role grants nothing the actor lacks; it ranks just above the base role (`priority` is the server's, the body's is not read) | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
 
+### Removals are bounded by the actor, and so is hiding a salon (2026-10-24)
+
 **Removals are bounded by the actor's own permissions, by the sibling predicate.**
 `kickFromWorkspace`, `removeMemberFromChannel`, every member an access-list rewrite takes the salon
 from (`updateChannelAccess`: the audience before - the allowlist, or the whole community while the
@@ -1364,13 +1366,25 @@ live").
 removes the user from the locked row, never from the copy read before the lock, so an add granted in
 between is kept. An access-list rewrite compares the locked row with the copy its removals and first
 evictions were computed from; if the visibility or the allowlist changed, it is refused whole with
-`409 CHANNEL_ACCESS_CHANGED` (nothing saved, nobody cut off, retryable), which the settings panel
-names. A public salon made private gets its distribution group before the lock; when the change is
-then refused, the group is left, not retired: inert while the salon is public, reused by the next
-flip (the mint is idempotent), and possibly the group of a concurrent flip that did commit.
+`409 CHANNEL_ACCESS_CHANGED`, which the settings panel names: the visibility, the allowlist and the
+write policy are left as the other edit wrote them, and a departure the first evictions began is
+settled `cancelled` like any abandoned one. A public salon made private gets its distribution group
+before the lock; when the change is then refused, the group is left, not retired: its id stays on the
+row, inert while the salon is public, reused by the next flip (the mint is idempotent), and possibly
+the group of a concurrent flip that did commit.
+
+**Nothing writes a salon row from a copy read without a lock.** TypeORM's `save` re-reads the row
+and writes back every column the copy differs on, so a save of a stale copy reverted whatever a
+concurrent edit had committed - an admin's flip could make a salon public again, outside any lock,
+and the check under the lock would then pass. The group id (`ensureChannelDistributionGroup`,
+`retireChannelDistributionGroup`) and a rename write their one column with `update`; a grant (an
+admin joining a private salon, an invitation into one) adds the user to the row re-read `FOR UPDATE`
+in its own transaction (`grantPrivateChannelAccess`), so it cannot restore a member a removal has
+just taken off.
 
 Pinned by `removal-bound.integration.spec.ts` (PostgreSQL: the gate parked on an uncommitted role
-change through `pg_blocking_pids`, the removal lock, a rewrite raced by another, a private creation,
+change through `pg_blocking_pids`, the removal lock, a rewrite raced by another, a flip computed
+from a public row another admin made private while its mint was in flight, a private creation,
 no advisory lock held at any call to chat-delivery) and `removal-bound.spec.ts`.
 
 `workspace.manage` holds every permission, so an administrator keeps all of it. Pinned by

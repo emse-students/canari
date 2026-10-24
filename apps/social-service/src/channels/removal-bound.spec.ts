@@ -67,6 +67,7 @@ describe('removals bounded by the actor', () => {
         Promise.resolve({ ...channel, allowedUsers: [...channel.allowedUsers] })
       ),
       find: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       save: jest.fn((c: typeof channel) => {
         Object.assign(channel, c);
         return Promise.resolve(c);

@@ -18,6 +18,7 @@
  * Everything happens in a throwaway schema created BEFORE the DataSource initializes (see
  * `channel-unread-clear.integration.spec.ts` for why that order), dropped at the end.
  */
+import * as crypto from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { HttpException, Logger } from '@nestjs/common';
@@ -55,8 +56,12 @@ maybe('a removal against PostgreSQL', () => {
   let salonSeq = 0;
   let previousFetch: typeof fetch;
   let previousSecret: string | undefined;
-  /** How many advisory locks the server held at each call to chat-delivery. */
+  /** How many holders of THIS community's removal lock existed at each call to chat-delivery. */
   const locksAtCall: number[] = [];
+  /** chat-delivery's group per salon, minted once (its create is idempotent per scope). */
+  const groups = new Map<string, string>();
+  /** Run once by the next group create, before it answers - a test's way into that moment. */
+  let beforeCreate: (() => Promise<void>) | null = null;
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
   /** Adds a member holding `roleId`, so every test names its own targets. */
@@ -115,17 +120,37 @@ maybe('a removal against PostgreSQL', () => {
     );
     // chat-delivery, as a departure sees it: every eviction finds no group (the salons here have
     // none), and each call records how many advisory locks the server held when it was made.
-    global.fetch = jest.fn(async () => {
+    // chat-delivery, as this file needs it: a group create answers the salon's one group id (the
+    // real mint runs, its row write included); an eviction finds no group; and each call records
+    // how many holders the community's removal lock had - that key only, read from `pg_locks`.
+    global.fetch = jest.fn(async (_url: unknown, init?: { method?: string; body?: unknown }) => {
       locksAtCall.push(
-        Number((await q(`SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory'`))[0].n)
+        Number(
+          (
+            await q(
+              `SELECT count(*) AS n FROM pg_locks
+               WHERE locktype = 'advisory' AND granted
+                 AND ((classid::bigint << 32) | objid::bigint)
+                   = hashtextextended('community_removal:' || $1, 0)`,
+              [WS]
+            )
+          )[0].n
+        )
       );
+      if (init?.method === 'POST' && typeof init.body === 'string') {
+        const { scopeId } = JSON.parse(init.body) as { scopeId: string };
+        const hook = beforeCreate;
+        beforeCreate = null;
+        if (hook) await hook();
+        if (!groups.has(scopeId)) groups.set(scopeId, crypto.randomUUID());
+        return new Response(JSON.stringify({ groupId: groups.get(scopeId) }), { status: 200 });
+      }
       return new Response(JSON.stringify({ evicted: false }), { status: 200 });
     }) as unknown as typeof fetch;
-    // The grant announcements and a private creation's group mint call chat-delivery for things
-    // this file does not judge.
-    for (const name of ['announceChannelAccessGranted', 'ensureChannelDistributionGroup']) {
-      jest.spyOn(service as never, name as never).mockResolvedValue(undefined as never);
-    }
+    // The grant announcements call chat-delivery for things this file does not judge.
+    jest
+      .spyOn(service as never, 'announceChannelAccessGranted' as never)
+      .mockResolvedValue(undefined as never);
     await q(
       `INSERT INTO channel_workspaces (id, name, slug, "createdBy") VALUES ($1, 'W', 'w-removal', 'owner')`,
       [WS]
@@ -141,6 +166,7 @@ maybe('a removal against PostgreSQL', () => {
     await member('owner', ADMIN_ROLE);
     await member('salons', SALONS_ROLE);
     await member('kicker', MOD_ROLE);
+    await member('owner2', ADMIN_ROLE);
     // No budget here: every integration spec has one, `jest-integration-budget.cjs`.
   });
 
@@ -306,6 +332,34 @@ maybe('a removal against PostgreSQL', () => {
       await other.client.query('ROLLBACK').catch(() => undefined);
       await other.client.end();
     }
+  });
+
+  it('refuses a flip computed from a public row another admin made private meanwhile', async () => {
+    // Admin B reads the salon public; admin A then commits it private (group G, A and Bob listed)
+    // while B's mint is in flight. B's mint answers the same G, and recording it must not write back
+    // B's stale public copy - or the check under the lock would see a public row, pass, and drop A
+    // and Bob with no departure begun. B is refused whole and A's row stands.
+    await member('bob', BASE_ROLE);
+    const channels = ds.getRepository(Channel);
+    const { id } = await channels.save(
+      channels.create({ workspaceId: WS, name: `public-${salonSeq++}`, isPrivate: false })
+    );
+    const group = crypto.randomUUID();
+    groups.set(id, group);
+    beforeCreate = async () => {
+      await q(
+        `UPDATE channels SET "isPrivate" = true, "allowedUsers" = 'owner,bob', "distributionGroupId" = $1
+         WHERE id = $2`,
+        [group, id]
+      );
+    };
+    expect(await started(service.updateChannelAccess(id, 'owner2', true, [])).outcome).toBe(
+      CHANNEL_ACCESS_CHANGED
+    );
+    const row = await channels.findOneByOrFail({ id });
+    expect(row.isPrivate).toBe(true);
+    expect(row.allowedUsers).toEqual(['owner', 'bob']);
+    expect(row.distributionGroupId).toBe(group);
   });
 
   it('refuses a private creation that leaves off someone who holds more than its creator', async () => {

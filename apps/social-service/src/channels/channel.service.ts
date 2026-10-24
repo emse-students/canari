@@ -808,7 +808,9 @@ export class ChannelService implements OnApplicationBootstrap {
     const groupId = await createDistributionGroup(this.internalSecret, channelScope(channel.id));
     if (channel.distributionGroupId !== groupId) {
       channel.distributionGroupId = groupId;
-      await this.channelRepo.save(channel);
+      // THE ONE COLUMN, never `save(channel)`: the copy was read outside any lock, and a save writes
+      // back every column it differs on - a concurrent flip's `isPrivate` and allowlist included.
+      await this.channelRepo.update({ id: channel.id }, { distributionGroupId: groupId });
     }
     this.logger.log(`[CHANNEL_GRAINE] group ready channel=${channel.id} group=${groupId}`);
     return groupId;
@@ -828,7 +830,8 @@ export class ChannelService implements OnApplicationBootstrap {
     try {
       await deleteDistributionGroup(this.internalSecret, channelScope(channel.id));
       channel.distributionGroupId = null;
-      await this.channelRepo.save(channel);
+      // The one column, for the reason `ensureChannelDistributionGroup` gives.
+      await this.channelRepo.update({ id: channel.id }, { distributionGroupId: null });
       await this.memberRepo.manager.query(DELETE_GROUP_DEPARTURES_SQL, [[groupId]]);
       this.logger.log(
         `[CHANNEL_GRAINE] group retired channel=${channel.id} group=${groupId} reason=${reason}`
@@ -907,6 +910,40 @@ export class ChannelService implements OnApplicationBootstrap {
         `reason=${reason} salons=${held.length}/${privateChannels.length}`
     );
     return held;
+  }
+
+  /**
+   * Adds `userId` to a PRIVATE salon's `allowedUsers`, on the row re-read `FOR UPDATE` in its own
+   * transaction - never by saving a copy read earlier, which would write back an allowlist a
+   * concurrent removal had already changed (the removed member restored with no seat). Returns the
+   * locked row as written, or null when the salon is gone or is no longer private (nothing to grant).
+   */
+  private async grantPrivateChannelAccess(
+    channelId: string,
+    userId: string
+  ): Promise<Channel | null> {
+    const normalised = userId.trim().toLowerCase();
+    return this.memberRepo.manager.transaction(async (m) => {
+      const locked = await m.getRepository(Channel).findOne({
+        where: { id: channelId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked?.isPrivate) {
+        this.logger.warn(
+          `[CHANNEL] grant skipped channel=${channelId} user=${userId.slice(0, 8)} ` +
+            `- ${locked ? 'no longer private' : 'gone'}`
+        );
+        return null;
+      }
+      const allowed = locked.allowedUsers || [];
+      if (!allowed.includes(normalised)) {
+        locked.allowedUsers = [...allowed, normalised];
+        await m
+          .getRepository(Channel)
+          .update({ id: channelId }, { allowedUsers: locked.allowedUsers });
+      }
+      return locked;
+    });
   }
 
   /**
@@ -2042,8 +2079,9 @@ export class ChannelService implements OnApplicationBootstrap {
 
     // GRANTED BEFORE ANNOUNCED, like every other grant here: the audience is derived from
     // `allowedUsers`, so the joiner would otherwise be the one person the event misses.
-    channel.allowedUsers = [...(channel.allowedUsers || []), normalized];
-    await this.channelRepo.save(channel);
+    const granted = await this.grantPrivateChannelAccess(channelId, actorUserId);
+    if (!granted) throw new ConflictException('The salon is no longer private');
+    channel.allowedUsers = granted.allowedUsers;
 
     const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
@@ -2680,7 +2718,8 @@ export class ChannelService implements OnApplicationBootstrap {
     const trimmedName = validateChannelName(newName);
 
     channel.name = trimmedName;
-    await this.channelRepo.save(channel);
+    // The one column: a save of this unlocked copy would write back its visibility and allowlist.
+    await this.channelRepo.update({ id: channelId }, { name: trimmedName });
 
     // The new NAME of a private salon is not the community's business.
     const audience = await this.channelAudience(channel);
@@ -2771,11 +2810,12 @@ export class ChannelService implements OnApplicationBootstrap {
     // private (members are granted one at a time, at once), so the flip always arrives with an empty
     // list - and an empty private salon is one nobody can open, its maker included, which is the
     // state `chat_no_allowed_members_warning` names. COMM-23 granted the owner by hand for this.
-    if (isPrivate && !wasPrivate && !nextAllowed.includes(actorUserId)) {
+    const actorNormalised = actorUserId.trim().toLowerCase();
+    if (isPrivate && !wasPrivate && !nextAllowed.includes(actorNormalised)) {
       this.logger.log(
         `[CHANNEL_ACCESS] made private by ${actorUserId.slice(0, 8)}, granting them channel=${channelId}`
       );
-      nextAllowed.push(actorUserId);
+      nextAllowed.push(actorNormalised);
     }
     // ONLY WHILE IT STAYS PRIVATE. A salon going public loses its group entirely a few lines below,
     // and that retirement supersedes every per-user cut - evicting people who are about to regain
@@ -3238,12 +3278,10 @@ export class ChannelService implements OnApplicationBootstrap {
       // invitation to everyone EXCEPT the person invited. For private channels with user-based
       // access this is the only row change left, so the save belongs to this branch alone.
       if (channel.isPrivate) {
-        const existing = channel.allowedUsers || [];
-        const normalized = input.targetUserId.trim().toLowerCase();
-        if (!existing.includes(normalized)) {
-          channel.allowedUsers = [...existing, normalized];
-          await this.channelRepo.save(channel);
-        }
+        const granted = await this.grantPrivateChannelAccess(channelId, input.targetUserId);
+        // Made public meanwhile: the community membership above is the whole grant.
+        if (granted) channel.allowedUsers = granted.allowedUsers;
+        else channel.isPrivate = false;
       }
 
       // Publish event to notify the invited user and connected clients
@@ -3361,11 +3399,24 @@ export class ChannelService implements OnApplicationBootstrap {
       actorPermissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS);
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
 
+    if (targetUserIds.length === 0) return;
+    // TWO QUERIES WHATEVER THE NUMBER OF TARGETS: the community's membership rows, then the roles
+    // they name - a salon made private compares the whole community. Matched case-blind, because an
+    // allowlist entry is lowercased and a membership row keeps its id as written.
+    const rows = await members.find({ where: { workspaceId }, ...lock });
+    const memberOf = new Map(rows.map((r) => [r.userId.trim().toLowerCase(), r]));
+    const roleIds = [
+      ...new Set(targetUserIds.flatMap((u) => memberOf.get(u.trim().toLowerCase())?.roleIds ?? [])),
+    ];
+    const roles = roleIds.length
+      ? m
+        ? await m.getRepository(ChannelRole).find({ where: { id: In(roleIds) }, ...lock })
+        : await this.roleRepo.find({ where: { id: In(roleIds) } })
+      : [];
+    const grantsOf = new Map(roles.map((r) => [r.id, r.permissions]));
+
     for (const targetUserId of targetUserIds) {
-      const targetMember = await members.findOne({
-        where: { workspaceId, userId: targetUserId },
-        ...lock,
-      });
+      const targetMember = memberOf.get(targetUserId.trim().toLowerCase());
       if (!targetMember) {
         if (absentTarget === 'refuse') {
           throw new NotFoundException('Target member not found in workspace');
@@ -3375,7 +3426,10 @@ export class ChannelService implements OnApplicationBootstrap {
         );
         continue;
       }
-      if (!permissionsCover(actorPermissions, await this.permissionsOfMember(targetMember, m))) {
+      const targetPermissions = [
+        ...new Set((targetMember.roleIds ?? []).flatMap((id) => grantsOf.get(id) ?? [])),
+      ];
+      if (!permissionsCover(actorPermissions, targetPermissions)) {
         this.logger.warn(
           `[WORKSPACE] refused removal - target holds more than the actor workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)} locked=${m !== undefined}`
         );
