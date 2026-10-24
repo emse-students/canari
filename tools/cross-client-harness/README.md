@@ -1044,7 +1044,7 @@ asserts R5 ownership of every conversation the row writes in, and reads the serv
 when an armed fault never fired, `FAIL` on any own assertion or invariant, else `PASS` - and
 `recordObserved` then gates it on every seat's window, the deploy exclusion (R4) and the server window
 judged by the row id (R6). The invariant (R8) runs after every row, with its reload. A row's own
-judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`), pinned by
+judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`), pinned by
 `archive/<group>-selftest.mjs`.
 
 ```sh
@@ -1063,6 +1063,27 @@ backdated eight days on a leaf its own commit produced), inside the race so no e
 it. **CC-5 is BLOCKED-ON-ACCOUNT** - it needs a fifth campaign account (`ccrows.mjs` `CC5_PREMISE`).
 The contract is the OUTCOME: one winner, the loser refused with either race refusal and rebuilt;
 which code it met is recorded in the detail (`refusalCodes`), never judged.
+
+```sh
+bun archive/settle.mjs --row DUP-1|DUP-2|DUP-4|DUP-5|DUP-6|OFF-1|OFF-2|TOK-1|TOK-2
+bun archive/settle.mjs --row DUP-3       # records SKIPPED with the plan's reason (Q2)
+bun archive/settle.mjs --row TOK-3       # 61 min with the socket open - run alone, unattended
+bun archive/run.mjs SETTLE               # every settlement row but TOK-3
+```
+
+**A settlement row** arms a fault on W1's commit POST (`fault.mjs`), then Adds the row's subject:
+the answer lost (`lose-answer`), refused (`status 409` with the `SEAT_CLAIM_OVERTAKEN` body the
+client types by - `status` takes a `body` since this runner), answered `503`, held past the write
+deadline (`hold-answer`), or failed under a cut (`hold` / `hold-answer` then `fail()` once
+`net.mjs` `cutHard` is in place). Every step after waits on a FACT: the fault firing, the client's
+own `[COMMIT] <group>... resubmission of the commit from epoch N: <verdict>` line, the gateway's
+reconnection. The evidence is the gate's log IN ORDER (`settlerows.mjs` `commitSequence`):
+one `ACCEPT`, the resubmissions `DUPLICATE`, nothing refused - a kept commit is settled, never
+rebuilt. **What a fault provokes is forgiven exactly, one line each**: `rowkit.mjs`
+`forgivingProvoked` takes the fault's records off W1's window (a transport failure included, which
+`ignoringExpectedRefusal` cannot match), and `checkInvariant({provoked})` forgives each provoked
+5xx once in invariant 4 and names it as an approximation. DUP-7 needs a new device and is played by
+the device runner.
 
 ## Rules that make a result trustworthy
 

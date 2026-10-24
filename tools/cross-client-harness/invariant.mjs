@@ -143,7 +143,7 @@ function serverWindow(since) {
 }
 
 /** One client's readings for one pass. */
-async function readClient(slot, group, markers) {
+async function readClient(slot, group, markers, provoked) {
   const { cx, target } = slot;
   const who = JSON.parse(await evaluate(cx, WHO));
   const ep = JSON.parse(await evaluate(cx, EPOCHS));
@@ -170,6 +170,7 @@ async function readClient(slot, group, markers) {
     lines: consoleEntries(cx),
     rowWatched: slot.rowWatched,
     http5xx: http5xxOf(cx),
+    provoked5xx: provoked[target.device] ?? [],
     received,
     // Not readable from the page on this build - `invariantverdict.mjs` records the approximation.
     fingerprint: undefined,
@@ -193,9 +194,11 @@ async function readClient(slot, group, markers) {
  * @param {boolean} [p.expectStage]
  * @param {number} [p.messages]
  * @param {Record<string, object>} [p.watchers] device -> the row's own `watch()` result, attached since the row began
+ * @param {Record<string, {status: number|null, url: string}[]>} [p.provoked] device -> the failures the row's OWN
+ *   faults put in front of that page (`rowkit.mjs` `provokedFailures`); invariant 4 forgives each 5xx ONCE
  * @returns {Promise<{ok: boolean, passes: object[]}>}
  */
-export async function checkInvariant({ group, targets, members, conversation, fromEpoch, since, reload = false, expectStage = false, messages = 2, watchers = {} }) {
+export async function checkInvariant({ group, targets, members, conversation, fromEpoch, since, reload = false, expectStage = false, messages = 2, watchers = {}, provoked = {} }) {
   if (!UUID.test(group)) throw new Error(`group '${group}' is not a uuid`);
   if (!conversation) throw new Error('a conversation to send the post-event messages in is required - invariant 3 is not optional');
   const memberSet = new Set(members?.length ? members : targets.map((t) => t.device));
@@ -236,7 +239,7 @@ export async function checkInvariant({ group, targets, members, conversation, fr
 
   const judge = async (label) => {
     const clients = [];
-    for (const s of slots) clients.push(await readClient(s, group, markers));
+    for (const s of slots) clients.push(await readClient(s, group, markers, provoked));
     const win = serverWindow(since);
     const verdict = invariantVerdict({
       group,

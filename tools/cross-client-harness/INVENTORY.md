@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-96 scripts.
+97 scripts.
 
 | script | what it is |
 |---|---|
@@ -101,6 +101,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `sendtrace.mjs` | WHETHER THE SERVER TOOK ONE DEVICE'S SEND, read off chat-delivery's own trace - for a client whose |
 | `serial.mjs` | WHICH PHONE adb SHOULD TALK TO - one resolver, and it REFUSES TO GUESS between two of them. |
 | `serverwindow.mjs` | THE SERVER HALF OF A ROW'S WINDOW, CONDENSED FOR THE LEDGER AND FOLDED INTO ITS VERDICT. |
+| `settlerows.mjs` | THE SETTLEMENT ROWS OF THE 1.4.1 CAMPAIGN - DUP, OFF-1/-2, TOK - their table and their judges. |
 | `shot.mjs` | Saves a PNG of a client, so a layout claim is LOOKED AT rather than inferred. |
 | `site.mjs` | THE ONLY DOOR TO `SITE` AND `ORIGIN`, AND IT REFUSES PRODUCTION BEFORE ANYTHING READS THEM. |
 | `srcscan.mjs` | READING A SCRIPT AS CODE RATHER THAN AS TEXT. |
@@ -134,7 +135,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-82 scripts.
+83 scripts.
 
 | script | what it is |
 |---|---|
@@ -213,6 +214,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/reel.mjs` | REEL-1 and REEL-2 on the phone: the camera tab opens a live PORTRAIT preview from a real swipe |
 | `archive/roster.mjs` | THE MEMBERSHIP TABLE ITSELF - the four rows nothing on this board could have caught. |
 | `archive/search.mjs` | SEARCH-1..6 - the two searches this app has (in-conversation full-history, and the sidebar |
+| `archive/settle.mjs` | THE SETTLEMENT ROWS OF THE 1.4.1 CAMPAIGN - a commit whose ANSWER is lost, refused or late. |
 | `archive/tab1.mjs` | TAB-1 - the OS notification for a message, and the silence that must precede it. |
 | `archive/tab236.mjs` | TAB-2, TAB-3 and TAB-6 - the three ways a client goes away and comes back. |
 | `archive/tab3b.mjs` | TAB-3b - five cold starts, and what each one spent its time on. |
@@ -225,7 +227,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-50 scripts.
+51 scripts.
 
 | script | what it is |
 |---|---|
@@ -270,6 +272,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/sendtrace-selftest.mjs` | Pins `sendsByDevice` and `mobileNavOrder` - the two readers the iPhone needs because what the |
 | `archive/servable-selftest.mjs` | The subset rule that decides HEAL-NEW-2 and -12, exercised on the sidebars it has to tell apart. |
 | `archive/serverwindow-selftest.mjs` | Pins `serverwindow.mjs`: the server's window reaches the ledger row, a dirty one demotes a PASS, |
+| `archive/settle-selftest.mjs` | THE SETTLEMENT ROWS' OWN JUDGEMENTS, PINNED (`settlerows.mjs`), AND THE FORGIVENESS OF WHAT THEIR |
 | `archive/sourcestamp-selftest.mjs` | THE GATE THAT WOULD HAVE SAVED GRP-3 AND GRP-8, pinned on both sides. |
 | `archive/spawn-selftest.mjs` | A SPAWN GIVEN A NAME IT CANNOT RESOLVE FAILS SILENTLY, AND THIS RIG HAS PAID FOR IT NINE TIMES. |
 | `archive/srvclassify-selftest.mjs` | THE SERVER CLASSIFIER AND ITS NORMALISER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
@@ -333,4 +336,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-272 scripts in total.
+275 scripts in total.
