@@ -1013,8 +1013,8 @@ community with no answer to this question, and a null would be a third state eve
 to interpret.
 
 **THE ENFORCEMENT POINT IS EVERY PLACE A SEED LEAVES A DEVICE, AND FOR A YEAR ONLY ONE OF THE TWO WAS
-GATED.** `gatherCommunityHistory` refused the join-time bundle under `joined`, correctly and out
-loud - and `gatherNamedSessions`, the WP-33 repair path, consulted nothing at all and handed the same
+GATED.** `gatherCommunityHistory` refused the join-time bundle under `joined`, out loud (whole,
+whoever asked - floored at the member's arrival since 2026-10-22, below) - and `gatherNamedSessions`, the WP-33 repair path, consulted nothing at all and handed the same
 past back one session id at a time. That is not an exotic path: a newcomer renders a salon, meets
 ciphertext it cannot open, and `noteMissingSeed` names those exact sessions. The setting was stored,
 broadcast, narrowed fail-closed, enforced on one path and bypassed entirely on the other, so a
@@ -1067,11 +1067,117 @@ roster fetch failed would strand seeds the member is entitled to.
 device still holding `shared` in memory would keep handing the past over after an admin had closed
 it - until its next relaunch.
 
-**Narrowed once, and fail-closed.** `narrowHistoryVisibility` is the only place a wire string becomes
-one of the two values, so the sidebar and the seed layer cannot disagree about a community. A value
-this client does not know, and a community whose rule this session never learned, both read as
-`joined`: refusing costs a newcomer some history they were entitled to, guessing `shared` costs a
-community the privacy it asked for, and those are not symmetrical. Both cases warn.
+#### The floor is the MEMBER's, on every path, and a widening reaches the members already in (2026-10-22)
+
+An audit of the rule on 2026-10-22 found it enforced, with four gaps. All four are closed in the
+same change; the rig arms that read them on a live estate are owed (COMM-12, two arms below).
+
+- **A member's NEW DEVICE got no history bundle under `joined`.** `gatherCommunityHistory` refused
+  every HISTORY ask whole, whoever asked - a reading of the rule by DEVICE, when the floor is per
+  MEMBER (`channel_members.createdAt`). It now answers like the repair path, through ONE function
+  (`seedsTheAskerMayRead` in `frameHandler.ts`): each held seed raised to the server's floor at the
+  asking member's arrival, a session wholly before it withheld, fail-closed when the floors cannot
+  be read. A newcomer's first device gets the sessions spanning its arrival; a long-standing
+  member's new device gets everything since the member arrived. The floor query is sliced at 100
+  session ids (`HISTORY_FLOOR_QUERY_MAX_SESSIONS`), because a bundle can name thousands and the ids
+  travel in the query string; the slices run four at a time (`HISTORY_FLOOR_QUERY_CONCURRENCY`), so
+  a capped bundle's 80 queries are not 80 round trips in a row. The bundle's cap applies before the
+  floors, to the NEWEST sessions first: the store's read has no order, and capping it as it came
+  could keep only sessions that predate a recent arrival - an empty, truncated answer at every ask.
+- **The `joined` newcomer's ask was answered by silence at every launch.** It is now ANSWERED: with
+  floored seeds, or, when every row opened and every one predates the arrival, with the "I hold
+  nothing" flag of [section 24](#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18),
+  meaning "nothing here for you" - recorded per roster exactly like "nothing". So the requester asks
+  under both rules, and the ask stops repeating. Rows that do not open with the device key still
+  answer silence, as under `shared`. **What recovers a past after "nothing for you", said:** only
+  the REPAIR path. The history ask is not asked again for that roster version, and a voucher written
+  onto an existing row (a re-admission, section 25) does not move the epoch. Each row the member
+  renders names its session and asks for it, and that repair goes through the same gate - which,
+  once the admission is proven, hands the seed whole (`frameHandler.test.ts`, RE-ADMISSION).
+  Forgetting the record when this device's own voucher appears was weighed and not built: it needs
+  the requester to watch its own roster row, and the repair path already reaches every row read.
+- **A switch `joined` -> `shared` never restored the past to members already in.** The history ask
+  returns once any seed is held, and a row below a raised floor is classed "sent before this device
+  was given the seed", which asks nobody (asking would loop on the same floor). Re-classing those
+  rows was REJECTED for that reason. Instead the ask is re-opened: `historyClosedSeen.ts` records,
+  durably per account, the communities whose past this device was told is CLOSED (only from a rule
+  the server stated, `knownHistoryVisibility` - never the fail-closed default). When the rule then
+  reads `shared`, `requestCommunityHistory` asks even though seeds are held (reason
+  `visibility-widened`), forgets ONCE the "nothing" answers given under the floor, and keeps asking
+  at each start until an answer STORES a seed (`noteHistoryAnswered`), the ask goes final,
+  or there is nobody to ask. Durable because most members are offline when an admin flips the
+  setting; the live `workspace.updated` also triggers it at once - and forgets, with the "nothing"
+  answers, the in-memory "nobody could answer at this epoch" (`historyUnanswerableAt`), which the
+  floor reached and a live widening does not move. An answer with a lower floor on a
+  held session lowers it (`storeIncomingSeed`) and re-reads the salon. **Residue, said:** an
+  answerer who itself arrived late, or who still holds `joined` in memory, answers with what it may
+  give, and that answer settles the widening.
+- **`shared` -> `joined` cannot take back a seed already handed out**, by design. The admin panel's
+  `joined` note says so (`chat_community_history_joined_note`), and no longer says "permanently".
+
+**The receiver re-floors under `joined` (`seedsWeMayKeep` in `frameHandler.ts`).** A bundle is
+floored for the member who asked, and answerers before 1.2.6 addressed it to the whole key group
+([section 23](#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)), while
+`absorbSeedBundle` stored every seed it carried. The receiver now applies its OWN floor too: a
+bundle's seeds are re-floored at this member's arrival (same server route, same raise-never-lower
+`applyHistoryFloors`) before anything is stored; fail-closed, the seeds stay reachable one session
+at a time by the repair path. The frame carries nothing that says whom it was addressed to, and the
+request id would refuse a legitimate late answer, so the floor is the check. The broadcasting
+answerer is retired by `minClientVersion` at or above `1.2.6` on both estates; the receiver check
+holds against any answerer, modified ones included. The native push mirror (`graine_seeds.json`) also
+absorbs a bundle with the app killed and is not re-floored: it only opens PUSHED messages, which are
+minted after the arrival, and nothing reads it back into the store.
+
+**One chokepoint, composed with the admission gate of [section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)
+(reconciled 2026-10-23).** `seedsTheAskerMayRead` is the one function both answers go through, and
+applies, in this order:
+
+1. the salon's roster - the scope of the key group the request arrived on (`withinFrameScope`). A
+   floor is asked of the server per salon, and a salon the asker may not read never reaches that
+   question, nor the gate. Nothing left in scope answers at once, ungated: "I hold none of these"
+   (a repair's `missing`, a history ask's "nothing" when the store has no row) depends neither on
+   the rule nor on the asker;
+2. the cap (history only);
+3. the rule as this session LEARNED it (`knownHistoryVisibility`): not learned yet PARKS the ask
+   until the listing states it (`parkAskUntilRuleKnown`, woken by `whenHistoryRuleKnown`);
+4. the gate (`pastPolicyFor`): `unobserved` PARKS the ask (section 25); `unverifiable` (the roster
+   or the tree did not read) is answered by SILENCE; `shared` hands everything;
+5. under `joined` - the community's setting or an unproven admission - the floor at the asking
+   MEMBER's arrival.
+
+| Case | Answer | Why |
+| --- | --- | --- |
+| Nothing held in scope | at once, ungated: `missing`, or "nothing" when no row exists | a fact about this store, not about the asker |
+| Rule not learned by this session | parked, gate never asked, then decided again (gate included) when the rule arrives | a floor drawn under a guessed `joined` loses a `shared` past for good; the same queue and bound as `unobserved` (64 asks, the oldest dropped at warn) |
+| Rule `shared`, admission proven | everything in scope | section 25 |
+| Rule `shared`, voucher not observed yet | parked until the key group drains, then decided again | section 25; nothing is floored before the gate decides |
+| Rule `shared`, admission not proven | floored at the member's arrival, "nothing for you" when every row predates it | section 25's "never refused whole"; the same floor as a `joined` community |
+| Rule `shared`, admission not checkable (roster or tree unreadable) | SILENCE on both paths: no floored seed, no "nothing", no decline (decided 2026-10-23) | a floored seed is lasting at the requester - the rows below its floor are asked of nobody - so a passing read failure would cost a member part of a session for good; silence records nothing, and the requester asks again at its next start |
+| Rule `joined`, proven or not | floored at the member's arrival | the rule outranks the proof: a proven admission lifts the `shared` gate, never a closed past |
+| Floors cannot be read | silence | fail-closed |
+| A row withheld for its roster, or the cap cut the list | never "nothing for you" | an unlisted salon may be the asker's; past the cap the floors judged nothing |
+
+**The receiver reads the COMMUNITY's rule, never the gate.** The gate is about whom an answerer may
+hand the past to, and a device is proven to itself. Under `shared` every seed goes to
+`storeIncomingSeed` as it came (a seed of a salon the answered listing did not name waits for its
+registration, `awaitSalonListing`). Under `joined` the bundle is scoped first (`seedsWeMayFloor`, the
+same `seedOutsideScope` as the answerer): another roster's seed is refused, and a seed of a salon not
+listed here - not yet, or not named by the answered listing - is SET ASIDE, not held for its
+registration, because a seed admitted that way would be stored unfloored. The repair path reaches it
+once the salon is rendered, floored at the answerer. Only then is the rest re-floored at our own
+arrival (`seedsWeMayKeep`).
+
+**A settled widening needs a STORED seed.** `noteHistoryAnswered` runs only when the bundle stored
+something new: an answerer handing back the floored past this device already holds settles nothing.
+
+**Narrowed once - and an UNKNOWN rule is neither rule.** `narrowHistoryVisibility` is the only place
+a wire string becomes one of the two values, so the sidebar and the seed layer cannot disagree
+about a community; a value this client does not know reads as `joined`, and warns. A community
+whose rule this SESSION has not learned yet is different (`knownHistoryVisibility` is `null`): the
+answerer PARKS the ask, on both answer paths, and the receiver HOLDS a bundle carrying seeds, until
+the rule arrives (`whenHistoryRuleKnown`, event-driven, at most 256 waiting steps, a step past it
+dropped at warn; dropped and said with the session or the community). A floor drawn under a guessed `joined` is a loss rather than a precaution: a `shared`
+community's newcomer handed the floored past records the ask answered and never asks again.
 
 **The ask is derived state, twice over.** A joiner asks when it holds NO seed for the community -
 read from the store, so it survives a reload a "done" flag would have lied about - and when it has
@@ -3745,7 +3851,10 @@ answerer missed the live request. What can be recorded is an ANSWER.
 is `shared`) and holds NO seed ROW of the community answers a HISTORY request with an empty bundle that
 says so, echoing the `request_id`, addressed to the device that asked as key material like every
 answer ([section 23](#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)). The
-`joined` refusal stays silent (the requester knows the rule), and a SESSIONS request is unchanged.
+`joined` refusal stayed silent (the requester knows the rule) until 2026-10-22; under `joined` the
+ask is now answered, floored, and an empty hand whose rows all opened says "nothing" too
+([WP-34/35](#the-floor-is-the-members-on-every-path-and-a-widening-reaches-the-members-already-in-2026-10-22)).
+A SESSIONS request is unchanged.
 
 **"Nothing" is a count of ROWS, never of what decrypted** (adversarial review of #2027). The seed read
 skips a row the device key cannot open - a PIN change re-sealing the store, backup rows sealed under
@@ -3916,8 +4025,8 @@ admissions, per account) and its MLS layer (pins and departures):
   the moment it drains. An ask arrives ON the key group, so it is that group's current work and can
   never see it drained. An ask whose answer depends on a voucher not observed yet
   (`pastPolicyFor` -> `unobserved`) is therefore PARKED in memory (`parkedAsks.ts`): one per asking
-  device, community and kind, at most 64, the oldest dropped at warn. The drain that follows decides
-  it again and answers then; a decision that has become a refusal is answered as one, with its log.
+  device, community and kind, at most 64 (shared with the asks that wait for an unknown history
+  rule), the oldest dropped at warn. The drain that follows decides it again and answers then; a decision that has become a refusal is answered as one, with its log.
   **Consequence: the answer waits for the key group to catch up on the answering device.** A parked
   ask lost with the app is acceptable: the asking device asks again at its next start. A SESSIONS
   repair naming only seeds this device does not hold is answered at once (`missing` does not depend
@@ -3963,13 +4072,17 @@ read from their arrival on when this device answers. Another device that saw the
 still hands them the past. The record holds only the vouchers on the current roster; one that leaves
 the roster and comes back is observed again, later.
 
-`pastPolicyFor(frame)` is THE gate, and both answer paths call it - the HISTORY bundle
-(`gatherCommunityHistory`) and the SESSIONS repair (`gatherNamedSessions`) - so the two cannot
-disagree about a member. It returns `joined` when the community is set to it, when the admission is
-not proven (`info`: a decision, not a loss), or when the roster or the tree cannot be read (`warn`:
-fail closed). **Not proven is never refused whole**: the answer is the one a `joined` community
-gives - nothing from before the asker's arrival, everything from it on, under the same
-server-computed floor. It returns `unobserved` when the admission is not proven only because a
+`pastPolicyFor(frame)` is THE gate, and both answer paths call it through ONE chokepoint,
+`seedsTheAskerMayRead` - the HISTORY bundle (`gatherCommunityHistory`) and the SESSIONS repair
+(`gatherNamedSessions`) - so the two cannot disagree about a member. It returns `joined` when the
+community is set to it, or when the admission is not proven (`info`: a decision, not a loss), and
+`unverifiable` when the roster or the tree cannot be read (`warn`: fail closed, answered by
+SILENCE on both paths - a floored seed would be lasting at the requester, a passing failure must
+not be). **Not proven is never refused whole**: the answer is the one a
+`joined` community gives - nothing from before the asker's arrival, everything from it on, under the
+same server-computed floor, on the history path too since the reconciliation with #2264
+([the decision table](#the-floor-is-the-members-on-every-path-and-a-widening-reaches-the-members-already-in-2026-10-22)).
+It returns `unobserved` when the admission is not proven only because a
 voucher waits for the key group to drain; the answer path then parks the ask (above). It judges on
 the COMMUNITY's key group (`communityKeyGroupOf`), whichever
 group the ask arrived on: a private salon's own group holds that salon's members and its own
@@ -4026,9 +4139,11 @@ R = lp("canari-graine-admit-redeem-v1") || lp(workspaceId) || lp(subject) || lp(
 
 ### Order with the other drafts
 
-Merges after #2262 (salon scope) and #2264 (visibility floors). #2264 moves the visibility read into
-`seedsTheAskerMayRead`; on rebase, its `historyVisibilityFor(...) === 'shared'` becomes
-`(await pastPolicyFor(frame)) === 'shared'`, so the gate stays the ONE function both paths call.
+This section merged after #2262 (salon scope); #2264 (visibility floors) was then rebuilt on top of
+it (2026-10-23): `seedsTheAskerMayRead` calls `pastPolicyFor` after the rule check, so the gate
+stays the ONE function both paths call, and the history path floors an unproven asker instead of
+refusing them whole. The composed cases are the table in
+[the floor is the member's](#the-floor-is-the-members-on-every-path-and-a-widening-reaches-the-members-already-in-2026-10-22).
 #2263 (rotation on a new user) and #2255 (paging) touch neither the gate nor the voucher.
 
 Tests: `graineAdmission.test.ts` (the leading `0x00`, round trips, every tampering: subject,

@@ -94,7 +94,8 @@ Restored history carries each message's author signature, and frames carry a sig
 
 Decided by the user: communities stay `shared` by default, the past goes only to an admission a
 member can verify, and a new user's arrival rotates (D5, #2263). Migration `107` is approved by the
-user. Owed, in order: merge after #2262 and #2264; the rig rows COMM-26..31; and a
+user. Merged (#2273); #2264 is rebuilt on it, one chokepoint calling the gate. Owed, in order: the
+rig rows COMM-26..31; and a
 `minClientVersion` floor at the version carrying it, since an older answering client still hands
 the past to whoever the roster names. **The cut date is DECIDED** (user, 2026-10-23):
 `ADMISSION_PROOF_SINCE` is the day the production stable carrying the proof ships, planned for

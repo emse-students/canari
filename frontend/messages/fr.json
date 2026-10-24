@@ -229,7 +229,7 @@
   "chat_community_history_shared_option": "Partagé - les nouveaux membres lisent le passé",
   "chat_community_history_joined_option": "À partir de l'arrivée - rien de plus ancien",
   "chat_community_history_shared_note": "Un lien d'invitation qui fuite donne aussi accès au passé. Gardez le lien limité dans le temps et en nombre d'usages.",
-  "chat_community_history_joined_note": "Les messages envoyés avant l'arrivée d'un membre resteront illisibles pour lui, définitivement.",
+  "chat_community_history_joined_note": "Les messages envoyés avant l'arrivée d'un membre lui restent illisibles tant que ce réglage est actif. Ce réglage ne reprend pas le passé déjà transmis aux membres arrivés avant.",
   "chat_community_members_description": "Gestion des membres de la communauté et de leurs rôles globaux.",
   "chat_community_member_count_label": [
     {

@@ -330,7 +330,9 @@ export const PHASES = {
       // revives it either way.
       'comm18.mjs',
     ],
-    needs: ['W1', 'W2', 'A1'],
+    // W3 FOR COMM-12 ALONE (2026-10-22): its new-device arm wipes the scratch profile and signs it in
+    // as a new device of the owner. `SCRATCH_SCRIPTS` narrows it, so no other COMM row asks for W3.
+    needs: ['W1', 'W2', 'A1', 'W3'],
   },
   // EVERY ROW SPELT OUT, and MULTI-6 LAST because it kills the app. Four of the six are automated and
   // the other two are recorded as `SKIPPED` by the script itself with the reason on the row - a phase
@@ -499,6 +501,8 @@ export const SCRATCH_SCRIPTS = {
   // GRAINE-AUTH-6 reads the injected v1 row on the owner's scratch device, which holds no session
   // the row could name; arms 1-3 read on W2 and arm 7 POSTs from W1, and none of them opens W3.
   GRAINE: ['graineauth.mjs --only 6'],
+  // COMM-12's new-device arm: a new device of the owner asking for a `joined` community's history.
+  COMM: ['comm12.mjs'],
 };
 
 /**
