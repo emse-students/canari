@@ -346,7 +346,7 @@ describe('processPendingInvitations - a lost commit race', () => {
     expect(h.mlsService.registerMember).not.toHaveBeenCalled();
   });
 
-  it('C3: rows judged at one epoch share ONE read of the pending list and of the commit log', async () => {
+  it('C3: rows judged at one epoch share ONE commit-log read, and each re-reads the pending list', async () => {
     const h = sweepHarness();
     const rows = [
       { userId: 'w4', deviceId: 'w4-a', groupId: G, status: 'pending' },
@@ -363,9 +363,34 @@ describe('processPendingInvitations - a lost commit race', () => {
     await h.run();
 
     expect(h.mlsService.addMember).toHaveBeenCalledTimes(2);
-    // The sweep's own listing, then ONE premise read for the pass - not one per row.
-    expect(h.mlsService.getPendingInvitations).toHaveBeenCalledTimes(2);
+    // The tree is confirmed ONCE for the pass; the pending list is read again for EVERY row - the
+    // sweep's own listing, then one per attempt (a removal deletes a row before its commit lands).
     expect(h.mlsService.fetchCommitsSince).toHaveBeenCalledTimes(1);
+    expect(h.mlsService.getPendingInvitations).toHaveBeenCalledTimes(3);
+  });
+
+  it('a row withdrawn while an earlier row was staged at the SAME epoch is not re-admitted', async () => {
+    const h = sweepHarness();
+    h.mlsService.getPendingInvitations.mockResolvedValue([
+      { userId: 'w4', deviceId: 'w4-a', groupId: G, status: 'pending' },
+      { userId: 'w4', deviceId: 'w4-b', groupId: G, status: 'pending' },
+    ]);
+    h.mlsService.fetchUserDevices.mockResolvedValue([
+      { deviceId: 'w4-a', keyPackage: new Uint8Array([4]) },
+      { deviceId: 'w4-b', keyPackage: new Uint8Array([5]) },
+    ]);
+    // Row A's Add fails without moving the epoch; meanwhile a removal's record deletes row B.
+    h.mlsService.addMember.mockImplementationOnce(async () => {
+      h.mlsService.getPendingInvitations.mockResolvedValue([
+        { userId: 'w4', deviceId: 'w4-a', groupId: G, status: 'pending' },
+      ]);
+      throw new Error('boom');
+    });
+
+    await h.run();
+
+    expect(h.mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(h.mlsService.registerMember).not.toHaveBeenCalled();
   });
 
   it('a busy add lock leaves the row pending - nothing is retired or staged', async () => {

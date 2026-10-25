@@ -611,9 +611,10 @@ ends a lost race the same way (CC-1, CC-2, CC-4 of the 1.4.1 campaign):
   - The sweep (`confirmPendingAddPremise`, `actions.ts`) re-runs `automaticAdmission` on a tree
     confirmed at the server's epoch (`not-a-member-device` when the user holds no leaf there - a
     removed person is a new person again), then re-reads the pending row (`invitation-withdrawn` when
-    a removal's record deleted it), in EVERY pass, the first included. Both are read ONCE PER PASS of
-    a group (`pendingAddFactsOf`): rows judged at one epoch share one read of the pending list and of
-    the commit log, and a rebuild reads afresh.
+    a removal's record deleted it), in EVERY pass, the first included. The confirmed tree is read
+    ONCE PER PASS of a group (`pendingAddFactsOf`: rows judged at one epoch share one commit-log read,
+    a rebuild reads afresh); the pending list is read on EVERY attempt, because a removal deletes the
+    row before its commit lands - a list kept for the pass would re-admit a device being removed.
   - A member's invitation (`rosterPremise`, `groupCreation.ts`) re-reads the roster before each
     REBUILD: a person on it when the invitation began and off it now (`removed-meanwhile`) was removed
     concurrently - an approved join ask another member declined - and the member is told so. What it

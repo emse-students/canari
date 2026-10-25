@@ -136,13 +136,17 @@ interface PendingAddFacts {
 }
 
 /**
- * Reads {@link PendingAddFacts} ONCE PER PASS of a group, not once per row (round 3 of #2416): every
- * pending row of a group is judged against the same server state, so the sweep used to re-fetch the
- * whole pending list and the commit log - under the global MLS lock - once per row. A pass is an
- * epoch: an Add (or the commit that beat it) moves the epoch and the next row reads afresh, while
- * rows skipped at one epoch share one read. A REBUILD always reads afresh (`fresh`), even at the same
- * epoch: an overtaken seat claim rebuilds without moving it, and a removal's record lands before its
- * commit.
+ * Reads {@link PendingAddFacts} for one attempt of one row's Add.
+ *
+ * THE TREE IS READ ONCE PER PASS OF A GROUP, not once per row (round 3 of #2416): confirming it costs
+ * a commit-log read under the global MLS lock, and every row of a group is judged against the same
+ * tree until an epoch moves. A pass is an epoch: an Add (or the commit that beat it) moves it and the
+ * next row reads afresh; a REBUILD always reads afresh (`fresh`), since an overtaken seat claim
+ * rebuilds without moving it.
+ *
+ * THE PENDING LIST IS READ ON EVERY ATTEMPT, never cached (round 4): a removal deletes the pending row
+ * BEFORE its commit lands, so that deletion moves no epoch - a list kept for the pass would tell row
+ * B, staged after row A, that a device being removed is "still pending", and re-admit it.
  */
 function pendingAddFactsOf(deps: {
   mlsService: IMlsService;
@@ -151,20 +155,21 @@ function pendingAddFactsOf(deps: {
   myDeviceId: string;
 }): (fresh: boolean) => Promise<PendingAddFacts> {
   const { mlsService, groupId, userId, myDeviceId } = deps;
-  let pass: { epoch: number; facts: Promise<PendingAddFacts> } | null = null;
-  return (fresh) => {
+  let pass: { epoch: number; tree: Promise<TreeReading> } | null = null;
+  return async (fresh) => {
     const epoch = mlsService.getEpoch(groupId);
-    if (!fresh && pass !== null && pass.epoch === epoch) return pass.facts;
-    const facts = (async (): Promise<PendingAddFacts> => {
+    if (fresh || pass === null || pass.epoch !== epoch) {
       // Always confirmed: the one read serves every row, whichever user each names.
-      const tree = await readConfirmedTree(mlsService, groupId, userId, '[PENDING]', () => false);
-      const rows = await mlsService
-        .getPendingInvitations(userId, myDeviceId)
-        .catch((e: unknown) => ({ unreadable: String(e).slice(0, 100) }));
-      return { tree, rows };
-    })();
-    pass = { epoch, facts };
-    return facts;
+      pass = {
+        epoch,
+        tree: readConfirmedTree(mlsService, groupId, userId, '[PENDING]', () => false),
+      };
+    }
+    const tree = await pass.tree;
+    const rows = await mlsService
+      .getPendingInvitations(userId, myDeviceId)
+      .catch((e: unknown) => ({ unreadable: String(e).slice(0, 100) }));
+    return { tree, rows };
   };
 }
 
@@ -177,7 +182,7 @@ function pendingAddFactsOf(deps: {
  * - the pending row is still on the server - a removal deletes it, and an Add answering a row that
  *   is gone answers nobody.
  *
- * Both are read from the group's pass ({@link pendingAddFactsOf}), not per row.
+ * Read by {@link pendingAddFactsOf}: the tree once per pass of the group, the list on every attempt.
  *
  * @throws {@link AddAbortedError} when either no longer holds, or cannot be read: nothing is staged
  *   and nothing registered.
