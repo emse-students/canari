@@ -92,6 +92,7 @@ function ctx(fetchImpl: ReturnType<typeof vi.fn>, refreshToken: ReturnType<typeo
     'awaitCommitCheckpoint',
     'checkpointStageBeforeSend',
     'mergeSettled',
+    'mergeAccepted',
     'deliverOwedWelcomes',
     'knownUnresolvedGroups',
     'settleUnresolvedCommits',

@@ -55,6 +55,13 @@ export function toBase64(bytes: Uint8Array): string {
   return btoa(parts.join(''));
 }
 
+/** Whether `a` and `b` hold the same bytes - a value comparison, never the arrays' identity. */
+export function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 const B64_PREFIX = 'b64:';
 
 // ── IndexedDB storage for MLS state ──────────────────────────────────────────

@@ -73,12 +73,21 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   let txEvictionRow: EvictionRow | null;
   /** Whether the target's key package is still there when the store re-reads it under the lock. */
   let txKeyPackage: boolean;
+  /** The row of the same Welcome already queued, as the store finds it under its lock. */
+  let queuedCopy: unknown;
   const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
     cb({
       // The seat lock, and the eviction row a key-group target's claim is checked against.
-      query: jest.fn(async (sql: string) => {
+      query: jest.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes('pg_advisory_xact_lock')) {
-          txReads.push(sql.includes('_shared') ? 'seat-lock-shared' : 'seat-lock');
+          const welcomeStore = String(params?.[0] ?? '').startsWith('welcome-store:');
+          txReads.push(
+            welcomeStore
+              ? 'welcome-lock'
+              : sql.includes('_shared')
+                ? 'seat-lock-shared'
+                : 'seat-lock'
+          );
           return [];
         }
         if (sql.includes('FROM dm_seat_evictions')) {
@@ -127,6 +136,11 @@ describe('MessagingService - sendWelcome does not touch membership status or the
           };
         }
         return {
+          // A copy of the same Welcome already queued (`findQueuedWelcome`) - none unless a case says.
+          findOne: jest.fn(async () => {
+            txReads.push('queued-copy');
+            return queuedCopy;
+          }),
           save: jest.fn(async (rows: unknown) => {
             txReads.push('save');
             return queuedSave(rows);
@@ -191,6 +205,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     claimRow = null;
     txEvictionRow = null;
     txKeyPackage = true;
+    queuedCopy = null;
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1', userId: 'u2', deviceId: 'd2' });
     deviceGroupRepo.createQueryBuilder.mockReturnValue(insertBuilder);
     deviceGroupRepo.findOne.mockResolvedValue(null);
@@ -266,6 +281,8 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       'group',
       'seat',
       'key-package',
+      'welcome-lock',
+      'queued-copy',
       'save',
       'pending-row',
       // The invitation-link ask its Welcome answers, lifted in the same transaction.
@@ -382,6 +399,16 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     });
   });
 
+  it('stores and publishes nothing when the same Welcome is already queued - a re-send after a lost answer', async () => {
+    queuedCopy = { id: 'q-first', recipientId: 'u2', deviceId: 'd2', groupId: 'g1' };
+
+    await expect(service.sendWelcome(undefined, body)).resolves.toEqual({ status: 'queued' });
+
+    expect(txReads).toContain('welcome-lock');
+    expect(txReads).not.toContain('save');
+    expect(redis.publish).not.toHaveBeenCalled();
+  });
+
   it('refuses a target device that does not exist', async () => {
     keyPackageRepo.findOne.mockResolvedValue(null);
 
@@ -449,6 +476,8 @@ describe('MessagingService - sendWelcome does not touch membership status or the
         'group',
         'claim',
         'key-package',
+        'welcome-lock',
+        'queued-copy',
         'save',
         'pending-row',
       ]);

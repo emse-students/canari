@@ -133,7 +133,8 @@ describe('a queued frame - one delivery, two routes', () => {
                   : entity === KeyPackage
                     ? // ...and its key package: every device asked for is still registered.
                       { find: jest.fn(async ({ where }: { where: unknown[] }) => where) }
-                    : { save: queuedSave },
+                    : // No copy of this Welcome is queued yet (`findQueuedWelcome`).
+                      { save: queuedSave, findOne: jest.fn().mockResolvedValue(null) },
         })
       ),
     },
