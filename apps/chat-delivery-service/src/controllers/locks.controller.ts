@@ -2,7 +2,7 @@ import { Controller, Post, Delete, Body, Headers, Inject, UseGuards, Logger } fr
 import Redis from 'ioredis';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { sanitizeQueryValue } from '../utils/sanitize';
-import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
+import { acquireAddLock, releaseAddLock, type AddLockAcquisition } from '../utils/add-lock';
 
 /**
  * The JWT-guarded door to the MLS add-lock, which serialises add commits on a group.
@@ -20,38 +20,42 @@ export class LocksController {
   constructor(@Inject('REDIS_CLIENT') private readonly redis: Redis) {}
 
   @Post('mls/add-lock')
-  /** Acquires the group's add-lock for the calling device. */
+  /**
+   * Acquires the group's add-lock for the calling device: `{acquired: true, token}` - the token
+   * its release names - or `{acquired: false, retryAfterMs}`, how long the holder's lock has left.
+   */
   async acquireAddLock(
     @Body()
     body: { groupId: string; deviceId: string },
     @Headers('x-user-id') userIdRaw?: string
-  ) {
+  ): Promise<AddLockAcquisition> {
     const userId = sanitizeQueryValue(userIdRaw ?? '', 'x-user-id');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    const acquired = await acquireAddLock(
-      this.redis,
-      this.logger,
-      { groupId, userId, deviceId },
-      'jwt'
-    );
-    return { acquired };
+    return acquireAddLock(this.redis, this.logger, { groupId, userId, deviceId }, 'jwt');
   }
 
   @Delete('mls/add-lock')
-  /** Releases the group's add-lock, if this device still holds it. */
+  /**
+   * Releases the group's add-lock if it is still the acquisition `token` names. A body with no
+   * token (a client that predates it) takes the LEGACY owner-only release (`utils/add-lock.ts`).
+   * `owed: true` marks a release the client owed from an earlier acquisition (logged only).
+   */
   async releaseAddLock(
-    @Body() body: { groupId: string; deviceId: string },
+    @Body() body: { groupId: string; deviceId: string; token?: string; owed?: unknown },
     @Headers('x-user-id') userIdRaw?: string
   ) {
     const userId = sanitizeQueryValue(userIdRaw ?? '', 'x-user-id');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const token = body.token ? sanitizeQueryValue(body.token, 'token') : undefined;
     const released = await releaseAddLock(
       this.redis,
       this.logger,
       { groupId, userId, deviceId },
-      'jwt'
+      'jwt',
+      token,
+      body.owed
     );
     return { released };
   }

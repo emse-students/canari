@@ -33,8 +33,17 @@ import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { MlsCheckpointNotWrittenError, MlsStateWriteRefusedError } from '$lib/utils/hex';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { TransportFailureError, isTransportFailure } from '$lib/utils/transportFailure';
-import { MlsDeliveryApi, WelcomeTargetNotMemberError } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  ADD_LOCK_WAIT_BOUND_MS,
+  MlsDeliveryApi,
+  WelcomeTargetNotMemberError,
+} from '$lib/mls-client/mlsDeliveryApi';
 import { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
+import {
+  listOwedInvitations,
+  type OwedInvitation,
+  type ReplanVerdict,
+} from '$lib/mls-client/owedInvitations';
 import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
 
 /**
@@ -137,7 +146,11 @@ function ctx(
     userId: U,
     deviceId: D,
     state,
-    delivery: { submitCommit },
+    delivery: {
+      submitCommit,
+      acquireAddLock: vi.fn().mockResolvedValue({ acquired: true, token: 'tok' }),
+      releaseAddLock: vi.fn().mockResolvedValue(true),
+    },
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     freshEpoch: vi.fn().mockResolvedValue(5),
     getEpoch: vi.fn(() => 5),
@@ -145,6 +158,18 @@ function ctx(
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     catchUpOnRefusedCommit: vi.fn().mockResolvedValue(undefined),
     unresolvedGroups: null,
+    // The lost-invitation drain (`owedInvitations.ts`): no re-planner unless a case registers one.
+    owedInvitationReplanner: null,
+    owedInvitationDrain: null,
+    owedInvitationDrainAgain: false,
+    connectionSettling: false,
+    connectionSettled: false,
+    owedInvitationGeneration: 0,
+    addLocksHeld: new Map<string, string | undefined>(),
+    addLockExpiryWakes: new Map(),
+    unrecordedInvitationTeller: null,
+    unrecordedInvitationsUntold: [],
+    isWsOpen: () => true,
     ...primitives(state, opts.owed),
   };
   // The real seams under test: what they decide from the gate's answers is what these cases are about.
@@ -161,13 +186,33 @@ function ctx(
     'knownUnresolvedGroups',
     'settleUnresolvedCommits',
     'settleUnresolvedCommitFromLog',
+    'oweLostInvitation',
+    'setOwedInvitationReplanner',
+    'replanOwedInvitations',
+    'drainOwedInvitationsOnce',
+    'settleEach',
+    'replanOwedInvitationsIn',
+    'acquireAddLock',
+    'releaseAddLock',
+    'wakeAtAddLockExpiry',
+    'cancelAddLockExpiryWakes',
+    'notifyCommitsApplied',
   ]) {
     c[name] = proto[name];
   }
   return c as unknown as Record<string, ReturnType<typeof vi.fn>> & {
     state: PendingState;
     owed: OwedState;
-    delivery: { submitCommit: ReturnType<typeof vi.fn> };
+    delivery: {
+      submitCommit: ReturnType<typeof vi.fn>;
+      acquireAddLock: (
+        g: string
+      ) => Promise<
+        | { acquired: true; token: string | undefined }
+        | { acquired: false; retryAfterMs: number | undefined }
+      >;
+      releaseAddLock: (g: string, token: string | undefined) => Promise<boolean>;
+    };
     runCommitTransaction(
       g: string,
       stage: (intent: Uint8Array) => Promise<unknown>,
@@ -1062,5 +1107,487 @@ describe('runCommitTransaction - a commit gate that never answers', () => {
     );
     expect(new Set(bodies.map((b) => b.proto))).toEqual(new Set([OURS]));
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * A KEPT INVITATION THAT DID NOT LAND IS RE-PLANNED, NEVER CLEARED AWAY (OFF-3, 1.4.1 campaign).
+ * W1's Add of W5 was kept across an absence; W2 moved the group from 2 to 5; W1's return settled the
+ * kept commit `epoch_mismatch`, cleared it and caught up - and nothing re-issued the Add or said so.
+ * The invitation rides in the commit's intent; the settlement records it BEFORE the clear erases
+ * that copy (`owedInvitations.ts`), and hands it to the re-planner once the lock is let go.
+ */
+describe('settleUnresolvedCommits - a kept invitation that did not land', () => {
+  const INVITATION = { users: ['w5'], rostered: [] as string[] };
+  const keptInvite = () =>
+    kept(
+      { excludeDeviceIds: ['w5:d-5'], keyPackageDevices: ['d-5'], invitation: INVITATION },
+      { welcome: new Uint8Array([3]), addedIndices: [0] }
+    );
+  const raceLost = () => submitting({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 5 });
+  /** The drain runs on its own: wait for it the way the session would not. */
+  const drained = async (c: ReturnType<typeof ctx>) => {
+    while ((c as unknown as { owedInvitationDrain: Promise<void> | null }).owedInvitationDrain) {
+      await (c as unknown as { owedInvitationDrain: Promise<void> }).owedInvitationDrain;
+    }
+  };
+  const settled = async (c: ReturnType<typeof ctx>) => {
+    await c.settleUnresolvedCommits();
+    await drained(c);
+  };
+  const register = (
+    c: ReturnType<typeof ctx>,
+    replanner: (o: OwedInvitation) => Promise<ReplanVerdict>
+  ) =>
+    (c as unknown as { setOwedInvitationReplanner(r: unknown): void }).setOwedInvitationReplanner(
+      replanner
+    );
+
+  it('records the invitation BEFORE the clear, then hands it to the re-planner once', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    const atClear: OwedInvitation[][] = [];
+    const clear = c.clearPendingCommit.getMockImplementation() as (g: string) => Promise<void>;
+    c.clearPendingCommit.mockImplementation(async (g: string) => {
+      atClear.push(listOwedInvitations(U));
+      return clear(g);
+    });
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    await settled(c);
+    expect(atClear).toEqual([
+      [
+        {
+          groupId: G,
+          baseEpoch: 5,
+          invitation: INVITATION,
+          cause: 'race',
+          reason: 'epoch_mismatch',
+        },
+      ],
+    ]);
+    expect(c.catchUpOnRefusedCommit).toHaveBeenCalledWith(G, 5, 5);
+    expect(replanner).toHaveBeenCalledExactlyOnceWith({
+      groupId: G,
+      baseEpoch: 5,
+      invitation: INVITATION,
+      cause: 'race',
+      reason: 'epoch_mismatch',
+    });
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('a refusal of the bytes themselves is recorded `refused` - told, never re-planned', async () => {
+    const c = ctx(submitting(new ApiRefusalError(400, null, 'bad commit')), {
+      state: keptInvite(),
+    });
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ cause: 'refused', reason: 'http_400' })
+    );
+  });
+
+  it('a BUSINESS refusal in a 200 body is classified by its typed reason, never by its shape', async () => {
+    // `committer_not_member` comes back as an ANSWER, like the race does: only the token tells them apart.
+    const c = ctx(
+      submitting({ accepted: false, reason: 'committer_not_member', currentEpoch: 5 }),
+      {
+        state: keptInvite(),
+      }
+    );
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ cause: 'refused', reason: 'committer_not_member' })
+    );
+  });
+
+  it('a WAITING verdict keeps the entry, and the event that lifts the wait drains it again', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    const replanner = vi
+      .fn<(o: OwedInvitation) => Promise<ReplanVerdict>>()
+      .mockResolvedValueOnce('waiting')
+      .mockResolvedValueOnce('concluded');
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toHaveLength(1);
+    // An event in ANOTHER conversation owes nothing here: no drain.
+    (
+      c as unknown as { replanOwedInvitationsIn(g: string, w: string): void }
+    ).replanOwedInvitationsIn('another-group', 'conversation available');
+    await drained(c);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    (
+      c as unknown as { replanOwedInvitationsIn(g: string, w: string): void }
+    ).replanOwedInvitationsIn(G, 'conversation available');
+    await drained(c);
+    expect(replanner).toHaveBeenCalledTimes(2);
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('THE ADD LOCK IS NOT RE-ENTRANT: no drain while this device holds one, the release drains', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    // A gesture of this device holds the group's add lock across the connection's settlement.
+    expect(
+      await (c as unknown as { acquireAddLock(g: string): Promise<boolean> }).acquireAddLock(G)
+    ).toBe(true);
+    await settled(c);
+    expect(replanner).not.toHaveBeenCalled();
+    expect(listOwedInvitations(U)).toHaveLength(1);
+    await (c as unknown as { releaseAddLock(g: string): Promise<void> }).releaseAddLock(G);
+    await drained(c);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('records nothing for a kept commit that carries no invitation (an automatic Add)', async () => {
+    const c = ctx(raceLost(), { state: kept({ excludeDeviceIds: ['u-b:d-b'] }) });
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    await settled(c);
+    expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
+    expect(replanner).not.toHaveBeenCalled();
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('a RELOAD between the refusal and the re-plan re-plans it ONCE, at the next connection', async () => {
+    // The session that refused it ends before any re-planner ran: the entry is all that is left.
+    const first = ctx(raceLost(), { state: keptInvite() });
+    await settled(first);
+    expect(first.state.size).toBe(0);
+    expect(listOwedInvitations(U)).toHaveLength(1);
+
+    // The reloaded session: no stage, the entry on disk; its connection settles twice.
+    const second = ctx(submitting());
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(second, replanner);
+    await settled(second);
+    await settled(second);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('a RELOAD before the clear reached disk settles the stage again: still ONE entry, one re-plan', async () => {
+    const first = ctx(raceLost(), { state: keptInvite() });
+    await settled(first);
+    // The checkpoint never carried the clear: the reload holds the stage AND the entry.
+    const second = ctx(raceLost(), { state: keptInvite() });
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(second, replanner);
+    await settled(second);
+    expect(second.delivery.submitCommit).toHaveBeenCalledTimes(1);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('with no re-planner yet the entry WAITS, and registering one drains it', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    await settled(c);
+    expect(listOwedInvitations(U)).toHaveLength(1);
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    while ((c as unknown as { owedInvitationDrain: Promise<void> | null }).owedInvitationDrain) {
+      await (c as unknown as { owedInvitationDrain: Promise<void> }).owedInvitationDrain;
+    }
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('a kept invitation the LOG shows lost (another commit at its base) is recorded too', async () => {
+    const c = ctx(submitting(), { state: keptInvite() });
+    expect(await c.settleUnresolvedCommitFromLog(G, 'theirs')).toBe('cleared');
+    expect(listOwedInvitations(U)).toEqual([
+      { groupId: G, baseEpoch: 5, invitation: INVITATION, cause: 'race' },
+    ]);
+  });
+
+  it('THE REAL LOCK: the re-plan, which takes the lock, runs AFTER the settlement lets it go', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    const scheduler = new MlsPerGroupScheduler('web');
+    (c as unknown as { runUnderMlsLock: unknown }).runUnderMlsLock = <T>(fn: () => Promise<T>) =>
+      scheduler.runUnderMlsLock(fn);
+    const order: string[] = [];
+    c.catchUpOnRefusedCommit.mockImplementation(async () => {
+      order.push('catch-up under the settlement lock');
+    });
+    register(c, async () => {
+      await scheduler.runUnderMlsLock(async () => {
+        order.push('re-plan under the lock');
+      });
+      return 'concluded';
+    });
+    await settled(c);
+    expect(order).toEqual(['catch-up under the settlement lock', 're-plan under the lock']);
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  /**
+   * The server's add lock as `add-lock.ts` keeps it: `SET NX` (its own holder refused too), one
+   * value per acquisition (owner + token), a release that deletes the acquisition its token names -
+   * or, with no token (a server that predates it), any acquisition of this device. A refusal says
+   * how long the key has left. Its expiry is never simulated unless a case sets `value` itself.
+   */
+  function fakeLockServer(c: ReturnType<typeof ctx>, opts: { tokens?: boolean } = {}) {
+    const tokens = opts.tokens ?? true;
+    const OWNER = `${U}:${D}`;
+    const server = {
+      value: null as string | null,
+      minted: 0,
+      ttlMs: 30_000,
+      /** `false` drops the next release on the floor: the server never hears it. */
+      releaseAnswers: [] as boolean[],
+      valueOf: (token: string | undefined) => `${OWNER}#${token ?? ''}`,
+    };
+    c.delivery.acquireAddLock = vi.fn(async () => {
+      if (server.value !== null) {
+        return { acquired: false, retryAfterMs: tokens ? server.ttlMs : undefined } as const;
+      }
+      const token = tokens ? `t${++server.minted}` : undefined;
+      server.value = server.valueOf(token);
+      return { acquired: true, token } as const;
+    });
+    c.delivery.releaseAddLock = vi.fn(async (_g: string, token: string | undefined) => {
+      if (server.releaseAnswers.shift() === false) return false;
+      const mine = token
+        ? server.value === server.valueOf(token)
+        : (server.value?.startsWith(`${OWNER}#`) ?? false);
+      if (mine) server.value = null;
+      return true;
+    });
+    return server;
+  }
+  const lockOf = (c: ReturnType<typeof ctx>) =>
+    c as unknown as {
+      acquireAddLock(g: string): Promise<boolean>;
+      releaseAddLock(g: string): Promise<void>;
+    };
+
+  it('THE REAL LOCK AND A FAKE ADD LOCK: a release lost with the connection is sent before the drain acquires - no TTL waited', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    const server = fakeLockServer(c);
+    const scheduler = new MlsPerGroupScheduler('web');
+    (c as unknown as { runUnderMlsLock: unknown }).runUnderMlsLock = <T>(fn: () => Promise<T>) =>
+      scheduler.runUnderMlsLock(fn);
+    const lock = lockOf(c);
+    // The cut Add: taken, then released into a dead connection - the server still holds it.
+    server.releaseAnswers.push(false);
+    expect(await lock.acquireAddLock(G)).toBe(true);
+    await lock.releaseAddLock(G);
+    expect(server.value).toBe(server.valueOf('t1'));
+
+    // Back within the TTL: the kept Add is refused, the drain re-plans - and its acquire succeeds.
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => {
+      if (!(await lock.acquireAddLock(G))) return 'waiting';
+      await scheduler.runUnderMlsLock(async () => {});
+      await lock.releaseAddLock(G);
+      return 'concluded';
+    });
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([]);
+    expect(server.value).toBeNull();
+  });
+
+  it('TWO ACQUIRES RACING WITH A RELEASE OWED never free a live lock: one sends it, one lock stands', async () => {
+    const c = ctx(submitting());
+    const server = fakeLockServer(c);
+    const lock = lockOf(c);
+    server.releaseAnswers.push(false);
+    await lock.acquireAddLock(G);
+    await lock.releaseAddLock(G); // lost: t1 is still up, and owed
+
+    const [a, b] = await Promise.all([lock.acquireAddLock(G), lock.acquireAddLock(G)]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    // The owed release went ONCE (claimed), and it freed t1 alone: the winner's lock stands.
+    expect(c.delivery.releaseAddLock).toHaveBeenCalledTimes(2);
+    expect(server.value).toBe(server.valueOf('t2'));
+
+    // A late release of an older acquisition - the stale token - frees nothing.
+    await c.delivery.releaseAddLock(G, 't1');
+    expect(server.value).toBe(server.valueOf('t2'));
+  });
+
+  it('a RELOAD: the durable marker of a page that died mid-Add sends its release before the next acquire', async () => {
+    const dead = ctx(submitting());
+    const server = fakeLockServer(dead);
+    expect(await lockOf(dead).acquireAddLock(G)).toBe(true); // ...and the page dies holding it.
+
+    const reloaded = ctx(submitting());
+    reloaded.delivery.acquireAddLock = dead.delivery.acquireAddLock;
+    reloaded.delivery.releaseAddLock = dead.delivery.releaseAddLock;
+    expect(await lockOf(reloaded).acquireAddLock(G)).toBe(true);
+    // Said OWED, so the server line tells it from a slow Add's TTL running out under it.
+    expect(reloaded.delivery.releaseAddLock).toHaveBeenCalledWith(G, 't1', { owed: true });
+    expect(server.value).toBe(server.valueOf('t2'));
+
+    // The ordinary release of the lock it holds is NOT owed.
+    await lockOf(reloaded).releaseAddLock(G);
+    expect(vi.mocked(reloaded.delivery.releaseAddLock).mock.calls.at(-1)).toEqual([G, 't2']);
+  });
+
+  it('a server with NO token: the release is the legacy owner-only one, and it still frees the lock', async () => {
+    const c = ctx(submitting());
+    const server = fakeLockServer(c, { tokens: false });
+    expect(await lockOf(c).acquireAddLock(G)).toBe(true);
+    await lockOf(c).releaseAddLock(G);
+    expect(c.delivery.releaseAddLock).toHaveBeenCalledWith(G, undefined);
+    expect(server.value).toBeNull();
+  });
+
+  it("ANOTHER DEVICE'S LOCK: the refusal wakes the drain when the SERVER says the lock ends", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const c = ctx(raceLost(), { state: keptInvite() });
+      const server = fakeLockServer(c);
+      server.value = `${U}:other-device#theirs`;
+      server.ttlMs = 7_000;
+      const replanner = vi.fn(async (): Promise<ReplanVerdict> => {
+        if (!(await lockOf(c).acquireAddLock(G))) return 'waiting';
+        await lockOf(c).releaseAddLock(G);
+        return 'concluded';
+      });
+      register(c, replanner);
+      await settled(c);
+      expect(replanner).toHaveBeenCalledTimes(1);
+      expect(listOwedInvitations(U)).toHaveLength(1);
+
+      // Their Add ends - its release sends no frame - and the server-stated moment comes.
+      server.value = null;
+      await vi.advanceTimersByTimeAsync(6_999);
+      expect(replanner).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await drained(c);
+      expect(replanner).toHaveBeenCalledTimes(2);
+      expect(listOwedInvitations(U)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** A refusal stating `stated` ms on a group that owes an invitation; returns the re-planner. */
+  async function refusedWith(c: ReturnType<typeof ctx>, stated: number | undefined) {
+    fakeLockServer(c);
+    // Refused once with that statement; the holder's lock is gone by the next acquire.
+    c.delivery.acquireAddLock = vi
+      .fn()
+      .mockResolvedValueOnce({ acquired: false, retryAfterMs: stated })
+      .mockResolvedValue({ acquired: true, token: 'mine' });
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => {
+      if (!(await lockOf(c).acquireAddLock(G))) return 'waiting';
+      return 'concluded';
+    });
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    return replanner;
+  }
+
+  it('a DESTROYED client keeps no wake: the server-stated moment comes and nothing re-plans', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const c = ctx(raceLost(), { state: keptInvite() });
+      const replanner = await refusedWith(c, 7_000);
+      // The teardown's other seams are not what this case is about.
+      Object.assign(c, {
+        pauseSocket: vi.fn(),
+        wakeKeyPackageRoundWaiters: vi.fn(),
+        abandonGroupDrainedWaiters: vi.fn(),
+        destroyPlatformResources: vi.fn(),
+        heartbeatTimer: null,
+        heldFrames: [],
+      });
+      (proto.destroy as (this: unknown) => void).call(c);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(replanner).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['a negative wait', -5, 0],
+    ['a HUGE wait (above 2^31-1, which setTimeout fires at once)', 2 ** 40, ADD_LOCK_WAIT_BOUND_MS],
+  ])('a refusal stating %s is bounded to 0..TTL+1 s', async (_name, stated, fireAt) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const c = ctx(raceLost(), { state: keptInvite() });
+      const replanner = await refusedWith(c, stated);
+      if (fireAt > 0) {
+        await vi.advanceTimersByTimeAsync(fireAt - 1);
+        expect(replanner).toHaveBeenCalledTimes(1);
+      }
+      await vi.advanceTimersByTimeAsync(1);
+      await drained(c);
+      expect(replanner).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('is outside 0..'));
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('a refusal stating NaN is NO stated end: no wake, and said so', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const c = ctx(raceLost(), { state: keptInvite() });
+      const replanner = await refusedWith(c, Number.NaN);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(replanner).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('read as undefined'));
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('a SIGN-OUT during the drain stops it: the next entry is neither re-planned nor dropped', async () => {
+    const c = ctx(submitting());
+    const other = { ...INVITATION, users: ['w6'] };
+    const { recordOwedInvitation } = await import('$lib/mls-client/owedInvitations');
+    recordOwedInvitation(U, { groupId: G, baseEpoch: 5, invitation: INVITATION, cause: 'race' });
+    recordOwedInvitation(U, { groupId: G, baseEpoch: 7, invitation: other, cause: 'race' });
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => {
+      // The member signs out while the first re-plan runs.
+      (c as unknown as { setOwedInvitationReplanner(r: null): void }).setOwedInvitationReplanner(
+        null
+      );
+      return 'concluded';
+    });
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([
+      { groupId: G, baseEpoch: 7, invitation: other, cause: 'race' },
+    ]);
+  });
+
+  it('a record that cannot be WRITTEN never blocks the group: the stage is cleared, the loss said and told BY NAME', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await settled(c);
+    setItem.mockRestore();
+    expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
+    expect(c.state.size).toBe(0);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('could NOT be recorded'));
+    expect(listOwedInvitations(U)).toEqual([]);
+    error.mockRestore();
+
+    // No teller yet (the conversations not restored): told once one is, by the conversation's name.
+    const tell = vi.fn();
+    (
+      c as unknown as { setOwedInvitationReplanner(r: unknown, t: unknown): void }
+    ).setOwedInvitationReplanner(async () => 'concluded', tell);
+    expect(tell).toHaveBeenCalledExactlyOnceWith(G);
   });
 });

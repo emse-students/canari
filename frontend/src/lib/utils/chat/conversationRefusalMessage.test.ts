@@ -7,6 +7,7 @@ import {
   conversationRefusalMessage,
   reportBulkAdditionRefusal,
   reportFollowerTabRefusal,
+  reportLostInvitation,
   reportMemberRemovalFailure,
 } from './conversationRefusalMessage';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
@@ -99,5 +100,64 @@ describe('reportBulkAdditionRefusal', () => {
   it('tells the member a lost commit race added nobody', () => {
     reportBulkAdditionRefusal('commit-race-lost');
     expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_invite_error_commit_race_lost());
+  });
+});
+
+/**
+ * AN INVITATION KEPT ACROSS A LOST CONNECTION IS NEVER LOST SILENTLY (OFF-3): the gesture says it
+ * will finish, and a re-plan that does not finish says so, naming the conversation the member is no
+ * longer looking at.
+ */
+describe('reportLostInvitation and the kept invitation', () => {
+  beforeEach(() => {
+    showToast.mockReset();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('the gesture whose Add got no answer is told it will finish, as a warning', () => {
+    reportBulkAdditionRefusal('outcome-unknown');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_pending_connection(),
+      'warning'
+    );
+  });
+
+  it('a person removed meanwhile is named as the reason', () => {
+    reportLostInvitation({ kind: 'not-completed', reason: 'removed-meanwhile' }, 'Team');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_resumed_removed_meanwhile({ conversation: 'Team' })
+    );
+  });
+
+  it('every other ending asks the member to invite again', () => {
+    reportLostInvitation({ kind: 'not-completed', reason: 'tree-unconfirmed' }, 'Team');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_resumed_failed({ conversation: 'Team' })
+    );
+  });
+
+  it('a GATE refusal (committer_not_member) never asks to invite again - re-inviting cannot work', () => {
+    reportLostInvitation({ kind: 'refused', reason: 'committer_not_member' }, 'Team');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_resumed_refused({ conversation: 'Team' })
+    );
+    expect(m.chat_invite_resumed_refused({ conversation: 'Team' })).not.toBe(
+      m.chat_invite_resumed_failed({ conversation: 'Team' })
+    );
+  });
+
+  it('a retired conversation is said as gone', () => {
+    reportLostInvitation({ kind: 'conversation-gone' }, 'Team');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_resumed_conversation_gone({ conversation: 'Team' })
+    );
+  });
+
+  it('says nothing when it completed, when its commit is kept again, or while it waits', () => {
+    reportLostInvitation({ kind: 'completed' }, 'Team');
+    reportLostInvitation({ kind: 'kept' }, 'Team');
+    reportLostInvitation({ kind: 'waiting', on: 'add-lock' }, 'Team');
+    expect(showToast).not.toHaveBeenCalled();
   });
 });

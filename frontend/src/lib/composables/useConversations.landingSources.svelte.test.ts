@@ -40,6 +40,7 @@ function makeCtx() {
     getLocalGroups: () => [],
     getDeviceId: () => 'dev-1',
     notifyConversationsRestored: vi.fn(),
+    setOwedInvitationReplanner: vi.fn(),
     notifyConversationRowsSeeded: vi.fn(),
   };
   return {

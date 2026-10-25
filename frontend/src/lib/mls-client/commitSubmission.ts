@@ -74,6 +74,46 @@ export interface CommitIntent {
   removes?: CommitRemoval[];
   /** For an Add of several devices: the device of each key package, by position. */
   keyPackageDevices?: string[];
+  /**
+   * Present only when the commit is the Add of a MEMBER'S INVITATION ({@link CommitInvitation}): the
+   * one Add no durable server row re-derives, so the only one a lost commit must re-plan
+   * (`owedInvitations.ts`). Not part of the request.
+   */
+  invitation?: CommitInvitation;
+}
+
+/**
+ * What a member's invitation rests on, written into the intent of its Add so it outlives the gesture
+ * - the stage and its record are in the MLS state, on disk before the first request leaves:
+ * - `users`: the people invited (user ids, lower-cased as the invitation normalises them);
+ * - `rostered`: those of them who were on the conversation's roster when the invitation BEGAN - the
+ *   baseline a later re-plan compares against, so a person taken off it meanwhile (removed, or a
+ *   join ask declined) is never brought back. ABSENT when that roster could not be read: a re-plan
+ *   then has no premise to stand on and is abandoned, never guessed.
+ */
+export interface CommitInvitation {
+  users: string[];
+  rostered?: string[];
+}
+
+/**
+ * The invitation a staged commit's record carries, or `null` - for every commit that is not a
+ * member's invitation, and for an intent that does not decode (said by {@link composeSubmission},
+ * which reads the same bytes first).
+ */
+export function invitationOf(record: StagedRecord): CommitInvitation | null {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(record.intent)) as Partial<CommitIntent>;
+    const inv = parsed?.invitation;
+    if (!inv || !Array.isArray(inv.users)) return null;
+    const users = inv.users.filter((u): u is string => typeof u === 'string');
+    const rostered = Array.isArray(inv.rostered)
+      ? inv.rostered.filter((u): u is string => typeof u === 'string')
+      : undefined;
+    return users.length > 0 ? { users, ...(rostered ? { rostered } : {}) } : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Encodes an intent for the stage (opaque bytes to the platform). */
@@ -174,6 +214,19 @@ export class CommitOutcomeUnknownError extends TransportFailureError {
         `(${why}) - kept until a resubmission answers`
     );
     this.name = 'CommitOutcomeUnknownError';
+  }
+}
+
+/**
+ * NOTHING WAS STAGED: `groupId` still holds an EARLIER commit whose outcome is unknown, and no commit
+ * is built on top of one (`runCommitTransaction`). A {@link CommitOutcomeUnknownError} for every
+ * caller that only needs "retry when the server answers"; its own type for the one that must tell a
+ * member whether THEIR gesture is kept - this one is not, the earlier commit is.
+ */
+export class PreviousCommitUnresolvedError extends CommitOutcomeUnknownError {
+  constructor(groupId: string, epoch: number) {
+    super(groupId, epoch, undefined, 'the previous commit of this group is still unresolved');
+    this.name = 'PreviousCommitUnresolvedError';
   }
 }
 

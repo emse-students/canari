@@ -115,6 +115,9 @@ export async function attemptCommitReplay(
   // repaired anything - reporting `healed` there is a verdict about EPOCHS answering a question
   // about something else, and it cost WP-PENDING-2 a silently dropped message: 0 commits applied,
   // epoch 1 -> 1, `healed=true`, and the frame ACKed off the server.
+  // THE ONE PLACE COMMITS ARE APPLIED OUTSIDE THE FRAME QUEUE: what waits on a commit applied (a
+  // lost invitation whose tree could not be confirmed) hears it from here too.
+  if (applied > 0) mlsService.notifyCommitsApplied(groupId);
   const reachedTarget = mlsService.getEpoch(groupId) >= target;
   const healed = reachedTarget && (applied > 0 || startEpoch < target);
   log(

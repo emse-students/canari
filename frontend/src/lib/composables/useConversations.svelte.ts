@@ -69,9 +69,15 @@ import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import {
   createNewGroup as createGroup,
   inviteMembersToGroup,
+  replanLostInvitation,
   startNewConversation as startConversation,
   type ConversationOutcome,
 } from '$lib/utils/chat/groupCreation';
+import type { OwedInvitationReplanner } from '$lib/mls-client/owedInvitations';
+import {
+  makeLostInvitationReplanner,
+  makeUnrecordedInvitationTeller,
+} from '$lib/utils/chat/lostInvitationReplanner';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import {
   findConversationKeyByGroupId,
@@ -85,6 +91,7 @@ import { readLandingPreview } from '$lib/utils/chat/landingPreview';
 import {
   reportBulkAdditionRefusal,
   reportFollowerTabRefusal,
+  reportLostInvitation,
   reportMemberRemovalFailure,
 } from '$lib/utils/chat/conversationRefusalMessage';
 import { MemberRemovalNotCommittedError } from '$lib/utils/chat/memberRemovalError';
@@ -1133,6 +1140,8 @@ export function useConversations() {
   }
 
   let restoreGeneration = newRestoreGeneration(0);
+  /** The client a lost-invitation re-planner is registered on, so the sign-out can remove it. */
+  let replannerMls: IMlsService | null = null;
 
   /**
    * Retires the current session's restore chain - called by the sign-out teardown, next to the
@@ -1144,6 +1153,10 @@ export function useConversations() {
     const retired = restoreGeneration;
     retired.retired = true;
     restoreGeneration = newRestoreGeneration(retired.id + 1);
+    // The re-planner re-plans into THIS session's map: the next account must not inherit it. Its
+    // entries stay in the leaving account's own record.
+    replannerMls?.setOwedInvitationReplanner(null);
+    replannerMls = null;
     // The map is cleared beside this call, so it is no longer "restored": the flag is the NEXT
     // session's to set, and a reader asking before then (the share-sheet suggestions, a deep-link
     // landing) must wait for that session's restore rather than trust the one that left.
@@ -1226,6 +1239,7 @@ export function useConversations() {
     // THE CLIENT THIS PASS RESTORED INTO, named once: asking `ensureMls()` again at the end would
     // CREATE a client if a sign-out retired this one meanwhile.
     let mlsService: IMlsService | null = null;
+    let restored = false;
     try {
       mlsService = ctx.ensureMls();
       await loadExistingConversations({
@@ -1243,6 +1257,7 @@ export function useConversations() {
         log: ctx.log,
         onArchivedIdsChange: () => {},
       });
+      restored = true;
     } finally {
       // A pass whose session ended speaks for nobody: the map is the next session's to mark, and
       // the client it would wake belongs to the account that left.
@@ -1252,6 +1267,16 @@ export function useConversations() {
         // queue rather than dropped. The restore finishing is what makes it readable, so it is the
         // trigger to ask again - there is no timer waiting to notice.
         mlsService?.notifyConversationsRestored();
+        // The re-plan of a lost invitation needs the map it re-plans into: registered only once a
+        // restore SUCCEEDED - on a map a failed restore left empty, every entry would read as a
+        // conversation that does not exist.
+        if (mlsService && restored) {
+          mlsService.setOwedInvitationReplanner(
+            lostInvitationReplanner(ctx, mlsService, gen),
+            makeUnrecordedInvitationTeller({ conversations, report: reportLostInvitation })
+          );
+          replannerMls = mlsService;
+        }
       }
     }
   }
@@ -2074,6 +2099,38 @@ export function useConversations() {
     } finally {
       pendingInvites = null;
     }
+  }
+
+  /**
+   * Re-plans a member's invitation whose KEPT commit did not land (`owedInvitations.ts`, OFF-3) and
+   * tells the member every ending it does not complete - `makeLostInvitationReplanner`, bound here.
+   */
+  function lostInvitationReplanner(
+    ctx: ConversationContext,
+    mlsService: IMlsService,
+    gen: RestoreGeneration
+  ): OwedInvitationReplanner {
+    return makeLostInvitationReplanner({
+      // The session that registered it: retired by the sign-out (`invalidateRestores`).
+      isCurrent: () => !gen.retired,
+      conversations,
+      mlsService,
+      replan: (owed, convo) =>
+        replanLostInvitation(owed, convo, {
+          mlsService,
+          storage: ctx.storage,
+          userId: ctx.userId,
+          deviceKeyB64: ctx.deviceKeyB64,
+          historyBaseUrl: ctx.historyBaseUrl,
+          conversations,
+          selectConversation: (name) => selectConversationWithCtx(name, ctx),
+          saveConversation: (name) => saveConversation(name, ctx),
+          log: ctx.log,
+          addMessageToChat: ctx.addMessageToChat,
+        }),
+      report: reportLostInvitation,
+      afterCompleted: (convo) => loadGroupMembers(convo.id, ctx),
+    });
   }
 
   /** What a member's answer to a join ask needs, bound to this context (`joinAnswers.ts`). */

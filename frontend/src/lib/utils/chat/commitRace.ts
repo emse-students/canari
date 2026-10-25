@@ -1,5 +1,6 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { CommitRefusedError, rebuildableRefusal } from '$lib/mls-client/CommitRefusedError';
+import type { CommitInvitation } from '$lib/mls-client/commitSubmission';
 import { treeHoldsDevice } from '$lib/mls-client/leafIdentity';
 import type { SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
 import { readConfirmedTree } from './confirmedTree';
@@ -104,24 +105,49 @@ export type RacedAddResult =
    */
   | { kind: 'already-in-tree' };
 
+/** What a member gesture's Add rests on, and what it carries - see {@link addDevicesRebuildingOnRace}. */
+export interface RacedAddOptions {
+  /**
+   * Re-checks, in each pass, what the gesture rests on; throws {@link AddAbortedError} when it no
+   * longer holds.
+   */
+  confirmPremise?: (attempt: number) => Promise<void>;
+  /**
+   * The premise reads the TREE'S OWN RECORD (`removalEpochs`), so it is only an answer on a tree
+   * CONFIRMED at the server's epoch: the tree is confirmed in every pass, whatever it holds, and the
+   * premise is checked AFTER that confirmation. Without it a departure in a commit this device had
+   * not applied yet - the very commit that won - is invisible, and the Add undoes it.
+   */
+  premiseReadsTree?: boolean;
+  /**
+   * Re-checked UNDER THE MLS LOCK right before the stage (`addMembersBulk`'s `beforeStage`): the
+   * part of the premise a commit applied between the confirmation and the stage could break - a
+   * Remove of the very person invited. Throws {@link AddAbortedError}; nothing is staged.
+   */
+  beforeStage?: () => Promise<void>;
+  /**
+   * A member's invitation only: carried into each commit's intent, so a commit that is kept and then
+   * does not land is re-planned rather than lost (`owedInvitations.ts`).
+   */
+  invitation?: CommitInvitation;
+}
+
 /**
  * The bulk Add every member gesture makes (an invitation, a 1:1 creation, a group's own devices),
- * rebuilt on a lost race by {@link rebuildOnRace}. Each pass first re-checks the caller's premise
- * (`confirmPremise`), then reads the tree and offers only the candidates without a leaf, so a winner
- * that admitted one of them (its own external join, another member's Add) is never added twice.
- * Every candidate is excluded from the commit's fan-out - an added device gets the Welcome, a
- * skipped one is not in the group - exactly as each caller did.
+ * rebuilt on a lost race by {@link rebuildOnRace}. Each pass re-checks the caller's premise
+ * (`confirmPremise`), reads the tree and offers only the candidates without a leaf, so a winner that
+ * admitted one of them (its own external join, another member's Add) is never added twice. Every
+ * candidate is excluded from the commit's fan-out - an added device gets the Welcome, a skipped one
+ * is not in the group - exactly as each caller did.
  *
  * **A CANDIDATE IS DROPPED ONLY ON A TREE CONFIRMED CURRENT** ({@link readConfirmedTree}, the helper
  * a Remove's "out" reads too, under the MLS lock): a tree behind a Remove still shows the removed
  * device, and filtering on it would skip an Add that is owed - or answer `already-in-tree` for
- * people nobody added. A tree holding none of the candidates needs no confirmation: the gate decides
- * the commit built on it. One that cannot be confirmed aborts ({@link AddAbortedError}
- * `tree-unconfirmed`), never "added".
+ * people nobody added. A tree holding none of the candidates needs no confirmation - the gate decides
+ * the commit built on it - unless the premise reads the tree's own record (`premiseReadsTree`). One
+ * that cannot be confirmed aborts ({@link AddAbortedError} `tree-unconfirmed`), never "added".
  *
  * @param actingUserId - this device's user, for the catch-up that confirms the tree.
- * @param confirmPremise - re-checks, before each pass, what the gesture rests on; throws
- *   {@link AddAbortedError} when it no longer holds.
  * @throws {@link AddAbortedError} before any stage; otherwise what the last attempt threw when it
  *   proves no progress - a race refusal that moved nothing included (`isCommitRaceRefusal`).
  */
@@ -131,8 +157,9 @@ export async function addDevicesRebuildingOnRace(
   actingUserId: string,
   candidates: AddCandidate[],
   log: (msg: string) => void,
-  confirmPremise?: (attempt: number) => Promise<void>
+  opts: RacedAddOptions = {}
 ): Promise<RacedAddResult> {
+  const { confirmPremise, premiseReadsTree = false, beforeStage, invitation } = opts;
   const holdsAny = (leaves: readonly string[]) =>
     candidates.some((d) => treeHoldsDevice(leaves, d.userId, d.deviceId));
   return rebuildOnRace(
@@ -140,13 +167,13 @@ export async function addDevicesRebuildingOnRace(
     groupId,
     `the Add of ${candidates.length} device(s)`,
     async (attempt) => {
-      await confirmPremise?.(attempt);
+      if (!premiseReadsTree) await confirmPremise?.(attempt);
       const reading = await readConfirmedTree(
         mlsService,
         groupId,
         actingUserId,
         '[COMMIT_RACE]',
-        (leaves) => !holdsAny(leaves)
+        (leaves) => !premiseReadsTree && !holdsAny(leaves)
       );
       if (reading.status === 'unconfirmed') {
         throw new AddAbortedError(
@@ -155,6 +182,7 @@ export async function addDevicesRebuildingOnRace(
           'which candidates already hold a leaf is unknown'
         );
       }
+      if (premiseReadsTree) await confirmPremise?.(attempt);
       const missing = candidates.filter(
         (d) => !treeHoldsDevice(reading.identities, d.userId, d.deviceId)
       );
@@ -167,7 +195,9 @@ export async function addDevicesRebuildingOnRace(
       const bulk = await mlsService.addMembersBulk(
         groupId,
         missing,
-        missing.map((d) => `${d.userId}:${d.deviceId}`)
+        missing.map((d) => `${d.userId}:${d.deviceId}`),
+        invitation,
+        beforeStage
       );
       return { kind: 'added', ...bulk } as const;
     },

@@ -19,6 +19,8 @@ import type {
   SentFrame,
 } from './mlsDeliveryApi';
 import type { ForkFinding } from './integrityFindings';
+import type { CommitInvitation } from './commitSubmission';
+import type { OwedInvitationReplanner, UnrecordedInvitationTeller } from './owedInvitations';
 
 export type { FrameDelivery };
 export type { DistributionScope };
@@ -810,7 +812,18 @@ export interface IMlsService {
   addMembersBulk(
     groupId: string,
     devices: Array<{ keyPackage: Uint8Array; deviceId: string; userId: string }>,
-    excludeDeviceIds?: string[]
+    excludeDeviceIds?: string[],
+    /**
+     * Set by a MEMBER'S INVITATION only: written into the commit's intent, so a kept commit that
+     * does not land is re-planned rather than lost (`CommitIntent.invitation`).
+     */
+    invitation?: CommitInvitation,
+    /**
+     * Runs UNDER THE MLS LOCK, right before the stage, on the tree the commit is built on: a premise
+     * a commit applied after the caller's own check could break is checked here, where nothing can
+     * apply one in between. Throwing stages nothing.
+     */
+    beforeStage?: () => Promise<void>
   ): Promise<{
     welcome?: Uint8Array;
     ratchetTree?: Uint8Array;
@@ -1006,6 +1019,25 @@ export interface IMlsService {
     groupId: string,
     commitAtBase: string | null
   ): Promise<'none' | 'merged' | 'cleared' | 'undecided'>;
+  /**
+   * Registers who re-plans a member's invitation whose KEPT commit did not land, or removes it
+   * (`null`, sign-out). The settlement records such an invitation before clearing its stage
+   * (`owedInvitations.ts`) and hands it over - at once in session, and at the next connection's
+   * settlement for an entry a previous session left. Without a re-planner the entries wait.
+   *
+   * @param tellUnrecorded - tells the member, by the conversation's name, of an invitation that
+   *   could not even be RECORDED; one met before it is registered is told when it is.
+   */
+  setOwedInvitationReplanner(
+    replanner: OwedInvitationReplanner | null,
+    tellUnrecorded?: UnrecordedInvitationTeller | null
+  ): void;
+  /**
+   * Commits were APPLIED to `groupId` - by a replay of the commit log (`attemptCommitReplay`), the
+   * one path that applies commits outside the frame queue. A lost invitation waiting on the group
+   * (its tree unconfirmed, another device's Add holding the lock) is re-planned.
+   */
+  notifyCommitsApplied(groupId: string): void;
   /**
    * Refreshes the server-stored GroupInfo (external-join base) at the current epoch. Best-effort:
    * called after every commit (a new group's first member-add is itself a commit) so a member lacking

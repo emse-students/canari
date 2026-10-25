@@ -35,6 +35,7 @@ function makeCtx(userId = 'u1') {
     getLocalGroups: () => [],
     getDeviceId: () => 'dev-1',
     notifyConversationsRestored: vi.fn(),
+    setOwedInvitationReplanner: vi.fn(),
     notifyConversationRowsSeeded: vi.fn(),
   };
   return {
@@ -219,6 +220,38 @@ describe('loadAndRestoreConversations - one restore at a time, at most one queue
     for (const p of folded) await expect(p).rejects.toThrow('IndexedDB unavailable');
     await Promise.all(reports);
     expect(report).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers the lost-invitation re-planner only after a SUCCESSFUL restore', async () => {
+    const releases = holdEachRestore();
+    const convs = useConversations();
+    const ctx = makeCtx();
+    const mls = (
+      ctx as unknown as {
+        ensureMls: () => { setOwedInvitationReplanner: ReturnType<typeof vi.fn> };
+      }
+    ).ensureMls();
+
+    // A failed restore leaves the map empty: every entry would read as a conversation that does not
+    // exist, so nothing re-plans - the entries stay on disk.
+    const failed = convs.loadAndRestoreConversations(ctx);
+    await settle();
+    releases[0].reject(new Error('IndexedDB unavailable'));
+    await expect(failed).rejects.toThrow('IndexedDB unavailable');
+    expect(mls.setOwedInvitationReplanner).not.toHaveBeenCalled();
+
+    const ok = convs.loadAndRestoreConversations(ctx);
+    await settle();
+    releases[1].resolve();
+    await ok;
+    expect(mls.setOwedInvitationReplanner).toHaveBeenCalledExactlyOnceWith(
+      expect.any(Function),
+      expect.any(Function)
+    );
+
+    // The sign-out removes it: the next account must not re-plan into this session's map.
+    convs.invalidateRestores();
+    expect(mls.setOwedInvitationReplanner).toHaveBeenLastCalledWith(null);
   });
 
   it('starts at once when nothing runs, each time', async () => {
