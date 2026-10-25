@@ -171,6 +171,14 @@ export const CHANNEL_SIGNATURE_REQUIRED = 'CHANNEL_SIGNATURE_REQUIRED';
 export const CHANNEL_ACCESS_CHANGED = 'CHANNEL_ACCESS_CHANGED';
 
 /**
+ * 409 code: an access-list rewrite refused because someone it ADDS is no longer a member of the
+ * community - asked under the community's removal lock, so a kick or a departure that committed
+ * while the rewrite waited is seen. Nothing was written; the body's `current` is the access as it
+ * stands. Not retryable as sent: the same list names the same non-member.
+ */
+export const CHANNEL_GRANTEE_NOT_MEMBER = 'CHANNEL_GRANTEE_NOT_MEMBER';
+
+/**
  * A salon's access as the settings panel reads and edits it, revision included - the one shape the
  * access read, a successful rewrite and a {@link CHANNEL_ACCESS_CHANGED} refusal all answer with.
  */
@@ -3192,14 +3200,28 @@ export class ChannelService implements OnApplicationBootstrap {
             (u) => !nextAllowed.includes(u.trim().toLowerCase())
           )
         : [];
+    // WHO THIS SAVE ADDS: every name of a salon becoming private (`gained` below says why), else the
+    // names the row does not hold yet. Only these are judged as grantees - an entry already on the
+    // row is not re-judged by an edit that does not add it.
+    const addedTo = (current: Channel): string[] => {
+      const held = new Set(current.isPrivate ? current.allowedUsers || [] : []);
+      return nextAllowed.filter((u) => !held.has(u));
+    };
     // Answered BEFORE any call to chat-delivery (the group minted below, the first evictions), so a
-    // refused rewrite mints and cuts nothing; asked again under the lock before the save.
+    // refused rewrite mints and cuts nothing - the actor first, then whoever it grants. A PREVIEW,
+    // read without a lock: asked again under the lock before the save, where it is the authority.
+    const earlyMembers = await this.memberRepo.find({
+      where: { workspaceId: channel.workspaceId },
+    });
     await this.assertActorMayRemoveMembers(
       channel.workspaceId,
       actorUserId,
-      losingSight(wasPrivate ? [] : await this.getWorkspaceMemberIds(channel.workspaceId)),
-      'skip'
+      losingSight(wasPrivate ? [] : earlyMembers.map((member) => member.userId)),
+      'skip',
+      undefined,
+      earlyMembers
     );
+    this.assertGranteesAreMembers(channel, actorUserId, addedTo(channel), earlyMembers, false);
 
     // BEFORE THE SAVE, and allowed to abort it - the same asymmetry as a community departure. Going
     // private without a group would leave the salon's seeds nowhere to go; the people this save
@@ -3225,20 +3247,24 @@ export class ChannelService implements OnApplicationBootstrap {
           if (locked.accessRevision !== channel.accessRevision) {
             this.refuseStaleAccessRewrite(locked, actorUserId, channel.accessRevision);
           }
-          const communityMemberIds = wasPrivate
-            ? []
-            : (
-                await m.getRepository(ChannelMember).find({
-                  where: { workspaceId: channel.workspaceId },
-                })
-              ).map((member) => member.userId);
+          // THE COMMUNITY'S MEMBERSHIP ROWS, READ ONCE AND SHARE-LOCKED, for both checks below. A
+          // kick that committed while this waited on the removal lock cut no salon when it read none
+          // naming its target, so the revision above did not move: only a membership read here sees
+          // it. The actor first (a kicked actor is a 403), then whoever this save adds - without
+          // that, a non-member would be saved onto the allowlist.
+          const lockedMembers = await m.getRepository(ChannelMember).find({
+            where: { workspaceId: channel.workspaceId },
+            lock: { mode: 'pessimistic_read' },
+          });
           await this.assertActorMayRemoveMembers(
             channel.workspaceId,
             actorUserId,
-            losingSight(communityMemberIds),
+            losingSight(wasPrivate ? [] : lockedMembers.map((member) => member.userId)),
             'skip',
-            m
+            m,
+            lockedMembers
           );
+          this.assertGranteesAreMembers(locked, actorUserId, addedTo(locked), lockedMembers, true);
           locked.isPrivate = isPrivate;
           locked.allowedUsers = nextAllowed;
           if (writePolicy) {
@@ -3397,6 +3423,41 @@ export class ChannelService implements OnApplicationBootstrap {
       code: CHANNEL_ACCESS_CHANGED,
       message: 'The salon access changed meanwhile, retry.',
       current: channelAccessState(current),
+    });
+  }
+
+  /**
+   * Refuses an access rewrite that ADDS someone who is not a member of the salon's community: the
+   * typed `409 CHANNEL_GRANTEE_NOT_MEMBER`, carrying the access of `channel`.
+   *
+   * Judged against `members`, the caller's read of the community's membership rows - so the one
+   * read serves this and {@link assertActorMayRemoveMembers} alike. `locked` says which read it is:
+   * the early PREVIEW, read without a lock so a crafted grant of a non-member is refused before a
+   * group is minted or an eviction begins; or the AUTHORITY, rows share-locked inside the community
+   * removal lock's transaction, so a kick or departure that committed while the rewrite waited is
+   * seen and none can commit before the save does. Matched case-blind, because an allowlist entry
+   * is lowercased and a membership row keeps its id as written.
+   */
+  private assertGranteesAreMembers(
+    channel: Channel,
+    actorUserId: string,
+    granteeIds: readonly string[],
+    members: readonly ChannelMember[],
+    locked: boolean
+  ): void {
+    if (granteeIds.length === 0) return;
+    const memberIds = new Set(members.map((r) => r.userId.trim().toLowerCase()));
+    const absent = granteeIds.filter((u) => !memberIds.has(u.trim().toLowerCase()));
+    if (absent.length === 0) return;
+    this.logger.warn(
+      `[CHANNEL_ACCESS] refused - the rewrite grants ${absent.length} non-member(s) ` +
+        `channel=${channel.id} by=${actorUserId.slice(0, 8)} first=${absent[0].slice(0, 8)} ` +
+        `revision=${channel.accessRevision} locked=${locked}`
+    );
+    throw new ConflictException({
+      code: CHANNEL_GRANTEE_NOT_MEMBER,
+      message: 'Someone this list grants is not a member of the community.',
+      current: channelAccessState(channel),
     });
   }
 
@@ -3810,6 +3871,10 @@ export class ChannelService implements OnApplicationBootstrap {
    * `m` it is the early answer a removal gives before it calls chat-delivery, asked again under the
    * lock.
    *
+   * GIVEN `communityRows`, the caller's own read of the community's membership rows (share-locked
+   * through `m` when given), the actor and every target are found in them and no second read of
+   * the community is made - an access-list rewrite reads them once for this and its grantee check.
+   *
    * @throws ForbiddenException `REMOVAL_EXCEEDS_ACTOR` when a target holds more than the actor
    */
   private async assertActorMayRemoveMembers(
@@ -3817,14 +3882,17 @@ export class ChannelService implements OnApplicationBootstrap {
     actorUserId: string,
     targetUserIds: readonly string[],
     absentTarget: 'refuse' | 'skip',
-    m?: EntityManager
+    m?: EntityManager,
+    communityRows?: readonly ChannelMember[]
   ): Promise<void> {
     const members = m ? m.getRepository(ChannelMember) : this.memberRepo;
     const lock = m ? { lock: { mode: 'pessimistic_read' as const } } : {};
-    const actorMember = await members.findOne({
-      where: { workspaceId, userId: actorUserId },
-      ...lock,
-    });
+    const actorMember = communityRows
+      ? communityRows.find((r) => r.userId === actorUserId)
+      : await members.findOne({
+          where: { workspaceId, userId: actorUserId },
+          ...lock,
+        });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     const actorPermissions = await this.permissionsOfMember(actorMember, m);
@@ -3838,7 +3906,7 @@ export class ChannelService implements OnApplicationBootstrap {
     // TWO QUERIES WHATEVER THE NUMBER OF TARGETS: the community's membership rows, then the roles
     // they name - a salon made private compares the whole community. Matched case-blind, because an
     // allowlist entry is lowercased and a membership row keeps its id as written.
-    const rows = await members.find({ where: { workspaceId }, ...lock });
+    const rows = communityRows ?? (await members.find({ where: { workspaceId }, ...lock }));
     const memberOf = new Map(rows.map((r) => [r.userId.trim().toLowerCase(), r]));
     const roleIds = [
       ...new Set(targetUserIds.flatMap((u) => memberOf.get(u.trim().toLowerCase())?.roleIds ?? [])),

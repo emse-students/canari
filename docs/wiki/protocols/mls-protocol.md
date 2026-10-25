@@ -1135,6 +1135,46 @@ vous ajoute." (`chat_awaiting_admission_preview`). When the list stops naming su
 or expired - discovery removes it with no status read: there is no past and no exclusion to keep.
 Only on a list that may be believed (`absenceIsEvidence`); a row that was ever `active` is not
 never-admitted, and both demotions out of `active` clear the flag.
+
+**A declined ask ends the joiner's recovery too, read and never learnt by failing (ADM-2,
+2026-10-25).** While it waits, the joiner's `requestReAdd` marks the group not-ready, and that marker -
+persisted, enumerated by the SYNC_WATCHDOG - is what drives every later pass. Discovery removed the
+declined row and left the marker, so the next pass (after a reload, 27 s later) found no row for its
+device - the decline deletes the seat and its device rows - read that as an `active` row would read
+(`not-pending`: "joined once, serve yourself"), re-created the placeholder, tried an external join the
+server refused with a 403, and retired the placeholder as a `removed` conversation the user then saw
+listed. The changes that close it:
+
+- `purgeLocalConversationRecord` drops the not-ready marker with the row, at every site that drops
+  one, so no pass is scheduled for a conversation that is gone (and logs a stored row it could not
+  delete). The in-memory cooldown is a throttle and stays.
+- `requestReAdd` reads "no row for this device" as its own answer and asks the account's seat on the
+  groups list (`readAccountSeat`, under the `absenceIsEvidence` guard). A list that cannot be
+  believed skips the round. A seated account keeps its door, re-read from the list's own
+  `deviceMembership` when it carries one. No seat ends the recovery - no row created, no join, no
+  ask - but only for what the list can speak for: no conversation row, or a never-admitted one. A
+  row this device was ever in is decided on the group's roster by ONE reader and ONE reducer that
+  discovery now shares (`readStillUserMember`, `decideAbsentGroupFate` in `groupLifecycle.ts`): the
+  typed 403 `NOT_A_MEMBER` is a proven exclusion and retires the row, `active` or `pending` alike - a
+  `pending` row kept on it re-ran recovery on every sweep; a roster that does not answer skips the
+  round; a roster that names us means the list was stale, and the pass goes on to the join.
+  Discovery used to swallow that 403 as doubt (`.catch(() => null)`), so its exclusion branch never
+  fired.
+- `stopRecovering` removes a never-admitted row instead of retiring it - the decision discovery takes
+  for the same row.
+- **The `absenceIsEvidence` guard had a blind spot, now closed (review of #2493).** It refused an
+  empty list whenever the device held trees, and the list never names Graine key groups - so for any
+  community member an honestly empty list (a joiner whose only ask was declined) was unbelievable for
+  ever, and neither recovery nor discovery could end the ask. It now counts conversation trees only
+  (`isDistributionGroup` excluded, `groupSweep.ts`). The price is taken deliberately: a member whose
+  only conversations are pending link asks now believes a transient `200 []` too, and its ask row is
+  removed locally though the seat stands - a second ask from the link, and no history lost, since a
+  never-admitted row holds none.
+
+Nothing local records the decline: the server's missing seat is the terminal state, read afresh on
+every pass, so a member who Adds the person later is not blocked - the Welcome installs the group and
+writes the row.
+
 The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>`), which used to
 admit the person with no member involved. The Android background answer refuses such a request as
 `newcomer` and leaves it to the foreground's sweep. Only a GROUP conversation takes an ask
