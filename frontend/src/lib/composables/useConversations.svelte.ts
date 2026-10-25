@@ -1268,7 +1268,7 @@ export function useConversations() {
         // restore SUCCEEDED - on a map a failed restore left empty, every entry would read as a
         // conversation that does not exist.
         if (mlsService && restored) {
-          mlsService.setOwedInvitationReplanner(lostInvitationReplanner(ctx, mlsService));
+          mlsService.setOwedInvitationReplanner(lostInvitationReplanner(ctx, mlsService, gen));
           replannerMls = mlsService;
         }
       }
@@ -2101,9 +2101,12 @@ export function useConversations() {
    */
   function lostInvitationReplanner(
     ctx: ConversationContext,
-    mlsService: IMlsService
+    mlsService: IMlsService,
+    gen: RestoreGeneration
   ): OwedInvitationReplanner {
     return makeLostInvitationReplanner({
+      // The session that registered it: retired by the sign-out (`invalidateRestores`).
+      isCurrent: () => !gen.retired,
       conversations,
       mlsService,
       replan: (owed, convo) =>
@@ -2117,6 +2120,7 @@ export function useConversations() {
           selectConversation: (name) => selectConversationWithCtx(name, ctx),
           saveConversation: (name) => saveConversation(name, ctx),
           log: ctx.log,
+          addMessageToChat: ctx.addMessageToChat,
         }),
       report: reportLostInvitation,
       afterCompleted: (convo) => loadGroupMembers(convo.id, ctx),

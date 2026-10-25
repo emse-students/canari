@@ -489,6 +489,7 @@ async function processBulkAddition(
         {
           confirmPremise: premise.check,
           premiseReadsTree: resumed !== undefined,
+          ...(premise.beforeStage ? { beforeStage: premise.beforeStage } : {}),
           invitation: {
             users: targetUsers,
             ...(premise.rostered ? { rostered: premise.rostered } : {}),
@@ -646,7 +647,9 @@ async function processBulkAddition(
  * a Remove or a Decline took off; and a departure merged after the lost commit's base
  * (`removalEpochs`, read from the tree's own record) is a removal the invitation must not undo,
  * roster or not. That record is only complete on a tree caught up to the server, so the resumed
- * check runs AFTER the tree is confirmed (`premiseReadsTree`), never before.
+ * check runs AFTER the tree is confirmed (`premiseReadsTree`), never before - and again UNDER THE MLS
+ * LOCK right before the stage (`beforeStage`): a Remove applied between the two would otherwise be
+ * staged over.
  *
  * @returns the check, and the baseline to write into the commit's intent - the recorded one when
  *   resumed, so a second loss is still judged against the gesture's own start.
@@ -657,7 +660,11 @@ async function rosterPremise(
   invited: readonly string[],
   log: (msg: string) => void,
   resumed?: ResumedInvitation
-): Promise<{ check: (attempt: number) => Promise<void>; rostered: string[] | undefined }> {
+): Promise<{
+  check: (attempt: number) => Promise<void>;
+  beforeStage: (() => Promise<void>) | undefined;
+  rostered: string[] | undefined;
+}> {
   const rosterOf = async (): Promise<Set<string>> =>
     new Set((await mlsService.getGroupUserMembers(groupId)).map((m) => m.userId));
   const atStart: Set<string> | null = resumed
@@ -682,18 +689,7 @@ async function rosterPremise(
       throw new AddAbortedError(groupId, 'premise-unreadable', String(e).slice(0, 100));
     }
     const removed = invited.filter((u) => atStart.has(u) && !now.has(u));
-    if (resumed) {
-      for (const u of invited) {
-        if (removed.includes(u)) continue;
-        let departures: number[];
-        try {
-          departures = await mlsService.removalEpochs(groupId, u);
-        } catch (e) {
-          throw new AddAbortedError(groupId, 'premise-unreadable', String(e).slice(0, 100));
-        }
-        if (departures.some((epoch) => epoch > resumed.baseEpoch)) removed.push(u);
-      }
-    }
+    if (resumed) removed.push(...(await departedSince(resumed.baseEpoch, removed)));
     if (removed.length > 0) {
       throw new AddAbortedError(
         groupId,
@@ -702,7 +698,38 @@ async function rosterPremise(
       );
     }
   };
-  return { check, rostered: atStart ? invited.filter((u) => atStart.has(u)) : undefined };
+  /** The invited people the tree records a departure of after `baseEpoch` - its own record, no I/O. */
+  const departedSince = async (baseEpoch: number, known: readonly string[] = []) => {
+    const departed: string[] = [];
+    for (const u of invited) {
+      if (known.includes(u)) continue;
+      let departures: number[];
+      try {
+        departures = await mlsService.removalEpochs(groupId, u);
+      } catch (e) {
+        throw new AddAbortedError(groupId, 'premise-unreadable', String(e).slice(0, 100));
+      }
+      if (departures.some((epoch) => epoch > baseEpoch)) departed.push(u);
+    }
+    return departed;
+  };
+  const beforeStage = resumed
+    ? async () => {
+        const departed = await departedSince(resumed.baseEpoch);
+        if (departed.length > 0) {
+          throw new AddAbortedError(
+            groupId,
+            'removed-meanwhile',
+            `${departed.join(', ')} left the tree in a commit applied just before the stage`
+          );
+        }
+      }
+    : undefined;
+  return {
+    check,
+    beforeStage,
+    rostered: atStart ? invited.filter((u) => atStart.has(u)) : undefined,
+  };
 }
 
 /**
@@ -722,10 +749,11 @@ export type LostInvitationOutcome =
   /** Its commit is kept in turn (no answer again): its own intent carries the invitation on. */
   | { kind: 'kept' }
   /**
-   * It cannot run YET: another device holds the group's add lock. Nothing staged, the entry stays
-   * for the next drain - never a word to the member, the invitation is not over.
+   * It cannot run YET - the add lock was refused, or the tree could not be confirmed at the server's
+   * epoch. Nothing staged, the entry stays for the next drain - never a word to the member, the
+   * invitation is not over.
    */
-  | { kind: 'waiting' }
+  | { kind: 'waiting'; on: 'add-lock' | 'tree-unconfirmed' }
   /**
    * The gate refused the lost commit for something other than a race - `reason` is its token
    * (`committer_not_member`, `welcome_target_not_member`, ...). Not re-planned: the same invitation
@@ -756,7 +784,7 @@ export type LostInvitationOutcome =
 export async function replanLostInvitation(
   owed: OwedInvitation,
   conversation: Conversation,
-  deps: GroupCreationDeps
+  deps: InviteDeps
 ): Promise<LostInvitationOutcome> {
   const short = owed.groupId.slice(0, 8);
   if (owed.cause === 'refused') {
@@ -774,7 +802,12 @@ export async function replanLostInvitation(
   );
   if (outcome.kind === 'added') return { kind: 'completed' };
   if (outcome.reason === 'outcome-unknown') return { kind: 'kept' };
-  if (outcome.reason === 'add-lock-busy') return { kind: 'waiting' };
+  // NOTHING STAGED, AND NOTHING THAT ENDS THE INVITATION: the lock was refused, or the tree could not
+  // be confirmed (a log that could not be read, a replay held behind frames refused for lack of a row
+  // whose pull is already asked, a catch-up that stopped short). Each lifts on an event - a commit
+  // applied in the group, the next connection - so the entry waits for it.
+  if (outcome.reason === 'add-lock-busy') return { kind: 'waiting', on: 'add-lock' };
+  if (outcome.reason === 'tree-unconfirmed') return { kind: 'waiting', on: 'tree-unconfirmed' };
   return { kind: 'not-completed', reason: outcome.reason };
 }
 

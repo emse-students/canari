@@ -630,6 +630,10 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     if (entry && entry[1].lifecycle !== 'active') {
       deps.conversations.set(entry[0], { ...entry[1], lifecycle: 'active' });
       await deps.saveConversation(entry[0]).catch(() => {});
+      // The row is usable from here, exactly as the Welcome path's is: what waited on it - a lost
+      // invitation of this member's (`owedInvitations.ts`), frames left behind - is woken by the one
+      // event that announces it.
+      deps.mlsService.notifyConversationAvailable(groupId);
     }
     // An external join lands at the current epoch WITHOUT the pre-join history, which only a member
     // can re-encrypt. Nothing has to decide whether anything is actually missing any more - this

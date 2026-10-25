@@ -15,6 +15,12 @@ export interface LostInvitationReplannerDeps {
   report: (outcome: LostInvitationOutcome, conversationName: string) => void;
   /** Rereads the member list once the invitation completed. */
   afterCompleted: (conversation: Conversation) => Promise<void>;
+  /**
+   * Whether the session that registered this re-planner is still the one signed in. Read after the
+   * re-plan, before anything is said: a sign-out during it must not tell the leaving account's
+   * conversation over the login page or the next account - the entry is kept for that account.
+   */
+  isCurrent: () => boolean;
 }
 
 /**
@@ -29,8 +35,10 @@ export interface LostInvitationReplannerDeps {
  * - no row and no group: the member left it themselves (a deletion is their gesture; a retirement
  *   keeps a `removed` row) - nothing can be added, and nothing is owed a word: `concluded`, logged;
  * - `removed`: the member is told the conversation is gone - `concluded`;
- * - `active`: re-planned; `waiting` only when another device holds the add lock, every other ending
- *   is told by `report` and `concluded`. A throw is told as a failure.
+ * - `active`: re-planned; `waiting` when the add lock was refused or the tree could not be
+ *   confirmed (nothing staged, an event lifts it), every other ending is told by `report` and
+ *   `concluded`. A throw is told as a failure;
+ * - a session that ended during the re-plan tells nothing and keeps the entry (`isCurrent`).
  */
 export function makeLostInvitationReplanner(
   deps: LostInvitationReplannerDeps
@@ -61,14 +69,24 @@ export function makeLostInvitationReplanner(
       deps.report({ kind: 'conversation-gone' }, convo.name);
       return 'concluded';
     }
+    const ended = () => {
+      if (deps.isCurrent()) return false;
+      console.log(
+        `[INVITE_OWED] ${short}... the session ended during the re-plan - nothing told, the entry is kept for its account`
+      );
+      return true;
+    };
     try {
       const outcome = await deps.replan(owed, convo);
       if (outcome.kind === 'waiting') {
         console.log(
-          `[INVITE_OWED] ${short}... another device holds the add lock - the lost invitation is kept for the next drain`
+          outcome.on === 'add-lock'
+            ? `[INVITE_OWED] ${short}... the group's add lock was refused (held by another device, or a lock of this device the server has not let go) - kept, re-planned at the group's next commit or the next connection`
+            : `[INVITE_OWED] ${short}... the tree could not be confirmed at the server's epoch - kept, re-planned at the group's next commit or the next connection`
         );
         return 'waiting';
       }
+      if (ended()) return 'waiting';
       deps.report(outcome, convo.name);
       if (outcome.kind === 'completed') {
         await deps
@@ -80,7 +98,8 @@ export function makeLostInvitationReplanner(
           );
       }
     } catch (e) {
-      console.error(`[INVITE_OWED] ${short}... the re-plan threw - the member is told:`, e);
+      console.error(`[INVITE_OWED] ${short}... the re-plan threw:`, e);
+      if (ended()) return 'waiting';
       deps.report({ kind: 'not-completed', reason: 'failed' }, convo.name);
     }
     return 'concluded';

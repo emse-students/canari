@@ -665,22 +665,34 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
   before would re-plan an invitation whose stage that settlement is about to record again). **Never
   while this device holds an add lock**: the server's lock is not re-entrant, so a re-plan run under
   one would be refused its own and read as "busy" - the drain waits, and the release asks for it.
+  **A release lost with the connection is sent again before the next acquire** (`addLockReleasesOwed`):
+  the server's lock (`SET NX EX`) refuses even its own holder, so the cut Add's lock would refuse the
+  re-plan for its whole TTL, and an expiry is not an event. The release deletes only this device's
+  lock, so sending it late never frees another's. The server's semantics are unchanged.
 - **The re-planner exists only on a RESTORED map** (`makeLostInvitationReplanner`, registered by
   `useConversations` after a restore that succeeded, removed at sign-out). It answers what happens to
   the entry (`ReplanVerdict`): a `pending` conversation, a row not there yet while the group is held,
-  or another device's add lock is `waiting` - the entry stays, and the event that lifts the wait
-  drains again (`notifyConversationAvailable`, a processed Welcome, an add lock released, the next
-  connection). A `removed` conversation is told as gone; no row and no group (the member deleted it)
-  concludes with a log.
+  a refused add lock or a tree that could not be confirmed (a log unread, a replay held behind
+  refused frames, a catch-up short) is `waiting` - the entry stays, and the event that lifts the wait
+  drains again (`notifyConversationAvailable`, the external-join re-admission included, a processed
+  Welcome, a COMMIT APPLIED in the group - which is how another device's Add ends - an add lock
+  released, the next connection). A `removed` conversation is told as gone; no row and no group (the
+  member deleted it) concludes with a log. **A drain runs for ONE re-planner**: a sign-out during it
+  stops it, and a re-plan that ends after the session did tells nothing and keeps its entry.
 - **The re-plan is the invitation made again** through `processBulkAddition`, under `rosterPremise`
   in its resumed form: the RECORDED baseline (a person on the roster at the gesture and off it now -
   removed, or a join ask declined - is `removed-meanwhile`), a departure after the lost commit's base
   (`removalEpochs`, the case the live premise cannot see), and the first pass checked too. **That
   premise reads the tree's own record, so it runs on the tree CONFIRMED at the server's epoch**
   (`premiseReadsTree`): before the catch-up, the Remove that undoes the invitation may sit in the very
-  commits not applied yet, and the Add would undo it. A person already holding a leaf is not added
+  commits not applied yet, and the Add would undo it. The departures are read AGAIN under the MLS lock
+  right before the stage (`addMembersBulk`'s `beforeStage`), so a Remove applied between the
+  confirmation and the stage is never staged over. A person already holding a leaf is not added
   twice (`already-in-tree`). The new commit carries the ORIGINAL baseline, so a second loss is judged
   against the gesture's own start.
+- **A record that cannot be written** (no storage, a full quota) never leaves the refused stage in
+  place - that would block every commit of the group: the stage is cleared, the loss logged at error
+  with its reason, and the member told. A page with no storage says so once.
 - **Idempotent from durable state, not a clock.** The entry leaves only once the re-plan CONCLUDED.
   A reload in between re-plans it once more, and the confirmed tree answers `already-in-tree` if its
   Add had merged; a re-plan whose own Add is kept hands the invitation to THAT stage's intent.
@@ -693,8 +705,9 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
 
 Not covered, in [backlog](../backlog.md): a 1:1 creation and a group's own devices carry no
 invitation; a kept commit is settled only by a connection, while the toast promises "once it is
-back"; and a re-plan that dies between its merge and its Welcomes finds `already-in-tree` next time
-and sends none.
+back"; a re-plan that dies between its merge and its Welcomes finds `already-in-tree` next time
+and sends none; and a release owed is remembered in memory only, so a reload within the lock's TTL
+waits for the next event.
 
 ### Group reset - THERE IS NONE, AND EVERY PIECE THIS SECTION DESCRIBED IS GONE
 

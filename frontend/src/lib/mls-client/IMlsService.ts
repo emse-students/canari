@@ -817,7 +817,13 @@ export interface IMlsService {
      * Set by a MEMBER'S INVITATION only: written into the commit's intent, so a kept commit that
      * does not land is re-planned rather than lost (`CommitIntent.invitation`).
      */
-    invitation?: CommitInvitation
+    invitation?: CommitInvitation,
+    /**
+     * Runs UNDER THE MLS LOCK, right before the stage, on the tree the commit is built on: a premise
+     * a commit applied after the caller's own check could break is checked here, where nothing can
+     * apply one in between. Throwing stages nothing.
+     */
+    beforeStage?: () => Promise<void>
   ): Promise<{
     welcome?: Uint8Array;
     ratchetTree?: Uint8Array;

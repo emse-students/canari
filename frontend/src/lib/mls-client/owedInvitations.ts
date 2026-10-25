@@ -89,10 +89,40 @@ function isOwed(v: unknown): v is OwedInvitation {
   );
 }
 
-function readAll(userId: string): Record<string, OwedInvitation> {
+/**
+ * The per-account store, resolved ONCE: a page with no usable `localStorage` (blocked site data, a
+ * runtime without one) says so in one line, not on every Welcome and lock release that asks.
+ */
+let store: Storage | null | undefined;
+function storage(): Storage | null {
+  if (store !== undefined) return store;
   try {
-    // Inside the try: a storage accessor that throws (blocked site data) is an unreadable record.
-    const raw = localStorage.getItem(ACCOUNT_KEY.owedInvitations(userId));
+    const s = globalThis.localStorage;
+    // The accessor itself may throw, and a present object may refuse its first read.
+    s.getItem('__owed_invitations_probe__');
+    store = s;
+  } catch (e) {
+    store = null;
+    console.error(
+      `[INVITE_OWED] no usable local storage - a lost invitation cannot be recorded, and is told instead: ${String(e).slice(0, 120)}`
+    );
+  }
+  return store;
+}
+
+/** The record could not be WRITTEN: nothing is owed a re-plan, so the caller tells the member. */
+export class OwedInvitationNotRecordedError extends Error {
+  constructor(readonly reason: string) {
+    super(`the owed-invitation record could not be written: ${reason}`);
+    this.name = 'OwedInvitationNotRecordedError';
+  }
+}
+
+function readAll(userId: string): Record<string, OwedInvitation> {
+  const s = storage();
+  if (!s) return {};
+  try {
+    const raw = s.getItem(ACCOUNT_KEY.owedInvitations(userId));
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const out: Record<string, OwedInvitation> = {};
@@ -109,15 +139,26 @@ function readAll(userId: string): Record<string, OwedInvitation> {
   }
 }
 
+/** @throws {@link OwedInvitationNotRecordedError} when the store is missing or refuses the write. */
 function writeAll(userId: string, all: Record<string, OwedInvitation>): void {
+  const s = storage();
+  if (!s) throw new OwedInvitationNotRecordedError('no usable local storage');
   const key = ACCOUNT_KEY.owedInvitations(userId);
-  if (Object.keys(all).length > 0) localStorage.setItem(key, JSON.stringify(all));
-  else localStorage.removeItem(key);
+  try {
+    if (Object.keys(all).length > 0) s.setItem(key, JSON.stringify(all));
+    else s.removeItem(key);
+  } catch (e) {
+    // QuotaExceededError included.
+    throw new OwedInvitationNotRecordedError(String(e).slice(0, 120));
+  }
 }
 
 /**
  * Records `owed` for `userId`, synchronously - the caller clears the stage right after. The same
  * lost commit recorded twice (a reload before its clear reached disk) is ONE entry.
+ *
+ * @throws {@link OwedInvitationNotRecordedError} - the caller still clears the stage (a refused stage
+ *   left in place blocks every commit of the group) and tells the member instead.
  */
 export function recordOwedInvitation(userId: string, owed: OwedInvitation): void {
   const all = readAll(userId);
@@ -130,9 +171,18 @@ export function listOwedInvitations(userId: string): OwedInvitation[] {
   return Object.values(readAll(userId)).sort((a, b) => a.baseEpoch - b.baseEpoch);
 }
 
-/** The re-plan of `owed` concluded (whatever it came to): its entry leaves the record. */
+/**
+ * The re-plan of `owed` concluded (whatever it came to): its entry leaves the record. A write that
+ * fails leaves it in place - re-planned once more, which the confirmed tree answers - and says so.
+ */
 export function settleOwedInvitation(userId: string, owed: OwedInvitation): void {
   const all = readAll(userId);
   delete all[entryKey(owed.groupId, owed.baseEpoch)];
-  writeAll(userId, all);
+  try {
+    writeAll(userId, all);
+  } catch (e) {
+    console.error(
+      `[INVITE_OWED] ${owed.groupId.slice(0, 8)}... the concluded entry at epoch ${owed.baseEpoch} could not be removed: ${(e as Error).message}`
+    );
+  }
 }

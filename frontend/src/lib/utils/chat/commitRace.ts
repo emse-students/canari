@@ -120,6 +120,12 @@ export interface RacedAddOptions {
    */
   premiseReadsTree?: boolean;
   /**
+   * Re-checked UNDER THE MLS LOCK right before the stage (`addMembersBulk`'s `beforeStage`): the
+   * part of the premise a commit applied between the confirmation and the stage could break - a
+   * Remove of the very person invited. Throws {@link AddAbortedError}; nothing is staged.
+   */
+  beforeStage?: () => Promise<void>;
+  /**
    * A member's invitation only: carried into each commit's intent, so a commit that is kept and then
    * does not land is re-planned rather than lost (`owedInvitations.ts`).
    */
@@ -153,7 +159,7 @@ export async function addDevicesRebuildingOnRace(
   log: (msg: string) => void,
   opts: RacedAddOptions = {}
 ): Promise<RacedAddResult> {
-  const { confirmPremise, premiseReadsTree = false, invitation } = opts;
+  const { confirmPremise, premiseReadsTree = false, beforeStage, invitation } = opts;
   const holdsAny = (leaves: readonly string[]) =>
     candidates.some((d) => treeHoldsDevice(leaves, d.userId, d.deviceId));
   return rebuildOnRace(
@@ -190,7 +196,8 @@ export async function addDevicesRebuildingOnRace(
         groupId,
         missing,
         missing.map((d) => `${d.userId}:${d.deviceId}`),
-        invitation
+        invitation,
+        beforeStage
       );
       return { kind: 'added', ...bulk } as const;
     },

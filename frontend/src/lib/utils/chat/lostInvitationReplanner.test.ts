@@ -26,6 +26,7 @@ function harness(rows: Array<[string, Partial<Conversation>]>, heldGroups: strin
     replan: vi.fn(async () => ({ kind: 'completed' }) as const),
     report: vi.fn(),
     afterCompleted: vi.fn(async () => {}),
+    isCurrent: vi.fn(() => true),
   };
   return { deps, replanner: makeLostInvitationReplanner(deps as never), conversations };
 }
@@ -77,7 +78,17 @@ describe('makeLostInvitationReplanner - what a lost invitation waits for, and wh
 
   it("another device's add lock is WAITING: no word to the member, the entry stays", async () => {
     const h = harness([[G, {}]]);
-    h.deps.replan.mockResolvedValueOnce({ kind: 'waiting' } as never);
+    h.deps.replan.mockResolvedValueOnce({ kind: 'waiting', on: 'add-lock' } as never);
+    expect(await h.replanner(owed)).toBe('waiting');
+    expect(h.deps.report).not.toHaveBeenCalled();
+  });
+
+  it('a session that ENDED during the re-plan tells nothing and keeps the entry for its account', async () => {
+    const h = harness([[G, {}]]);
+    h.deps.replan.mockImplementationOnce(async () => {
+      h.deps.isCurrent.mockReturnValue(false);
+      return { kind: 'refused', reason: 'committer_not_member' } as never;
+    });
     expect(await h.replanner(owed)).toBe('waiting');
     expect(h.deps.report).not.toHaveBeenCalled();
   });

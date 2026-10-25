@@ -157,7 +157,7 @@ describe('reportLostInvitation and the kept invitation', () => {
   it('says nothing when it completed, when its commit is kept again, or while it waits', () => {
     reportLostInvitation({ kind: 'completed' }, 'Team');
     reportLostInvitation({ kind: 'kept' }, 'Team');
-    reportLostInvitation({ kind: 'waiting' }, 'Team');
+    reportLostInvitation({ kind: 'waiting', on: 'add-lock' }, 'Team');
     expect(showToast).not.toHaveBeenCalled();
   });
 });

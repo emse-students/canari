@@ -4,6 +4,11 @@
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 const persistMlsStructuralCheckpoint = vi.hoisted(() => vi.fn());
+const showToast = vi.hoisted(() => vi.fn());
+vi.mock('$lib/stores/toast.svelte', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/toast.svelte')>()),
+  showToast,
+}));
 vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
   persistMlsStructuralCheckpoint: (...a: unknown[]) => persistMlsStructuralCheckpoint(...a),
   scheduleOutboundMlsPersist: vi.fn(),
@@ -160,7 +165,9 @@ function ctx(
     owedInvitationDrainAgain: false,
     connectionSettling: false,
     connectionSettled: false,
+    owedInvitationGeneration: 0,
     addLocksHeld: new Set<string>(),
+    addLockReleasesOwed: new Set<string>(),
     isWsOpen: () => true,
     ...primitives(state, opts.owed),
   };
@@ -192,7 +199,11 @@ function ctx(
   return c as unknown as Record<string, ReturnType<typeof vi.fn>> & {
     state: PendingState;
     owed: OwedState;
-    delivery: { submitCommit: ReturnType<typeof vi.fn> };
+    delivery: {
+      submitCommit: ReturnType<typeof vi.fn>;
+      acquireAddLock: (g: string) => Promise<boolean>;
+      releaseAddLock: (g: string) => Promise<boolean>;
+    };
     runCommitTransaction(
       g: string,
       stage: (intent: Uint8Array) => Promise<unknown>,
@@ -1304,5 +1315,86 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     await settled(c);
     expect(order).toEqual(['catch-up under the settlement lock', 're-plan under the lock']);
     expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('THE REAL LOCK AND A FAKE ADD LOCK: a release lost with the connection is sent before the drain acquires - no TTL waited', async () => {
+    // The server's lock as `add-lock.ts` keeps it: SET NX (even its own holder is refused), a
+    // release that deletes only the owner's. Its expiry is never simulated: nothing here may wait for it.
+    const server = { holder: null as string | null, releaseAnswers: [false] as boolean[] };
+    const OWNER = `${U}:${D}`;
+    const c = ctx(raceLost(), { state: keptInvite() });
+    const scheduler = new MlsPerGroupScheduler('web');
+    (c as unknown as { runUnderMlsLock: unknown }).runUnderMlsLock = <T>(fn: () => Promise<T>) =>
+      scheduler.runUnderMlsLock(fn);
+    c.delivery.acquireAddLock = vi.fn(async () => {
+      if (server.holder !== null) return false;
+      server.holder = OWNER;
+      return true;
+    });
+    c.delivery.releaseAddLock = vi.fn(async () => {
+      // The first release dies with the connection: the server never hears it.
+      if (server.releaseAnswers.shift() === false) return false;
+      if (server.holder === OWNER) server.holder = null;
+      return true;
+    });
+    const lock = c as unknown as {
+      acquireAddLock(g: string): Promise<boolean>;
+      releaseAddLock(g: string): Promise<void>;
+    };
+    // The cut Add: taken, then released into a dead connection - the server still holds it.
+    expect(await lock.acquireAddLock(G)).toBe(true);
+    await lock.releaseAddLock(G);
+    expect(server.holder).toBe(OWNER);
+
+    // Back within the TTL: the kept Add is refused, the drain re-plans - and its acquire succeeds.
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => {
+      if (!(await lock.acquireAddLock(G))) return 'waiting';
+      await scheduler.runUnderMlsLock(async () => {});
+      await lock.releaseAddLock(G);
+      return 'concluded';
+    });
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([]);
+    expect(server.holder).toBeNull();
+  });
+
+  it('a SIGN-OUT during the drain stops it: the next entry is neither re-planned nor dropped', async () => {
+    const c = ctx(submitting());
+    const other = { ...INVITATION, users: ['w6'] };
+    const { recordOwedInvitation } = await import('$lib/mls-client/owedInvitations');
+    recordOwedInvitation(U, { groupId: G, baseEpoch: 5, invitation: INVITATION, cause: 'race' });
+    recordOwedInvitation(U, { groupId: G, baseEpoch: 7, invitation: other, cause: 'race' });
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => {
+      // The member signs out while the first re-plan runs.
+      (c as unknown as { setOwedInvitationReplanner(r: null): void }).setOwedInvitationReplanner(
+        null
+      );
+      return 'concluded';
+    });
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([
+      { groupId: G, baseEpoch: 7, invitation: other, cause: 'race' },
+    ]);
+  });
+
+  it('a record that cannot be WRITTEN never blocks the group: the stage is cleared, the loss said and told', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    showToast.mockClear();
+    await settled(c);
+    setItem.mockRestore();
+    expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
+    expect(c.state.size).toBe(0);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('could NOT be recorded'));
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([]);
+    error.mockRestore();
   });
 });

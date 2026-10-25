@@ -1580,16 +1580,30 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Releases the add-lock previously acquired by {@link acquireAddLock}. Best-effort, non-throwing. */
-  async releaseAddLock(groupId: string): Promise<void> {
+  /**
+   * Releases the add-lock previously acquired by {@link acquireAddLock}. Non-throwing.
+   *
+   * @returns whether the server answered the release. `false` means the lock may still be up on the
+   *   server for its whole TTL - the caller remembers it and sends it again before its next acquire,
+   *   since the server's lock refuses even its own holder.
+   */
+  async releaseAddLock(groupId: string): Promise<boolean> {
     try {
-      await this.f(`${this.historyUrl}/api/mls/add-lock`, {
+      const res = await this.f(`${this.historyUrl}/api/mls/add-lock`, {
         method: 'DELETE',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ groupId, deviceId: this.deviceId }),
       });
-    } catch {
-      /* non-blocking */
+      if (res.ok) return true;
+      console.warn(
+        `[ADD_LOCK] ${groupId.slice(0, 8)}... the release was answered ${res.status} - the lock may still be held`
+      );
+      return false;
+    } catch (e) {
+      console.warn(
+        `[ADD_LOCK] ${groupId.slice(0, 8)}... the release got no answer - the lock may still be held: ${String(e).slice(0, 120)}`
+      );
+      return false;
     }
   }
 

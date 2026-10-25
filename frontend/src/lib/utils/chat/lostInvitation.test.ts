@@ -5,6 +5,11 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalMessaging: { isMessageCatchupActive: false, resetMessageCatchupState: vi.fn() },
 }));
 vi.mock('$lib/users/blocks', () => ({ isBlockedWith: vi.fn(async () => false) }));
+// The inviter's own `memberAdded` notice resolves names: a profile read nothing here is about.
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
+  resolveDisplayNames: async () => (id: string) => id,
+}));
 vi.mock('$lib/utils/hex', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/hex')>()),
   saveMlsState: vi.fn().mockResolvedValue(undefined),
@@ -64,8 +69,11 @@ function harness() {
         _g: string,
         devices: Array<{ userId: string; deviceId: string }>,
         _excludes?: string[],
-        _invitation?: unknown
+        _invitation?: unknown,
+        beforeStage?: () => Promise<void>
       ) => {
+        // Under the MLS lock, right before the stage - as `addMembersBulk` runs it.
+        await beforeStage?.();
         state.tree.push(...devices.map((d) => `${d.userId}:${d.deviceId}`));
         state.epoch += 1;
         return {
@@ -89,6 +97,7 @@ function harness() {
     selectConversation: vi.fn(),
     saveConversation: vi.fn(async () => {}),
     log: vi.fn(),
+    addMessageToChat: vi.fn(),
   };
   return { state, roster, departures, mlsService, deps };
 }
@@ -168,12 +177,50 @@ describe('replanLostInvitation - the invitation a kept commit lost', () => {
     expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
 
+  it('a Remove APPLIED BETWEEN the confirmation and the stage is seen under the lock: nothing staged', async () => {
+    const h = harness();
+    // The confirmed premise reads no departure; a Remove of W5 is applied before the stage.
+    let reads = 0;
+    h.mlsService.removalEpochs.mockImplementation(async (_g: string, u: string) =>
+      u === 'w5' && ++reads > 1 ? [6] : []
+    );
+    const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-completed', reason: 'removed-meanwhile' });
+    expect(h.state.tree).not.toContain('w5:w5-dev');
+  });
+
+  // EVERY WAY A TREE STAYS UNCONFIRMED IS TRANSIENT AND STAGES NOTHING, so a resumed invitation
+  // WAITS on each (its entry kept, re-planned at the group's next commit or connection), never drops.
+  it.each([
+    ['the log could not be read', 'fetch'],
+    ['the replay is held behind frames refused for lack of a row', 'held'],
+    ['the catch-up stopped short of the server', 'short'],
+  ] as const)('an unconfirmed tree - %s - is WAITING', async (_what, how) => {
+    const h = harness();
+    h.mlsService.getEpoch.mockImplementation(() => 2);
+    h.mlsService.fetchCommitsSince.mockImplementation(async () => {
+      if (how === 'fetch') throw new Error('offline');
+      return { commits: [], activeEpoch: 5, belowFloor: false };
+    });
+    catchUp.run = async () => ({
+      healed: false,
+      belowFloor: false,
+      applied: 0,
+      heldBehindRefusedBacklog: how === 'held',
+    });
+    const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'waiting', on: 'tree-unconfirmed' });
+    expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
   it('another device holds the add lock: WAITING - nothing staged, the invitation is not over', async () => {
     const h = harness();
     h.mlsService.acquireAddLock.mockResolvedValueOnce(false);
     const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
 
-    expect(outcome).toEqual({ kind: 'waiting' });
+    expect(outcome).toEqual({ kind: 'waiting', on: 'add-lock' });
     expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
 

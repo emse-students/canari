@@ -150,7 +150,7 @@ import {
   type MlsStateWriteLatch,
 } from '$lib/utils/hex';
 import { m } from '$lib/paraglide/messages';
-import { showPinnedToast } from '$lib/stores/toast.svelte';
+import { showPinnedToast, showToast } from '$lib/stores/toast.svelte';
 import {
   MAX_REFUSED_ROTATION_RELOADS,
   REFUSED_ROTATION_RELOADS_KEY,
@@ -211,6 +211,7 @@ import {
 } from '$lib/mls-client/commitSubmission';
 import {
   listOwedInvitations,
+  OwedInvitationNotRecordedError,
   owesInvitationIn,
   RACE_REFUSAL_REASON,
   recordOwedInvitation,
@@ -2470,6 +2471,12 @@ export abstract class BaseMlsService implements IMlsService {
             }
             welcomedGroups.push(groupId);
           }
+          // A COMMIT APPLIED is how an Add holding the group's lock ENDS - another device's, whose
+          // lock refused a re-plan here - and how a tree that could not be confirmed catches up: a
+          // lost invitation that waited on either is re-planned now.
+          if (msg.isCommit && groupId && cbResult !== false) {
+            this.replanOwedInvitationsIn(groupId, 'commit applied');
+          }
         } catch (e) {
           console.error(`[QUEUE] Error processing message:`, e);
 
@@ -3646,22 +3653,42 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.updateDeviceMetadata(userId, deviceId, metadata);
   }
 
+  /**
+   * Takes the group's add lock - after sending again a release of THIS device's that got no answer
+   * ({@link addLockReleasesOwed}). The server's lock refuses its own holder (`SET NX`), so a lock
+   * left up by a release lost with the connection would refuse this device's next Add for its whole
+   * TTL - and an expiry is not an event anything wakes on. The release deletes only a lock this
+   * device still owns, so sending it late can never free another device's.
+   */
   async acquireAddLock(groupId: string): Promise<boolean> {
+    if (this.addLockReleasesOwed.has(groupId)) {
+      const released = await this.delivery.releaseAddLock(groupId);
+      console.log(
+        `[ADD_LOCK] ${groupId.slice(0, 8)}... the release lost earlier was sent again before acquiring: ${released ? 'answered' : 'still unanswered'}`
+      );
+      if (released) this.addLockReleasesOwed.delete(groupId);
+    }
     const acquired = await this.delivery.acquireAddLock(groupId);
-    if (acquired) this.addLocksHeld.add(groupId);
+    if (acquired) {
+      // Taken, so whatever the lost release left has expired: nothing is owed any more.
+      this.addLockReleasesOwed.delete(groupId);
+      this.addLocksHeld.add(groupId);
+    }
     return acquired;
   }
 
   /**
    * Releases the group's add lock - and, once this device holds none, drains the lost invitations a
    * held lock deferred ({@link replanOwedInvitations}): the server's lock is not re-entrant, so a
-   * re-plan run under one would be refused its own. Forgotten locally BEFORE the request: a release
-   * that fails leaves the server's lock to its expiry either way.
+   * re-plan run under one would be refused its own. Forgotten as HELD before the request; a release
+   * the server did not answer is remembered as OWED, and sent again before the next acquire.
    */
   async releaseAddLock(groupId: string): Promise<void> {
     this.addLocksHeld.delete(groupId);
     try {
-      return await this.delivery.releaseAddLock(groupId);
+      const released = await this.delivery.releaseAddLock(groupId);
+      if (released) this.addLockReleasesOwed.delete(groupId);
+      else this.addLockReleasesOwed.add(groupId);
     } finally {
       if (
         this.addLocksHeld.size === 0 &&
@@ -4955,6 +4982,10 @@ export abstract class BaseMlsService implements IMlsService {
    * and before the clear (`owedInvitations.ts`). Any other commit owes nothing here - an automatic
    * Add is re-derived from the server row it answers, a Remove by the roster collector.
    *
+   * A RECORD THAT CANNOT BE WRITTEN (no storage, a full quota) NEVER STOPS THE CLEAR: a refused stage
+   * left in place blocks every commit of the group at every connection. The loss is said instead -
+   * at error, with its reason, and to the member - and nothing is re-planned.
+   *
    * @returns whether an invitation was recorded.
    */
   private oweLostInvitation(
@@ -4966,13 +4997,22 @@ export abstract class BaseMlsService implements IMlsService {
     const invitation = record ? invitationOf(record) : null;
     if (!invitation) return false;
     const { groupId, baseEpoch } = submission;
-    recordOwedInvitation(this.userId, {
-      groupId,
-      baseEpoch,
-      invitation,
-      cause,
-      ...(reason ? { reason } : {}),
-    });
+    try {
+      recordOwedInvitation(this.userId, {
+        groupId,
+        baseEpoch,
+        invitation,
+        cause,
+        ...(reason ? { reason } : {}),
+      });
+    } catch (e) {
+      if (!(e instanceof OwedInvitationNotRecordedError)) throw e;
+      console.error(
+        `[INVITE_OWED] ${groupId.slice(0, 8)}... the Add of ${invitation.users.length} invited person(s) staged on epoch ${baseEpoch} did not land (${cause}${reason ? `: ${reason}` : ''}) and could NOT be recorded (${e.reason}) - not re-planned, the member is told`
+      );
+      showToast(m.chat_invite_error_failed());
+      return false;
+    }
     console.log(
       `[INVITE_OWED] ${groupId.slice(0, 8)}... the Add of ${invitation.users.length} invited person(s) staged on epoch ${baseEpoch} did not land (${cause}${reason ? `: ${reason}` : ''}) - recorded, ${cause === 'race' ? 're-planned at the new epoch' : 'not re-planned, the member is told'}`
     );
@@ -4984,6 +5024,8 @@ export abstract class BaseMlsService implements IMlsService {
    * (`replanLostInvitation`). See {@link IMlsService.setOwedInvitationReplanner}.
    */
   private owedInvitationReplanner: OwedInvitationReplanner | null = null;
+  /** Moves with every registration or removal of the re-planner: a drain runs for ONE of them. */
+  private owedInvitationGeneration = 0;
   /** The drain running, and whether another was asked while it ran: one drain at a time. */
   private owedInvitationDrain: Promise<void> | null = null;
   private owedInvitationDrainAgain = false;
@@ -4997,10 +5039,13 @@ export abstract class BaseMlsService implements IMlsService {
    * the drain waits for the release instead ({@link releaseAddLock}).
    */
   private readonly addLocksHeld = new Set<string>();
+  /** The groups whose add lock THIS device released without an answer (see {@link acquireAddLock}). */
+  private readonly addLockReleasesOwed = new Set<string>();
 
   /** See {@link IMlsService.setOwedInvitationReplanner}. */
   setOwedInvitationReplanner(replanner: OwedInvitationReplanner | null): void {
     this.owedInvitationReplanner = replanner;
+    this.owedInvitationGeneration++;
     // Drained by the connection's settlement, once it has settled every kept stage. A re-planner that
     // arrives after that settlement drains at once, while the gateway answers; one that arrives
     // before it leaves the drain to it - draining first would re-plan an invitation whose stage that
@@ -5072,7 +5117,16 @@ export abstract class BaseMlsService implements IMlsService {
       );
       return;
     }
+    // THE RE-PLANNER IS A SESSION'S: a sign-out (null) or a new session's registration during the
+    // drain ends it here, so no entry of the leaving account is re-planned or told over the next.
+    const generation = this.owedInvitationGeneration;
     for (const entry of owed) {
+      if (this.owedInvitationGeneration !== generation) {
+        console.log(
+          `[INVITE_OWED] the re-planner changed during the drain - its remaining entries are kept (${why})`
+        );
+        return;
+      }
       console.log(
         `[INVITE_OWED] ${entry.groupId.slice(0, 8)}... re-planning the invitation lost at epoch ${entry.baseEpoch} (${entry.cause}, ${why})`
       );
@@ -6856,7 +6910,8 @@ export abstract class BaseMlsService implements IMlsService {
     groupId: string,
     devices: Array<{ keyPackage: Uint8Array; deviceId: string; userId: string }>,
     excludeDeviceIds?: string[],
-    invitation?: CommitInvitation
+    invitation?: CommitInvitation,
+    beforeStage?: () => Promise<void>
   ): Promise<{
     welcome?: Uint8Array;
     ratchetTree?: Uint8Array;
@@ -6866,6 +6921,8 @@ export abstract class BaseMlsService implements IMlsService {
     const result = await this.runCommitTransaction(
       groupId,
       async (intent) => {
+        // Under the lock, after any settlement, on the tree the stage is built on.
+        await beforeStage?.();
         const staged = await this.stageAddMembers(
           groupId,
           devices.map((d) => ({ keyPackage: d.keyPackage, identity: `${d.userId}:${d.deviceId}` })),
