@@ -12,8 +12,18 @@
  * client that predates a code still reads the status and the prose it always read.
  */
 export const RefusalCode = {
-  /** 403 - the device id is banned; the cure is a fresh id. */
+  /**
+   * 403 - the device id is banned. At registration it is answered ONLY for an id its own install
+   * retired (`reason: 'retired'`), whose cure is a fresh id; the commit gate answers it for any
+   * banned id, since no cure applies to a commit.
+   */
   DEVICE_REVOKED: 'DEVICE_REVOKED',
+  /**
+   * 403 - the device's OWNER revoked it (or the ban predates the recorded reason, read the same way).
+   * No cure on this device: it signs out and returns to a fresh install. A distinct code rather than
+   * a field of `DEVICE_REVOKED`, so a client that predates it does NOT read it as "enrol again".
+   */
+  DEVICE_REVOKED_BY_OWNER: 'DEVICE_REVOKED_BY_OWNER',
   /** 400 - the account already holds its maximum of live devices. */
   DEVICE_LIMIT_REACHED: 'DEVICE_LIMIT_REACHED',
   /** 400 - a key package that does not parse or names another device. Never retryable. */

@@ -100,14 +100,19 @@ describe('DevicesController.registerDevice - revoked device', () => {
   });
 
   it('refuses a revoked device id, and writes nothing', async () => {
-    revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1', userId: 'u1', deviceId: 'd1' });
+    revokedDeviceRepo.findOne.mockResolvedValue({
+      id: 'r1',
+      userId: 'u1',
+      deviceId: 'd1',
+      reason: 'retired',
+    });
 
     await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toBeInstanceOf(
       ForbiddenException
     );
     // The client branches on this code, never on the message.
     await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
-      response: { code: 'DEVICE_REVOKED' },
+      response: { code: 'DEVICE_REVOKED', reason: 'retired' },
     });
     expect(keyPackageRepo.save).not.toHaveBeenCalled();
   });

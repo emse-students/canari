@@ -91,7 +91,7 @@ describe('WebMlsService - a kept id with a lost state re-enrols as a new device'
     expect(localStorage.getItem(`mls_device_id_${USER}`)).toBe('web-u-new');
     expect(ctx.persistCheckpoint).toHaveBeenCalledTimes(1);
     expect(ctx.deleteDevice).toHaveBeenCalledTimes(1);
-    expect(ctx.deleteDevice).toHaveBeenCalledWith(USER, 'web-u-old');
+    expect(ctx.deleteDevice).toHaveBeenCalledWith(USER, 'web-u-old', 'retired');
     expect(readAbandonedDeviceIds(USER)).toEqual([]);
 
     // A later round finds nothing left to retire.

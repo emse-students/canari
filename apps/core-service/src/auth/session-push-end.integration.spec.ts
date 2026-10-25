@@ -287,4 +287,24 @@ maybe('the push-ending outbox against PostgreSQL', () => {
 
     expect(await outboxRows()).toEqual([]);
   });
+  it('a session reads live until it is revoked, logged out or replaced - the verify check', async () => {
+    const owned = await sessions.create('user-1');
+    const loggedOut = await sessions.create('user-1');
+    const kept = await sessions.create('user-1');
+    const other = await sessions.create('user-1');
+
+    for (const s of [owned, loggedOut, kept, other]) {
+      await expect(sessions.isLive(s.sessionId, 'user-1')).resolves.toBe(true);
+    }
+    await expect(sessions.isLive(owned.sessionId, 'user-2')).resolves.toBe(false);
+
+    await sessions.revokeOwned('user-1', owned.sessionId);
+    await sessions.revoke(loggedOut.sessionId);
+    await sessions.revokeOthers('user-1', kept.sessionId);
+
+    await expect(sessions.isLive(owned.sessionId, 'user-1')).resolves.toBe(false);
+    await expect(sessions.isLive(loggedOut.sessionId, 'user-1')).resolves.toBe(false);
+    await expect(sessions.isLive(other.sessionId, 'user-1')).resolves.toBe(false);
+    await expect(sessions.isLive(kept.sessionId, 'user-1')).resolves.toBe(true);
+  });
 });

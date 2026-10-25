@@ -91,7 +91,14 @@ describe('AuthController sessions', () => {
   let sessions: jest.Mocked<
     Pick<
       AuthSessionsService,
-      'create' | 'rotate' | 'revoke' | 'revokeOwned' | 'revokeOthers' | 'listForUser' | 'bindDevice'
+      | 'create'
+      | 'rotate'
+      | 'revoke'
+      | 'revokeOwned'
+      | 'revokeOthers'
+      | 'listForUser'
+      | 'bindDevice'
+      | 'isLive'
     >
   >;
 
@@ -114,6 +121,7 @@ describe('AuthController sessions', () => {
       revokeOthers: jest.fn().mockResolvedValue(2),
       listForUser: jest.fn().mockResolvedValue([]),
       bindDevice: jest.fn().mockResolvedValue(true),
+      isLive: jest.fn().mockResolvedValue(true),
     } as never;
 
     const users = {
@@ -1026,29 +1034,60 @@ describe('AuthController sessions', () => {
       expect(out.headers['X-User-Id']).toBe('');
     });
 
-    it('authenticates a genuine access token', async () => {
-      const req = makeReq({ bearer: signAccess('user-1', true) });
+    const SID = '0a0a0a0a-0000-4000-8000-0000000000a1';
+    const accessFor = (sid: string | undefined, admin = false): string =>
+      jwt.sign({ sub: 'user-1', admin, type: 'access', ...(sid ? { sid } : {}) }, JWT_SECRET, {
+        expiresIn: '1h',
+      });
+
+    it('authenticates a genuine access token whose session is live', async () => {
       const out = makeRes();
 
-      await controller.verify(req, out.res);
+      await controller.verify(makeReq({ bearer: accessFor(SID, true) }), out.res);
 
+      expect(sessions.isLive).toHaveBeenCalledWith(SID, 'user-1');
       expect(out.headers['X-Logged-In']).toBe('true');
       expect(out.headers['X-User-Id']).toBe('user-1');
       expect(out.headers['X-Global-Admin']).toBe('true');
+      expect(out.headers['X-Session-Id']).toBe(SID);
     });
 
-    it('hands nginx the session the access token names, and nothing for a token minted before the claim', async () => {
-      const withSid = makeRes();
-      await controller.verify(
-        makeReq({ bearer: jwt.sign({ sub: 'user-1', sid: 'sid-1' }, JWT_SECRET) }),
-        withSid.res
-      );
-      expect(withSid.headers['X-Session-Id']).toBe('sid-1');
+    /**
+     * THE CHOKE POINT FOR A SESSION THAT HAS ENDED: its access token authenticates nothing, from
+     * the moment the session row is gone. Every guarded route of every service reads `X-Logged-In`,
+     * so an anonymous answer here is a 401 everywhere.
+     */
+    it('answers anonymous for an access token whose session has ended', async () => {
+      sessions.isLive.mockResolvedValue(false);
+      const out = makeRes();
 
-      const withoutSid = makeRes();
-      await controller.verify(makeReq({ bearer: signAccess('user-1') }), withoutSid.res);
-      expect(withoutSid.headers['X-Logged-In']).toBe('true');
-      expect(withoutSid.headers['X-Session-Id']).toBe('');
+      await controller.verify(makeReq({ bearer: accessFor(SID) }), out.res);
+
+      expect(out.status()).toBe(200);
+      expect(out.headers['X-Logged-In']).toBe('false');
+      expect(out.headers['X-User-Id']).toBe('');
+      expect(out.headers['X-Session-Id']).toBe('');
+      expect(out.headers['X-Internal-Token']).toBeUndefined();
+    });
+
+    it('answers anonymous for an access token that names no session, without a read', async () => {
+      const out = makeRes();
+
+      await controller.verify(makeReq({ bearer: signAccess('user-1') }), out.res);
+
+      expect(sessions.isLive).not.toHaveBeenCalled();
+      expect(out.headers['X-Logged-In']).toBe('false');
+      expect(out.headers['X-Session-Id']).toBe('');
+    });
+
+    it('does not turn a failed session read into an answer: it propagates', async () => {
+      sessions.isLive.mockRejectedValue(new Error('database down'));
+      const out = makeRes();
+
+      await expect(controller.verify(makeReq({ bearer: accessFor(SID) }), out.res)).rejects.toThrow(
+        'database down'
+      );
+      expect(out.headers['X-Logged-In']).toBe('false');
     });
 
     it('names no session for a refresh token used as a bearer token', async () => {

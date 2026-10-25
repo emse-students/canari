@@ -115,6 +115,21 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Revisit 2026-12-31 - a `DEVICE_REVOKED` refusal that does not say who revoked the device
+
+**Site:** `classifyRevokedDeviceRefusal` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`.
+**What it humours:** a delivery service older than migration 040, whose `DEVICE_REVOKED` carries no
+`reason`. It cannot tell an id its own install retired from a device its owner revoked, so a client
+reads it as the owner's - a sign-out and a wipe, said at `error` - and only `reason: 'retired'`
+licenses a re-enrolment. That reading is the safe one and stays; what goes is only the ACCUSATION
+wording about an older server, once no server without the reason can answer.
+**The other direction needs nothing:** a client older than `DEVICE_REVOKED_BY_OWNER` reads it as an
+unknown 403 and does not re-enrol (the code is new precisely so it cannot), and still re-enrols on
+`DEVICE_REVOKED`, which a current server sends only for a retired id. A `revoked_device` row written
+before the column holds NULL and is read as the owner's for good - data at rest, not a shim, so it
+has no date.
+**Condition:** every estate serves migration 040 (one deploy of each). The date is when to check.
+
 ### No date yet - a member client older than the admission rule still adds a new person automatically
 
 **Site:** `automaticAdmission` in `frontend/src/lib/utils/chat/actions.ts` (the rule), and the server's

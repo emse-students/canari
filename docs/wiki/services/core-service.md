@@ -32,11 +32,13 @@ credential, `logout` only cleared the cookie (revoking nothing), a stolen cookie
 7 days on every use in parallel with the real user, and the single lever available was rotating
 `JWT_SECRET` — which signs every user out of all six services at once.
 
-**The access token deliberately stays stateless.** Making it a row would add a database round trip
-to every service *and* to the nginx `auth_request`. So the row backs the **refresh** token, and the
-consequence is stated rather than hidden: revoking a session stops it renewing itself immediately,
-but an access token already handed out keeps working until it expires (≤ 1 h). The settings UI says
-so in as many words.
+**The access token is never looked up by the services.** Making it a row would add a database round
+trip to every service. So the row backs the **refresh** token, and the ONE place every request
+already passes - `/api/auth/verify`, nginx's `auth_request` - reads it by the token's `sid`: an access
+token whose session has ended is answered anonymous there, so revoking a session cuts its HTTP access
+at once, not at the token's expiry. Only the gateway socket, which checks its own cookie, may outlive
+the session by up to the token's hour; the settings UI says so in as many words
+([sessions](../sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
 
 **The row also names the MLS device it belongs to** (`deviceId`, nullable), written once per app
 start after the client unlocks MLS — the first moment it can say which device it is. It is the only

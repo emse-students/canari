@@ -448,6 +448,25 @@ describe('AuthSessionsService', () => {
       await expect(service.revokeOthers('user-1', null)).resolves.toBe(2);
       expect(repo.rows).toHaveLength(0);
     });
+    it('reads a session live for its owner until the owner revokes it', async () => {
+      const { service } = makeService();
+      const opened = await service.create('user-1');
+
+      await expect(service.isLive(opened.sessionId, 'user-1')).resolves.toBe(true);
+      // Another account naming the id is not its owner.
+      await expect(service.isLive(opened.sessionId, 'user-2')).resolves.toBe(false);
+
+      await service.revokeOwned('user-1', opened.sessionId);
+      await expect(service.isLive(opened.sessionId, 'user-1')).resolves.toBe(false);
+    });
+
+    it('reads an idle-expired row as ended even before the sweep removes it', async () => {
+      const { service } = makeService();
+      const opened = await service.create('user-1');
+      const later = new Date(opened.expiresAt.getTime() + 1);
+
+      await expect(service.isLive(opened.sessionId, 'user-1', later)).resolves.toBe(false);
+    });
   });
 
   describe('a session that ends records its push ending in the same transaction', () => {

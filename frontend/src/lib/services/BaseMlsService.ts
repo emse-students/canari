@@ -24,6 +24,7 @@ import {
 import {
   DeliveryDeadlineError,
   DeviceRevokedError,
+  DeviceRevokedByOwnerError,
   KEY_PACKAGE_ROUND_DEADLINE_MS,
   raceDeadline,
   NotAGroupMemberError,
@@ -1251,7 +1252,10 @@ export abstract class BaseMlsService implements IMlsService {
         'a gateway socket of this document still carries it - its revocation would be signalled to that socket'
       );
     }
-    return this.deleteDevice(userId, deviceId);
+    // RETIRED, NOT REVOKED: this install abandoned the id itself. Said explicitly, because the
+    // server reads a delete without a reason as the OWNER's revocation - which would make a later
+    // holder of the id (a reinstall restoring it) wipe itself instead of enrolling again.
+    return this.deleteDevice(userId, deviceId, 'retired');
   }
 
   /** Retires every abandoned id of this account, through {@link deleteAbandonedDevice}. */
@@ -3009,11 +3013,18 @@ export abstract class BaseMlsService implements IMlsService {
 
   /**
    * Generates and publishes this device's key packages, re-enrolling under a fresh id when the
-   * server answers that this one is revoked.
+   * server answers that THIS INSTALL RETIRED the id ({@link DeviceRevokedError}), and never when it
+   * answers that the OWNER revoked the device ({@link DeviceRevokedByOwnerError}).
    *
-   * A revoked id is denylisted for good and `resolveDeviceId` deliberately hands the same id back
+   * A retired id is denylisted for good and `resolveDeviceId` deliberately hands the same id back
    * after a reinstall, so retrying it is futile: the only way forward is to become a new device.
    * Retried exactly once - a second refusal is a server bug, not a state to keep rotating through.
+   *
+   * AN OWNER'S REVOCATION IS THE OPPOSITE ANSWER, whichever of the two ways the device learns it
+   * first - the `device_revoked` frame or this refusal. The refusal says who banned the id, and an
+   * owner's revocation goes to the one revocation consequence there is - the `onDeviceRevoked`
+   * handler, which confirms with the server and runs `wipeRevokedDevice` - and the round fails.
+   * Nothing here mints an id.
    */
   async generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage> {
     // NAMED FOR ITS SPAN, so an external join issued while it runs can wait for the publication it
@@ -3036,6 +3047,10 @@ export abstract class BaseMlsService implements IMlsService {
         this.retireAbandonedIds();
         return published;
       } catch (e) {
+        if (e instanceof DeviceRevokedByOwnerError) {
+          this.reportRevokedByOwner(e);
+          throw e;
+        }
         if (!(e instanceof DeviceRevokedError)) throw e;
         if (roundState.stale) {
           console.error(
@@ -3130,6 +3145,19 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
+  /**
+   * Hands an owner's revocation met by a key-package round to the ONE revocation consequence
+   * (`onDeviceRevoked`, the handler the `device_revoked` frame also calls): it confirms with the
+   * server and wipes the device. Never a rotation. With no handler wired - no live session yet - the
+   * login's own revocation gate is what wipes, and the line says so.
+   */
+  private reportRevokedByOwner(e: DeviceRevokedByOwnerError): void {
+    console.error(
+      `[MLS] device ${sanitizeForLog(e.deviceId)} was REVOKED BY ITS OWNER (${e.reasonStated ? 'stated by the server' : 'cause not stated - read as the owner'}) - NOT re-enrolling; ${this.deviceRevokedCallback ? 'handing it to the revocation handler (sign out and wipe)' : 'no revocation handler is wired yet, so the login revocation gate is what wipes it'}`
+    );
+    this.deviceRevokedCallback?.();
+  }
+
   /** Records a settled round and wakes every parked join, which re-reads the fact itself. */
   private noteKeyPackageRoundSettled(error?: unknown): void {
     this.keyPackageRoundsActive--;
@@ -3159,7 +3187,7 @@ export abstract class BaseMlsService implements IMlsService {
    *   failed and nothing else is running, the failure is the answer.
    * - a round is running: park until one settles, then read again. A round failing while an
    *   overlapping one still runs refuses nobody - the survivor may yet publish.
-   * - no round is running and the fact is absent (or the id revoked, which a round re-enrols):
+   * - no round is running and the fact is absent (or the id banned, which a round re-enrols only when this install retired it):
    *   START one, the only thing that can make it true, and wait for it. If it succeeded and the
    *   server STILL does not hold the package, that is unverified, never a second round.
    * - the read got no answer and no round is running: unverified; nothing is claimed.
@@ -3928,14 +3956,15 @@ export abstract class BaseMlsService implements IMlsService {
 
   async deleteDevice(
     userId: string,
-    deviceId: string
+    deviceId: string,
+    reason?: 'retired'
   ): Promise<{
     status: string;
     groupsCleaned: number;
     keyPackagesDeleted: number;
     oneTimeKeyPackagesDeleted: number;
   }> {
-    return this.delivery.deleteDevice(userId, deviceId);
+    return this.delivery.deleteDevice(userId, deviceId, reason);
   }
 
   // ── Shared MLS decrypt session (overridden on Web for the worker path) ─────

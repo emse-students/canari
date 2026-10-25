@@ -11,9 +11,11 @@ one application and apply to the other three. Per-application detail lives with 
 **An opaque token in the cookie, and one server-side row holding everything else.** Sky's model, now
 MiGallery's and the Cercle's.
 
-Canari is the one variant, deliberately: its 1 h access token stays STATELESS, because six services
-and nginx verify it without touching a database. The row backs the REFRESH token instead, and carries
-`sid` + `jti` (`apps/core-service/src/auth/auth-sessions.service.ts`). On Android a session may also
+Canari is the one variant, deliberately: its 1 h access token is a signed JWT the six services never
+look up. The row backs the REFRESH token, and carries `sid` + `jti`
+(`apps/core-service/src/auth/auth-sessions.service.ts`) - and since 2026-10-25 the one verifier every
+request passes through, `/api/auth/verify`, also reads that row by `sid`, so an access token lives no
+longer than its session ([below](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). On Android a session may also
 own ONE restore key, which dies with the row and moves the session to a new phone rather than adding
 one ([account-restore](account-restore.md)).
 
@@ -359,6 +361,36 @@ can name a device, and a holder who never unlocks MLS never names one at all - w
 stolen cookie takes. The settings panel gives such a row its own entry instead of hiding it under a
 device it cannot claim.
 
+## An access token is only as alive as its session (2026-10-25)
+
+**`/api/auth/verify` answers an access token whose session has ended exactly as it answers an expired
+one: anonymous.** Every authenticated location in nginx runs that verifier as its `auth_request`, and
+every guarded route of every service reads the `X-Logged-In` it sets, so from the commit that deletes
+a session row - a sign-out, the owner removing it from the device panel, "sign out the others", a
+replay, a restore - every request carrying a token minted for it is a 401. The client meets that 401,
+renews, is refused the refresh, and signs out.
+
+- **One read, at the one place every request already goes.** `AuthSessionsService.isLive(sid, sub)`
+  is a primary-key read beside the platform config the verifier already reads. Every ending of a
+  session DELETES its row, so absence is the ended state; `expiresAt` is compared too because an
+  idle-expired row may not have been swept yet. No cache and no clock: the deletion is what flips it.
+- **A token naming no session is refused.** Every token minted since the `sid` claim carries one, so
+  a token without it was not minted by the current service (`warn`, `Access refused: ... names no
+  session`).
+- **A failed read is not an answer.** It propagates as a 5xx - nginx fails the request, and a client
+  keeps its session on a 5xx; it is never turned into "anonymous" (which would sign a user out on a
+  database hiccup) nor into "logged in" (which would let an ended session through).
+- **What it closes.** Every HTTP route behind `auth_request` - device registration, key-package and
+  prekey publication, commits and external joins, add locks, Welcome requests, invitation accepts, push
+  registration. A device-creating call from an ended session is refused before it reaches the
+  delivery service, whatever client version sent it.
+- **What it does not.** The gateway WebSocket authenticates its own `canari_ws_token` cookie (the
+  upgrade carries no `Authorization` header), so a socket - open, or opened within the token's hour -
+  is not cut by this; it can create nothing, since every creating call is HTTP. The push-secret
+  background routes are not behind it either: a session's ending deletes its push registration and
+  with it the secret those routes check (below). The settings panel says the socket part in as many
+  words (`settings_sessions_delay_note`).
+
 ## A session that ends takes its device's push registration with it (2026-10-22)
 
 **After any sign-out, the device stops being a push destination for the account that left - on
@@ -394,9 +426,12 @@ durable by construction:
   device whose earlier session died without an ending therefore loses that stale row with its
   current session's sign-out.
 
-**A final pass, because an access token outlives its session.** An access token minted before the
-session ended stays valid for up to one `ACCESS_TOKEN_TTL_SECONDS` and can still register under the
-ended session's id. So a pass that succeeded before `endedAt + ACCESS_TOKEN_TTL_SECONDS +
+**A final pass, because a request can be in flight across the ending.** Since 2026-10-25 an access
+token whose session has ended is answered anonymous at the verifier
+([above](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)), but a registration whose
+`auth_request` answered just before the session's deletion committed still reaches chat-delivery
+afterwards, carrying the ended session's id - and a node rolled out before that change does not check
+at all. So a pass that succeeded before `endedAt + ACCESS_TOKEN_TTL_SECONDS +
 CREDENTIAL_SKEW_SECONDS` keeps the row, due at that instant, and the row is deleted only after a pass
 that STARTED after it - the account erasure's `afterSuccess` rule, a termination proved by the
 token's own expiry. `SessionPushEndService` drains the outbox exactly as `AccountErasureService`

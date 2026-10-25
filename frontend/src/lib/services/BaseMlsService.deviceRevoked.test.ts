@@ -12,7 +12,7 @@ import {
 import { createMlsStatePersister } from '$lib/mls-client/mlsStatePersister';
 import type { IMlsService } from '$lib/mls-client';
 import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
-import { DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
+import { DeviceRevokedByOwnerError, DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
 import { MlsStateWriteRefusedError, type MlsStateWriteLatch } from '$lib/utils/hex';
 import { dismissToast, toastStore } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -64,6 +64,57 @@ const generateKeyPackage = (ctx: unknown): Promise<Uint8Array> =>
 describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
   beforeEach(() => localStorage.clear());
 
+  /**
+   * AN OWNER'S REVOCATION IS NEVER A RE-ENROLMENT, whether the device learns it from the frame or
+   * from this refusal. It goes to the revocation handler (confirm with the server, then sign out and
+   * wipe) and the round fails - no id is minted, nothing moves, nothing is deleted.
+   */
+  it.each([
+    ['stated by the server', true],
+    ['not stated - an older server, read as the owner', false],
+  ])(
+    'an owner revocation (%s) never rotates, and hands the device to the wipe',
+    async (_l, stated) => {
+      const impl = vi.fn().mockRejectedValue(new DeviceRevokedByOwnerError('d-revoked', stated));
+      const onRevoked = vi.fn();
+      const ctx = makeCtx({
+        generateKeyPackageImpl: impl,
+        rotateDeviceIdentity: vi.fn(),
+        deviceRevokedCallback: onRevoked,
+        reportRevokedByOwner: BaseMlsService.prototype['reportRevokedByOwner'],
+      });
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await expect(generateKeyPackage(ctx)).rejects.toBeInstanceOf(DeviceRevokedByOwnerError);
+
+      expect(ctx.rotateDeviceIdentity).not.toHaveBeenCalled();
+      expect(onRevoked).toHaveBeenCalledTimes(1);
+      expect(ctx.deviceId).toBe('d-revoked');
+      expect(localStorage.getItem('mls_device_id_u')).toBeNull();
+      expect(ctx.deleteDevice).not.toHaveBeenCalled();
+      expect(impl).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('REVOKED BY ITS OWNER'));
+      error.mockRestore();
+    }
+  );
+
+  it('an owner revocation with no handler wired yet still never rotates, and says who wipes', async () => {
+    const impl = vi.fn().mockRejectedValue(new DeviceRevokedByOwnerError('d-revoked', true));
+    const ctx = makeCtx({
+      generateKeyPackageImpl: impl,
+      rotateDeviceIdentity: vi.fn(),
+      deviceRevokedCallback: null,
+      reportRevokedByOwner: BaseMlsService.prototype['reportRevokedByOwner'],
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(generateKeyPackage(ctx)).rejects.toBeInstanceOf(DeviceRevokedByOwnerError);
+
+    expect(ctx.rotateDeviceIdentity).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('login revocation gate'));
+    error.mockRestore();
+  });
+
   it('re-enrols under a fresh id and publishes again', async () => {
     const published = new Uint8Array([9]);
     const impl = vi
@@ -81,7 +132,7 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
     expect(localStorage.getItem('mls_device_id_u')).toBe('d-fresh');
     // The rotation's write ends the document if it is refused - see the latch cases below.
     expect(ctx.persistCheckpoint).toHaveBeenCalledWith({ endsDocumentOnRefusal: true });
-    expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'd-revoked');
+    expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'd-revoked', 'retired');
     expect(impl).toHaveBeenCalledTimes(2);
   });
 

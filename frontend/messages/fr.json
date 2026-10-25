@@ -2729,7 +2729,7 @@
   "settings_sessions_revoked_toast": "Connexion supprimée",
   "settings_sessions_load_error": "Impossible de charger vos connexions.",
   "settings_sessions_revoke_error": "La déconnexion a échoué. Réessayez.",
-  "settings_sessions_delay_note": "Une session déconnectée ne peut plus se prolonger, mais l'accès déjà accordé peut survivre jusqu'à une heure.",
+  "settings_sessions_delay_note": "Une session déconnectée est refusée par le serveur immédiatement ; seule sa connexion de messagerie en cours peut survivre jusqu'à une heure.",
   "minesweeper_title": "Démineur",
   "minesweeper_new_game": "Nouvelle partie",
   "minesweeper_status_won": "Terrain dégagé !",

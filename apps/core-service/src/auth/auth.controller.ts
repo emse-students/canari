@@ -1231,56 +1231,93 @@ export class AuthController {
       return res.status(200).send();
     }
 
+    let payload: { sub: string; admin?: boolean; type?: string; sid?: unknown };
     try {
-      const payload = jwt.verify(token, this.jwtSecret, {
+      payload = jwt.verify(token, this.jwtSecret, {
         algorithms: ['HS256'],
-      }) as {
-        sub: string;
-        admin?: boolean;
-        type?: string;
-        sid?: unknown;
-      };
-
-      // The refresh token is signed with the same key, so it verifies here too.
-      // Nothing but this check stops it from being spent as an access token -
-      // which would hand a 7-day credential the reach of a 1-hour one.
-      if (payload.type === 'refresh') {
-        return res.status(200).send();
-      }
-
-      const platformConfig = await this.platformService.getConfig();
-      if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!payload.admin)) {
-        res.set('X-Maintenance-Mode', 'true');
-        return res.status(503).json({
-          code: 'MAINTENANCE',
-          message:
-            platformConfig.maintenanceMessage ||
-            'Canari is under maintenance. Please try again later.',
-        });
-      }
-
-      res.set('X-User-Id', payload.sub);
-      res.set('X-Logged-In', 'true');
-      res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
-      // The session this access token was minted for. Empty for a token minted before the claim
-      // existed (one TTL after the deploy at most): a push registration it makes is then unbound.
-      res.set('X-Session-Id', typeof payload.sid === 'string' ? payload.sid : '');
-
-      // Mint a per-minute HMAC token so backend services can verify the request
-      // genuinely came through nginx (not from a compromised container).
-      if (this.internalSecret) {
-        const epochMinute = Math.floor(Date.now() / 60000);
-        const hmac = createHmac('sha256', this.internalSecret)
-          .update(`${payload.sub}:${epochMinute}`)
-          .digest('hex');
-        res.set('X-Internal-Token', hmac);
-      }
-
-      return res.status(200).send();
+      }) as typeof payload;
     } catch {
       // Invalid/expired token - pass through as anonymous; the service decides
       // whether to reject the request.
       return res.status(200).send();
     }
+
+    // The refresh token is signed with the same key, so it verifies here too.
+    // Nothing but this check stops it from being spent as an access token -
+    // which would hand a 7-day credential the reach of a 1-hour one.
+    if (payload.type === 'refresh') {
+      return res.status(200).send();
+    }
+
+    // AN ACCESS TOKEN IS ONLY AS ALIVE AS THE SESSION IT WAS MINTED FOR - a sign-out, the owner
+    // removing it from the device panel and "sign out the others" all end it at once, for every
+    // route. This is the one place every authenticated request of every service passes through
+    // (nginx `auth_request`), so the check is made here once, and an ended session is answered the
+    // way an expired token is: anonymous, which each guarded route refuses with a 401 - the answer
+    // that ends the client's session. One primary-key read, beside the platform config this route
+    // already reads; the session's own deletion is what flips it, so no clock is involved.
+    // A token naming NO session is refused too: every token minted since the `sid` claim carries
+    // one, so a token without it was not minted by this service as it is.
+    const sessionId = await this.liveSessionOfToken(payload);
+    if (sessionId === null) return res.status(200).send();
+
+    const platformConfig = await this.platformService.getConfig();
+    if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!payload.admin)) {
+      res.set('X-Maintenance-Mode', 'true');
+      return res.status(503).json({
+        code: 'MAINTENANCE',
+        message:
+          platformConfig.maintenanceMessage ||
+          'Canari is under maintenance. Please try again later.',
+      });
+    }
+
+    res.set('X-User-Id', payload.sub);
+    res.set('X-Logged-In', 'true');
+    res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
+    // The session this access token was minted for - proven live above.
+    res.set('X-Session-Id', sessionId);
+
+    // Mint a per-minute HMAC token so backend services can verify the request
+    // genuinely came through nginx (not from a compromised container).
+    if (this.internalSecret) {
+      const epochMinute = Math.floor(Date.now() / 60000);
+      const hmac = createHmac('sha256', this.internalSecret)
+        .update(`${payload.sub}:${epochMinute}`)
+        .digest('hex');
+      res.set('X-Internal-Token', hmac);
+    }
+
+    return res.status(200).send();
+  }
+
+  /**
+   * The session an access token names when it still exists for the token's subject, else null
+   * (see `check`). A
+   * database failure is NOT an answer and is not turned into one: it propagates, nginx's
+   * `auth_request` then fails the request with a 5xx, and a client keeps its session on a 5xx.
+   */
+  private async liveSessionOfToken(payload: {
+    sub: string;
+    sid?: unknown;
+  }): Promise<string | null> {
+    if (typeof payload.sid !== 'string' || payload.sid.length === 0) {
+      this.logger.warn(
+        `Access refused: the access token of user=${payload.sub} names no session - answered anonymous`
+      );
+      return null;
+    }
+    try {
+      if (await this.authSessions.isLive(payload.sid, payload.sub)) return payload.sid;
+    } catch (e) {
+      this.logger.error(
+        `Access check FAILED: could not read session sid=${payload.sid}: ${e instanceof Error ? e.message : String(e)}`
+      );
+      throw e;
+    }
+    this.logger.warn(
+      `Access refused: session sid=${payload.sid} user=${payload.sub} has ended - its access token is answered anonymous`
+    );
+    return null;
   }
 }

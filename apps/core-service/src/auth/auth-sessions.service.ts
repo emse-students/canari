@@ -247,6 +247,23 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Whether `sessionId` is a session of `userId` that has neither ended nor expired - the question
+   * `/api/auth/verify` asks of every access token, so a token outlives its session by nothing
+   * (`docs/wiki/sessions.md`, "An access token is only as alive as its session"). One primary-key
+   * read. Every ending of a session DELETES its row, so absence is the ended state; `expiresAt` is
+   * compared too because an idle-expired row may not have been swept yet. A restore-key registration
+   * asks a stricter question of the same row (also the presented refresh `jti`) -
+   * `RestoreCredentialsService.isLiveSessionOf`.
+   */
+  async isLive(sessionId: string, userId: string, now: Date = new Date()): Promise<boolean> {
+    const row = await this.sessions.findOne({
+      where: { id: sessionId, userId },
+      select: { id: true, expiresAt: true },
+    });
+    return row !== null && row.expiresAt.getTime() > now.getTime();
+  }
+
+  /**
    * Destroys one session - the logout - and records, in the same transaction, the ending of the push
    * registration it made.
    *

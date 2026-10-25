@@ -146,7 +146,7 @@ describe('the gateway socket across a device identity rotation', () => {
     await flush();
 
     expect(deleteDevice).toHaveBeenCalledTimes(1);
-    expect(deleteDevice).toHaveBeenCalledWith(USER, 'web-u-old');
+    expect(deleteDevice).toHaveBeenCalledWith(USER, 'web-u-old', 'retired');
     expect(readAbandonedDeviceIds(USER)).toEqual([]);
     // Replacing the socket is not losing it.
     expect(reconnect).not.toHaveBeenCalled();
@@ -186,7 +186,7 @@ describe('the gateway socket across a device identity rotation', () => {
     await flush();
 
     expect(FakeSocket.all).toHaveLength(0);
-    expect(deleteDevice).toHaveBeenCalledWith(USER, 'web-u-old');
+    expect(deleteDevice).toHaveBeenCalledWith(USER, 'web-u-old', 'retired');
 
     const later = svc.connect('token', svc.socketFence());
     FakeSocket.all[0].open();
