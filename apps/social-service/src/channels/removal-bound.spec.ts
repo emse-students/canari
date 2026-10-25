@@ -66,6 +66,7 @@ describe('removals bounded by the actor', () => {
       name: 'prive',
       isPrivate: salon.isPrivate,
       allowedUsers: salon.allowedUsers ?? (salon.isPrivate ? members.map((m) => m.userId) : []),
+      accessRevision: 0,
     };
     const channelRepo = {
       findOne: jest.fn(() =>
@@ -216,7 +217,9 @@ describe('removals bounded by the actor', () => {
       // The same removal, reached through the allowlist instead of the remove button.
       const { service, channelRepo, rosterWrites } = makeService();
       expect(
-        await outcome(service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-mod')))
+        await outcome(
+          service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-mod'), undefined, 0)
+        )
       ).toBe(BOUND);
       expect(channelRepo.save).not.toHaveBeenCalled();
       // Refused before the departure: nobody was cut off.
@@ -226,7 +229,16 @@ describe('removals bounded by the actor', () => {
     it('lets a salon manager drop a plain member, asked again on row-locked members', async () => {
       const { service, channel, memberRepo } = makeService();
       expect(
-        await outcome(service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-member')))
+        await outcome(
+          service.updateChannelAccess(
+            SALON,
+            'u-salons',
+            true,
+            everyoneBut('u-member'),
+            undefined,
+            0
+          )
+        )
       ).toBe('allowed');
       expect(channel.allowedUsers).toEqual(everyoneBut('u-member'));
       expect(memberRepo.findOne).toHaveBeenCalledWith(ROW_LOCKED);
@@ -239,7 +251,14 @@ describe('removals bounded by the actor', () => {
       });
       expect(
         await outcome(
-          service.updateChannelAccess(SALON, 'u-salons', true, ['u-salons', 'u-member'])
+          service.updateChannelAccess(
+            SALON,
+            'u-salons',
+            true,
+            ['u-salons', 'u-member'],
+            undefined,
+            0
+          )
         )
       ).toBe('allowed');
       expect(channel.allowedUsers).toEqual(['u-salons', 'u-member']);
@@ -257,12 +276,97 @@ describe('removals bounded by the actor', () => {
           Promise.resolve({ ...channel, allowedUsers: ['u-salons', 'u-member'] })
         )
         .mockImplementationOnce(() =>
-          Promise.resolve({ ...channel, allowedUsers: ['u-salons', 'u-member', 'u-mod'] })
+          Promise.resolve({
+            ...channel,
+            allowedUsers: ['u-salons', 'u-member', 'u-mod'],
+            accessRevision: 1,
+          })
         );
       expect(
-        await outcome(service.updateChannelAccess(SALON, 'u-salons', true, ['u-salons']))
+        await outcome(
+          service.updateChannelAccess(SALON, 'u-salons', true, ['u-salons'], undefined, 0)
+        )
       ).toBe(CHANNEL_ACCESS_CHANGED);
       expect(channelRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * THE PANEL'S LIST PREDATES A GRANT IT NEVER SAW. Admin A opened the access tab at revision 0; B
+   * granted u-mod (revision 1); A then changes the write policy, sending the list it holds. Diffing
+   * that list against the row read u-mod as a removal - cut from the key distribution, answered 200.
+   */
+  describe('the base revision the rewrite was edited at', () => {
+    const grantedSince = () => {
+      const made = makeService({ isPrivate: true, allowedUsers: ['u-salons', 'u-member'] });
+      // B's grant, committed after A's panel read revision 0.
+      made.channel.allowedUsers = ['u-salons', 'u-member', 'u-mod'];
+      Object.assign(made.channel, { accessRevision: 1 });
+      return made;
+    };
+
+    it('refuses a stale base with the current access, before anything is cut', async () => {
+      const { service, channel, channelRepo, rosterWrites } = grantedSince();
+      const refusal = await service
+        .updateChannelAccess(SALON, 'u-salons', true, ['u-salons', 'u-member'], 'admins', 0)
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: CHANNEL_ACCESS_CHANGED,
+        current: {
+          isPrivate: true,
+          allowedUsers: ['u-salons', 'u-member', 'u-mod'],
+          accessRevision: 1,
+        },
+      });
+      expect(rosterWrites).not.toHaveBeenCalled();
+      expect(channelRepo.save).not.toHaveBeenCalled();
+      expect(channel.allowedUsers).toContain('u-mod');
+    });
+
+    it('saves a current base, raises the revision and answers it', async () => {
+      const { service, channel } = grantedSince();
+      const saved = await service.updateChannelAccess(
+        SALON,
+        'u-salons',
+        true,
+        ['u-salons', 'u-member', 'u-mod', 'u-admin'],
+        'admins',
+        1
+      );
+      expect(saved).toMatchObject({ ok: true, accessRevision: 2, writePolicy: 'admins' });
+      expect(channel).toMatchObject({
+        accessRevision: 2,
+        allowedUsers: ['u-salons', 'u-member', 'u-mod', 'u-admin'],
+      });
+    });
+
+    it('drops nobody on a baseless rewrite - an old panel grants, it never removes here', async () => {
+      const { service, channel, rosterWrites } = grantedSince();
+      const saved = await service.updateChannelAccess(
+        SALON,
+        'u-salons',
+        true,
+        ['u-salons', 'u-member', 'u-admin'],
+        'admins'
+      );
+      // u-mod, absent from the stale list, is kept; u-admin, the old panel's grant, is added.
+      expect(new Set(channel.allowedUsers)).toEqual(
+        new Set(['u-salons', 'u-member', 'u-admin', 'u-mod'])
+      );
+      expect(saved).toMatchObject({ accessRevision: 2, writePolicy: 'admins' });
+      // No departure cut anyone: the roster write ran with no cut to make.
+      expect(rosterWrites).toHaveBeenCalledWith([], 'access_updated', WS, expect.any(Function));
+    });
+
+    it('raises the revision on a per-member removal and answers it', async () => {
+      const { service, channel } = grantedSince();
+      const removed = await service.removeMemberFromChannel(SALON, 'u-member', 'u-salons');
+      expect(removed).toMatchObject({ success: true, accessRevision: 2 });
+      expect(channel).toMatchObject({ accessRevision: 2, allowedUsers: ['u-salons', 'u-mod'] });
     });
   });
 

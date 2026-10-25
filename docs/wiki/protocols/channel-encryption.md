@@ -758,6 +758,10 @@ window with a durable row and a lock:
   answers the departure's name; the roster write and a `departed` row in `distribution_departures`
   (social migration `108`) commit in ONE transaction; then it evicts again with
   `?phase=after_roster_write&departure=<name>`, which settles that departure and no later one.
+  `updateChannelAccess` computes who it cuts from the list the CLIENT edited, so it names the access
+  revision that list was read at and is refused `409 CHANNEL_ACCESS_CHANGED` when the salon moved
+  since - otherwise a stale settings panel cut whoever was granted after it loaded
+  ([social-service](../services/social-service.md#an-access-rewrite-names-the-revision-it-edited-2026-10-25)).
 - **The drain asks for an OUTCOME, never the entitlement.** A failed second eviction is logged
   `[KEY_DISTRIBUTION] second eviction FAILED` and the departure stays owed. The hourly sweep
   (`drainOwedSeatEvictions`, `[SEAT_DRAIN]`) asks social-service how THAT departure ended

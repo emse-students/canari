@@ -18,6 +18,7 @@
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import {
     channelService,
+    type ChannelAccessState,
     type ChannelNotificationLevel,
     type ChannelWritePolicy,
   } from '$lib/services/ChannelService';
@@ -127,6 +128,12 @@
   let addingUserId = $state('');
   let memberAdding = $state(false);
   let writePolicy = $state<ChannelWritePolicy>('everyone');
+  /**
+   * The server's revision of the access on screen, sent as the BASE of every write here. The list
+   * this panel holds is the one it read; a grant made since by someone else is absent from it, and
+   * without a base the server read that absence as a removal and cut the grantee off, answering 200.
+   */
+  let accessRevision = $state(0);
 
   /** The three write policies, most open first. */
   const writePolicyOptions = $derived<PickerOption[]>([
@@ -174,9 +181,7 @@
         Log.d('channelSettings.loadChannelAccess superseded', channelId);
         return;
       }
-      accessIsPrivate = data.isPrivate;
-      accessAllowedUserIds = data.allowedUsers ?? [];
-      writePolicy = data.writePolicy ?? 'everyone';
+      applyAccess(data);
       // Always load the member list so the user autocomplete is scoped to workspace members.
       await loadMembers();
     } catch (e) {
@@ -211,6 +216,63 @@
     return describeCommunityRefusal(refusalCode(e)) ?? generic;
   }
 
+  /** Puts the server's answer on screen - visibility, allowlist, write policy and revision. */
+  function applyAccess(state: ChannelAccessState) {
+    accessIsPrivate = state.isPrivate;
+    accessAllowedUserIds = state.allowedUsers ?? [];
+    writePolicy = state.writePolicy ?? 'everyone';
+    accessRevision = state.accessRevision;
+  }
+
+  /**
+   * Reads the access again, keeping every message on screen - the answer to a write refused because
+   * the salon moved, and to a write that succeeded on top of somebody else's.
+   */
+  async function refreshAccess(channelId: string) {
+    Log.d('channelSettings.refreshAccess', channelId);
+    try {
+      const data = await channelService.getChannelAccess(channelId);
+      if (channelId !== selectedChannelId) {
+        Log.d('channelSettings.refreshAccess superseded', channelId);
+        return;
+      }
+      applyAccess(data);
+    } catch (e) {
+      // The list on screen is now known to be stale and could not be replaced: say so, rather than
+      // leave a list the next write would be refused over anyway.
+      console.warn('[CHANNEL] access re-read failed after a stale write', e);
+      saveError = m.chat_channel_access_load_error();
+    }
+  }
+
+  /**
+   * After a successful write made at `base`: the answer is the panel's new state when it is the very
+   * next revision - nobody else wrote in between, so the answer is this panel's own edit and nothing
+   * more. Any other revision means another write landed too, and only a fresh read shows it.
+   */
+  async function afterAccessWrite(channelId: string, base: number, answer: ChannelAccessState) {
+    if (channelId !== selectedChannelId) return;
+    if (answer.accessRevision === base + 1) {
+      applyAccess(answer);
+      return;
+    }
+    Log.d('channelSettings.afterAccessWrite another write landed', {
+      channelId,
+      base,
+      revision: answer.accessRevision,
+    });
+    await refreshAccess(channelId);
+  }
+
+  /**
+   * What a refused access write leaves on screen. `CHANNEL_ACCESS_CHANGED` means the list shown is
+   * stale - so it is read again BEFORE the refusal is named, and the admin decides on the real one.
+   */
+  async function accessWriteRefused(channelId: string, e: unknown, generic: string) {
+    if (refusalCode(e) === 'CHANNEL_ACCESS_CHANGED') await refreshAccess(channelId);
+    return accessWriteError(e, generic);
+  }
+
   /**
    * Flips visibility ON THE SERVER, at once, behind a confirmation - the same shape as removing a
    * member (below): both change who can read the channel, and both used to be deferred to
@@ -229,13 +291,20 @@
     if (!confirmed) return;
     privacySaving = true;
     saveError = '';
+    const channelId = selectedChannelId;
+    const base = accessRevision;
     try {
-      await channelService.updateChannelAccess(selectedChannelId, next, accessAllowedUserIds);
-      accessIsPrivate = next;
-      if (!next) accessAllowedUserIds = [];
+      const answer = await channelService.updateChannelAccess(
+        channelId,
+        base,
+        next,
+        accessAllowedUserIds
+      );
+      // The answer, not `next`: going private also grants whoever flipped it (server-side).
+      await afterAccessWrite(channelId, base, answer);
     } catch (e) {
       Log.d('channelSettings.handleTogglePrivacy failed', e);
-      saveError = accessWriteError(e, m.chat_channel_access_save_error());
+      saveError = await accessWriteRefused(channelId, e, m.chat_channel_access_save_error());
     } finally {
       privacySaving = false;
     }
@@ -248,17 +317,21 @@
     writePolicy = next;
     writePolicySaving = true;
     saveError = '';
+    const channelId = selectedChannelId;
+    const base = accessRevision;
     try {
-      await channelService.updateChannelAccess(
-        selectedChannelId,
+      const answer = await channelService.updateChannelAccess(
+        channelId,
+        base,
         accessIsPrivate,
         accessAllowedUserIds,
         next
       );
+      await afterAccessWrite(channelId, base, answer);
     } catch (e) {
       Log.d('channelSettings.setWritePolicy failed', e);
       writePolicy = previous;
-      saveError = accessWriteError(e, m.chat_channel_access_save_error());
+      saveError = await accessWriteRefused(channelId, e, m.chat_channel_access_save_error());
     } finally {
       writePolicySaving = false;
     }
@@ -283,17 +356,24 @@
     memberAdding = true;
     accessError = '';
     const next = [...accessAllowedUserIds, uid];
+    const channelId = selectedChannelId;
+    const base = accessRevision;
     try {
-      await channelService.updateChannelAccess(selectedChannelId, accessIsPrivate, next);
-      accessAllowedUserIds = next;
+      const answer = await channelService.updateChannelAccess(
+        channelId,
+        base,
+        accessIsPrivate,
+        next
+      );
       addingUserId = '';
+      await afterAccessWrite(channelId, base, answer);
       // Whoever admits a newcomer Welcomes them (channel-encryption section 20): the grantee's
       // phone may be shut, and only a device holding the salon's key group can add them to it.
       // Not awaited and never throws - the grant has already succeeded, every outcome is logged.
-      if (accessIsPrivate) void admitSalonGrantee(selectedChannelId, uid, appendLog);
+      if (answer.isPrivate) void admitSalonGrantee(channelId, uid, appendLog);
     } catch (e) {
       Log.d('channelSettings.addAllowedUser failed', e);
-      membersError = accessWriteError(e, m.chat_channel_add_access_error());
+      membersError = await accessWriteRefused(channelId, e, m.chat_channel_add_access_error());
     } finally {
       memberAdding = false;
     }
@@ -306,14 +386,18 @@
     });
     if (!confirmed) return;
     memberRemoving = { ...memberRemoving, [userId]: true };
+    const channelId = selectedChannelId;
+    const base = accessRevision;
     try {
-      await channelService.removeMemberFromChannel(selectedChannelId, userId);
-      accessAllowedUserIds = accessAllowedUserIds.filter((u) => u !== userId);
+      const answer = await channelService.removeMemberFromChannel(channelId, userId);
+      // The per-member route needs no base (it removes exactly one name), but its answer moves the
+      // revision, which this panel must follow to keep its next write valid.
+      await afterAccessWrite(channelId, base, answer);
       // Also remove from displayed member list
       channelMembers = channelMembers.filter((m) => m.userId !== userId);
     } catch (e) {
       Log.d('channelSettings.handleRemoveMemberFromChannel failed', e);
-      membersError = accessWriteError(e, m.chat_channel_remove_access_error());
+      membersError = await accessWriteRefused(channelId, e, m.chat_channel_remove_access_error());
     } finally {
       const updated = { ...memberRemoving };
       delete updated[userId];

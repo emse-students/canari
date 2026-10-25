@@ -162,11 +162,26 @@ const CLIENT_MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 export const CHANNEL_SIGNATURE_REQUIRED = 'CHANNEL_SIGNATURE_REQUIRED';
 
 /**
- * 409 code: an access-list rewrite refused because the salon's visibility or allowlist changed
- * between the read it was computed from and the row lock it is saved under. Nothing was written and
- * nobody was cut off; the same edit may be retried against the new row.
+ * 409 code: an access-list rewrite refused because the salon's access is no longer at the revision
+ * it was computed from - the caller's `baseAccessRevision`, or the row read before the lock it is
+ * saved under. Nothing was written and nobody was cut off; the body's `current` is the access as it
+ * stands, and the edit may be made again against it.
  */
 export const CHANNEL_ACCESS_CHANGED = 'CHANNEL_ACCESS_CHANGED';
+
+/**
+ * A salon's access as the settings panel reads and edits it, revision included - the one shape the
+ * access read, a successful rewrite and a {@link CHANNEL_ACCESS_CHANGED} refusal all answer with.
+ */
+export function channelAccessState(channel: Channel) {
+  return {
+    channelId: channel.id,
+    isPrivate: channel.isPrivate,
+    allowedUsers: channel.allowedUsers || [],
+    writePolicy: channel.writePolicy ?? 'everyone',
+    accessRevision: channel.accessRevision,
+  };
+}
 
 /**
  * 409 code: a departure that could not complete this time - its name was settled `cancelled` by the
@@ -975,9 +990,14 @@ export class ChannelService implements OnApplicationBootstrap {
       const allowed = locked.allowedUsers || [];
       if (!allowed.includes(normalised)) {
         locked.allowedUsers = [...allowed, normalised];
+        // A NEW REVISION: a settings panel holding the list without this grantee must not save it.
+        locked.accessRevision += 1;
         await m
           .getRepository(Channel)
-          .update({ id: channelId }, { allowedUsers: locked.allowedUsers });
+          .update(
+            { id: channelId },
+            { allowedUsers: locked.allowedUsers, accessRevision: locked.accessRevision }
+          );
       }
       return { outcome: 'granted' as const, channel: locked };
     });
@@ -1014,9 +1034,14 @@ export class ChannelService implements OnApplicationBootstrap {
         );
         continue;
       }
-      locked.allowedUsers = (locked.allowedUsers || []).filter((u) => u !== normalised);
+      const before = locked.allowedUsers || [];
+      locked.allowedUsers = before.filter((u) => u !== normalised);
+      // A NEW REVISION when the list changed: a settings panel still showing this user must not
+      // rewrite a list that no longer names them as if nothing had happened. Unchanged, it stays.
+      if (locked.allowedUsers.length !== before.length) locked.accessRevision += 1;
       await m.getRepository(Channel).save(locked);
       channel.allowedUsers = locked.allowedUsers;
+      channel.accessRevision = locked.accessRevision;
     }
   }
 
@@ -2885,21 +2910,27 @@ export class ChannelService implements OnApplicationBootstrap {
       );
     }
 
-    return {
-      channelId,
-      isPrivate: channel.isPrivate,
-      allowedUsers: channel.allowedUsers || [],
-      writePolicy: channel.writePolicy ?? 'everyone',
-    };
+    return channelAccessState(channel);
   }
 
-  /** Updates the channel's visibility, allowed-user list, and write policy. Requires MANAGE_CHANNEL permission. */
+  /**
+   * Updates the channel's visibility, allowed-user list, and write policy. Requires MANAGE_CHANNEL
+   * permission.
+   *
+   * @param baseAccessRevision the {@link Channel.accessRevision} the caller's list was read at. A
+   *   rewrite of any other revision is refused whole with `409 CHANNEL_ACCESS_CHANGED`, carrying the
+   *   current access: the caller's list predates a write it never saw, and diffing it against the row
+   *   would read whoever that write granted as a removal. `undefined` is a client older than the
+   *   revision (docs/wiki/legacy-compatibility.md): its list is taken as GRANTS ONLY, so it can drop
+   *   nobody - the panel it runs never meant to, a removal there being the per-member DELETE.
+   */
   async updateChannelAccess(
     channelId: string,
     actorUserId: string,
     isPrivate: boolean,
     allowedUserIds: string[],
-    writePolicy?: ChannelWritePolicy
+    writePolicy?: ChannelWritePolicy,
+    baseAccessRevision?: number
   ) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -2912,12 +2943,34 @@ export class ChannelService implements OnApplicationBootstrap {
     if (!(await this.memberCanManageChannels(actorMember)))
       throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
+    // A STALE BASE IS REFUSED BEFORE ANYTHING IS COMPUTED FROM IT - no group minted, no eviction
+    // begun. Asked again under the lock below, where it is authoritative.
+    if (baseAccessRevision !== undefined && baseAccessRevision !== channel.accessRevision) {
+      this.refuseStaleAccessRewrite(channel, actorUserId, baseAccessRevision);
+    }
+
     // WHO LOSES ACCESS, COMPUTED BEFORE THE ROW CHANGES. After the save the old roster is gone, and
     // a member dropped from a private salon would keep being routed its seeds with nothing left
     // anywhere to say they should not be.
     const wasPrivate = channel.isPrivate;
     const previousAllowed = new Set(channel.allowedUsers || []);
-    const nextAllowed = isPrivate ? allowedUserIds.map((u) => u.trim().toLowerCase()) : [];
+    const requested = isPrivate ? allowedUserIds.map((u) => u.trim().toLowerCase()) : [];
+    // A BASELESS LIST IS GRANTS ONLY. An old panel sends the list it read when it opened, so a member
+    // granted since is missing from it, and nothing in the request can tell that absence from a
+    // removal. That panel never removes through this route (its trash is the per-member DELETE), so
+    // reading every absence as "not mine to decide" loses no gesture it has.
+    const ignoredDrops =
+      baseAccessRevision === undefined && wasPrivate && isPrivate
+        ? [...previousAllowed].filter((u) => !requested.includes(u))
+        : [];
+    if (ignoredDrops.length > 0) {
+      this.logger.warn(
+        `[CHANNEL_ACCESS] baseless rewrite (client older than the access revision) would have dropped ` +
+          `${ignoredDrops.length} - kept channel=${channelId} by=${actorUserId.slice(0, 8)} ` +
+          `revision=${channel.accessRevision}`
+      );
+    }
+    const nextAllowed = [...requested, ...ignoredDrops];
     // MAKING A SALON PRIVATE GRANTS WHOEVER DID IT, the rule `createChannel` already applies to a
     // salon created private. The panel offers its allowlist only once the SERVER holds the salon
     // private (members are granted one at a time, at once), so the flip always arrives with an empty
@@ -2970,28 +3023,16 @@ export class ChannelService implements OnApplicationBootstrap {
         channel.workspaceId,
         async (m) => {
           // THE ROW IS RE-READ `FOR UPDATE` UNDER THE LOCK. `dropped` and the first evictions came
-          // from the copy read above; if another rewrite changed the salon's visibility or list since,
-          // they name the wrong people, and saving this copy would erase that rewrite. Refused whole
-          // and retryable: the departure is abandoned, so nobody is cut off.
+          // from the copy read above, at the caller's base revision; if any access write committed
+          // since, they name the wrong people, and saving this list would erase that write. Refused
+          // whole and retryable: the departure is abandoned, so nobody is cut off.
           const locked = await m.getRepository(Channel).findOne({
             where: { id: channelId },
             lock: { mode: 'pessimistic_write' },
           });
           if (!locked) throw new NotFoundException('Channel not found');
-          const lockedAllowed = new Set(locked.allowedUsers || []);
-          if (
-            locked.isPrivate !== wasPrivate ||
-            lockedAllowed.size !== previousAllowed.size ||
-            [...previousAllowed].some((u) => !lockedAllowed.has(u))
-          ) {
-            this.logger.warn(
-              `[CHANNEL_ACCESS] refused - the salon changed since it was read channel=${channelId} ` +
-                `by=${actorUserId.slice(0, 8)}`
-            );
-            throw new ConflictException({
-              code: CHANNEL_ACCESS_CHANGED,
-              message: 'The salon access changed meanwhile, retry.',
-            });
+          if (locked.accessRevision !== channel.accessRevision) {
+            this.refuseStaleAccessRewrite(locked, actorUserId, channel.accessRevision);
           }
           const communityMemberIds = wasPrivate
             ? []
@@ -3012,7 +3053,9 @@ export class ChannelService implements OnApplicationBootstrap {
           if (writePolicy) {
             locked.writePolicy = writePolicy;
           }
+          locked.accessRevision += 1;
           await m.getRepository(Channel).save(locked);
+          channel.accessRevision = locked.accessRevision;
         }
       );
     } catch (e) {
@@ -3089,16 +3132,27 @@ export class ChannelService implements OnApplicationBootstrap {
     this.logger.log(
       `[CHANNEL] access updated channel=${channelId} private=${channel.isPrivate} ` +
         `writePolicy=${channel.writePolicy ?? 'everyone'} audience=${audience.length} ` +
-        `mayWrite=${[...decisions.values()].filter(Boolean).length}`
+        `mayWrite=${[...decisions.values()].filter(Boolean).length} ` +
+        `revision=${channel.accessRevision} base=${baseAccessRevision ?? 'none'}`
     );
 
-    return {
-      ok: true,
-      channelId,
-      isPrivate: channel.isPrivate,
-      allowedUsers: channel.allowedUsers,
-      writePolicy: channel.writePolicy,
-    };
+    return { ok: true, ...channelAccessState(channel) };
+  }
+
+  /**
+   * Refuses an access rewrite computed at `base` while the salon is at another revision: the typed
+   * `409 CHANNEL_ACCESS_CHANGED`, carrying the CURRENT access so the caller can show it at once.
+   */
+  private refuseStaleAccessRewrite(current: Channel, actorUserId: string, base: number): never {
+    this.logger.warn(
+      `[CHANNEL_ACCESS] refused - the salon changed since it was read channel=${current.id} ` +
+        `by=${actorUserId.slice(0, 8)} base=${base} current=${current.accessRevision}`
+    );
+    throw new ConflictException({
+      code: CHANNEL_ACCESS_CHANGED,
+      message: 'The salon access changed meanwhile, retry.',
+      current: channelAccessState(current),
+    });
   }
 
   /**
@@ -3810,7 +3864,11 @@ export class ChannelService implements OnApplicationBootstrap {
     // No key is rotated here, and none can be: the seed that opens this channel's messages lives on
     // the sending devices. Removing someone from the community makes them ineligible for the
     // distribution group, and every sender mints a fresh session on the next send.
-    return { success: true };
+    //
+    // THE ACCESS AS THE STRIP LEFT IT, revision included: the settings panel adopts it as its new
+    // base only when it is the very next revision after its own (nobody else wrote in between), and
+    // reads the access again otherwise.
+    return { success: true, ...channelAccessState(channel) };
   }
 
   // ================= CHANNEL MEMBERS =================

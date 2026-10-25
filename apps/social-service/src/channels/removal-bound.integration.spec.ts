@@ -239,7 +239,7 @@ maybe('a removal against PostgreSQL', () => {
   it('drops a plain member from a private salon and saves the list', async () => {
     await member('plain', BASE_ROLE);
     const id = await salon(['salons', 'plain']);
-    await service.updateChannelAccess(id, 'salons', true, ['salons']);
+    await service.updateChannelAccess(id, 'salons', true, ['salons'], undefined, 0);
     expect(await allowedOn(id)).toEqual(['salons']);
   });
 
@@ -255,7 +255,9 @@ maybe('a removal against PostgreSQL', () => {
         `UPDATE channel_members SET "roleIds" = $1 WHERE "workspaceId" = $2 AND "userId" = 'promoted'`,
         [MOD_ROLE, WS]
       );
-      const rewrite = started(service.updateChannelAccess(id, 'salons', true, ['salons']));
+      const rewrite = started(
+        service.updateChannelAccess(id, 'salons', true, ['salons'], undefined, 0)
+      );
       await blockedBy(change.pid, rewrite.settled);
       await change.client.query('COMMIT');
       expect(await rewrite.outcome).toBe('REMOVAL_EXCEEDS_ACTOR');
@@ -282,7 +284,9 @@ maybe('a removal against PostgreSQL', () => {
         `UPDATE channel_roles SET permissions = 'member.kick' WHERE id = $1`,
         [grown]
       );
-      const rewrite = started(service.updateChannelAccess(id, 'salons', true, ['salons']));
+      const rewrite = started(
+        service.updateChannelAccess(id, 'salons', true, ['salons'], undefined, 0)
+      );
       await blockedBy(change.pid, rewrite.settled);
       await change.client.query('COMMIT');
       expect(await rewrite.outcome).toBe('REMOVAL_EXCEEDS_ACTOR');
@@ -337,11 +341,15 @@ maybe('a removal against PostgreSQL', () => {
     const other = await holder();
     try {
       await other.client.query('BEGIN');
-      await other.client.query(`UPDATE channels SET "allowedUsers" = $1 WHERE id = $2`, [
-        'salons,kept,late',
-        id,
-      ]);
-      const rewrite = started(service.updateChannelAccess(id, 'salons', true, ['salons']));
+      // Another access write, as every writer makes one: the list AND its revision.
+      await other.client.query(
+        `UPDATE channels SET "allowedUsers" = $1, "accessRevision" = "accessRevision" + 1
+         WHERE id = $2`,
+        ['salons,kept,late', id]
+      );
+      const rewrite = started(
+        service.updateChannelAccess(id, 'salons', true, ['salons'], undefined, 0)
+      );
       await blockedBy(other.pid, rewrite.settled);
       await other.client.query('COMMIT');
       expect(await rewrite.outcome).toBe(CHANNEL_ACCESS_CHANGED);
@@ -366,7 +374,8 @@ maybe('a removal against PostgreSQL', () => {
     groups.set(id, group);
     beforeCreate = async () => {
       await q(
-        `UPDATE channels SET "isPrivate" = true, "allowedUsers" = 'owner,bob', "distributionGroupId" = $1
+        `UPDATE channels SET "isPrivate" = true, "allowedUsers" = 'owner,bob', "distributionGroupId" = $1,
+                "accessRevision" = "accessRevision" + 1
          WHERE id = $2`,
         [group, id]
       );
@@ -464,5 +473,196 @@ maybe('a removal against PostgreSQL', () => {
     expect(await named('cache')).toBe(0);
     expect(await create('bureau', 'owner')).toBe('allowed');
     expect(await named('bureau')).toBe(1);
+  });
+
+  /**
+   * THE SETTINGS PANEL'S BASE. Admin A opens the access tab (one read), admin B grants someone, and
+   * A then edits the write policy - sending the whole list it read. Without a base, the server
+   * diffed that list against its own fresh read and cut B's grantee off, answering 200.
+   */
+  describe('an access rewrite names the revision it edited', () => {
+    const revisionOf = async (channelId: string): Promise<number> =>
+      (await ds.getRepository(Channel).findOneByOrFail({ id: channelId })).accessRevision;
+    /** Every call to chat-delivery that names `userId` - an eviction is a DELETE on their member. */
+    const evictionsOf = (userId: string): unknown[] =>
+      (global.fetch as unknown as jest.Mock).mock.calls.filter(
+        ([url, init]: [unknown, { method?: string } | undefined]) =>
+          init?.method === 'DELETE' && String(url).includes(`/members/${userId}`)
+      );
+    /**
+     * A private salon WITH a key-distribution group, so a removal from it is a real cut (an eviction
+     * call to chat-delivery) rather than a roster write with nothing to evict.
+     */
+    const keyedSalon = async (allowed: string[]): Promise<string> => {
+      const id = await salon(allowed);
+      const group = crypto.randomUUID();
+      groups.set(id, group);
+      await q(`UPDATE channels SET "distributionGroupId" = $1 WHERE id = $2`, [group, id]);
+      return id;
+    };
+    const departuresOf = async (userId: string): Promise<number> =>
+      Number(
+        (
+          await q(`SELECT count(*) AS n FROM distribution_departures WHERE "userId" = $1`, [userId])
+        )[0].n
+      );
+
+    /**
+     * THE PINNED REGRESSION, reproduced on dev 2026-10-25 through the panel's own gestures: panel A
+     * shows two allowed members; B grants W4 from its own panel (the server holds three); A, still
+     * showing two, grants W5. A's PATCH was answered 200, W4's key distribution was cut
+     * (`reason=access_updated`, a `departed` row) and the list became A's edit, with nothing said
+     * on either screen. Now A is refused, W4 is untouched, and nothing is cut.
+     */
+    it('refuses the stale panel that grants W5 after B granted W4, and cuts nobody', async () => {
+      await member('w4', BASE_ROLE);
+      await member('w5', BASE_ROLE);
+      const id = await keyedSalon(['salons', 'owner']);
+      const panelA = await service.getChannelAccess(id, 'salons');
+      const panelB = await service.getChannelAccess(id, 'owner');
+      expect(panelA.allowedUsers).toEqual(['salons', 'owner']);
+
+      // B's "Add": its own list plus W4, at the revision it read.
+      await service.updateChannelAccess(
+        id,
+        'owner',
+        true,
+        [...panelB.allowedUsers, 'w4'],
+        undefined,
+        panelB.accessRevision
+      );
+      expect(await allowedOn(id)).toEqual(['salons', 'owner', 'w4']);
+      (global.fetch as unknown as jest.Mock).mockClear();
+
+      // A's "Add": the list it still shows, plus W5, at the revision it read.
+      const refusal = await started(
+        service.updateChannelAccess(
+          id,
+          'salons',
+          true,
+          [...panelA.allowedUsers, 'w5'],
+          undefined,
+          panelA.accessRevision
+        )
+      ).outcome;
+
+      expect(refusal).toBe(CHANNEL_ACCESS_CHANGED);
+      expect(await allowedOn(id)).toEqual(['salons', 'owner', 'w4']);
+      expect(evictionsOf('w4')).toHaveLength(0);
+      expect(await departuresOf('w4')).toBe(0);
+      expect(await revisionOf(id)).toBe(panelB.accessRevision + 1);
+    });
+
+    it('the same sequence from a client that sends no base: W5 is granted, W4 is kept', async () => {
+      await member('w4-old', BASE_ROLE);
+      await member('w5-old', BASE_ROLE);
+      const id = await keyedSalon(['salons', 'owner']);
+      const panelA = await service.getChannelAccess(id, 'salons');
+      await service.updateChannelAccess(id, 'owner', true, ['salons', 'owner', 'w4-old']);
+      (global.fetch as unknown as jest.Mock).mockClear();
+
+      await service.updateChannelAccess(id, 'salons', true, [...panelA.allowedUsers, 'w5-old']);
+
+      expect(new Set(await allowedOn(id))).toEqual(
+        new Set(['salons', 'owner', 'w4-old', 'w5-old'])
+      );
+      expect(evictionsOf('w4-old')).toHaveLength(0);
+      expect(await departuresOf('w4-old')).toBe(0);
+    });
+
+    it('still cuts a member a CURRENT-base rewrite leaves off - the probe above sees a cut', async () => {
+      // The control for the two cases above: the same list, sent at the revision the server holds,
+      // is a deliberate removal, and the eviction it makes is exactly what `evictionsOf` counts.
+      await member('w4-cut', BASE_ROLE);
+      const id = await keyedSalon(['salons', 'owner', 'w4-cut']);
+      (global.fetch as unknown as jest.Mock).mockClear();
+      await service.updateChannelAccess(id, 'salons', true, ['salons', 'owner'], undefined, 0);
+      expect(await allowedOn(id)).toEqual(['salons', 'owner']);
+      expect(evictionsOf('w4-cut').length).toBeGreaterThan(0);
+    });
+
+    it("refuses A's stale rewrite after B's grant, and the grantee keeps access", async () => {
+      await member('grantee', BASE_ROLE);
+      const id = await salon(['salons', 'owner']);
+      const panel = await service.getChannelAccess(id, 'salons');
+      expect(panel.accessRevision).toBe(0);
+      // B's grant: an administrator joining is one of the real writers of the list.
+      await member('admin-b', ADMIN_ROLE);
+      await service.joinPrivateChannelAsAdmin(id, 'admin-b');
+      expect(await revisionOf(id)).toBe(1);
+
+      const refusal = await service
+        .updateChannelAccess(id, 'salons', true, panel.allowedUsers, 'admins', panel.accessRevision)
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+      expect(codeOf(refusal)).toBe(CHANNEL_ACCESS_CHANGED);
+      expect(((refusal as HttpException).getResponse() as { current: unknown }).current).toEqual(
+        expect.objectContaining({
+          allowedUsers: ['salons', 'owner', 'admin-b'],
+          accessRevision: 1,
+          writePolicy: 'everyone',
+        })
+      );
+      expect(await allowedOn(id)).toEqual(['salons', 'owner', 'admin-b']);
+      expect(await revisionOf(id)).toBe(1);
+    });
+
+    it('saves a rewrite at the current revision, and raises it once', async () => {
+      await member('next', BASE_ROLE);
+      const id = await salon(['salons', 'owner']);
+      const saved = await service.updateChannelAccess(
+        id,
+        'salons',
+        true,
+        ['salons', 'owner', 'next'],
+        'admins',
+        0
+      );
+      expect(saved).toMatchObject({ accessRevision: 1, allowedUsers: ['salons', 'owner', 'next'] });
+      expect(await revisionOf(id)).toBe(1);
+      // The same admin's next edit, at the revision the save answered, needs no reload.
+      await service.updateChannelAccess(id, 'salons', true, saved.allowedUsers, 'everyone', 1);
+      expect(await revisionOf(id)).toBe(2);
+    });
+
+    it('drops nobody on a baseless rewrite, and still saves its grant', async () => {
+      await member('old-grant', BASE_ROLE);
+      await member('old-new', BASE_ROLE);
+      const id = await salon(['salons', 'owner', 'old-grant']);
+      // An old panel that read the list before 'old-grant' was added, now granting 'old-new'.
+      await service.updateChannelAccess(id, 'salons', true, ['salons', 'owner', 'old-new']);
+      expect(new Set(await allowedOn(id))).toEqual(
+        new Set(['salons', 'owner', 'old-grant', 'old-new'])
+      );
+      expect(await revisionOf(id)).toBe(1);
+    });
+
+    it('removes one member through the per-member route, and raises the revision', async () => {
+      await member('revoked', BASE_ROLE);
+      const id = await salon(['salons', 'revoked']);
+      const removed = await service.removeMemberFromChannel(id, 'revoked', 'salons');
+      expect(removed).toMatchObject({ success: true, accessRevision: 1, allowedUsers: ['salons'] });
+      expect(await allowedOn(id)).toEqual(['salons']);
+      expect(await revisionOf(id)).toBe(1);
+    });
+
+    it('answers exactly one of two rewrites made at the same revision', async () => {
+      await member('race-a', BASE_ROLE);
+      await member('race-b', BASE_ROLE);
+      const id = await salon(['salons']);
+      const outcomes = await Promise.all([
+        started(service.updateChannelAccess(id, 'salons', true, ['salons', 'race-a'], undefined, 0))
+          .outcome,
+        started(service.updateChannelAccess(id, 'salons', true, ['salons', 'race-b'], undefined, 0))
+          .outcome,
+      ]);
+      expect(outcomes.filter((o) => o === 'allowed')).toHaveLength(1);
+      expect(outcomes.filter((o) => o === CHANNEL_ACCESS_CHANGED)).toHaveLength(1);
+      const winner = outcomes[0] === 'allowed' ? 'race-a' : 'race-b';
+      expect(await allowedOn(id)).toEqual(['salons', winner]);
+      expect(await revisionOf(id)).toBe(1);
+    });
   });
 });

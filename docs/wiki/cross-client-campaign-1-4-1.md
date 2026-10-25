@@ -252,8 +252,11 @@ and the write policy alone, and EVERY such PATCH reaches that re-read: the save 
 `cancelled` by a refused drop" is unreachable as a RACE from the UI**: no panel gesture builds a PATCH
 that drops someone. A panel that went STALE does send one - it never re-reads the list after loading
 it, and the PATCH carries no base, so the server takes the stale list as meant and cuts whoever was
-granted since, answered 200 ([backlog](backlog.md#p2---a-salon-access-rewrite-from-a-stale-panel-silently-cuts-whoever-was-granted-since-found-2026-10-25)).
-RM-4's judge names that outcome when it sees two 200s.
+granted since, answered 200 - until the PATCH carried the revision it edited: a stale one is now
+refused `409 CHANNEL_ACCESS_CHANGED` and the panel reads the list again
+([social-service](services/social-service.md#an-access-rewrite-names-the-revision-it-edited-2026-10-25)).
+RM-4's judge names that outcome when it sees two 200s; on a build carrying the revision, two grants
+from panels read at the same revision answer one 200 and one 409.
 
 #### ADM - group-link admission, new and old clients
 

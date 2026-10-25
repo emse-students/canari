@@ -533,14 +533,17 @@ export class ChannelsController {
     );
   }
 
-  /** Returns the channel's access settings (isPrivate, allowedUsers, writePolicy). Readers only. */
+  /** Returns the channel's access settings (isPrivate, allowedUsers, writePolicy, accessRevision). Readers only. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/access')
   getChannelAccess(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
     return this.service.getChannelAccess(channelId, xUserId.trim().toLowerCase());
   }
 
-  /** Updates the channel's isPrivate flag, allowedUsers list, and write policy (who may post). */
+  /**
+   * Updates the channel's isPrivate flag, allowedUsers list, and write policy (who may post), at the
+   * `baseAccessRevision` the caller read (a stale one answers `409 CHANNEL_ACCESS_CHANGED`).
+   */
   @UseGuards(NginxAuthGuard)
   @Patch(':channelId/access')
   updateChannelAccess(
@@ -554,12 +557,20 @@ export class ChannelsController {
         HttpStatus.BAD_REQUEST
       );
     }
+    const base = body.baseAccessRevision;
+    if (base !== undefined && !(Number.isSafeInteger(base) && base >= 0)) {
+      throw new HttpException(
+        { statusCode: HttpStatus.BAD_REQUEST, message: 'Invalid base access revision' },
+        HttpStatus.BAD_REQUEST
+      );
+    }
     return this.service.updateChannelAccess(
       channelId,
       xUserId.trim().toLowerCase(),
       body.isPrivate,
       body.allowedUserIds ?? [],
-      body.writePolicy
+      body.writePolicy,
+      base
     );
   }
 

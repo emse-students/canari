@@ -520,6 +520,26 @@ over the 30-day deploy-log archive ([backlog](backlog.md#owed-to-the-user---deci
 and the read side, `queued.proto ?? queued.content ?? ''` in `push.controller.ts`, which logs
 `LEGACY_CONTENT_ROW` at warn if a row ever carries it. Then this entry goes.
 
+### 2027-04-25 - a salon access rewrite with no `baseAccessRevision`
+
+**Site:** `ChannelService.updateChannelAccess` (`ignoredDrops`) in
+[`apps/social-service/src/channels/channel.service.ts`](../../apps/social-service/src/channels/channel.service.ts),
+and the optional `baseAccessRevision` of `UpdateChannelAccessDto`.
+**Shim:** since 2026-10-25 the settings panel sends the access revision it edited, and a stale one is
+refused `409 CHANNEL_ACCESS_CHANGED` ([social-service](services/social-service.md#an-access-rewrite-names-the-revision-it-edited-2026-10-25)).
+An older client sends none. Its list is then read as GRANTS ONLY while the salon stays private: every
+name it lacks is kept, never dropped, because that list may predate a grant and nothing in it tells a
+stale absence from a removal. Its panel never removed through this route - its trash is the
+per-member `DELETE`, unchanged - so no gesture it offers is lost.
+**What it does not cover:** a stale VISIBILITY flip from such a client (it read the salon private,
+another admin made it public, it saves its write policy) is not detectable without a base.
+**Why a date and not the floor alone:** the panel ships inside the phone apps, which update when their
+store decides; six months, as for the push wording above.
+**On removal** (the date, or earlier once `minClientVersion` is a build carrying the base): make
+`baseAccessRevision` required (a `400` without it), delete `ignoredDrops` and its warn line. The warn
+line, `baseless rewrite (client older than the access revision)`, measures the traffic first.
+**Cost of keeping it:** an old client cannot remove anyone through a PATCH - which it never did.
+
 ### 2027-02-19 - a server-composed `title` / `body` on social and form pushes
 
 **Site:** `PushContent.legacyTitle` / `legacyBody` in
