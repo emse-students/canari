@@ -1002,6 +1002,16 @@ const CASES = [
   // `errors` is the bucket that DECIDES - it also lands in `notable`, and the matcher above asserts
   // membership rather than exclusivity for exactly that reason.
   ['error', '[RESET] 2 store(s) SURVIVED the wipe: canari-mls, keyval-store', 'errors'],
+  // A BULK ADD OF THREE, as FLOOR-2 prints it (2026-10-25): the member list is comma-separated.
+  ['log', 'Inviting 3 member(s): c71e1a5b…, 223bc34e…, 43319a65…...', 'benign'],
+  ['log', '[OK] Added: c71e1a5b…, 223bc34e…, 43319a65… (3 device(s)). (3 user(s) delivered)', 'benign'],
+  ['log', '[SYNC] Members added: c71e1a5b…, 223bc34e…, 43319a65… (3/3 delivered)', 'benign'],
+  ['log', '[SYNC] Members added: c71e1a5b…, 223bc34e… (1/2 delivered) and more', 'unexplained'],
+  // The admitted device's two 1.4.x decision lines, and their controls.
+  ['log', "[HISTORY_ADDRESSED] 7722a9f1… admitted - the inviter's push is solicited", 'benign'],
+  ['log', '[LEAF_REFRESH] 7722a9f1... first sight of this leaf (admitted, no refresh of ours on record) - observed now, its first refresh is owed from 5.2 d after this or seven days after its admission, whichever is later', 'benign'],
+  ['log', '[LEAF_REFRESH] 7722a9f1... first sight of this leaf (commit-sourced, no refresh of ours on record) - observed now, its first refresh is owed from 5.2 d after this', 'unexplained'],
+  ['log', '[HISTORY_ADDRESSED] REFUSED an addressed message in 7722a9f1… from c71e1a5b - only a history answer may be addressed in a conversation', 'unexplained'],
 ];
 
 let failures = 0;
