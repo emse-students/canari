@@ -38,7 +38,7 @@ import { awaitQuiet, readEstateBuild } from '../deploy.mjs';
 import { groupTombstones, sweepDismissed } from './dismiss.mjs';
 import { ESTATE, srvLines, verifyTarget } from '../estate.mjs';
 import { SITE } from '../site.mjs';
-import { srvReport, srvSummary } from '../srvlog.mjs';
+import { srvReport, srvSummary, windowRow } from '../srvlog.mjs';
 import { client } from '../chat.mjs';
 import * as phone from '../phone.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
@@ -1277,7 +1277,8 @@ serverWindowFrom = new Date().toISOString();
 try {
   // The reader is passed in rather than reached for: `srvlog.mjs` is pure so a CI self-test can take
   // its rule lists, and WHICH ESTATE to read is a fact only `estate.mjs` holds (it follows `SITE`).
-  server = srvReport(srvLines, windowFrom, { subjects: [...SUBJECTS] });
+  // A ONE-ROW PASS IS JUDGED AS THAT ROW (`windowRow`): its own expected lines are not out of row.
+  server = srvReport(srvLines, windowFrom, { subjects: [...SUBJECTS], row: windowRow(rows) });
   console.log(`SERVER (since ${windowFrom})\n`);
   for (const line of srvSummary(server)) console.log(line);
   console.log(`\n  ${server.clean ? 'server clean' : 'SERVER NOT CLEAN - run srvlog.mjs --since ' + windowFrom + ' for the lines'}`);
