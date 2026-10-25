@@ -117,6 +117,7 @@ function fakeClient(held: { init?: Held; resolveDeviceId?: Held } = {}) {
     connect: vi.fn(async () => {
       state.socketOpen = true;
     }),
+    gatewaySocketSettled: vi.fn(async () => {}),
     pauseSocket: vi.fn(() => {
       state.socketOpen = false;
     }),

@@ -157,6 +157,36 @@ to `routeFrame` on each platform so that a held frame and a live one take litera
 Behaviour is in `BaseMlsService.inboundGate.test.ts` and `startGatewayHandshake.test.ts`; the boot
 ORDER, which no behavioural test can see, is in six source guards in `offlineUnlock.test.ts`.
 
+#### The device id is not final when the handshake starts (fixed 2026-10-25)
+
+The paragraph above said the socket "reads nothing" the state load produces. **That was wrong for one
+fact: the device id.** `init()` can ROTATE it (`reenrolLostState` for a kept id whose state is
+provably gone, a credential that names another device), and the gateway routes by the `device_id` in
+the socket URL. Reproduced on a web pre-release after a lost-state re-enrolment: the socket opened
+under the abandoned id about a second after the new one was minted, presence listed only the old id,
+the new id got its frames by queue and push only until the next reconnect, and the retirement of the
+old id signalled `device_revoked` to that same live socket (`gatewaySubscribers=1`). That frame did
+no damage - the handler asks the server about the CURRENT id, which is not revoked, and ignores it -
+but the socket was deaf to the device it belonged to.
+
+**The fix is at the rotation, one implementation for web and Tauri (`BaseMlsService`):**
+
+- `connect` is concrete on the base class and QUEUES every open; the platform half is
+  `openGatewaySocket(deviceId, token)`, handed the id recorded for that socket. Two opens in flight
+  together used to let the first one's 15 s deadline close the second socket.
+- `rotateDeviceIdentity`, once the new id is on disk, queues a reopen: behind any open in flight, and
+  it replaces the socket only if one is open under another id. Without a socket it opens nothing - the
+  next open reads the new id.
+- `openGatewayConnection` waits for `gatewaySocketSettled()` before the post-connect half, so the
+  pending fetch and the KeyPackage round run on the socket that will carry this device, and a failed
+  reopen fails the connection like any open (a `SessionExpiredError` stays one).
+- An abandoned id is deleted only once no socket of this document carries it
+  (`deleteAbandonedDevice`); otherwise it stays recorded for the next published round.
+
+**The overlap is kept.** A login that does not rotate pays nothing; one that rotates pays a second
+handshake. The same reopen covers the rotation a revoked KeyPackage round triggers after the connect.
+Behaviour is in `BaseMlsService.socketRotation.test.ts` and `startGatewayHandshake.test.ts`.
+
 The order is asserted by `session/startupOrder.test.ts`, deliberately a SOURCE test: the property is
 an order between two statements inside a function that takes a live MLS client, a storage backend, a
 device key and a gateway, so there is no seam to observe it through short of running a whole

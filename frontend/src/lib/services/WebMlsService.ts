@@ -410,8 +410,8 @@ export class WebMlsService extends BaseMlsService {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  /** WASM client wrapper - opens a native browser WebSocket to the chat gateway, wiring message/close handlers and registering reconnect listeners once. */
-  async connect(token?: string): Promise<void> {
+  /** Opens a native browser WebSocket to the chat gateway under `deviceId`, wiring message/close handlers and registering reconnect listeners once. Reached through `connect` only. */
+  protected override async openGatewaySocket(deviceId: string, token?: string): Promise<void> {
     this.clearHeartbeat();
     // Close existing socket before creating a new one
     if (this.ws) {
@@ -484,7 +484,7 @@ export class WebMlsService extends BaseMlsService {
     }
     const { url: fullWsUrl, redacted: logUrl } = gatewaySocketUrl(
       wsUrl,
-      this.deviceId,
+      deviceId,
       resolvedToken || undefined
     );
 
@@ -505,7 +505,7 @@ export class WebMlsService extends BaseMlsService {
         clearTimeout(timeout);
         resolved = true;
         this.startHeartbeat();
-        console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(this.deviceId)}`);
+        console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(deviceId)}`);
         resolve();
       };
       this.ws.onerror = (event) => {

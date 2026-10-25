@@ -65,6 +65,13 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     // Real implementations, not mocks: the fresh-start assertions below (new id persisted, old
     // device deleted) are assertions ABOUT the rotation, so stubbing it would test nothing.
     rotateDeviceIdentity: WebMlsService.prototype['rotateDeviceIdentity'],
+    // The rotation's socket seams (`BaseMlsService.socketRotation.test.ts` owns them): no socket here.
+    reopenGatewaySocketAfterRotation: vi.fn(),
+    retireAbandonedIds: WebMlsService.prototype['retireAbandonedIds'],
+    deleteAbandonedDevice: WebMlsService.prototype['deleteAbandonedDevice'],
+    gatewaySocketSettled: WebMlsService.prototype['gatewaySocketSettled'],
+    isWsOpen: () => false,
+    socketStepsPending: 0,
     // BOTH HALVES OF THE CHECKPOINT, for the same reason. `persistCheckpoint` is concrete in
     // `BaseMlsService` and carries the send-ledger pairing; `writeCheckpoint` is the platform half
     // it delegates to. Stubbing either would test the rotation against a checkpoint that is not the

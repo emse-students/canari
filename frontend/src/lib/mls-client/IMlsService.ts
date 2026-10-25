@@ -878,6 +878,12 @@ export interface IMlsService {
   /** Opens a WebSocket connection to the chat gateway. Token is used when the cookie is not forwarded (Tauri, proxy, ITP). Falls back to internal getToken() if omitted. */
   connect(token?: string): Promise<void>;
   /**
+   * Resolves once every socket open queued so far has run - including the reopen a device identity
+   * rotation queues - and rejects with the last one's own failure. The post-connect half of a
+   * connection waits here so it runs on the socket that carries this device's CURRENT id.
+   */
+  gatewaySocketSettled(): Promise<void>;
+  /**
    * Declares this client able to interpret an inbound frame, and replays everything the socket
    * collected before it was.
    *

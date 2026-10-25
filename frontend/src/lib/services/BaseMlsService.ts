@@ -937,7 +937,144 @@ export abstract class BaseMlsService implements IMlsService {
 
   // ── WebSocket (platform-specific) ─────────────────────────────────────────
 
-  abstract connect(token?: string): Promise<void>;
+  /**
+   * The device id the gateway socket of this document was LAST opened under, or `null` before the
+   * first open. Written synchronously when an open starts ({@link openSocketUnderCurrentId}), so it
+   * names the socket being opened as well as the one that is open; `isWsOpen()` says which.
+   */
+  private socketDeviceId: string | null = null;
+
+  /** The latest queued socket step ({@link enqueueSocketStep}); may reject, and is never awaited bare. */
+  private socketFlight: Promise<void> = Promise.resolve();
+
+  /** How many queued socket steps have not settled. Zero means the next step runs synchronously. */
+  private socketStepsPending = 0;
+
+  /**
+   * Opens the gateway socket under the device id this document holds WHEN THE OPEN STARTS.
+   *
+   * ONE SOCKET STEP AT A TIME. Every open, and the reopen a rotation asks for
+   * ({@link reopenGatewaySocketAfterRotation}), goes through one queue, because a platform open first
+   * closes the socket it finds with its handlers detached: two opens in flight together left the
+   * first one's promise to its own 15 s deadline, which then closed the SECOND socket. Queued, an
+   * open that starts reads the outcome of the one before it. With nothing pending the open runs
+   * synchronously, exactly as it did before the queue existed.
+   */
+  connect(token?: string): Promise<void> {
+    return this.enqueueSocketStep(() => this.openSocketUnderCurrentId(token));
+  }
+
+  /**
+   * Resolves once every socket step queued so far has run, and REJECTS with the last one's own
+   * failure - a `SessionExpiredError` from a reopen stays one, so the caller stops retrying.
+   *
+   * WHY IT EXISTS: the login starts its handshake beside the MLS state load (`startGatewayHandshake`),
+   * and that load can ROTATE the device identity (a lost state re-enrolled, a credential that names
+   * someone else). The rotation queues a reopen of the socket under the new id; the post-connect half
+   * of the login waits here, so it runs on the socket that will carry this device, never on one that
+   * carries the id this document has just abandoned.
+   */
+  async gatewaySocketSettled(): Promise<void> {
+    if (this.socketStepsPending > 0) await this.socketFlight;
+  }
+
+  private enqueueSocketStep(step: () => Promise<void>): Promise<void> {
+    const run = this.socketStepsPending === 0 ? step() : this.socketFlight.then(step, step);
+    this.socketStepsPending++;
+    const settled = (): void => {
+      this.socketStepsPending--;
+    };
+    // Handling `run` here also keeps the stored copy from reporting an unhandled rejection: every
+    // caller of `connect` still receives `run` itself, with its failure.
+    run.then(settled, settled);
+    this.socketFlight = run;
+    return run;
+  }
+
+  private openSocketUnderCurrentId(token?: string): Promise<void> {
+    const deviceId = this.deviceId;
+    this.socketDeviceId = deviceId;
+    return this.openGatewaySocket(deviceId, token);
+  }
+
+  /**
+   * Re-opens the gateway socket under the id a rotation has just minted, when an open one still
+   * carries the abandoned id. Queued behind any open in flight, so an open that STARTED under the
+   * old id is replaced once it lands, whatever its timing against the rotation.
+   *
+   * The gateway routes by the id in the socket URL, so without this the live tab kept the abandoned
+   * id until its next reconnect: every frame addressed to the new id went by queue and push only,
+   * and the retirement of the old id was signalled (`device_revoked`) to this very socket.
+   *
+   * A failed reopen leaves no socket - the platform closed the old one first - so it reports the
+   * loss on the one disconnect seam every other lost socket uses.
+   */
+  private reopenGatewaySocketAfterRotation(abandoned: string): void {
+    void this.enqueueSocketStep(async () => {
+      const current = this.deviceId;
+      if (!this.isWsOpen()) {
+        console.log(
+          `[WS] identity rotated ${sanitizeForLog(abandoned)} -> ${sanitizeForLog(current)}: no gateway socket is open, the next open carries the new id`
+        );
+        return;
+      }
+      if (this.socketDeviceId === current) {
+        console.log(
+          `[WS] identity rotated -> ${sanitizeForLog(current)}: the gateway socket already carries it`
+        );
+        return;
+      }
+      console.warn(
+        `[WS] identity rotated: the gateway socket carries the abandoned id ${sanitizeForLog(
+          this.socketDeviceId ?? '-'
+        )} - reopening it under ${sanitizeForLog(current)}`
+      );
+      await this.openSocketUnderCurrentId();
+    }).catch((e: unknown) => {
+      console.error(
+        `[WS] reopening the gateway socket under the rotated id FAILED - reported as a lost socket: ${sanitizeForLog(String(e))}`
+      );
+      this.disconnectCallback?.();
+    });
+  }
+
+  /**
+   * The delete an abandoned id's retirement uses (`abandonedDevices.ts`): never while a socket of this
+   * document still carries that id. The delivery service signals `device_revoked` to every socket of
+   * the deleted id, and the live tab would receive a revocation addressed to itself. Waits for the
+   * queued socket steps first - the rotation queued its reopen before it asked for the retirement -
+   * and answers "not retired" otherwise, which keeps the id recorded for the next published round.
+   */
+  private async deleteAbandonedDevice(
+    userId: string,
+    deviceId: string
+  ): Promise<{ status: string } | undefined> {
+    await this.gatewaySocketSettled().catch(() => {
+      /* the step's failure is reported where it ran; only the socket left behind matters here */
+    });
+    if (this.isWsOpen() && this.socketDeviceId === deviceId) {
+      console.warn(
+        `[MLS] abandoned device ${sanitizeForLog(deviceId)} is still carried by this document's gateway socket - not retired now, kept for the next published round`
+      );
+      return undefined;
+    }
+    return this.deleteDevice(userId, deviceId);
+  }
+
+  /** Retires every abandoned id of this account, through {@link deleteAbandonedDevice}. */
+  private retireAbandonedIds(): void {
+    void retireAbandonedDevices({
+      userId: this.userId,
+      liveDeviceId: this.deviceId,
+      deleteDevice: (u, d) => this.deleteAbandonedDevice(u, d),
+    });
+  }
+
+  /**
+   * The platform half of {@link connect}: open the socket carrying `deviceId`, which is the id the
+   * caller recorded for it - never re-read `this.deviceId`, which a rotation may change mid-open.
+   */
+  protected abstract openGatewaySocket(deviceId: string, token?: string): Promise<void>;
   abstract isWsOpen(): boolean;
   abstract sendDisconnect(): void;
   abstract pauseSocket(): void;
@@ -2684,11 +2821,7 @@ export abstract class BaseMlsService implements IMlsService {
         // A published round proves this page's identity is accepted: any refused-rotation run ended.
         forgetRefusedRotationReloads();
         // And the server is reachable: an abandoned id a rotation could not delete is retried here.
-        void retireAbandonedDevices({
-          userId: this.userId,
-          liveDeviceId: this.deviceId,
-          deleteDevice: (u, d) => this.deleteDevice(u, d),
-        });
+        this.retireAbandonedIds();
         return published;
       } catch (e) {
         if (!(e instanceof DeviceRevokedError)) throw e;
@@ -2967,6 +3100,10 @@ export abstract class BaseMlsService implements IMlsService {
       throw e;
     }
     localStorage.setItem(ACCOUNT_KEY.deviceId(this.userId), this.deviceId);
+    // THE SOCKET FOLLOWS THE IDENTITY, AT THE ONE MOMENT THE IDENTITY CHANGES. The login opens its
+    // socket beside the state load that rotates here, so a socket opened (or opening) under the old
+    // id is reopened under the new one - queued BEFORE the retirement below, which waits for it.
+    this.reopenGatewaySocketAfterRotation(oldDeviceId);
     // The counters describe the ratchets of the device being abandoned, whose state was discarded
     // for a fresh one starting at generation zero. Carried over, they would burn against sends
     // that, from the peers' side, this device has never made.
@@ -2980,11 +3117,8 @@ export abstract class BaseMlsService implements IMlsService {
     recordAbandonedDevice(this.userId, oldDeviceId);
     // The refusals the abandoned id remembered were judged by pins its discarded state held.
     forgetRefusedDevicesOf({ userId: this.userId, deviceId: oldDeviceId });
-    void retireAbandonedDevices({
-      userId: this.userId,
-      liveDeviceId: this.deviceId,
-      deleteDevice: (u, d) => this.deleteDevice(u, d),
-    });
+    // Never while a socket of this document still carries the old id (`deleteAbandonedDevice`).
+    this.retireAbandonedIds();
     return oldDeviceId;
   }
 

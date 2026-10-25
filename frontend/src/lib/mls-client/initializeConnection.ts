@@ -89,10 +89,15 @@ export type StartedHandshake = Promise<Error | null>;
 /**
  * Starts the gateway handshake WITHOUT waiting for it, so it runs beside the MLS state load.
  *
- * The two have no data dependency in either direction: the socket carries a device id and a token,
- * both of which exist before a byte of MLS state is decrypted. Measured on production 2026-09-16,
- * the handshake was 182 ms of a 1308 ms cold start and every one of those milliseconds was spent
- * waiting for a state the socket never reads.
+ * The socket carries a device id and a token, both of which exist before a byte of MLS state is
+ * decrypted. Measured on production 2026-09-16, the handshake was 182 ms of a 1308 ms cold start and
+ * every one of those milliseconds was spent waiting for a state the socket never reads.
+ *
+ * ONE DEPENDENCY RUNS THE OTHER WAY, AND IT IS THE DEVICE ID: the state load can ROTATE it (a lost
+ * state re-enrolled, a credential naming someone else). The rotation itself reopens the socket under
+ * the new id (`BaseMlsService.reopenGatewaySocketAfterRotation`), and {@link openGatewayConnection}
+ * waits for that reopen before the post-connect half. The overlap is kept: only a rotating login pays
+ * the second handshake.
  *
  * WHAT MAKES IT SAFE IS NOT HERE BUT AT THE OTHER END: an early socket can be handed a frame before
  * the MLS client that must interpret it exists, so `BaseMlsService` holds every inbound frame until
@@ -151,6 +156,11 @@ export async function openGatewayConnection(
       const token = await getToken();
       await mlsService.connect(token);
     }
+    // THE SOCKET THAT OPENED MAY NOT BE THE ONE THAT STAYS. The login's handshake runs beside the MLS
+    // state load, and that load can rotate the device identity; the rotation queues a reopen under
+    // the new id. Nothing below runs - not the pending fetch, not the KeyPackage round - until the
+    // socket carries the id it will keep, and a failed reopen fails this connection like any open.
+    await mlsService.gatewaySocketSettled();
     setIsWsConnected(true);
     setReconnectAttempts(0);
     log('Connected to network!');

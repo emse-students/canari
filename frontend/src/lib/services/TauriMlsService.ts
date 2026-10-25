@@ -39,6 +39,7 @@ import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import { getToken } from '$lib/stores/auth';
+import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
@@ -273,8 +274,8 @@ export class TauriMlsService extends BaseMlsService {
     return this.ws !== null;
   }
 
-  /** Tauri-native `invoke` wrapper - opens a NativeWebSocket to the chat gateway, passing the Bearer token in the URL query string for mobile compatibility. */
-  async connect(token?: string): Promise<void> {
+  /** Opens a NativeWebSocket to the chat gateway under `deviceId`, passing the Bearer token in the URL query string for mobile compatibility. Reached through `connect` only. */
+  protected override async openGatewaySocket(deviceId: string, token?: string): Promise<void> {
     // Unlisten + disconnect before reconnecting so the Close event doesn't trigger disconnectCallback.
     this.clearHeartbeat();
     if (this.ws) {
@@ -348,15 +349,11 @@ export class TauriMlsService extends BaseMlsService {
 
     // Use the same regex as WebMlsService to avoid http:// → wss:// mismatch.
     const wsBase = this.baseUrl.replace(/^https?:/, (m) => (m === 'https:' ? 'wss:' : 'ws:'));
-    const { url: wsUrl, redacted } = gatewaySocketUrl(
-      wsBase,
-      this.deviceId,
-      resolvedToken || undefined
-    );
+    const { url: wsUrl, redacted } = gatewaySocketUrl(wsBase, deviceId, resolvedToken || undefined);
     console.log(`[WS] Opening connection → ${redacted}`);
 
     this.ws = await connectNativeSocket(NativeWebSocket.connect(wsUrl), NATIVE_CONNECT_TIMEOUT_MS);
-    console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
+    console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(deviceId)}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {
       // Any incoming frame proves the server is alive - reset heartbeat miss counter (parity WebMlsService).

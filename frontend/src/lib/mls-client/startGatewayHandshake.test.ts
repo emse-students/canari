@@ -38,6 +38,7 @@ const makeDeps = (connect: ReturnType<typeof vi.fn>) => {
   const setReconnectAttempts = vi.fn();
   const mlsService = {
     connect,
+    gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
     onDisconnect: vi.fn(),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     sendDisconnect: vi.fn(),
@@ -156,6 +157,39 @@ describe('openGatewayConnection handed a handshake already in flight', () => {
     expect(connect).not.toHaveBeenCalled();
     expect(setIsWsConnected).toHaveBeenCalledWith(false);
     expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('runs nothing after the open until the socket a rotation reopened has settled', async () => {
+    // THE HANDSHAKE RUNS BESIDE A STATE LOAD THAT CAN ROTATE THE DEVICE ID, and the rotation reopens
+    // the socket under the new id. The pending fetch and the KeyPackage round must run on that
+    // socket, never on the one carrying the abandoned id - and a failed reopen fails this connection.
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const { deps, mlsService, setIsWsConnected } = makeDeps(connect);
+    let release!: () => void;
+    (mlsService as unknown as { gatewaySocketSettled: () => Promise<void> }).gatewaySocketSettled =
+      vi.fn(() => new Promise<void>((r) => (release = r)));
+    const started = startGatewayHandshake(deps);
+
+    const opened = openGatewayConnection(deps, started);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mlsService.fetchPendingMessages).not.toHaveBeenCalled();
+    expect(setIsWsConnected).not.toHaveBeenCalled();
+
+    release();
+    await expect(opened).resolves.toBe(true);
+    expect(mlsService.fetchPendingMessages).toHaveBeenCalledOnce();
+  });
+
+  it('fails the connection when the reopen after a rotation failed', async () => {
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const { deps, mlsService, setIsWsConnected } = makeDeps(connect);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    (mlsService as unknown as { gatewaySocketSettled: () => Promise<void> }).gatewaySocketSettled =
+      vi.fn().mockRejectedValue(new Error('reopen refused'));
+
+    await expect(openGatewayConnection(deps, startGatewayHandshake(deps))).resolves.toBe(false);
+    expect(setIsWsConnected).toHaveBeenCalledWith(false);
+    expect(mlsService.fetchPendingMessages).not.toHaveBeenCalled();
   });
 
   it('opens one itself when handed nothing, which is what the reconnect path does', async () => {
