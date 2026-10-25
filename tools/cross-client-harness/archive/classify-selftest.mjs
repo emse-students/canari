@@ -23,6 +23,7 @@ import {
   EVICTED_REJOIN_NARRATION,
   ignoringExpectedLog,
   PAGE_BOOT_NARRATION,
+  REFUSED_FOR_LACK_OF_ROW_NARRATION,
   stripStamp,
   ignoringExpectedRefusal,
   ignoringOfflineCut,
@@ -352,6 +353,15 @@ const CASES = [
   ['log', '[04:00:00] [SYNC] the Add was abandoned before its stage (removed-meanwhile) - nobody added', 'notable'],
   ['log', '[04:00:00] [PENDING] Add of web-c71e1a5b-mvn2mrrz-j6mu to 46163138... abandoned before its stage (gave-up) - nothing committed', 'unexplained'],
   ['log', '[04:00:00] [SYNC] the Add was abandoned before its stage (removed-meanwhile) - half of them added', 'unexplained'],
+  // FRAMES REFUSED FOR LACK OF A ROW (#2414/#2416 round 4): normal only where a row provokes them, so
+  // UNEXPLAINED by default - the generic `/epoch|GAP/` rule must NOT claim them (REFUSED_FOR_LACK_OF_ROW_NARRATION).
+  ['log', "[04:00:00] [COMMIT_RACE] 46163138… not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed", 'unexplained'],
+  ['log', "[04:00:00] [REMOVE_MEMBER] 46163138… not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed", 'unexplained'],
+  ['log', "[04:00:00] [PENDING] 46163138… not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed", 'unexplained'],
+  ['log', "[04:00:00] [GAP] 46163138 not replayed: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked", 'unexplained'],
+  ['log', "[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 3: frames refused for lack of a row are still queued - no replay past them, nothing to rebuild on", 'unexplained'],
+  // ... and the control: the same tags saying something ELSE stay with the generic rule.
+  ['log', "[04:00:00] [GAP] 46163138 not replayed: frames refused for lack of a row are still queued and bring the missing epochs - replaying anyway", 'notable'],
   ["log", "[04:00:00] [PENDING] Tree of 46163138... not confirmed at the server's epoch, cannot say whether c71e1a5b is a member - nothing added", 'notable'],
   ['log', '[04:00:00] [COMMIT_RACE] 46163138... the Add of 1 device(s) was refused (epoch-moved, now epoch 3) - rebuilding on the tree that won', 'notable'],
   ['log', '[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 2: read the commit log, 1 commit(s) applied, now epoch 3', 'notable'],
@@ -1299,6 +1309,18 @@ const benignFirst = await report({
  * dirt of another kind sitting beside a forgiven line.
  */
 const FORGIVE_CASES = [
+  [
+    'frames refused for lack of a row: forgiven where a row names the narration',
+    [['log', "[04:00:00] [COMMIT_RACE] 46163138… not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed"], ['log', "[04:00:00] [GAP] 46163138 not replayed: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked"], ['log', "[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 3: frames refused for lack of a row are still queued - no replay past them, nothing to rebuild on"]],
+    REFUSED_FOR_LACK_OF_ROW_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'control: in a row that does not name that narration (a CC row with no refused frame queued) they stay dirt',
+    [['log', '[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 3: frames refused for lack of a row are still queued - no replay past them, nothing to rebuild on']],
+    [/^\[COMMIT\] [0-9a-f]{8}\.\.\. refused concurrent_commit at epoch \d+: read the commit log/],
+    { clean: false, unmatched: 1 },
+  ],
   [
     'the DEL-2 sentence, forgiven by its own needle',
     [['log', '[09:14:02] [OUTBOX] a721e695… text entry in 472df672…, group-deleted - permanent failure']],
