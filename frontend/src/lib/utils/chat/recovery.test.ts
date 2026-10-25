@@ -813,6 +813,55 @@ describe('requestReAdd - an invitation-link ask a member declined', () => {
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
   });
 
+  it('an ever-in PENDING row the roster refuses is retired on that proof, and the next pass does nothing', async () => {
+    // Re-review of #2493: the reducer used to KEEP a `pending` row on a proven exclusion, the pass
+    // cleared its cooldown, and every sweep re-ran it for ever. Rows in this state: demoted from
+    // `active` after losing state, or a placeholder of an Add whose person was removed before the
+    // Welcome.
+    const notAMember = new ApiRefusalError(403, 'NOT_A_MEMBER', 'getGroupUserMembers failed (403)');
+    const deps = makeDeps({
+      mlsService: declined({ getGroupUserMembers: vi.fn().mockRejectedValue(notAMember) }),
+      conversations: makeConversations([['g1', { id: 'g1', lifecycle: 'pending' }]]),
+    });
+
+    await requestReAdd('g1', deps);
+    expect(deps.conversations.get('g1')?.lifecycle).toBe('removed');
+    expect(enumerateNotReadyGroups('user-a')).toEqual([]);
+
+    resetReAddCooldowns();
+    await requestReAdd('g1', deps);
+    expect(deps.mlsService.getGroupMeta).toHaveBeenCalledTimes(1);
+    expect(deps.mlsService.getGroupUserMembers).toHaveBeenCalledTimes(1);
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+  });
+
+  it('a seat the account list carries but does not answer skips the round, as the first read would (F3)', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const deps = makeDeps({
+      mlsService: makeMls({
+        getDeviceMemberships: vi.fn().mockResolvedValue([]),
+        getUserGroups: vi.fn().mockResolvedValue([
+          {
+            groupId: 'g1',
+            name: '',
+            isGroup: true,
+            deviceMembership: { status: 'pending', admitted: false },
+          },
+        ]),
+        externalJoin: vi.fn().mockResolvedValue({ joined: true }),
+      }),
+    });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining('lacks welcomeQueued or addInFlight')
+    );
+    errors.mockRestore();
+  });
+
   it('a list that left out a group whose roster still names us was stale: the pass goes on to its door', async () => {
     const deps = makeDeps({
       mlsService: declined({

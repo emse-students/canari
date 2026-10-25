@@ -1153,15 +1153,23 @@ listed. The changes that close it:
   believed skips the round. A seated account keeps its door, re-read from the list's own
   `deviceMembership` when it carries one. No seat ends the recovery - no row created, no join, no
   ask - but only for what the list can speak for: no conversation row, or a never-admitted one. A
-  row this device was ever in is decided as discovery decides it, on the group's roster
-  (`decideAbsentGroupFate`; 403 `NOT_A_MEMBER` is "no", a stale list goes on to the join).
+  row this device was ever in is decided on the group's roster by ONE reader and ONE reducer that
+  discovery now shares (`readStillUserMember`, `decideAbsentGroupFate` in `groupLifecycle.ts`): the
+  typed 403 `NOT_A_MEMBER` is a proven exclusion and retires the row, `active` or `pending` alike - a
+  `pending` row kept on it re-ran recovery on every sweep; a roster that does not answer skips the
+  round; a roster that names us means the list was stale, and the pass goes on to the join.
+  Discovery used to swallow that 403 as doubt (`.catch(() => null)`), so its exclusion branch never
+  fired.
 - `stopRecovering` removes a never-admitted row instead of retiring it - the decision discovery takes
   for the same row.
 - **The `absenceIsEvidence` guard had a blind spot, now closed (review of #2493).** It refused an
   empty list whenever the device held trees, and the list never names Graine key groups - so for any
   community member an honestly empty list (a joiner whose only ask was declined) was unbelievable for
   ever, and neither recovery nor discovery could end the ask. It now counts conversation trees only
-  (`isDistributionGroup` excluded, `groupSweep.ts`).
+  (`isDistributionGroup` excluded, `groupSweep.ts`). The price is taken deliberately: a member whose
+  only conversations are pending link asks now believes a transient `200 []` too, and its ask row is
+  removed locally though the seat stands - a second ask from the link, and no history lost, since a
+  never-admitted row holds none.
 
 Nothing local records the decline: the server's missing seat is the terminal state, read afresh on
 every pass, so a member who Adds the person later is not blocked - the Welcome installs the group and

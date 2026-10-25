@@ -62,6 +62,10 @@ export interface GroupSweepSnapshot {
    *    `dm_group_members` row), so any community member's device holds trees the list cannot name,
    *    and counting them made an honestly empty list - a joiner whose only ask was declined -
    *    unbelievable for ever (review of #2493).
+   *    THE PRICE, TAKEN DELIBERATELY: a device whose only conversation trees are none at all - a
+   *    member whose only conversations are pending link asks - now believes a transient `200 []`
+   *    too. Its ask row is then removed locally though the seat stands; the cost is a second ask
+   *    from the link, and no history, since a never-admitted row holds none.
    */
   absenceIsEvidence: boolean;
   /** Why the list may not be used, in the words the skip is logged with; `null` when it may. */

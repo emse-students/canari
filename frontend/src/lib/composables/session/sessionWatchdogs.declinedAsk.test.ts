@@ -67,7 +67,7 @@ function makeMls(state: { declined: boolean }) {
 }
 
 /** The joiner's whole sequence up to the removal, then a reload, then the watchdog's first sweep. */
-async function declineThenReloadThenSweep(opts: { removeTheRow: 'discovery' | 'never' }) {
+async function declineThenReloadThenSweep(opts: { removeTheRow: 'discovery' | 'row-only' }) {
   const state = { declined: false };
   const conversations = new SvelteMap<string, object>([
     [GROUP, { id: GROUP, lifecycle: 'pending', awaitingAdmission: true }],
@@ -89,9 +89,12 @@ async function declineThenReloadThenSweep(opts: { removeTheRow: 'discovery' | 'n
   await requestReAdd(GROUP, deps as never);
   expect(enumerateNotReadyGroups('joiner')).toEqual([GROUP]);
 
-  // A member declines; discovery removes the never-admitted row (or, in the control, nobody does).
+  // A member declines; discovery removes the never-admitted row. The control removes the ROW ONLY
+  // and leaves the marker - the pre-fix purge - so the marker alone is what it isolates.
   state.declined = true;
-  if (opts.removeTheRow === 'discovery') {
+  if (opts.removeTheRow === 'row-only') {
+    conversations.delete(GROUP);
+  } else {
     await purgeLocalConversationRecord({
       conversations: conversations as never,
       contactKey: GROUP,
@@ -133,12 +136,14 @@ describe('the SYNC_WATCHDOG after a declined ask (ADM-2, ADM-4)', () => {
     expect(enumerateNotReadyGroups('joiner')).toEqual([]);
   });
 
-  it('control: with the marker standing, the same sweep DOES run a pass - so the case above can fail', async () => {
-    const { conversations, mls } = await declineThenReloadThenSweep({ removeTheRow: 'never' });
+  it('control: the row gone but the marker left standing, the same sweep DOES run a pass - so the case above can fail', async () => {
+    const { conversations, mls } = await declineThenReloadThenSweep({ removeTheRow: 'row-only' });
 
     await vi.waitFor(() => expect(mls.getGroupMeta).toHaveBeenCalledTimes(2));
-    // ...and that pass ends on the account's seat: the row goes, nothing is joined or asked.
-    await vi.waitFor(() => expect(conversations.size).toBe(0));
+    // ...and that stale pass, the ADM-2 one, now ends on the account's seat: no placeholder, no
+    // join, no second ask, and the marker it ran on is gone.
+    await vi.waitFor(() => expect(enumerateNotReadyGroups('joiner')).toEqual([]));
+    expect(conversations.size).toBe(0);
     expect(mls.externalJoin).not.toHaveBeenCalled();
     expect(mls.sendWelcomeRequest).toHaveBeenCalledTimes(1);
   });
