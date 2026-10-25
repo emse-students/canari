@@ -274,9 +274,9 @@ function sharedVenue() {
     return {
       ok: false,
       said:
-        `the shared venue "${VENUE.community}" IS NOT ON PRODUCTION - every runner that builds its ` +
-        'salon inside it will report an unlisted community. Recreate it with its ' +
-        `"${VENUE.channel}" channel and both accounts in it before running anything`,
+        `the shared venue "${VENUE.community}" IS NOT ON THE ESTATE - every runner that builds its ` +
+        'salon inside it will report an unlisted community. Build it with `bun campaign-fixtures.mjs --build` ' +
+        `(its "${VENUE.channel}" channel and the campaign accounts in it) before running anything`,
     };
   }
   const channelId = channelIdOf(workspaceId, VENUE.channel);
