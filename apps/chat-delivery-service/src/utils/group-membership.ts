@@ -6,7 +6,12 @@ import { GroupMembershipInterval } from '../entities/group-membership-interval.e
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { Group } from '../entities/group.entity';
 import { RepeatCounter, cutUserId } from './log-repeat';
-import { heldKeyPackages, takeSharedSeatLock, withSeatLock } from './seat-eviction';
+import {
+  bumpSeatGeneration,
+  heldKeyPackages,
+  takeSharedSeatLock,
+  withSeatLock,
+} from './seat-eviction';
 
 const seatsLogger = new Logger('GroupMembership');
 
@@ -284,9 +289,18 @@ export async function endGroupMembership(
   userId: string
 ): Promise<{ deleted: number; closed: number }> {
   const del = await manager.getRepository(GroupMember).delete({ groupId, userId });
-  const upd = await manager
-    .getRepository(GroupMembershipInterval)
-    .update({ groupId, userId, leftAt: IsNull() }, { leftAt: new Date() });
+  // THE GENERATION THIS REMOVAL MOVED THE GROUP TO (its caller bumped it first, under the seat lock):
+  // the counter an Add built before this departure is ordered by (`Group.epochSeatGeneration`).
+  const [row] = (await manager.query(`SELECT "seatGeneration" FROM dm_groups WHERE id = $1`, [
+    groupId,
+  ])) as Array<{ seatGeneration: number | string }>;
+  const upd = await manager.getRepository(GroupMembershipInterval).update(
+    { groupId, userId, leftAt: IsNull() },
+    {
+      leftAt: new Date(),
+      leftAtSeatGeneration: row ? Number(row.seatGeneration) : null,
+    }
+  );
   return { deleted: del.affected ?? 0, closed: upd.affected ?? 0 };
 }
 
@@ -316,15 +330,30 @@ export type AwaitingSeatWithdrawal =
  * commit's transaction, under the same lock) is wholly before, and this answers `already-admitted`
  * and touches nothing, or wholly after, and finds no seat to Welcome into.
  *
- * NOT A REMOVAL. The person was never in: no eviction is recorded, no exclusion interval is closed -
- * the interval the link opened is DELETED, so a later admission does not read a past stretch that
- * never was - and no commit is owed. The one order of `utils/seat-eviction.ts`: the roster row, the
- * queued Welcomes, the device rows.
+ * NOT A REMOVAL. The person was never in: no exclusion interval is closed - the interval the link
+ * opened is DELETED, so a later admission does not read a past stretch that never was - and no
+ * commit is owed.
+ *
+ * A DECLINE IS A DEPARTURE THE COMMIT GATE MUST STILL SEE (review of #2419). It makes no commit, so
+ * an Add a member built while the ask was open can land afterwards at the same epoch, and the gate's
+ * enrolment would undo the Decline. So a `declined` withdrawal moves the group's seat generation
+ * ({@link bumpSeatGeneration}) and records the generation it moved to in the person's
+ * `dm_seat_evictions` row (`declinedAtSeatGeneration`), the counter `enrolAdmittedPeople` orders a
+ * departure against the commit's base epoch by - never a clock. The deleted interval cannot carry
+ * it: a closed one would read as a gap and withhold its span from every history answer.
+ *
+ * AN EXPIRY RECORDS NOTHING: it is no member's decision, only the absence of one, and a member's Add
+ * built while the ask was open IS the answer it waited for - refusing that Add because a timer ran
+ * would let a clock decide an admission.
+ *
+ * The one order of `utils/seat-eviction.ts`: the `dm_groups` row (the bump), the roster row and its
+ * interval, the queued Welcomes, the device rows, `dm_seat_evictions` last.
  */
 export async function withdrawAwaitingSeat(
   m: EntityManager,
   groupId: string,
-  userId: string
+  userId: string,
+  cause: 'declined' | 'expired'
 ): Promise<AwaitingSeatWithdrawal> {
   const seat = await m.getRepository(GroupMember).findOne({
     where: { groupId, userId },
@@ -335,10 +364,27 @@ export async function withdrawAwaitingSeat(
   if (!seat.awaitingAdmission) {
     return (await holdsAdmissionTrace(m, groupId, userId)) ? 'already-admitted' : 'not-awaiting';
   }
+  if (cause === 'declined') await bumpSeatGeneration(m, groupId);
   await m.getRepository(GroupMember).delete({ groupId, userId });
-  await endDeviceMemberships(m, { userId, groupId }, 'welcomes');
   await m.getRepository(GroupMembershipInterval).delete({ groupId, userId, leftAt: IsNull() });
+  await endDeviceMemberships(m, { userId, groupId }, 'welcomes');
+  if (cause === 'declined') await recordDecline(m, groupId, userId);
   return 'withdrawn';
+}
+
+/**
+ * Writes the generation a Decline moved `groupId` to into `userId`'s `dm_seat_evictions` row -
+ * created if absent, the rest of the row left as it is. Under the seat lock (`m` must hold it),
+ * after the bump. Deleted with the group and with the account, as the row is.
+ */
+async function recordDecline(m: EntityManager, groupId: string, userId: string): Promise<void> {
+  await m.query(
+    `INSERT INTO dm_seat_evictions ("groupId", "userId", "declinedAtSeatGeneration", "updatedAt")
+     SELECT $1::uuid, $2::varchar, g."seatGeneration", now() FROM dm_groups g WHERE g.id = $1::uuid
+     ON CONFLICT ("groupId", "userId") DO UPDATE
+       SET "declinedAtSeatGeneration" = EXCLUDED."declinedAtSeatGeneration", "updatedAt" = now()`,
+    [groupId, userId]
+  );
 }
 
 /**
@@ -508,7 +554,9 @@ export async function expireUnansweredAsks(
           })
           .andWhere(`(d.status = 'active' OR d."pendingSince" >= :expiry)`, { expiry })
           .getCount();
-        return live > 0 ? 'still-live' : withdrawAwaitingSeat(m, seat.groupId, seat.userId);
+        return live > 0
+          ? 'still-live'
+          : withdrawAwaitingSeat(m, seat.groupId, seat.userId, 'expired');
       });
       outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
     } catch (e) {

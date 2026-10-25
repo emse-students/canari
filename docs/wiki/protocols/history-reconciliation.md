@@ -1107,8 +1107,11 @@ that group empty - never unfiltered - and serves the rest.
 
 The exclusions read also counts every person holding a device row (`dm_device_group_memberships`,
 either status - the enum is `pending | active`, and both mean a device the tree admitted), not only
-the roster: an add commit admits devices before `registerMember` enrols the person, and the union
-must include their windows from that first moment. It reads DISTINCT users, not rows.
+the roster: a device row can stand before its person's seat (a key group has no seat at all, and a
+server older than 2026-10-25 admitted a device before the client's `registerMember`; since then a
+conversation commit writes the seat in the same transaction, or drops the admit of a person it
+refuses - [mls-protocol](mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25)),
+and the union must include their windows from that first moment. It reads DISTINCT users, not rows.
 
 Rejected designs, and why:
 

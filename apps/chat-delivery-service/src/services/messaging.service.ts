@@ -61,6 +61,7 @@ import {
   awaitingAdmissionRefusal,
   callerSeatStandings,
   endDeviceMemberships,
+  ensureGroupMember,
   refuseAwaitingSeat,
   exclusionWindows,
   openMissingIntervals,
@@ -70,6 +71,7 @@ import {
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import { isBlockedBetween } from '../utils/user-blocks';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
   type PayloadGroupFacts,
@@ -2445,9 +2447,16 @@ export class MessagingService {
           // Redis lock's 5 s: two commits at one base can both pass the read. Only one can move the
           // epoch from it - the second waits on the row, then matches nothing - so the epoch never
           // forks, whatever a timer did.
+          // THE SEAT GENERATION THE NEW EPOCH BEGINS AT, read under the seat lock every removal moves
+          // it under - so it is stable here. The base's own (`epochSeatGeneration` before this
+          // write) orders every departure since against this commit ({@link enrolAdmittedPeople}).
+          const seatGenerations = await this.readSeatGenerations(m, groupId);
           const advance = await m
             .getRepository(Group)
-            .update({ id: groupId, activeEpoch: baseEpoch }, { activeEpoch: baseEpoch + 1 });
+            .update(
+              { id: groupId, activeEpoch: baseEpoch },
+              { activeEpoch: baseEpoch + 1, epochSeatGeneration: seatGenerations.current }
+            );
           if ((advance.affected ?? 0) !== 1) throw new EpochAdvanceLost('epoch_moved');
           if (newBase) {
             await this.putGroupInfo(groupId, newBase, baseEpoch + 1, m);
@@ -2472,6 +2481,37 @@ export class MessagingService {
           if (!Array.isArray(logged.raw) || logged.raw.length !== 1) {
             throw new EpochAdvanceLost('log_row_exists');
           }
+          // THE PEOPLE THIS COMMIT ADMITS ARE ENROLLED WITH THE ADVANCE ({@link enrolAdmittedPeople}),
+          // so an accepted Add and its roster row commit together or not at all - whichever request
+          // of the commit lands, and a resubmission answered `duplicate` finds both. A person it
+          // refuses gets no device row either: their admits are dropped here. BEFORE ANY DEVICE ROW,
+          // the one order of `utils/seat-eviction.ts` (the roster row, then the device rows), so this
+          // and the route writing the same person wait on the roster row, never in a cycle.
+          if (!distributionScopeOf(group)) {
+            const refused = await this.enrolAdmittedPeople(
+              m,
+              groupId,
+              committer,
+              admitted,
+              seatGenerations.base,
+              traceId
+            );
+            if (refused.size > 0) admitted = admitted.filter((a) => !refused.has(a.userId));
+          }
+          // THE ADMISSION A LINK'S SEAT WAITED FOR (`GroupMember.awaitingAdmission`): this commit
+          // is a member's Add - the gate above refuses every commit from a seat still awaiting one -
+          // and it admits a device of the person, declared (`admits`) or as the target of the
+          // Welcome it carries, so the person is a member from this epoch on. Written with the
+          // advance, so the flag never outlives the leaf nor goes before it; a roster write, so
+          // before any device row like the enrolment. A key group has no roster rows: nothing matches.
+          await this.liftAwaitingAdmission(
+            m,
+            groupId,
+            [...admitted.map((a) => a.userId), ...(welcome ? [welcome.userId] : [])],
+            traceId,
+            'COMMIT',
+            'admits'
+          );
           // THE COMMITTER'S SEAT, whose claim held above (`committerSeat`): written here, with the
           // advance, through the one writer of an active seat - its key package read
           // first, before any device row, the order an account erasure deletes in.
@@ -2514,20 +2554,6 @@ export class MessagingService {
                 { admittedAtEpoch: baseEpoch + 1, kickedAt: null }
               );
           }
-          // THE ADMISSION A LINK'S SEAT WAITED FOR (`GroupMember.awaitingAdmission`): this commit
-          // is a member's Add - the gate above refuses every commit from a seat still awaiting one -
-          // and it admits a device of the person, declared (`admits`) or as the target of the
-          // Welcome it carries, so the person is a member from this epoch on. Written with the
-          // advance, so the flag never outlives the leaf nor goes before it. A key group has no
-          // roster rows: nothing matches.
-          await this.liftAwaitingAdmission(
-            m,
-            groupId,
-            [...admitted.map((a) => a.userId), ...(welcome ? [welcome.userId] : [])],
-            traceId,
-            'COMMIT',
-            'admits'
-          );
           // THE WELCOME LANDS WITH THE ADVANCE OR NEITHER DOES (`ValidateCommitBody.welcome`). Its
           // seat is guaranteed as `sendWelcome` guarantees it - inserted, never overwriting a row -
           // when the admits above did not already write it.
@@ -3589,6 +3615,142 @@ export class MessagingService {
   }
 
   /**
+   * `groupId`'s seat generation now, and the one its current epoch began at - read in `m`, which
+   * holds the seat lock every removal moves the generation under (`utils/seat-eviction.ts`). A
+   * group with no row reads 0 for both.
+   */
+  private async readSeatGenerations(
+    m: EntityManager,
+    groupId: string
+  ): Promise<{ current: number; base: number }> {
+    const [row] = (await m.query(
+      `SELECT "seatGeneration", "epochSeatGeneration" FROM dm_groups WHERE id = $1`,
+      [groupId]
+    )) as Array<{ seatGeneration: number | string; epochSeatGeneration: number | string }>;
+    return {
+      current: Number(row?.seatGeneration ?? 0),
+      base: Number(row?.epochSeatGeneration ?? 0),
+    };
+  }
+
+  /**
+   * ENROLS, in the advance's transaction `m`, every person a conversation commit admits a device of
+   * and the roster does not name yet - the `dm_group_members` row `POST mls/groups/:id/members`
+   * writes, through the same {@link ensureGroupMember}.
+   *
+   * WHY HERE AND NOT IN A LATER CLIENT CALL (2026-10-25, the DUP/OFF rows of the 1.4.1 campaign).
+   * The enrolment used to be the committer's `registerMember`, made after it READ the accept. An Add
+   * whose answer was lost - settled later by a resubmission answered `duplicate`, or held offline and
+   * sent from the outbox on return - is merged by `mergeSettled`, which sends the Welcome and never
+   * enrols: the invitee held a leaf, every Welcome was refused `welcome_target_not_member`, it
+   * retired itself, and the inviter's stray sweep removed the leaf. Written here, the roster row is
+   * part of the accepted commit: a duplicate answer finds it already there, and no path to the gate
+   * can skip it.
+   *
+   * THE SAME BAR AS THE ROUTE, AND ONE MORE. Refused - not enrolled, logged `NOT_ENROLLED`:
+   * - everyone not yet on the roster, when the committer holds no admitted seat itself (the route's
+   *   `assertCallerMayMutateMembership`; the gate already refuses a seat awaiting admission);
+   * - a person a block stands between and the committer;
+   * - A PERSON WHO DEPARTED AFTER THE EPOCH THIS COMMIT WAS BUILT ON BEGAN (`departed_since_base`):
+   *   a stretch of theirs closed, or a member's Decline of their ask was recorded, at a seat
+   *   generation later than the base's (`leftAtSeatGeneration` / `declinedAtSeatGeneration` >
+   *   `epochSeatGeneration`, migration 039). A removal holds against an Add built before it (owner's
+   *   rule of 2026-10-14): an Add held in an outbox, a removal whose Remove commit was lost, or a
+   *   Decline (which makes no commit) can leave the epoch unchanged, and enrolling then would undo
+   *   the departure. Ordered by a COUNTER every removal and Decline moves under the seat lock, never
+   *   by a clock. The cost is one-sided: a re-invite built after a self-leave or a Decline at that
+   *   same epoch is refused here too (nothing distinguishes it from the stale Add), and is enrolled
+   *   by the client's own `registerMember` on a direct accept - or not at all if its answer was lost,
+   *   until a new Add. WHILE CLIENTS STILL CALL `registerMember` after a direct accept, that call
+   *   re-enrols the departed person of a stale Add too, as before this check existed: the guard
+   *   holds on the paths that skip the call (a settlement, the outbox) until it is removed.
+   * A refused person's admits are dropped by the caller: no device row, so no frame is queued for a
+   * device whose Welcome will be refused (`WELCOME_TARGET_NOT_MEMBER`, terminal for the sender) and
+   * no stale row later dates their arrival. The leaf stays in the tree with no seat, and the stray
+   * sweep REMOVES it - it repairs nothing: the person needs a new Add. Dropping the rows has a cost
+   * for a refused re-invite that the client's `registerMember` then enrols: no `admittedAtEpoch` is
+   * kept, so a frame sent between the accept and that call (or the Welcome) is not queued for the
+   * invitee's devices. A person already on the roster is left as they are (an awaiting seat is lifted
+   * by {@link liftAwaitingAdmission}). A key group's roster is social-service's entitlement, not a
+   * row here, and never reaches this.
+   *
+   * IDEMPOTENT BY CONSTRUCTION: it runs once per accepted commit, inside the transaction that writes
+   * its log row (a duplicate is answered before any transaction), and `ensureGroupMember` ignores a
+   * row that exists - so the route call a client still makes afterwards changes nothing.
+   *
+   * @param baseGeneration the seat generation the commit's base epoch began at.
+   * @returns the people refused, whose admits the caller drops.
+   */
+  private async enrolAdmittedPeople(
+    m: EntityManager,
+    groupId: string,
+    committer: string,
+    admitted: ReadonlyArray<{ userId: string; deviceId: string }>,
+    baseGeneration: number,
+    traceId: string
+  ): Promise<Set<string>> {
+    const refused = new Set<string>();
+    const people = [...new Set(admitted.map((a) => a.userId))].filter((u) => u !== committer);
+    if (people.length === 0) return refused;
+    const seats = m.getRepository(GroupMember);
+    const enrolled = new Set(
+      (
+        await seats.find({
+          where: { groupId, userId: In(people) },
+          select: { userId: true },
+        })
+      ).map((s) => s.userId)
+    );
+    const newcomers = people.filter((u) => !enrolled.has(u));
+    if (newcomers.length === 0) return refused;
+    const refuse = (userId: string, reason: string) => {
+      refused.add(userId);
+      this.logger.warn(
+        `[ADD_MEMBER][${traceId}] NOT_ENROLLED group=${groupId} user=${cutUserId(userId)} ` +
+          `reason=${reason} committer=${cutUserId(committer)} - its admits dropped, the leaf has no seat`
+      );
+    };
+    const committerSeat = await seats.findOne({
+      where: { groupId, userId: committer, ...ADMITTED_SEAT },
+      select: { id: true },
+    });
+    if (!committerSeat) {
+      for (const userId of newcomers) refuse(userId, 'committer_not_on_roster');
+      return refused;
+    }
+    // A removal or a self-leave closes a stretch; a Decline deletes the ask's stretch and records
+    // its generation on the person's eviction row instead (`withdrawAwaitingSeat`).
+    const departed = new Set(
+      (
+        (await m.query(
+          `SELECT "userId" FROM dm_group_membership_intervals
+            WHERE "groupId" = $1 AND "userId" = ANY($2::varchar[]) AND "leftAtSeatGeneration" > $3
+           UNION
+           SELECT "userId" FROM dm_seat_evictions
+            WHERE "groupId" = $1 AND "userId" = ANY($2::varchar[]) AND "declinedAtSeatGeneration" > $3`,
+          [groupId, newcomers, baseGeneration]
+        )) as Array<{ userId: string }>
+      ).map((r) => r.userId)
+    );
+    for (const userId of newcomers) {
+      if (departed.has(userId)) {
+        refuse(userId, `departed_since_base baseSeatGeneration=${baseGeneration}`);
+        continue;
+      }
+      if (await isBlockedBetween(m, committer, userId)) {
+        refuse(userId, 'blocked');
+        continue;
+      }
+      await ensureGroupMember(m, groupId, userId);
+      this.logger.log(
+        `[ADD_MEMBER][${traceId}] ENROLLED by commit group=${groupId} user=${cutUserId(userId)} ` +
+          `committer=${cutUserId(committer)}`
+      );
+    }
+    return refused;
+  }
+
+  /**
    * LIFTS `awaitingAdmission` FOR `userIds` in `groupId`, in the transaction `m` that stores what
    * admits them - the ONE writer of that lift. Two doors reach it, both behind a member:
    *
@@ -3753,8 +3915,10 @@ export class MessagingService {
    *
    * The device must be registered (its KeyPackage row; the user narrows the lookup when given, so
    * two accounts sharing a raw device id stay apart). THE TARGET OF A CONVERSATION'S WELCOME IS ON
-   * ITS ROSTER: every client path registers the member (`registerMember`) before it delivers the
-   * Welcome, so this refuses only a device whose owner the group does not name - the row a Welcome
+   * ITS ROSTER: a Welcome sent apart follows an Add whose acceptance enrolled the person
+   * ({@link enrolAdmittedPeople}), and one carried INSIDE a commit is resolved here before that
+   * commit's transaction, so its target must already be enrolled (the background re-add Welcomes
+   * existing members). This refuses only a device whose owner the group does not name - the row a Welcome
    * writes would otherwise make it a device of the group. A key-distribution group has no user
    * roster here, so its target is asked of social-service, exactly as its external joins are
    * (WP-KEYGROUP-JOIN-GATE); a grant is written there before the granting device Welcomes anyone.
@@ -4023,10 +4187,13 @@ export class MessagingService {
           `Device ${targetDeviceId} (user: ${targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`
         );
       }
-      throw new ForbiddenException({
-        error: 'welcome_target_not_member',
-        message: 'this Welcome is not accepted',
-      });
+      // `code` is what a client types the refusal by (`WelcomeTargetNotMemberError`); `error` and the
+      // message stay for the clients that predate it.
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.WELCOME_TARGET_NOT_MEMBER, 'this Welcome is not accepted', {
+          error: 'welcome_target_not_member',
+        })
+      );
     }
     const deviceInfo = target;
 

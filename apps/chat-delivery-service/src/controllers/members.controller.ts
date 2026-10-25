@@ -866,7 +866,9 @@ export class MembersController {
    * in its commit's transaction under the same lock, so an Add that came first (another member,
    * whose epoch this device has not processed yet) is answered `already-admitted` and nothing is
    * touched - the generic removal deleted that admitted person's seat and left their leaf with none.
-   * No eviction and no exclusion interval are recorded: the person was never in.
+   * No exclusion interval is recorded - the person was never in - but the Decline moves the group's
+   * seat generation and records it, so an Add built before it enrols nobody after it (review of
+   * #2419: `departed_since_base` at the commit gate).
    *
    * Every outcome is an ANSWER (200, `outcome`), so the client reads a type, never a status
    * sentence. The caller must be an ADMITTED member - a seat still awaiting a member decides nothing.
@@ -902,7 +904,7 @@ export class MembersController {
       );
     }
     const outcome = await withSeatLock(this.dataSource.manager, safeGroupId, (m) =>
-      withdrawAwaitingSeat(m, safeGroupId, safeUserId)
+      withdrawAwaitingSeat(m, safeGroupId, safeUserId, 'declined')
     );
     this.logger.log(
       `[JOIN_DECLINE] group=${safeGroupId} caller=${caller} target=${safeUserId} outcome=${outcome}`

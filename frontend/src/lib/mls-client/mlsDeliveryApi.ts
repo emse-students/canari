@@ -575,6 +575,31 @@ export class UserBlockedError extends Error {
 }
 
 /**
+ * The server refused a Welcome because the conversation's roster does not name its target
+ * (`403 WELCOME_TARGET_NOT_MEMBER`, `POST /api/mls/welcome`).
+ *
+ * TERMINAL FOR THAT WELCOME, and typed so a sender can stop on it: the server enrols the person an Add
+ * admits in the same transaction that accepts the commit, so a target still off the roster departed
+ * after the Add was built, is separated from the sender by a block, or was admitted by a commit the
+ * server did not enrol them for (a committer without a seat, a server older than the enrolment). Sending the same bytes again changes none of these; an Add that would is a new
+ * commit with a Welcome of its own. Until 2026-10-25 this was an untyped `Error`, and the settlement
+ * of a lost-answer Add re-sent its refused Welcome at every connection, for ever.
+ */
+export class WelcomeTargetNotMemberError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly targetUserId: string,
+    readonly targetDeviceId: string
+  ) {
+    super(
+      `the Welcome of ${groupId.slice(0, 8)}... to ${targetUserId}:${targetDeviceId} was refused - ` +
+        'the roster does not name its target'
+    );
+    this.name = 'WelcomeTargetNotMemberError';
+  }
+}
+
+/**
  * A group EXIT the server answered with a refusal - the answer being the point.
  *
  * `DELETE /api/mls/groups/:id` and `DELETE /api/mls/groups/:id/members/:user` are the two calls that
@@ -1341,6 +1366,13 @@ export class MlsDeliveryApi {
             groupId,
           }),
         });
+        // The one refusal a sender must act on, typed at the throw from the server's code.
+        if (response.status === 403) {
+          const refusal = await refusalFromResponse(response, 'Welcome delivery');
+          if (refusal.code === 'WELCOME_TARGET_NOT_MEMBER') {
+            throw new WelcomeTargetNotMemberError(groupId, targetUserId, deviceId);
+          }
+        }
         await assertOkMlsDeliveryResponse(
           response,
           `Welcome delivery to ${targetUserId}:${deviceId} (group ${groupId})`
