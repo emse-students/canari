@@ -59,32 +59,43 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
    question). The Tout feed stays filtered by spaces for non-followers, so what widens is exactly
    what the author approved, one person at a time.
 
-### Open questions for the user, each with the lead's recommendation
+### The four open questions, ANSWERED by the user on 2026-10-25
 
-- **Q1 - What does "private" hide from a non-follower who shares a space?** Today they see the
-  student's personal posts in Tout. Recommended: "private" governs who may FOLLOW (the acceptance),
-  and space visibility stays as it is; narrowing it to followers only (the Instagram model) would
-  make a student's posts vanish for their own promo, a change nobody asked for.
-- **Q2 - Does a member's repost of an ENTITY post widen that entity's audience?** Recommended: no.
-  An association's audience is its admins' choice (D38 needs their acceptance), so a member's
-  repost places the post in Suivis only for followers who already see it. A repost of a PERSONAL
-  post with the author's consent does widen it to the reposter's accepted followers, which is what
-  the consent is for.
-- **Q3 - Minors.** The terms admit members aged 15 and over. Private-by-default for students is the
-  protection; confirm that no age-based rule is wanted beyond it (no stored age was assumed here,
-  and none should be added for this).
-- **Q4 - Search and suggestions.** Recommended: a private account stays findable by name and can be
-  asked; its posts reach only accepted followers (plus the space rule, per Q1).
+- **Q1 - ALL PERSONAL ACCOUNTS ARE PRIVATE** (user: *"Tous les comptes sont prives alors. Pas besoin
+  de faire de distinctions entre les comptes."*). Following any PERSON is a request the person
+  accepts; there is no public/auto-accept variant, no per-profile default and no setting to switch
+  it. Entities (associations, lists, institutions) stay free to follow. "Private" governs who may
+  FOLLOW; space visibility of the Tout feed is unchanged. This SUPERSEDES decision 2's "students
+  private by default, every other profile public, each user may change it" and removes the setting
+  from WP-F1.
+- **Q2 - A member's repost of an ENTITY post DOES widen its audience** to the reposter's followers
+  (user: "Oui, jusqu'aux abonnes du membre"). The repost still needs no consent from the entity,
+  never covers an anonymous post, and obeys blocks both ways and the hide cascade. WP-F6 and WP-F5
+  must treat it as a disclosure change: Opus security review, and the repost's reach is the
+  reposter's ACCEPTED followers only.
+- **Q3 - Minors: moot.** With one rule for every person, no age-based or profile-based distinction
+  exists to confirm; none is stored or added.
+- **Q4 - A private account stays findable** by name in search and suggestions and can be asked; its
+  posts reach only accepted followers (plus the space rule, per Q1).
+
+### Confirmed by scenario with the user (2026-10-25) and three ideas that came with it
+
+Checked with four cases: a student asks a student, a staff member asks a student (same rule, no
+exception by profile), two people sharing a space still see each other's posts in the space feed
+without following, and a member's repost (author consent given) reaches the reposter's followers
+even when they do not follow the author. **New, from the same answers:** (a) rename the "Tout" tab
+"Mon espace" for clarity; (b) an information button explaining each tab; (c) a broader tutorial
+shown on the first open after a future update, covering many features of the app. All three are
+product work for after the stable, none is designed yet; ask the user for the wording and the
+placement of (b) and the scope of (c) before building.
 
 ### The work packages, in order, each with its starting point and its proof
 
 - **WP-F1 - follow status and the setting** (a DATA MIGRATION: it ships with a stable only on the
   user's go). Add `status` (`pending` / `accepted`) to `user_follows`, every existing row
-  `accepted`; a user setting "approve followers", defaulted from the profile (student private,
-  others public). Start: `apps/social-service/src/follows/entities/user-follow.entity.ts`,
+  `accepted`; NO setting (every person is private, user 2026-10-25). Start: `apps/social-service/src/follows/entities/user-follow.entity.ts`,
   `follows/follows.service.ts:81` (`followUser`), `posts/posts.controller.ts:181`. Proof:
-  migration idempotence spec, a follow on a private account lands `pending`, on a public one
-  `accepted`.
+  migration idempotence spec, a follow of a person lands `pending`, of an entity `accepted`.
 - **WP-F2 - every reader of `user_follows` reads accepted rows only.** Enumerate the consumers, not
   only the feed: the Suivis arm (`posts/posts.service.ts` ~1361 and `getFollowedUserIdsForUser`),
   the announce sweep (`spaces/reader-spaces.ts`, the two `user_follows` subqueries), the live start
@@ -123,8 +134,6 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
   consented to, so the predicate change must not land before the followers list and "remove
   follower" are live, and each user should be told once that followers now see their posts across
   spaces. Proof: WP-F5's matrix, and the Opus review.
-- **Minors.** Private by default for students is the guard; a student who switches to public does
-  so by choice. Proof: the default asserted per profile in WP-F1's spec.
 - **Notification volume.** A follow request is one push to one person; a repost notifies only the
   newly reached, under the D38 lock, so a repost of a widely seen post notifies almost nobody.
   Proof: the newly-reached spec counting zero for readers who already saw the post.
