@@ -1132,13 +1132,47 @@ BLOCKS, and a wipe that completes at some later moment nobody controls is not on
 This is the immediate half only. A device that is offline when it is deleted learns at its next
 login, from the denylist, exactly as before.
 
-`registerDevice` therefore refuses a revoked id with **403 `{ code: 'DEVICE_REVOKED' }`**. Before
+`registerDevice` (and the prekey upload, through the same `refuseRevokedDevice`) therefore refuses a
+banned id with a 403 that says WHO banned it, read from `revoked_device.reason` (migration 040):
+
+| `reason` | refusal | the client's answer |
+| --- | --- | --- |
+| `retired` - the install's own rotation abandoned the id (`DELETE ...?reason=retired`) | `{ code: 'DEVICE_REVOKED', reason: 'retired' }` | a fresh id (`DeviceRevokedError`, below) |
+| `owner` - the owner revoked it from another device (a `DELETE` without a reason) | `{ code: 'DEVICE_REVOKED_BY_OWNER', reason: 'owner' }` | sign out and wipe (`DeviceRevokedByOwnerError` -> `onDeviceRevoked` -> `wipeRevokedDevice`), never a new id |
+| NULL - a row written before the column | read as `owner` (`revocationReasonOf`) | the same wipe |
+
+**The owner's cause is never downgraded, and the merge is ONE statement** (`upsertRevocation`: an
+`INSERT ... ON CONFLICT ("userId", "deviceId") DO UPDATE SET reason = CASE ...`, which reads the
+existing row under the conflict's row lock, so two deletes racing on one id cannot both read "no
+owner" and the retired one win): a later `?reason=retired` on an id whose active ban is the owner's
+keeps `owner`, and says so at `warn`; a lapsed ban starts over with the new cause. Any other `reason`
+value is a 400 - a cause written wrong decides whether a device is wiped. **A distinct code for the owner, not a
+field of `DEVICE_REVOKED`**, so a client older than it reads an unknown 403 and does not re-enrol; and
+a client reads `DEVICE_REVOKED` WITHOUT `reason: 'retired'` (a server older than the reason) as the
+owner's, said at `error` (`classifyRevokedDeviceRefusal`). The compatibility of both directions is in
+[legacy-compatibility](../legacy-compatibility.md). An ended session cannot reach any of this: its
+access token is answered anonymous at `/api/auth/verify`
+([sessions](../sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+
+**An owner's ban ends the device's sessions before the delete answers.** Once the recorded cause is
+`owner`, the delete asks core-service to end every session bound to that device except the caller's
+own (`endDeviceSessions` in `src/internal/device-sessions.ts`; the caller's `sid` comes from
+`X-Session-Id`). Every way that call can fail is the typed `DeviceSessionsNotEndedError`, answered
+503 and logged at `error` - never swallowed, never a success. The ban is already written and the
+device already signalled (the signal is sent BEFORE this step, so its failure skips neither); the
+panel still signs out the logins it shows for the row (`removeDeviceRow`), and whatever survives
+stays listed - a login whose device is gone gets its own row - for the user's retry. A retirement
+ends none. What a device-bound
+ending does not reach is stated in
+[sessions](../sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25).
+
+Before
 that check existed, registration succeeded and the device was then filtered out of `getUserDevices`
 and resolved to a `null` KeyPackage by `resolveKeyPackagePayloadForDevice` - registered, absent from
 its own device list, never invitable to a group, with no error surfaced anywhere. That silent state
 was [WP-DEV-PANEL-1](../../../CLAUDE.md).
 
-The client answers the refusal by becoming a new device: `BaseMlsService.generateKeyPackage` catches
+The client answers a RETIRED id by becoming a new device: `BaseMlsService.generateKeyPackage` catches
 the typed `DeviceRevokedError` and calls `rotateDeviceIdentity`, which mints a fresh id, reloads
 empty MLS state, persists it, and deregisters the abandoned id. Retried exactly once - a second
 refusal is a server bug, not a state to keep rotating through. The MLS credential is

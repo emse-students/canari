@@ -64,6 +64,8 @@ describe.each([
   ['038_group_member_awaiting_admission.sql', /^\s*ALTER\s+TABLE\s+"?dm_group_members"?/im],
   // `dm_groups` is read by every commit, `dm_group_membership_intervals` by every history answer.
   ['039_departure_seat_generation.sql', /^\s*ALTER\s+TABLE\s+"?dm_groups"?/im],
+  // `revoked_device` is read by every device registration and every commit.
+  ['040_revoked_device_reason.sql', /^\s*ALTER\s+TABLE\s+"?revoked_device"?/im],
 ])('a migration that locks another hot table: %s', (file, alters) => {
   it('sets a lock_timeout before it alters the table', () => {
     const sql = read(file);

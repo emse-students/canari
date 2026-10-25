@@ -1451,10 +1451,15 @@ export interface IMlsService {
     deviceId: string
   ): Promise<{ status: string; affected: number }>;
 
-  /** Completely delete a device from the user's account (groups + KeyPackages + push token) */
+  /**
+   * Completely delete a device from the user's account (groups + KeyPackages + push token) and ban
+   * its id. Without `reason` the ban is the OWNER's revocation; `'retired'` is said only for an id
+   * this install's own rotation abandoned.
+   */
   deleteDevice(
     userId: string,
-    deviceId: string
+    deviceId: string,
+    reason?: 'retired'
   ): Promise<{
     status: string;
     groupsCleaned: number;

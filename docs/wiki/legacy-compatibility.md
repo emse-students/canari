@@ -116,6 +116,45 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Revisit 2026-12-31 - a `DEVICE_REVOKED` refusal that does not say who revoked the device
+
+**Site:** `classifyRevokedDeviceRefusal` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`.
+**What it humours:** a delivery service older than migration 040, whose `DEVICE_REVOKED` carries no
+`reason`. It cannot tell an id its own install retired from a device its owner revoked, so a client
+reads it as the owner's - a sign-out and a wipe, said at `error` - and only `reason: 'retired'`
+licenses a re-enrolment. That reading is the safe one and stays; what goes is only the ACCUSATION
+wording about an older server, once no server without the reason can answer.
+**The other direction needs nothing:** a client older than `DEVICE_REVOKED_BY_OWNER` reads it as an
+unknown 403 and does not re-enrol (the code is new precisely so it cannot), and still re-enrols on
+`DEVICE_REVOKED`, which a current server sends only for a retired id. A `revoked_device` row written
+before the column holds NULL and is read as the owner's for good - data at rest, not a shim, so it
+has no date.
+**The window this opens, and it is a real one:** the stores can ship this client BEFORE production
+runs migration 040. In that window an install whose own rotation retired its id gets a reasonless
+`DEVICE_REVOKED` and is signed out and wiped instead of taking a fresh id - the fail-safe direction,
+paid by the few installs that rotate in it. The same client's `?reason=retired` is ignored by such a
+server, which records a plain ban (read as the owner's once 040 lands - see below).
+**Old clients record retirements as owner bans, for good:** a client older than `?reason=retired`
+deletes its abandoned id without a reason, which a current server records as the owner's. The id is
+abandoned, so nothing re-enrols it; the cost is only that the delete also ends the sessions bound to
+that id (never the caller's own, which is the one the install is using). Permanent data at rest, no
+date.
+**Condition:** every estate serves migration 040 (one deploy of each). The date is when to check.
+
+### Removal at deploy + one access-token lifetime - an access token that names no session
+
+**Site:** the `legacy` branch of `AuthController.sessionOfToken` in
+`apps/core-service/src/auth/auth.controller.ts`.
+**What it humours:** an access token minted before its issuer wrote `sid`. The issuer always writes it
+now, so such a token is pre-deploy by construction and dies by its own `exp` within
+`ACCESS_TOKEN_TTL_SECONDS` (1 h) of the deploy; it is accepted without a session read, `X-Session-Id`
+empty, logged once per process at `log`. Refusing it would answer every client signed in at the
+deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tokens already carry
+`sid`).
+**Condition:** production has run the release carrying the check for longer than one access-token
+lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
+one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+
 ### No date yet - a member client older than the admission rule still adds a new person automatically
 
 **Site:** `automaticAdmission` in `frontend/src/lib/utils/chat/actions.ts` (the rule), and the server's

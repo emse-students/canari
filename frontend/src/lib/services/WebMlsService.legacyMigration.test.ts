@@ -138,7 +138,7 @@ describe('WebMlsService._initImpl legacy migration', () => {
     // A mismatch is not repairable by any PIN, so noFreshStart must NOT hold it back.
     expect(ctx.generateDeviceId).toHaveBeenCalled();
     expect(localStorage.getItem('mls_device_id_u')).toBe('web-u-fresh');
-    expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'web-u-new');
+    expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'web-u-new', 'retired');
   });
 
   /**
@@ -215,6 +215,6 @@ describe('WebMlsService._initImpl legacy migration', () => {
     expect(migrateLegacyMlsStateBlob).not.toHaveBeenCalled();
     expect(ctx.generateDeviceId).toHaveBeenCalled();
     expect(localStorage.getItem('mls_device_id_u')).toBe('web-u-fresh');
-    expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'web-u-new');
+    expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'web-u-new', 'retired');
   });
 });

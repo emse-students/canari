@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   Inject,
   Headers,
   BadRequestException,
@@ -14,6 +15,7 @@ import {
   Logger,
   ForbiddenException,
   ConflictException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThanOrEqual, DataSource, In, Not } from 'typeorm';
@@ -49,7 +51,15 @@ import {
   DEVICE_ENROLMENT_GRACE_MS,
 } from '../retention.constants';
 import { resolveUserDisplayName } from '../utils/display-name';
-import { activeRevocationWhere } from '../utils/revocation';
+import {
+  activeRevocationWhere,
+  revocationReasonOf,
+  revokedDeviceRefusal,
+  upsertRevocation,
+} from '../utils/revocation';
+import { parseSessionId } from '../utils/session-id';
+import { DeviceSessionsNotEndedError, endDeviceSessions } from '../internal/device-sessions';
+import type { RevocationReason } from '../entities/revoked-device.entity';
 import { RefusalCode } from '../utils/refusal-codes';
 
 /**
@@ -132,6 +142,24 @@ export class DevicesController {
       )
       .getRawOne<{ n: string }>();
     return Number(rows?.n ?? 0);
+  }
+
+  /**
+   * Refuses a device-creating call for an id under an active ban, with the refusal typed by WHO
+   * banned it ({@link revokedDeviceRefusal}). The one check `register-device` and the prekey upload
+   * share, so the two can never disagree on what a banned id may still publish.
+   */
+  private async refuseRevokedDevice(userId: string, deviceId: string, scope: string) {
+    const revoked = await this.revokedDeviceRepo.findOne({
+      where: activeRevocationWhere({ userId, deviceId }),
+    });
+    if (!revoked) return;
+    const reason = revocationReasonOf(revoked);
+    this.logger.warn(
+      `[${scope}] REFUSED revoked device user=${userId} device=${deviceId} reason=${reason}` +
+        (revoked.reason === null ? ' (ban predates the recorded reason - read as owner)' : '')
+    );
+    throw new ForbiddenException(revokedDeviceRefusal(reason));
   }
 
   private makeTraceId(scope: string): string {
@@ -289,19 +317,10 @@ export class DevicesController {
     // SAME id after a reinstall - so without this check the row is written, 200 is returned, and
     // the device is then filtered out of getUserDevices and resolves to a null KeyPackage
     // forever: registered, invisible, never invitable, with no error anywhere. Refusing here is
-    // what makes revocation mean something; the client answers by enrolling under a fresh id.
-    const revoked = await this.revokedDeviceRepo.findOne({
-      where: activeRevocationWhere({ userId, deviceId }),
-    });
-    if (revoked) {
-      this.logger.warn(
-        `[REGISTER_DEVICE] REFUSED revoked device user=${userId} device=${deviceId}`
-      );
-      throw new ForbiddenException({
-        code: RefusalCode.DEVICE_REVOKED,
-        message: 'This device was revoked. Enrol again under a new device id.',
-      });
-    }
+    // what makes revocation mean something - and the refusal says WHO banned the id, because the
+    // client's cure differs: a fresh id for an id its own install retired, a wipe for a device its
+    // owner revoked (`refuseRevokedDevice`).
+    await this.refuseRevokedDevice(userId, deviceId, 'REGISTER_DEVICE');
 
     if (
       typeof body.keyPackage !== 'string' ||
@@ -456,6 +475,10 @@ export class DevicesController {
       userId,
       'Cannot upload prekeys for another user'
     );
+
+    // THE SAME REFUSAL AS `register-device`, for the same id: a banned device publishing a pool of
+    // one-time packages would hand peers packages for a device no Welcome may reach.
+    await this.refuseRevokedDevice(userId, deviceId, 'REGISTER_PREKEYS');
 
     if (!Array.isArray(body.keyPackages) || body.keyPackages.length === 0) {
       throw new BadRequestException('keyPackages must be a non-empty array');
@@ -885,11 +908,24 @@ export class DevicesController {
   async deleteDevice(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
+    @Query('reason') reasonRaw?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-session-id') headerSessionId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    // The caller's own session (nginx forwards the verified token's `sid`, and empties a client's):
+    // the one session a device delete never ends.
+    const callerSessionId = parseSessionId(headerSessionId, 'X-Session-Id');
+    // WHO IS BANNING THE ID. Absent means the owner, which is what every caller older than the
+    // parameter is when it deletes another device (the device panel). `retired` is said only by an
+    // install deleting the id its own rotation abandoned (`abandonedDevices.ts`). Anything else is
+    // refused rather than guessed: a cause written wrong decides whether a device is wiped.
+    let reason: RevocationReason;
+    if (reasonRaw === undefined || reasonRaw === '') reason = 'owner';
+    else if (reasonRaw === 'retired') reason = 'retired';
+    else throw new BadRequestException("reason must be absent or 'retired'");
     // A device may only be deleted by its owner (audit S4): this route purges the full
     // per-device footprint (memberships, KeyPackages, queued messages, push token) and
     // denylists re-registration, so without this binding any user could eject a victim from
@@ -911,25 +947,53 @@ export class DevicesController {
     //    constraint on (userId, deviceId) then rejects, turning a re-revocation into a 500. What
     //    the window changes is the DATE: revoking again restarts it, so a device banned, un-banned
     //    and banned again is banned from today rather than from the first time.
-    const existingRevoked = await this.revokedDeviceRepo.findOne({
-      where: { userId: safeUserId, deviceId: safeDeviceId },
-    });
-    await this.revokedDeviceRepo.save(
-      this.revokedDeviceRepo.create({
-        id: existingRevoked?.id ?? crypto.randomUUID(),
-        userId: safeUserId,
-        deviceId: safeDeviceId,
-        revokedAt: new Date(),
-      })
+    //    THE CAUSE IS MERGED, NEVER OVERWRITTEN DOWNWARD - an owner's active ban stays the owner's
+    //    whatever a later call says - and it is merged IN THE ONE STATEMENT that writes it
+    //    (`upsertRevocation`), so two deletes racing on one id cannot both read "no owner" and the
+    //    "retired" one win.
+    const recordedReason = await upsertRevocation(
+      this.dataSource,
+      safeUserId,
+      safeDeviceId,
+      reason,
+      crypto.randomUUID()
     );
+    if (recordedReason !== reason) {
+      this.logger.warn(
+        `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} asked reason=${reason} - kept reason=${recordedReason}: an owner's ban is never downgraded`
+      );
+    }
 
     // 3. Tell the device NOW, if it is connected: a delete that leaves a live session open is a
     //    delete the user has to make twice, and the second half is invisible from the panel they
-    //    used. The denylist row above is the durable half; this is what makes it immediate.
+    //    used. The denylist row above is the durable half; this is what makes it immediate. It is
+    //    sent BEFORE the sessions are ended, so a failure of that step below never skips it.
     const signalled = await this.messagingService.notifyDeviceRevoked(safeUserId, safeDeviceId);
 
+    // 4. AN OWNER'S REVOCATION ENDS THE DEVICE'S SESSIONS HERE, server-side, so it never depends on
+    //    the panel's second request. Every session bound to the device except the caller's own is
+    //    ended by core-service (`endDeviceSessions`); a retirement ends none - the id was the
+    //    caller's own install's. A failure is NOT swallowed: the delete answers 503, the panel still
+    //    signs out the logins it shows for the device, and whatever survives stays listed for the
+    //    user's retry (a login whose device is gone gets its own row). Not covered, stated: a
+    //    session bound to no device, or to another id - the panel's own session revocation ends those.
+    let sessionsEnded = 0;
+    if (recordedReason === 'owner') {
+      try {
+        sessionsEnded = await endDeviceSessions(safeUserId, safeDeviceId, callerSessionId);
+      } catch (e) {
+        if (!(e instanceof DeviceSessionsNotEndedError)) throw e;
+        this.logger.error(
+          `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} banned and signalled=${signalled}, but its sessions were NOT ended (${e.detail}) - answering 503`
+        );
+        throw new ServiceUnavailableException({
+          message: 'The device is banned but its sessions could not be ended yet. Retry.',
+        });
+      }
+    }
+
     this.logger.log(
-      `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} groupsCleaned=${purge.groupsCleaned} keyPackagesDeleted=${purge.keyPackagesDeleted} oneTimeKeyPackagesDeleted=${purge.oneTimeKeyPackagesDeleted} queuedMessagesDeleted=${purge.queuedMessagesDeleted} signalled=${signalled}`
+      `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} reason=${recordedReason} sessionsEnded=${sessionsEnded} groupsCleaned=${purge.groupsCleaned} keyPackagesDeleted=${purge.keyPackagesDeleted} oneTimeKeyPackagesDeleted=${purge.oneTimeKeyPackagesDeleted} queuedMessagesDeleted=${purge.queuedMessagesDeleted} signalled=${signalled}`
     );
 
     return {

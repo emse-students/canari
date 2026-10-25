@@ -251,15 +251,65 @@ export function parseGroupExclusions(raw: unknown): GroupExclusions {
 }
 
 /**
- * The delivery service refused this device id: it was explicitly deleted, and the denylist is
- * permanent. Typed rather than message-matched, because the only cure is structural - enrol under
- * a fresh device id ({@link BaseMlsService.rotateDeviceIdentity}), never a retry of the same call.
+ * The delivery service refused this device id because ITS OWN INSTALL RETIRED IT (`DEVICE_REVOKED`
+ * with `reason: 'retired'`): an identity rotation abandoned the id, and a later holder of it - a
+ * reinstall that restored the old id - may only go on as a new device. Typed rather than
+ * message-matched, because the only cure is structural - enrol under a fresh device id
+ * ({@link BaseMlsService.rotateDeviceIdentity}), never a retry of the same call.
  */
 export class DeviceRevokedError extends Error {
   constructor(readonly deviceId: string) {
     super(`Device ${deviceId} is revoked server-side`);
     this.name = 'DeviceRevokedError';
   }
+}
+
+/**
+ * The delivery service refused this device id because ITS OWNER REVOKED IT
+ * (`DEVICE_REVOKED_BY_OWNER`) - or because the refusal did not say who did, which is read the same
+ * way (see {@link classifyRevokedDeviceRefusal}). There is no cure ON this device: it must never
+ * enrol again under any id; it signs out and returns to a fresh install (`wipeRevokedDevice`).
+ * `reasonStated` is false when the cause was not stated (a server older than the reason), for the
+ * line that accuses it.
+ */
+export class DeviceRevokedByOwnerError extends Error {
+  constructor(
+    readonly deviceId: string,
+    readonly reasonStated: boolean
+  ) {
+    super(`Device ${deviceId} was revoked by its owner`);
+    this.name = 'DeviceRevokedByOwnerError';
+  }
+}
+
+/**
+ * Types a device-creating call's 403 by WHO banned the id, from the body's `code` and `reason` -
+ * never from its prose. `null` when the response is not such a refusal.
+ *
+ * ONLY AN EXPLICIT `reason: 'retired'` IS A LICENCE TO RE-ENROL. `DEVICE_REVOKED` without it is a
+ * server older than the reason, which cannot tell a retired id from a revoked device: that is read as
+ * the owner's revocation, the reading that wipes this device rather than letting a possibly-disowned
+ * one back in - and it is said at `error`, because it costs the user a sign-out
+ * (`docs/wiki/legacy-compatibility.md`).
+ */
+export async function classifyRevokedDeviceRefusal(
+  response: Response,
+  deviceId: string
+): Promise<DeviceRevokedError | DeviceRevokedByOwnerError | null> {
+  if (response.status !== 403) return null;
+  const body = await response
+    .clone()
+    .json()
+    .then((b) => b as { code?: unknown; reason?: unknown })
+    .catch(() => undefined);
+  if (body?.code === 'DEVICE_REVOKED_BY_OWNER')
+    return new DeviceRevokedByOwnerError(deviceId, true);
+  if (body?.code !== 'DEVICE_REVOKED') return null;
+  if (body.reason === 'retired') return new DeviceRevokedError(deviceId);
+  console.error(
+    `[MLS] the server refused device ${sanitizeForLog(deviceId)} as revoked WITHOUT saying who revoked it (reason=${sanitizeForLog(String(body.reason))}) - read as revoked by its owner: no re-enrolment, the device signs out and is wiped`
+  );
+  return new DeviceRevokedByOwnerError(deviceId, false);
 }
 
 /**
@@ -1309,19 +1359,19 @@ export class MlsDeliveryApi {
       });
 
       if (!response.ok) {
-        // TWO REFUSALS NO RETRY CAN FIX, both classified HERE because downstream they are one sentence.
-        // 403 + DEVICE_REVOKED: the id itself is banned, and the cure is a fresh id.
+        // REFUSALS NO RETRY CAN FIX, classified HERE because downstream they are one sentence.
+        // 403 + a banned id: a fresh id if its own install retired it, a wipe if its owner revoked
+        // it (`classifyRevokedDeviceRefusal`).
         // 400 + DEVICE_LIMIT_REACHED: the ACCOUNT is full, and the cure is a person deleting a device.
-        if (response.status === 403 || response.status === 400) {
+        const revoked = await classifyRevokedDeviceRefusal(response, this.deviceId);
+        if (revoked) throw revoked;
+        if (response.status === 400) {
           const body = await response
             .clone()
             .json()
             .then((b) => b as { code?: string; max?: number })
             .catch(() => undefined);
-          if (response.status === 403 && body?.code === 'DEVICE_REVOKED') {
-            throw new DeviceRevokedError(this.deviceId);
-          }
-          if (response.status === 400 && body?.code === 'DEVICE_LIMIT_REACHED') {
+          if (body?.code === 'DEVICE_LIMIT_REACHED') {
             throw new DeviceLimitReachedError(typeof body.max === 'number' ? body.max : null);
           }
         }
@@ -1357,6 +1407,9 @@ export class MlsDeliveryApi {
         }),
       });
       if (!response.ok) {
+        // The same banned-id refusal as `register-device`, typed the same way.
+        const revoked = await classifyRevokedDeviceRefusal(response, this.deviceId);
+        if (revoked) throw revoked;
         throw await refusalFromResponse(response, 'Failed to publish key packages');
       }
       // A portal's 2xx published nothing: no answer, so the pool is asked about again.
@@ -2773,9 +2826,16 @@ export class MlsDeliveryApi {
     }
   }
 
+  /**
+   * Deletes a device server-side and bans its id. `reason: 'retired'` is said ONLY by an install
+   * retiring the id its own rotation abandoned (`abandonedDevices.ts`); without it the server records
+   * the OWNER's revocation, which makes the device holding that id wipe itself rather than enrol
+   * again.
+   */
   async deleteDevice(
     userId: string,
-    deviceId: string
+    deviceId: string,
+    reason?: 'retired'
   ): Promise<{
     status: string;
     groupsCleaned: number;
@@ -2784,7 +2844,7 @@ export class MlsDeliveryApi {
   }> {
     try {
       const res = await this.f(
-        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}${reason ? `?reason=${reason}` : ''}`,
         { method: 'DELETE', headers: await this.auth() }
       );
       if (!res.ok) {

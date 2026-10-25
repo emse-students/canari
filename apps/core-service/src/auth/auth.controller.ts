@@ -213,6 +213,9 @@ const RESTORE_ANONYMOUS_LIMIT_PER_MINUTE = 120;
 const REFRESH_COOKIE = 'canari_refresh';
 const REFRESH_MAX_AGE = SESSION_TTL_SECONDS; // 7 days in seconds - the cookie and the row must agree
 
+/** How many ended sessions `AuthController` remembers having warned about (see `endedSessionsSaid`). */
+const ENDED_SESSIONS_SAID_CAP = 4096;
+
 /** Controller handling OIDC login, token refresh, logout, and nginx JWT verification. */
 @Controller('auth')
 export class AuthController {
@@ -232,6 +235,16 @@ export class AuthController {
   private readonly allowInsecureCookies: boolean;
   /** Shared secret used to sign X-Internal-Token HMAC headers for inter-service auth. */
   private readonly internalSecret: string;
+
+  /** Set at the first sid-less access token this process accepts, so it is said once (`sessionOfToken`). */
+  private legacyTokenSeen = false;
+  /**
+   * Ended sessions whose refusal this process has already said at `warn` (`sessionOfToken`): a
+   * client holding such a token sends several requests before its refresh is refused, and the
+   * refusal is one fact per session, not per request. Bounded: the oldest entry is dropped past
+   * {@link ENDED_SESSIONS_SAID_CAP}, which costs at most a second line for that session.
+   */
+  private readonly endedSessionsSaid = new Set<string>();
 
   constructor(
     private readonly usersService: UsersService,
@@ -363,19 +376,20 @@ export class AuthController {
    * These routes live under `/api/auth`, which nginx serves unauthenticated and
    * where it deliberately blanks `X-User-Id` - so `NginxAuthGuard` would refuse
    * every request. The token is verified here instead, exactly as
-   * `/api/auth/verify` does it.
+   * `/api/auth/verify` does it - its session's liveness included
+   * ({@link sessionOfToken}), so an ended session manages no session.
    */
-  private requireAccessToken(req: Request): {
+  private async requireAccessToken(req: Request): Promise<{
     userId: string;
     isAdmin: boolean;
-  } {
+  }> {
     const header = req.headers['authorization'];
     if (!header) throw new UnauthorizedException('Missing Authorization header');
     const parts = String(header).split(' ');
     const token = parts.length > 1 ? parts[1] : parts[0];
     if (!token) throw new UnauthorizedException('Missing bearer token');
 
-    let payload: { sub?: string; admin?: boolean; type?: string };
+    let payload: { sub?: string; admin?: boolean; type?: string; sid?: unknown };
     try {
       payload = jwt.verify(token, this.jwtSecret, {
         algorithms: ['HS256'],
@@ -388,6 +402,8 @@ export class AuthController {
     if (payload.type === 'refresh')
       throw new UnauthorizedException('Refresh token is not an access token');
     if (!payload.sub) throw new UnauthorizedException('Token carries no subject');
+    const session = await this.sessionOfToken({ sub: payload.sub, sid: payload.sid });
+    if (session.state === 'ended') throw new UnauthorizedException('Session has ended');
     return { userId: payload.sub, isAdmin: !!payload.admin };
   }
 
@@ -890,7 +906,7 @@ export class AuthController {
   private async restoreRegistrationCaller(
     req: Request
   ): Promise<{ userId: string; sessionId: string; tokenId: string }> {
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     const origin = req.get('origin') ?? '';
     if (!ANDROID_APP_ORIGINS.includes(origin)) {
       this.logger.warn(
@@ -1073,7 +1089,7 @@ export class AuthController {
   /** Lists the caller's live sessions, flagging the one this request came from. */
   @Get('sessions')
   async listSessions(@Req() req: Request): Promise<{ sessions: SessionDto[] }> {
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     const currentId = this.currentSessionId(req);
     const rows = await this.authSessions.listForUser(userId);
     return {
@@ -1109,7 +1125,7 @@ export class AuthController {
     @Req() req: Request,
     @Body() body: BindDeviceDto
   ): Promise<{ bound: true }> {
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     const sessionId = this.currentSessionId(req);
     if (!sessionId) throw new UnauthorizedException('No session behind this request');
     if (typeof body?.deviceId !== 'string') throw new BadRequestException('deviceId is required');
@@ -1127,7 +1143,7 @@ export class AuthController {
   @Delete('sessions')
   @HttpCode(200)
   async revokeOtherSessions(@Req() req: Request): Promise<{ revoked: number }> {
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     const currentId = this.currentSessionId(req);
     const revoked = await this.authSessions.revokeOthers(userId, currentId);
     return { revoked };
@@ -1141,7 +1157,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ): Promise<{ ok: boolean }> {
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     // Scoped to the caller: a session id is an identifier, never an authorization.
     const ok = await this.authSessions.revokeOwned(userId, id);
     if (ok && this.currentSessionId(req) === id) {
@@ -1167,7 +1183,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response
   ): Promise<{ expiresInSeconds: number }> {
     if (!this.adminerAccess.enabled) throw new NotFoundException();
-    const { userId } = this.requireAccessToken(req);
+    const { userId } = await this.requireAccessToken(req);
     const user = await this.usersService.findOne(userId).catch(() => null);
     if (!user?.admin) {
       this.logger.warn(`adminer session refused: ${userId} is not a global admin`);
@@ -1231,56 +1247,116 @@ export class AuthController {
       return res.status(200).send();
     }
 
+    let payload: { sub: string; admin?: boolean; type?: string; sid?: unknown };
     try {
-      const payload = jwt.verify(token, this.jwtSecret, {
+      payload = jwt.verify(token, this.jwtSecret, {
         algorithms: ['HS256'],
-      }) as {
-        sub: string;
-        admin?: boolean;
-        type?: string;
-        sid?: unknown;
-      };
-
-      // The refresh token is signed with the same key, so it verifies here too.
-      // Nothing but this check stops it from being spent as an access token -
-      // which would hand a 7-day credential the reach of a 1-hour one.
-      if (payload.type === 'refresh') {
-        return res.status(200).send();
-      }
-
-      const platformConfig = await this.platformService.getConfig();
-      if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!payload.admin)) {
-        res.set('X-Maintenance-Mode', 'true');
-        return res.status(503).json({
-          code: 'MAINTENANCE',
-          message:
-            platformConfig.maintenanceMessage ||
-            'Canari is under maintenance. Please try again later.',
-        });
-      }
-
-      res.set('X-User-Id', payload.sub);
-      res.set('X-Logged-In', 'true');
-      res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
-      // The session this access token was minted for. Empty for a token minted before the claim
-      // existed (one TTL after the deploy at most): a push registration it makes is then unbound.
-      res.set('X-Session-Id', typeof payload.sid === 'string' ? payload.sid : '');
-
-      // Mint a per-minute HMAC token so backend services can verify the request
-      // genuinely came through nginx (not from a compromised container).
-      if (this.internalSecret) {
-        const epochMinute = Math.floor(Date.now() / 60000);
-        const hmac = createHmac('sha256', this.internalSecret)
-          .update(`${payload.sub}:${epochMinute}`)
-          .digest('hex');
-        res.set('X-Internal-Token', hmac);
-      }
-
-      return res.status(200).send();
+      }) as typeof payload;
     } catch {
       // Invalid/expired token - pass through as anonymous; the service decides
       // whether to reject the request.
       return res.status(200).send();
     }
+
+    // The refresh token is signed with the same key, so it verifies here too.
+    // Nothing but this check stops it from being spent as an access token -
+    // which would hand a 7-day credential the reach of a 1-hour one.
+    if (payload.type === 'refresh') {
+      return res.status(200).send();
+    }
+
+    // AN ACCESS TOKEN IS ONLY AS ALIVE AS THE SESSION IT WAS MINTED FOR - a sign-out, the owner
+    // removing it from the device panel and "sign out the others" all end it at once. Every route
+    // behind nginx's `auth_request` passes here, so the check is made here once, and an ended
+    // session is answered the way an expired token is: anonymous, which each guarded route refuses
+    // with a 401 - the answer that ends the client's session. One primary-key read, beside the
+    // platform config this route already reads; the session's own deletion is what flips it.
+    const session = await this.sessionOfToken(payload);
+    if (session.state === 'ended') return res.status(200).send();
+
+    const platformConfig = await this.platformService.getConfig();
+    if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!payload.admin)) {
+      res.set('X-Maintenance-Mode', 'true');
+      return res.status(503).json({
+        code: 'MAINTENANCE',
+        message:
+          platformConfig.maintenanceMessage ||
+          'Canari is under maintenance. Please try again later.',
+      });
+    }
+
+    res.set('X-User-Id', payload.sub);
+    res.set('X-Logged-In', 'true');
+    res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
+    // The session this access token was minted for - proven live above; empty for a token minted
+    // before the claim existed (`sessionOfToken`).
+    res.set('X-Session-Id', session.state === 'live' ? session.sessionId : '');
+
+    // Mint a per-minute HMAC token so backend services can verify the request
+    // genuinely came through nginx (not from a compromised container).
+    if (this.internalSecret) {
+      const epochMinute = Math.floor(Date.now() / 60000);
+      const hmac = createHmac('sha256', this.internalSecret)
+        .update(`${payload.sub}:${epochMinute}`)
+        .digest('hex');
+      res.set('X-Internal-Token', hmac);
+    }
+
+    return res.status(200).send();
+  }
+
+  /**
+   * Whether the session an access token was minted for still exists for the token's subject - the
+   * one liveness rule of every access token this service checks (`check`, `requireAccessToken`).
+   *
+   * - `live`: the token names a session that still exists.
+   * - `ended`: it names one that does not - signed out, revoked, replaced or expired.
+   * - `legacy`: it names NONE. Accepted, by construction rather than by trust: since the release that
+   *   brought this check, the only issuer (`signAccessToken`) always writes `sid`, so a sid-less
+   *   token can only have been minted by the previous release before its deploy, and it dies by its
+   *   own `exp` within one `ACCESS_TOKEN_TTL_SECONDS`. Refusing it would answer every client that
+   *   was signed in at the deploy anonymous for up to that hour. Said ONCE per process at `log`, not
+   *   per request. The branch goes one token lifetime after the deploy
+   *   (`docs/wiki/legacy-compatibility.md`).
+   *
+   * A database failure is NOT an answer and is not turned into one: it propagates, nginx's
+   * `auth_request` then fails the request with a 5xx, and a client keeps its session on a 5xx.
+   */
+  private async sessionOfToken(payload: {
+    sub: string;
+    sid?: unknown;
+  }): Promise<{ state: 'live'; sessionId: string } | { state: 'legacy' } | { state: 'ended' }> {
+    if (typeof payload.sid !== 'string' || payload.sid.length === 0) {
+      if (!this.legacyTokenSeen) {
+        this.legacyTokenSeen = true;
+        this.logger.log(
+          'An access token naming no session was accepted (minted before the sid claim) - said once per process; such tokens expire within one access-token lifetime of the deploy'
+        );
+      }
+      return { state: 'legacy' };
+    }
+    let live: boolean;
+    try {
+      live = await this.authSessions.isLive(payload.sid, payload.sub);
+    } catch (e) {
+      this.logger.error(
+        `Access check FAILED: could not read session sid=${payload.sid}: ${e instanceof Error ? e.message : String(e)}`
+      );
+      throw e;
+    }
+    if (live) return { state: 'live', sessionId: payload.sid };
+    if (this.endedSessionsSaid.has(payload.sid)) {
+      this.logger.debug(`Access refused again: session sid=${payload.sid} has ended`);
+    } else {
+      if (this.endedSessionsSaid.size >= ENDED_SESSIONS_SAID_CAP) {
+        const oldest = this.endedSessionsSaid.values().next().value;
+        if (oldest !== undefined) this.endedSessionsSaid.delete(oldest);
+      }
+      this.endedSessionsSaid.add(payload.sid);
+      this.logger.warn(
+        `Access refused: session sid=${payload.sid} user=${payload.sub} has ended - its access token is answered anonymous (said once per session)`
+      );
+    }
+    return { state: 'ended' };
   }
 }

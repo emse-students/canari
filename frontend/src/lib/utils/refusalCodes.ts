@@ -42,6 +42,8 @@ const REFUSAL_WORDING: Readonly<Record<string, () => string>> = {
  */
 export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   'DEVICE_REVOKED',
+  // An owner's revocation is a typed `DeviceRevokedByOwnerError`, answered by signing out and wiping.
+  'DEVICE_REVOKED_BY_OWNER',
   'DEVICE_LIMIT_REACHED',
   'KEY_PACKAGE_IDENTITY_INVALID',
   'KEY_DISTRIBUTION_GROUP',

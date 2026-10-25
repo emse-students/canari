@@ -247,6 +247,23 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Whether `sessionId` is a session of `userId` that has neither ended nor expired - the question
+   * `/api/auth/verify` asks of every access token, so a token outlives its session by nothing
+   * (`docs/wiki/sessions.md`, "An access token is only as alive as its session"). One primary-key
+   * read. Every ending of a session DELETES its row, so absence is the ended state; `expiresAt` is
+   * compared too because an idle-expired row may not have been swept yet. A restore-key registration
+   * asks a stricter question of the same row (also the presented refresh `jti`) -
+   * `RestoreCredentialsService.isLiveSessionOf`.
+   */
+  async isLive(sessionId: string, userId: string, now: Date = new Date()): Promise<boolean> {
+    const row = await this.sessions.findOne({
+      where: { id: sessionId, userId },
+      select: { id: true, expiresAt: true },
+    });
+    return row !== null && row.expiresAt.getTime() > now.getTime();
+  }
+
+  /**
    * Destroys one session - the logout - and records, in the same transaction, the ending of the push
    * registration it made.
    *
@@ -365,6 +382,37 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
       const res = await qb.execute();
       // Each ending is by session, so the kept session's registration is never reached.
       return { ended: (res.raw ?? []) as EndedSession[], result: res.affected ?? 0 };
+    });
+  }
+
+  /**
+   * Ends every session of `userId` BOUND to `deviceId` (`auth_sessions."deviceId"`, written by
+   * {@link bindDevice}) except `exceptSessionId`, recording each one's push ending in the same
+   * transaction - the server-side half of an owner revoking a device, asked by chat-delivery once
+   * the device's ban is recorded, so a revocation no longer depends on the panel's second request.
+   *
+   * `exceptSessionId` is the CALLER's own session: whoever deletes a device never signs itself out
+   * by doing so (an install whose identity rotation is still bound to the id it abandoned included).
+   * What it does not reach, stated: a session bound to NO device (opened, never unlocked) or bound
+   * to another id - those are ended only by the panel's own session revocation. Returns how many
+   * ended; idempotent (a second call ends nothing).
+   */
+  async endDeviceSessions(
+    userId: string,
+    deviceId: string,
+    exceptSessionId: string | null
+  ): Promise<number> {
+    return this.endSessions('revoked-by-owner', async (repo) => {
+      const qb = repo
+        .createQueryBuilder()
+        .delete()
+        .from(AuthSession)
+        .where('"userId" = :userId AND "deviceId" = :deviceId', { userId, deviceId })
+        .returning(['id', 'userId', 'deviceId']);
+      if (exceptSessionId) qb.andWhere('id != :except', { except: exceptSessionId });
+      const res = await qb.execute();
+      const ended = (res.raw ?? []) as EndedSession[];
+      return { ended, result: ended.length };
     });
   }
 
