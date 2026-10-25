@@ -7,7 +7,7 @@
  *
  *   bun archive/salon-selftest.mjs
  */
-import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, statusesIn } from '../salonrows.mjs';
+import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, statusesIn } from '../salonrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -127,6 +127,30 @@ ok('entitlement: an allowed user who left the community, still seated, breaks it
 ok('entitlement: a public salon has nothing to check', salonEntitlement({ pass: 'p', dist: { isPrivate: false, allowedUsers: [], devices: [] }, members: [U1], users: [U1] }).ok);
 ok('entitlement: an unread salon breaks it', !salonEntitlement({ pass: 'p', dist: null, members: [], users: [] }).ok);
 ok('entitlement: says it replaced the message probe', salonEntitlement({ pass: 'p', dist, members: [U1, U2], users: [U1, U2] }).passes[0].approximations.length === 1);
+
+// THE COMMUNITY'S ONE-PER-EVENT NARRATION, scoped to the row's ids (RM-4's first alpha.4 run, 2026-10-25).
+const scope = { workspaceId: 'bbd34b31-412b-4e70-abb9-72b2fbe621f7', channelIds: ['0c6421b1-0000-4000-8000-000000000001', '0fb4ddf1-aece-4b50-b309-88503be81573'], keyGroupIds: ['3b8eb81a-7ab7-4d77-8096-cca66925f563'] };
+const said = (line) => salonNarration(scope).some((r) => r.test(line));
+for (const line of [
+  'Joined channel 0fb4ddf1…',
+  '[INVITE] this link carries no admission proof - joining with no past',
+  '[GRAINE] invite link to community bbd34b31 endorsed by device web-f7a9',
+  '[WELCOME] 3b8eb81a... is a KEY-DISTRIBUTION group (server row) - installing it as a seed carrier',
+  '[QUEUE] Welcome for key group 3b8eb81a... - not announced to the conversation layer',
+  '[GRAINE] ADMIT salon grantee 223bc34e to 0fb4ddf1 (community bbd34b31)',
+  "[GRAINE] salon 0fb4ddf1 of bbd34b31: a Welcome is owed to this device (queued, or an add in flight) - not joining by external commit, the admitter's Welcome is the door",
+  '[WORKSPACE] my role in bbd34b31 is now "Administrateur" (canManage=true canManageChannels=true canModerate=true)',
+  '[channelSettings.loadChannelAccess] channel_0fb4ddf1…',
+  '[channelSettings.addAllowedUser] {"channelId":"channel_0fb4ddf1…","userId":"223bc34e…"}',
+  '[RoutePreload] {"pathname":"/posts","first":true}',
+]) ok(`narration: ${line.slice(0, 60)}`, said(line));
+ok('control: another community\'s join is not the row\'s', !said('Joined channel 99999999…'));
+ok('control: another key group\'s Welcome is not the row\'s', !said('[WELCOME] 99999999... is a KEY-DISTRIBUTION group (server row) - installing it as a seed carrier'));
+ok('control: a per-read Graine answer stays dirt (fixed at the source)', !said('[GRAINE] sending 0 of 0 seed(s) this key group may read as history to c71e1a5b…'));
+ok('control: a redelivered Welcome stays dirt', !said('[WELCOME] key group 3b8eb81a... already held - redelivered Welcome ignored (idempotent)'));
+const refusal = salonRaceRefusal(scope.channelIds);
+ok('the race loser\'s 409 on the row\'s salon is RM-4\'s', refusal.test('[channelSettings.addAllowedUser failed] ChannelApiError: {"code":"CHANNEL_ACCESS_CHANGED","message":"The salon access changed meanwhile, retry.","current":{"channelId":"0fb4ddf1…","isPrivate":true'));
+ok('control: another code is not the race', !refusal.test('[channelSettings.addAllowedUser failed] ChannelApiError: {"code":"FORBIDDEN","current":{"channelId":"0fb4ddf1…"'));
 
 if (failures) {
   console.error(`\n${failures} salon assertion(s) failed`);

@@ -39,11 +39,12 @@ import {
 } from '../comm.mjs';
 import { psql } from '../estate.mjs';
 import { armFault } from '../fault.mjs';
-import { awaitUserRouting, channelIdOf, communityMemberIds, communityRoles, isCommunityMember, salonDistribution, workspaceIdOf } from '../grainedb.mjs';
+import { awaitUserRouting, channelIdOf, communityChannels, communityMemberIds, communityRoles, isCommunityMember, salonDistribution, workspaceIdOf } from '../grainedb.mjs';
 import { closeSeats, displayNameOf, observersOf, openSeats, userOf } from '../mlsrow.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowGroupName } from '../rowkit.mjs';
-import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, statusesIn } from '../salonrows.mjs';
+import { NAMED, SALON_ROWS, accessRaceOwn, intendedLists, kickRaceCycleOwn, removalBoundOwn, revokeRaceOwn, salonEntitlement, salonNarration, salonRaceRefusal, statusesIn } from '../salonrows.mjs';
+import { atLevels } from '../watch.mjs';
 
 const argv = process.argv.slice(2);
 const id = argv.includes('--row') ? argv[argv.indexOf('--row') + 1] : null;
@@ -364,7 +365,12 @@ try {
   const { verdict, failures } = composeVerdict({ own: out.own ?? [], invariant: out.invariant ?? null, premise: out.premise ?? [] });
   for (const f of failures) console.log(`[${id}] ${f}`);
   console.log(`[${id}] assertions: ${verdict}`);
-  const observers = await observersOf(seats, { provoked: out.records ?? {} });
+  // THE ROW'S COMMUNITY NARRATES ITSELF on every seat, scoped to its own ids (`salonNarration`); the
+  // access race's loser is RM-4's own subject, at `debug` only.
+  const scope = out.detail?.workspaceId ? { workspaceId: out.detail.workspaceId, ...communityChannels(out.detail.workspaceId) } : null;
+  const narration = scope ? [...salonNarration(scope), ...(id === 'RM-4' ? [atLevels(['debug'], salonRaceRefusal(scope.channelIds))] : [])] : [];
+  const logs = Object.fromEntries(spec.devices.map((d) => [d, narration]));
+  const observers = await observersOf(seats, { provoked: out.records ?? {}, logs });
   await finishObserved(
     id,
     verdict,

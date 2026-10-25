@@ -895,6 +895,9 @@ const NOTABLE = [
   // newcomer, in the accept transaction. Met unexplained on FLOOR-2's first alpha.4 PASS (2026-10-25).
   // Its refusals (`departed_since_base`, `blocked`) are a different sentence and stay unmatched.
   /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] ENROLLED by commit group=\S+ user=[0-9a-f]{8} committer=[0-9a-f]{8}$/,
+  // ...AND THE ADMISSION A KEY GROUP'S COMMIT ASKED FOR, per scope (a salon or a community): how many
+  // people it named and how many the scope entitles. One per commit, met on RM-4 (2026-10-25).
+  /\[COMMIT\]\[commit-[0-9a-f]+\] ADMITS_ASKED group=\S+ (?:channel|workspace)=\S+ people=\d+ entitled=\d+$/,
   // A REMOVAL'S COMMIT QUEUED TO THE DEVICES IT REMOVES, and AN ADDRESSED HISTORY ANSWER NARROWED TO
   // ITS READER (1.4.x, `messaging.service.ts`). Both are `log` narration of a mechanism doing its job,
   // met unexplained on the first CC-3 draw of 2026-10-25 - notable because a reader following a
@@ -1015,7 +1018,14 @@ const NOTABLE = [
   // never-expiring invites, but an invite with a limit is not a different event, and a rule that
   // pinned this run's shape would file the next one as unexplained for being ordinary.
   /\[ChannelService\] \[INVITE\] created workspace=\S+ by=\S+ expiresAt=\S+ maxUses=\S+ replaced=\d+$/,
-  /\[ChannelService\] \[INVITE\] accepted workspace=\S+ user=\S+$/,
+  // `voucher=` since the admission proof (1.4.x): whether the link carried one. Spelt as the product
+  // spells it today, so the older shape - only a stale bundle prints it - stays unexplained.
+  /\[ChannelService\] \[INVITE\] accepted workspace=\S+ user=\S+ voucher=(?:yes|no)$/,
+  // A COMMUNITY'S AUTHORITY BEING SET: its creator's standing at creation, and a role granted to a
+  // member. One line per event, met unexplained on RM-4's first alpha.4 run (2026-10-25). The role's
+  // `but not announced` twin is a failure and stays unmatched.
+  /\[ChannelService\] \[WORKSPACE\] creator standing workspace=\S+ manage=(?:true|false) moderate=(?:true|false) manageChannels=(?:true|false)$/,
+  /\[ChannelService\] \[WORKSPACE\] role set workspace=\S+ target=[0-9a-f]{8} role="[^"]+" by=[0-9a-f]{8}$/,
   // A POLL BEING ENDED, which is destructive in the small: it forces the deadline, unpins the
   // message and makes every further vote a 403. Its `created` and `vote` siblings are BENIGN because
   // they are content; this one is an authority acting on somebody else's message - `closePoll` takes
@@ -1246,7 +1256,7 @@ const ROW_RULES = [
   {
     name: 'access rewrite refused, salon changed',
     tag: /\[CHANNEL_ACCESS\] refused/,
-    shape: /\[CHANNEL_ACCESS\] refused - the salon changed since it was read channel=\S+ by=\S+$/,
+    shape: /\[CHANNEL_ACCESS\] refused - the salon changed since it was read channel=\S+ by=\S+ base=\d+ current=\d+$/,
     rows: ['RM-4'],
   },
   {

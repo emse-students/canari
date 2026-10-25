@@ -43,6 +43,17 @@ export function channelIdOf(workspaceId, name) {
 }
 
 /**
+ * Every channel of a community and the key group each is linked to (empty when none): the ids a
+ * row's narration is scoped to (`salonNarration`).
+ *
+ * @returns {{channelIds: string[], keyGroupIds: string[]}}
+ */
+export function communityChannels(workspaceId) {
+  const found = rows(psql(`SELECT id, coalesce("distributionGroupId"::text,'') FROM channels WHERE "workspaceId" = '${workspaceId}'`));
+  return { channelIds: found.map((r) => r[0]), keyGroupIds: found.map((r) => r[1]).filter(Boolean) };
+}
+
+/**
  * The uuid of a community by name, or null. Ambiguity answers null rather than picking one.
  *
  * **A NAME IDENTIFIES A COMMUNITY ONLY WHERE THE POPULATION MAKES IT UNIQUE, AND SINCE 2026-09-03
