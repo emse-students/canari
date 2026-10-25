@@ -1,4 +1,5 @@
-import { ConflictException, Logger } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Logger } from '@nestjs/common';
+import { RefusalCode, refusalBody } from './refusal-codes';
 import { In, IsNull, Not, type EntityManager, type Repository } from 'typeorm';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { GroupMember } from '../entities/group-member.entity';
@@ -508,6 +509,79 @@ export function refuseAwaitingSeat(
     );
   }
   return awaitingAdmissionRefusal();
+}
+
+/** The three tables a caller's standing on a group of either kind is read from. */
+export type GroupStandingRepos = {
+  groups: Pick<Repository<Group>, 'findOne'>;
+  seats: Pick<Repository<GroupMember>, 'findOne'>;
+  devices: Pick<Repository<DeviceGroupMembership>, 'findOne'>;
+};
+
+/**
+ * Where `userId` stands on `groupId`, asked of the table that records membership for the group's
+ * KIND: a key-distribution group (`distributionWorkspaceId` or `distributionChannelId` set) is
+ * recorded per DEVICE and never on the user roster, so it answers `admitted` from an ACTIVE device
+ * row and has no `awaiting` state; every other group answers {@link callerSeatStanding}.
+ *
+ * THE ONE KIND-AWARE READ: `MessagingService.memberOfGroupKind` and
+ * {@link assertCallerActsOnGroup} both go through it, so the two cannot disagree about a key group.
+ *
+ * @param group the `dm_groups` row when the caller already read it, `null` when it is absent.
+ */
+export async function standingOnGroupOfKind(
+  repos: Pick<GroupStandingRepos, 'seats' | 'devices'>,
+  group: Pick<Group, 'distributionWorkspaceId' | 'distributionChannelId'> | null,
+  groupId: string,
+  userId: string
+): Promise<SeatStanding | null> {
+  if (group?.distributionWorkspaceId || group?.distributionChannelId) {
+    const device = await repos.devices.findOne({ where: { groupId, userId, status: 'active' } });
+    return device ? 'admitted' : null;
+  }
+  return callerSeatStanding(repos.seats, groupId, userId);
+}
+
+/** One count per (route, group, caller) for the refusals of {@link assertCallerActsOnGroup}. */
+const notAMemberRepeats = new RepeatCounter();
+
+/**
+ * THE AUTHORIZATION OF A ROUTE THAT ACTS ON ONE GROUP BY ITS ID: the caller must be an ADMITTED
+ * member of it. Authentication (`HeaderAuthGuard`, or a PushSecret bound to a user and device) says
+ * WHO is asking; this says whether that person may touch THIS group.
+ *
+ * - no seat - never a member, removed, departed, or the group is absent or tombstoned (a tombstone
+ *   purges every seat, so nobody holds one) - is the 403 `NOT_A_MEMBER`, the SAME answer for an
+ *   unknown and a known group, so the route is no oracle of which ids exist. A client replaying an
+ *   owed exit reads that 403 as "already done" (`pendingGroupExits`) and stops owing it.
+ * - a seat still awaiting a member's admission is the 409 `awaiting_admission`
+ *   ({@link refuseAwaitingSeat}), never a 403 its client would retire the conversation on.
+ *
+ * Every refusal logs, at 1, 10, 100... per (route, group, caller), so a retrying client is one line.
+ */
+export async function assertCallerActsOnGroup(
+  repos: GroupStandingRepos,
+  log: Pick<Logger, 'warn'>,
+  route: string,
+  groupId: string,
+  callerUserId: string
+): Promise<void> {
+  const group = await repos.groups.findOne({
+    where: { id: groupId },
+    select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+  });
+  const standing = group ? await standingOnGroupOfKind(repos, group, groupId, callerUserId) : null;
+  if (standing === 'admitted') return;
+  if (standing === 'awaiting') throw refuseAwaitingSeat(log, route, groupId, callerUserId);
+  const nth = notAMemberRepeats.hit(`${route}|${groupId}|${callerUserId}`);
+  if (nth !== null) {
+    log.warn(
+      `[${route}] REFUSED group=${groupId} caller=${cutUserId(callerUserId)} groupFound=${group !== null} - the caller holds no seat in this group (403 NOT_A_MEMBER, repeat=${nth}, said at 1, 10, 100...)`
+    );
+  }
+  throw new ForbiddenException(
+    refusalBody(RefusalCode.NOT_A_MEMBER, 'Caller is not a member of this group')
+  );
 }
 
 /** The key {@link expireUnansweredAsks} names a person's seat in a group by. */

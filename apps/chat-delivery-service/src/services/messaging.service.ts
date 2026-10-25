@@ -63,6 +63,8 @@ import {
   endDeviceMemberships,
   ensureGroupMember,
   refuseAwaitingSeat,
+  standingOnGroupOfKind,
+  assertCallerActsOnGroup,
   exclusionWindows,
   openMissingIntervals,
   partingKey,
@@ -2817,16 +2819,16 @@ export class MessagingService {
     userId: string
   ): Promise<{ isMember: boolean; isKeyDistribution: boolean }> {
     const isKeyDistribution = !!(group?.distributionWorkspaceId || group?.distributionChannelId);
-    const isMember = isKeyDistribution
-      ? !!(await this.deviceGroupRepo.findOne({
-          where: { groupId, userId, status: 'active' },
-        }))
-      : // A seat still AWAITING a member's admission (an invitation link's ask) is no membership:
-        // its holder may not Welcome anyone - a Welcome lifts the flag - nor read the log or report.
-        !!(await this.groupMemberRepo.findOne({
-          where: { groupId, userId, ...ADMITTED_SEAT },
-        }));
-    return { isMember, isKeyDistribution };
+    // A seat still AWAITING a member's admission (an invitation link's ask) is no membership: its
+    // holder may not Welcome anyone - a Welcome lifts the flag - nor read the log or report. The
+    // kind-aware read is the one the group routes authorize with (`assertCallerActsOnGroup`).
+    const standing = await standingOnGroupOfKind(
+      { seats: this.groupMemberRepo, devices: this.deviceGroupRepo },
+      group,
+      groupId,
+      userId
+    );
+    return { isMember: standing === 'admitted', isKeyDistribution };
   }
 
   /**
@@ -3569,6 +3571,20 @@ export class MessagingService {
       select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
     });
     return distributionScopeOf(group);
+  }
+
+  /**
+   * Refuses unless `userId` is an admitted member of `groupId`: {@link assertCallerActsOnGroup} over
+   * this service's repositories, for the doors that hold none of their own (the add-lock's two).
+   */
+  async assertCallerActsOnGroup(route: string, groupId: string, userId: string): Promise<void> {
+    await assertCallerActsOnGroup(
+      { groups: this.groupRepo, seats: this.groupMemberRepo, devices: this.deviceGroupRepo },
+      this.logger,
+      route,
+      groupId,
+      userId
+    );
   }
 
   /**

@@ -39,6 +39,7 @@ import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import {
+  assertCallerActsOnGroup,
   refuseAwaitingSeat,
   callerSeatStanding,
   endDeviceMemberships,
@@ -667,18 +668,32 @@ export class InvitationsController {
 
   /**
    * Delete a specific device-group membership (e.g. when removing a device).
-   * Also deletes ALL memberships for the device if no groupId is provided.
+   *
+   * The caller ends its OWN device's row, or - as an admitted member of the group - the row of a
+   * device the group cannot add (`processPendingInvitations`); nobody else ends anybody's.
    */
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/device-memberships/:userId/:deviceId/:groupId')
   async deleteDeviceMembership(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Param('groupId') groupId: string
+    @Param('groupId') groupId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const caller = sanitizeQueryValue(headerUserId ?? '', 'x-user-id');
+    if (caller !== safeUserId && headerGlobalAdmin !== 'true') {
+      await assertCallerActsOnGroup(
+        { groups: this.groupRepo, seats: this.groupMemberRepo, devices: this.deviceGroupRepo },
+        this.logger,
+        'DEL_MEMBERSHIP',
+        safeGroupId,
+        caller
+      );
+    }
 
     // The row and the Welcomes still queued for it, in ONE transaction ({@link endDeviceMemberships}).
     const ended = await this.endMemberships({
@@ -728,16 +743,24 @@ export class InvitationsController {
   }
 
   /**
-   * Delete ALL device-group memberships for a specific device.
+   * Delete ALL device-group memberships for a specific device - one of the caller's own.
    */
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/device-memberships/:userId/:deviceId')
   async deleteAllDeviceMemberships(
     @Param('userId') userId: string,
-    @Param('deviceId') deviceId: string
+    @Param('deviceId') deviceId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      "Cannot end another user's device memberships"
+    );
 
     // Capture affected groups before delete so we can clean Redis routing sets.
     const memberships = await this.deviceGroupRepo.find({

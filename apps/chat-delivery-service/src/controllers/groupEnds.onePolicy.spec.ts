@@ -74,7 +74,12 @@ interface Ending {
 const ENDINGS: Ending[] = [
   {
     name: 'the user-facing delete',
-    end: ({ groups }) => groups.deleteGroup(GROUP_ID),
+    // Asked by an admitted member, the only caller the route lets end a group.
+    prepare: (repos) => {
+      repos.group.findOne.mockResolvedValue({ id: GROUP_ID });
+      repos.groupMember.findOne.mockResolvedValue({ id: 's-1', awaitingAdmission: false });
+    },
+    end: ({ groups }) => groups.deleteGroup(GROUP_ID, 'u1'),
     releasesScope: false,
   },
   {

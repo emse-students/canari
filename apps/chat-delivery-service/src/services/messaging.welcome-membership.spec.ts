@@ -525,9 +525,10 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     it('still asks dm_group_members for an ordinary conversation - an ADMITTED seat only', async () => {
       await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
       // A seat still awaiting a member decides nothing: its holder Welcoming a device of their own
-      // would lift their own ask.
+      // would lift their own ask - so the seat's flag is read, and only `admitted` passes.
       expect(groupMemberRepo.findOne).toHaveBeenCalledWith({
-        where: { groupId: 'g1', userId: 'u1', awaitingAdmission: false },
+        where: { groupId: 'g1', userId: 'u1' },
+        select: { id: true, awaitingAdmission: true },
       });
     });
 

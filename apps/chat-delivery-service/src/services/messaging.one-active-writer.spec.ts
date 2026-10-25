@@ -677,6 +677,7 @@ describe('the CREATE_GROUP door', () => {
       providers: [
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
+        { provide: getRepositoryToken(GroupMember), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: { findOne: jest.fn() } },
         { provide: 'REDIS_CLIENT', useValue: { sadd: jest.fn() } },
         { provide: MessagingService, useValue: messaging },

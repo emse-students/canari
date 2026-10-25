@@ -3,6 +3,7 @@ import Redis from 'ioredis';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { sanitizeQueryValue } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock, type AddLockAcquisition } from '../utils/add-lock';
+import { MessagingService } from '../services/messaging.service';
 
 /**
  * The JWT-guarded door to the MLS add-lock, which serialises add commits on a group.
@@ -11,18 +12,27 @@ import { acquireAddLock, releaseAddLock, type AddLockAcquisition } from '../util
  * [`utils/add-lock.ts`](../utils/add-lock.ts), shared with the PushSecret door in
  * `push.controller.ts`. Nothing about the lock is decided here: a second implementation is how the
  * two doors came to disagree about how long it lives.
+ *
+ * **ONLY AN ADMITTED MEMBER OF THE GROUP TAKES ITS LOCK** - the lock serialises the Adds a member
+ * commits, so it is the group's to grant. The release needs no such check:
+ * it is ownership-checked, so it can only ever drop the caller's own lock, and refusing it to a
+ * member removed while holding one would only keep the group locked until the lock expires.
  */
 @Controller()
 @UseGuards(HeaderAuthGuard)
 export class LocksController {
   private readonly logger = new Logger(LocksController.name);
 
-  constructor(@Inject('REDIS_CLIENT') private readonly redis: Redis) {}
+  constructor(
+    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private readonly messagingService: MessagingService
+  ) {}
 
   @Post('mls/add-lock')
   /**
-   * Acquires the group's add-lock for the calling device: `{acquired: true, token}` - the token
-   * its release names - or `{acquired: false, retryAfterMs}`, how long the holder's lock has left.
+   * Acquires the group's add-lock for the calling device, which must be an admitted member's:
+   * `{acquired: true, token}` - the token its release names - or `{acquired: false, retryAfterMs}`,
+   * how long the holder's lock has left.
    */
   async acquireAddLock(
     @Body()
@@ -32,6 +42,7 @@ export class LocksController {
     const userId = sanitizeQueryValue(userIdRaw ?? '', 'x-user-id');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    await this.messagingService.assertCallerActsOnGroup('ADD_LOCK', groupId, userId);
     return acquireAddLock(this.redis, this.logger, { groupId, userId, deviceId }, 'jwt');
   }
 

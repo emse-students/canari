@@ -27,6 +27,11 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
+
+What the audit left open is in the private operations notes until each item is fixed; the rule is
+in [durable-rules](durable-rules.md).
+
 ## P3 - A duplicate redelivery is logged as a damaged frame (portal ACK probe, 2026-10-25)
 
 When a frame this device already read comes back (`SecretReuseError` at its own epoch),
