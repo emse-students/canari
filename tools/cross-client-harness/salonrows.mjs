@@ -282,6 +282,10 @@ export function salonNarration({ workspaceId, channelIds, keyGroupIds }) {
     R(String.raw`^\[WORKSPACE\] my role in ${ws} is now "[^"]+" \(canManage=(?:true|false) canManageChannels=(?:true|false) canModerate=(?:true|false)\)$`),
     R(String.raw`^\[channelSettings\.(?:loadChannelAccess|refreshAccess)\] channel_${ch}…$`),
     R(String.raw`^\[channelSettings\.(?:add|remove)AllowedUser\] \{"channelId":"channel_${ch}…","userId":"[0-9a-f]{8}…"\}$`),
+    // A revoked member's own client leaving the salon, and the panel noticing that another write
+    // landed after its own (RM-4b's race, both writes standing) - one line each per event.
+    R(String.raw`^Removed from channel ${ch}…$`),
+    R(String.raw`^\[channelSettings\.afterAccessWrite another write landed\] \{"channelId":"channel_${ch}…","base":\d+,"revision":\d+\}$`),
     /^\[RoutePreload\] \{"pathname":"\/[a-z]*","first":true\}$/,
   ];
 }
