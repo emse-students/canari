@@ -3261,13 +3261,7 @@ export class MessagingService {
         ? await isEntitledToDistributionGroup(scope, userId, traceId)
         : external
           ? seat !== null
-          : !!(await this.deviceGroupRepo.findOne({
-              where: [
-                { groupId, userId, deviceId, status: 'active' as const },
-                { groupId, userId, deviceId, status: 'pending' as const, kickedAt: IsNull() },
-              ],
-              select: { deviceId: true },
-            })));
+          : await this.memberCommitterHoldsSeat(groupId, userId, deviceId, traceId));
     if (allowed) return claim;
     this.logger.warn(
       `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
@@ -3282,6 +3276,43 @@ export class MessagingService {
         error: 'committer_not_member',
       })
     );
+  }
+
+  /**
+   * Whether a MEMBER commit's committer holds a seat it may commit from: an `active` row, or a
+   * `pending` one no kick holds - the row its admission wrote, whose first commit then writes it
+   * `active` ({@link validateCommit}, `committerNeedsSeat`).
+   *
+   * THAT FIRST COMMIT CREATES AN ACTIVE SEAT, so in a key-distribution group it is held to the
+   * question every other key-group seat writer asks: is this person entitled, asked of social-service
+   * ({@link isEntitledToDistributionGroup}) - once, on a `pending` row; an `active` row asks nobody. A
+   * `no` is logged here and refuses the commit; an unanswered question is the retryable 503. A
+   * conversation's pending row needs no question: the roster gate in the caller already decided.
+   */
+  private async memberCommitterHoldsSeat(
+    groupId: string,
+    userId: string,
+    deviceId: string,
+    traceId: string
+  ): Promise<boolean> {
+    const row = await this.deviceGroupRepo.findOne({
+      where: [
+        { groupId, userId, deviceId, status: 'active' as const },
+        { groupId, userId, deviceId, status: 'pending' as const, kickedAt: IsNull() },
+      ],
+      select: { deviceId: true, status: true },
+    });
+    if (!row) return false;
+    if (row.status === 'active') return true;
+    const scope = await this.keyDistributionScope(groupId);
+    if (!scope) return true;
+    if (await isEntitledToDistributionGroup(scope, userId, traceId)) return true;
+    this.logger.warn(
+      `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
+        `device=${sanitizeLogValue(userId)}:${deviceId} kind=key-group-member-first-commit ` +
+        `${scope.kind}=${scope.id} reason=not_entitled - a pending key-group seat commits only for a member`
+    );
+    return false;
   }
 
   /**
@@ -4393,8 +4424,8 @@ export class MessagingService {
     const entitledClaim = scope
       ? await this.claimEntitledReport(scope, userId, deviceId, groupId, tag)
       : null;
-    if (entitledClaim === 'not_entitled') {
-      return { ok: false, reason: 'not_entitled' };
+    if (entitledClaim === 'not_entitled' || entitledClaim === 'departed') {
+      return { ok: false, reason: entitledClaim };
     }
     // Which rows the statement may promote. A conversation: an unkicked seat whose owner is an
     // admitted member of the roster. A key group: the seat already active, or - only with an
@@ -4410,15 +4441,18 @@ export class MessagingService {
     // UNDER THE SEAT LOCK, like every other seat write, so an eviction is wholly before (the row is
     // gone and nothing matches) or wholly after (it deletes what this promoted).
     const result = await withSeatLock(this.groupRepo.manager, groupId, async (m) => {
-      if (entitledClaim) {
-        const overtaken = await seatClaimHolds(m, entitledClaim);
-        if (overtaken) {
-          this.logger.warn(
-            `[${tag}] REFUSED group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
-              `reason=departed (${overtaken}, claimed at generation ${entitledClaim.generation})`
-          );
-          return 'departed' as const;
-        }
+      // ONLY THIS PERSON'S DEPARTURE REFUSES HERE. The generation is the GROUP's, so anybody's
+      // eviction while social-service was asked moves it - and a report has no retry to absorb that
+      // refusal. It needs none: this statement is an UPDATE under the seat lock, and every eviction
+      // of this person deletes their rows, so one that ran since the question leaves nothing to
+      // match. A departure begun but not yet written to the roster is the one thing the rows do not
+      // say, and the claim's `owed` does.
+      if (entitledClaim && (await seatClaimHolds(m, entitledClaim)) === 'departure_in_progress') {
+        this.logger.warn(
+          `[${tag}] REFUSED group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+            `reason=departed (departure_in_progress since the entitlement was asked)`
+        );
+        return 'departed' as const;
       }
       return m
         .getRepository(DeviceGroupMembership)
@@ -4451,12 +4485,14 @@ export class MessagingService {
 
   /**
    * For a report in a key-distribution group: the claim a `pending` seat is promoted against, once
-   * social-service answered that its owner is entitled - or `'not_entitled'` (logged here, the
-   * decision), or `null` when the seat is not an unkicked `pending` one and nothing is asked: an
-   * `active` seat is only reported again, and an absent or kicked one is refused by the statement.
+   * social-service answered that its owner is entitled - or `'not_entitled'` / `'departed'` (logged
+   * here, the decision), or `null` when the seat is not an unkicked `pending` one and nothing is
+   * asked: an `active` seat is only reported again, and an absent or kicked one is refused by the
+   * statement.
    *
    * The claim is read BEFORE the question ({@link claimSeat}), never under a lock, as every
-   * key-group seat writer does; the statement re-reads it under the seat lock.
+   * key-group seat writer does; the statement re-reads its departure under the seat lock. A
+   * departure already in progress is refused without asking.
    */
   private async claimEntitledReport(
     scope: DistributionScope,
@@ -4464,13 +4500,20 @@ export class MessagingService {
     deviceId: string,
     groupId: string,
     tag: string
-  ): Promise<SeatClaim | 'not_entitled' | null> {
+  ): Promise<SeatClaim | 'not_entitled' | 'departed' | null> {
     const seat = await this.deviceGroupRepo.findOne({
       where: { userId, deviceId, groupId },
       select: { status: true, kickedAt: true },
     });
     if (seat?.status !== 'pending' || seat.kickedAt) return null;
     const claim = await claimSeat(this.groupRepo.manager, groupId, userId);
+    if (claim.owed) {
+      this.logger.warn(
+        `[${tag}] REFUSED group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+          `reason=departed (departure_in_progress) - not asked of social-service`
+      );
+      return 'departed';
+    }
     const traceId = this.makeTraceId('seat-report');
     if (await isEntitledToDistributionGroup(scope, userId, traceId)) return claim;
     this.logger.warn(
@@ -4794,8 +4837,12 @@ export class MessagingService {
    * removal or an erasure - and stays deleted. One conditional UPDATE: a row deleted first is not
    * matched, and nothing is written.
    *
-   * @returns whether a seat was demoted; `false` when none exists (logged here, under the caller's
-   *   tag), which the status route answers as the `no_seat` refusal.
+   * A CALLER THAT READ THE ROW NAMES IT (`seatId`), and only that row is demoted: a seat deleted
+   * and written again since the read is another seat - a new admission, whose `admittedAtEpoch`
+   * this must not clear nor stamp a kick on that no commit answered.
+   *
+   * @returns whether a seat was demoted; `false` when there is no such row (logged here, under the
+   *   caller's tag), which the status route answers as the `no_seat` refusal.
    */
   async deactivateDeviceMembership(
     userId: string,
@@ -4803,8 +4850,14 @@ export class MessagingService {
     groupId: string,
     {
       removedFromTreeAt,
+      seatId,
       tag = 'MEMBERSHIP_PENDING',
-    }: { removedFromTreeAt: Date | null; tag?: string }
+    }: {
+      removedFromTreeAt: Date | null;
+      /** The `id` of the row the caller read, when it read one. */
+      seatId?: string;
+      tag?: string;
+    }
   ): Promise<boolean> {
     // A placeholder names no device, so it names no seat: demoting it grants nothing and costs
     // nothing, which is why this is a refusal and not a throw - no caller of this best-effort path
@@ -4832,7 +4885,7 @@ export class MessagingService {
     // demoted device to have, and could not give it: it was reading `updatedAt`, which somebody
     // else's write moves.
     const demoted = await this.deviceGroupRepo.update(
-      { userId, deviceId, groupId },
+      seatId ? { id: seatId, userId, deviceId, groupId } : { userId, deviceId, groupId },
       {
         status: 'pending' as const,
         pendingSince: new Date(),
@@ -4850,7 +4903,7 @@ export class MessagingService {
     if ((demoted.affected ?? 0) === 0) {
       this.logger.warn(
         `[${tag}] NOT DEMOTED group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
-          `reason=no_seat - a demotion never creates a seat; the row was deleted before it (a departure, a removal or an erasure)`
+          `reason=no_seat - no row${seatId ? ` (the row read, id=${seatId.slice(0, 8)})` : ''}; a demotion never creates a seat`
       );
       return false;
     }

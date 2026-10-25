@@ -645,6 +645,8 @@ export class InvitationsController {
     // ONE instant for the whole batch, because ONE Remove commit is what reset all of them - which
     // is why the shared writer takes the instant instead of reading the clock per device.
     const kickedAt = new Date();
+    /** The rows actually demoted: one deleted since the read above is not counted (nor re-created). */
+    const demoted: typeof memberships = [];
     for (const m of memberships) {
       // THIS LOOP USED TO SET THE TWO COLUMNS ITSELF AND CALL NO `srem`, and its sibling
       // `kickStaleDevice` fifty lines below did. So kicking a whole user's devices left every one
@@ -652,22 +654,27 @@ export class InvitationsController {
       // `welcome_request` for a group whose leaf the caller had just removed - for up to the
       // fourteen days it takes `cleanupStalePendingInvitations` to delete the row. Nothing
       // reconciles an entry AWAY, so it was permanent until then and silent throughout.
-      await this.messagingService.deactivateDeviceMembership(m.userId, m.deviceId, m.groupId, {
-        removedFromTreeAt: kickedAt,
-        tag: 'KICK_USER',
-      });
+      if (
+        await this.messagingService.deactivateDeviceMembership(m.userId, m.deviceId, m.groupId, {
+          removedFromTreeAt: kickedAt,
+          seatId: m.id,
+          tag: 'KICK_USER',
+        })
+      ) {
+        demoted.push(m);
+      }
     }
 
-    if (memberships.length > 0) {
+    if (demoted.length > 0) {
       this.logger.log(
-        `[KICK] Reset ${memberships.length} device(s) of user ${safeUserId} in group ${safeGroupId} to pending`
+        `[KICK] Reset ${demoted.length} device(s) of user ${safeUserId} in group ${safeGroupId} to pending`
       );
     }
 
     return {
       status: 'kicked',
-      affected: memberships.length,
-      devices: memberships.map((m) => ({
+      affected: demoted.length,
+      devices: demoted.map((m) => ({
         deviceId: m.deviceId,
         groupId: m.groupId,
       })),
@@ -706,10 +713,16 @@ export class InvitationsController {
     // at all - two opposite causes wanting opposite fixes. The caller has just removed this
     // device's leaf and owes it an Add; when that Add throws, its failure is swallowed on the
     // answering device, and `kickedAt` is the only thing left that can name the loss server-side.
-    await this.messagingService.deactivateDeviceMembership(safeUserId, safeDeviceId, safeGroupId, {
-      removedFromTreeAt: new Date(),
-      tag: 'KICK_DEVICE',
-    });
+    // Only the row read above: one deleted since is not re-created, and the writer says so.
+    const demoted = await this.messagingService.deactivateDeviceMembership(
+      safeUserId,
+      safeDeviceId,
+      safeGroupId,
+      { removedFromTreeAt: new Date(), seatId: membership.id, tag: 'KICK_DEVICE' }
+    );
+    if (!demoted) {
+      return { status: 'not_found', affected: 0 };
+    }
 
     this.logger.log(
       `[KICK] Reset device ${safeDeviceId} of user ${safeUserId} in group ${safeGroupId} to pending`

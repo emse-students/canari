@@ -277,16 +277,24 @@ entitlement (`isEntitledToDistributionGroup`) asked against a claim re-read unde
 (`utils/seat-eviction.ts`) - the accepted commit and its admits, the Welcome, the publisher.
 
 - **The demotion is one conditional `UPDATE`, never an upsert.** Every caller demotes a row it read
-  or its own device's seat, so an absent row was deleted in between (a departure, a removal or an
-  erasure) and stays deleted: the demotion writes nothing, returns `false`, warns `NOT DEMOTED ... reason=no_seat` under the
-  caller's tag, the cron does not count it, and the status route answers 403 `NOT_A_MEMBER`
+  or its own device's seat. A caller that read the row names it (`seatId`), so a row deleted and
+  written again since - a new admission - is left alone. With no such row the demotion writes
+  nothing, returns `false` and warns `NOT DEMOTED ... reason=no_seat` under the caller's tag; the
+  cron and both kicks count only what was demoted, and the status route answers 403 `NOT_A_MEMBER`
   `reason=no_seat`, as its promotion already did.
 - **A report of `active` in a key-distribution group asks the entitlement** before promoting a
-  `pending` seat (`claimEntitledReport`), against a claim the statement re-reads under the lock: not
-  entitled is 403 `NOT_A_MEMBER` `reason=not_entitled`, a departure in between is `departed`, an
-  unanswered question the usual retryable 503. An `active` seat reported again asks nobody, and the
-  `UPDATE` then matches `status = 'active'` only. A conversation's report is unchanged: its roster
-  is in the same statement.
+  `pending` seat (`claimEntitledReport`). Not entitled is 403 `NOT_A_MEMBER` `reason=not_entitled`;
+  an unanswered question the usual retryable 503. **Only this person's departure in progress
+  refuses it (`departed`)** - read before asking, and again under the lock. Another person's
+  eviction moves the group's seat generation and must not: a report is one-shot on every client,
+  and none is needed, because the statement is an `UPDATE` under the seat lock and an eviction of
+  this person deletes their rows. An `active` seat reported again asks nobody, and the `UPDATE` then
+  matches `status = 'active'` only. A conversation's report is unchanged: its roster is in the
+  same statement.
+- **A member commit from a `pending` key-group seat asks the entitlement too**
+  (`memberCommitterHoldsSeat`): that first commit writes the seat `active`, so it is a seat writer
+  like the others. Not entitled refuses the commit (403 `NOT_A_MEMBER`
+  `error=committer_not_member`) before the epoch moves; an `active` committer asks nobody.
 
 Proven against PostgreSQL by `seat-writes-membership.integration.spec.ts`, through the real doors.
 

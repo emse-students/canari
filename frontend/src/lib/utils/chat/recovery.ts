@@ -673,8 +673,9 @@ export async function requestReAdd(
     //
     // SO THE SEAT IS PROMOTED HERE, whichever it was - the deterministic end of the row - but ONLY
     // ON PROOF THAT OUR LEAF IS IN THE TREE WE HOLD. The server cannot check that: a self-report
-    // promotes any existing seat that is not kicked and not awaiting admission (`promoteReportedSeat`),
-    // so the proof is ours to carry. Holding the state is not it - an evicted group stays held
+    // promotes an existing seat that is not kicked and whose owner is a member - an admitted roster
+    // seat, or in a key-distribution group an entitlement social-service gives
+    // (`promoteReportedSeat`) - and it cannot read the tree, so the proof is ours to carry. Holding the state is not it - an evicted group stays held
     // (`isGroupActive`) - and a held, active group is: `active` is then the truth, and a `pending`
     // row left behind is served to every member as a work item, so the next one online would Add a
     // leaf already in the tree and its duplicate-leaf repair would kick the live one (the reason the

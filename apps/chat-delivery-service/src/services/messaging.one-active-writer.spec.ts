@@ -504,6 +504,40 @@ describe('the ONE writer of an active membership', () => {
         expect(redis.sadd).not.toHaveBeenCalled();
       });
 
+      it("promotes when only SOMEONE ELSE's eviction moved the group's generation meanwhile", async () => {
+        // A report has no retry: the generation is the group's, so it must not refuse here. An
+        // eviction of THIS person would have deleted the row the statement updates.
+        (groupRepo as unknown as { manager: unknown }).manager = {
+          query: async () => [],
+          transaction: async (cb: (m: unknown) => Promise<unknown>) =>
+            cb({
+              query: async (sql: string) =>
+                sql.includes('FROM dm_seat_evictions')
+                  ? [{ generation: 7, owedDeparture: null }]
+                  : [],
+              getRepository: () => deviceGroupRepo,
+            }),
+        };
+
+        await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+          ok: true,
+        });
+        expect(seats[0]).toMatchObject({ status: 'active' });
+      });
+
+      it('refuses a departure already in progress without asking social-service', async () => {
+        (groupRepo as unknown as { manager: { query: unknown } }).manager.query = async () => [
+          { generation: 1, owedDeparture: 1 },
+        ];
+
+        await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+          ok: false,
+          reason: 'departed',
+        });
+        expect(entitled).not.toHaveBeenCalled();
+        expect(seats[0]).toMatchObject({ status: 'pending' });
+      });
+
       it('lets an unanswered entitlement fail the report whole, promoting nothing', async () => {
         entitled.mockRejectedValue(new Error('503'));
 

@@ -274,6 +274,37 @@ describe('the KICK and INVITATION_STATUS doors', () => {
     expect(deviceGroupRepo.save).not.toHaveBeenCalled();
   });
 
+  it('the kicks name the row they read, and count only what was demoted', async () => {
+    deviceGroupRepo.find.mockResolvedValue([
+      { id: 's1', userId: 'u1', deviceId: 'd1', groupId: 'g1' },
+      { id: 's2', userId: 'u1', deviceId: 'd2', groupId: 'g1' },
+    ]);
+    // d2's row was deleted between the read and the write.
+    messaging.deactivateDeviceMembership.mockImplementation(
+      async (_u: string, d: string) => d === 'd1'
+    );
+
+    const user = await controller.kickStaleUser({ userId: 'u1', groupId: 'g1' }, 'u1', 'true');
+
+    expect(user).toMatchObject({ affected: 1, devices: [{ deviceId: 'd1', groupId: 'g1' }] });
+    expect(messaging.deactivateDeviceMembership).toHaveBeenCalledWith(
+      'u1',
+      'd2',
+      'g1',
+      expect.objectContaining({ seatId: 's2' })
+    );
+
+    deviceGroupRepo.findOne.mockResolvedValue({
+      id: 's2',
+      userId: 'u1',
+      deviceId: 'd2',
+      groupId: 'g1',
+    });
+    await expect(
+      controller.kickStaleDevice({ deviceId: 'd2', userId: 'u1', groupId: 'g1' }, 'u1', 'true')
+    ).resolves.toEqual({ status: 'not_found', affected: 0 });
+  });
+
   it('kick-stale-device still writes nothing for a membership that does not exist', async () => {
     deviceGroupRepo.findOne.mockResolvedValue(null);
 

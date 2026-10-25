@@ -36,6 +36,7 @@ import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { InvitationsController } from '../controllers/invitations.controller';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
+import { memberCommitFrame } from '../testing/mlsFrameFixture';
 
 // social-service's entitlement answer, set by each case.
 jest.mock('../internal/distribution-entitlement', () => ({
@@ -59,8 +60,10 @@ const WORKSPACE = '00000000-0000-4000-8000-0000000000a1';
 const ROUTES = `group:members:${KEY_GROUP}`;
 /** A member who stays. */
 const MEMBER = { userId: 'member', deviceId: 'dev-m' };
-/** A person evicted from the key group: no seat, no route. */
-const UNSEATED = { userId: 'gone', deviceId: 'dev-g' };
+/** An unseated person: evicted from the key group, no seat, no route. */
+const UNSEATED = { userId: 'unseated', deviceId: 'dev-u' };
+/** Someone else in the community, whose eviction moves the group's seat generation. */
+const OTHER = { userId: 'other', deviceId: 'dev-o' };
 
 maybe('seat writes check membership in a key-distribution group (PostgreSQL)', () => {
   const schema = `seat_mb_${Math.random().toString(36).slice(2, 10)}`;
@@ -89,6 +92,13 @@ maybe('seat writes check membership in a key-distribution group (PostgreSQL)', (
       members.forEach((m) => set.delete(m));
       return before - set.size;
     },
+    smismember: async (key: string, ...members: string[]) =>
+      members.map((m) => (setOf(key).has(m) ? 1 : 0)),
+    // The commit gate's Redis lock and its bookkeeping, never contended here.
+    set: async () => 'OK',
+    eval: async () => 1,
+    hdel: async () => 0,
+    hgetall: async () => ({}),
   };
 
   const controller = () =>
@@ -196,7 +206,7 @@ maybe('seat writes check membership in a key-distribution group (PostgreSQL)', (
       [KEY_GROUP, WORKSPACE]
     );
     // Both devices are addressable: a key package each, nothing revoked.
-    for (const who of [MEMBER, UNSEATED]) {
+    for (const who of [MEMBER, UNSEATED, OTHER]) {
       await q(
         `INSERT INTO key_package ("userId", "deviceId", "keyPackage") VALUES ($1, $2, 'kp')`,
         [who.userId, who.deviceId]
@@ -213,6 +223,7 @@ maybe('seat writes check membership in a key-distribution group (PostgreSQL)', (
     entitled.mockImplementation(async (_scope, userId) => userId === MEMBER.userId);
     await seatActive(MEMBER);
     await seatActive(UNSEATED);
+    await seatActive(OTHER);
     await evicted(UNSEATED);
   });
 
@@ -239,7 +250,7 @@ maybe('seat writes check membership in a key-distribution group (PostgreSQL)', (
     expect(await seatOf(UNSEATED)).toBeNull();
   });
 
-  it('reports in both directions from a device with no seat leave no seat and no route', async () => {
+  it('a device with no seat is refused in both directions', async () => {
     await refusalOf(report(UNSEATED, 'pending'));
     const refusal = await refusalOf(report(UNSEATED, 'active'));
 
@@ -316,13 +327,13 @@ maybe('seat writes check membership in a key-distribution group (PostgreSQL)', (
     expect(entitled).not.toHaveBeenCalled();
   });
 
-  it('a promotion whose claim an eviction overtook is refused and promotes nothing', async () => {
+  it("a promotion during the person's own departure is refused and promotes nothing", async () => {
     await q(
       `UPDATE dm_device_group_memberships SET status = 'pending'
         WHERE "groupId" = $1 AND "userId" = $2`,
       [KEY_GROUP, MEMBER.userId]
     );
-    // An eviction begins while the entitlement is being asked: social-service still says yes.
+    // Their departure begins while the entitlement is being asked: social-service still says yes.
     entitled.mockImplementation(async () => {
       await service.evictSeats(KEY_GROUP, MEMBER.userId, 'begin');
       return true;
@@ -333,6 +344,127 @@ maybe('seat writes check membership in a key-distribution group (PostgreSQL)', (
     expect(refusal).toMatchObject({ status: 403, body: { code: 'NOT_A_MEMBER' } });
     expect(await seatOf(MEMBER)).toBeNull();
     expect(routed(MEMBER)).toBe(false);
+  });
+
+  it("SOMEONE ELSE's eviction while the entitlement is asked does not refuse the promotion", async () => {
+    await q(
+      `UPDATE dm_device_group_memberships SET status = 'pending'
+        WHERE "groupId" = $1 AND "userId" = $2`,
+      [KEY_GROUP, MEMBER.userId]
+    );
+    // The group's seat generation moves under the report; nothing of this person's changed.
+    entitled.mockImplementation(async () => {
+      await evicted(OTHER);
+      return true;
+    });
+
+    await expect(report(MEMBER, 'active')).resolves.toEqual({ status: 'active' });
+    expect((await seatOf(MEMBER))?.status).toBe('active');
+    expect(routed(MEMBER)).toBe(true);
+  });
+
+  it('a departure already in progress refuses the promotion without asking social-service', async () => {
+    await q(
+      `UPDATE dm_device_group_memberships SET status = 'pending'
+        WHERE "groupId" = $1 AND "userId" = $2`,
+      [KEY_GROUP, MEMBER.userId]
+    );
+    // The first half of a departure, recorded without deleting this row (as a raw writer would).
+    await q(
+      `INSERT INTO dm_seat_evictions ("groupId", "userId", "generation", "owedDeparture", "updatedAt")
+       VALUES ($1, $2, 1, 1, now())`,
+      [KEY_GROUP, MEMBER.userId]
+    );
+
+    const refusal = await refusalOf(report(MEMBER, 'active'));
+
+    expect(refusal).toMatchObject({ status: 403, body: { reason: 'departed' } });
+    expect(entitled).not.toHaveBeenCalled();
+    expect((await seatOf(MEMBER))?.status).toBe('pending');
+  });
+
+  it('a demotion names the row it read: a row written again since is left alone', async () => {
+    const [read]: { id: string }[] = await q(
+      `SELECT id FROM dm_device_group_memberships WHERE "groupId" = $1 AND "userId" = $2`,
+      [KEY_GROUP, MEMBER.userId]
+    );
+    // Deleted and written again (a new admission) between the kick's read and its write.
+    await q(`DELETE FROM dm_device_group_memberships WHERE id = $1`, [read.id]);
+    await q(
+      `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status, "admittedAtEpoch")
+       VALUES ($1, $2, $3, 'pending', 4)`,
+      [MEMBER.userId, MEMBER.deviceId, KEY_GROUP]
+    );
+
+    await expect(
+      service.deactivateDeviceMembership(MEMBER.userId, MEMBER.deviceId, KEY_GROUP, {
+        removedFromTreeAt: new Date(0),
+        seatId: read.id,
+        tag: 'KICK_DEVICE',
+      })
+    ).resolves.toBe(false);
+    const [row]: { kickedAt: Date | null; admittedAtEpoch: number | null }[] = await q(
+      `SELECT "kickedAt", "admittedAtEpoch" FROM dm_device_group_memberships
+        WHERE "groupId" = $1 AND "userId" = $2`,
+      [KEY_GROUP, MEMBER.userId]
+    );
+    expect(row).toEqual({ kickedAt: null, admittedAtEpoch: 4 });
+  });
+
+  describe("a member commit from a pending key-group seat (the seat's first commit)", () => {
+    const commitAs = (who: { userId: string; deviceId: string }) =>
+      service.validateCommit(
+        {
+          groupId: KEY_GROUP,
+          deviceId: who.deviceId,
+          baseEpoch: 3,
+          proto: memberCommitFrame(KEY_GROUP, 3n),
+          senderId: who.userId,
+        },
+        who.userId
+      );
+
+    beforeEach(async () => {
+      await q(`UPDATE dm_groups SET "activeEpoch" = 3 WHERE id = $1`, [KEY_GROUP]);
+      await q(`DELETE FROM mls_commit_log`);
+      jest.spyOn(service, 'sendMessage').mockResolvedValue({
+        status: 'processed',
+        queued: 0,
+        sent: 0,
+        receivedAt: 0,
+      });
+      // An unkicked pending seat, as an older writer could leave it.
+      await q(
+        `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status)
+         VALUES ($1, $2, $3, 'pending')`,
+        [UNSEATED.userId, UNSEATED.deviceId, KEY_GROUP]
+      );
+    });
+
+    it('is refused when its owner is not entitled, and writes no active seat', async () => {
+      const refusal = await refusalOf(commitAs(UNSEATED));
+
+      expect(refusal).toMatchObject({ status: 403, body: { code: 'NOT_A_MEMBER' } });
+      expect((await seatOf(UNSEATED))?.status).toBe('pending');
+      expect(routed(UNSEATED)).toBe(false);
+      const [group]: { activeEpoch: number }[] = await q(
+        `SELECT "activeEpoch" FROM dm_groups WHERE id = $1`,
+        [KEY_GROUP]
+      );
+      expect(group.activeEpoch).toBe(3);
+    });
+
+    it('is accepted when its owner is entitled, and writes the active seat', async () => {
+      entitled.mockResolvedValue(true);
+
+      await expect(commitAs(UNSEATED)).resolves.toMatchObject({ accepted: true });
+      expect((await seatOf(UNSEATED))?.status).toBe('active');
+    });
+
+    it('from an active seat asks nobody', async () => {
+      await expect(commitAs(MEMBER)).resolves.toMatchObject({ accepted: true });
+      expect(entitled).not.toHaveBeenCalled();
+    });
   });
 
   it("a member's own demotion of a seat it holds still works and drops the route", async () => {
