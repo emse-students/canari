@@ -26,7 +26,9 @@
  * OPENING a conversation, and this is a membership commit. Keeping them apart is what stops the next
  * reader importing half of one to get the other.
  */
+import { assertCampaignOwned } from '../campaign.mjs';
 import { clickAtPoint, evaluate, realClick, until } from '../chat.mjs';
+import { confirmDialog } from '../comm.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -205,6 +207,61 @@ export async function addMembers(cx, names, { openSettings = true } = {}) {
   });
   await submitInvite(cx);
   return picked;
+}
+
+/** The open group panel's `MEMBRES (N)` count, opening the panel first if it is not up; null if unreadable. */
+async function rosterCount(cx) {
+  if (!(await evaluate(cx, `/Quitter le groupe/.test(document.body.innerText)`))) await openGroupSettings(cx);
+  return evaluate(cx, String.raw`(function () { var m = /MEMBRES\s*\((\d+)\)/i.exec(document.body.innerText); return m ? Number(m[1]) : null; })()`);
+}
+
+/**
+ * Removes one member by id from the open group and returns once the roster has actually shrunk -
+ * or once 25 s have passed, without throwing, so the caller fails on the roster as it really stands.
+ *
+ * MOVED HERE FROM `archive/grp.mjs` (2026-10-24), where it was private: the 1.4.1 race rows (CC-2,
+ * CC-3, RM-1) remove a member as their action, and a second copy is how three lessons ended up in
+ * three files last time (this module's header).
+ *
+ * THE POST-CONDITION IS THE ROSTER, not the click: a Remove is a commit and a network round trip,
+ * exactly as an Add is. THE CLICK ONLY ASKS: the removal is confirmed in `showConfirm` since #816
+ * ("Retirer ce membre du groupe ?"); unanswered, the dialog left the roster at two and covered every
+ * later click (GRP-3..10, 2026-10-22).
+ *
+ * @param {string} userId the member's user id (`[data-remove-member]`, the panel's only per-member hook)
+ * @param {string} name the group's name, for the R5 ownership guard
+ * @returns {Promise<{before: number|null, after: number|null}>} the roster counts read around the removal
+ */
+export async function removeMember(cx, userId, name, { label = 'removeMember' } = {}) {
+  // R5: a removal is a commit on THIS group, so the open group must be the campaign's.
+  assertCampaignOwned({ kind: 'group', name }, label);
+  const before = await rosterCount(cx);
+  await realClick(cx, `[data-remove-member="${userId}"]`);
+  await confirmDialog(cx, 'common_remove_label');
+  if (before !== null) {
+    await until(cx, `/MEMBRES\\s*\\(${before - 1}\\)/i.test(document.body.innerText)`, 25000).catch(() =>
+      console.log(`[${label}] the roster did not reach ${before - 1} within 25 s`)
+    );
+  }
+  await sleep(2000);
+  return { before, after: await rosterCount(cx) };
+}
+
+/**
+ * Leaves the open group, through BOTH steps the panel requires (`Quitter le groupe` only arms a
+ * confirmation; the `Quitter` inside it calls `onGroupLeave`). Moved from `archive/grp.mjs` with
+ * {@link removeMember}, for RM-8.
+ */
+export async function leaveGroup(cx, name, { label = 'leaveGroup' } = {}) {
+  assertCampaignOwned({ kind: 'group', name }, label);
+  await realClick(cx, 'text=Quitter le groupe');
+  // CASE-INSENSITIVE, because the confirmation is a `<p class="... uppercase">` and `innerText`
+  // returns what CSS renders: "QUITTER CE GROUPE ?". The exact-case test timed out on every run of
+  // GRP-6 and read as the product refusing to arm its own confirmation.
+  await until(cx, `/quitter ce groupe/i.test(document.body.innerText)`, 8000);
+  await realClick(cx, 'text=Quitter');
+  await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) === -1`, 30000);
+  await sleep(2000);
 }
 
 /**
