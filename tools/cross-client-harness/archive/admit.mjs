@@ -112,12 +112,29 @@ async function asksOn(c, devices) {
   return out;
 }
 
+/**
+ * The answer, given only where the ask SHOWED. An answerer whose screen never showed it is already a
+ * failed assertion (`<seat> shows the ask (never)`); throwing from `answerAsk` turned that FAIL into
+ * an ERROR with no verdict (ADM-1, 2026-10-25: the ask reached the one member its request was
+ * forwarded to, and W1 - the answerer - only at its next connection).
+ *
+ * @returns {Promise<boolean>} whether the answer was given
+ */
+async function answerWhereShown(asks, by, userId, choice) {
+  if (asks[by] === null) {
+    console.log(`[${id}] ${by} never showed the ask - no answer given, the judge records it`);
+    return false;
+  }
+  await answerAsk(seats.seat[by].cx, userId, choice);
+  return true;
+}
+
 const ACTIONS = {
   /** ADM-1: waiting, refused the base, asked everywhere, admitted by one member, the ask gone everywhere. */
   async 'ADM-1'(c) {
     const w = await followAndWait(c);
     const asks = await asksOn(c, c.members);
-    await answerAsk(seats.seat[spec.answer.by].cx, c.user[spec.joiner], spec.answer.choice);
+    await answerWhereShown(asks, spec.answer.by, c.user[spec.joiner], spec.answer.choice);
     const admitted = await seatReaches(c, c.user[spec.joiner], 'admitted', 60_000);
     const listed = (await awaitListed(seats.seat[spec.joiner].cx, c.group.name, 90_000)) !== null;
     const gone = {};
@@ -133,7 +150,7 @@ const ACTIONS = {
   async 'ADM-2'(c) {
     const w = await followAndWait(c);
     const asks = await asksOn(c, c.members);
-    await answerAsk(seats.seat[spec.answer.by].cx, c.user[spec.joiner], spec.answer.choice);
+    await answerWhereShown(asks, spec.answer.by, c.user[spec.joiner], spec.answer.choice);
     const after = await seatReaches(c, c.user[spec.joiner], 'absent', 60_000);
     const exclusions = await apiGet(seats.seat[c.owner].cx, `/api/mls/groups/${c.group.id}/exclusions`);
     const excluded = String(exclusions.body ?? '').toLowerCase().includes(c.user[spec.joiner].toLowerCase());
@@ -213,7 +230,7 @@ const ACTIONS = {
   async 'ADM-5'(c) {
     const w = await followAndWait(c);
     const asks = await asksOn(c, c.members);
-    await answerAsk(seats.seat[spec.answer.by].cx, c.user[spec.joiner], spec.answer.choice);
+    await answerWhereShown(asks, spec.answer.by, c.user[spec.joiner], spec.answer.choice);
     const admitted = await seatReaches(c, c.user[spec.joiner], 'admitted', 90_000);
     const listed = (await awaitListed(seats.seat[spec.joiner].cx, c.group.name, 120_000)) !== null;
     const gone = {};
