@@ -24,6 +24,9 @@ document. `watch.mjs` `DEV_EDGE_CSP_EXCEPTION` forgives exactly that refusal, on
 per document, never an app script's hash; every row that used it carries `environmentException` in
 its detail. Any other CSP refusal is dirt. It goes when the owner turns the zone's detections off.
 
+**THE iPHONE (I1) RUNS `1.4.1-alpha.4` FROM TESTFLIGHT AND READS NO ROWS (2026-10-25)** - it is
+signed out, and nothing signs it in until the owner decides; every `+I1` row stays `pending`.
+
 | State | Meaning |
 | --- | --- |
 | `PASS` | ran, the row's own assertions and the invariant of section 4.0 held, every window clean - and the row names the build |
@@ -33,7 +36,7 @@ its detail. Any other CSP refusal is dirt. It goes when the owner turns the zone
 | `INVALID` | the row's premise could not be built, so the product was never asked |
 | `SKIPPED` | decided not to run, with the reason in the cell |
 | `pending` | not run on the current build; a reason after it (BLOCKED-ON-ACCOUNT, Q5) says what it waits for |
-undefined`SKIPPED` - not played on the bench (Q2): unit coverage stands in |undefined`SKIPPED` - not played on this build: the shared-payload writer stays OFF for 1.4.1 |undefined`pending` - blocked on Q5 |- BLOCKED-ON-ACCOUNT: needs a fifth campaign account |- BLOCKED-ON-ACCOUNT: needs a fifth campaign account |
+
 ## FLOOR - re-proved on dev, in the same session, before anything else (tier A)
 
 | Id | What it asks | Needs | State |
