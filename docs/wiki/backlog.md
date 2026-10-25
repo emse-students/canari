@@ -71,53 +71,37 @@ brings back the stored case. The creator's own sidebar shows the stored case thr
 path is not yet read. The salon runner now mints lower-case salon names, so its rows no longer
 depend on this.
 
-## P2 - A joiner receives the next commit before its Welcome and asks for a re-Add it does not need (DUP-2, 2026-10-25)
+## P3 - A re-fetch after a late Welcome re-reads frames the live socket already delivered (DUP-2, 2026-10-25)
 
-When an Add's commit is accepted but its answer is lost, the committer merges late. It merges when
-its resubmission is answered `duplicate`, and only then delivers the Welcome it owes
-(`deliverOwedWelcomes`, #2452). Until then the server already counts the joiner as a member, and it
-fans the group's next commit to the joiner's device, which has no Welcome yet. Read on
-`1.4.1-alpha.4` (dev.f49f499), DUP-2. One member's Add 2->3 was accepted with its answer lost, and
-its resubmission was held about 12 s. Another member removed a third member, 3->4, during the hold.
-Timeline on the joiner, in seconds from the Add's acceptance:
+After a late Welcome (a joiner reached by a member's commit before it, [mls-protocol](protocols/mls-protocol.md#a-joiner-whose-first-frame-beats-its-welcome-waits-for-it-dup-2-2026-10-25)),
+the client re-fetches the frames it left behind as `unknown-group`. That re-fetch pulls every row the
+server still holds for the group, including an epoch-4 application frame live delivery had read a
+moment earlier and not yet acknowledged. MLS refuses the second read (`SecretReuseError`) and the
+frame ledger ACKs it as `Duplicate delivery … silent ACK (SecretReuseError, already read by live
+delivery)`. Read on `1.4.1-alpha.4` (dev.f49f499). Nothing is lost, but the duplicate comes from the
+client itself, not from a lost ACK, so it is a defect, not a normal path: a decrypt spent to learn
+what the client already knew. The mislabel the second read used to carry (`[FORK] not a fork … the
+frame itself is damaged` at WARN) is fixed - classified as a spent generation in `messaging.rs` (#2466).
+The re-read itself is not: the re-fetch should not ask for, or should not hand to MLS, a row the live
+socket already delivered in this session. Not yet read: whether the re-fetch and the live drain share
+any per-row identity (`queuedMessageId`) the re-fetch could skip on.
 
-- **+7.8**: the epoch-3 Remove commit arrives for a group the joiner does not know. The joiner logs
-  `[PIPELINE] Out-of-sync … - requestReAdd`, `[BUFFER] recovery started for unknown group`, then
-  `[READD] sendWelcomeRequest… (invited, Welcome owed by a member)` and `welcome_request sent`, and
-  closes with `[PIPELINE] Recovery attempt finished`.
-- **+11.7**: the committer's held resubmission is answered `duplicate` and merged. The owed Welcome is
-  delivered.
-- **+12.2**: the Welcome is processed, the buffered commit is re-queued, the group is re-fetched as
-  "left behind as unknown-group", and the joiner lands at epoch 4. That re-fetch is the next entry's
-  duplicate.
+## P3 - Verify: an Add accepted but unannounced lets the joiner rejoin over its own leaf (DUP-2 review, 2026-10-25)
 
-Nothing is lost, and the race heals. But the Welcome was never missing, only late, so the
-`welcome_request` asks a member for work that was already on its way, and the joiner's log narrates a
-recovery that was not one. Which side owns the fix is open:
-
-- the server does not fan a commit to a device it has not yet seen a Welcome for;
-- or the joiner treats "Welcome owed by a member" as a wait, not a recovery.
-
-The group of that run is kept on dev for the reading.
-
-## P3 - A duplicate redelivery is logged as a damaged frame (portal ACK probe, 2026-10-25)
-
-When a frame this device already read comes back (`SecretReuseError` at its own epoch),
-`messaging.rs` logs `[FORK] not a fork: the refused frame on group <id> claims our own epoch
-fingerprint at epoch N - the frame itself is damaged` at WARN, and then `MLS decryption failed at
-exactly its own epoch, so no redelivery can help` at ERROR. A line later the TS side reads the same
-refusal correctly: `Duplicate delivery … silent ACK (SecretReuseError, already read by the archive
-replay)`. The frame is not damaged and nothing failed, so both Rust lines accuse wrongly. Read on
-`1.4.1-alpha.3` (dev.9335201): an ACK eaten by a captive portal left one frame queued, and the
-reload re-fetched it. The fix is to classify `SecretReuseError` before the fork judgement and the
-error line, carrying it as the type the TS classifier already keys on.
-
-**A second path makes the duplicate (DUP-2, `1.4.1-alpha.4`, 2026-10-25).** The re-fetch that runs
-after a late Welcome (the entry above) re-reads an epoch-4 application frame that live delivery had
-already read. The same two Rust lines follow at WARN and DEBUG, then `Duplicate delivery … silent ACK
-(SecretReuseError, already read by live delivery)`. Here the duplicate comes from the client itself,
-not from a lost ACK: the re-fetch fetches what the live socket had already delivered. So this is two
-defects: the misnaming above, and a re-fetch that re-reads frames the live socket already delivered.
+A joiner decides its door from its membership row (`readWelcomeOwedFromRow`). An Add the server
+ACCEPTED whose answer the adder lost leaves the seat with `admittedAtEpoch` and the joiner's leaf in
+the tree, the Welcome owed state on the adder (`owed_welcome.rs`). If the adder no longer holds the add
+lock before it settles and no Welcome is queued, both facts are false: the reading is
+`unhonoured-seat` and the joiner joins by external commit. **That is NOT the GRP-4 duplicate-leaf
+shape**: the external commit carries the same signature key as the leaf the Add wrote, and OpenMLS
+removes that leaf in the same commit - the routine rejoin of an active device that lost its state.
+Pinned by `mls-core/tests/external_join.rs` (`an_admitted_joiner_joining_externally_leaves_exactly_one_leaf_for_its_key`)
+and `recovery.test.ts` ("joins externally on a seat a commit admitted when neither fact holds").
+What is owed is a VERIFICATION, not a decision: whether any adder path releases the lock before its
+settlement (DUP-2 read `owed`, so the lock was held there), and then what the adder's late Welcome
+does when it meets a joiner already in by its own commit (it should be refused as a spent key package
+and taken as a redelivery). `getDeviceMemberships` does not carry `admitted` (the user-groups route
+does); adding it is only worth it if the verification finds a cost.
 
 ## P3 - A browser whose storage is broken is told the connection failed (KILL-2, 2026-10-25)
 

@@ -306,7 +306,8 @@ async function stopRecovering(groupId: string, reason: string, deps: RecoveryDep
  *  3. Group CONFIRMED ABSENT server-side -> purge the local phantom, stop.
  *  4. Group already in local WASM -> nothing to recover (caller must forgetGroup first if forked).
  *  5. Group tombstoned (`deletedAt`) -> mark the conversation removed, stop.
- *  6. A member ALREADY OWES us a Welcome (membership still `pending`) -> ask one, stop. The
+ *  6. A member ALREADY OWES us a Welcome (`pending`, with a Welcome queued or an add in flight) ->
+ *     wait for it, ask nobody, stop; a link's seat awaiting admission -> ask a member, stop. The
  *     external join below is not ours to make while an Add is in flight for our own leaf.
  *  7. Try the self-service external-commit join (Phase 4).
  *  8. The server REFUSED it as a non-member (`NotAGroupMemberError`) -> mark the conversation
@@ -507,8 +508,28 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     await askAMemberToReAddUs(groupId, deps, "invited by a link, awaiting a member's admission");
     return;
   }
+  // A WELCOME THAT IS COMING IS WAITED FOR, NEVER ASKED FOR AGAIN (DUP-2, 2026-10-25).
+  //
+  // `owed` is the server saying a Welcome is queued for this device or a member holds the add lock
+  // right now - both mean the Welcome is already on its way, from a party that holds it (a queued
+  // row, or an Add whose Welcome is durable state on the adder, `owed_welcome.rs`). A
+  // `welcome_request` on top of that asked every member to do the same work a second time: a member
+  // finding the lock held logged `Lock busy` and stood down, and a member finding it free would have
+  // REPLACED this device's leaf - a second commit, a second Welcome, and the first one invalidated.
+  // Measured on DUP-2: a joiner whose first frame was a member's commit fanned out before its
+  // Welcome existed (the server routes an admitted device every frame of its epoch, and must) asked
+  // for a re-add it did not need, five seconds before the adder delivered the owed Welcome.
+  //
+  // So it waits, on the facts and not a clock: the not-ready marker above keeps the group on the
+  // SYNC_WATCHDOG's cadence, every pass re-reads the row, and the moment neither fact holds the
+  // reading is `unhonoured-seat` and the self-service door below is this device's. The frames that
+  // arrived first stay buffered and in the server queue, and the Welcome handler replays them.
+  // The Graine key-group join has waited on this same reading since 2026-09-27
+  // (`ensureDistributionGroupFor`); this was the one door that still asked.
   if (reading === 'owed') {
-    await askAMemberToReAddUs(groupId, deps, 'invited, Welcome owed by a member');
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... a Welcome is owed to this device (queued, or an add in flight) - waiting for it, no member asked`
+    );
     return;
   }
 
@@ -822,10 +843,10 @@ async function readWelcomeOwed(
  * Asks a reachable member to re-add this device by Welcome, and says WHY it was asked.
  *
  * The single seam for the only remaining way into a group this device cannot join by itself, shared
- * by the two callers that reach it for opposite reasons - one because a member already owes us the
- * Welcome, one because the external join was refused. `context` is what keeps the log honest: the
- * same request sent for those two reasons means different things, and reading "fallback" on the path
- * that is the PRIMARY one would misdescribe a healthy join as a degraded one.
+ * by the two callers that reach it for opposite reasons - one because a link's seat waits for a
+ * member's admission, one because the external join was refused. `context` is what keeps the log
+ * honest: the same request sent for those two reasons means different things. A Welcome a member
+ * already OWES us is never asked for here - it is waited for (`requestReAdd`, DUP-2).
  */
 async function askAMemberToReAddUs(
   groupId: string,

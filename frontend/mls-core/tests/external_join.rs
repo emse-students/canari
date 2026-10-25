@@ -217,3 +217,49 @@ fn staged_removal_carries_a_base_for_the_epoch_it_creates() {
         .expect("external join from the removal's own base");
     assert_eq!(carol.get_epoch(gid).expect("epoch"), before + 2);
 }
+
+/// AN ADMITTED JOINER THAT JOINS BY EXTERNAL COMMIT ENDS WITH ONE LEAF, NOT TWO (DUP-2 review,
+/// 2026-10-25).
+///
+/// The case a joiner reaches when an Add was ACCEPTED (its leaf is in the tree) but neither a queued
+/// Welcome nor a held add lock says so: its seat reads `unhonoured-seat` and it serves itself. The
+/// fear was the GRP-4 duplicate-leaf shape. It is not: the external commit carries the same signature
+/// key as the leaf the Add wrote, and OpenMLS removes that leaf in the same commit - the routine
+/// rejoin of an active device that lost its state. Pinned on both sides of the commit.
+#[test]
+fn an_admitted_joiner_joining_externally_leaves_exactly_one_leaf_for_its_key() {
+    let mut alice = make_device("alice", "dev1");
+    let mut bob = make_device("bob", "dev1");
+    let gid = "g-admitted-external";
+    alice.create_group(gid.to_string()).expect("create_group");
+    let kp_bob = bob.generate_key_package().expect("kp bob");
+    // The Add lands; its Welcome never reaches bob (the adder's answer was lost, say).
+    alice.add_members_bulk(gid, &[&kp_bob]).expect("add bob");
+    alice.merge_pending_commit_for(gid).expect("merge add bob");
+    let bob_leaves = |m: &MlsManager| {
+        m.member_identities(gid)
+            .expect("identities")
+            .iter()
+            .filter(|id| id.as_str() == "bob:dev1")
+            .count()
+    };
+    assert_eq!(bob_leaves(&alice), 1, "the Add wrote bob's leaf");
+
+    let info = alice.export_group_info(gid).expect("group info");
+    let (_, commit) = bob
+        .join_by_external_commit(&info)
+        .expect("bob joins over his own admitted leaf");
+    alice
+        .process_incoming_message(gid, &commit)
+        .expect("alice applies the external commit");
+    bob.merge_pending_commit_for(gid).expect("bob merges");
+
+    assert_eq!(bob_leaves(&alice), 1, "one leaf for bob's key on the member");
+    assert_eq!(bob_leaves(&bob), 1, "one leaf for bob's key on bob");
+    let frame = alice.send_message(gid, b"after the rejoin").expect("send");
+    let plaintext = bob
+        .process_incoming_message(gid, &frame)
+        .expect("bob reads")
+        .expect("application");
+    assert_eq!(plaintext, b"after the rejoin");
+}

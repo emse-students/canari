@@ -403,6 +403,35 @@ impl MlsManager {
                 // through this very return, and both classifiers key on those markers. So a frame
                 // can carry two, and the order is fixed on both sides - a specific marker names
                 // the ratchet position, this one names only what is left when none of them does.
+                // A SPENT GENERATION IS NOT A DAMAGED FRAME, AND IT IS NOT A FORK QUESTION EITHER -
+                // classified HERE, at the throw, from the error's type. OpenMLS reaches
+                // `SecretReuseError` only AFTER it opened the frame's sender data with this epoch's
+                // `sender_data_secret` and found the sender's ratchet position already consumed: the
+                // frame was sealed under OUR copy of this epoch (a forked one fails earlier, at the
+                // sender data) and its bytes are intact. What is left is the question the caller's
+                // ledger answers from the bytes - the same frame read twice (a live delivery and a
+                // re-fetch of the row it had not acknowledged yet, after a Welcome), or a rewound
+                // sender (WP-LOSS-1). So no fork verdict is judged, no "damaged" line is written,
+                // and the error still reaches every caller with its marker.
+                //
+                // Measured on DUP-2 (2026-10-25, a joiner re-fetching after its Welcome): the
+                // re-fetched copy of a frame live delivery had just read logged `[FORK] not a fork
+                // ... the frame itself is damaged` at WARN, and the pipeline then ACKed it as the
+                // duplicate it was. Both halves of that line were false.
+                if is_spent_generation(&e) {
+                    log::debug!(
+                        "Spent generation at our own epoch: group={} epoch={} - the frame was \
+                         sealed under this tree and its key is already consumed (a re-delivery, or \
+                         a rewound sender); the caller's frame ledger tells which",
+                        group_id,
+                        msg_epoch
+                    );
+                    return Err(MlsError::OpenMls(format!(
+                        "Process error: same-epoch refusal {:?} [msg_epoch={}, group_epoch={}]",
+                        e, msg_epoch, group_epoch
+                    )));
+                }
+
                 // AND THE ONE PLACE A FORK CAN BE SEEN: a frame from the other side of a fork is
                 // this very refusal. Its claim says whether the sender's copy of this epoch is ours
                 // (`Agrees`: the bytes are bad) or another one (`fork_check.rs`).
@@ -595,4 +624,20 @@ impl MlsManager {
             }
         }
     }
+}
+
+/// Whether OpenMLS refused a frame because its sender's ratchet generation is already CONSUMED here.
+///
+/// Read from the error's TYPE, never from its `Debug` text: this is the one refusal that proves the
+/// frame was sealed under this device's copy of the epoch (the sender data opened), so it decides
+/// that no fork verdict is judged and no "damaged frame" line is written. A rewording upstream must
+/// not be able to move a frame from one answer to the other.
+fn is_spent_generation<S>(error: &ProcessMessageError<S>) -> bool {
+    use openmls::framing::errors::{MessageDecryptionError, SecretTreeError};
+    matches!(
+        error,
+        ProcessMessageError::ValidationError(ValidationError::UnableToDecrypt(
+            MessageDecryptionError::SecretTreeError(SecretTreeError::SecretReuseError)
+        ))
+    )
 }

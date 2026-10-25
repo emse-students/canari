@@ -60,7 +60,7 @@ signed out, and nothing signs it in until the owner decides; every `+I1` row sta
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | DUP-1 | The commit lands and its ANSWER is lost | W1 W2 - U | `pending` |
-| DUP-2 | DUP-1, and another member commits before our resubmission - a Remove; an intervening ADD during a held resubmission is covered by CC-1, not DUP-2 | W1 W2 W4 W5 - U | `PASS-DIRTY` (product) on `1.4.1-alpha.4` - every assertion held and the server was clean; the joiner received the next commit before its late Welcome ([backlog](backlog.md#p2---a-joiner-receives-the-next-commit-before-its-welcome-and-asks-for-a-re-add-it-does-not-need-dup-2-2026-10-25)) |
+| DUP-2 | DUP-1, and another member commits before our resubmission - a Remove; an intervening ADD during a held resubmission is covered by CC-1, not DUP-2 | W1 W2 W4 W5 - U | `PASS-DIRTY` (product) on `1.4.1-alpha.4` - every assertion held and the server was clean; the joiner received the next commit before its late Welcome - it now waits for it ([mls-protocol](protocols/mls-protocol.md#a-joiner-whose-first-frame-beats-its-welcome-waits-for-it-dup-2-2026-10-25)); the re-fetch after it re-reads a frame ([backlog](backlog.md#p3---a-re-fetch-after-a-late-welcome-re-reads-frames-the-live-socket-already-delivered-dup-2-2026-10-25)) |
 | DUP-3 | The first request stalls past the server's 5 s commit lock while our resubmission arrives | - | `SKIPPED` - not played on the bench (Q2): unit coverage stands in |
 | DUP-4 | A resubmission is answered `409 SEAT_CLAIM_OVERTAKEN` | W1 W2 - U | `pending` |
 | DUP-5 | The commit is answered `503` | W1 W2 - U | `pending` |

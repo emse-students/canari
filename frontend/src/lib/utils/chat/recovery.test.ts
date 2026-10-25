@@ -131,7 +131,8 @@ describe('requestReAdd', () => {
     // THE REGRESSION THIS PINS COST GRP-4 ABOUT HALF ITS JOINS. An invited device whose membership
     // is still `pending` has an Add in flight for its own leaf; serving itself an external commit
     // puts two parties in the same tree, and the loser of that race is evicted by the winner's
-    // duplicate-leaf repair. The welcome_request is not a fallback here - it is the whole path.
+    // duplicate-leaf repair. Nor is a welcome_request ours to send: the Welcome is on its way, and
+    // a member answering one would replace the leaf the Add is writing (DUP-2, 2026-10-25).
     const deps = makeDeps();
     deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([membership('g1', 'pending')]);
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
@@ -139,7 +140,7 @@ describe('requestReAdd', () => {
     await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
-    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
   });
 
   it('external-joins a group whose membership is already active', async () => {
@@ -169,7 +170,14 @@ describe('requestReAdd', () => {
     await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
-    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+    // A queued Welcome is delivered by the next drain; asking a member for another one is work
+    // done twice, and the second copy would be built on a new KeyPackage.
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(deps.log).toHaveBeenCalledWith(
+      expect.stringContaining('a Welcome is owed to this device')
+    );
+    // Still on the watchdog's cadence: each pass re-reads the facts until the Welcome lands.
+    expect(localStorage.getItem('mls_not_ready_since:user-a:g1')).not.toBeNull();
   });
 
   it('waits while a member holds the add lock, even with no Welcome queued yet', async () => {
@@ -188,7 +196,10 @@ describe('requestReAdd', () => {
     await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
-    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+    // DUP-2, 2026-10-25: the adder's answer was lost, its resubmission held the lock, and the joiner
+    // - whose first frame was another member's commit - asked every member for a re-add. A member
+    // finding the lock free would have REPLACED the leaf the Add had just written.
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
   });
 
   it('serves itself when the roster seat has no Welcome and no Add in flight', async () => {
@@ -546,7 +557,7 @@ describe('recoverRosterDisagreement', () => {
     expect(mls.externalJoin).toHaveBeenCalledWith('g-stuck');
   });
 
-  it('asks the member who owes us a Welcome instead of joining over the top of the Add', async () => {
+  it('waits for the Welcome a member owes us instead of joining over the top of the Add', async () => {
     const mls = makeMlsHolding(['g-stuck'], {
       getDeviceMemberships: vi
         .fn()
@@ -560,7 +571,8 @@ describe('recoverRosterDisagreement', () => {
     // A pending seat with a Welcome queued is not ours to external-join: two parties would write
     // the same leaf, which is the GRP-4 kick this discriminator exists to prevent.
     expect(mls.externalJoin).not.toHaveBeenCalled();
-    expect(mls.sendWelcomeRequest).toHaveBeenCalled();
+    // Nor asked for again: the queued Welcome is the door (DUP-2).
+    expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
   });
 
   /**
