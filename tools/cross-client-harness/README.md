@@ -1195,6 +1195,18 @@ reads each sender's Graine sessions per phase from `channel_messages`. Its invar
 community's membership (`communityEntitlement`). There is no `checks.mjs` phase: the rows need both
 phones. Judgements in `bigrows.mjs`, pinned by `archive/big-selftest.mjs`.
 
+```sh
+bun archive/handrow.mjs --row LIFE-5|CALL-12|CALL-13 --verdict PASS|FAIL|INCONCLUSIVE|SKIPPED --what "<observed>" --since <ISO>
+```
+
+**A ROW ONLY A PERSON CAN PLAY IS RECORDED, NEVER WATCHED.** The `O` rows of the plan's section 4.3
+need a gesture no tool performs, so the person's observation goes in `handObserved` and the client
+side is `unobservable`; no `clean` key is written. The rig reads the one observer it still has, the
+server window from `--since` (the start the lead gives), and a window that is dirty or unreadable
+demotes a PASS to `PASS-DIRTY`. `SKIPPED` takes no `--since` and records the reason. TOK-3 is not a
+hand row: `settle.mjs` runs it unattended. Judgements in `handrows.mjs`, pinned by
+`archive/handrow-selftest.mjs`.
+
 ## Rules that make a result trustworthy
 
 **Thirty-one** harness faults produced a false verdict before these were learnt. They are distilled,
