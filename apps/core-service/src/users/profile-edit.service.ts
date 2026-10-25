@@ -8,6 +8,7 @@ import { ProfileCorrectionNotPendingError } from './profile-correction.errors';
 import { MiconnectEditorClient } from './miconnect-editor.client';
 import { legacyColumns, validateProfileEdit, type ProfileSnapshot } from './miconnect-profile';
 import { ProfileEditInvalidError, ProfileEditNotLinkedError } from './profile-edit.errors';
+import { updateUserColumns } from './user-write';
 
 /** What an applied edit reports back. `changeId` is null when nothing differed and nothing was traced. */
 export interface ProfileEditResult {
@@ -97,7 +98,7 @@ export class ProfileEditService {
 
     try {
       return await this.dataSource.transaction(async (manager) => {
-        Object.assign(user, {
+        const columns = {
           campus: after.campus,
           cursus: after.cursus,
           posts: after.posts,
@@ -105,8 +106,18 @@ export class ProfileEditService {
           lastName: after.lastName,
           displayName: `${after.firstName} ${after.lastName}`,
           ...legacyColumns(after.cursus),
-        });
-        await manager.save(User, user);
+        };
+        // The profile columns of the row, never a save of the copy read above: that copy predates
+        // the authentik round-trip, and a save would write back every other column changed since
+        // and re-insert a row deleted since. A row gone answers 404 and rolls the audit back.
+        await updateUserColumns(
+          manager.getRepository(User),
+          targetId,
+          columns,
+          'profile.edit',
+          this.logger
+        );
+        Object.assign(user, columns);
         let changeId: string | null = null;
         if (!unchanged) {
           const change = await manager.save(

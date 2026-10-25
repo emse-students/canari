@@ -504,6 +504,33 @@ authorization, and die with the row. The IP is taken from the **last** `X-Forwar
 the first: nginx appends the connecting address to whatever the client sent, so the head of that
 list is attacker-controlled and only the tail is what nginx actually saw.
 
+### A user write updates columns, never saves the row it read (2026-10-25)
+
+**A write to an existing `users` row is ONE column-scoped `UPDATE` keyed by its id**
+(`updateUserColumns`, `users/user-write.ts`), and `affected !== 1` throws the typed
+`UserRowGoneError` (a 404): nothing written, nothing inserted. A TypeORM `save` of a `User` read
+earlier is not that: it diffs the stale copy against the row as it stands and writes back every
+column a concurrent writer changed since the read, and it inserts the row again, every column
+included, when it was deleted in between. The sites: the notepad save, the profile `PATCH`, the admin
+flag (one `UPDATE` of `admin` and no read at all), the sign-in's refresh of its claims, and an admin
+profile edit (inside its audit transaction, so a row gone rolls the audit back).
+
+- **The notepad key** is minted by `UPDATE ... SET "notesKey" = COALESCE("notesKey", $key) ...
+  RETURNING "notesKey"`: PostgreSQL makes the second of two concurrent first calls wait and re-read
+  the row, so both answer the first key, and a note is never encrypted under a key a later write
+  replaced.
+- **The sign-in** keeps its insert for a subject with no row. Only an account erasure deletes a user
+  row, so a row read and gone before the update is answered with the erasure's own refusal
+  (`ACCOUNT_ERASURE_PENDING`/`_BLOCKED`, read again on `UserRowGoneError`) and is never re-created.
+- **`save` stays for a row the call itself creates** (`create`, the first sign-in, a session, a block).
+
+Proven on PostgreSQL by `users/user-write-gone.integration.spec.ts` (CI step "User writes against
+PostgreSQL"): every write above, with an admin revoke or an erasure committed between its read and its
+write from inside the service's own repository call, plus two first key calls. The same rule holds in
+social-service for memberships ([social-service](social-service.md)), a tag's renewal
+([cotisations](../cotisations.md#a-renewal-updates-two-columns-never-saves-the-tag-it-read-2026-10-25))
+and an unmute, proven by `users/user-grant-write-gone.integration.spec.ts` there.
+
 ### The admin announcement, shown once per account
 
 Published from `/admin/platform` as a ROW, never a deploy - exactly as `minClientVersion` is. An

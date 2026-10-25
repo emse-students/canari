@@ -23,6 +23,8 @@ import { EMPTY_PROFILE, legacyColumns, type MiconnectProfile } from './miconnect
 import { socialUrl } from '../internal/service-urls';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import { assertMintableUserId } from './user-id';
+import { UserRowGoneError, updateUserColumns } from './user-write';
+import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 
 /** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
@@ -90,11 +92,22 @@ export class UsersService implements OnModuleInit {
     return users.map((user) => this.toPublicDto(user));
   }
 
-  /** Merges the provided fields onto the user and persists the result. */
+  /**
+   * Writes the provided fields to the user, then answers the row as it now stands.
+   *
+   * The fields go out as ONE column update of the row (`updateUserColumns`), never a save of a copy
+   * read first: a user write updates the columns it names and never saves the row it read.
+   */
   async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
-    const user = await this.findOne(id);
-    this.userRepository.merge(user, updateUserDto);
-    return await this.userRepository.save(user);
+    const changes = Object.fromEntries(
+      Object.entries(updateUserDto).filter(([, value]) => value !== undefined)
+    ) as QueryDeepPartialEntity<User>;
+    if (Object.keys(changes).length > 0) {
+      await updateUserColumns(this.userRepository, id, changes, 'users.update', this.logger);
+    } else {
+      this.logger.debug(`[users.update] user=${id.slice(0, 8)} nothing to write`);
+    }
+    return this.findOne(id);
   }
 
   /**
@@ -117,25 +130,48 @@ export class UsersService implements OnModuleInit {
    * whole change.
    */
   async setNotes(id: string, ciphertext: string): Promise<void> {
-    const user = await this.findOne(id);
-    user.notesCiphertext = ciphertext;
-    user.notes = null;
-    await this.userRepository.save(user);
+    await updateUserColumns(
+      this.userRepository,
+      id,
+      { notesCiphertext: ciphertext, notes: null },
+      'notes.set',
+      this.logger
+    );
   }
 
   /**
    * Returns the caller's notepad key, generating it on first use. 32 random bytes
    * hex, mirroring an association's vault key. It is served only to its owner, so
    * a database dump alone cannot read the notepad.
+   *
+   * TWO FIRST CALLS AGREE ON ONE KEY. The key is written by ONE conditional statement that keeps a
+   * key already there (`COALESCE`) and answers the key the row holds once it ran; PostgreSQL makes
+   * the second of two concurrent statements wait for the first and re-read the row, so both answer
+   * the first one's key. A note encrypted under a key a later write replaced would be unreadable.
    */
   async getOrCreateNotesKey(id: string): Promise<string> {
     const user = await this.findOne(id);
     if (user.notesKey) return user.notesKey;
 
-    user.notesKey = randomBytes(32).toString('hex');
-    await this.userRepository.save(user);
-    this.logger.log(`[NOTES] generated a notepad key for ${id}`);
-    return user.notesKey;
+    const minted = randomBytes(32).toString('hex');
+    // `UPDATE ... RETURNING` through TypeORM's postgres driver answers `[rows, affectedCount]`.
+    const [rows] = (await this.userRepository.query(
+      `UPDATE users SET "notesKey" = COALESCE("notesKey", $2) WHERE id = $1 RETURNING "notesKey"`,
+      [id, minted]
+    )) as [Array<{ notesKey: string }>, number];
+    const stored = rows[0]?.notesKey;
+    if (!stored) {
+      this.logger.warn(
+        `[NOTES] user row gone since its read user=${id.slice(0, 8)} - no key minted`
+      );
+      throw new UserRowGoneError(id);
+    }
+    if (stored === minted) {
+      this.logger.log(`[NOTES] generated a notepad key for ${id}`);
+    } else {
+      this.logger.log(`[NOTES] another call minted ${id}'s notepad key first - answering that one`);
+    }
+    return stored;
   }
 
   /** Maps a User entity to a PublicUserDto, stripping internal fields. */
@@ -166,6 +202,14 @@ export class UsersService implements OnModuleInit {
    * also why nothing could be inferred from the two agreeing. Now that the pair is what every
    * surface PREFERS (`libs/contracts/user-display-name.cases.json`), a column that never updates is
    * a name that never updates.
+   *
+   * AN EXISTING ACCOUNT IS UPDATED BY COLUMN, NEVER SAVED: the claims that changed go out as ONE
+   * column update (`updateUserColumns`). A save of the row read here would write back every column
+   * another writer changed since this read, and would insert the row again had it been deleted
+   * meanwhile - and the only thing that deletes a user row is the account's erasure. So a row gone
+   * since the read throws {@link UserRowGoneError}, which the callback answers with the erasure's
+   * refusal; the insert below is reached only when the read found no row at all, and the callback's
+   * `confirmAfterSignIn` covers an erasure that commits after it.
    */
   async findOrCreateFromOidc(
     id: string,
@@ -187,32 +231,27 @@ export class UsersService implements OnModuleInit {
       (u.formation ?? null) === formation;
     const user = await this.userRepository.findOne({ where: { id } });
     if (user) {
-      let updated = false;
-      if (displayName && user.displayName !== displayName) {
-        user.displayName = displayName;
-        updated = true;
-      }
+      const changes: QueryDeepPartialEntity<User> = {};
+      if (displayName && user.displayName !== displayName) changes.displayName = displayName;
       // A claim the provider did not send may not ERASE what is stored: `firstName` is an optional
       // custom claim on this provider, and an Authentik mapping that stops emitting it must leave
       // the name alone rather than blank it. Same shape as `displayName` above, and as `promo`.
-      if (firstName && user.firstName !== firstName) {
-        user.firstName = firstName;
-        updated = true;
-      }
-      if (lastName && user.lastName !== lastName) {
-        user.lastName = lastName;
-        updated = true;
-      }
+      if (firstName && user.firstName !== firstName) changes.firstName = firstName;
+      if (lastName && user.lastName !== lastName) changes.lastName = lastName;
       if (!sameProfile(user)) {
         this.logger.debug(`OIDC profile changed for ${id}: campus=${profile.campus}`);
-        Object.assign(user, profile, { promo, formation });
-        updated = true;
+        Object.assign(changes, profile, { promo, formation });
       }
-      if (updated) {
-        await this.userRepository.save(user).catch((err: unknown) => {
-          // Ignore unique constraint violations (e.g. email already taken), but never silently.
+      if (Object.keys(changes).length > 0) {
+        try {
+          await updateUserColumns(this.userRepository, id, changes, 'oidc.upsert', this.logger);
+        } catch (err) {
+          // The row is gone since the read: the caller refuses the sign-in, nothing is re-created.
+          if (err instanceof UserRowGoneError) throw err;
+          // Any other database refusal costs the refresh of the claims, never the sign-in.
           this.logger.warn(`OIDC upsert of ${id} not saved: ${String(err)}`);
-        });
+        }
+        Object.assign(user, changes);
       }
       return user;
     }
@@ -228,11 +267,13 @@ export class UsersService implements OnModuleInit {
     return await this.userRepository.save(newUser);
   }
 
-  /** Sets or clears the admin flag on a user. */
+  /**
+   * Sets or clears the admin flag on a user: ONE `UPDATE` of that column and nothing else, so no
+   * other write can carry a stale copy of it back, and a row that is gone answers 404.
+   */
   async setAdmin(targetId: string, admin: boolean): Promise<void> {
-    const user = await this.findOne(targetId);
-    user.admin = admin;
-    await this.userRepository.save(user);
+    this.logger.log(`[ADMIN] user=${targetId.slice(0, 8)} admin=${admin}`);
+    await updateUserColumns(this.userRepository, targetId, { admin }, 'admin.set', this.logger);
   }
 
   /** Returns all users (id, displayName, admin) - admin-only listing. */

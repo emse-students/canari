@@ -28,6 +28,7 @@ import * as jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
 import { parseProfileClaims, type MiconnectClaims } from '../users/miconnect-profile';
 import { UsersService } from '../users/users.service';
+import { UserRowGoneError } from '../users/user-write';
 import { PlatformService } from '../platform/platform.service';
 import {
   AuthSessionsService,
@@ -606,14 +607,28 @@ export class AuthController {
     // deletion can commit between here and there.
     this.refuseDuringErasure(userinfo.sub, await this.accountErasure.erasureState(userinfo.sub));
 
-    // 4. Upsert local user
-    const user = await this.usersService.findOrCreateFromOidc(
-      userinfo.sub,
-      userinfo.name || null,
-      userinfo.firstName || null,
-      userinfo.lastName || null,
-      parseProfileClaims(userinfo)
-    );
+    // 4. Upsert local user. A row that was read and is gone before its update was deleted by the
+    // account's erasure (the one thing that deletes a user row): the answer is the erasure's
+    // refusal, read again now, and the row is not re-created.
+    const user = await this.usersService
+      .findOrCreateFromOidc(
+        userinfo.sub,
+        userinfo.name || null,
+        userinfo.firstName || null,
+        userinfo.lastName || null,
+        parseProfileClaims(userinfo)
+      )
+      .catch(async (err: unknown) => {
+        if (!(err instanceof UserRowGoneError)) throw err;
+        this.refuseDuringErasure(
+          userinfo.sub,
+          await this.accountErasure.erasureState(userinfo.sub)
+        );
+        this.logger.error(
+          `[AUTH] sign-in refused: user=${userinfo.sub.slice(0, 8)} row deleted during the sign-in with no erasure recorded`
+        );
+        throw err;
+      });
 
     await this.refuseDuringMaintenance(user);
 
