@@ -18,6 +18,8 @@ import {
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { saveMlsState } from '$lib/utils/hex';
 import { resetHistoryReconciliation, setHistoryProbeSender } from './historyReconcile';
+import { purgeLocalConversationRecord } from './groupActions';
+import { enumerateNotReadyGroups } from './notReadyRegistry';
 
 beforeEach(() => {
   vi.mocked(saveMlsState).mockClear();
@@ -33,6 +35,9 @@ beforeEach(() => {
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Every group id a case below drives, so the default account list seats the account in each. */
+const SEATED_GROUPS = ['g1', 'g-dm', 'g-fork', 'g-stuck', 'ghost', 'graine-group', 'left', 'tomb'];
 
 /** Stands in for the session-registered probe sender, which the reconciliation refuses to run without. */
 const probeSender = vi.fn().mockResolvedValue(true);
@@ -75,6 +80,13 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     // populations `requestReAdd` serves, so a stub that answers nothing puts every case on the
     // "could not tell" path and none of them reach the join at all.
     getDeviceMemberships: vi.fn().mockResolvedValue([]),
+    // Default = THIS ACCOUNT holds a seat in every group a case names. With no row for this device
+    // (the default above) the seam reads the account's seat before choosing a door, and a seated
+    // account keeps the self-service join; the ADM-2 cases below override it with a list that does
+    // not name the group (an ask declined, its seat gone).
+    getUserGroups: vi
+      .fn()
+      .mockResolvedValue(SEATED_GROUPS.map((groupId) => ({ groupId, name: '', isGroup: true }))),
     // The self-service join now CLEARS the roster seat it joined on, so the stub owes this call.
     // Without it the success path would reject on `undefined.catch` and every join test would pass
     // for the wrong reason.
@@ -674,6 +686,197 @@ describe('requestReAdd', () => {
 
     expect(deps.mlsService.getGroupMeta).not.toHaveBeenCalled();
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+  });
+});
+
+// ── An ask a member declined (ADM-2, 2026-10-25) ─────────────────────────────
+
+describe('requestReAdd - an invitation-link ask a member declined', () => {
+  // ADM-2 on alpha.4: the joiner's ask was declined, discovery removed the never-admitted row, and a
+  // pass 27 s later re-created the placeholder, tried an external join the server refused (403) and
+  // left the conversation listed as `removed`. The decline deletes the account's seat and its
+  // device rows, so the server answers no device row AND no seat on the account's list.
+
+  /** The server's answers once the ask was declined: no device row, the group not on the list. */
+  function declined(overrides: Record<string, unknown> = {}) {
+    return makeMls({
+      getDeviceMemberships: vi.fn().mockResolvedValue([]),
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'other', name: '', isGroup: true }]),
+      externalJoin: vi.fn().mockRejectedValue(new NotAGroupMemberError('g1')),
+      ...overrides,
+    });
+  }
+
+  it('the removal cancels the retry: discovery dropping the row drops the marker the watchdog enumerates', async () => {
+    const deps = makeDeps({
+      conversations: makeConversations([
+        ['g1', { id: 'g1', lifecycle: 'pending', awaitingAdmission: true }],
+      ]),
+    });
+    deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([
+      membership('g1', 'pending', {
+        welcomeQueued: false,
+        addInFlight: false,
+        awaitingAdmission: true,
+      }),
+    ]);
+    await requestReAdd('g1', deps);
+    expect(enumerateNotReadyGroups('user-a')).toEqual(['g1']);
+
+    // Discovery's never-admitted branch, on the list that no longer names the group.
+    await purgeLocalConversationRecord({
+      conversations: deps.conversations,
+      contactKey: 'g1',
+      groupId: 'g1',
+      userId: 'user-a',
+      deleteConversation: deps.deleteConversation,
+      log: deps.log,
+    });
+
+    expect(deps.conversations.size).toBe(0);
+    expect(enumerateNotReadyGroups('user-a')).toEqual([]);
+  });
+
+  it('the retry scheduled BEFORE the removal does not fire after it, even past the cadence and a reload (ADM-2, ADM-4)', async () => {
+    // Measured twice: the stale pass came 27 s (ADM-2) and 37 s (ADM-4) after the removal, each
+    // time after a reload had emptied the in-memory cooldown and left the persisted marker standing.
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({
+        conversations: makeConversations([
+          ['g1', { id: 'g1', lifecycle: 'pending', awaitingAdmission: true }],
+        ]),
+      });
+      deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([
+        membership('g1', 'pending', {
+          welcomeQueued: false,
+          addInFlight: false,
+          awaitingAdmission: true,
+        }),
+      ]);
+      await requestReAdd('g1', deps);
+      expect(enumerateNotReadyGroups('user-a')).toEqual(['g1']);
+
+      await purgeLocalConversationRecord({
+        conversations: deps.conversations,
+        contactKey: 'g1',
+        groupId: 'g1',
+        userId: 'user-a',
+        deleteConversation: deps.deleteConversation,
+        log: deps.log,
+      });
+      // Past the cadence, and a reload: the cooldown that used to be the only brake is gone.
+      vi.advanceTimersByTime(RECOVERY_TIMEOUT_MS * 2);
+      resetReAddCooldowns();
+
+      // The watchdog's candidate set is the conversations plus the registry - both empty now.
+      const candidates = new Set([
+        ...[...deps.conversations.values()].map((c: { id: string }) => c.id),
+        ...enumerateNotReadyGroups('user-a'),
+      ]);
+      expect(candidates.size).toBe(0);
+      expect(deps.mlsService.getGroupMeta).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the end is not sticky: a member who Adds the person later is waited for as any Welcome is', async () => {
+    // A Decline followed by a member's own Add re-seats the person (mls-protocol, "Who admits a new
+    // person"). Nothing local records the decline, so the server's word is read afresh each pass.
+    const deps = makeDeps({ mlsService: declined() });
+    await requestReAdd('g1', deps);
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+
+    resetReAddCooldowns();
+    deps.mlsService.getUserGroups = vi
+      .fn()
+      .mockResolvedValue([{ groupId: 'g1', name: '', isGroup: true }]);
+    deps.mlsService.getDeviceMemberships = vi
+      .fn()
+      .mockResolvedValue([
+        membership('g1', 'pending', { welcomeQueued: true, addInFlight: false }),
+      ]);
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.fetchPendingMessages).toHaveBeenCalled();
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+  });
+
+  it('a pass that runs after the removal creates no row, joins nothing, asks nobody, and accuses nobody', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const deps = makeDeps({ mlsService: declined() });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.conversations.size).toBe(0);
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(deps.mlsService.notifyConversationAvailable).not.toHaveBeenCalled();
+    expect(enumerateNotReadyGroups('user-a')).toEqual([]);
+    expect(deps.log).toHaveBeenCalledWith(
+      expect.stringContaining('the server lists no seat for this account in the group')
+    );
+    expect(errors).not.toHaveBeenCalled();
+    expect(warns).not.toHaveBeenCalled();
+    errors.mockRestore();
+    warns.mockRestore();
+  });
+
+  it('a declined seat whose row discovery has not removed yet is REMOVED, never retired as `removed`', async () => {
+    const deps = makeDeps({
+      mlsService: declined(),
+      conversations: makeConversations([
+        ['g1', { id: 'g1', lifecycle: 'pending', awaitingAdmission: true }],
+      ]),
+    });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.conversations.has('g1')).toBe(false);
+    expect(deps.deleteConversation).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+  });
+
+  it('a conversation this device was in is still retired, as a removal always was', async () => {
+    const deps = makeDeps({
+      mlsService: declined(),
+      conversations: makeConversations([['g1', { id: 'g1', lifecycle: 'active' }]]),
+    });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.conversations.get('g1')?.lifecycle).toBe('removed');
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+  });
+
+  it('an account list that cannot be read decides nothing: the round is skipped', async () => {
+    const deps = makeDeps({
+      mlsService: declined({ getUserGroups: vi.fn().mockRejectedValue(new Error('HTTP 502')) }),
+    });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.conversations.size).toBe(0);
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    // Still owed a recovery: the watchdog asks again on its cadence.
+    expect(enumerateNotReadyGroups('user-a')).toEqual(['g1']);
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('skipping this round'));
+    errors.mockRestore();
+  });
+
+  it('a seated account with no row for this device keeps its own door (the control)', async () => {
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.getUserGroups).toHaveBeenCalledWith('user-a');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
   });
 });
 

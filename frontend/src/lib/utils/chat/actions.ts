@@ -1052,6 +1052,7 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
+            userId,
             deleteConversation,
             log,
           });
@@ -1087,6 +1088,7 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
+            userId,
             deleteConversation,
             log,
           });
@@ -1116,6 +1118,7 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
+            userId,
             deleteConversation,
             log,
           });
@@ -1144,6 +1147,7 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
+            userId,
             deleteConversation,
             log,
           });

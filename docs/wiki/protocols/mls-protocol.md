@@ -1135,6 +1135,21 @@ vous ajoute." (`chat_awaiting_admission_preview`). When the list stops naming su
 or expired - discovery removes it with no status read: there is no past and no exclusion to keep.
 Only on a list that may be believed (`absenceIsEvidence`); a row that was ever `active` is not
 never-admitted, and both demotions out of `active` clear the flag.
+
+**A declined ask ends the joiner's recovery too, read and never learnt by failing (ADM-2,
+2026-10-25).** While it waits, the joiner's `requestReAdd` marks the group not-ready, and that marker -
+persisted, enumerated by the SYNC_WATCHDOG - is what drives every later pass. Discovery removed the
+declined row and left the marker, so the next pass (after a reload, 27 s later) found no row for its
+device - the decline deletes the seat and its device rows - read that as an `active` row would read
+(`not-pending`: "joined once, serve yourself"), re-created the placeholder, tried an external join the
+server refused with a 403, and retired the placeholder as a `removed` conversation the user then saw
+listed. Three changes close it. `purgeLocalConversationRecord` drops the not-ready marker with the row,
+at every site that drops one, so no pass is scheduled for a conversation that is gone. `requestReAdd`
+reads "no row for this device" as its own answer and asks the account's seat on the groups list
+(`readAccountSeat`, under the same `absenceIsEvidence` guard): no seat ends the recovery with no row
+created, no join and no ask; a list that cannot be believed skips the round; a seated account keeps
+its self-service door. And `stopRecovering` removes a never-admitted row instead of retiring it - the
+decision discovery takes for the same row. The in-memory cooldown is a throttle and stays.
 The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>`), which used to
 admit the person with no member involved. The Android background answer refuses such a request as
 `newcomer` and leaves it to the foreground's sweep. Only a GROUP conversation takes an ask

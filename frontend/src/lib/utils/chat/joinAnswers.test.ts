@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A MEMBER'S ANSWER TO A JOIN ASK, AND THE INVITATION LINK END TO END.
  *
@@ -170,6 +171,10 @@ function joinerSide(member: ReturnType<typeof memberSide>) {
             },
           ]
         : []
+    ),
+    // The account's list names the group while the seat exists, as `GET mls/users/:id/groups` does.
+    getUserGroups: vi.fn(async () =>
+      member.seat.exists ? [{ groupId: GROUP, name: 'Club', isGroup: true }] : []
     ),
     updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
   };
@@ -362,15 +367,22 @@ describe('a join by invitation link, end to end', () => {
     expect(m.mlsService.declineJoinRequest).toHaveBeenCalledWith(GROUP, JOINER);
     expect(m.invite).not.toHaveBeenCalled();
     expect(pendingJoinRequests()).toEqual([]);
-    // No seat any more: the server refuses the base as to a non-member (403), the joiner retires
-    // the conversation and asks nobody - no ask raised again on every cadence.
+    // No seat any more, and the joiner READS it rather than learning it from a refusal (ADM-2,
+    // 2026-10-25): its never-admitted row goes, no external join is tried, nobody is asked again,
+    // and no `removed` conversation is left listed.
     resetReAddCooldowns();
     joiner.mlsService.sendWelcomeRequest.mockClear();
     joiner.mlsService.externalJoin = vi.fn().mockRejectedValue(new NotAGroupMemberError(GROUP));
-    joiner.deps.conversations.set(GROUP, { id: GROUP, name: 'Club', lifecycle: 'active' });
+    joiner.deps.conversations.set(GROUP, {
+      id: GROUP,
+      name: 'Club',
+      lifecycle: 'pending',
+      awaitingAdmission: true,
+    });
     await requestReAdd(GROUP, joiner.deps);
     expect(joiner.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
-    expect(joiner.deps.conversations.get(GROUP)?.lifecycle).toBe('removed');
+    expect(joiner.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(joiner.deps.conversations.has(GROUP)).toBe(false);
     expect(pendingJoinRequests()).toEqual([]);
   });
 
