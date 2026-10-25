@@ -21,7 +21,7 @@ import {
   clearEpochGap,
   resetEpochGapRegistry,
 } from '$lib/utils/chat/epochGapRegistry';
-import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
+import { replayAndRecord } from '$lib/utils/chat/commitReplay';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
@@ -1358,13 +1358,13 @@ async function handleKnownGroup({
       // Either way no later attempt can succeed, so the wait below is pure delay.
       let rungOneIsExhausted = false;
       try {
-        const replay = await attemptCommitReplay(mlsService, groupId, userId, log);
-        // Healed or not, applied commits moved the epoch: a partial replay is as durable-worthy.
-        if (replay.healed || replay.applied > 0) statePersister.persistNow();
-        if (replay.healed) {
-          clearEpochGap(groupId);
-          return true;
-        }
+        // Persisted on any applied commit, un-marked on a heal (`replayAndRecord`); the refused
+        // backlog was judged above, more narrowly than the helper would.
+        const replay = await replayAndRecord(mlsService, groupId, userId, log, {
+          persist: () => statePersister.persistNow(),
+          refusedBacklog: 'judged-by-caller',
+        });
+        if (replay.healed) return true;
         rungOneIsExhausted = replay.belowFloor || replay.gapAt !== undefined;
       } catch (e) {
         log(`[GAP] replay error for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 80)}`);

@@ -2,6 +2,7 @@ import { m } from '$lib/paraglide/messages';
 import type { ConversationRefusal } from '$lib/utils/chat/groupCreation';
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { showToast } from '$lib/stores/toast.svelte';
+import { MemberRemovalNotCommittedError } from './memberRemovalError';
 
 /**
  * THE ONE PLACE A REFUSAL BECOMES A SENTENCE, AND THE REASON IT IS A TABLE.
@@ -44,10 +45,37 @@ export function conversationRefusalMessage(reason: ConversationRefusal): string 
  * @returns whether the failure was that refusal and was shown.
  */
 export function reportFollowerTabRefusal(e: unknown): boolean {
-  if (!(e instanceof FollowerTabCommitError)) return false;
+  // A removal the server recorded and then could not commit carries the refusal as its cause: the
+  // member still learns WHY, by type (`MemberRemovalNotCommittedError`).
+  const refusal = e instanceof MemberRemovalNotCommittedError ? e.cause : e;
+  if (!(refusal instanceof FollowerTabCommitError)) return false;
   console.warn(
-    `[GROUP] a group action was refused in a follower tab (${e.groupId.slice(0, 8)}...)`
+    `[GROUP] a group action was refused in a follower tab (${refusal.groupId.slice(0, 8)}...)`
   );
   showToast(conversationRefusalMessage('follower-tab'));
   return true;
+}
+
+/**
+ * Tells the member what a removal they asked for came to when it did not complete - read from the
+ * error's TYPE, never its text. Two outcomes the member must not confuse:
+ *
+ * - {@link MemberRemovalNotCommittedError}: the person IS removed (the server recorded it, no message
+ *   reaches them) and only the key change is late - it completes at the next connection, by the
+ *   collector that compares the roster with the tree;
+ * - anything else: nothing was recorded, the person is still a member, and the gesture can be
+ *   retried.
+ *
+ * A follower-tab refusal is not handled here: {@link reportFollowerTabRefusal} has its own sentence.
+ *
+ * @param e - what `removeMemberAndBroadcast` threw.
+ * @returns `recorded` when the removal stands and only its commit is owed, `not-removed` otherwise.
+ */
+export function reportMemberRemovalFailure(e: unknown): 'recorded' | 'not-removed' {
+  if (e instanceof MemberRemovalNotCommittedError) {
+    showToast(m.chat_group_remove_member_keys_pending(), 'warning');
+    return 'recorded';
+  }
+  showToast(m.chat_group_remove_member_failed());
+  return 'not-removed';
 }

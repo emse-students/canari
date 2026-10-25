@@ -567,6 +567,8 @@ describe('a removal opens its window on the server BEFORE the commit removes the
   it('records the removal first, then commits', async () => {
     const mlsService = createMlsServiceStub();
     const order: string[] = [];
+    // Bob holds a leaf, so the removal owes a commit.
+    vi.mocked(mlsService.getGroupMemberIdentities).mockResolvedValue([`${BOB}:d1`]);
     vi.mocked(mlsService.removeMemberFromServer).mockImplementation(async () => {
       order.push('server');
     });

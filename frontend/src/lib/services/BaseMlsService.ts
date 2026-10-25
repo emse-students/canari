@@ -105,7 +105,7 @@ import {
   finishQueueDrainBench,
   recordPendingMessagesFetched,
 } from '$lib/mls-client/catchupBenchmark';
-import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
+import { attemptCommitReplay, replayAndRecord } from '$lib/utils/chat/commitReplay';
 import { markEpochGap, clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { runAsEpochAdvance, runAsEpochSend } from '$lib/utils/chat/epochSendBarrier';
 import {
@@ -128,6 +128,7 @@ import {
   dischargeRefusedBacklog,
   noteUnackedFrame,
   refusedBacklogMark,
+  rearmRefusedBacklog,
   reportUnackedFrames,
   takeGroupAwaiting,
   takeGroupsAwaiting,
@@ -2674,6 +2675,9 @@ export abstract class BaseMlsService implements IMlsService {
     // holding live frames behind it (`refusedBacklogIsQueued`). A pull that died half-way proves
     // nothing about the pages it did not list.
     if (emptied) dischargeRefusedBacklog(refusalsCovered);
+    // ...and it leaves the backlog OWED A PULL, which its start took off the work list: re-armed, so
+    // the next event asking for that backlog (`notifyConversationAvailable`) pulls again.
+    else rearmRefusedBacklog(refusalsCovered);
     // Only now is the answer complete: the rows were enqueued, not handled, so what the handler
     // refused to acknowledge is known only once the queue has drained. Without this, a device that
     // re-fetches the same backlog on every reconnect reports a perfectly healthy pull each time.
@@ -5087,12 +5091,18 @@ export abstract class BaseMlsService implements IMlsService {
     markEpochGap(groupId);
     let exhausted: string | undefined;
     try {
-      const replay = await attemptCommitReplay(this, groupId, this.userId, log);
-      // Applied commits moved the epoch whether or not the gap closed: a partial replay is as
-      // durable-worthy as a healed one.
-      if (replay.healed || replay.applied > 0) scheduleOutboundMlsPersist();
-      if (replay.healed) {
-        clearEpochGap(groupId);
+      // Persisted on any applied commit, un-marked on a heal, held behind a refused backlog
+      // (`replayAndRecord`): the frames that backlog holds would not survive a replay past them,
+      // and they bring the missing commits themselves.
+      const replay = await replayAndRecord(this, groupId, this.userId, log, {
+        persist: scheduleOutboundMlsPersist,
+        refusedBacklog: 'hold',
+      });
+      if (replay.healed) return;
+      if (replay.heldBehindRefusedBacklog) {
+        log(
+          `[GAP] ${short} not replayed: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked`
+        );
         return;
       }
       // "Still behind" merges two futures: one where the next frame closes the gap, and one where

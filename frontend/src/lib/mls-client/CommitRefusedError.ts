@@ -54,3 +54,39 @@ export class CommitRefusedError extends Error {
     this.name = 'CommitRefusedError';
   }
 }
+
+/**
+ * Why a commit the server REFUSED may be rebuilt and submitted again, or `null` when it may not.
+ *
+ * THE ONE RULE FOR EVERY CALLER THAT REBUILDS A MEMBER'S GESTURE (an admission, a removal), so a
+ * lost race ends the same way whoever lost it. TERMINATION IS A PROOF, NEVER A COUNT:
+ *
+ * - `epoch-moved`: the refusal's catch-up (`catchUpOnRefusedCommit`) took the local epoch past the
+ *   one the commit was built on, so one foreign commit was consumed - a rebuild reads the tree that
+ *   commit left. A refusal that moved nothing proves nothing, and ends the gesture;
+ * - `seat-claim-overtaken`: the whole commit was refused because an unrelated eviction moved the
+ *   group's seat generation on every submission `runCommitTransaction` made - each refusal proves
+ *   an eviction landed, and the epoch stood still, so the rebuild stages on the same tree.
+ *
+ * NEVER A REFUSAL THE CLIENT ITSELF DECIDED: `rate_limited` (the server asked this account to wait)
+ * and `lock_budget_spent` (nothing was even staged) are not races, and a rebuild would only meet them
+ * again - whatever the epoch did meanwhile.
+ *
+ * Read from the TYPE and its fields, never from the message. The epoch is compared with the one the
+ * refused commit RECORDED (`baseEpoch`), not one read before the call: a frame processed between that
+ * read and the stage would otherwise count as progress the refusal did not make.
+ *
+ * @param error - what the commit threw.
+ * @param epochNow - the local epoch after the refusal.
+ */
+export function rebuildableRefusal(
+  error: unknown,
+  epochNow: number
+): 'epoch-moved' | 'seat-claim-overtaken' | null {
+  if (!(error instanceof CommitRefusedError)) return null;
+  if (error.reason === 'rate_limited' || error.reason === COMMIT_LOCK_BUDGET_SPENT_REASON)
+    return null;
+  if (epochNow > error.baseEpoch) return 'epoch-moved';
+  if (error.reason === SEAT_CLAIM_OVERTAKEN_REASON) return 'seat-claim-overtaken';
+  return null;
+}

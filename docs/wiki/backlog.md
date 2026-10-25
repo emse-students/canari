@@ -27,6 +27,28 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P3 - A Remove refused `concurrent_commit` that moved no epoch is left to the collector (decided 2026-10-25)
+
+When the gate refuses a Remove `concurrent_commit` before the lock holder's commit has landed, the
+refusal proves no progress, so it is not rebuilt: the caller is told "removed, the key change follows"
+and `removeStrayLeaves` commits it at a holder's next connection. Waiting for the winner would be a
+clock. The candidate is an EVENT-driven wait for the winner's epoch (the local epoch moving past the
+refused base), which needs a proof of termination when the winner itself fails. Not built.
+
+## P3 - A removed device replays the commits it missed and is answered 403, read as a replay error (CC-2, 1.4.1 dev campaign, 2026-10-25)
+
+The Remove commit the server queues to a removed device (`group:parting`) is built on the group's
+CURRENT epoch, which is past the device's own whenever any commit landed between the server record
+and the Remove - a lost commit race always does, and the rebuild of that race (2026-10-25,
+[history-reconciliation](protocols/history-reconciliation.md)) keeps it so. The device sees an epoch gap, runs rung 1 (`attemptCommitReplay` ->
+`fetchCommitsSince`), and is answered `403` on `GET commits?sinceEpoch` - it is off the roster - with
+`user-members` and `group-info` refused alike. `setupMessageHandler.ts` logs `[GAP] replay error ...
+403` and keeps the gap clock running toward rung 2. **The 403 is an answer ("you are out"), not a
+failure.** Owed: type it at the throw (`fetchCommitsSince`) and carry it to the `epoch-gap` arm, which
+then hands it to `retireIfEvicted` rather than to rung 2. Gated on proof because retiring is
+destructive: the roster 403 is not the device's own membership (`ExclusionsRefusedError` records that
+trap), so the decision must read the server's own eviction evidence, not the status alone. Not built.
+
 ## P3 - The boot restore opens the frame pipeline before any conversation row exists: a queued frame for a stored conversation is refused (`absent-conversation`), not ACKed, and re-pulled (found by the 1.4.1 dev campaign, DECIDED TO DEFER)
 
 **Deferred past 1.4.1 on purpose.** The fix reorders Welcome and commit handling relative to the

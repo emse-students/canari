@@ -82,7 +82,11 @@ import {
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
 import { readLandingPreview } from '$lib/utils/chat/landingPreview';
-import { reportFollowerTabRefusal } from '$lib/utils/chat/conversationRefusalMessage';
+import {
+  reportFollowerTabRefusal,
+  reportMemberRemovalFailure,
+} from '$lib/utils/chat/conversationRefusalMessage';
+import { MemberRemovalNotCommittedError } from '$lib/utils/chat/memberRemovalError';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
@@ -2280,22 +2284,34 @@ export function useConversations() {
       confirmLabel: common_remove_label(),
     });
     if (!confirmed) return;
+    // THE ROSTER IS REREAD WHENEVER THE SERVER RECORDED THE REMOVAL - on success, and when only its
+    // commit is owed (`MemberRemovalNotCommittedError`): the person is out either way. Outside the
+    // `try`, so a failed reread is never reported as a failed removal.
+    let recorded: boolean;
     try {
-      await removeMemberAndBroadcast({
+      // `already-out` is a complete removal too (another commit took their leaves): no error.
+      const outcome = await removeMemberAndBroadcast({
         mlsService: ctx.ensureMls(),
         groupId: convo.id,
         memberId,
         userId: ctx.userId,
         deviceKeyB64: ctx.deviceKeyB64,
       });
-      membershipCache.delete(convo.id);
-      groupMembers = groupMembers.filter((m) => m !== memberId);
-      await loadGroupMembers(convo.id, ctx);
-      ctx.log(`${memberId} retire du groupe.`);
+      recorded = true;
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removed from the group (${outcome})`);
     } catch (e) {
-      ctx.log(`Erreur retrait membre: ${String(e)}`);
-      reportFollowerTabRefusal(e);
+      // NEVER A LOG LINE ALONE: every ending reaches the person who asked, classified by TYPE.
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} not fully removed: ${String(e)}`);
+      // Recorded or not is the error's TYPE; the sentence is the follower tab's when that is why.
+      recorded = e instanceof MemberRemovalNotCommittedError;
+      if (!reportFollowerTabRefusal(e)) reportMemberRemovalFailure(e);
     }
+    if (!recorded) return;
+    membershipCache.delete(convo.id);
+    groupMembers = groupMembers.filter((m) => m !== memberId);
+    await loadGroupMembers(convo.id, ctx).catch((e: unknown) =>
+      ctx.log(`[REMOVE_MEMBER] member list not reread after the removal: ${String(e)}`)
+    );
   }
 
   // ── Exposed API ───────────────────────────────────────────────────────────

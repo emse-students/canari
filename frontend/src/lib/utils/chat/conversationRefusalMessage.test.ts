@@ -3,7 +3,13 @@ vi.mock('$lib/stores/toast.svelte', () => ({ showToast }));
 
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { m } from '$lib/paraglide/messages';
-import { conversationRefusalMessage, reportFollowerTabRefusal } from './conversationRefusalMessage';
+import {
+  conversationRefusalMessage,
+  reportFollowerTabRefusal,
+  reportMemberRemovalFailure,
+} from './conversationRefusalMessage';
+import { MemberRemovalNotCommittedError } from './memberRemovalError';
+import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
 /**
  * A COMMIT REFUSED IN A FOLLOWER TAB IS SOMETHING THE MEMBER CAN ACT ON, so it reaches them as a
@@ -21,6 +27,17 @@ describe('reportFollowerTabRefusal', () => {
     expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_error_follower_tab());
   });
 
+  it('reaches the follower-tab refusal a recorded removal carries as its cause, by type', () => {
+    const wrapped = new MemberRemovalNotCommittedError(
+      'g-1',
+      'user-b',
+      'commit-not-landed',
+      new FollowerTabCommitError('g-1')
+    );
+    expect(reportFollowerTabRefusal(wrapped)).toBe(true);
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_error_follower_tab());
+  });
+
   it('leaves every other failure to its caller, whatever its text says', () => {
     const lookalike = new Error(new FollowerTabCommitError('g-1').message);
     expect(reportFollowerTabRefusal(lookalike)).toBe(false);
@@ -29,5 +46,35 @@ describe('reportFollowerTabRefusal', () => {
 
   it('gives the creation modal the same sentence for the follower-tab refusal', () => {
     expect(conversationRefusalMessage('follower-tab')).toBe(m.chat_error_follower_tab());
+  });
+});
+
+/**
+ * A REMOVAL THAT DID NOT COMPLETE REACHES THE MEMBER AS ONE OF TWO SENTENCES, read from the TYPE:
+ * the person IS out and only the key change is late, or nothing was recorded and they are still in.
+ */
+describe('reportMemberRemovalFailure', () => {
+  beforeEach(() => showToast.mockReset());
+
+  it('says the person is removed and the key change follows, when only the commit is owed', () => {
+    const e = new MemberRemovalNotCommittedError(
+      'g-1',
+      'user-b',
+      'commit-not-landed',
+      new Error('refused')
+    );
+    expect(reportMemberRemovalFailure(e)).toBe('recorded');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_group_remove_member_keys_pending(),
+      'warning'
+    );
+  });
+
+  it('says the removal failed for anything else - a bare commit refusal included', () => {
+    expect(reportMemberRemovalFailure(new Error('503'))).toBe('not-removed');
+    expect(reportMemberRemovalFailure(new CommitRefusedError('epoch_mismatch', 1, 2))).toBe(
+      'not-removed'
+    );
+    expect(showToast).toHaveBeenCalledWith(m.chat_group_remove_member_failed());
   });
 });

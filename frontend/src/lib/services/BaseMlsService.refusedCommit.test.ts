@@ -19,6 +19,12 @@ import {
 } from '$lib/mls-client/CommitRefusedError';
 import { commitRateLimitRemainingMs, resetCommitRateLimit } from '$lib/mls-client/commitRateLimit';
 import { CommitOutcomeUnknownError } from '$lib/mls-client/commitSubmission';
+import {
+  dischargeRefusedBacklog,
+  noteUnackedFrame,
+  refusedBacklogMark,
+  resetUnackedFrames,
+} from '$lib/mls-client/messagePipeline/unackedFrames';
 
 /**
  * The WRITE-side entrance to the recovery ladder: a commit the server refuses because our base
@@ -66,6 +72,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     deviceId: 'web-a',
     // No staged commit kept in the state: every commit here is answered at once.
     groupsWithPendingCommit: vi.fn(async () => []),
+    // What a replay held behind a refused backlog asks for: the pull that ends the hold.
+    notifyConversationAvailable: vi.fn(),
     // REAL: with no staged commit kept they settle nothing and submit once, which is the
     // case here (`BaseMlsService.unresolvedCommit.test.ts` owns the others).
     ...Object.fromEntries(
@@ -435,5 +443,43 @@ describe('BaseMlsService - a partial replay after a refused commit', () => {
     none.fetchCommitsSince.mockResolvedValue({ commits: [], activeEpoch: 400, belowFloor: true });
     await none.catchUpOnRefusedCommit('g', 195, 400);
     expect(persistNow).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A REFUSED COMMIT'S CATCH-UP HELD BEHIND A REFUSED BACKLOG ASKS FOR THE PULL THAT ENDS THE HOLD
+ * (round 4 of #2414): the mark is discharged only by a pull, and a quiet conversation has no next
+ * frame to start one - so the hold used to last until the stuck-gap escalation or a reconnect.
+ */
+describe('BaseMlsService - a refused commit held behind a refused backlog', () => {
+  beforeEach(() => {
+    resetUnackedFrames();
+    resetEpochGapRegistry();
+  });
+
+  it('replays nothing, asks for the pull ONCE, and replays once that pull has discharged the backlog', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const ctx = makeCtx();
+    ctx.fetchCommitsSince.mockResolvedValue({
+      commits: [{ baseEpoch: 195, proto: 'AA==' }],
+      activeEpoch: 196,
+      belowFloor: false,
+    });
+    noteUnackedFrame('g', 'absent-conversation');
+
+    await ctx.catchUpOnRefusedCommit('g', 195, 196);
+
+    expect(ctx.processIncomingMessage).not.toHaveBeenCalled();
+    expect(ctx.notifyConversationAvailable).toHaveBeenCalledTimes(1);
+    expect(ctx.notifyConversationAvailable).toHaveBeenCalledWith('g');
+
+    // The pull listed the whole mailbox: the backlog is discharged, and the next refusal replays.
+    dischargeRefusedBacklog(refusedBacklogMark());
+    await ctx.catchUpOnRefusedCommit('g', 195, 196);
+
+    expect(ctx.state.epoch).toBe(196);
+    expect(isInEpochGap('g')).toBe(false);
+    expect(ctx.notifyConversationAvailable).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
   });
 });

@@ -1429,6 +1429,8 @@
   "chat_group_remove_member_label": "Remove {member}",
   "chat_group_remove_member_title": "Remove from group",
   "chat_group_remove_member_confirm": "Remove this member from the group? They will lose access to the conversation, and a new invitation will be needed to bring them back.",
+  "chat_group_remove_member_keys_pending": "Member removed from the group: no message reaches them any more. The key change will finish at the next connection.",
+  "chat_group_remove_member_failed": "The member could not be removed. Try again.",
   "common_you_label": "You",
   "chat_group_no_members_label": "No members to display.",
   "chat_group_leave_button": "Leave group",
