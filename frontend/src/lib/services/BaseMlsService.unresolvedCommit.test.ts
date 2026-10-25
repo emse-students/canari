@@ -35,6 +35,7 @@ import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { TransportFailureError, isTransportFailure } from '$lib/utils/transportFailure';
 import { MlsDeliveryApi, WelcomeTargetNotMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
+import { listOwedInvitations, type OwedInvitation } from '$lib/mls-client/owedInvitations';
 import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
 
 /**
@@ -145,6 +146,13 @@ function ctx(
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     catchUpOnRefusedCommit: vi.fn().mockResolvedValue(undefined),
     unresolvedGroups: null,
+    // The lost-invitation drain (`owedInvitations.ts`): no re-planner unless a case registers one.
+    owedInvitationReplanner: null,
+    owedInvitationDrain: null,
+    owedInvitationDrainAgain: false,
+    connectionSettling: false,
+    connectionSettled: false,
+    isWsOpen: () => true,
     ...primitives(state, opts.owed),
   };
   // The real seams under test: what they decide from the gate's answers is what these cases are about.
@@ -161,6 +169,11 @@ function ctx(
     'knownUnresolvedGroups',
     'settleUnresolvedCommits',
     'settleUnresolvedCommitFromLog',
+    'oweLostInvitation',
+    'setOwedInvitationReplanner',
+    'replanOwedInvitations',
+    'drainOwedInvitationsOnce',
+    'settleEach',
   ]) {
     c[name] = proto[name];
   }
@@ -1062,5 +1075,149 @@ describe('runCommitTransaction - a commit gate that never answers', () => {
     );
     expect(new Set(bodies.map((b) => b.proto))).toEqual(new Set([OURS]));
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * A KEPT INVITATION THAT DID NOT LAND IS RE-PLANNED, NEVER CLEARED AWAY (OFF-3, 1.4.1 campaign).
+ * W1's Add of W5 was kept across an absence; W2 moved the group from 2 to 5; W1's return settled the
+ * kept commit `epoch_mismatch`, cleared it and caught up - and nothing re-issued the Add or said so.
+ * The invitation rides in the commit's intent; the settlement records it BEFORE the clear erases
+ * that copy (`owedInvitations.ts`), and hands it to the re-planner once the lock is let go.
+ */
+describe('settleUnresolvedCommits - a kept invitation that did not land', () => {
+  const INVITATION = { users: ['w5'], rostered: [] as string[] };
+  const keptInvite = () =>
+    kept(
+      { excludeDeviceIds: ['w5:d-5'], keyPackageDevices: ['d-5'], invitation: INVITATION },
+      { welcome: new Uint8Array([3]), addedIndices: [0] }
+    );
+  const raceLost = () => submitting({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 5 });
+  const settled = async (c: ReturnType<typeof ctx>) => {
+    await c.settleUnresolvedCommits();
+    // The drain runs on its own after the settlement: wait for it the way the session would not.
+    while ((c as unknown as { owedInvitationDrain: Promise<void> | null }).owedInvitationDrain) {
+      await (c as unknown as { owedInvitationDrain: Promise<void> }).owedInvitationDrain;
+    }
+  };
+  const register = (c: ReturnType<typeof ctx>, replanner: (o: OwedInvitation) => Promise<void>) =>
+    (c as unknown as { setOwedInvitationReplanner(r: unknown): void }).setOwedInvitationReplanner(
+      replanner
+    );
+
+  it('records the invitation BEFORE the clear, then hands it to the re-planner once', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    const atClear: OwedInvitation[][] = [];
+    const clear = c.clearPendingCommit.getMockImplementation() as (g: string) => Promise<void>;
+    c.clearPendingCommit.mockImplementation(async (g: string) => {
+      atClear.push(listOwedInvitations(U));
+      return clear(g);
+    });
+    const replanner = vi.fn(async () => {});
+    register(c, replanner);
+    await settled(c);
+    expect(atClear).toEqual([
+      [{ groupId: G, baseEpoch: 5, invitation: INVITATION, cause: 'race' }],
+    ]);
+    expect(c.catchUpOnRefusedCommit).toHaveBeenCalledWith(G, 5, 5);
+    expect(replanner).toHaveBeenCalledExactlyOnceWith({
+      groupId: G,
+      baseEpoch: 5,
+      invitation: INVITATION,
+      cause: 'race',
+    });
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('a refusal of the bytes themselves is recorded `refused` - told, never re-planned', async () => {
+    const c = ctx(submitting(new ApiRefusalError(400, null, 'bad commit')), {
+      state: keptInvite(),
+    });
+    const replanner = vi.fn(async () => {});
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ cause: 'refused' })
+    );
+  });
+
+  it('records nothing for a kept commit that carries no invitation (an automatic Add)', async () => {
+    const c = ctx(raceLost(), { state: kept({ excludeDeviceIds: ['u-b:d-b'] }) });
+    const replanner = vi.fn(async () => {});
+    register(c, replanner);
+    await settled(c);
+    expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
+    expect(replanner).not.toHaveBeenCalled();
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('a RELOAD between the refusal and the re-plan re-plans it ONCE, at the next connection', async () => {
+    // The session that refused it ends before any re-planner ran: the entry is all that is left.
+    const first = ctx(raceLost(), { state: keptInvite() });
+    await settled(first);
+    expect(first.state.size).toBe(0);
+    expect(listOwedInvitations(U)).toHaveLength(1);
+
+    // The reloaded session: no stage, the entry on disk; its connection settles twice.
+    const second = ctx(submitting());
+    const replanner = vi.fn(async () => {});
+    register(second, replanner);
+    await settled(second);
+    await settled(second);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('a RELOAD before the clear reached disk settles the stage again: still ONE entry, one re-plan', async () => {
+    const first = ctx(raceLost(), { state: keptInvite() });
+    await settled(first);
+    // The checkpoint never carried the clear: the reload holds the stage AND the entry.
+    const second = ctx(raceLost(), { state: keptInvite() });
+    const replanner = vi.fn(async () => {});
+    register(second, replanner);
+    await settled(second);
+    expect(second.delivery.submitCommit).toHaveBeenCalledTimes(1);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('with no re-planner yet the entry WAITS, and registering one drains it', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    await settled(c);
+    expect(listOwedInvitations(U)).toHaveLength(1);
+    const replanner = vi.fn(async () => {});
+    register(c, replanner);
+    while ((c as unknown as { owedInvitationDrain: Promise<void> | null }).owedInvitationDrain) {
+      await (c as unknown as { owedInvitationDrain: Promise<void> }).owedInvitationDrain;
+    }
+    expect(replanner).toHaveBeenCalledTimes(1);
+    expect(listOwedInvitations(U)).toEqual([]);
+  });
+
+  it('a kept invitation the LOG shows lost (another commit at its base) is recorded too', async () => {
+    const c = ctx(submitting(), { state: keptInvite() });
+    expect(await c.settleUnresolvedCommitFromLog(G, 'theirs')).toBe('cleared');
+    expect(listOwedInvitations(U)).toEqual([
+      { groupId: G, baseEpoch: 5, invitation: INVITATION, cause: 'race' },
+    ]);
+  });
+
+  it('THE REAL LOCK: the re-plan, which takes the lock, runs AFTER the settlement lets it go', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    const scheduler = new MlsPerGroupScheduler('web');
+    (c as unknown as { runUnderMlsLock: unknown }).runUnderMlsLock = <T>(fn: () => Promise<T>) =>
+      scheduler.runUnderMlsLock(fn);
+    const order: string[] = [];
+    c.catchUpOnRefusedCommit.mockImplementation(async () => {
+      order.push('catch-up under the settlement lock');
+    });
+    register(c, async () => {
+      await scheduler.runUnderMlsLock(async () => {
+        order.push('re-plan under the lock');
+      });
+    });
+    await settled(c);
+    expect(order).toEqual(['catch-up under the settlement lock', 're-plan under the lock']);
+    expect(listOwedInvitations(U)).toEqual([]);
   });
 });

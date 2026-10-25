@@ -68,6 +68,7 @@ export function createMlsServiceStub(
     // Default: no commit of this device has an unknown outcome.
     settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
     settleUnresolvedCommitFromLog: vi.fn().mockResolvedValue('none'),
+    setOwedInvitationReplanner: vi.fn(),
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
     // The DEFAULT outcome is the one a test that does not care should get: no base published, so
     // nothing joined. A bare `false` no longer type-checks, and that is the point - every caller

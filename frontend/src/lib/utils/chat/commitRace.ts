@@ -1,5 +1,6 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { CommitRefusedError, rebuildableRefusal } from '$lib/mls-client/CommitRefusedError';
+import type { CommitInvitation } from '$lib/mls-client/commitSubmission';
 import { treeHoldsDevice } from '$lib/mls-client/leafIdentity';
 import type { SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
 import { readConfirmedTree } from './confirmedTree';
@@ -122,6 +123,8 @@ export type RacedAddResult =
  * @param actingUserId - this device's user, for the catch-up that confirms the tree.
  * @param confirmPremise - re-checks, before each pass, what the gesture rests on; throws
  *   {@link AddAbortedError} when it no longer holds.
+ * @param invitation - a member's invitation only: carried into each commit's intent, so a commit
+ *   that is kept and then does not land is re-planned rather than lost (`owedInvitations.ts`).
  * @throws {@link AddAbortedError} before any stage; otherwise what the last attempt threw when it
  *   proves no progress - a race refusal that moved nothing included (`isCommitRaceRefusal`).
  */
@@ -131,7 +134,8 @@ export async function addDevicesRebuildingOnRace(
   actingUserId: string,
   candidates: AddCandidate[],
   log: (msg: string) => void,
-  confirmPremise?: (attempt: number) => Promise<void>
+  confirmPremise?: (attempt: number) => Promise<void>,
+  invitation?: CommitInvitation
 ): Promise<RacedAddResult> {
   const holdsAny = (leaves: readonly string[]) =>
     candidates.some((d) => treeHoldsDevice(leaves, d.userId, d.deviceId));
@@ -167,7 +171,8 @@ export async function addDevicesRebuildingOnRace(
       const bulk = await mlsService.addMembersBulk(
         groupId,
         missing,
-        missing.map((d) => `${d.userId}:${d.deviceId}`)
+        missing.map((d) => `${d.userId}:${d.deviceId}`),
+        invitation
       );
       return { kind: 'added', ...bulk } as const;
     },

@@ -36,6 +36,11 @@ export const ACCOUNT_KEY = {
    * rotation and not yet confirmed deleted on the server - a JSON array, emptied as each delete lands.
    */
   retiringDeviceIds: (userId: string) => `mls_retiring_device_ids_${userId}`,
+  /**
+   * `owedInvitations.ts`: the member invitations whose kept commit did not land, owed a re-plan -
+   * group ids, epochs and the invited user ids, emptied as each re-plan concludes.
+   */
+  owedInvitations: (userId: string) => `mls_owed_invitations:v1:${userId}`,
   /** `deviceKeyGate.ts`: the device-key change epoch. */
   deviceKeyEpoch: (userId: string) => `canari-device-key-epoch:${userId}`,
   /** `conversations.ts`: the archived conversation ids (lower-cased, as it always was). */
@@ -170,6 +175,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.sendRatchetLedger(userId),
     ACCOUNT_KEY.deviceId(userId),
     ACCOUNT_KEY.retiringDeviceIds(userId),
+    ACCOUNT_KEY.owedInvitations(userId),
     ACCOUNT_KEY.deviceKeyEpoch(userId),
     ACCOUNT_KEY.archivedConversations(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),

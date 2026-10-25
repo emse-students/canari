@@ -1,5 +1,9 @@
 import { m } from '$lib/paraglide/messages';
-import type { BulkAdditionRefusal, ConversationRefusal } from '$lib/utils/chat/groupCreation';
+import type {
+  BulkAdditionRefusal,
+  ConversationRefusal,
+  LostInvitationOutcome,
+} from '$lib/utils/chat/groupCreation';
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { showToast } from '$lib/stores/toast.svelte';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
@@ -90,6 +94,8 @@ const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
   'commit-race-lost': () => m.chat_invite_error_commit_race_lost(),
   'removed-meanwhile': () => m.chat_invite_error_removed_meanwhile(),
   'tree-unconfirmed': () => m.chat_invite_error_tree_unconfirmed(),
+  'outcome-unknown': () => m.chat_invite_pending_connection(),
+  'previous-commit-unresolved': () => m.chat_invite_error_previous_commit_unresolved(),
   failed: () => m.chat_invite_error_failed(),
 };
 
@@ -99,9 +105,38 @@ const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
  * a member's own Add (2026-10-23), so a refused one - a lost race, a busy add lock - is not retried by
  * any sweep, and the member is the one who retries. Saying nothing is how CC-4 lost an Add for good.
  *
+ * `outcome-unknown` is the one reason that is not a refusal: the commit is kept and finishes by
+ * itself (`owedInvitations.ts`), so it is said as a warning, and {@link reportLostInvitation} speaks
+ * if it does not finish.
+ *
  * @param reason - the refusal `inviteMembersToGroup` returned.
  */
 export function reportBulkAdditionRefusal(reason: BulkAdditionRefusal): void {
   console.warn(`[GROUP] an invitation added nobody (${reason})`);
-  showToast(INVITE_SENTENCES[reason]());
+  if (reason === 'outcome-unknown') showToast(INVITE_SENTENCES[reason](), 'warning');
+  else showToast(INVITE_SENTENCES[reason]());
+}
+
+/**
+ * Tells the member how an invitation they made BEFORE A LOST CONNECTION ended, once its kept commit
+ * was found not to have landed and it was re-planned (`replanLostInvitation`). Named after the
+ * conversation, since the member is no longer looking at it. Silent when it completed - the member
+ * list shows it - and when its commit is kept again, which ends here later.
+ *
+ * @param outcome - what the re-plan came to.
+ * @param conversationName - the conversation's display name.
+ */
+export function reportLostInvitation(
+  outcome: LostInvitationOutcome,
+  conversationName: string
+): void {
+  if (outcome.kind !== 'not-completed') return;
+  console.warn(
+    `[INVITE_OWED] the member is told: an invitation lost a connection ago was not completed (${outcome.reason})`
+  );
+  showToast(
+    outcome.reason === 'removed-meanwhile'
+      ? m.chat_invite_resumed_removed_meanwhile({ conversation: conversationName })
+      : m.chat_invite_resumed_failed({ conversation: conversationName })
+  );
 }

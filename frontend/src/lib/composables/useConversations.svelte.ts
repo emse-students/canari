@@ -69,9 +69,11 @@ import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import {
   createNewGroup as createGroup,
   inviteMembersToGroup,
+  replanLostInvitation,
   startNewConversation as startConversation,
   type ConversationOutcome,
 } from '$lib/utils/chat/groupCreation';
+import type { OwedInvitationReplanner } from '$lib/mls-client/owedInvitations';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import {
   findConversationKeyByGroupId,
@@ -85,6 +87,7 @@ import { readLandingPreview } from '$lib/utils/chat/landingPreview';
 import {
   reportBulkAdditionRefusal,
   reportFollowerTabRefusal,
+  reportLostInvitation,
   reportMemberRemovalFailure,
 } from '$lib/utils/chat/conversationRefusalMessage';
 import { MemberRemovalNotCommittedError } from '$lib/utils/chat/memberRemovalError';
@@ -1252,6 +1255,10 @@ export function useConversations() {
         // queue rather than dropped. The restore finishing is what makes it readable, so it is the
         // trigger to ask again - there is no timer waiting to notice.
         mlsService?.notifyConversationsRestored();
+        // The re-plan of a lost invitation needs the map it re-plans into: registered once it is.
+        if (mlsService) {
+          mlsService.setOwedInvitationReplanner(lostInvitationReplanner(ctx, mlsService));
+        }
       }
     }
   }
@@ -2074,6 +2081,51 @@ export function useConversations() {
     } finally {
       pendingInvites = null;
     }
+  }
+
+  /**
+   * Re-plans a member's invitation whose KEPT commit did not land (`owedInvitations.ts`, OFF-3) and
+   * tells the member every ending it does not complete (`reportLostInvitation`). TOTAL: its entry is
+   * dropped once it returns, so nothing may escape it unsaid.
+   */
+  function lostInvitationReplanner(
+    ctx: ConversationContext,
+    mlsService: IMlsService
+  ): OwedInvitationReplanner {
+    return async (owed) => {
+      const short = owed.groupId.slice(0, 8);
+      const convo = conversations.get(owed.groupId);
+      // A conversation this device no longer holds as active takes no invitation from it: the
+      // member was removed, or it was deleted - the invitation went with it.
+      if (!convo || convo.lifecycle !== 'active') {
+        console.warn(
+          `[INVITE_OWED] ${short}... no active conversation to re-plan the lost invitation into (${convo?.lifecycle ?? 'no row'}) - dropped`
+        );
+        return;
+      }
+      try {
+        const outcome = await replanLostInvitation(owed, convo, {
+          mlsService,
+          storage: ctx.storage,
+          userId: ctx.userId,
+          deviceKeyB64: ctx.deviceKeyB64,
+          historyBaseUrl: ctx.historyBaseUrl,
+          conversations,
+          selectConversation: (name) => selectConversationWithCtx(name, ctx),
+          saveConversation: (name) => saveConversation(name, ctx),
+          log: ctx.log,
+        });
+        reportLostInvitation(outcome, convo.name);
+        if (outcome.kind === 'completed') {
+          await loadGroupMembers(convo.id, ctx).catch((e: unknown) =>
+            ctx.log(`[INVITE_OWED] member list not reread after the re-plan: ${String(e)}`)
+          );
+        }
+      } catch (e) {
+        console.error(`[INVITE_OWED] ${short}... the re-plan threw - the member is told:`, e);
+        reportLostInvitation({ kind: 'not-completed', reason: 'failed' }, convo.name);
+      }
+    };
   }
 
   /** What a member's answer to a join ask needs, bound to this context (`joinAnswers.ts`). */
