@@ -1372,17 +1372,24 @@ evictions began is settled `cancelled` like any abandoned one.
 
 ### A member write updates columns, never saves the row it read (2026-10-25)
 
-**A member write must never insert a row.** A TypeORM `save` of an entity read earlier inserts it
-again, every column included, when the row was deleted in between. So a write to an existing
-membership (`channel_members`, `association_members`) is ONE column-scoped `UPDATE` keyed by the
-row's `id`, and `affected !== 1` means the membership is gone: the call is refused (`403`/`404`) and
-nothing is written. `setNotificationLevel` merges its one key in SQL (`notifLevels || jsonb_build_object`),
-so two devices setting two salons keep both. `updateWorkspaceMemberRole` and the association
-`updateMemberRole` write only the columns they change. The successor an account erasure promotes is
-chosen again under `withCommunityRemovalLock`, from rows read `FOR UPDATE`, since every removal
-deletes through that lock. Proven on PostgreSQL by `member-write-gone.integration.spec.ts` and
-`association-member-write-gone.integration.spec.ts`, each committing a removal between the read and
-the write. `save` stays for a row the call itself creates.
+**A member write must never insert a row.** A TypeORM `save` of a stale entity inserts it again,
+every column included, when the row was deleted in between - and also reverts every column a
+concurrent writer changed since the read. So a write to an existing row (`channel_members`,
+`association_members`, `channel_workspaces`) is ONE column-scoped `UPDATE` keyed by the row's `id`,
+and `affected !== 1` refuses the call with nothing written:
+
+- `setNotificationLevel` merges its one key in SQL (`notifLevels || jsonb_build_object`), so two
+  devices setting two salons keep both; 0 rows is `403`.
+- `updateWorkspaceMemberRole` and the association `updateMemberRole` are CONDITIONED on what their
+  bound was judged against (`AND "roleIds" = :judged`, `AND permissions = :judged`): 0 rows - the
+  member was re-roled or removed since - is `409 MEMBER_CHANGED_MEANWHILE`, which the client names.
+- `updateWorkspaceImage` and `updateWorkspaceHistoryVisibility` write their one column; 0 rows is `404`.
+- The successor an account erasure promotes is chosen again under `withCommunityRemovalLock`, from
+  rows read `FOR UPDATE` in id order, since every removal deletes through that lock.
+
+Proven on PostgreSQL by `member-write-gone.integration.spec.ts` and
+`association-member-write-gone.integration.spec.ts`, each committing the other write between the read
+and the update. `save` stays for a row the call itself creates.
 
 ### An access rewrite names the revision it edited (2026-10-25)
 

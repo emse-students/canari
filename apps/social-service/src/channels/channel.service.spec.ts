@@ -22,6 +22,7 @@ import {
   PIN_REQUIRES_MODERATION,
 } from './permissions';
 import { fakeDepartureManager } from './departure-transaction.fake-spec';
+import { roleUpdateBuilder } from './member-role-update.fake-spec';
 
 /** A well-formed Graine v2 signature: every salon row carries one (channel-encryption 21.8). */
 const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
@@ -62,6 +63,8 @@ describe('ChannelService security hardening', () => {
       findOne: jest.fn(),
       find: jest.fn(),
       save: jest.fn(),
+      // A community setting is one column update of the row; 1 row found.
+      update: jest.fn(() => Promise.resolve({ affected: 1 })),
       manager: {
         transaction: jest.fn((cb: (m: { delete: typeof hardDeletes }) => Promise<void>) =>
           cb({ delete: hardDeletes })
@@ -471,6 +474,10 @@ describe('ChannelService security hardening', () => {
     const result = await service.updateWorkspaceHistoryVisibility('ws1', 'u1', 'joined');
 
     expect(result).toEqual({ success: true, workspaceId: 'ws1', historyVisibility: 'joined' });
+    expect(workspaceRepo.update).toHaveBeenCalledWith(
+      { id: 'ws1' },
+      { historyVisibility: 'joined' }
+    );
     expect(redis.publishChannelEvent).toHaveBeenCalledWith(
       'workspace.updated',
       { workspaceId: 'ws1', historyVisibility: 'joined' },
@@ -489,7 +496,7 @@ describe('ChannelService security hardening', () => {
     await expect(
       service.updateWorkspaceHistoryVisibility('ws1', 'u1', 'everyone' as never)
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(workspaceRepo.save).not.toHaveBeenCalled();
+    expect(workspaceRepo.update).not.toHaveBeenCalled();
   });
 
   it('updateWorkspaceHistoryVisibility refuses a member without MANAGE_WORKSPACE', async () => {
@@ -501,7 +508,7 @@ describe('ChannelService security hardening', () => {
     await expect(
       service.updateWorkspaceHistoryVisibility('ws1', 'u1', 'joined')
     ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(workspaceRepo.save).not.toHaveBeenCalled();
+    expect(workspaceRepo.update).not.toHaveBeenCalled();
   });
 
   // ── Member removal broadcasts ─────────────────────────────────────────────
@@ -2509,6 +2516,10 @@ describe('ChannelService security hardening', () => {
         return Promise.resolve({ affected: hit.length });
       }
     );
+    // The role assignment's conditioned UPDATE: by id, and only while the roles are the ones judged.
+    Object.assign(memberRepo, {
+      createQueryBuilder: () => roleUpdateBuilder(rows),
+    });
 
     memberRepo.findOne.mockImplementation(({ where }: { where: Partial<(typeof rows)[number]> }) =>
       Promise.resolve(rows.find((r) => matches(r, where)) ?? null)

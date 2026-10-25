@@ -8,6 +8,7 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
+import { roleUpdateBuilder } from './member-role-update.fake-spec';
 import { CHANNEL_PERMISSIONS } from './permissions';
 
 /**
@@ -49,6 +50,8 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
   };
 
   function makeService(targetRole: typeof ADMIN_ROLE | typeof MEMBER_ROLE) {
+    /** The target's stored membership, as the conditioned role update finds it. */
+    const stored = [{ id: `m-${TARGET}`, roleIds: [MEMBER_ROLE.id] }];
     const roleRepo = {
       // `findOne` resolves the role being ASSIGNED; `find` resolves the ACTOR's roles, which is
       // what the permission guard reads.
@@ -71,8 +74,8 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
         { userId: ACTOR, roleIds: [ADMIN_ROLE.id] },
         { userId: 'u-other-admin', roleIds: [ADMIN_ROLE.id] },
       ]),
-      // The role is written as one column update of the row read, never a save of it.
-      update: jest.fn().mockResolvedValue({ affected: 1 }),
+      // The role is written as one conditioned column update of the row read, never a save of it.
+      createQueryBuilder: jest.fn(() => roleUpdateBuilder(stored)),
       save: jest.fn((m: Record<string, unknown>) => Promise.resolve(m)),
     };
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
@@ -89,7 +92,7 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
     );
     jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    return { service, redis, memberRepo };
+    return { service, redis, memberRepo, stored };
   }
 
   beforeEach(() => {
@@ -156,16 +159,13 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
   // attempted, so a throw here would report a failure for a change that DID happen - and the member
   // who missed the event is exactly where they were before it existed: correct on their next load.
   it('still succeeds when the announcement itself fails, because the role is already written', async () => {
-    const { service, redis, memberRepo } = makeService(MEMBER_ROLE);
+    const { service, redis, memberRepo, stored } = makeService(SALON_MANAGER_ROLE);
     redis.publishChannelEvent.mockRejectedValue(new Error('redis down'));
 
     await expect(
-      service.updateWorkspaceMemberRole(WORKSPACE, TARGET, 'member', ACTOR)
+      service.updateWorkspaceMemberRole(WORKSPACE, TARGET, 'Gestion des salons', ACTOR)
     ).resolves.toEqual({ success: true });
-    expect(memberRepo.update).toHaveBeenCalledWith(
-      { id: `m-${TARGET}` },
-      { roleIds: [MEMBER_ROLE.id] }
-    );
+    expect(stored[0].roleIds).toEqual([SALON_MANAGER_ROLE.id]);
     expect(memberRepo.save).not.toHaveBeenCalled();
   });
 });

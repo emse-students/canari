@@ -53,6 +53,7 @@ import {
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
   INVITE_ROLE_NOT_GRANTABLE,
+  MEMBER_CHANGED_MEANWHILE,
   permissionsCover,
   PIN_REQUIRES_MODERATION,
   REMOVAL_EXCEEDS_ACTOR,
@@ -1352,8 +1353,14 @@ export class ChannelService implements OnApplicationBootstrap {
     leavingUserId: string
   ): Promise<'no_members' | 'governed' | 'no_admin_role' | 'promoted'> {
     const memberRows = m.getRepository(ChannelMember);
+    // Locked in ONE order (by id): a community's hard delete removes these rows without the removal
+    // lock, and lockers that agree on an order cannot each hold a row the other waits on.
     const members = (
-      await memberRows.find({ where: { workspaceId }, lock: { mode: 'pessimistic_write' } })
+      await memberRows.find({
+        where: { workspaceId },
+        order: { id: 'ASC' },
+        lock: { mode: 'pessimistic_write' },
+      })
     ).filter((r) => r.userId !== leavingUserId);
     if (members.length === 0) {
       this.logger.log(
@@ -2727,6 +2734,25 @@ export class ChannelService implements OnApplicationBootstrap {
     };
   }
 
+  /**
+   * Writes `columns` of one community as ONE column-scoped UPDATE, never a save of the row read
+   * earlier: a save of a stale entity re-inserts a deleted row and reverts every column a concurrent
+   * writer changed. 0 rows updated means the community is gone, answered 404.
+   */
+  private async updateWorkspaceColumns(
+    workspaceId: string,
+    columns: Partial<Pick<Workspace, 'imageMediaId' | 'historyVisibility'>>,
+    what: string
+  ): Promise<void> {
+    const updated = await this.workspaceRepo.update({ id: workspaceId }, columns);
+    if (updated.affected !== 1) {
+      this.logger.warn(
+        `[WORKSPACE] ${what} NOT set, community gone since its read workspace=${workspaceId} affected=${updated.affected ?? 'unknown'}`
+      );
+      throw new NotFoundException('Workspace not found');
+    }
+  }
+
   /** Updates the workspace's cover image and broadcasts a workspace.updated event to all members. */
   async updateWorkspaceImage(workspaceId: string, actorUserId: string, mediaId: string) {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
@@ -2748,8 +2774,7 @@ export class ChannelService implements OnApplicationBootstrap {
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
 
-    workspace.imageMediaId = mediaId;
-    await this.workspaceRepo.save(workspace);
+    await this.updateWorkspaceColumns(workspaceId, { imageMediaId: mediaId }, 'image');
 
     const workspaceMemberIds = await this.getWorkspaceMemberIds(workspaceId);
     await this.redis.publishChannelEvent(
@@ -2794,8 +2819,7 @@ export class ChannelService implements OnApplicationBootstrap {
       throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
     }
 
-    workspace.historyVisibility = historyVisibility;
-    await this.workspaceRepo.save(workspace);
+    await this.updateWorkspaceColumns(workspaceId, { historyVisibility }, 'historyVisibility');
     // Logged at info: it changes what every future joiner may read, it is rare, and it is the only
     // trace of who opened or closed a community's past.
     this.logger.log(
@@ -3861,14 +3885,25 @@ export class ChannelService implements OnApplicationBootstrap {
     }
 
     // Replace all existing roles with the single specified role - as ONE column update of the row
-    // judged above, never a save of it: a member write must never insert a row, and a save inserts
-    // the membership again when it was deleted since the read. 0 rows means it is gone.
-    const updated = await this.memberRepo.update({ id: targetMember.id }, { roleIds: [role.id] });
+    // judged above, never a save of it: a member write must never insert a row, and a save of a
+    // stale entity re-inserts a deleted one and reverts what a concurrent writer changed. The
+    // UPDATE is CONDITIONED on the roles the bound was judged against (`simple-array` is stored
+    // comma-joined), so 0 rows means the row is not the one judged - gone, or re-roled since.
+    const updated = await this.memberRepo
+      .createQueryBuilder()
+      .update(ChannelMember)
+      .set({ roleIds: [role.id] })
+      .where('id = :memberId', { memberId: targetMember.id })
+      .andWhere('"roleIds" = :judged', { judged: (targetMember.roleIds ?? []).join(',') })
+      .execute();
     if (updated.affected !== 1) {
       this.logger.warn(
-        `[WORKSPACE] role NOT set, membership gone since its read workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
+        `[WORKSPACE] role NOT set, membership changed or gone since its read workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
       );
-      throw new NotFoundException('Target member not found');
+      throw new ConflictException({
+        code: MEMBER_CHANGED_MEANWHILE,
+        message: 'This member changed meanwhile, retry.',
+      });
     }
 
     this.logger.log(

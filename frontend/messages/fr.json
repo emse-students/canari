@@ -525,6 +525,7 @@
   "chat_community_no_admin_left_error": "Cette communauté se retrouverait sans administrateur. Donnez le rôle à un autre membre d'abord.",
   "chat_community_removal_exceeds_actor_error": "Une personne qui perdrait l'accès a des permissions que vous n'avez pas.",
   "chat_channel_access_changed_error": "Les accès de ce salon ont changé entre-temps. Rien n'a été enregistré : la liste affichée est à jour, vérifiez-la et réessayez.",
+  "chat_community_member_changed_error": "Ce membre a changé entre-temps. Rien n'a été enregistré : rechargez la liste des membres et réessayez.",
   "chat_community_role_change_exceeds_actor_error": "Ce changement de rôle dépasse vos propres permissions.",
   "chat_invite_role_not_grantable_error": "Vous ne pouvez pas attribuer ce rôle en invitant.",
   "chat_community_departure_retry_error": "Le départ n'a pas pu aboutir cette fois-ci. Rien n'a changé : réessayez.",

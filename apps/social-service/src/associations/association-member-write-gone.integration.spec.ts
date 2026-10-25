@@ -15,11 +15,12 @@
  * `channel-unread-clear.integration.spec.ts` for why that order), dropped at the end.
  */
 import * as crypto from 'crypto';
-import { Logger, NotFoundException } from '@nestjs/common';
+import { HttpException, Logger } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource, Repository } from 'typeorm';
 import { AssociationsService } from './associations.service';
 import { AssociationMember } from './entities/association-member.entity';
+import { MEMBER_CHANGED_MEANWHILE } from '../channels/permissions';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -84,9 +85,8 @@ maybe('an association member write against PostgreSQL', () => {
     await admin.end();
   });
 
-  it('a role change across a removal leaves no membership row', async () => {
-    const asso = crypto.randomUUID();
-    await seat(asso, 'target', 0);
+  /** Runs `hook` right after the service's next membership read answers; says whether it ran. */
+  const afterNextRead = (hook: () => Promise<unknown>): (() => boolean) => {
     const original = members.findOne.bind(members);
     let ran = false;
     const spy = jest.spyOn(members, 'findOne').mockImplementation((async (
@@ -95,17 +95,45 @@ maybe('an association member write against PostgreSQL', () => {
       const answer = await original(o);
       spy.mockRestore();
       ran = true;
-      await service.removeMember(asso, 'target');
+      await hook();
       return answer;
     }) as never);
+    return () => ran;
+  };
+  /** A refusal's typed code; the exception itself when it carries none. */
+  const codeOf = (e: unknown): unknown =>
+    (e instanceof HttpException ? (e.getResponse() as { code?: unknown }).code : undefined) ?? e;
+
+  it('a role change across a removal leaves no membership row', async () => {
+    const asso = crypto.randomUUID();
+    await seat(asso, 'target', 0);
+    const ran = afterNextRead(() => service.removeMember(asso, 'target'));
 
     const outcome = await service.updateMemberRole(asso, 'target', 'Tresorier', 1).then(
       () => 'set',
       (e: unknown) => e
     );
-    expect(ran).toBe(true);
-    expect(outcome).toBeInstanceOf(NotFoundException);
+    expect(ran()).toBe(true);
+    expect(codeOf(outcome)).toBe(MEMBER_CHANGED_MEANWHILE);
     expect(await rowOf(asso, 'target')).toBeNull();
+  });
+
+  it('a role change judged against permissions changed since its read writes nothing', async () => {
+    // Read without MANAGE_MEMBERS, so the last-manager guard was not asked; the member is made a
+    // manager before the write, which would otherwise strip it unchecked.
+    const asso = crypto.randomUUID();
+    await seat(asso, 'target', 0);
+    const ran = afterNextRead(() =>
+      members.update({ associationId: asso, userId: 'target' }, { permissions: 4 })
+    );
+
+    const outcome = await service.updateMemberRole(asso, 'target', 'Membre', 0).then(
+      () => 'set',
+      (e: unknown) => e
+    );
+    expect(ran()).toBe(true);
+    expect(codeOf(outcome)).toBe(MEMBER_CHANGED_MEANWHILE);
+    expect(await rowOf(asso, 'target')).toMatchObject({ permissions: 4 });
   });
 
   it('a role change with no removal writes only what it names', async () => {

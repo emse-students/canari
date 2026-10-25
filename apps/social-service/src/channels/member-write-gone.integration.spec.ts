@@ -19,10 +19,11 @@
 import * as crypto from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, HttpException, Logger, NotFoundException } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource, Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
+import { MEMBER_CHANGED_MEANWHILE } from './permissions';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -49,17 +50,19 @@ maybe('a member write against PostgreSQL', () => {
   let ds: DataSource;
   let service: ChannelService;
   let members: Repository<ChannelMember>;
+  let workspaces: Repository<Workspace>;
   let previousFetch: typeof fetch;
   let previousSecret: string | undefined;
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
   /** One fresh community per case: its three roles, and the members named with their role. */
-  const community = async (seats: Record<string, 'admin' | 'mod' | 'base'>) => {
+  const community = async (seats: Record<string, 'admin' | 'mod' | 'base' | 'mgr'>) => {
     const ws = crypto.randomUUID();
     const roles = {
       admin: crypto.randomUUID(),
       mod: crypto.randomUUID(),
       base: crypto.randomUUID(),
+      mgr: crypto.randomUUID(),
     };
     await q(
       `INSERT INTO channel_workspaces (id, name, slug, "createdBy") VALUES ($1, 'W', $2, 'x')`,
@@ -69,8 +72,9 @@ maybe('a member write against PostgreSQL', () => {
       `INSERT INTO channel_roles (id, "workspaceId", name, priority, permissions) VALUES
          ($1, $4, 'Administrateur', 100, 'workspace.manage'),
          ($2, $4, 'Modérateur', 50, 'member.kick,member.invite'),
-         ($3, $4, 'Membre', 10, '')`,
-      [roles.admin, roles.mod, roles.base, ws]
+         ($3, $4, 'Membre', 10, ''),
+         ($5, $4, 'Gestion', 20, 'role.manage')`,
+      [roles.admin, roles.mod, roles.base, ws, roles.mgr]
     );
     for (const [userId, seat] of Object.entries(seats)) {
       await members.save(members.create({ workspaceId: ws, userId, roleIds: [roles[seat]] }));
@@ -83,6 +87,10 @@ maybe('a member write against PostgreSQL', () => {
     return { ws, roles, channelId: channel.id };
   };
 
+  /** A refusal's typed code; the exception itself when it carries none. */
+  const codeOf = (e: unknown): unknown =>
+    (e instanceof HttpException ? (e.getResponse() as { code?: unknown }).code : undefined) ?? e;
+
   const rowOf = (ws: string, userId: string) =>
     members.findOne({ where: { workspaceId: ws, userId } });
 
@@ -94,11 +102,13 @@ maybe('a member write against PostgreSQL', () => {
   const afterNextRead = (
     method: 'findOne' | 'find',
     matches: (where: Record<string, unknown>) => boolean,
-    hook: () => Promise<unknown>
+    hook: () => Promise<unknown>,
+    repo: Repository<ChannelMember> | Repository<Workspace> = members
   ): (() => boolean) => {
     let ran = false;
-    const original = members[method].bind(members) as (o: ReadOptions) => Promise<unknown>;
-    const spy = jest.spyOn(members, method).mockImplementation((async (o: ReadOptions) => {
+    const target = repo as Repository<ChannelMember>;
+    const original = target[method].bind(target) as (o: ReadOptions) => Promise<unknown>;
+    const spy = jest.spyOn(target, method).mockImplementation((async (o: ReadOptions) => {
       const answer = await original(o);
       if (matches(o?.where ?? {})) {
         spy.mockRestore();
@@ -133,8 +143,9 @@ maybe('a member write against PostgreSQL', () => {
     await ds.synchronize();
     await q(DEPARTURES_MIGRATION);
     members = ds.getRepository(ChannelMember);
+    workspaces = ds.getRepository(Workspace);
     service = new ChannelService(
-      ds.getRepository(Workspace),
+      workspaces,
       ds.getRepository(Channel),
       ds.getRepository(ChannelRole),
       members,
@@ -211,8 +222,63 @@ maybe('a member write against PostgreSQL', () => {
         (e: unknown) => e
       );
     expect(ran()).toBe(true);
-    expect(outcome).toBeInstanceOf(NotFoundException);
+    expect(codeOf(outcome)).toBe(MEMBER_CHANGED_MEANWHILE);
     expect(await rowOf(ws, 'target')).toBeNull();
+  });
+
+  it('a role change judged against roles changed since its read writes nothing', async () => {
+    // The role manager may re-role a plain member, never a moderator. An administrator makes the
+    // target a moderator after the manager's read and before its write.
+    const { ws, roles } = await community({ owner: 'admin', mgr: 'mgr', target: 'base' });
+    const ran = afterNextRead(
+      'findOne',
+      (w) => w.userId === 'target',
+      () =>
+        q(
+          `UPDATE channel_members SET "roleIds" = $1 WHERE "workspaceId" = $2 AND "userId" = 'target'`,
+          [roles.mod, ws]
+        )
+    );
+    const outcome = await service.updateWorkspaceMemberRole(ws, 'target', 'Gestion', 'mgr').then(
+      () => 'set',
+      (e: unknown) => e
+    );
+    expect(ran()).toBe(true);
+    expect(codeOf(outcome)).toBe(MEMBER_CHANGED_MEANWHILE);
+    expect((await rowOf(ws, 'target'))?.roleIds).toEqual([roles.mod]);
+  });
+
+  it('a community image set across a history change keeps the history change', async () => {
+    const { ws } = await community({ owner: 'admin' });
+    const ran = afterNextRead(
+      'findOne',
+      (w) => w.id === ws,
+      () => q(`UPDATE channel_workspaces SET "historyVisibility" = 'joined' WHERE id = $1`, [ws]),
+      workspaces
+    );
+    await service.updateWorkspaceImage(ws, 'owner', 'media-1');
+    expect(ran()).toBe(true);
+    expect(await workspaces.findOneBy({ id: ws })).toMatchObject({
+      imageMediaId: 'media-1',
+      historyVisibility: 'joined',
+    });
+  });
+
+  it('a history change across the community deletion does not bring the community back', async () => {
+    const { ws } = await community({ owner: 'admin' });
+    const ran = afterNextRead(
+      'findOne',
+      (w) => w.id === ws,
+      () => q(`DELETE FROM channel_workspaces WHERE id = $1`, [ws]),
+      workspaces
+    );
+    const outcome = await service.updateWorkspaceHistoryVisibility(ws, 'owner', 'joined').then(
+      () => 'set',
+      (e: unknown) => e
+    );
+    expect(ran()).toBe(true);
+    expect(outcome).toBeInstanceOf(NotFoundException);
+    expect(await workspaces.findOneBy({ id: ws })).toBeNull();
   });
 
   it('a role change with no removal still writes the role', async () => {

@@ -42,6 +42,8 @@ const COMMUNITY_REFUSALS: Record<string, () => string> = {
   INVITE_ROLE_NOT_GRANTABLE: () => m.chat_invite_role_not_grantable_error(),
   /** A salon access edit computed from a row another edit changed since: nothing saved, retryable. */
   CHANNEL_ACCESS_CHANGED: () => m.chat_channel_access_changed_error(),
+  /** A role change computed from a member another edit changed or removed since: nothing saved. */
+  MEMBER_CHANGED_MEANWHILE: () => m.chat_community_member_changed_error(),
 };
 
 /**
