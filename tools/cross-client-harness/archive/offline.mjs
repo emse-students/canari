@@ -37,7 +37,7 @@ import {
   userOf,
   watchersOf,
 } from '../mlsrow.mjs';
-import { LOCK_BUDGET_SPENT, OFFLINE_ROWS, PORTAL_HTML, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
+import { ADD_ABANDONED_NOTICE, LOCK_BUDGET_SPENT, OFFLINE_BLOCKED, OFFLINE_ROWS, PORTAL_HTML, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, provokedFailures, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence, decidedAfter, resubmissionLine, settleNarration, settledOnce } from '../settlerows.mjs';
@@ -49,6 +49,10 @@ const argv = process.argv.slice(2);
 const id = argv.includes('--row') ? argv[argv.indexOf('--row') + 1] : null;
 if (!OFFLINE_ROWS[id]) {
   console.error(`usage: bun archive/offline.mjs --row ${Object.keys(OFFLINE_ROWS).join('|')}  (OFF-4 is BLOCKED-ON-ACCOUNT)`);
+  process.exit(2);
+}
+if (OFFLINE_BLOCKED[id]) {
+  console.error(`${id}: ${OFFLINE_BLOCKED[id]}`);
   process.exit(2);
 }
 const spec = OFFLINE_ROWS[id];
@@ -143,6 +147,8 @@ const ACTIONS = {
     const clearedLine = await awaitLine(W1, keptRefusedLine(c.group.id, c.fromEpoch), 45_000);
     const caughtUpMs = await awaitClientEpoch(W1, c.group.id, serverView(c.group.id).activeEpoch, 45_000);
     // THE RE-ISSUE IS GIVEN THE SAME BOUND AS EVERY SETTLEMENT HERE; its absence is the finding.
+    // THE OTHER WAY THE INTENT IS KEPT: abandoned with a typed notice (`ADD_ABANDONED_NOTICE`, empty until the fix names it).
+    const notices = consoleLines(W1).filter((l) => ADD_ABANDONED_NOTICE.some((re) => re.test(l))).length;
     const reissued = await awaitServer(c.group.id, (v) => (v.roster ?? []).some((r) => r.userId.toLowerCase() === c.user[spec.subject].toLowerCase()), 45_000);
     return {
       premise,
@@ -151,8 +157,8 @@ const ACTIONS = {
       members: reissued.settled ? spec.devices : spec.devices.filter((d) => d !== spec.subject),
       joiners: ['W4', ...(reissued.settled ? [spec.subject] : [])],
       narration: { W1: settleNarration(c.group.id) },
-      detail: { gesture, lockFreedMs, w2Add: w4, clientUnknown: unknown, gatewayMs, clearedLine, caughtUpMs, returnedAt },
-      judge: (view) => staleStageOwn({ seqAfter: commitSequence(commitLines(c.group.id, returnedAt)), clearedLine, caughtUpMs, view, subject: c.user[spec.subject], advanced }),
+      detail: { gesture, notices, lockFreedMs, w2Add: w4, clientUnknown: unknown, gatewayMs, clearedLine, caughtUpMs, returnedAt },
+      judge: (view) => staleStageOwn({ seqAfter: commitSequence(commitLines(c.group.id, returnedAt)), clearedLine, caughtUpMs, view, subject: c.user[spec.subject], advanced, notices }),
     };
   },
 

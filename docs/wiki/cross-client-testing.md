@@ -72,7 +72,7 @@ undefined`SKIPPED` - not played on the bench (Q2): unit coverage stands in |unde
 | OFF-2 | Cut after the POST reached the server | W1 W2 - U | `pending` |
 | OFF-3 | The committer stays offline while the others advance three epochs | W1 W2 W4 - U | `pending` |
 | OFF-4 | A RECEIVER offline across ten commits and a hundred messages | W1 W2 - U | `pending` - BLOCKED-ON-ACCOUNT: needs a fifth campaign account |
-| OFF-5 | The phone loses both radios in the middle of an Add it is making | +A1 - B | `pending` |
+| OFF-5 | The phone loses both radios in the middle of an Add it is making | +A1 - B | `pending` - BLOCKED-ON-RIG: the row holds A1's commit POST, and the Tauri apps send every first-party API call through `tauri-plugin-http`, below the WebView, where CDP `Fetch` cannot hold it (measured on A1 on 1.4.1-alpha.3, 2026-10-25); every row that faults the commit on A1 or the iPhone is blocked the same way. A radio cut timed around the commit would be a race. What would lift it: a fault point inside the app's routed fetch, in a bench build only (proposal, not built) |
 
 ## KILL - the process dies mid-commit
 
@@ -80,8 +80,8 @@ undefined`SKIPPED` - not played on the bench (Q2): unit coverage stands in |unde
 | --- | --- | --- | --- |
 | KILL-1 | Close the web tab at a random point between the stage and the answer, 20 runs | W1 W2 - U | `pending` |
 | KILL-2 | Kill Chrome's whole browser process at the same point (no unload handlers) | W1 W2 - U | `pending` |
-| KILL-3 | Swipe A1 away during a commit it is making, 10 runs | +A1 - B | `pending` |
-| KILL-4 | `am kill` during the checkpoint itself | +A1 - B | `pending` |
+| KILL-3 | Swipe A1 away during a commit it is making, 10 runs | +A1 - B | `pending` - BLOCKED-ON-RIG: as OFF-5 |
+| KILL-4 | `am kill` during the checkpoint itself | +A1 - B | `pending` - BLOCKED-ON-RIG: as OFF-5 (its window is measured on a held commit) |
 | KILL-5 | Kill between the merge of an Add and its Welcome send (`owed_welcome`) | W1 + W3 - U | `pending` |
 
 ## GAP - epoch gaps and frame order

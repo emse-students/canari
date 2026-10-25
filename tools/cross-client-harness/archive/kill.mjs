@@ -18,7 +18,7 @@ import { send } from '../chat.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
 import { checkInvariant, receivedOn } from '../invariant.mjs';
-import { KILL_ROWS, WINDOWS, delayOf, killRunsOwn, removalBoundOwn, runOutcome, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { KILL_BLOCKED, KILL_ROWS, WINDOWS, delayOf, killRunsOwn, removalBoundOwn, runOutcome, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 import { activeSeats, onRoster } from '../ccrows.mjs';
 import {
   COMMIT_POST,
@@ -48,6 +48,10 @@ const argv = process.argv.slice(2);
 const id = argv.includes('--row') ? argv[argv.indexOf('--row') + 1] : null;
 if (!KILL_ROWS[id]) {
   console.error(`usage: bun archive/kill.mjs --row ${Object.keys(KILL_ROWS).join('|')}`);
+  process.exit(2);
+}
+if (KILL_BLOCKED[id]) {
+  console.error(`${id}: ${KILL_BLOCKED[id]}`);
   process.exit(2);
 }
 const spec = KILL_ROWS[id];

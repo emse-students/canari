@@ -1,0 +1,3 @@
+### Fixed - the A1 preflight checks the notification grant and stamps class-B rows, and OFF-5/KILL-3/KILL-4 are BLOCKED-ON-RIG
+
+The preflight now refuses A1 when POST_NOTIFICATIONS is not granted. A row that names A1 is preflighted with A1, so it stamps `a1Build`, and web rows no longer inherit the phone binding. `closeOverlays` closes any side panel. OFF-5, KILL-3 and KILL-4 are refused because the Tauri apps send API calls through `tauri-plugin-http`, where CDP cannot hold them. OFF-3 judges the Add's intent as either re-issued or abandoned with a notice ([cross-client-testing](docs/wiki/cross-client-testing.md)).
