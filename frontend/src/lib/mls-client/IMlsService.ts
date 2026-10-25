@@ -1368,7 +1368,7 @@ export interface IMlsService {
   /** Returns the (userId, deviceId) pairs currently in a group. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
-  getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]>;
+  getGroupUserMembers(groupId: string, opts?: { fresh?: boolean }): Promise<GroupUserMemberRow[]>;
   /**
    * The windows during which each current member of `groupId` was out of it, from
    * `GET /api/mls/groups/:groupId/exclusions`. Throws on any failure: a history answer that cannot

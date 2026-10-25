@@ -171,9 +171,10 @@ export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: 
  */
 export async function fetchGroupRoster(
   mlsService: Pick<IMlsService, 'getGroupUserMembers'>,
-  groupId: string
+  groupId: string,
+  opts?: { fresh?: boolean }
 ): Promise<string[]> {
-  const rows = await mlsService.getGroupUserMembers(groupId);
+  const rows = await mlsService.getGroupUserMembers(groupId, opts);
   return [...new Set(rows.filter((r) => r.awaitingAdmission !== true).map((r) => r.userId))];
 }
 

@@ -1702,7 +1702,11 @@ export function useConversations() {
    *
    * An empty roster is the ANSWER here rather than a fallback: there is no membership to show.
    */
-  async function loadGroupMembers(id: string, ctx: ConversationContext | null) {
+  async function loadGroupMembers(
+    id: string,
+    ctx: ConversationContext | null,
+    opts?: { fresh?: boolean }
+  ) {
     if (!ctx) return;
     if (isChannelConversationId(id)) {
       groupMembers = [];
@@ -1715,7 +1719,7 @@ export function useConversations() {
       return;
     }
     try {
-      groupMembers = await fetchGroupRoster(ctx.ensureMls(), id);
+      groupMembers = await fetchGroupRoster(ctx.ensureMls(), id, opts);
     } catch (e) {
       console.warn('[GroupMembers]', e);
       groupMembers = [];
@@ -2095,7 +2099,8 @@ export function useConversations() {
       });
       // NEVER A SILENT REFUSAL: the member is the only one who can retry an invitation.
       if (outcome.kind === 'not-added') reportBulkAdditionRefusal(outcome.reason);
-      await loadGroupMembers(convo.id, ctx);
+      // FRESH: a roster read begun before the commit's write must not be joined (pre-Add roster).
+      await loadGroupMembers(convo.id, ctx, { fresh: true });
     } catch (e) {
       // `processBulkAddition` lets only this refusal through; anything else is its own to report.
       if (!reportFollowerTabRefusal(e)) throw e;
@@ -2170,7 +2175,7 @@ export function useConversations() {
   ): Promise<JoinAnswerResult> {
     const result = await admitJoinRequest(request, joinAnswerDeps(ctx));
     if (result.done && selectedContact === request.groupId) {
-      await loadGroupMembers(request.groupId, ctx);
+      await loadGroupMembers(request.groupId, ctx, { fresh: true });
     }
     return result;
   }
@@ -2544,7 +2549,10 @@ export function useConversations() {
     openSidePanel,
     closeSidePanel,
     toggleSidePanel,
-    /** Fetches and stores the deduplicated member list for an MLS group. */
+    /**
+     * Reads and stores the user-level ADMITTED roster of an MLS group (`user-members`, seats awaiting
+     * admission left out). `fresh` skips an identical read already in flight.
+     */
     loadGroupMembers,
     /** Checks and caches whether the current user is still in the given conversation. */
     verifyCurrentUserMembership,

@@ -2928,3 +2928,11 @@ measurements: [lydia-api](lydia-api.md) and [payments](frontend/modules/payments
 | P3 | A product with no price is creatable and its checkout answers 400 with no log | open |
 | Owed | The confirm callback verified with a Business key | done in production 2026-10-23 ([lydia-api](lydia-api.md#3-callbacks-confirm_url-cancel_url-expire_url)) |
 | Owed | A refund end to end, the default `expire_time` (at least 47 min), the deep link as `end_mobile_url` | open, [lydia-api](lydia-api.md#6-still-unknown); `request/cancel` on a PAID request measured 2026-10-23 (error 2, stays paid) |
+
+## P3 - legacy link seats written before migration 038 would now be listed by the group panel (found 2026-10-25)
+
+The group panel reads the user-level roster (`user-members`) and drops only seats flagged
+`awaitingAdmission`. A link seat written BEFORE migration 038 got `awaitingAdmission` defaulting to
+`false` and never entered the MLS tree, so it would now appear as a member. Owed ONE production count,
+read-only: roster rows with no active or admitted device of that user in that group. Nothing was run
+on production. If it is 0, delete this section; otherwise a backfill migration the user approves.
