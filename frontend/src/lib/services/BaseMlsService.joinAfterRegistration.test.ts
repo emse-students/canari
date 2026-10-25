@@ -73,6 +73,8 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
     // `destroy` settles the drain waiters too, and `Object.create` skips the field initialisers.
     groupDrainedWaiters: new Map(),
     groupDrainedArmed: new Set<string>(),
+    // And it releases the socket through the platform half, which a prototype has no body for.
+    pausePlatformSocket: vi.fn(),
     distributionGroupInfo: null,
     joinByExternalCommit: vi.fn().mockResolvedValue({ groupId: 'g', commit: new Uint8Array([9]) }),
     getEpoch: vi.fn(() => 6),

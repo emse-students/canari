@@ -895,10 +895,22 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * Removes shared event listeners and clears the heartbeat timer.
-   * Calls {@link destroyPlatformResources} for subclass-specific teardown.
+   * Releases the gateway socket for good (fenced: an open in flight assigns nothing, and no
+   * {@link connect} opens one afterwards), removes shared event listeners and clears the heartbeat
+   * timer. Calls {@link destroyPlatformResources} for subclass-specific teardown.
    */
   destroy(): void {
+    // THE SOCKET GOES WITH THE CLIENT, AND NO OPEN LANDS AFTER IT. A failed login destroys the
+    // client it built (`resetMls`) while the handshake it started beside the state load may still be
+    // in its token fetch or its native connect. Without the fence that open landed on the destroyed
+    // client, started its heartbeat, and held a socket nobody could reach any more: the next sign-out
+    // pauses the CURRENT client only, and the plugin (or the browser) kept answering the gateway's
+    // pings, so the device stayed online as the signed-out account. Certain from the code; that it is
+    // what a TestFlight iPhone showed on 2026-10-25 (two sockets at the PIN gate, both alive after the
+    // sign-out) is owed the app's own log. The pause sends `disconnect`: the presence goes at once.
+    this.socketRetired = true;
+    console.log('[WS] MLS client destroyed - its socket is released and no open may follow');
+    this.pauseSocket();
     // NOTHING PARKED OUTLIVES THE CLIENT: a join waiting on a round that will never settle here
     // would hold its group's flight for ever and hand every later caller the same hung promise.
     this.wakeKeyPackageRoundWaiters(true);
@@ -964,6 +976,13 @@ export abstract class BaseMlsService implements IMlsService {
   /** Set by {@link pauseSocket}, cleared when an explicit {@link connect} starts - the resume. */
   private socketPaused = false;
 
+  /**
+   * Set once, by {@link destroy}, and never cleared: a destroyed client opens no socket again. A
+   * pause is lifted by the next {@link connect}; this is not, because nothing will ever pause a client
+   * the holder has let go of - a socket it opened would outlive every sign-out.
+   */
+  private socketRetired = false;
+
   /** Settles the open in flight as abandoned; kept so a pause never leaves the queue to a deadline. */
   private abandonPendingOpen: ((reason: string) => void) | null = null;
 
@@ -988,6 +1007,14 @@ export abstract class BaseMlsService implements IMlsService {
         '[WS] a connect whose token was fetched across a pause is dropped - the resume opens the socket'
       );
       return Promise.reject(new GatewayOpenAbandonedError('paused during its token fetch'));
+    }
+    // The destroy moved the fence, so a fence that still matches was taken AFTER it: the caller is
+    // holding a client the holder let go of, which is a defect upstream, not a race.
+    if (this.socketRetired) {
+      console.error(
+        '[WS] connect on a DESTROYED MLS client - its caller holds a client that was let go of; nothing opened'
+      );
+      return Promise.reject(new GatewayOpenAbandonedError('client destroyed'));
     }
     return this.enqueueSocketStep(() => {
       if (this.socketGeneration !== fence) {

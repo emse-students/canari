@@ -15,7 +15,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
 
 /** @see BaseMlsService.mailboxBarrier.test.ts - same reason the cast is what instantiates the base. */
-abstract class Harness extends BaseMlsService {}
+abstract class Harness extends BaseMlsService {
+  // `destroy` releases the socket through the platform half; this harness has none.
+  protected override pausePlatformSocket(): void {}
+}
 
 /** The routed frames, in the order `routeFrame` was actually called with them. */
 type Routed = { msg: Record<string, unknown>; frameType: string }[];

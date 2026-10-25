@@ -319,6 +319,15 @@ async fn handle_socket(
     // race with abort() on the send task.
     let conn_id = state.next_conn_id.fetch_add(1, Ordering::Relaxed);
 
+    // THE DUPLICATE-CONNECTION RULE: A NEW SOCKET FOR A DEVICE IS ADDED BESIDE ITS SIBLINGS, NEVER
+    // REPLACES OR REFUSES THEM. Several sessions of one device id are legitimate - two tabs of one
+    // browser share it (a leadership hand-over overlaps them), a reconnect overlaps its predecessor's close, a deploy overlap spreads them
+    // over two processes - and each is a field of the shared sessions hash (crate::addressing), so
+    // this process could not see, let alone close, a sibling held by another. Replacing would also
+    // turn two live tabs into a reconnect duel. What this rule costs: a socket its client forgot
+    // keeps answering pings and keeps the device online, so the CLIENT owns releasing every socket
+    // it opened (`BaseMlsService.destroy`, docs/wiki/frontend/modules/auth.md). The count below is
+    // the reading that shows one.
     {
         let mut map = state.connected_users.lock().unwrap();
         map.entry(conn_key.clone())

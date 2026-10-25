@@ -616,19 +616,6 @@ export class TauriMlsService extends BaseMlsService {
     }
   }
 
-  /** Releases Tauri-specific resources: closes the native WebSocket and its listener. */
-  protected override destroyPlatformResources(): void {
-    this.clearHeartbeat();
-    if (this.wsUnlisten) {
-      this.wsUnlisten();
-      this.wsUnlisten = null;
-    }
-    if (this.ws) {
-      this.ws.disconnect().catch(() => {});
-      this.ws = null;
-    }
-  }
-
   /**
    * Tauri override: when localStorage was cleared (Android WebView eviction / reinstall),
    * restore the original device id from native push_context.json so we don't generate a
