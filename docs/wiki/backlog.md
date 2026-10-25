@@ -204,6 +204,28 @@ lacks them, and they land in other members' timelines marked unverified. The rul
 property of the row ("device-local": never described, never relayed), carried at the write rather
 than guessed from the sender. Found by reading; the relay count in the field is unmeasured.
 
+**The device notice's contact line is the same class, with one difference (DEV-1, `1.4.1-alpha.3`,
+2026-10-25).** `writeContactLines` (`deviceNotices.svelte.ts`) writes the "X added a device" line with
+the same `system` sender, under a DETERMINISTIC id (`contactLineId(group, event)`), so two contacts
+that both wrote it never trade it. But the device's OWNER never writes it (`owner-alert`, no line),
+nor does a device minted after the event - so the digest diff can push a contact's line to exactly
+those devices, unverified. The DEV-1 judge reads the owner's pane at 0 lines within the row, which
+bounds the window, not the relay. The fresh device logged unverified-authorship relays on DEV-1 and
+DEV-2; which rows they were is not read. The same "device-local" property closes both.
+
+## P3 - A fresh device's own KeyPackage read answers 404, and every browser prints it red (DEV-1, `1.4.1-alpha.3`, 2026-10-25)
+
+`awaitOwnKeyPackagePublished` (`BaseMlsService.ts`) reads `fetchDeviceKeyPackage(self)` before an
+external join, and on a device that has not published yet the delivery service answers 404 with its
+typed reason. The client reads it correctly as "absent" and waits for the round - but the browser
+prints `Failed to load resource: ... 404` at `error` level on EVERY fresh device, which no needle may
+forgive (a 404 elsewhere on that path is a real loss). Wanted: the own-publication read answers
+`200 {held:false}`, an answer and not a failure. The same endpoint serves a PEER's package to
+`processPendingInvitations`, whose typed 404 (`deviceKeyPackage.ts`) must not change, so the fix is a
+read of one's own publication rather than a new status on the shared one; old clients that read the
+404 get a [legacy-compatibility](legacy-compatibility.md) row with its removal date. Until it lands
+the DEV rows stay `PASS-DIRTY` on this line, named.
+
 ## P2 - The native Android senders trust a 200/201 without reading the body (review of #2428, 2026-10-25, needs a device reading)
 
 The web send now reads a non-JSON 2xx as no answer
