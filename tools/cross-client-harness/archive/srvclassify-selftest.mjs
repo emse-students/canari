@@ -183,6 +183,10 @@ const BENIGN_CASES = [
   // AN OWED RELEASE (#2426): the successor of a page that died mid-Add releases the expired
   // acquisition before acquiring; the client marks it and the server ends the line ` owed=true`.
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=token via=jwt owed=true`,
+  // An owed release whose marker carried no token (a page that predates it), and one that DID free
+  // the lock (`released=true ... owed=true`, the generic success rule): #2426's final line, head 46dac424d.
+  `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=owner-legacy via=jwt owed=true`,
+  `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=true by=token via=jwt owed=true`,
   // A LOGIN. Every phase that starts, reloads or reconnects a client mints one; the security signal
   // on this service is `Refresh token replay detected`, which is SEVERE and asserted apart.
   `${NEST}[AuthSessionsService] Session opened sid=00000000-0000-4000-8000-000000000001 user=aaaaaaaaaaaaaaaa`,

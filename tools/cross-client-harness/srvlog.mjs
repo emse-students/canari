@@ -81,7 +81,7 @@ const BENIGN = [
   // releases it BEFORE acquiring - by which time the TTL has long expired, so `released=false` is the
   // expected answer. The client says so in the body and the server appends ` owed=true` at the END
   // of the line; the slow-Add half below stays NOTABLE. Anchored, so a malformed flag is unexplained.
-  /\[RELEASE_LOCK\] group=\S+ owner=\S+ released=false by=token via=(jwt|push) owed=true\s*$/,
+  /\[RELEASE_LOCK\] group=\S+ owner=\S+ released=false by=(token|owner-legacy) via=(jwt|push) owed=true\s*$/,
   // A membership read. It answers a question; it changes nothing.
   /\[MembersController\] \[GET_USER_MEMBERS\] group=\S+ count=\d+/,
   // Presence, which every connected client refreshes continuously. CASE-INSENSITIVE because the
