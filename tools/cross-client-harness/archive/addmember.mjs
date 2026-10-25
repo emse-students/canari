@@ -37,8 +37,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  *
  * The label is bare - `Ajouter`, not `Ajouter un membre`, which is what a guessed matcher looked for
  * and missed.
+ *
+ * IDEMPOTENT: a panel ALREADY open is the goal reached, not an obstacle. On the phone the side panel
+ * stays open across conversations and covers the header button, so clicking it anyway failed with
+ * "no stable element" (OFF-5 on A1, 2026-10-25, the panel up from the moment the row's group opened).
  */
 export async function openGroupSettings(cx) {
+  if (await evaluate(cx, `/Quitter le groupe/.test(document.body.innerText)`)) return;
   await realClick(cx, '[aria-label="Paramètres du groupe"]');
   await until(cx, `/Quitter le groupe/.test(document.body.innerText)`, 10000);
   await sleep(1200);

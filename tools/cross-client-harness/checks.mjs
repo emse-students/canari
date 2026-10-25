@@ -1,6 +1,11 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ADMIT_ROWS } from './admitrows.mjs';
+import { DEV_ROWS } from './devicerows.mjs';
+import { FLOOR_ROWS } from './floorrows.mjs';
+import { KILL_ROWS } from './killrows.mjs';
+import { OFFLINE_ROWS } from './offlinerows.mjs';
 
 const HARNESS = dirname(fileURLToPath(import.meta.url));
 /**
@@ -639,10 +644,38 @@ const onlyOf = (words) => {
   return null;
 };
 
+/**
+ * THE 1.4.1 ROW TABLES, by the script that plays them: each row names its own `devices`. A row that
+ * names A1 is class B and is in NO phase (a phase is browsers only), so `--file <script> --row <id>`
+ * used to preflight the phase's browsers alone - no phone read, no `a1Build` stamp, and the row then
+ * recorded "bound a phone and carries no a1Build" (OFF-5, 2026-10-25). FLOOR is selected by number.
+ */
+const ROW_TABLES = {
+  'offline.mjs': OFFLINE_ROWS,
+  'kill.mjs': KILL_ROWS,
+  'admit.mjs': ADMIT_ROWS,
+  'devrows.mjs': DEV_ROWS,
+  'floor.mjs': Object.fromEntries(Object.entries(FLOOR_ROWS).map(([k, v]) => [k.replace(/^FLOOR-/, ''), v])),
+};
+
+/** The devices the row `--row` selects names in its own table, or null when there is no such row. */
+export function rowDevices(file, args = []) {
+  const i = args.indexOf('--row');
+  const row = i === -1 ? null : ROW_TABLES[file]?.[args[i + 1]];
+  return row?.devices ?? null;
+}
+
 export function devicesFor(file, args = []) {
+  const named = rowDevices(file, args);
   const owner = Object.entries(PHASES).find(([, p]) =>
     p.scripts.some((s) => s.split(' ')[0] === file)
   );
+  // A ROW THAT NAMES A1 IS PREFLIGHTED WITH A1, whatever its phase says - that is what stamps its
+  // build. Only the PHONE is added: the browsers stay the phase's, which the preflight already covers.
+  if (named?.includes('A1')) {
+    const base = owner ? devicesFor(file, []).devices : ['W1', 'W2'];
+    return { devices: [...new Set([...base.filter((d) => d !== 'A1'), ...named.filter((d) => d === 'A1' || /^W\d$/.test(d))])], phase: owner?.[0] ?? null };
+  }
   if (!owner) return { devices: ['W1', 'W2'], phase: null };
   const [name, phase] = owner;
   const narrowed = PHONE_SCRIPTS[name];

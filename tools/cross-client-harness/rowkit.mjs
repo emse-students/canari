@@ -87,6 +87,18 @@ export const invariantDetail = (inv) =>
   inv ? inv.passes.map((p) => ({ pass: p.pass, ok: p.ok, failures: p.failures, approximations: p.approximations })) : null;
 
 /**
+ * WHY NO ROW MAY FAULT A FIRST-PARTY API REQUEST ON THE TAURI APPS (A1, I1): every JSON call to the
+ * API, the commit POST included, goes through `tauri-plugin-http` (`hooks.client.ts`
+ * `createRoutedFetch`), below the WebView, so CDP `Fetch` never sees it and a `hold` never fires.
+ * Measured on A1, 2026-10-25 (OFF-5): the gesture succeeded, the commit was accepted, and the fault
+ * timed out with "1 held request(s) never happened". A radio cut timed around the commit instead is
+ * a race, not a fault. What would lift it: a fault point INSIDE the app's routed fetch, in a bench
+ * build only - a rig proposal, not built.
+ */
+export const TAURI_HTTP_BLOCKED =
+  'BLOCKED-ON-RIG: the row faults a first-party API request on a Tauri app, which goes through tauri-plugin-http where CDP Fetch cannot hold it';
+
+/**
  * What a row's armed faults PUT IN FRONT OF THE PAGE, one entry per acted record (`fault.mjs`): a
  * fulfilled status (`status N`, `status-unsent N`) or a transport failure (`lose-answer`, and a
  * `hold` / `hold-answer` the row chose to `fail()`, or one the PAGE abandoned while it was held - its

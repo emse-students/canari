@@ -16,6 +16,11 @@
  * connection, which is before any `watch()` can attach to the new document.
  */
 
+import { TAURI_HTTP_BLOCKED } from './rowkit.mjs';
+
+/** KILL-3 and KILL-4 hold A1's commit POST, which the Tauri app sends below the WebView: refused, `pending` on the board. */
+export const KILL_BLOCKED = { 'KILL-3': TAURI_HTTP_BLOCKED, 'KILL-4': TAURI_HTTP_BLOCKED };
+
 /** The two sides of the server a kill can land on, and the fault that holds the commit there. */
 export const WINDOWS = { 'before-server': 'hold once', 'after-accept': 'hold-answer once' };
 

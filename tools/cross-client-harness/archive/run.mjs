@@ -212,6 +212,20 @@ const SUBJECTS = new Set();
  *
  * @returns a sentence for the preflight to print, or '' when there was nothing to do
  */
+/**
+ * Whether the app holds POST_NOTIFICATIONS on the bound phone: true, false, or null when `dumpsys`
+ * does not say (an Android before 13 has no such runtime permission and answers nothing).
+ */
+function notificationGrant() {
+  try {
+    const m = /android\.permission\.POST_NOTIFICATIONS: granted=(true|false)/.exec(phone.sh(`dumpsys package ${phone.PKG}`));
+    return m ? m[1] === 'true' : null;
+  } catch (e) {
+    console.log(`  ??   A1  dumpsys package failed: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+}
+
 async function reviveThePhone() {
   const notes = [];
   try {
@@ -420,6 +434,14 @@ async function preflight(devices, { quiet = false } = {}) {
       const locked = phone.deviceLocked();
       if (locked) problems.push('A1 is behind the DEVICE lock screen - every fetch inside the WebView hangs and the gateway drops it, whatever the probes below say. A human must unlock the phone; `wm dismiss-keyguard` will not.');
       else if (locked === null) console.log('  ??   A1  dumpsys trust would not say whether the device is locked - treating that as unknown, not as unlocked');
+      // THE NOTIFICATION PERMISSION, UNANSWERED, PUTS A SHEET OVER EVERY CONTROL. An install resets
+      // POST_NOTIFICATIONS, and the app then asks with a `z-(--z-critical)` rationale sheet once per
+      // process (`PushNotificationService` `push_permission_rationale`). OFF-5 on 2026-10-25 died in
+      // `createGroup` behind it, after a fresh alpha APK. Granting is a deliberate act on the bench
+      // phone (`pm grant`), so it is SAID here, not done.
+      const notif = notificationGrant();
+      if (notif === false) problems.push(`A1 has not been granted POST_NOTIFICATIONS (a fresh install resets it): the app's rationale sheet will cover the UI. Grant it once: adb shell pm grant ${phone.PKG} android.permission.POST_NOTIFICATIONS`);
+      else if (notif === null) console.log('  ??   A1  dumpsys package would not say whether POST_NOTIFICATIONS is granted');
     }
 
     // ONTO THE DEPLOYED BUNDLE BEFORE ANYTHING IS READ, and before the repair loop below - a reload
@@ -689,6 +711,12 @@ if (!named.length && !flag('all') && !flag('file')) {
 
 let jobs = [];
 let devices = new Set();
+
+/** `env` without the phone binding `phone.useDevice` set - for a child that drives no phone. */
+const withoutPhoneBinding = (env) => {
+  const { ANDROID_SERIAL: _bound, ...rest } = env;
+  return rest;
+};
 
 /**
  * Devices this run must do WITHOUT - `--without A1`, repeatable - and the rows that costs.
@@ -1087,6 +1115,12 @@ for (const job of jobs) {
     const child = spawn(process.execPath, [requireScript(file), ...args], {
       cwd: HERE,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // THE PHONE BINDING IS INHERITED ONLY BY A RUN THAT DRIVES THE PHONE. This file binds A1 at
+      // load (`phone.useDevice` above) for its own preflight, and `ANDROID_SERIAL` in a child is what
+      // `results.mjs` reads as "this row drove a device" - so every WEB row it spawned printed "bound a
+      // phone and carries no a1Build" (OFF-3, NET-*, 2026-10-25), a line its reader learns to skip.
+      // Per JOB, not per run: a phase mixing phone and web rows must not lend the binding to the web ones.
+      env: devicesFor(file, args).devices.includes('A1') ? process.env : withoutPhoneBinding(process.env),
     });
     let tail = '';
     // Kept, not discarded: a script that dies says why on stderr, and that sentence is the whole

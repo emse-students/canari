@@ -217,6 +217,11 @@ export function overlayOn(cx) {
       if (/Nouvelle discussion Contact Groupe/.test(t.replace(/\s+/g, ' '))) return 'new-conversation';
       if (t.indexOf(${JSON.stringify(OVERLAY_MARKERS.addMember)}) !== -1) return 'add-member';
       if (t.indexOf(${JSON.stringify(OVERLAY_MARKERS.groupPanel)}) !== -1) return 'group-panel';
+      // ANY OTHER SIDE PANEL STILL UP - a DM's "Infos de la discussion" names no group marker. On the
+      // phone it covers the header, "Nouvelle discussion" included, so the next createGroup failed
+      // with "no stable element" (A1, 2026-10-25) while this answered 'none'.
+      var close = document.querySelector(${JSON.stringify(SIDE_PANEL_CLOSE)});
+      if (close && close.getClientRects().length > 0) return 'side-panel';
       return 'none';
     })()`
   );
@@ -245,7 +250,7 @@ export async function closeOverlays(cx) {
     // `SidePanel`, whose class is `side-panel`, and `.conversation-side-panel` matched nothing again
     // until NOTIF-17b died here on 2026-09-27. The selftest guards strings, not class names.
     const closeSelector =
-      state === 'group-panel' ? SIDE_PANEL_CLOSE : state === 'add-member' ? MODAL_CLOSE : 'text=Fermer';
+      state === 'group-panel' || state === 'side-panel' ? SIDE_PANEL_CLOSE : state === 'add-member' ? MODAL_CLOSE : 'text=Fermer';
     await realClick(cx, closeSelector).catch((e) => {
       lastClickError = `${state}: ${e.message}`;
       console.log(`[closeOverlays] pass ${i} click on ${state} failed - ${e.message}`);
