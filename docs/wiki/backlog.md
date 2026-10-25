@@ -129,6 +129,31 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
   newly reached, under the D38 lock, so a repost of a widely seen post notifies almost nobody.
   Proof: the newly-reached spec counting zero for readers who already saw the post.
 
+## P3 - what the 1.4.1 dev campaign left unexplained or noisy (2026-10-25, alpha.4)
+
+Each is a log or console line the campaign met and no row asserts on. NOISE IS NEVER ACCEPTABLE
+([CLAUDE.md](../../CLAUDE.md)): explain it or fix it, never demote it.
+
+- **A past-epoch frame older than the joiner's own Welcome is logged at WARN as an unreadable loss.**
+  Seen on ADM-1/3/4 (`[RUST::WARN] Past-epoch application frame, unreadable for good: msg_epoch=2
+  group_epoch=3 ... TooDistantInThePast`), emitted while a new `WasmMlsClient` loads its state, right
+  after "Welcome complete: re-queued 1 buffered message(s)" and before "[HISTORY] ... holds 1 frame(s)
+  it can never read - reconciling". The frame predates the membership, so under the no-past-for-new-
+  members decision it is not a loss: drop it at INFO with its reason, once.
+- **A freshly minted device asks the server three times whether its own KeyPackage exists while it
+  already knows its first publication is running.** DEV-1, W3: census "0 proven" and a generate round
+  in flight, yet each of the three key-group external joins does `GET /api/mls/devices/<user>/<device>/key-package`
+  and learns "absent" from a 404 ("externalJoin ... waits for the server to hold this device's
+  KeyPackage (absent, a round is running)"). The wake-up is already round-driven; remove the GET
+  before the first round (never learn by failing what a fact could tell).
+- **Two flaky unit tests** (they pass alone, fail in the full parallel run, with or without recent
+  changes): `ChatArea.entryWindow.svelte.test.ts` ("never mounts more than the 20-row entry frame")
+  and `outbox.reelResume` ("KILL MID-UPLOAD"). Find the shared-state or ordering cause; a flaky gate is
+  a gate nobody believes.
+- **The rig's volume lines and its own probes** (JOIN_*, WELCOME_REQ, DISCOVERY, 409/400/403 probes,
+  DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
+  the ADM and DEV rows; a rig allowlist PR follows the chain.
+
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
 What the audit left open is in the private operations notes until each item is fixed; the rule is
