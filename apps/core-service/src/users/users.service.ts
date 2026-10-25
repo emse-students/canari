@@ -23,7 +23,7 @@ import { EMPTY_PROFILE, legacyColumns, type MiconnectProfile } from './miconnect
 import { socialUrl } from '../internal/service-urls';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import { assertMintableUserId } from './user-id';
-import { UserRowGoneError, updateUserColumns } from './user-write';
+import { UserIdTakenError, UserRowGoneError, updateUserColumns } from './user-write';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 
 /** Service managing user persistence and OIDC upsert logic. */
@@ -57,12 +57,32 @@ export class UsersService implements OnModuleInit {
     this.logger.log('unaccent + pg_trgm extensions ready');
   }
 
-  /** Persists a new user entity and returns it. */
+  /**
+   * Creates a NEW user and returns it; an id that already has a row is refused with
+   * {@link UserIdTakenError} (409) and the row is left as it is.
+   *
+   * An `INSERT ... ON CONFLICT DO NOTHING`, never a save: a save of an entity whose id exists
+   * overwrites that row with the payload's columns.
+   */
   async create(createUserDto: CreateUserDto): Promise<User> {
     // The administrator's mint point: the same rule as the sign-in callback (`user-id.ts`).
     assertMintableUserId(createUserDto.id, this.logger, 'admin-create');
-    const user = this.userRepository.create(createUserDto);
-    return await this.userRepository.save(user);
+    const result = await this.userRepository
+      .createQueryBuilder()
+      .insert()
+      .into(User)
+      .values(this.userRepository.create(createUserDto))
+      .orIgnore()
+      .returning(['id'])
+      .execute();
+    if ((result.raw as unknown[]).length !== 1) {
+      this.logger.warn(
+        `[users.create] refused: user=${createUserDto.id.slice(0, 8)} already exists`
+      );
+      throw new UserIdTakenError(createUserDto.id);
+    }
+    this.logger.log(`[users.create] user=${createUserDto.id.slice(0, 8)} created`);
+    return this.findOne(createUserDto.id);
   }
 
   /** Finds a user by ID, throwing NotFoundException if not found. */
@@ -99,11 +119,16 @@ export class UsersService implements OnModuleInit {
    * read first: a user write updates the columns it names and never saves the row it read.
    */
   async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
-    const changes = Object.fromEntries(
-      Object.entries(updateUserDto).filter(([, value]) => value !== undefined)
-    ) as QueryDeepPartialEntity<User>;
-    if (Object.keys(changes).length > 0) {
-      await updateUserColumns(this.userRepository, id, changes, 'users.update', this.logger);
+    // The columns this route owns, named one by one: a field added to the DTO reaches the row only
+    // once it is written here.
+    if (updateUserDto.bio !== undefined) {
+      await updateUserColumns(
+        this.userRepository,
+        id,
+        { bio: updateUserDto.bio },
+        'users.update',
+        this.logger
+      );
     } else {
       this.logger.debug(`[users.update] user=${id.slice(0, 8)} nothing to write`);
     }
@@ -167,9 +192,11 @@ export class UsersService implements OnModuleInit {
       throw new UserRowGoneError(id);
     }
     if (stored === minted) {
-      this.logger.log(`[NOTES] generated a notepad key for ${id}`);
+      this.logger.log(`[NOTES] generated a notepad key for ${id.slice(0, 8)}`);
     } else {
-      this.logger.log(`[NOTES] another call minted ${id}'s notepad key first - answering that one`);
+      this.logger.log(
+        `[NOTES] another call minted the notepad key of ${id.slice(0, 8)} first - answering that one`
+      );
     }
     return stored;
   }

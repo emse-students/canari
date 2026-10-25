@@ -3605,6 +3605,7 @@
   "refusal_block_limit_reached": "Vous avez atteint le nombre maximum de personnes bloquées.",
   "refusal_not_blocked": "Cette personne n'est pas bloquée.",
   "refusal_admin_self_demote": "Un administrateur ne peut pas retirer ses propres droits : un autre administrateur doit le faire.",
+  "refusal_admin_self_change": "Un administrateur ne peut pas modifier ses propres droits : un autre administrateur doit le faire.",
   "refusal_user_search_filter_required": "Renseignez au moins un filtre pour lancer la recherche.",
   "refusal_user_search_too_long": "La recherche est trop longue.",
   "calendar_action_deposit": "Dépôt de l'événement",

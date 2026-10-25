@@ -8,7 +8,7 @@ import { ProfileCorrectionNotPendingError } from './profile-correction.errors';
 import { MiconnectEditorClient } from './miconnect-editor.client';
 import { legacyColumns, validateProfileEdit, type ProfileSnapshot } from './miconnect-profile';
 import { ProfileEditInvalidError, ProfileEditNotLinkedError } from './profile-edit.errors';
-import { updateUserColumns } from './user-write';
+import { UserRowGoneError, updateUserColumns } from './user-write';
 
 /** What an applied edit reports back. `changeId` is null when nothing differed and nothing was traced. */
 export interface ProfileEditResult {
@@ -143,6 +143,15 @@ export class ProfileEditService {
         return { user, changed: !unchanged, changeId };
       });
     } catch (err) {
+      if (err instanceof UserRowGoneError) {
+        // Only an account erasure deletes a user row, so there is no Canari row left to disagree
+        // with: authentik keeps the edit, which belongs to the person's MiConnect account.
+        this.logger.error(
+          `[PROFILE_EDIT] authentik was written for ${targetId.slice(0, 8)} but the Canari account ` +
+            `was deleted meanwhile - no row and no audit written`
+        );
+        throw err;
+      }
       this.logger.error(
         `[PROFILE_EDIT] authentik was written for ${targetId.slice(0, 8)} but Canari's row and the ` +
           `audit were NOT (${String(err)}) - the sources disagree until the person's next sign-in`

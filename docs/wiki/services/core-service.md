@@ -127,7 +127,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | GET | `/api/users/directory` | JWT | Paginated directory with filters (promo, formation, association) |
 | GET | `/api/users/batch?ids=a,b,c` | JWT | Public profiles for up to 100 ids in ONE query ([why](#one-request-for-a-list-the-client-already-holds)) |
 | GET | `/api/users/:id/avatar` | JWT | Proxy the user's MiGallery photo ([three outcomes](#the-avatar-proxy)) |
-| POST | `/api/users` | global admin | Create user manually |
+| POST | `/api/users` | global admin | Create user manually; an id that has a row, or whose erasure is running, is a `409` |
 | GET | `/api/users/me/notes` | JWT | Get caller's notepad ciphertext (+ `legacyNotes` once, pre-encryption) |
 | PUT | `/api/users/me/notes` | JWT | Store caller's notepad ciphertext; clears the legacy plaintext |
 | GET | `/api/users/me/notes-key` | JWT | Caller's notepad key (32 bytes hex), generated on first use |
@@ -135,7 +135,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | PATCH | `/api/users/me` | JWT | Update caller's profile |
 | DELETE | `/api/users/me` | JWT | Deactivate at once and queue a guaranteed erasure in every service ([account-erasure](../account-erasure.md)) |
 | GET | `/api/users/admin/list` | global admin | List all users with admin status |
-| PATCH | `/api/users/:id/admin` | global admin | Set/clear admin flag (cannot self-revoke) |
+| PATCH | `/api/users/:id/admin` | global admin | Set/clear admin flag (`{ admin: boolean }`, else `400`); never one's own (`ADMIN_SELF_DEMOTE`/`ADMIN_SELF_CHANGE`, `403`); a removal ends every session of the person |
 
 #### One request for a list the client already holds
 
@@ -522,12 +522,23 @@ profile edit (inside its audit transaction, so a row gone rolls the audit back).
 - **The sign-in** keeps its insert for a subject with no row. Only an account erasure deletes a user
   row, so a row read and gone before the update is answered with the erasure's own refusal
   (`ACCOUNT_ERASURE_PENDING`/`_BLOCKED`, read again on `UserRowGoneError`) and is never re-created.
-- **`save` stays for a row the call itself creates** (`create`, the first sign-in, a session, a block).
+- **A role change ends the sessions that carried it.** The admin flag travels in each access token
+  (`/api/auth/verify` hands it on as `X-Global-Admin`), so removing it ends every session of the
+  person (`revokeOthers(id, null)`): each token authenticates nothing from that moment, and the next
+  sign-in mints tokens from the row as it stands. Nobody writes their own flag, either way. The
+  session store is its own `SessionsModule`, imported by the auth and the user routes alike.
+- **An administrator's `create` is an insert**, `ON CONFLICT DO NOTHING`: an id that has a row is a
+  `409` (`UserIdTakenError`), as is one whose erasure is running; a save would overwrite the row.
+- **`save` stays for a row the call itself creates** (the first sign-in, a session, a block).
+- **An empty set writes nothing**: `updateUserColumns` answers at once rather than handing TypeORM an
+  `UPDATE` with no column.
 
 Proven on PostgreSQL by `users/user-write-gone.integration.spec.ts` (CI step "User writes against
 PostgreSQL"): every write above, with an admin revoke or an erasure committed between its read and its
-write from inside the service's own repository call, plus two first key calls. The same rule holds in
-social-service for memberships ([social-service](social-service.md)), a tag's renewal
+write from inside the service's own repository call, plus two first key calls, a flag removal read
+back at `verify`, and a `create` over an existing id. The same rule holds in social-service for
+memberships
+([social-service](social-service.md#a-member-write-updates-columns-never-saves-the-row-it-read-2026-10-25)), a tag's renewal
 ([cotisations](../cotisations.md#a-renewal-updates-two-columns-never-saves-the-tag-it-read-2026-10-25))
 and an unmute, proven by `users/user-grant-write-gone.integration.spec.ts` there.
 

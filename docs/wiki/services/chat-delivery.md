@@ -1203,7 +1203,7 @@ every client that reads it. Social-service keeps its own table ([social-service]
 | delivery | `PIN_INCORRECT` | 403 | wrong current PIN, or the lost compare-and-swap | PIN change |
 | delivery | `PIN_NOT_SET` | 400 | PIN change on an account with no PIN | PIN change |
 | core | `BLOCK_SELF`, `BLOCK_TARGET_NOT_FOUND`, `BLOCK_LIMIT_REACHED` (+`max`), `NOT_BLOCKED` | 400/404/422/404 | the block list | settings, blocked people |
-| core | `ADMIN_SELF_DEMOTE` | 403 | an administrator removes their own right | no screen calls it yet |
+| core | `ADMIN_SELF_DEMOTE`, `ADMIN_SELF_CHANGE` | 403 | an administrator removes, or otherwise writes, their own right | no screen calls it yet |
 | core | `USER_SEARCH_FILTER_REQUIRED`, `USER_SEARCH_TOO_LONG` (+`max`) | 400 | the directory with no filter, a search past 200 characters | `/directory` |
 
 `MAINTENANCE`, `ACCOUNT_ERASURE_PENDING` and `ACCOUNT_ERASURE_BLOCKED` were coded in

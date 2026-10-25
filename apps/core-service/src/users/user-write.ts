@@ -1,4 +1,4 @@
-import { Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import type { Repository } from 'typeorm';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import type { User } from './entities/user.entity';
@@ -11,6 +11,13 @@ import type { User } from './entities/user.entity';
 export class UserRowGoneError extends NotFoundException {
   constructor(readonly userId: string) {
     super(`User #${userId} not found`);
+  }
+}
+
+/** A user is created under an id that already has a row: refused, and that row is left alone. */
+export class UserIdTakenError extends ConflictException {
+  constructor(readonly userId: string) {
+    super(`User #${userId} already exists`);
   }
 }
 
@@ -27,6 +34,9 @@ export class UserRowGoneError extends NotFoundException {
  * `affected !== 1` means the row is gone (or the id names none): {@link UserRowGoneError}, nothing
  * written, nothing inserted.
  *
+ * An EMPTY `changes` writes nothing and answers at once (TypeORM refuses an `UPDATE` with no
+ * column, with an untyped error that would surface as a 500).
+ *
  * @param site the caller's name, for the log line that accuses a write which found no row.
  */
 export async function updateUserColumns(
@@ -36,6 +46,10 @@ export async function updateUserColumns(
   site: string,
   logger: Logger
 ): Promise<void> {
+  if (Object.keys(changes as object).length === 0) {
+    logger.debug(`[${site}] user=${id.slice(0, 8)} nothing to write`);
+    return;
+  }
   const result = await repo.update({ id }, changes);
   if (result.affected !== 1) {
     logger.warn(

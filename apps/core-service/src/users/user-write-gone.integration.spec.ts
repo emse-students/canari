@@ -8,14 +8,26 @@
  * read and its write - the writer runs from inside the service's own repository call, so the
  * interleaving is deterministic (never a sleep) - and asserts what the row holds afterwards.
  *
+ * And the admin flag's removal, end to end: the person's sessions end with it, so an access token
+ * minted while they held the flag authenticates nothing at `/api/auth/verify` afterwards.
+ *
  * GATED ON `CORE_IT_DATABASE_URL`, like the other integration files; the `boot-nest-apps` job in
  * `ci.yml` sets it. It needs no existing schema: the tables are created from their entities in a
  * throwaway schema, dropped at the end.
  *
  *   CORE_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- user-write-gone.integration
  */
-import { Logger } from '@nestjs/common';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { ConflictException, Logger } from '@nestjs/common';
+import * as jwt from 'jsonwebtoken';
+import type { Request, Response } from 'express';
 import { DataSource, Repository } from 'typeorm';
+import { AuthSession } from '../auth/entities/auth-session.entity';
+import { AuthSessionsService } from '../auth/auth-sessions.service';
+import { SessionPushEndService } from '../auth/session-push-end.service';
+import { AuthController } from '../auth/auth.controller';
+import { UsersController } from './users.controller';
 import { User } from './entities/user.entity';
 import { ProfileChange } from './entities/profile-change.entity';
 import { ProfileCorrectionRequest } from './entities/profile-correction-request.entity';
@@ -25,7 +37,15 @@ import type { MiconnectEditorClient } from './miconnect-editor.client';
 import type { UserBlocksService } from './user-blocks.service';
 import { UserRowGoneError } from './user-write';
 
+jest.mock('axios');
+
 const URL = process.env.CORE_IT_DATABASE_URL;
+const JWT_SECRET = 'user-write-it-secret';
+/** `session_push_endings`, as production gets it: every session end records into it. */
+const PUSH_ENDINGS_MIGRATION = readFileSync(
+  join(__dirname, '..', 'migrations', '016_session_push_endings.sql'),
+  'utf8'
+);
 const maybe = URL ? describe : describe.skip;
 
 const PROFILE = {
@@ -46,7 +66,23 @@ maybe('a user write against PostgreSQL', () => {
   let users: Repository<User>;
   let service: UsersService;
   let profiles: ProfileEditService;
+  let sessions: AuthSessionsService;
+  let usersRoute: UsersController;
+  let auth: AuthController;
   let seq = 0;
+  const env = { ...process.env };
+
+  /** The headers `/api/auth/verify` hands nginx for this bearer token. */
+  const verify = async (token: string): Promise<Record<string, string>> => {
+    const headers: Record<string, string> = {};
+    const res = {
+      set: (k: string, v: string) => (headers[k] = v),
+      status: () => ({ send: () => undefined, json: () => undefined }),
+    } as unknown as Response;
+    const req = { headers: { authorization: `Bearer ${token}` } } as unknown as Request;
+    await auth.verify(req, res);
+    return headers;
+  };
 
   /** A fresh account per case: an admin with a name, a profile and no notepad key. */
   const seed = async (): Promise<string> => {
@@ -108,7 +144,7 @@ maybe('a user write against PostgreSQL', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [User, ProfileChange, ProfileCorrectionRequest],
+      entities: [User, ProfileChange, ProfileCorrectionRequest, AuthSession],
       synchronize: true,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
@@ -125,9 +161,41 @@ maybe('a user write against PostgreSQL', () => {
       writeUser: async () => undefined,
     } as unknown as MiconnectEditorClient;
     profiles = new ProfileEditService(users, ds, editor);
+
+    await ds.query(PUSH_ENDINGS_MIGRATION);
+    const axios = jest.requireMock('axios') as { delete: jest.Mock };
+    axios.delete = jest.fn().mockResolvedValue({ data: { removed: 0 } });
+    sessions = new AuthSessionsService(
+      ds.getRepository(AuthSession),
+      new SessionPushEndService(ds)
+    );
+    const erasure = { erasureState: async () => 'none' };
+    const unused = {} as never;
+    usersRoute = new UsersController(
+      service,
+      unused,
+      unused,
+      profiles,
+      unused,
+      erasure as never,
+      sessions
+    );
+    process.env.JWT_SECRET = JWT_SECRET;
+    process.env.NODE_ENV = 'test';
+    process.env.ALLOW_INSECURE_COOKIES = 'false';
+    const platform = { getConfig: async () => ({}), isAccessBlockedByMaintenance: () => false };
+    auth = new AuthController(
+      service,
+      platform as never,
+      sessions,
+      { enabled: false } as never,
+      erasure as never,
+      unused
+    );
   }, 60_000);
 
   afterAll(async () => {
+    process.env = { ...env };
     jest.restoreAllMocks();
     await ds?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     await ds?.destroy();
@@ -182,6 +250,38 @@ maybe('a user write against PostgreSQL', () => {
     expect(inner).toMatch(/^[0-9a-f]{64}$/);
     expect(outer).toBe(inner);
     expect((await rowOf(id))?.notesKey).toBe(inner);
+  });
+
+  it("removing the flag ends the person's sessions: a token minted before authenticates nothing", async () => {
+    const id = await seed();
+    const opened = await sessions.create(id);
+    const token = jwt.sign(
+      { sub: id, admin: true, type: 'access', sid: opened.sessionId },
+      JWT_SECRET,
+      {
+        expiresIn: '1h',
+      }
+    );
+    expect(await verify(token)).toMatchObject({ 'X-Logged-In': 'true', 'X-Global-Admin': 'true' });
+
+    await usersRoute.setAdmin(id, 'it-other-admin', { admin: false });
+
+    expect((await rowOf(id))?.admin).toBe(false);
+    expect(await verify(token)).toMatchObject({
+      'X-Logged-In': 'false',
+      'X-Global-Admin': 'false',
+    });
+    expect(await ds.getRepository(AuthSession).count({ where: { userId: id } })).toBe(0);
+  });
+
+  it('creating a user under an id that has a row is a conflict, and the row is left alone', async () => {
+    const id = await seed();
+    const outcome = await usersRoute.create({ id, displayName: 'Intruder' }).then(
+      () => 'created',
+      (e: unknown) => e
+    );
+    expect(outcome).toBeInstanceOf(ConflictException);
+    expect(await rowOf(id)).toMatchObject({ displayName: 'Old Name', admin: true });
   });
 
   it('a write with nobody racing it still writes its columns', async () => {
