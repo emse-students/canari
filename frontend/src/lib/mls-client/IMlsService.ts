@@ -79,7 +79,12 @@ export interface DistributionGroupInfoTransport {
  * production (2026-08-25).
  */
 export type ExternalJoinOutcome =
-  | { joined: true }
+  /**
+   * The group is held. `alreadyHeld` says nothing was built because the group was ALREADY here when
+   * the MLS lock was taken - a Welcome installed it while the caller's recovery was on its way - so
+   * the caller stands down: the path that installed it owns everything after (review of #2466).
+   */
+  | { joined: true; alreadyHeld?: true }
   /** No base has been published on the group yet - nobody has initialised its MLS group. */
   | { joined: false; reason: 'no_base_published' }
   /**
@@ -87,7 +92,10 @@ export type ExternalJoinOutcome =
    * on it. Terminal for a joiner: the repair is a republish, which only a holder can perform.
    */
   | { joined: false; reason: 'stale_base'; baseEpoch: number; serverEpoch: number }
-  /** The external commit could not be built locally (e.g. the group is already held). */
+  /**
+   * The external commit could not be built locally. NEVER because the group is already held: that
+   * is `{ joined: true, alreadyHeld: true }`, read under the lock before anything is built.
+   */
   | { joined: false; reason: 'build_failed' }
   /**
    * The join was NOT attempted: this device's own key package round was running and failed, so the
@@ -597,10 +605,10 @@ export type BaseRefreshOutcome = {
  * `welcomeQueued` and `addInFlight` ARE THE POINT OF THE TYPE. `status` alone cannot say which kind
  * of `pending` a row is - see `getDeviceMemberships` in
  * `apps/chat-delivery-service/src/controllers/invitations.controller.ts` for the two situations it
- * collapses and what reading it as one cost on production. They are optional so that a client
- * talking to a server older than the field does not read `false` as an answer: `undefined` means
- * "this server does not say", which `readWelcomeOwed` treats as the old behaviour rather than as a
- * licence to serve itself.
+ * collapses and what reading it as one cost on production. They are optional so that a row which
+ * does not carry them is never read as `false`: every deployed server writes both on a pending row,
+ * so `undefined` is an anomaly `readWelcomeOwedFromRow` answers `null` (unanswered, the pass is
+ * skipped and accused) - never a licence to serve itself.
  */
 export type DeviceMembershipRow = {
   id: string;
@@ -618,6 +626,13 @@ export type DeviceMembershipRow = {
    * (`readWelcomeOwedFromRow` -> `awaiting-admission`). Absent from a server older than the field.
    */
   awaitingAdmission?: boolean;
+  /**
+   * The epoch at which an accepted commit ADMITTED this device (`DeviceGroupMembership`), so its
+   * leaf is in the tree while the row is still `pending`; `null` for a seat no commit has admitted.
+   * Read by `requestReAdd` to name an admitted seat it serves itself over - the external commit
+   * replaces that leaf (`mls-core/tests/external_join.rs`).
+   */
+  admittedAtEpoch?: number | null;
 };
 
 export interface IMlsService {

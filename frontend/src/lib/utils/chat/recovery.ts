@@ -13,6 +13,7 @@ import { retireConversation } from './conversations';
 import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
 import { readWelcomeOwedFromRow, type WelcomeOwedReading } from './welcomeOwed';
+import { getTabLeadership } from '$lib/mls-client/tabLeader';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).
@@ -303,6 +304,12 @@ export interface ReAddOptions {
    * queued Welcome is then not evidence that one is coming, and is read past
    * (`readWelcomeOwedFromRow`'s `ignoreQueuedWelcome`). Without it the device waited a whole
    * cadence for the Welcome it had just spent.
+   *
+   * IT READS PAST EVERY QUEUED WELCOME OF THE GROUP, NOT ONLY THE SPENT ONE - the row is a boolean
+   * and cannot tell them apart - and that is safe because the door it opens is guarded where it
+   * acts: a second Welcome the drain applies first makes `externalJoin` stand down under the MLS
+   * lock (`alreadyHeld`), and an external commit that lands first replaces the leaf the second
+   * Welcome's Add wrote for the same key (review of #2466).
    */
   welcomeHandled?: boolean;
 }
@@ -527,7 +534,7 @@ export async function requestReAdd(
   }
   // A WELCOME THAT IS COMING IS WAITED FOR, NEVER ASKED FOR AGAIN (DUP-2, 2026-10-25).
   //
-  // Three readings say somebody else's Welcome is the door. A `welcome_request` on top of any of
+  // Two readings say somebody else's Welcome is the door. A `welcome_request` on top of any of
   // them asked every member to redo work already under way: a member finding the add lock held
   // logged `Lock busy` and stood down, and a member finding it free would have REPLACED this
   // device's leaf - a second commit, a second Welcome, the first one invalidated. Measured on DUP-2:
@@ -543,6 +550,16 @@ export async function requestReAdd(
   if (reading === 'welcome-queued') {
     // THE WELCOME IS IN THIS DEVICE'S OWN MAILBOX, so the mailbox is where to look. A pull reads it
     // now rather than whenever the next push or reconnect happens to.
+    //
+    // ONLY THE LEADER TAB PULLS: the mailbox is drained where the ratchet lives, and a pull asked
+    // from a follower is refused as a caller that forgot to ask (`fetchPendingMessages`). A follower
+    // has nothing to do here - the leader's own recovery reads the same row.
+    if (getTabLeadership() === 'follower') {
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... a Welcome is queued for this device - a follower tab does not pull, the leader drains it`
+      );
+      return;
+    }
     deps.log(
       `[READD] ${groupId.slice(0, 8)}... a Welcome is queued for this device - pulling the mailbox, no member asked`
     );
@@ -555,13 +572,11 @@ export async function requestReAdd(
       );
     return;
   }
-  if (reading === 'add-in-flight' || reading === 'pending-unqualified') {
-    // `add-in-flight` is SOME member holding this group's add lock - the lock is per group, so the
-    // Add may be for another device; the next pass after its release reads which.
+  if (reading === 'add-in-flight') {
+    // SOME member holding this group's add lock - the lock is per group, so the Add may be for
+    // another device; the next pass after its release reads which.
     deps.log(
-      reading === 'add-in-flight'
-        ? `[READD] ${groupId.slice(0, 8)}... a member holds the add lock - waiting for it to settle, no member asked`
-        : `[READD] ${groupId.slice(0, 8)}... pending, and the server does not say whether a Welcome is coming - waiting, no member asked`
+      `[READD] ${groupId.slice(0, 8)}... a member holds the add lock - waiting for it to settle, no member asked`
     );
     return;
   }
@@ -649,6 +664,19 @@ export async function requestReAdd(
   deps.log(
     `[READD] ${groupId.slice(0, 8)}... externalJoin -> ${outcome.joined ? 'joined' : outcome.reason}`
   );
+  if (outcome.joined && outcome.alreadyHeld) {
+    // A WELCOME INSTALLED THE GROUP WHILE THIS RECOVERY WAS ON ITS WAY, and nothing was built: the
+    // join read the group as held under the MLS lock the Welcome took (review of #2466). The path
+    // that installed it owns everything after - the roster seat, the row, the history - so this
+    // seam only drops its own bookkeeping, exactly as it does on finding the group held up front.
+    ownKeyPackageLogged.delete(groupId);
+    clearGroupNotReady(deps.userId, groupId);
+    cancelReAdd(groupId);
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... a Welcome installed the group before the join took the lock - nothing built, recovery done`
+    );
+    return;
+  }
   if (outcome.joined) {
     ownKeyPackageLogged.delete(groupId);
     deps.log(`[READD] ${groupId.slice(0, 8)}... rejoined via external commit (self-service)`);
@@ -796,9 +824,9 @@ export async function requestReAdd(
  * Answers "does a member already owe this device a Welcome for `groupId`, RIGHT NOW?" from the
  * server's own per-device membership row and the two facts the row cannot carry.
  *
- * THREE ANSWERS, AND THE THIRD IS NOT A "NO". `true` an Add is in flight for our leaf, `false`
- * nobody owes us anything that exists, `null` the question could not be asked. Collapsing `null`
- * into `false` is precisely the mistake this seam exists to stop making: it would send the invited
+ * `null` IS NOT A "NO": it says the question could not be answered - the request failed, or the row
+ * did not carry the facts. Collapsing `null` into "nobody owes us" is precisely the mistake this
+ * seam exists to stop making: it would send the invited
  * population back down the external-join path on exactly the network conditions where losing the
  * race is likeliest. `getDeviceMemberships` rejects rather than answering `[]` so that this function
  * can tell the two apart at all.
@@ -824,14 +852,14 @@ export async function requestReAdd(
  * Together they are true for every `pending` row somebody is actually working on, and false only for
  * a roster seat nothing follows.
  *
- * **A SERVER THAT DOES NOT SAY IS NOT A SERVER SAYING NO.** Both fields are optional, and a row from
- * a server that carries neither falls back to the old reading - `pending` means owed. A native client
- * ships its own frontend (`frontendDist`), so an APK older than this change talks to a server that
- * has it and vice versa; treating a missing field as `false` would hand the whole invited population
- * the external join, which is the race, not the fix.
+ * **A ROW THAT DOES NOT SAY IS NOT A ROW SAYING NO.** Every deployed server writes both facts on a
+ * pending row since 2026-09-03, so a row missing either is an anomaly: it reads `null`, the pass is
+ * skipped as if the request had failed, and the line accuses. Treating a missing field as `false`
+ * would hand the invited population the external join, which is the race, not the fix.
  *
  * @returns the reading ({@link WelcomeOwedReading}) - `awaiting-admission` included, the invitation
- *   link's seat that only a member's Add answers - or `null` when the memberships could not be read.
+ *   link's seat that only a member's Add answers - or `null` when the memberships could not be read
+ *   or this device's pending row did not answer.
  */
 async function readWelcomeOwed(
   groupId: string,
@@ -845,13 +873,17 @@ async function readWelcomeOwed(
     );
     // THE READING IS SHARED with the Graine key-group join (`readWelcomeOwedFromRow`), which since
     // 2026-09-27 has the same two doors - an admitter's Welcome, or the device's own external
-    // commit. A server that carries neither field reads `pending-unqualified`, and is waited on.
-    const reading = readWelcomeOwedFromRow(
-      rows.find((r) => r.groupId === groupId),
-      {
-        ignoreQueuedWelcome: opts.welcomeHandled === true,
-      }
-    );
+    // commit.
+    const row = rows.find((r) => r.groupId === groupId);
+    const readPast = opts.welcomeHandled === true;
+    const reading = readWelcomeOwedFromRow(row, { ignoreQueuedWelcome: readPast });
+    if (reading === null) {
+      // AN ANOMALY, AND IT ACCUSES: every deployed server writes both facts on a pending row.
+      console.error(
+        `[READD] ${groupId.slice(0, 8)}... this device's pending row carries neither welcomeQueued nor addInFlight - the server did not answer the question it always answers`
+      );
+      return null;
+    }
     if (reading === 'awaiting-admission') {
       deps.log(
         `[READD] ${groupId.slice(0, 8)}... invitation-link seat awaiting a member's admission - ` +
@@ -864,9 +896,22 @@ async function readWelcomeOwed(
       // means this device was given a seat nobody ever honoured, and the next lines are the
       // self-service join that used to be unreachable. If it is common, the inviter is dropping
       // devices - which is the P2 next door, not this seam.
+      //
+      // UNLESS A QUEUED WELCOME WAS READ PAST ON PURPOSE: the caller has just spent one, and the
+      // row cannot say whether the Welcome it lists is that one or another. That is not a stranded
+      // seat, and saying "NO queued Welcome" of it would be false; the join below is safe either
+      // way (`readWelcomeOwedFromRow`). And a seat a commit ADMITTED (`admittedAtEpoch`) is named,
+      // because its leaf is already in the tree and the external commit replaces it.
+      const admitted =
+        row?.admittedAtEpoch !== undefined && row.admittedAtEpoch !== null
+          ? ` (a commit admitted this seat at epoch ${row.admittedAtEpoch}; the external commit replaces that leaf)`
+          : '';
       deps.log(
-        `[READD] ${groupId.slice(0, 8)}... roster seat with NO queued Welcome and NO add in flight` +
-          ` - nobody owes us anything; serving ourselves`
+        readPast && row?.welcomeQueued === true
+          ? `[READD] ${groupId.slice(0, 8)}... the row still lists a queued Welcome, read past: this device has just spent one for the group` +
+              ` - serving ourselves${admitted}`
+          : `[READD] ${groupId.slice(0, 8)}... roster seat with NO queued Welcome and NO add in flight` +
+              ` - nobody owes us anything; serving ourselves${admitted}`
       );
     }
     return reading;

@@ -100,8 +100,10 @@ and `recovery.test.ts` ("joins externally on a seat a commit admitted when neith
 What is owed is a VERIFICATION, not a decision: whether any adder path releases the lock before its
 settlement (DUP-2 read `owed`, so the lock was held there), and then what the adder's late Welcome
 does when it meets a joiner already in by its own commit (it should be refused as a spent key package
-and taken as a redelivery). `getDeviceMemberships` does not carry `admitted` (the user-groups route
-does); adding it is only worth it if the verification finds a cost.
+and taken as a redelivery). `getDeviceMemberships` carries `admittedAtEpoch` (it spreads the entity),
+typed on `DeviceMembershipRow` since the review of #2466 and named in the recovery's
+`unhonoured-seat` line, so a reading of the log tells an admitted seat from a stranded one. It is not
+read as owed: a seat whose adder died would then wait for ever, and the join over it is safe.
 
 ## P3 - A browser whose storage is broken is told the connection failed (KILL-2, 2026-10-25)
 

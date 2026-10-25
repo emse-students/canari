@@ -87,20 +87,6 @@ fn external_join_stages_then_merges_and_both_sides_converge() {
     assert_eq!(plaintext, b"hello carol");
 }
 
-#[test]
-fn external_join_refuses_to_clobber_a_live_local_group() {
-    let (alice, mut bob, gid) = group_with_alice_bob();
-
-    // Bob already holds the group locally: an external join must refuse rather than overwrite it
-    // (a rung-2 caller forgets the group first; this guards accidental clobber).
-    let group_info = alice.export_group_info(gid).expect("export group_info");
-    let err = bob.join_by_external_commit(&group_info);
-    assert!(
-        err.is_err(),
-        "external join must refuse a group already held locally"
-    );
-}
-
 /// COMM-22, in one test: the joiner's OWN commit advances the group, so the base published for the
 /// NEXT joiner has to be the one the joiner itself exports - before it merges, because the export
 /// must travel inside the commit submission and there is no second round-trip to put it in.
@@ -266,4 +252,46 @@ fn an_admitted_joiner_joining_externally_leaves_exactly_one_leaf_for_its_key() {
         .expect("bob reads")
         .expect("application");
     assert_eq!(plaintext, b"after the rejoin");
+}
+
+/// A LIVE GROUP IS UNTOUCHED BY AN EXTERNAL JOIN ASKED FOR THE SAME GROUP ID (review of #2466).
+///
+/// The interleaving: a Welcome installs the group while a recovery for it is already on its way to
+/// `join_by_external_commit`. The guard against "already held" used to sit AFTER
+/// `ExternalCommitBuilder::finalize`, which had by then written the built group into the provider's
+/// storage under the same id - so the in-memory group was intact and its durable rows were not, and
+/// the next save and load put the external join's group in place of the live one. Pinned through
+/// the save and the load, where the damage lived, and on the typed refusal a caller reads as
+/// "joined".
+#[test]
+fn an_external_join_for_a_group_already_held_leaves_the_live_group_untouched() {
+    let (mut alice, mut bob, gid) = group_with_alice_bob();
+    let epoch = bob.get_epoch(gid).expect("bob epoch");
+    let info = alice.export_group_info(gid).expect("group info");
+
+    let refused = bob
+        .join_by_external_commit(&info)
+        .expect_err("a group already held is refused");
+
+    let key = [7u8; 32];
+    let saved = bob.save_encrypted_with_key(&key).expect("save");
+    let mut reloaded = MlsManager::load_with_key("bob", "dev1", Some(saved), &key).expect("reload");
+    assert_eq!(
+        reloaded.get_epoch(gid).expect("reloaded epoch"),
+        epoch,
+        "the reloaded group is the live one, at its own epoch"
+    );
+    let frame = alice
+        .send_message(gid, b"after the refused join")
+        .expect("send");
+    let plaintext = reloaded
+        .process_incoming_message(gid, &frame)
+        .expect("the reloaded live group reads the member's next frame")
+        .expect("application");
+    assert_eq!(plaintext, b"after the refused join");
+
+    assert!(
+        matches!(refused, mls_core::MlsError::GroupAlreadyHeld(ref id) if id == gid),
+        "typed, so a caller stands down instead of reading a failed build: {refused:?}"
+    );
 }

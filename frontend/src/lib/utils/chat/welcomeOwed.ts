@@ -10,9 +10,6 @@ import type { DeviceMembershipRow, UserGroupRow } from '$lib/mls-client/IMlsServ
  *   now. The lock is per group, so it does not say the Add is for this device; it says an Add may be,
  *   and serving itself an external commit inside that window is the GRP-4 duplicate-leaf race of
  *   2026-08-26. The device WAITS; the next read after the lock is released decides.
- * - `pending-unqualified`: `pending`, and the server carries neither fact - a server older than
- *   2026-09-03, which no estate runs. Read as owed (a server that does not say is not a server
- *   saying no), so it is waited for like the two above.
  * - `unhonoured-seat`: `pending` with no queued Welcome and no add in flight - a roster seat nothing
  *   follows. Nobody owes the device anything, so it may serve itself.
  * - `not-pending`: no row, or an `active` one (joined once, state since lost). The self-service
@@ -38,34 +35,41 @@ import type { DeviceMembershipRow, UserGroupRow } from '$lib/mls-client/IMlsServ
 export type WelcomeOwedReading =
   | 'welcome-queued'
   | 'add-in-flight'
-  | 'pending-unqualified'
   | 'awaiting-admission'
   | 'unhonoured-seat'
   | 'not-pending';
 
 /** The readings in which somebody else's Welcome is the door, so the device joins nothing itself. */
 export function isWelcomeOwed(reading: WelcomeOwedReading): boolean {
-  return (
-    reading === 'welcome-queued' || reading === 'add-in-flight' || reading === 'pending-unqualified'
-  );
+  return reading === 'welcome-queued' || reading === 'add-in-flight';
 }
 
 /**
  * Classifies one membership row; see {@link WelcomeOwedReading}. PURE.
  *
+ * `null` WHEN A `pending` ROW DOES NOT ANSWER: it carries neither `welcomeQueued` nor
+ * `addInFlight`. Every deployed server has written both since 2026-09-03
+ * (`getDeviceMemberships`), so such a row is an anomaly, not an old server to be humoured - it is
+ * the same "could not be read" a thrown request is, and each caller already skips its pass on that
+ * and says so at a level that accuses. It used to be a reading of its own (`pending-unqualified`),
+ * waited on like an owed Welcome; nothing produced it.
+ *
  * `ignoreQueuedWelcome` is for a caller that has just HANDLED a Welcome for this group and failed to
  * join from it (`NoMatchingKeyPackage`, `GroupAlreadyExists`): its ACK may not have reached the server
  * yet, so the row can still list that very Welcome as queued, and reading it as owed would make the
- * device wait for the Welcome it has already spent.
+ * device wait for the Welcome it has already spent. It reads past EVERY queued Welcome of the group,
+ * the spent one and any other; that is safe because the door it opens is guarded where it acts - an
+ * external join stands down under the MLS lock when a Welcome installed the group first
+ * (`externalJoin`), and one that lands first replaces the leaf an Add wrote for the same key
+ * (`mls-core/tests/external_join.rs`).
  */
 export function readWelcomeOwedFromRow(
   row: DeviceMembershipRow | undefined,
   opts: { ignoreQueuedWelcome?: boolean } = {}
-): WelcomeOwedReading {
+): WelcomeOwedReading | null {
   if (row?.awaitingAdmission === true && row.status !== 'active') return 'awaiting-admission';
   if (row?.status !== 'pending') return 'not-pending';
-  if (row.welcomeQueued === undefined && row.addInFlight === undefined)
-    return 'pending-unqualified';
+  if (row.welcomeQueued === undefined || row.addInFlight === undefined) return null;
   if (row.welcomeQueued === true && !opts.ignoreQueuedWelcome) return 'welcome-queued';
   if (row.addInFlight === true) return 'add-in-flight';
   return 'unhonoured-seat';

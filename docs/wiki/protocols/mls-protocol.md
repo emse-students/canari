@@ -1683,8 +1683,11 @@ just written - a second commit and a second Welcome. Now the row is read as two 
   (`fetchPendingMessages`).
 - `add-in-flight`: some member holds the group's add lock - per group, so not necessarily an Add of
   this device - and the device waits for it to settle.
-- `pending-unqualified`: the server carries neither fact (older than 2026-09-03, which no estate
-  runs); waited on like the two above.
+
+A pending row that carries neither fact did not answer: every deployed server writes both since
+2026-09-03, so it reads as unreadable (`null`), the pass is skipped and the line accuses. It used to
+be a reading of its own, `pending-unqualified`, waited on as owed; nothing produced it, and it is
+deleted. Only the leader tab pulls the mailbox for `welcome-queued`; a follower's pass returns.
 
 The not-ready marker keeps the group on the sync watchdog's cadence, each pass re-reads the row, and
 once no fact holds the reading is `unhonoured-seat` and the self-service join is the device's own
@@ -1696,7 +1699,32 @@ readings (`isWelcomeOwed`).
 (`NoMatchingKeyPackage`, `GroupAlreadyExists`), the handler starts the recovery before it returns
 `true`, so before the drain acknowledges that Welcome: the row can still list it as queued. The
 handler says so (`requestReAdd(..., { welcomeHandled: true })`) and the reading looks past the queued
-Welcome, so the repair runs at once instead of waiting a cadence for the Welcome it just spent.
+Welcome, so the repair runs at once instead of waiting a cadence for the Welcome it just spent. The
+log says the Welcome was read past, not that none was queued.
+
+**It reads past EVERY queued Welcome of the group, and the guard is where the join acts, not in the
+reading** (review of #2466). The row is a boolean: it cannot say whether the Welcome it lists is the
+spent one or a second one a member sent with a fresh KeyPackage. Two orders are possible, and both
+are safe:
+
+- **The drain applies the second Welcome first.** The recovery reaches `externalJoin`, which reads the
+  group again UNDER the MLS lock the Welcome took, finds it held, builds nothing and answers
+  `{ joined: true, alreadyHeld: true }`; the recovery drops its bookkeeping and leaves the rest to
+  the Welcome path. The engine refuses the same case by type before building
+  (`MlsError::GroupAlreadyHeld`, `GROUP_ALREADY_HELD:`), and the TS side reads that refusal as joined
+  and accuses the held-groups list that missed it. Before this, the "already present locally" guard
+  sat AFTER OpenMLS's `ExternalCommitBuilder::finalize`, which had already written the built group
+  into the live group's storage rows: memory kept the live group, the next save and load resurrected
+  the external join's one, and the refusal read as `build_failed` asked a member to re-add a healthy
+  leaf (`tests/external_join.rs`, `an_external_join_for_a_group_already_held_leaves_the_live_group_untouched`;
+  `BaseMlsService.externalJoin.test.ts`, "stands down ... while it waited for the lock").
+- **The external commit lands first.** It carries the same signature key as the leaf the second
+  Welcome's Add wrote, and replaces that leaf in one commit (the admitted-seat case below); the late
+  Welcome then meets a group already held and is ignored as a redelivery.
+
+The other design - waiting for the spent Welcome's ACK before reading the row - was not taken: it
+needs a per-delivery acknowledgement barrier through the drain, to buy what the lock already
+guarantees at the one step that can do harm.
 
 **When the Welcome lands, the buffer replays** and the frames left behind as `unknown-group` are
 re-fetched. That re-fetch pulls every row the server still holds for the group, including a frame
@@ -1713,7 +1741,8 @@ same-epoch ERROR that `logging.rs` demoted by its marker; the demotion is delete
 hid. A frame whose bytes really are damaged keeps its WARN (`tests/spent_generation_is_not_damage.rs`).
 
 **An admitted seat with neither fact joins by itself, and that is safe.** An Add the server accepted
-whose adder holds no lock and has queued no Welcome leaves a seat with `admittedAtEpoch` that reads
+whose adder holds no lock and has queued no Welcome leaves a seat with `admittedAtEpoch` (on the
+`getDeviceMemberships` row, typed on `DeviceMembershipRow` and named in the recovery's line) that reads
 `unhonoured-seat`. The external commit carries the same signature key as the leaf the Add wrote, and
 OpenMLS removes that leaf in the same commit - one leaf for the key, the routine rejoin of an active
 device (`tests/external_join.rs`, `an_admitted_joiner_joining_externally_leaves_exactly_one_leaf_for_its_key`).

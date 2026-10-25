@@ -92,6 +92,16 @@ pub enum MlsError {
     /// tells "already gone" from "still there".
     #[error("NO_SUCH_MEMBER: {0}")]
     NoSuchMember(String),
+    /// An external join was asked for a group this device ALREADY HOLDS, so nothing was built.
+    ///
+    /// NOT A FAILURE OF THE JOIN: the group the join was for is here, installed by a Welcome that
+    /// landed while the recovery asking for the join was on its way. A caller reads it as "joined"
+    /// and stands down. Typed because the caller that used to meet it as
+    /// `OpenMls("... already present locally")` read it as a failed build and asked a member to
+    /// re-add a device whose leaf was healthy (review of #2466) - and because it is raised BEFORE
+    /// `finalize`, which writes the built group into the same storage rows the live one is kept in.
+    #[error("GROUP_ALREADY_HELD: {0}")]
+    GroupAlreadyHeld(String),
     /// The saved MLS state could not be OPENED: its AEAD tag did not verify, or it is too short to
     /// be an envelope at all.
     ///

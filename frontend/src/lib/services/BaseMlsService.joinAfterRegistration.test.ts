@@ -68,6 +68,8 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
       storeGroupInfo: vi.fn().mockResolvedValue(undefined),
     },
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
+    // The groups this device holds, read by `externalJoin` under the lock. Empty: a joiner.
+    getLocalGroups: (): string[] => [],
     distributionScopeByGroup: new Map<string, string>(),
     knownDistributionGroups: new Set<string>(),
     // `destroy` settles the drain waiters too, and `Object.create` skips the field initialisers.

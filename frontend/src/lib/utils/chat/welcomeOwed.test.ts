@@ -16,16 +16,16 @@ describe('readWelcomeOwedFromRow', () => {
   it('a queued Welcome and a held add lock are two readings, both owed', () => {
     // Two facts that send the device to two places - its own mailbox, or somebody else's work - so
     // a caller can act on each (review of #2466).
-    expect(readWelcomeOwedFromRow(row({ status: 'pending', welcomeQueued: true }))).toBe(
-      'welcome-queued'
-    );
+    expect(
+      readWelcomeOwedFromRow(row({ status: 'pending', welcomeQueued: true, addInFlight: false }))
+    ).toBe('welcome-queued');
     expect(
       readWelcomeOwedFromRow(row({ status: 'pending', welcomeQueued: true, addInFlight: true }))
     ).toBe('welcome-queued');
     expect(
       readWelcomeOwedFromRow(row({ status: 'pending', welcomeQueued: false, addInFlight: true }))
     ).toBe('add-in-flight');
-    for (const r of ['welcome-queued', 'add-in-flight', 'pending-unqualified'] as const) {
+    for (const r of ['welcome-queued', 'add-in-flight'] as const) {
       expect(isWelcomeOwed(r)).toBe(true);
     }
     for (const r of ['unhonoured-seat', 'not-pending', 'awaiting-admission'] as const) {
@@ -51,9 +51,13 @@ describe('readWelcomeOwedFromRow', () => {
     ).toBe('unhonoured-seat');
   });
 
-  it('a server that does not say is not a server saying no', () => {
-    // Named for what it is - a server older than 2026-09-03, which no estate runs - and waited on.
-    expect(readWelcomeOwedFromRow(row({ status: 'pending' }))).toBe('pending-unqualified');
+  it('a pending row that does not carry both facts does not answer', () => {
+    // Every deployed server writes both since 2026-09-03, so a row missing either is an anomaly:
+    // read as "could not be read" (`null`), which every caller skips and accuses - never waited on
+    // as if a Welcome were owed, never taken as a licence to serve itself.
+    expect(readWelcomeOwedFromRow(row({ status: 'pending' }))).toBeNull();
+    expect(readWelcomeOwedFromRow(row({ status: 'pending', welcomeQueued: false }))).toBeNull();
+    expect(readWelcomeOwedFromRow(row({ status: 'pending', addInFlight: false }))).toBeNull();
   });
 
   it("a seat awaiting a member's admission is never a door the device serves itself", () => {
