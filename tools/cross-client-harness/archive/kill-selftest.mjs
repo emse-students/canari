@@ -7,7 +7,7 @@
  *
  *   bun archive/kill-selftest.mjs
  */
-import { KILL_ROWS, WINDOWS, delayOf, killRunsOwn, removalBoundOwn, runOutcome, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { KILL_ROWS, WINDOWS, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runOutcome, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -88,6 +88,11 @@ ok('a surviving seat at the kill is recorded, never failed', allOk(rm({ seatsAtK
 ok('the roster not dropped is the premise failing', failing(rm({ rosterDropped: false })) === 1);
 ok('a Remove commit before the kill is the premise failing', failing(rm({ commitBeforeKill: 1 })) === 1);
 ok('a seat never taken within the bound fails', failing(rm({ goneAfterMs: null })) === 1);
+
+// RM-3's premise: the panel lists every invitee of the one bulk Add (#2433, 2026-10-25).
+ok('the panel offering both invitees misses nobody', panelMissing({ buttons: ['AAA', 'bbb'] }, ['aaa', 'BBB']).length === 0);
+ok('control: the alpha.3 panel (one invitee only) misses the other', panelMissing({ buttons: ['c71e'] }, ['c71e', '223b']).join() === '223b');
+ok('control: an unreadable panel misses everyone', panelMissing(null, ['a', 'b']).length === 2);
 
 if (failures) {
   console.error(`\n${failures} kill assertion(s) failed`);
