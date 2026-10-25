@@ -5105,10 +5105,23 @@ export abstract class BaseMlsService implements IMlsService {
     if (reason === 'concurrent_commit' && (activeEpoch === undefined || activeEpoch <= baseEpoch)) {
       const detail: string[] = [];
       try {
-        const replay = await attemptCommitReplay(this, groupId, this.userId, (msg) =>
-          detail.push(msg)
+        // The same books as every rung-1 replay (`replayAndRecord`), its narration kept quiet.
+        const replay = await replayAndRecord(
+          this,
+          groupId,
+          this.userId,
+          (msg) => detail.push(msg),
+          {
+            persist: scheduleOutboundMlsPersist,
+            refusedBacklog: 'hold',
+          }
         );
-        if (replay.applied > 0) scheduleOutboundMlsPersist();
+        if (replay.heldBehindRefusedBacklog) {
+          log(
+            `[COMMIT] ${short}... refused concurrent_commit at epoch ${baseEpoch}: frames refused for lack of a row are still queued - no replay past them, nothing to rebuild on`
+          );
+          return;
+        }
         const now = this.getEpoch(groupId);
         if (!replay.healed && (replay.activeEpoch ?? 0) > now) {
           markEpochGap(groupId);

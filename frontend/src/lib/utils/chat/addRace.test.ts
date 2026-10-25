@@ -346,6 +346,28 @@ describe('processPendingInvitations - a lost commit race', () => {
     expect(h.mlsService.registerMember).not.toHaveBeenCalled();
   });
 
+  it('C3: rows judged at one epoch share ONE read of the pending list and of the commit log', async () => {
+    const h = sweepHarness();
+    const rows = [
+      { userId: 'w4', deviceId: 'w4-a', groupId: G, status: 'pending' },
+      { userId: 'w4', deviceId: 'w4-b', groupId: G, status: 'pending' },
+    ];
+    h.mlsService.getPendingInvitations.mockResolvedValue(rows);
+    h.mlsService.fetchUserDevices.mockResolvedValue([
+      { deviceId: 'w4-a', keyPackage: new Uint8Array([4]) },
+      { deviceId: 'w4-b', keyPackage: new Uint8Array([5]) },
+    ]);
+    // Neither Add lands, so both rows are judged at the same epoch.
+    h.mlsService.addMember.mockRejectedValue(new Error('boom'));
+
+    await h.run();
+
+    expect(h.mlsService.addMember).toHaveBeenCalledTimes(2);
+    // The sweep's own listing, then ONE premise read for the pass - not one per row.
+    expect(h.mlsService.getPendingInvitations).toHaveBeenCalledTimes(2);
+    expect(h.mlsService.fetchCommitsSince).toHaveBeenCalledTimes(1);
+  });
+
   it('a busy add lock leaves the row pending - nothing is retired or staged', async () => {
     const h = sweepHarness();
     h.mlsService.acquireAddLock.mockResolvedValue(false);

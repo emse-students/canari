@@ -51,7 +51,7 @@ import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
 import { AddAbortedError, rebuildOnRace } from './commitRace';
-import { readConfirmedTree } from './confirmedTree';
+import { readConfirmedTree, type TreeReading } from './confirmedTree';
 import { sameDeviceIdentity, treeHoldsDevice, treeHoldsUser } from '$lib/mls-client/leafIdentity';
 import {
   DeviceTrustRefusedError,
@@ -90,38 +90,31 @@ export interface JoinApprovalRequest {
  * `unreadable`: the tree could not be read, which proves no membership, so the caller adds nothing
  * and asks no one - another member, or the next sweep, answers.
  *
- * `confirmAs` (this device's user) makes a `member-device` answer one read at the SERVER'S epoch
- * ({@link readConfirmedTree}): a tree behind a Remove still holds the removed person, and an Add
- * decided on it re-admits someone a member just took out. `newcomer` needs no confirmation - it
- * adds nobody. A tree that cannot be confirmed is `unreadable`.
+ * `confirmed` hands it a reading of the tree CONFIRMED at the server's epoch
+ * ({@link readConfirmedTree}) instead of the local one: a tree behind a Remove still holds the
+ * removed person, and an Add decided on it re-admits someone a member just took out. A reading that
+ * could not be confirmed is `unreadable`.
  */
 type AutomaticAdmission = 'member-device' | 'newcomer' | 'unreadable';
 
 async function automaticAdmission(deps: {
-  mlsService: IMlsService;
+  mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
   groupId: string;
   userId: string;
   /** The caller's log tag, so the line reads in the sequence it belongs to. */
   tag: string;
   log: (message: string) => void;
-  confirmAs?: string;
+  confirmed?: TreeReading;
 }): Promise<AutomaticAdmission> {
-  const { mlsService, groupId, userId, tag, log, confirmAs } = deps;
-  if (confirmAs !== undefined) {
-    const reading = await readConfirmedTree(
-      mlsService,
-      groupId,
-      confirmAs,
-      tag,
-      (identities) => !treeHoldsUser(identities, userId)
-    );
-    if (reading.status === 'unconfirmed') {
+  const { mlsService, groupId, userId, tag, log, confirmed } = deps;
+  if (confirmed !== undefined) {
+    if (confirmed.status === 'unconfirmed') {
       log(
         `${tag} Tree of ${groupId.slice(0, 8)}... not confirmed at the server's epoch, cannot say whether ${userId} is a member - nothing added`
       );
       return 'unreadable';
     }
-    return treeHoldsUser(reading.identities, userId) ? 'member-device' : 'newcomer';
+    return treeHoldsUser(confirmed.identities, userId) ? 'member-device' : 'newcomer';
   }
   try {
     const identities = await mlsService.getGroupMemberIdentities(groupId);
@@ -134,14 +127,57 @@ async function automaticAdmission(deps: {
   }
 }
 
+/** What every automatic Add of one group rests on, as one read of the server gives it. */
+interface PendingAddFacts {
+  /** The tree, confirmed at the server's epoch - or not. */
+  tree: TreeReading;
+  /** The pending rows the server still holds, or why they could not be read. */
+  rows: PendingInvitationRow[] | { unreadable: string };
+}
+
+/**
+ * Reads {@link PendingAddFacts} ONCE PER PASS of a group, not once per row (round 3 of #2416): every
+ * pending row of a group is judged against the same server state, so the sweep used to re-fetch the
+ * whole pending list and the commit log - under the global MLS lock - once per row. A pass is an
+ * epoch: an Add (or the commit that beat it) moves the epoch and the next row reads afresh, while
+ * rows skipped at one epoch share one read. A REBUILD always reads afresh (`fresh`), even at the same
+ * epoch: an overtaken seat claim rebuilds without moving it, and a removal's record lands before its
+ * commit.
+ */
+function pendingAddFactsOf(deps: {
+  mlsService: IMlsService;
+  groupId: string;
+  userId: string;
+  myDeviceId: string;
+}): (fresh: boolean) => Promise<PendingAddFacts> {
+  const { mlsService, groupId, userId, myDeviceId } = deps;
+  let pass: { epoch: number; facts: Promise<PendingAddFacts> } | null = null;
+  return (fresh) => {
+    const epoch = mlsService.getEpoch(groupId);
+    if (!fresh && pass !== null && pass.epoch === epoch) return pass.facts;
+    const facts = (async (): Promise<PendingAddFacts> => {
+      // Always confirmed: the one read serves every row, whichever user each names.
+      const tree = await readConfirmedTree(mlsService, groupId, userId, '[PENDING]', () => false);
+      const rows = await mlsService
+        .getPendingInvitations(userId, myDeviceId)
+        .catch((e: unknown) => ({ unreadable: String(e).slice(0, 100) }));
+      return { tree, rows };
+    })();
+    pass = { epoch, facts };
+    return facts;
+  };
+}
+
 /**
  * What an automatic Add of a pending device rests on, re-checked in EVERY pass of its Add
  * (`rebuildOnRace`) - the commit that won a race may be the Remove of the very person:
  * - the user is still a MEMBER, read from the tree confirmed at the server's epoch
- *   ({@link automaticAdmission} with `confirmAs`) - a removed person is a new person again, and only
- *   a member's gesture brings one in;
+ *   ({@link automaticAdmission} on the confirmed reading) - a removed person is a new person again,
+ *   and only a member's gesture brings one in;
  * - the pending row is still on the server - a removal deletes it, and an Add answering a row that
  *   is gone answers nobody.
+ *
+ * Both are read from the group's pass ({@link pendingAddFactsOf}), not per row.
  *
  * @throws {@link AddAbortedError} when either no longer holds, or cannot be read: nothing is staged
  *   and nothing registered.
@@ -150,18 +186,17 @@ async function confirmPendingAddPremise(deps: {
   mlsService: IMlsService;
   groupId: string;
   inv: PendingInvitationRow;
-  userId: string;
-  myDeviceId: string;
+  facts: PendingAddFacts;
   log: (message: string) => void;
 }): Promise<void> {
-  const { mlsService, groupId, inv, userId, myDeviceId, log } = deps;
+  const { mlsService, groupId, inv, facts, log } = deps;
   const admission = await automaticAdmission({
     mlsService,
     groupId,
     userId: inv.userId,
     tag: '[PENDING]',
     log,
-    confirmAs: userId,
+    confirmed: facts.tree,
   });
   if (admission === 'unreadable') {
     throw new AddAbortedError(groupId, 'tree-unconfirmed', `membership of ${inv.userId} unknown`);
@@ -173,13 +208,10 @@ async function confirmPendingAddPremise(deps: {
       `${inv.userId} holds no leaf at the server's epoch`
     );
   }
-  let rows: PendingInvitationRow[];
-  try {
-    rows = await mlsService.getPendingInvitations(userId, myDeviceId);
-  } catch (e) {
-    throw new AddAbortedError(groupId, 'premise-unreadable', String(e).slice(0, 100));
+  if (!Array.isArray(facts.rows)) {
+    throw new AddAbortedError(groupId, 'premise-unreadable', facts.rows.unreadable);
   }
-  const stillPending = rows.some(
+  const stillPending = facts.rows.some(
     (r) =>
       r.groupId === groupId &&
       r.userId === inv.userId &&
@@ -518,6 +550,8 @@ export async function processPendingInvitations(params: {
       // ── Add pending devices ───────────────────────────────────────────────
       // Only 'pending' status exists now (stale removed - RFC 9420).
       const currentPending = invitations.filter((inv) => inv.status === 'pending');
+      // The server state every Add of this group is judged against, read once per pass.
+      const pendingAddFacts = pendingAddFactsOf({ mlsService, groupId, userId, myDeviceId });
 
       for (const inv of currentPending) {
         const admission = await automaticAdmission({
@@ -676,8 +710,14 @@ export async function processPendingInvitations(params: {
             mlsService,
             groupId,
             `the pending Add of ${inv.deviceId}`,
-            async () => {
-              await confirmPendingAddPremise({ mlsService, groupId, inv, userId, myDeviceId, log });
+            async (attempt) => {
+              await confirmPendingAddPremise({
+                mlsService,
+                groupId,
+                inv,
+                facts: await pendingAddFacts(attempt > 0),
+                log,
+              });
               return mlsService.addMember(
                 groupId,
                 { keyPackage: device.keyPackage, userId: inv.userId, deviceId: inv.deviceId },
