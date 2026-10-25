@@ -48,7 +48,17 @@ route, so a group-keyed route has one answer to the question rather than three.
 
 ## P2 - A salon access rewrite from a stale panel silently cuts whoever was granted since (found 2026-10-25)
 
-Found by reading, while redesigning RM-4; not yet reproduced. `ChannelSettingsPanel` reads the
+Found by reading while redesigning RM-4, and REPRODUCED on `1.4.1-alpha.3` the same day with no row,
+through the panel's own gestures, in a scratch community swept afterwards:
+1. W1 opened a private salon's access tab and left it open; its panel showed two allowed users.
+2. W2 granted W4, so the server held three.
+3. W1's panel still showed two, and W1 granted W5.
+4. W1's PATCH was answered 200.
+5. The server cut W4 at once: `[KEY_DISTRIBUTION] key distribution cut ... reason=access_updated`, one
+   `departed` row.
+6. The list ended as W1, W2 and W5. Nothing on either screen said W4 had been removed.
+
+`ChannelSettingsPanel` reads the
 salon's access list ONCE, when its access tab opens (`loadChannelAccess`, guarded by
 `accessLoadedFor`), and never again. Three of its controls send the WHOLE list it holds:
 - a grant (`addAllowedUser`, the list plus one);
