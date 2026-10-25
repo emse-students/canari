@@ -27,6 +27,8 @@ vi.mock('$lib/utils/users/displayName', async (importOriginal) => {
       senderId: string,
       convo: Parameters<typeof real.notificationSenderName>[1]
     ) => real.notificationSenderName(senderId, convo),
+    // A visible notice's text names its actor: every id draws as itself here.
+    resolveDisplayNames: async () => (id: string) => id,
   };
 });
 
@@ -51,6 +53,9 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 const { useMessaging } = await import('./useMessaging.svelte');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
+import { createMlsServiceStub } from '../mls-client/test/fixtures/mlsServiceStub';
+import { decodeAppMessage } from '../proto/codec';
+import { sendVisibleNotice } from '../utils/chat/visibleNotices';
 
 const ME = 'me-user-id';
 const PEER = 'peer-user-id';
@@ -182,6 +187,44 @@ describe('addMessageToChat during a bulk-ingest window', () => {
     expect(idsIn(conversations)).toEqual(['own-1']);
     expect(saveMessage).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * THE ACTING DEVICE'S OWN NOTICE IS THE SAME CASE UNDER A `system` SENDER (review of #2412): MLS
+   * never echoes it, so `sendVisibleNotice`'s write is the only one it gets. Written through the
+   * real `sendVisibleNotice` into the real `addMessageToChat`, inside a drain, then the drain is
+   * discarded both ways the buffer can be.
+   */
+  for (const discard of ['a second drain start', 'resetMessageCatchupState'] as const) {
+    it(`keeps the acting device's own visible notice across ${discard}`, async () => {
+      const messaging = useMessaging();
+      const { ctx, conversations, saveMessage } = makeContext();
+      const mls = createMlsServiceStub();
+
+      messaging.beginBulkMessageIngest(LIVE_DRAIN);
+      await sendVisibleNotice(
+        mls,
+        CONVO,
+        'groupRenamed',
+        { newName: 'Nouveau' },
+        {
+          contactName: CONVO,
+          actor: ME,
+          addMessageToChat: (senderId, content, key, options) =>
+            messaging.addMessageToChat(senderId, content, key, ctx, options),
+        }
+      );
+      if (discard === 'a second drain start') {
+        messaging.beginBulkMessageIngest(LIVE_DRAIN);
+        await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+      } else {
+        messaging.resetMessageCatchupState();
+      }
+
+      const frame = decodeAppMessage(vi.mocked(mls.sendMessage).mock.calls[0][1] as Uint8Array);
+      expect(idsIn(conversations)).toEqual([frame?.messageId]);
+      expect(saveMessage).toHaveBeenCalledTimes(1);
+    });
+  }
 
   it('keeps the own message across resetMessageCatchupState, which also discards unflushed', async () => {
     const messaging = useMessaging();

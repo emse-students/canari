@@ -2062,6 +2062,7 @@ export function useConversations() {
         conversations,
         selectConversation: (name) => selectConversationWithCtx(name, ctx),
         saveConversation: (name) => saveConversation(name, ctx),
+        addMessageToChat: ctx.addMessageToChat,
         log: ctx.log,
       });
       // NEVER A SILENT REFUSAL: the member is the only one who can retry an invitation.
@@ -2091,6 +2092,7 @@ export function useConversations() {
           conversations,
           selectConversation: (name) => selectConversationWithCtx(name, ctx),
           saveConversation: (name) => saveConversation(name, ctx),
+          addMessageToChat: ctx.addMessageToChat,
           log: ctx.log,
         }),
       log: ctx.log,
@@ -2148,10 +2150,21 @@ export function useConversations() {
     });
   }
 
-  /** Renames the currently selected group on the server, broadcasts the change via MLS, and appends a system message. No-op for DMs and channels. */
+  /**
+   * Applies `patch` to the conversation as it stands NOW, never to a snapshot taken before an await:
+   * whatever was written in between (a notice, a message) survives. A conversation gone meanwhile is
+   * left gone.
+   */
+  function patchConversation(key: string, patch: Partial<Conversation>): void {
+    const current = conversations.get(key);
+    if (current) conversations.set(key, { ...current, ...patch });
+  }
+
+  /** Renames the currently selected group on the server, broadcasts the change via MLS, and writes this device's own notice under the frame's id. No-op for DMs and channels. */
   async function handleRenameGroup(name: string, ctx: ConversationContext) {
-    if (!selectedContact) return;
-    const convo = conversations.get(selectedContact);
+    const key = selectedContact;
+    if (!key) return;
+    const convo = conversations.get(key);
     if (!convo) return;
     if ((convo.conversationType ?? 'group') !== 'group') return; // only named groups can be renamed
     try {
@@ -2161,19 +2174,24 @@ export function useConversations() {
         newName: name,
         userId: ctx.userId,
         deviceKeyB64: ctx.deviceKeyB64,
+        ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
       });
-      conversations.set(selectedContact, { ...convo, name });
-      await saveConversation(selectedContact, ctx);
-      ctx.log(`Group ${selectedContact} renamed`);
+      // RE-READ AFTER THE AWAIT, AND PATCH THE NAME ONLY. The send wrote our own notice into this
+      // conversation meanwhile (`sendVisibleNotice`); writing back the snapshot taken before the
+      // await erased it from this device's screen - the one device that had never drawn it.
+      patchConversation(key, { name });
+      await saveConversation(key, ctx);
+      ctx.log(`Group ${key} renamed`);
     } catch (e) {
       ctx.log(`Erreur renommage: ${String(e)}`);
     }
   }
 
-  /** Sets the currently selected group's avatar on the server, broadcasts the change via MLS, and updates the UI. No-op for DMs and channels. */
+  /** Sets the currently selected group's avatar on the server, broadcasts the change via MLS, writes this device's own notice under the frame's id, and updates the UI. No-op for DMs and channels. */
   async function handleSetGroupImage(mediaId: string, ctx: ConversationContext) {
-    if (!selectedContact) return;
-    const convo = conversations.get(selectedContact);
+    const key = selectedContact;
+    if (!key) return;
+    const convo = conversations.get(key);
     if (!convo) return;
     if ((convo.conversationType ?? 'group') !== 'group') return; // only named groups carry an avatar
     try {
@@ -2183,9 +2201,11 @@ export function useConversations() {
         mediaId,
         userId: ctx.userId,
         deviceKeyB64: ctx.deviceKeyB64,
+        ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
       });
-      conversations.set(selectedContact, { ...convo, imageMediaId: mediaId });
-      await saveConversation(selectedContact, ctx);
+      // Re-read and patch, for the reason `handleRenameGroup` gives.
+      patchConversation(key, { imageMediaId: mediaId });
+      await saveConversation(key, ctx);
       ctx.log(`Photo de groupe mise a jour (media=${mediaId})`);
     } catch (e) {
       ctx.log(`Erreur changement photo: ${String(e)}`);
@@ -2279,8 +2299,9 @@ export function useConversations() {
    * inherits it, which is the same reason the deletion paths do it at their own call site.
    */
   async function handleRemoveMember(memberId: string, ctx: ConversationContext) {
-    if (!selectedContact) return;
-    const convo = conversations.get(selectedContact);
+    const key = selectedContact;
+    if (!key) return;
+    const convo = conversations.get(key);
     if (!convo) return;
     const confirmed = await showConfirm(chat_group_remove_member_confirm(), {
       danger: true,
@@ -2299,6 +2320,7 @@ export function useConversations() {
         memberId,
         userId: ctx.userId,
         deviceKeyB64: ctx.deviceKeyB64,
+        ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
       });
       recorded = true;
       ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removed from the group (${outcome})`);

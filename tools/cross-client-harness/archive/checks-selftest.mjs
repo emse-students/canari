@@ -271,6 +271,16 @@ const cases = [
   { file: "graineauth.mjs", args: ["--only", "6"], phase: "GRAINE", a1: false, w3: true },
   { file: "graineauth.mjs", args: ["--only", "7"], phase: "GRAINE", a1: false, w3: false },
   { file: "graineauth.mjs", args: ["--only", "1"], phase: "GRAINE", a1: false, w3: false },
+  // A 1.4.1 ROW THAT NAMES A1 IN ITS OWN TABLE IS PREFLIGHTED WITH A1, though no phase lists it -
+  // that preflight is what stamps `a1Build` (OFF-5 recorded without one, 2026-10-25). Controls: the
+  // same scripts' browser rows stay browser-only.
+  { file: "offline.mjs", args: ["--row", "OFF-5"], phase: "OFFLINE", a1: true },
+  { file: "offline.mjs", args: ["--row", "OFF-3"], phase: "OFFLINE", a1: false },
+  { file: "admit.mjs", args: ["--row", "ADM-5"], phase: "ADMIT", a1: true },
+  { file: "admit.mjs", args: ["--row", "ADM-1"], phase: "ADMIT", a1: false },
+  { file: "kill.mjs", args: ["--row", "KILL-3"], phase: "KILL", a1: true },
+  { file: "floor.mjs", args: ["--row", "3"], phase: "FLOOR", a1: true },
+  { file: "floor.mjs", args: ["--row", "2"], phase: "FLOOR", a1: false },
 ];
 for (const c of cases) {
   const got = devicesFor(c.file, c.args);

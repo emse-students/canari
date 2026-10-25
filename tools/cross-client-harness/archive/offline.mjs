@@ -22,6 +22,7 @@ import {
   COMMIT_POST,
   armLeafRefresh,
   assertRowOwns,
+  awaitAddLockFree,
   awaitClientEpoch,
   awaitListed,
   awaitServer,
@@ -36,7 +37,7 @@ import {
   userOf,
   watchersOf,
 } from '../mlsrow.mjs';
-import { LOCK_BUDGET_SPENT, RM8_NARRATION, OFFLINE_ROWS, PORTAL_HTML, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
+import { ADD_ABANDONED_NOTICE, LOCK_BUDGET_SPENT, OFFLINE_BLOCKED, OFFLINE_ROWS, PORTAL_HTML, RM8_NARRATION, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, provokedFailures, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence, decidedAfter, resubmissionLine, settleNarration, settledOnce } from '../settlerows.mjs';
@@ -50,6 +51,10 @@ if (!OFFLINE_ROWS[id]) {
   console.error(`usage: bun archive/offline.mjs --row ${Object.keys(OFFLINE_ROWS).join('|')}  (OFF-4 is BLOCKED-ON-ACCOUNT)`);
   process.exit(2);
 }
+if (OFFLINE_BLOCKED[id]) {
+  console.error(`${id}: ${OFFLINE_BLOCKED[id]}`);
+  process.exit(2);
+}
 const spec = OFFLINE_ROWS[id];
 const since = new Date().toISOString();
 let seats = null;
@@ -60,6 +65,20 @@ const outcome = (p) =>
     (e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 300) })
   );
 const loggedOut = async (cx) => (await evaluate(cx, LOGIN_SHOWING)) === true;
+
+/**
+ * Waits for the gesture's commit to be HELD, and when it never comes, says what the GESTURE did. A
+ * pick that failed is otherwise swallowed by `outcome` and the row reports only "1 held request(s)
+ * never happened" (OFF-5, 2026-10-25: the app logged nothing at all, and the cause was unreadable).
+ */
+async function awaitHeldOrSay(f, g, timeoutMs) {
+  try {
+    await f.awaitHeld(1, timeoutMs);
+  } catch (e) {
+    const settled = await Promise.race([g, new Promise((r) => setTimeout(() => r({ pending: true }), 1000))]);
+    throw new Error(`${String(e?.message ?? e)}; the gesture: ${JSON.stringify(settled)}`);
+  }
+}
 
 /** Restores a cut and waits for the gateway; the ms it took, or null. */
 async function restoreAndReconnect(cx, restore, timeoutMs = 45_000) {
@@ -90,7 +109,7 @@ const ACTIONS = {
     const rules = [{ ...COMMIT_POST, fault: 'hold once' }];
     const f = await armFault(W1, rules);
     const g = outcome(addMembers(W1, [c.name(spec.subject)]));
-    await f.awaitHeld(1, 45_000);
+    await awaitHeldOrSay(f, g, 45_000);
     const cutW1 = await cutHard(W1);
     await f.fail();
     const unknown = await awaitLine(W1, resubmissionLine(c.group.id, c.fromEpoch, 'unknown'), 30_000);
@@ -100,6 +119,9 @@ const ACTIONS = {
     // W2 MOVES THE GROUP THREE EPOCHS: an Add of W4 (its own commit, which makes its leaf its own),
     // then two refreshes of that leaf.
     let advanced = 0;
+    // W1 TOOK THE ADD LOCK and was cut holding it; W2's Add is refused until the server drops it.
+    const lockFreedMs = await awaitAddLockFree(c.group.id, 45_000);
+    if (lockFreedMs === null) premise.push("W1's add lock was still held on the server 45 s after its cut");
     await closeOverlays(W2);
     await openGroup(W2, c.group.name, { navigate: false, label: id });
     const w4 = await outcome(addMembers(W2, [c.name('W4')]));
@@ -125,6 +147,8 @@ const ACTIONS = {
     const clearedLine = await awaitLine(W1, keptRefusedLine(c.group.id, c.fromEpoch), 45_000);
     const caughtUpMs = await awaitClientEpoch(W1, c.group.id, serverView(c.group.id).activeEpoch, 45_000);
     // THE RE-ISSUE IS GIVEN THE SAME BOUND AS EVERY SETTLEMENT HERE; its absence is the finding.
+    // THE OTHER WAY THE INTENT IS KEPT: abandoned with a typed notice (`ADD_ABANDONED_NOTICE`, empty until the fix names it).
+    const notices = consoleLines(W1).filter((l) => ADD_ABANDONED_NOTICE.some((re) => re.test(l))).length;
     const reissued = await awaitServer(c.group.id, (v) => (v.roster ?? []).some((r) => r.userId.toLowerCase() === c.user[spec.subject].toLowerCase()), 45_000);
     return {
       premise,
@@ -133,8 +157,8 @@ const ACTIONS = {
       members: reissued.settled ? spec.devices : spec.devices.filter((d) => d !== spec.subject),
       joiners: ['W4', ...(reissued.settled ? [spec.subject] : [])],
       narration: { W1: settleNarration(c.group.id) },
-      detail: { gesture, w2Add: w4, clientUnknown: unknown, gatewayMs, clearedLine, caughtUpMs, returnedAt },
-      judge: (view) => staleStageOwn({ seqAfter: commitSequence(commitLines(c.group.id, returnedAt)), clearedLine, caughtUpMs, view, subject: c.user[spec.subject], advanced }),
+      detail: { gesture, notices, lockFreedMs, w2Add: w4, clientUnknown: unknown, gatewayMs, clearedLine, caughtUpMs, returnedAt },
+      judge: (view) => staleStageOwn({ seqAfter: commitSequence(commitLines(c.group.id, returnedAt)), clearedLine, caughtUpMs, view, subject: c.user[spec.subject], advanced, notices }),
     };
   },
 
@@ -154,7 +178,7 @@ const ACTIONS = {
     const rules = [{ ...COMMIT_POST, fault: 'hold-answer once' }];
     const f = await armFault(A1, rules);
     const g = outcome(addMembers(A1, [c.name(spec.subject)]));
-    await f.awaitHeld(1, 60_000);
+    await awaitHeldOrSay(f, g, 60_000);
     radios(false);
     let unknown = null;
     let returnedAt = null;
@@ -273,26 +297,43 @@ const ACTIONS = {
   /** NET-3: every /api/ call of W1's answered 200 text/html for `portalMs`, while W1 Adds W4 and sends. */
   async 'NET-3'(c) {
     const W1 = c.cx('W1');
-    const rules = [{ match: '/api/', fault: 'status-unsent 200', body: PORTAL_HTML, contentType: 'text/html; charset=utf-8' }];
+    const portal = { status: 200, body: PORTAL_HTML, contentType: 'text/html; charset=utf-8' };
+    // THE PORTAL GOES UP ONLY ONCE THE COMMIT IS HELD. Armed with the picks (2026-10-25, alpha.3), a
+    // portal on every /api/ call answered the Add's own pre-checks (block status, members) first: the
+    // client skipped the invitee, no commit was ever made, and the row judged a commit that did not
+    // exist. So the commit is HELD, the portal is opened, and the held commit gets the portal's page.
+    let portalUp = false;
+    const rules = [
+      { ...COMMIT_POST, fault: 'hold once' },
+      { match: '/api/', fault: 'status-unsent 200', body: portal.body, contentType: portal.contentType, when: () => portalUp },
+    ];
     const mark = rowMessageMark(id, 'P');
     let f = null;
     let portalEnds = 0;
     let loggedOutDuring = false;
     let gesture = null;
     let sendOutcome = null;
+    let commitAnswered = 0;
     let rep = { records: [] };
     try {
-      // THE PORTAL GOES UP AFTER THE PICKS: the picker's user search is /api/ too, and an Add never
-      // made would test nothing.
-      gesture = await outcome(
+      const g = outcome(
         addMembers(W1, [c.name(spec.subject)], {
           beforeSubmit: async () => {
             f = await armFault(W1, rules);
-            portalEnds = Date.now() + spec.portalMs;
           },
         })
       );
-      if (!f) return { premise: [`the Add never reached its submission (${gesture.error ?? 'no error'})`], records: {}, offline: [], detail: { gesture } };
+      // The fault exists once the picks are made; until then only the gesture can say anything.
+      let settled = false;
+      void g.then(() => (settled = true));
+      const armedBy = Date.now() + 60_000;
+      while (!f && !settled && Date.now() < armedBy) await new Promise((r) => setTimeout(r, 250));
+      if (!f) return { premise: [`the Add never reached its submission (${(await g).error ?? 'no error'})`], records: {}, offline: [], detail: { gesture: await g } };
+      await awaitHeldOrSay(f, g, 45_000);
+      portalUp = true;
+      portalEnds = Date.now() + spec.portalMs;
+      commitAnswered = await f.answerHeld(portal);
+      gesture = await g;
       await closeOverlays(W1);
       sendOutcome = await outcome(send(W1, `${id} under the portal [${mark}]`));
       loggedOutDuring = await loggedOut(W1);
@@ -316,7 +357,8 @@ const ACTIONS = {
       members: joined ? spec.devices : spec.devices.filter((d) => d !== spec.subject),
       joiners: joined ? [spec.subject] : [],
       narration: { W1: settleNarration(c.group.id) },
-      detail: { gesture, sendOutcome, portalMs: spec.portalMs, answered: rep.records.length, noAnswer, clearedLine },
+      premise: commitAnswered === 1 ? [] : [`the held commit was not answered by the portal (${commitAnswered})`],
+      detail: { gesture, sendOutcome, portalMs: spec.portalMs, answered: rep.records.length, commitAnswered, noAnswer, clearedLine },
       judge: () => portalOwn({ loggedOutDuring, loggedOutAfter, noAnswer, clearedLine, joined, messageShown }),
     };
   },

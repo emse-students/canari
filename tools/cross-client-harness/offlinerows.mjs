@@ -10,6 +10,7 @@
  * a departure attempted offline (RM-8).
  */
 import { activeSeats, onRoster } from './ccrows.mjs';
+import { TAURI_HTTP_BLOCKED } from './rowkit.mjs';
 
 /** The rows `archive/offline.mjs` plays. */
 export const OFFLINE_ROWS = {
@@ -59,6 +60,18 @@ export const OFFLINE_ROWS = {
 export const OFF4_PREMISE =
   'BLOCKED-ON-ACCOUNT: OFF-4 needs ten membership changes, an Add/Remove loop of a fifth campaign account (see the runners page)';
 
+/**
+ * The typed notice W1 shows when it abandons a kept Add refused at its return - EMPTY until the fix
+ * (stacked on #2416) exists and its line is read off that pull request; a needle written before the
+ * line exists would forgive or count a guess. While empty, OFF-3 passes only by the re-issue.
+ *
+ * @type {RegExp[]}
+ */
+export const ADD_ABANDONED_NOTICE = [];
+
+/** Rows that cannot be played as designed, and why - refused by the runner, `pending` on the board. */
+export const OFFLINE_BLOCKED = { 'OFF-5': TAURI_HTTP_BLOCKED };
+
 /** What a captive portal answers instead of the API. */
 export const PORTAL_HTML = '<!doctype html><html><head><title>Wi-Fi login</title></head><body><form action="/login"><input name="room"></form></body></html>';
 
@@ -84,8 +97,14 @@ const kinds = (seq) => seq.map((d) => d.kind).join(',') || 'nothing';
  * @param {number|null} p.caughtUpMs W1 reached the server's epoch after the return
  * @param {object} p.view `serverView` at the end
  * @param {string} p.subject the user W1 meant to add
+ * @param {number} [p.notices] how many times W1 told the user, typed, that the Add was abandoned
+ *
+ * THE INTENT IS KEPT ONE OF TWO WAYS, NEVER NEITHER (lead, 2026-10-25, after alpha.3 dropped it in
+ * silence): re-issued at the new epoch - the subject on the roster with an active seat, an ACCEPT
+ * after the refusal - or abandoned WITH a typed notice the user sees ({@link ADD_ABANDONED_NOTICE}).
+ * A roster without the subject and no notice is the defect.
  */
-export function staleStageOwn({ seqAfter, clearedLine, caughtUpMs, view, subject, advanced }) {
+export function staleStageOwn({ seqAfter, clearedLine, caughtUpMs, view, subject, advanced, notices = 0 }) {
   const refusal = seqAfter.find((d) => d.kind === 'REJECT');
   return [
     { what: `W2 moved the group ${advanced} epoch(s) while W1 was away`, ok: advanced >= 3 },
@@ -93,8 +112,10 @@ export function staleStageOwn({ seqAfter, clearedLine, caughtUpMs, view, subject
     { what: `W1 cleared it (${clearedLine ?? 'no line'})`, ok: !!clearedLine },
     { what: `W1 caught up to the server's epoch (${caughtUpMs ?? 'never'} ms)`, ok: caughtUpMs !== null },
     {
-      what: `the intent still held, so it was re-issued: ${subject.slice(0, 8)} on the roster with an active seat, and an ACCEPT after the refusal`,
-      ok: !!refusal && onRoster(view, subject) && activeSeats(view, subject).length > 0 && seqAfter.findIndex((d) => d.kind === 'ACCEPT') > seqAfter.indexOf(refusal),
+      what: `the Add's intent was kept: ${subject.slice(0, 8)} re-issued with an active seat and an ACCEPT after the refusal, or the user told it was abandoned (${notices} notice(s)) - never neither`,
+      ok:
+        (!!refusal && onRoster(view, subject) && activeSeats(view, subject).length > 0 && seqAfter.findIndex((d) => d.kind === 'ACCEPT') > seqAfter.indexOf(refusal)) ||
+        notices >= 1,
     },
   ];
 }

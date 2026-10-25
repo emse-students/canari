@@ -10,7 +10,7 @@
  *   bun archive/offline-selftest.mjs
  */
 import { fulfilBody } from '../fault.mjs';
-import { EXIT_REPLAY_NARRATION, LOCK_BUDGET_SPENT, RM8_NARRATION, OFF4_PREMISE, OFFLINE_ROWS, PORTAL_HTML, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
+import { ADD_ABANDONED_NOTICE, EXIT_REPLAY_NARRATION, LOCK_BUDGET_SPENT, OFF4_PREMISE, OFFLINE_ROWS, PORTAL_HTML, RM8_NARRATION, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
 import { GROUP_CREATION_NARRATION, ignoringExpectedLog } from '../watch.mjs';
 
 let failures = 0;
@@ -59,6 +59,10 @@ ok('not cleared fails', failing(off3({ clearedLine: null })) === 1);
 ok('never caught up fails', failing(off3({ caughtUpMs: null })) === 1);
 ok('not re-issued fails', failing(off3({ view: view(['u1']) })) === 1);
 ok('an accept BEFORE the refusal is no re-issue', failing(off3({ seqAfter: [ACC, REJ] })) === 1);
+ok('abandoned WITH a typed notice, nobody added -> the intent is kept', allOk(off3({ view: view(['u1']), seqAfter: [REJ], notices: 1 })));
+ok('control: abandoned with NO notice and nobody added FAILS (the alpha.3 defect)', failing(off3({ view: view(['u1']), seqAfter: [REJ], notices: 0 })) === 1);
+ok('re-issued AND a notice still holds', allOk(off3({ notices: 1 })));
+ok('the notice needle list is empty until the fix names its line', ADD_ABANDONED_NOTICE.length === 0);
 
 // ── NET-1 ────────────────────────────────────────────────────────────────────────────────────────
 console.log('NET-1 slowLinkOwn');
