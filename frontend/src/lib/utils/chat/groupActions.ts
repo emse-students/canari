@@ -24,7 +24,7 @@ import {
 import { holdsGroupState } from './groupUsability';
 import { groupSkippedByReason, type SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
 import { isDeviceTrustRefusal } from '$lib/mls-client/deviceTrust';
-import { rebuildableRefusal } from '$lib/mls-client/CommitRefusedError';
+import { CommitRefusedError, rebuildableRefusal } from '$lib/mls-client/CommitRefusedError';
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
@@ -331,8 +331,9 @@ async function notifyMembershipChange(
  * refusal's catch-up has applied the winning commit, the tree is read again, and the Remove is staged
  * again on it - under {@link rebuildableRefusal}, the one rule an admission follows too: only a
  * refusal that MOVED the epoch (or an overtaken seat claim, each one an eviction) is rebuilt, so the
- * loop ends on a proof, never on a count. A tree that no longer holds the member (the winner removed
- * them) commits nothing. Every other ending - a refusal that moved nothing, an unknown outcome, an
+ * loop ends on a proof, never on a count. A tree that no longer holds the member - before the commit,
+ * or read again after ANY refusal (CC-3: two Removes of one person, the loser refused
+ * `concurrent_commit`) - commits nothing and resolves `already-out`, quietly: the goal is reached. Every other ending - a refusal that moved nothing, an unknown outcome, an
  * unreadable tree - throws {@link MemberRemovalNotCommittedError}, so the caller can say so; the
  * collector still completes it from durable state (roster against tree), which is what it is for.
  *
@@ -345,7 +346,7 @@ export async function removeMemberAndBroadcast(params: {
   memberId: string;
   userId: string;
   deviceKeyB64: string;
-}) {
+}): Promise<MemberRemovalOutcome> {
   const { mlsService, groupId, memberId, userId, deviceKeyB64 } = params;
   const short = groupId.slice(0, 8);
 
@@ -366,25 +367,42 @@ export async function removeMemberAndBroadcast(params: {
   }
 
   // 2. MLS remove commit, rebuilt on the epoch that beat it (see above).
-  await commitMemberRemoval(mlsService, groupId, memberId);
+  const outcome = await commitMemberRemoval(mlsService, groupId, memberId);
 
-  // 3. Notify remaining members.
-  await notifyMembershipChange(mlsService, groupId, 'memberRemoved', { targetUser: memberId });
+  // 3. Notify remaining members - only when THIS commit removed them. When another commit did, its
+  // author announced it (a remover) or deliberately announced nothing (the collector, whose reason
+  // is in `strayLeaves.ts`); a second "removed" line would tell the members twice.
+  if (outcome === 'committed') {
+    await notifyMembershipChange(mlsService, groupId, 'memberRemoved', { targetUser: memberId });
+  }
 
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
+  return outcome;
 }
+
+/**
+ * How a removal the server recorded ended in the tree - both are a COMPLETE removal:
+ * - `committed`: this device's Remove commit took the member's leaves out;
+ * - `already-out`: the tree held no leaf of theirs when this device looked - another commit (a
+ *   concurrent Remove of the same person, a holder's collector) removed them, or they never held
+ *   one. Not a failure, and never reported as one: a lost race whose goal the winner reached.
+ */
+export type MemberRemovalOutcome = 'committed' | 'already-out';
 
 /**
  * Commits the Remove of every leaf of `memberId` in `groupId`, rebuilding it on the epoch that beat
  * it, for the reasons {@link removeMemberAndBroadcast} gives. Resolves once the tree holds no leaf of
  * the member - by this commit, or by the one that won the race; throws
  * {@link MemberRemovalNotCommittedError} otherwise.
+ *
+ * @returns `committed` when this commit removed them, `already-out` when the tree already held no
+ *   leaf of theirs - first, or after a refusal (see {@link MemberRemovalOutcome}).
  */
 async function commitMemberRemoval(
   mlsService: IMlsService,
   groupId: string,
   memberId: string
-): Promise<void> {
+): Promise<MemberRemovalOutcome> {
   const short = groupId.slice(0, 8);
   const who = memberId.slice(0, 8);
   for (;;) {
@@ -403,7 +421,7 @@ async function commitMemberRemoval(
       console.log(
         `[REMOVE_MEMBER] ${short}… ${who} holds no leaf at epoch ${mlsService.getEpoch(groupId)} - nothing to commit`
       );
-      return;
+      return 'already-out';
     }
     const builtOn = mlsService.getEpoch(groupId);
     try {
@@ -411,7 +429,7 @@ async function commitMemberRemoval(
       console.log(
         `[REMOVE_MEMBER] ${short}… ${who} removed from the tree, epoch ${builtOn} -> ${mlsService.getEpoch(groupId)}`
       );
-      return;
+      return 'committed';
     } catch (e) {
       const caughtUpTo = mlsService.getEpoch(groupId);
       const rebuild = rebuildableRefusal(e, builtOn, caughtUpTo);
@@ -421,11 +439,43 @@ async function commitMemberRemoval(
         );
         continue;
       }
+      // NOT REBUILDABLE, BUT POSSIBLY ALREADY SATISFIED: a `concurrent_commit` (or an
+      // `epoch_mismatch` whose catch-up has not moved this device) may have been the SAME removal by
+      // another member - CC-3, two Removes of one person. The tree this device holds is asked once
+      // more, and a tree without the member ends the gesture as the outcome it is, quietly.
+      if (
+        e instanceof CommitRefusedError &&
+        (await treeLacksMember(mlsService, groupId, memberId))
+      ) {
+        console.log(
+          `[REMOVE_MEMBER] ${short}… the Remove of ${who} was refused (${e.reason}) and ${who} already holds no leaf - another commit removed them`
+        );
+        return 'already-out';
+      }
       console.warn(
         `[REMOVE_MEMBER] ${short}… the Remove of ${who} built on epoch ${builtOn} did not land and cannot be rebuilt (${String(e).slice(0, 120)}; epoch now ${caughtUpTo}) - recorded, NOT committed`
       );
       throw new MemberRemovalNotCommittedError(groupId, memberId, e);
     }
+  }
+}
+
+/**
+ * Whether the tree this device holds has NO leaf of `memberId` - false when it cannot be read, which
+ * proves nothing, so the caller's failure stands.
+ */
+async function treeLacksMember(
+  mlsService: IMlsService,
+  groupId: string,
+  memberId: string
+): Promise<boolean> {
+  try {
+    return !treeHoldsUser(await mlsService.getGroupMemberIdentities(groupId), memberId);
+  } catch (e) {
+    console.warn(
+      `[REMOVE_MEMBER] ${groupId.slice(0, 8)}… tree unreadable after a refused Remove: ${String(e).slice(0, 120)}`
+    );
+    return false;
   }
 }
 

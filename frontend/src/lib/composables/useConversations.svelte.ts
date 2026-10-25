@@ -2288,7 +2288,8 @@ export function useConversations() {
     // `try`, so a failed reread is never reported as a failed removal.
     let recorded: boolean;
     try {
-      await removeMemberAndBroadcast({
+      // `already-out` is a complete removal too (another commit took their leaves): no error.
+      const outcome = await removeMemberAndBroadcast({
         mlsService: ctx.ensureMls(),
         groupId: convo.id,
         memberId,
@@ -2296,10 +2297,10 @@ export function useConversations() {
         deviceKeyB64: ctx.deviceKeyB64,
       });
       recorded = true;
-      ctx.log(`${memberId} retire du groupe.`);
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removed from the group (${outcome})`);
     } catch (e) {
       // NEVER A LOG LINE ALONE: every ending reaches the person who asked, classified by TYPE.
-      ctx.log(`Erreur retrait membre: ${String(e)}`);
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} not fully removed: ${String(e)}`);
       if (reportFollowerTabRefusal(e)) return;
       recorded = reportMemberRemovalFailure(e) === 'recorded';
     }

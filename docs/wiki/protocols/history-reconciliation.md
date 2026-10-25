@@ -953,8 +953,10 @@ holder's next connection. Now `commitMemberRemoval` (`groupActions.ts`) re-reads
 refusal's catch-up applied the winner, and stages the Remove again on it, under `rebuildableRefusal`
 (`CommitRefusedError.ts`) - the one rule the newcomer admission follows too: only a refusal whose
 catch-up MOVED the epoch, or an overtaken seat claim (each one an eviction), is rebuilt, so the loop
-ends on a proof, never on a count. A tree that no longer holds the member (the winner removed them)
-commits nothing. Every other ending - a refusal that moved nothing, an unknown outcome, an unreadable
+ends on a proof, never on a count. A tree that no longer holds the member commits nothing and
+resolves `already-out`, QUIETLY (no warning, no second `memberRemoved` notice) - read before the
+commit, and read again after ANY refused attempt: two Removes of one person (CC-3) refuse the loser
+`concurrent_commit` with no epoch to catch up on, and the winner's commit is already in its tree. Every other ending - a refusal that moved nothing, an unknown outcome, an unreadable
 tree - throws `MemberRemovalNotCommittedError`, and the person who asked is told by TYPE
 (`reportMemberRemovalFailure`): "removed, the key change finishes at the next connection", never
 "failed", because the record IS the removal and is not rolled back. The collector still completes

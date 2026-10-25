@@ -67,7 +67,7 @@ describe('removeMemberAndBroadcast - a lost commit race', () => {
       })
       .mockImplementationOnce(accept);
 
-    await run(mlsService);
+    await expect(run(mlsService)).resolves.toBe('committed');
 
     expect(mlsService.removeMember).toHaveBeenCalledTimes(2);
     expect(state.tree).toEqual([`${ME}:da`, 'user-c:d1']);
@@ -85,10 +85,49 @@ describe('removeMemberAndBroadcast - a lost commit race', () => {
       throw new CommitRefusedError('epoch_mismatch', 3, 4);
     });
 
-    await run(mlsService);
+    await expect(run(mlsService)).resolves.toBe('already-out');
 
     expect(mlsService.removeMember).toHaveBeenCalledTimes(1);
     expect(state.tree).toEqual([`${ME}:da`]);
+  });
+
+  it('CC-3: two Removes of one person - the loser, refused concurrent_commit, ends QUIETLY', async () => {
+    // Two members remove BOB at once. The winner's commit holds the gate's lock, so the loser is
+    // refused `concurrent_commit` with no epoch ahead to catch up on; the winner's commit reaches
+    // the loser's tree before the refusal is read. Both tallies agree: BOB is off roster and tree.
+    const { mlsService, state } = harness();
+    const winner = harness();
+    vi.mocked(winner.mlsService.removeMember).mockImplementation(winner.accept);
+    vi.mocked(mlsService.removeMember).mockImplementationOnce(async () => {
+      state.tree = [`${ME}:da`];
+      state.epoch = 4;
+      throw new CommitRefusedError('concurrent_commit', 3, 3);
+    });
+    const error = vi.spyOn(console, 'error');
+    const warn = vi.mocked(console.warn);
+
+    const [won, lost] = await Promise.all([run(winner.mlsService), run(mlsService)]);
+
+    expect(won).toBe('committed');
+    expect(lost).toBe('already-out');
+    expect(winner.state.tree).toEqual([`${ME}:da`]);
+    expect(state.tree).toEqual([`${ME}:da`]);
+    // Quiet: no error, no warning, and no second "removed" notice from the loser.
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(winner.mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('a concurrent_commit refusal while the member STILL holds a leaf is surfaced, never quiet', async () => {
+    const { mlsService, state } = harness();
+    vi.mocked(mlsService.removeMember).mockRejectedValue(
+      new CommitRefusedError('concurrent_commit', 3, 3)
+    );
+
+    await expect(run(mlsService)).rejects.toBeInstanceOf(MemberRemovalNotCommittedError);
+    expect(state.tree).toContain(`${BOB}:d1`);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('NOT committed'));
   });
 
   it('rebuilds on an overtaken seat claim, which refuses the whole commit without moving the epoch', async () => {
@@ -142,7 +181,7 @@ describe('removeMemberAndBroadcast - a lost commit race', () => {
     const { mlsService, state } = harness();
     state.tree = [`${ME}:da`];
 
-    await run(mlsService);
+    await expect(run(mlsService)).resolves.toBe('already-out');
 
     expect(mlsService.removeMemberFromServer).toHaveBeenCalledWith(G, BOB);
     expect(mlsService.removeMember).not.toHaveBeenCalled();
