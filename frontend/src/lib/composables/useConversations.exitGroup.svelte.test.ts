@@ -24,7 +24,7 @@ const isGroupActiveOnServer = vi.hoisted(() => vi.fn());
 const leaveGroupAndBroadcast = vi.hoisted(() => vi.fn());
 const deleteGroupAndBroadcast = vi.hoisted(() => vi.fn());
 const purgeOrphanGroup = vi.hoisted(() => vi.fn());
-const fetchUniqueGroupMembers = vi.hoisted(() => vi.fn());
+const fetchGroupRoster = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/groupActions')>();
@@ -34,7 +34,7 @@ vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
     leaveGroupAndBroadcast,
     deleteGroupAndBroadcast,
     purgeOrphanGroup,
-    fetchUniqueGroupMembers,
+    fetchGroupRoster,
   };
 });
 
@@ -118,7 +118,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   isGroupActiveOnServer.mockResolvedValue(true);
   purgeOrphanGroup.mockResolvedValue(undefined);
-  fetchUniqueGroupMembers.mockResolvedValue(['u1', 'u2']);
+  fetchGroupRoster.mockResolvedValue(['u1', 'u2']);
   drainOutboxForExit.mockResolvedValue(0);
 });
 
@@ -216,7 +216,7 @@ describe('exitGroupAndCleanup - the departure is recorded before it is performed
     );
 
     // The 403 GRP-6 recorded: the request itself, not the way it was handled.
-    expect(fetchUniqueGroupMembers).not.toHaveBeenCalled();
+    expect(fetchGroupRoster).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining('not requested - conversation retired')
     );
@@ -229,7 +229,7 @@ describe('exitGroupAndCleanup - the departure is recorded before it is performed
 
     expect(deleteGroupAndBroadcast).toHaveBeenCalledOnce();
     expect(seen.lifecycle).toBe('removed');
-    expect(fetchUniqueGroupMembers).not.toHaveBeenCalled();
+    expect(fetchGroupRoster).not.toHaveBeenCalled();
   });
 
   it('still purges the row afterwards - retiring is the window, not the end state', async () => {
