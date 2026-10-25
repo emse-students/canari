@@ -87,6 +87,7 @@ import {
   OWNER_DEVICE_NOTICE_NARRATION,
   REVOKED_RETURN_NARRATION,
   REVOKED_SIGN_OUT_NARRATION,
+  SIBLING_MINT_NARRATION,
   consoleLines,
   logcatSince,
 } from '../watch.mjs';
@@ -491,6 +492,9 @@ try {
   const refusals = {};
   for (const d of spec.mint) {
     logs[d] = (act.revoked ?? []).includes(d) ? REVOKED_NARRATION : MINT_NARRATION;
+    // TWO MINTS IN ONE ROW (DEV-4, DEV-6) make each minted seat the owner's other device for the
+    // other: it is told of its sibling at first sight and vets the sibling's KeyPackage.
+    if (spec.mint.length > 1) logs[d] = [...logs[d], ...OWNER_DEVICE_NOTICE_NARRATION, ...SIBLING_MINT_NARRATION];
     refusals[d] = MINT_REFUSALS;
   }
   const observers = await observersOf(seats, { logs, refusals, provoked: act.records ?? {}, offline: act.offline ?? [] });

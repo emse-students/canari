@@ -52,7 +52,7 @@ import {
 import { clientBuild, errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowMessageMark } from '../rowkit.mjs';
 import { SITE } from '../site.mjs';
-import { GROUP_CREATION_NARRATION, consoleLines } from '../watch.mjs';
+import { ADMISSION_JOINER_NARRATION, ADMISSION_MEMBER_NARRATION, GROUP_CREATION_NARRATION, consoleLines } from '../watch.mjs';
 import { addMembers } from './addmember.mjs';
 import { answerAsk, awaitAsk, awaitAskGone, followGroupLink, mintGroupLink } from './grouplink.mjs';
 
@@ -86,8 +86,23 @@ function oldCommit() {
 /** The ask lines `[JOIN_REQUEST] <user> asks to join <g8>...` a member printed about `groupId`. */
 const askLinesOn = (cx, groupId) => consoleLines(cx).filter((l) => l.includes('[JOIN_REQUEST]') && l.includes(`asks to join ${String(groupId).slice(0, 8)}`)).length;
 
-/** Asks the base as `seat` - from its own page; a phone names the estate's API origin. */
-const baseAs = (seat, groupId) => (seat.target.isPhone ? apiAt(seat.cx, SITE, 'GET', `/api/mls/group-info/${groupId}`) : apiGet(seat.cx, `/api/mls/group-info/${groupId}`));
+/**
+ * The refusals THIS row provokes on purpose, per device - handed to `observersOf` so a status the
+ * row asked for is not counted as the product's dirt. Each is added at the gesture that provokes it,
+ * so a row that never reached the gesture forgives nothing.
+ */
+const rowRefusals = {};
+const expectRefusal = (device, rule) => (rowRefusals[device] ??= []).push(rule);
+
+/**
+ * Asks the base as `seat` - from its own page; a phone names the estate's API origin. A waiting seat
+ * is answered 409 (`awaiting_admission`), which is what every waiting row asserts, so that 409 is
+ * the row's own and forgiven on this seat - at 409 only.
+ */
+const baseAs = (seat, groupId) => {
+  expectRefusal(seat.target.device, { path: new RegExp(`^/api/mls/group-info/${groupId}$`), status: [409] });
+  return seat.target.isPhone ? apiAt(seat.cx, SITE, 'GET', `/api/mls/group-info/${groupId}`) : apiGet(seat.cx, `/api/mls/group-info/${groupId}`);
+};
 
 /** Waits for the joiner's seat to reach `state` on the server; its state then. */
 async function seatReaches(c, user, state, timeoutMs) {
@@ -219,6 +234,10 @@ const ACTIONS = {
     // THE ASK IS ANSWERED SO THE GROUP ENDS AS IT BEGAN; the answer is not what this row judges.
     await awaitAsk(seats.seat[c.owner].cx, c.user[spec.joiner], 90_000);
     await answerAsk(seats.seat[c.owner].cx, c.user[spec.joiner], 'decline').catch((e) => console.log(`[${id}] the closing Decline: ${String(e?.message ?? e)}`));
+    // EVERY PROBE IS THE ROW'S OWN and answers 409 by design: forgiven route by route, at 409 only, so
+    // a route that answered anything else stays dirt beside its failed assertion. The paths are
+    // `/api/...` with a uuid - no character in them is special to a RegExp.
+    for (const r of routes) expectRefusal(spec.joiner, { path: new RegExp(`^${r.path}$`), status: [409] });
     return {
       members: c.members,
       detail: { answers: answers.map(({ body: _body, ...a }) => a) },
@@ -325,6 +344,8 @@ const ACTIONS = {
       const askLines = askLinesOn(W1, gid) + askLinesOn(seats.seat.W2.cx, gid);
       kinds.push({ kind, mint: { status: mint.status }, accept: accept ? { status: accept.status } : null, tokenLength: token ? token.length : null, askLines, after: seatState(serverView(gid), c.user[spec.joiner]) });
     }
+    // THE MINTS ARE REFUSED BY DESIGN - 400 on a 1:1, 403 on a key group - and that refusal is the row.
+    expectRefusal('W1', { path: /^\/api\/mls\/groups\/[0-9a-f-]+\/invites$/, status: [400, 403] });
     return { members: c.members, detail: { kinds }, judge: () => noAskOwn(kinds) };
   },
 };
@@ -390,7 +411,14 @@ try {
   const { verdict, failures } = composeVerdict({ own: out.own ?? [], invariant: out.invariant ?? null, premise: out.premise ?? [] });
   for (const f of failures) console.log(`[${id}] ${f}`);
   console.log(`[${id}] assertions: ${verdict}`);
-  const observers = await observersOf(seats, { logs: { [spec.owner]: [...GROUP_CREATION_NARRATION] }, provoked: out.records ?? {} });
+  // THE ASK IS EVERY MEMBER'S SUBJECT AND THE WAIT IS THE JOINER'S: each device is given the
+  // narration of its own part, and nothing of the other's.
+  const logs = {};
+  for (const d of spec.devices) {
+    logs[d] = d === spec.joiner ? [...ADMISSION_JOINER_NARRATION] : [...ADMISSION_MEMBER_NARRATION];
+    if (d === spec.owner) logs[d].push(...GROUP_CREATION_NARRATION);
+  }
+  const observers = await observersOf(seats, { logs, refusals: rowRefusals, provoked: out.records ?? {} });
   await finishObserved(
     id,
     verdict,

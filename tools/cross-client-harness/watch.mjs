@@ -2254,6 +2254,43 @@ export const FRESH_CLIENT_NARRATION = [
 ];
 
 /**
+ * WHAT A MEMBER'S DEVICE SAYS ABOUT AN INVITATION-LINK ASK - the ADM rows' subject, on every member
+ * (#2358, decided 2026-10-23: a new person is admitted only by a member). Read on ADM-1..4 of
+ * `1.4.1-alpha.4` (2026-10-25), where every one of them was `unexplained` on W1 and W2.
+ *
+ * The ask arrives (`[JOIN_ASK]`, `[JOIN_REQUEST] asks to join`, and the forwarded `[WELCOME_REQ]`),
+ * then leaves the screen when it is answered here or elsewhere (`admitted` / `declined`, with or
+ * without "the ask leaves this screen"), and a Decline given HERE says the seat is withdrawn. A list
+ * the ADM rows name, never a classifier rule: on a device of a conversation nobody asked to join,
+ * these lines are the finding. `atLevels` throughout, so the same words at `warn` stay dirt.
+ */
+export const ADMISSION_MEMBER_NARRATION = [
+  atLevels(['log', 'info'], /^\[(JOIN_ASK|WELCOME_REQ)\] \S+ has no leaf in \S+ - a new person is not added automatically, a member's approval is asked$/),
+  atLevels(['log', 'info'], /^\[JOIN_REQUEST\] \S+ asks to join \S+ - a member's answer is awaited$/),
+  atLevels(['log', 'info'], /^\[JOIN_REQUEST\] \S+ (admitted|declined) in \S+( - the ask leaves this screen)?$/),
+  atLevels(['log', 'info'], /^\[JOIN_REQUEST\] \S+ declined - their seat is withdrawn$/),
+];
+
+/**
+ * WHAT THE JOINER'S DEVICE SAYS WHILE IT WAITS - the placeholder the waiting conversation is drawn
+ * from, and its end: admitted ("no longer awaits a member") or declined ("never-admitted ... removing").
+ * Read on ADM-1..4 of `1.4.1-alpha.4` (2026-10-25). Only the rows' joiner is given it.
+ */
+export const ADMISSION_JOINER_NARRATION = [
+  atLevels(['log', 'info'], /^\[DISCOVERY\] Placeholder \S+ created\.$/),
+  atLevels(['log', 'info'], /^\[DISCOVERY\] "\S+" (awaits a member admission|no longer awaits a member)$/),
+  atLevels(['log', 'info'], /^\[DISCOVERY\] never-admitted "\S+" is no longer listed - the ask was declined or expired - removing$/),
+];
+
+/**
+ * WHAT A MINTED DEVICE SAYS WHEN A SIBLING IS MINTED BESIDE IT - DEV-4 mints W3 and W6 at once, so
+ * each is the owner's "other device" for the other: it vets the sibling's KeyPackage, and tells the
+ * owner-alert once at first sight ({@link OWNER_DEVICE_NOTICE_NARRATION}, which the caller adds).
+ * Read on DEV-4 of `1.4.1-alpha.4` (2026-10-25), on W6.
+ */
+export const SIBLING_MINT_NARRATION = [atLevels(['debug'], /^\[TRUST\] KeyPackage for \S+ vetted: pinned$/)];
+
+/**
  * WHAT THE OWNER'S OTHER DEVICES SAY WHEN ONE MORE OF THEIRS ENROLS - the DEV rows' subject, on W1.
  *
  * `deviceEventAudience` (`deviceTrust.ts`) sends the owner's own new device to `owner-alert`: the
