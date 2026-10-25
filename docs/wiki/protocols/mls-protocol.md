@@ -581,6 +581,36 @@ Reception is in two steps, and the order matters. The add-path (`batchAddMessage
 
 **The unread badge is recomputed, never transported**, and it is derived from the read watermark rather than from any per-message field - see [Read state becomes a watermark](history-reconciliation.md#read-state-becomes-a-watermark).
 
+### A commit that loses a race is rebuilt on proven progress, or surfaced (2026-10-25)
+
+The gate admits ONE commit per epoch. A member's gesture that loses the race is refused
+`epoch_mismatch` (the winner landed) or `concurrent_commit` (the winner held the gate's lock) - one race
+seen at two instants, read alike by `isCommitRaceRefusal` (`CommitRefusedError.ts`). Every gesture now
+ends a lost race the same way (CC-1, CC-2, CC-4 of the 1.4.1 campaign):
+
+- **Rebuilt on proven progress, never on a count or a clock.** `rebuildableRefusal` rebuilds only when
+  the refusal's catch-up took the local epoch past the base the refused commit RECORDED, or on an
+  overtaken seat claim. `rebuildOnRace` (`utils/chat/commitRace.ts`) is the one loop; the bulk Add of
+  an invitation, a 1:1 creation and a group's own devices go through `addDevicesRebuildingOnRace`,
+  which reads the tree first and offers only the devices still without a leaf; the pending-invitation
+  sweep wraps its single Add; the Remove (`groupActions.ts`, see
+  [history-reconciliation](history-reconciliation.md)) and the key-group admission
+  (`admitNewcomer.ts`) apply the same rule.
+- **A `concurrent_commit` reads the commit log once** (`catchUpOnRefusedCommit`): its `currentEpoch` is
+  what the gate read while the winner held the lock, so "not ahead" is not an answer. A winner that
+  landed is applied - the progress the rebuild needs; one that did not leaves the epoch, and no gap is
+  marked. CC-4 lost an Add here: a leaf refresh accepted at epoch 3, the Add beside it refused with
+  `currentEpoch=2`, nothing rebuilt.
+- **No progress is surfaced, or kept durable - never dropped.** An invitation is a gesture with no
+  durable row (a new person enters only by a member's own Add), so its refusal comes back as a typed
+  reason - `commit-race-lost`, `add-lock-busy` - and every reason is a sentence the member sees
+  (`reportBulkAdditionRefusal`); the member retries. A sweep's pending row is durable: a race without
+  progress, or a busy add lock, leaves it `pending` for the next sweep.
+
+Not covered: the welcome_request handler (`actions.ts`, the requester asks again by itself), and a
+`concurrent_commit` whose winner has not landed when the log is read - an event-driven wait for the
+winner's epoch is the candidate ([backlog](../backlog.md)).
+
 ### Group reset - THERE IS NONE, AND EVERY PIECE THIS SECTION DESCRIBED IS GONE
 
 > Every state and transition on this page is drawn, with its `file:line`, on

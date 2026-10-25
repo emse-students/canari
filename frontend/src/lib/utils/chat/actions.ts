@@ -49,7 +49,8 @@ import {
 } from '$lib/utils/chat/groupSweep';
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
+import { rebuildOnRace } from './commitRace';
 import { sameDeviceIdentity, treeHoldsDevice, treeHoldsUser } from '$lib/mls-client/leafIdentity';
 import {
   DeviceTrustRefusedError,
@@ -579,11 +580,23 @@ export async function processPendingInvitations(params: {
           // or roll back on reject. A rejected commit throws WITHOUT advancing the local epoch (no
           // fork) and is handled by the outer catch as a benign retryable failure; the Welcome is
           // only sent once the commit is accepted. [[C7]]
+          //
+          // A LOST RACE IS REBUILT ON PROVEN PROGRESS (`rebuildOnRace`, the rule every gesture
+          // shares): the refusal's catch-up moved the epoch, so the Add is staged again on the tree
+          // that won. One that proved nothing reaches the catch below, and the row stays pending.
           packageAdded = targetDevice.keyPackage;
-          const result = await mlsService.addMember(
+          const device = targetDevice;
+          const result = await rebuildOnRace(
+            mlsService,
             groupId,
-            { keyPackage: targetDevice.keyPackage, userId: inv.userId, deviceId: inv.deviceId },
-            [`${inv.userId}:${inv.deviceId}`]
+            `the pending Add of ${inv.deviceId}`,
+            () =>
+              mlsService.addMember(
+                groupId,
+                { keyPackage: device.keyPackage, userId: inv.userId, deviceId: inv.deviceId },
+                [`${inv.userId}:${inv.deviceId}`]
+              ),
+            log
           );
 
           // Register member on server (upsert GroupMember row), keeping server state up to date.
@@ -670,9 +683,11 @@ export async function processPendingInvitations(params: {
               );
             }
           } else if (
-            // The server's refusal is TYPED (`CommitRefusedError`); `WrongEpoch` is openmls's own
-            // error, raised inside the WASM engine with no type crossing that boundary.
-            (e instanceof CommitRefusedError && e.reason === 'epoch_mismatch') ||
+            // The server's refusal is TYPED (`isCommitRaceRefusal`: `epoch_mismatch` AND
+            // `concurrent_commit`, one race seen at two instants - CC-4 lost an Add to the second);
+            // `WrongEpoch` is openmls's own error, raised inside the WASM engine with no type
+            // crossing that boundary.
+            isCommitRaceRefusal(e) ||
             errStr.includes('WrongEpoch')
           ) {
             // Transient concurrent race (gap 1): another device committed simultaneously.

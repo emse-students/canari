@@ -96,6 +96,8 @@ function mls(overrides: Record<string, unknown> = {}) {
     endBulkIngest: vi.fn(),
     acquireAddLock: vi.fn(async () => true),
     releaseAddLock: vi.fn(async () => {}),
+    // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
+    getGroupMemberIdentities: vi.fn(async () => [] as string[]),
     addMembersBulk: vi.fn(async () => ({
       addedDeviceIds: [],
       skipped: [],

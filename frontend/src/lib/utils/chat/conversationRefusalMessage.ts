@@ -1,5 +1,5 @@
 import { m } from '$lib/paraglide/messages';
-import type { ConversationRefusal } from '$lib/utils/chat/groupCreation';
+import type { BulkAdditionRefusal, ConversationRefusal } from '$lib/utils/chat/groupCreation';
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { showToast } from '$lib/stores/toast.svelte';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
@@ -78,4 +78,28 @@ export function reportMemberRemovalFailure(e: unknown): 'recorded' | 'not-remove
   }
   showToast(m.chat_group_remove_member_failed());
   return 'not-removed';
+}
+
+/** Every way an invitation can add nobody, as a sentence - total for the reason the file gives. */
+const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
+  'nobody-named': () => m.chat_invite_error_nobody_named(),
+  'nobody-reachable': () => m.chat_invite_error_nobody_reachable(),
+  'no-devices': () => m.chat_invite_error_no_devices(),
+  'add-lock-busy': () => m.chat_invite_error_add_lock_busy(),
+  'no-device-added': () => m.chat_invite_error_no_device_added(),
+  'commit-race-lost': () => m.chat_invite_error_commit_race_lost(),
+  failed: () => m.chat_invite_error_failed(),
+};
+
+/**
+ * Tells the member that an invitation they made added nobody, and why - read from the outcome's
+ * `reason`, never a log. AN INVITATION IS A GESTURE WITH NO DURABLE ROW: a new person enters only by
+ * a member's own Add (2026-10-23), so a refused one - a lost race, a busy add lock - is not retried by
+ * any sweep, and the member is the one who retries. Saying nothing is how CC-4 lost an Add for good.
+ *
+ * @param reason - the refusal `inviteMembersToGroup` returned.
+ */
+export function reportBulkAdditionRefusal(reason: BulkAdditionRefusal): void {
+  console.warn(`[GROUP] an invitation added nobody (${reason})`);
+  showToast(INVITE_SENTENCES[reason]());
 }

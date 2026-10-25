@@ -16,6 +16,8 @@ import { isBlockedWith } from '$lib/users/blocks';
 import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
+import { isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
+import { addDevicesRebuildingOnRace } from './commitRace';
 
 /** Dependencies injected into all group-creation and conversation-management helpers. */
 interface GroupCreationDeps {
@@ -196,24 +198,33 @@ export async function createNewGroup(
     if (ownDevices.length > 0) {
       const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
       try {
-        // Staged transaction (C7-A): exclude every candidate device from the commit broadcast (the
-        // added subset receives the Welcome instead; skipped devices are not in the group anyway).
-        const excludeIds = ownDevices.map((d) => `${userId}:${d.deviceId}`);
-        const bulk = await mlsService.addMembersBulk(groupId, ownDevices, excludeIds);
-        log(
-          `[GROUP] addMembersBulk result: welcome=${!!bulk.welcome} (${bulk.welcome?.length ?? 0} bytes), added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')})`
-        );
-        warnSkippedKeyPackages(bulk.skipped, groupId, '[GROUP]', log);
-
-        // All added devices belong to the current user; deliveries run in parallel.
-        await deliverWelcomes({
+        // Staged transaction (C7-A), rebuilt on a lost race (`commitRace.ts`): exclude every
+        // candidate device from the commit broadcast (the added subset receives the Welcome
+        // instead; skipped devices are not in the group anyway). Own devices that joined by their
+        // own external commit meanwhile already hold a leaf, and are not added twice.
+        const raced = await addDevicesRebuildingOnRace(
           mlsService,
           groupId,
-          bulk,
-          ownerOf: () => userId,
-          tag: '[GROUP]',
-          log,
-        });
+          ownDevices.map((d) => ({ ...d, userId })),
+          log
+        );
+        if (raced.kind === 'added') {
+          const bulk = raced;
+          log(
+            `[GROUP] addMembersBulk result: welcome=${!!bulk.welcome} (${bulk.welcome?.length ?? 0} bytes), added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')})`
+          );
+          warnSkippedKeyPackages(bulk.skipped, groupId, '[GROUP]', log);
+
+          // All added devices belong to the current user; deliveries run in parallel.
+          await deliverWelcomes({
+            mlsService,
+            groupId,
+            bulk,
+            ownerOf: () => userId,
+            tag: '[GROUP]',
+            log,
+          });
+        }
 
         // Save MLS state after the merged commit (crash-safety).
         await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
@@ -303,6 +314,11 @@ export type BulkAdditionRefusal =
   | 'add-lock-busy'
   /** The commit added no device - every key package was skipped (logged per device). */
   | 'no-device-added'
+  /**
+   * The Add commit lost a race (`epoch_mismatch` / `concurrent_commit`) and no progress was proven,
+   * so it was not rebuilt: nothing was added, the invite can be retried.
+   */
+  | 'commit-race-lost'
   /** Something threw before the commit merged (logged). */
   | 'failed';
 
@@ -414,16 +430,19 @@ async function processBulkAddition(
     const announcedUsers = new Set<string>();
 
     try {
-      // Add all devices in one staged MLS commit (C7-A): exclude every candidate device from the
-      // commit broadcast (the added subset receives the Welcome instead; skipped devices are not in
-      // the group anyway). The stage -> validate -> merge -> broadcast runs inside addMembersBulk.
-      const excludeIds = allDevices
-        .map((d) => {
-          const uid = userMap.get(d.deviceId);
-          return uid ? `${uid}:${d.deviceId}` : null;
-        })
-        .filter((s): s is string => s !== null);
-      const bulk = await mlsService.addMembersBulk(conversation.id, allDevices, excludeIds);
+      // Add all devices in one staged MLS commit (C7-A), REBUILT ON A LOST RACE (`commitRace.ts`):
+      // a refusal whose catch-up moved the epoch is staged again on the tree that won, offering only
+      // the devices still without a leaf (CC-1, CC-4). Every candidate is excluded from the commit
+      // broadcast (the added subset receives the Welcome instead).
+      const raced = await addDevicesRebuildingOnRace(mlsService, conversation.id, allDevices, log);
+      if (raced.kind === 'already-in-tree') {
+        // The commit that won admitted every one of them: their Welcome and registration were its
+        // author's. The Add is done, and nothing is announced twice.
+        addedUsers = new Set(allDevices.map((d) => d.userId));
+        log(`[SYNC] every invited device already holds a leaf - added by another member's commit`);
+        return { kind: 'added', addedUsers: [...addedUsers] };
+      }
+      const bulk = raced;
       warnSkippedKeyPackages(bulk.skipped, conversation.id, '[SYNC]', log);
 
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
@@ -497,6 +516,16 @@ async function processBulkAddition(
   } catch (e: any) {
     // The one failure the member can act on, so it reaches them (`inviteMembersToCurrentGroup`).
     if (e instanceof FollowerTabCommitError) throw e;
+    // A RACE THAT PROVED NO PROGRESS (`rebuildableRefusal` declined it): another commit held or took
+    // the epoch and this device could not see it land, so nothing was added and nothing may be
+    // guessed. Its own reason, so the member is told to retry rather than that the Add broke.
+    if (isCommitRaceRefusal(e) && (addedUsers === null || addedUsers.size === 0)) {
+      log(
+        `[SYNC] the Add lost a commit race without proof of progress (${e.reason}) - nobody added`
+      );
+      console.warn(`[SYNC] processBulkAddition: race refusal ${e.reason} on ${conversation.id}`);
+      return notAdded('commit-race-lost');
+    }
     log(`Bulk invite error: ${String(e)}`);
     console.error('[SYNC] processBulkAddition failed:', e);
     // A throw AFTER the commit merged does not unmake the Add: the users are in the tree.
@@ -525,14 +554,22 @@ async function performDirectAdd(
 
   const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
   try {
-    // Staged transaction (C7-A): exclude every candidate device from the commit broadcast (the
-    // added subset receives the Welcome instead). stage -> validate -> merge -> broadcast is
-    // handled inside addMembersBulk.
-    const excludeIds = allDevices.map((d) => {
-      const owner = contactDeviceIds.has(d.deviceId) ? contact : userId;
-      return `${owner}:${d.deviceId}`;
-    });
-    const bulk = await mlsService.addMembersBulk(groupId, allDevices, excludeIds);
+    // Staged transaction (C7-A), rebuilt on a lost race (`commitRace.ts`); every candidate device
+    // is excluded from the commit broadcast (the added subset receives the Welcome instead).
+    const raced = await addDevicesRebuildingOnRace(
+      mlsService,
+      groupId,
+      allDevices.map((d) => ({
+        ...d,
+        userId: contactDeviceIds.has(d.deviceId) ? contact : userId,
+      })),
+      log
+    );
+    if (raced.kind === 'already-in-tree') {
+      log(`[ADD] every device already holds a leaf in ${groupId} - nothing to add`);
+      return;
+    }
+    const bulk = raced;
     log(`[ADD] ${bulk.addedDeviceIds.length} device(s), welcome=${!!bulk.welcome}`);
     warnSkippedKeyPackages(bulk.skipped, groupId, '[ADD]', log);
 

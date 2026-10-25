@@ -5,6 +5,7 @@ import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { m } from '$lib/paraglide/messages';
 import {
   conversationRefusalMessage,
+  reportBulkAdditionRefusal,
   reportFollowerTabRefusal,
   reportMemberRemovalFailure,
 } from './conversationRefusalMessage';
@@ -76,5 +77,27 @@ describe('reportMemberRemovalFailure', () => {
       'not-removed'
     );
     expect(showToast).toHaveBeenCalledWith(m.chat_group_remove_member_failed());
+  });
+});
+
+/**
+ * AN INVITATION THAT ADDED NOBODY IS TOLD, NEVER ONLY LOGGED: a gesture has no durable row, so the
+ * member is the one who retries it - a busy add lock and a lost race included (CC-4).
+ */
+describe('reportBulkAdditionRefusal', () => {
+  beforeEach(() => {
+    showToast.mockReset();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('tells the member a busy add lock refused the invitation, so they retry it', () => {
+    reportBulkAdditionRefusal('add-lock-busy');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_invite_error_add_lock_busy());
+  });
+
+  it('tells the member a lost commit race added nobody', () => {
+    reportBulkAdditionRefusal('commit-race-lost');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_invite_error_commit_race_lost());
   });
 });

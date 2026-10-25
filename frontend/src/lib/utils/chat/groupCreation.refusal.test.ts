@@ -75,6 +75,8 @@ function dmDeps() {
     getLocalGroups: vi.fn(() => Array.from(local)),
     acquireAddLock: vi.fn(async () => true),
     releaseAddLock: vi.fn(async () => {}),
+    // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
+    getGroupMemberIdentities: vi.fn(async () => [] as string[]),
     addMembersBulk: vi.fn(async () => ({
       addedDeviceIds: ['peer-dev'],
       skipped: [],
@@ -141,6 +143,8 @@ describe('createNewGroup names its refusal', () => {
       fetchUserDevices: vi.fn(async () => [{ deviceId: 'dev-2' }]),
       acquireAddLock: vi.fn(async () => true),
       releaseAddLock: vi.fn(async () => {}),
+      // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
+      getGroupMemberIdentities: vi.fn(async () => [] as string[]),
       addMembersBulk: vi.fn(async () => {
         throw new FollowerTabCommitError('g-new');
       }),
