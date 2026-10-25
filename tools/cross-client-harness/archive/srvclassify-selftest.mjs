@@ -187,6 +187,11 @@ const BENIGN_CASES = [
   // the lock (`released=true ... owed=true`, the generic success rule): #2426's final line, head 46dac424d.
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=owner-legacy via=jwt owed=true`,
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=true by=token via=jwt owed=true`,
+  // The hourly live-report age report: its start, an empty queue, a queue inside the commitment
+  // (KILL-1's window, dev, 2026-10-25). Its past-the-commitment twin is `error`, controlled below.
+  '[Nest] 1  - 10/25/2026, 6:53:00 AM   DEBUG [LiveReportAgeScheduler] [LIVE_REPORT_AGE] reading the pending live reports',
+  '[Nest] 1  - 10/25/2026, 6:53:00 AM     LOG [LiveReportAgeScheduler] [LIVE_REPORT_AGE] pending=0',
+  '[Nest] 1  - 10/25/2026, 6:53:00 AM     LOG [LiveReportAgeScheduler] [LIVE_REPORT_AGE] pending=2 overdue=0 oldest=3.5h working (14h wall), inside the 24h',
   // A LOGIN. Every phase that starts, reloads or reconnects a client mints one; the security signal
   // on this service is `Refresh token replay detected`, which is SEVERE and asserted apart.
   `${NEST}[AuthSessionsService] Session opened sid=00000000-0000-4000-8000-000000000001 user=aaaaaaaaaaaaaaaa`,
@@ -309,6 +314,14 @@ for (const l of [
   const ok = !matches(NOTABLE_RULES, owed);
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} owed release is not a slow Add`);
+}
+
+// THE OVERDUE LIVE REPORT IS NOT BENIGN: the store commitment broken is the report's whole point.
+{
+  const overdue = '[Nest] 1  - 10/25/2026, 6:53:00 AM   ERROR [LiveReportAgeScheduler] [LIVE_REPORT_AGE] pending=2 overdue=1 oldest=30h working (40h wall): 1 live report(s) past the 24h working-day commitment to the stores - answer them in /admin/moderation';
+  const ok = !matches(BENIGN_RULES, overdue);
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} an overdue live report is not benign`);
 }
 
 for (const l of NOTABLE_CASES) {

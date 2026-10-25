@@ -84,6 +84,12 @@ const BENIGN = [
   /\[RELEASE_LOCK\] group=\S+ owner=\S+ released=false by=(token|owner-legacy) via=(jwt|push) owed=true\s*$/,
   // A membership read. It answers a question; it changes nothing.
   /\[MembersController\] \[GET_USER_MEMBERS\] group=\S+ count=\d+/,
+  // THE HOURLY LIVE-REPORT AGE REPORT (`live-report-age.scheduler.ts`, minute 53): its start, an empty
+  // queue, and a queue still inside the working-hours commitment. A report PAST it is `error` and
+  // stays a finding - so only the `inside the Nh` ending is matched, anchored (KILL-1, 2026-10-25).
+  /\[LiveReportAgeScheduler\] \[LIVE_REPORT_AGE\] reading the pending live reports\s*$/,
+  /\[LiveReportAgeScheduler\] \[LIVE_REPORT_AGE\] pending=0\s*$/,
+  /\[LiveReportAgeScheduler\] \[LIVE_REPORT_AGE\] pending=\d+ overdue=0 oldest=[\d.]+h working \([\d.]+h wall\), inside the [\d.]+h\s*$/,
   // Presence, which every connected client refreshes continuously. CASE-INSENSITIVE because the
   // gateway writes `[presence]` and the delivery service `[Presence]`, and the capitalised pattern
   // left every one of the gateway's 55 presence lines in `unexplained` for the whole campaign.
