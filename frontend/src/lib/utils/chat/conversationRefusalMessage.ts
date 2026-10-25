@@ -121,22 +121,27 @@ export function reportBulkAdditionRefusal(reason: BulkAdditionRefusal): void {
  * Tells the member how an invitation they made BEFORE A LOST CONNECTION ended, once its kept commit
  * was found not to have landed and it was re-planned (`replanLostInvitation`). Named after the
  * conversation, since the member is no longer looking at it. Silent when it completed - the member
- * list shows it - and when its commit is kept again, which ends here later.
+ * list shows it - when its commit is kept again, and when it waits: both end here later.
+ *
+ * Only a refusal re-inviting could lift says "invite them again": a gate refusal (`refused`, e.g.
+ * `committer_not_member`) and a retired conversation have their own sentences.
  *
  * @param outcome - what the re-plan came to.
- * @param conversationName - the conversation's display name.
+ * @param conversation - the conversation's display name.
  */
-export function reportLostInvitation(
-  outcome: LostInvitationOutcome,
-  conversationName: string
-): void {
-  if (outcome.kind !== 'not-completed') return;
+export function reportLostInvitation(outcome: LostInvitationOutcome, conversation: string): void {
+  if (outcome.kind === 'completed' || outcome.kind === 'kept' || outcome.kind === 'waiting') return;
+  const why = outcome.kind === 'not-completed' ? outcome.reason : outcome.kind;
   console.warn(
-    `[INVITE_OWED] the member is told: an invitation lost a connection ago was not completed (${outcome.reason})`
+    `[INVITE_OWED] the member is told: an invitation lost a connection ago was not completed (${why}${outcome.kind === 'refused' ? `: ${outcome.reason ?? 'no reason'}` : ''})`
   );
-  showToast(
-    outcome.reason === 'removed-meanwhile'
-      ? m.chat_invite_resumed_removed_meanwhile({ conversation: conversationName })
-      : m.chat_invite_resumed_failed({ conversation: conversationName })
-  );
+  if (outcome.kind === 'refused') {
+    showToast(m.chat_invite_resumed_refused({ conversation }));
+  } else if (outcome.kind === 'conversation-gone') {
+    showToast(m.chat_invite_resumed_conversation_gone({ conversation }));
+  } else if (outcome.reason === 'removed-meanwhile') {
+    showToast(m.chat_invite_resumed_removed_meanwhile({ conversation }));
+  } else {
+    showToast(m.chat_invite_resumed_failed({ conversation }));
+  }
 }

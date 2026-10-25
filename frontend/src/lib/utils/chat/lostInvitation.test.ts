@@ -10,6 +10,17 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
 }));
 
+/** The catch-up a confirmation runs, replaced only by the case that needs one (see there). */
+const catchUp = vi.hoisted(() => ({ run: null as null | (() => Promise<unknown>) }));
+vi.mock('./commitReplay', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./commitReplay')>();
+  return {
+    ...real,
+    replayAndRecord: (...args: Parameters<typeof real.replayAndRecord>) =>
+      catchUp.run ? catchUp.run() : real.replayAndRecord(...args),
+  };
+});
+
 import { inviteMembersToGroup, replanLostInvitation } from './groupCreation';
 import {
   CommitOutcomeUnknownError,
@@ -96,7 +107,10 @@ describe('replanLostInvitation - the invitation a kept commit lost', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    catchUp.run = null;
+    vi.restoreAllMocks();
+  });
 
   it('OFF-3: re-issues the Add ONCE at epoch 5, and W5 ends with a seat', async () => {
     const h = harness();
@@ -128,6 +142,38 @@ describe('replanLostInvitation - the invitation a kept commit lost', () => {
     const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
 
     expect(outcome).toEqual({ kind: 'not-completed', reason: 'removed-meanwhile' });
+    expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('ADDED AND REMOVED BY OTHERS IN COMMITS THIS DEVICE HAS NOT APPLIED YET: read after the catch-up, never re-added', async () => {
+    const h = harness();
+    // Back from the absence at epoch 2; the server is at 5. W2 added W5 at 3 and removed them at 4 -
+    // commits only the catch-up applies, so before it the tree's record shows no departure, and the
+    // tree (W5 holds no leaf) would need no confirmation at all.
+    let local = 2;
+    h.mlsService.getEpoch.mockImplementation(() => local);
+    h.mlsService.fetchCommitsSince.mockImplementation(async () => ({
+      commits: [],
+      activeEpoch: 5,
+      belowFloor: false,
+    }));
+    catchUp.run = async () => {
+      local = 5;
+      h.departures.set('w5', [4]);
+      return { healed: true, belowFloor: false, applied: 3, heldBehindRefusedBacklog: false };
+    };
+    const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-completed', reason: 'removed-meanwhile' });
+    expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('another device holds the add lock: WAITING - nothing staged, the invitation is not over', async () => {
+    const h = harness();
+    h.mlsService.acquireAddLock.mockResolvedValueOnce(false);
+    const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'waiting' });
     expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
 
@@ -164,15 +210,15 @@ describe('replanLostInvitation - the invitation a kept commit lost', () => {
     expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
 
-  it('a commit the gate refused for its bytes is not re-planned - the member is told', async () => {
+  it('a commit the gate refused (its typed reason) is not re-planned - the member is told why', async () => {
     const h = harness();
     const outcome = await replanLostInvitation(
-      owed({ cause: 'refused' }),
+      owed({ cause: 'refused', reason: 'committer_not_member' }),
       { id: G } as never,
       h.deps as never
     );
 
-    expect(outcome).toEqual({ kind: 'not-completed', reason: 'failed' });
+    expect(outcome).toEqual({ kind: 'refused', reason: 'committer_not_member' });
     expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
 

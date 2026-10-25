@@ -137,9 +137,27 @@ describe('reportLostInvitation and the kept invitation', () => {
     );
   });
 
-  it('says nothing when it completed, or when its commit is kept again', () => {
+  it('a GATE refusal (committer_not_member) never asks to invite again - re-inviting cannot work', () => {
+    reportLostInvitation({ kind: 'refused', reason: 'committer_not_member' }, 'Team');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_resumed_refused({ conversation: 'Team' })
+    );
+    expect(m.chat_invite_resumed_refused({ conversation: 'Team' })).not.toBe(
+      m.chat_invite_resumed_failed({ conversation: 'Team' })
+    );
+  });
+
+  it('a retired conversation is said as gone', () => {
+    reportLostInvitation({ kind: 'conversation-gone' }, 'Team');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_invite_resumed_conversation_gone({ conversation: 'Team' })
+    );
+  });
+
+  it('says nothing when it completed, when its commit is kept again, or while it waits', () => {
     reportLostInvitation({ kind: 'completed' }, 'Team');
     reportLostInvitation({ kind: 'kept' }, 'Team');
+    reportLostInvitation({ kind: 'waiting' }, 'Team');
     expect(showToast).not.toHaveBeenCalled();
   });
 });

@@ -34,8 +34,15 @@ import type { CommitInvitation } from './commitSubmission';
 export type LostInvitationCause =
   /** Another commit took its epoch (`epoch_mismatch`, or the log at its base): re-planned. */
   | 'race'
-  /** The gate refused the bytes themselves (a 4xx): not re-planned - the member is told. */
+  /**
+   * The gate refused it for any other reason - a business refusal in a 200 body (`departed`,
+   * `welcome_target_not_member`, ...) or a 4xx: the same invitation would meet the same answer, so
+   * it is not re-planned and the member is told.
+   */
   | 'refused';
+
+/** The one reason a lost commit is a RACE: the gate's typed refusal, never the shape of its answer. */
+export const RACE_REFUSAL_REASON = 'epoch_mismatch';
 
 /** One lost invitation, owed a re-plan (or a word) - see the module doc. */
 export interface OwedInvitation {
@@ -44,13 +51,28 @@ export interface OwedInvitation {
   baseEpoch: number;
   invitation: CommitInvitation;
   cause: LostInvitationCause;
+  /** The gate's refusal reason, or a 4xx's code, as answered - what the member is told on `refused`. */
+  reason?: string;
 }
 
 /**
- * Re-plans one lost invitation and tells the member every ending it does not complete. MUST NOT
- * throw: its entry is dropped once it returns, so a throw is a loss nobody hears of.
+ * What a re-plan came to, for the record:
+ * - `concluded`: it ended - completed, or the member was told why not - and the entry leaves;
+ * - `waiting`: it cannot run YET (the conversation is not restored or not active, another device
+ *   holds the group's add lock) - the entry stays, and the event that lifts the wait drains it again.
  */
-export type OwedInvitationReplanner = (owed: OwedInvitation) => Promise<void>;
+export type ReplanVerdict = 'concluded' | 'waiting';
+
+/**
+ * Re-plans one lost invitation and tells the member every ending it does not complete. MUST NOT
+ * throw: a throw is a defect, and its entry is dropped like a concluded one.
+ */
+export type OwedInvitationReplanner = (owed: OwedInvitation) => Promise<ReplanVerdict>;
+
+/** Whether `userId` is owed a re-plan in `groupId` - the gate of an event-driven drain. */
+export function owesInvitationIn(userId: string, groupId: string): boolean {
+  return Object.values(readAll(userId)).some((o) => o.groupId === groupId);
+}
 
 /** The key of one entry:a group holds one staged commit at a time, each on its own epoch. */
 function entryKey(groupId: string, baseEpoch: number): string {
@@ -68,9 +90,10 @@ function isOwed(v: unknown): v is OwedInvitation {
 }
 
 function readAll(userId: string): Record<string, OwedInvitation> {
-  const raw = localStorage.getItem(ACCOUNT_KEY.owedInvitations(userId));
-  if (!raw) return {};
   try {
+    // Inside the try: a storage accessor that throws (blocked site data) is an unreadable record.
+    const raw = localStorage.getItem(ACCOUNT_KEY.owedInvitations(userId));
+    if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const out: Record<string, OwedInvitation> = {};
     for (const [k, v] of Object.entries(parsed ?? {})) {

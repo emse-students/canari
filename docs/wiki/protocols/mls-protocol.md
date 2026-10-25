@@ -656,28 +656,45 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
 - **The settlement records it BEFORE the clear** (`owedInvitations.ts`, `[INVITE_OWED]` lines), in
   the per-account `localStorage` record, synchronously, under the MLS lock - keyed by group and base
   epoch, so a stage a reload brings back is refused and recorded again under the SAME key.
+- **The cause is the gate's TYPED reason, never the shape of its answer.** A business refusal
+  (`committer_not_member`, `welcome_target_not_member`, `departed`, ...) comes back in a 200 body
+  exactly as the race does, so only `epoch_mismatch` is a `race` (re-planned); every other reason, and
+  a 4xx's code, is `refused` and recorded WITH its reason (told, never re-planned).
 - **It is re-planned after the lock is let go** (`replanOwedInvitations`, a single-flight drain):
   at once in session, and by a connection's settlement once EVERY kept stage is settled (a drain run
-  before would re-plan an invitation whose stage that settlement is about to record again). The
-  re-planner (`replanLostInvitation`, registered by `useConversations` once the conversations are
-  restored) is the invitation made again through `processBulkAddition`, under `rosterPremise` in its
-  resumed form: the RECORDED baseline (a person on the roster at the gesture and off it now - removed,
-  or a join ask declined - is `removed-meanwhile`), a departure this device merged after the lost
-  commit's base (`removalEpochs`, the case the live premise cannot see), and the first pass checked
-  too. A person already holding a leaf is not added twice (`already-in-tree`). The new commit carries
-  the ORIGINAL baseline, so a second loss is judged against the gesture's own start.
-- **Idempotent from durable state, not a clock.** The entry leaves only once the re-plan concluded.
+  before would re-plan an invitation whose stage that settlement is about to record again). **Never
+  while this device holds an add lock**: the server's lock is not re-entrant, so a re-plan run under
+  one would be refused its own and read as "busy" - the drain waits, and the release asks for it.
+- **The re-planner exists only on a RESTORED map** (`makeLostInvitationReplanner`, registered by
+  `useConversations` after a restore that succeeded, removed at sign-out). It answers what happens to
+  the entry (`ReplanVerdict`): a `pending` conversation, a row not there yet while the group is held,
+  or another device's add lock is `waiting` - the entry stays, and the event that lifts the wait
+  drains again (`notifyConversationAvailable`, a processed Welcome, an add lock released, the next
+  connection). A `removed` conversation is told as gone; no row and no group (the member deleted it)
+  concludes with a log.
+- **The re-plan is the invitation made again** through `processBulkAddition`, under `rosterPremise`
+  in its resumed form: the RECORDED baseline (a person on the roster at the gesture and off it now -
+  removed, or a join ask declined - is `removed-meanwhile`), a departure after the lost commit's base
+  (`removalEpochs`, the case the live premise cannot see), and the first pass checked too. **That
+  premise reads the tree's own record, so it runs on the tree CONFIRMED at the server's epoch**
+  (`premiseReadsTree`): before the catch-up, the Remove that undoes the invitation may sit in the very
+  commits not applied yet, and the Add would undo it. A person already holding a leaf is not added
+  twice (`already-in-tree`). The new commit carries the ORIGINAL baseline, so a second loss is judged
+  against the gesture's own start.
+- **Idempotent from durable state, not a clock.** The entry leaves only once the re-plan CONCLUDED.
   A reload in between re-plans it once more, and the confirmed tree answers `already-in-tree` if its
   Add had merged; a re-plan whose own Add is kept hands the invitation to THAT stage's intent.
 - **The member is told every ending that is not a seat.** The gesture whose Add got no answer now
   answers `outcome-unknown` ("will be finished once the connection is back"), not `failed`; one that
   staged nothing behind an EARLIER unanswered commit (`PreviousCommitUnresolvedError`) answers
   `previous-commit-unresolved`. A re-plan that does not complete is a toast naming the conversation
-  (`reportLostInvitation`); a commit the gate refused for its bytes (a 4xx, recorded `refused`) is
-  told, never re-planned.
+  (`reportLostInvitation`); only an ending a new invitation could lift says "invite them again" - a
+  gate refusal and a retired conversation have their own sentences.
 
-Not covered: a 1:1 creation and a group's own devices carry no invitation - their loss is not
-re-planned here.
+Not covered, in [backlog](../backlog.md): a 1:1 creation and a group's own devices carry no
+invitation; a kept commit is settled only by a connection, while the toast promises "once it is
+back"; and a re-plan that dies between its merge and its Welcomes finds `already-in-tree` next time
+and sends none.
 
 ### Group reset - THERE IS NONE, AND EVERY PIECE THIS SECTION DESCRIBED IS GONE
 

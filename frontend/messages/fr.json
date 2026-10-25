@@ -1476,6 +1476,8 @@
   "chat_invite_error_previous_commit_unresolved": "Une modification précédente de cette conversation attend encore la connexion : personne n'a été ajouté. Réessayez une fois la connexion revenue.",
   "chat_invite_resumed_removed_meanwhile": "L'ajout fait dans {conversation} avant la perte de connexion n'a pas abouti : une personne invitée a été retirée de la conversation entre-temps.",
   "chat_invite_resumed_failed": "L'ajout fait dans {conversation} avant la perte de connexion n'a pas pu aboutir. Invitez-les à nouveau.",
+  "chat_invite_resumed_refused": "L'ajout fait dans {conversation} avant la perte de connexion a été refusé par le serveur et n'a pas abouti.",
+  "chat_invite_resumed_conversation_gone": "L'ajout fait dans {conversation} avant la perte de connexion n'a pas abouti : vous ne faites plus partie de cette conversation.",
   "common_you_label": "Vous",
   "chat_group_no_members_label": "Aucun membre à afficher.",
   "chat_group_leave_button": "Quitter le groupe",

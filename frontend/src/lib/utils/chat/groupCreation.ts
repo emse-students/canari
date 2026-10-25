@@ -475,6 +475,10 @@ async function processBulkAddition(
       //
       // THE INVITATION RIDES IN THE COMMIT'S INTENT, with its roster baseline: a commit that is KEPT
       // (no answer) and then does not land is re-planned from it, never lost (`owedInvitations.ts`).
+      //
+      // A RESUMED invitation's premise reads the tree's own departures, so it is checked on the tree
+      // CONFIRMED at the server's epoch (`premiseReadsTree`): the Remove that undoes it may be in the
+      // very commits this device catches up on.
       const premise = await rosterPremise(mlsService, conversation.id, targetUsers, log, resumed);
       const raced = await addDevicesRebuildingOnRace(
         mlsService,
@@ -482,10 +486,13 @@ async function processBulkAddition(
         userId,
         allDevices,
         log,
-        premise.check,
         {
-          users: targetUsers,
-          ...(premise.rostered ? { rostered: premise.rostered } : {}),
+          confirmPremise: premise.check,
+          premiseReadsTree: resumed !== undefined,
+          invitation: {
+            users: targetUsers,
+            ...(premise.rostered ? { rostered: premise.rostered } : {}),
+          },
         }
       );
       if (raced.kind === 'already-in-tree') {
@@ -636,9 +643,10 @@ async function processBulkAddition(
  * **A RESUMED INVITATION (`resumed`) CHECKS ITS FIRST PASS TOO, AND SEES THAT CASE** - its gesture
  * was made before an absence, not a moment ago. Its baseline is the one recorded with the lost
  * commit (`CommitInvitation.rostered`), never a read made now, which would already lack the person
- * a Remove or a Decline took off; and a departure THIS device merged after the lost commit's base
+ * a Remove or a Decline took off; and a departure merged after the lost commit's base
  * (`removalEpochs`, read from the tree's own record) is a removal the invitation must not undo,
- * roster or not.
+ * roster or not. That record is only complete on a tree caught up to the server, so the resumed
+ * check runs AFTER the tree is confirmed (`premiseReadsTree`), never before.
  *
  * @returns the check, and the baseline to write into the commit's intent - the recorded one when
  *   resumed, so a second loss is still judged against the gesture's own start.
@@ -713,6 +721,19 @@ export type LostInvitationOutcome =
   | { kind: 'completed' }
   /** Its commit is kept in turn (no answer again): its own intent carries the invitation on. */
   | { kind: 'kept' }
+  /**
+   * It cannot run YET: another device holds the group's add lock. Nothing staged, the entry stays
+   * for the next drain - never a word to the member, the invitation is not over.
+   */
+  | { kind: 'waiting' }
+  /**
+   * The gate refused the lost commit for something other than a race - `reason` is its token
+   * (`committer_not_member`, `welcome_target_not_member`, ...). Not re-planned: the same invitation
+   * meets the same answer, so the member is told, never asked to invite again.
+   */
+  | { kind: 'refused'; reason: string | undefined }
+  /** The conversation was retired on this device (`lifecycle: 'removed'`): nobody can be added. */
+  | { kind: 'conversation-gone' }
   /** Nothing was added, for `reason` - the member is told. */
   | { kind: 'not-completed'; reason: BulkAdditionRefusal };
 
@@ -724,8 +745,10 @@ export type LostInvitationOutcome =
  * - one who already holds a leaf - another member's Add - is not added twice (`already-in-tree`);
  * - a tree that cannot be confirmed, or a roster that cannot be read, adds nobody.
  *
- * A `refused` loss (the gate refused the bytes themselves) is not re-planned: the same invitation
- * would meet the same refusal, so the member is told and decides.
+ * A `refused` loss (the gate refused it for anything but a race, its typed reason recorded) is not
+ * re-planned: the same invitation would meet the same refusal, so the member is told. Another
+ * device's add lock (`add-lock-busy`) is `waiting`: nothing was staged and the invitation is not
+ * over, so the entry stays for the next drain.
  *
  * @returns how it ended; it never throws but for a follower tab's refusal, which the drain never
  *   reaches (only the leader drains).
@@ -738,9 +761,9 @@ export async function replanLostInvitation(
   const short = owed.groupId.slice(0, 8);
   if (owed.cause === 'refused') {
     deps.log(
-      `[INVITE_OWED] ${short}... the invitation lost at epoch ${owed.baseEpoch} was refused by the gate - not re-planned, the member is told`
+      `[INVITE_OWED] ${short}... the invitation lost at epoch ${owed.baseEpoch} was refused by the gate (${owed.reason ?? 'no reason'}) - not re-planned, the member is told`
     );
-    return { kind: 'not-completed', reason: 'failed' };
+    return { kind: 'refused', reason: owed.reason };
   }
   const outcome = await processBulkAddition(owed.invitation.users, conversation, deps, {
     baseEpoch: owed.baseEpoch,
@@ -751,6 +774,7 @@ export async function replanLostInvitation(
   );
   if (outcome.kind === 'added') return { kind: 'completed' };
   if (outcome.reason === 'outcome-unknown') return { kind: 'kept' };
+  if (outcome.reason === 'add-lock-busy') return { kind: 'waiting' };
   return { kind: 'not-completed', reason: outcome.reason };
 }
 

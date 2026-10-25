@@ -1444,6 +1444,8 @@
   "chat_invite_error_previous_commit_unresolved": "An earlier change to this conversation is still waiting for the connection: nobody was added. Try again once you are back online.",
   "chat_invite_resumed_removed_meanwhile": "The invitation you made in {conversation} before the connection was lost was not completed: a person you invited was removed from the conversation meanwhile.",
   "chat_invite_resumed_failed": "The invitation you made in {conversation} before the connection was lost could not be completed. Invite them again.",
+  "chat_invite_resumed_refused": "The invitation you made in {conversation} before the connection was lost was refused by the server and was not completed.",
+  "chat_invite_resumed_conversation_gone": "The invitation you made in {conversation} before the connection was lost was not completed: you are no longer in that conversation.",
   "common_you_label": "You",
   "chat_group_no_members_label": "No members to display.",
   "chat_group_leave_button": "Leave group",

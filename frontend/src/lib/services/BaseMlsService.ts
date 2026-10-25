@@ -211,10 +211,13 @@ import {
 } from '$lib/mls-client/commitSubmission';
 import {
   listOwedInvitations,
+  owesInvitationIn,
+  RACE_REFUSAL_REASON,
   recordOwedInvitation,
   settleOwedInvitation,
   type LostInvitationCause,
   type OwedInvitationReplanner,
+  type ReplanVerdict,
 } from '$lib/mls-client/owedInvitations';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
@@ -2058,6 +2061,8 @@ export abstract class BaseMlsService implements IMlsService {
       `conversation ${groupId.slice(0, 8)}… now exists`,
       groupId
     );
+    // A lost invitation that waited for this conversation to exist can be re-planned now.
+    this.replanOwedInvitationsIn(groupId, 'conversation available');
   }
 
   /** Runs `fn` under the global MLS client mutex (shared with the drain and catch-up sessions). */
@@ -2459,6 +2464,9 @@ export abstract class BaseMlsService implements IMlsService {
               );
             } else {
               this.welcomeProcessedCallback?.(groupId);
+              // A re-admission's Welcome is what makes a `pending` conversation active again: a
+              // lost invitation that waited for it can be re-planned now.
+              this.replanOwedInvitationsIn(groupId, 'Welcome processed');
             }
             welcomedGroups.push(groupId);
           }
@@ -3639,11 +3647,30 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   async acquireAddLock(groupId: string): Promise<boolean> {
-    return this.delivery.acquireAddLock(groupId);
+    const acquired = await this.delivery.acquireAddLock(groupId);
+    if (acquired) this.addLocksHeld.add(groupId);
+    return acquired;
   }
 
+  /**
+   * Releases the group's add lock - and, once this device holds none, drains the lost invitations a
+   * held lock deferred ({@link replanOwedInvitations}): the server's lock is not re-entrant, so a
+   * re-plan run under one would be refused its own. Forgotten locally BEFORE the request: a release
+   * that fails leaves the server's lock to its expiry either way.
+   */
   async releaseAddLock(groupId: string): Promise<void> {
-    return this.delivery.releaseAddLock(groupId);
+    this.addLocksHeld.delete(groupId);
+    try {
+      return await this.delivery.releaseAddLock(groupId);
+    } finally {
+      if (
+        this.addLocksHeld.size === 0 &&
+        this.owedInvitationReplanner &&
+        listOwedInvitations(this.userId).length > 0
+      ) {
+        this.replanOwedInvitations('add lock released');
+      }
+    }
   }
 
   async createRemoteGroup(name: string, isGroup = true): Promise<string> {
@@ -4893,13 +4920,20 @@ export abstract class BaseMlsService implements IMlsService {
       await this.mergeSettled(submission);
       return 'merged';
     }
-    // A REFUSAL WITH AN ANSWER IS THE RACE (`epoch_mismatch`: another commit holds the epoch); one
-    // without is the gate refusing the bytes (a 4xx). Recorded BEFORE the clear, which erases the
-    // invitation's only other copy (`owedInvitations.ts`).
+    // CLASSIFIED BY THE GATE'S TYPED REASON: `epoch_mismatch` is the race (another commit holds the
+    // epoch). Every other refusal - a business refusal in a 200 body (`departed`,
+    // `welcome_target_not_member`, ...) or a 4xx - would meet the same answer again. Recorded BEFORE
+    // the clear, which erases the invitation's only other copy (`owedInvitations.ts`).
+    const reason =
+      answer.answer?.reason ??
+      (answer.error instanceof ApiRefusalError
+        ? (answer.error.code ?? `http_${answer.error.status}`)
+        : undefined);
     const owed = this.oweLostInvitation(
       read.status === 'recorded' ? read.record : null,
       submission,
-      answer.answer ? 'race' : 'refused'
+      reason === RACE_REFUSAL_REASON ? 'race' : 'refused',
+      reason
     );
     await this.clearPendingCommit(groupId).catch((e: unknown) => {
       // Still staged, so still unresolved: the next settlement reads it again.
@@ -4926,14 +4960,21 @@ export abstract class BaseMlsService implements IMlsService {
   private oweLostInvitation(
     record: StagedRecord | null,
     submission: CommitSubmission,
-    cause: LostInvitationCause
+    cause: LostInvitationCause,
+    reason?: string
   ): boolean {
     const invitation = record ? invitationOf(record) : null;
     if (!invitation) return false;
     const { groupId, baseEpoch } = submission;
-    recordOwedInvitation(this.userId, { groupId, baseEpoch, invitation, cause });
+    recordOwedInvitation(this.userId, {
+      groupId,
+      baseEpoch,
+      invitation,
+      cause,
+      ...(reason ? { reason } : {}),
+    });
     console.log(
-      `[INVITE_OWED] ${groupId.slice(0, 8)}... the Add of ${invitation.users.length} invited person(s) staged on epoch ${baseEpoch} did not land (${cause}) - recorded, ${cause === 'race' ? 're-planned at the new epoch' : 'the member is told'}`
+      `[INVITE_OWED] ${groupId.slice(0, 8)}... the Add of ${invitation.users.length} invited person(s) staged on epoch ${baseEpoch} did not land (${cause}${reason ? `: ${reason}` : ''}) - recorded, ${cause === 'race' ? 're-planned at the new epoch' : 'not re-planned, the member is told'}`
     );
     return true;
   }
@@ -4950,11 +4991,16 @@ export abstract class BaseMlsService implements IMlsService {
   private connectionSettling = false;
   /** A connection's settlement has completed in this session (see the registration). */
   private connectionSettled = false;
+  /**
+   * The groups whose add lock THIS device holds. The server's lock is not re-entrant (one holder
+   * per group, this device included), so a re-plan run while one is held is refused its own lock:
+   * the drain waits for the release instead ({@link releaseAddLock}).
+   */
+  private readonly addLocksHeld = new Set<string>();
 
   /** See {@link IMlsService.setOwedInvitationReplanner}. */
   setOwedInvitationReplanner(replanner: OwedInvitationReplanner | null): void {
     this.owedInvitationReplanner = replanner;
-    console.log(`[INVITE_OWED] re-planner ${replanner ? 'registered' : 'removed'}`);
     // Drained by the connection's settlement, once it has settled every kept stage. A re-planner that
     // arrives after that settlement drains at once, while the gateway answers; one that arrives
     // before it leaves the drain to it - draining first would re-plan an invitation whose stage that
@@ -4965,21 +5011,36 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * Hands every owed invitation to the re-planner, one at a time, and drops each entry once its
-   * re-plan concluded - whatever it came to, since the re-planner tells the member every ending it
-   * does not complete. NEVER AWAITED BY A LOCK HOLDER: the re-plan takes the MLS lock itself.
+   * Drains again when an event lifts what a waiting entry waits on in `groupId` - its conversation
+   * became available - and only if something is owed there, so the event costs nothing otherwise.
+   */
+  private replanOwedInvitationsIn(groupId: string, why: string): void {
+    // Without a re-planner there is nothing to drain into: its registration drains instead.
+    if (!this.owedInvitationReplanner) return;
+    if (owesInvitationIn(this.userId, groupId)) this.replanOwedInvitations(why);
+  }
+
+  /**
+   * Hands every owed invitation to the re-planner, one at a time, and drops each entry whose re-plan
+   * CONCLUDED - the re-planner tells the member every ending it does not complete. An entry that must
+   * WAIT (`ReplanVerdict`) stays, for the event that lifts its wait. NEVER AWAITED BY A LOCK HOLDER:
+   * the re-plan takes the MLS lock itself.
    *
-   * Nothing runs without a re-planner or on a follower tab (only the leader commits): the entries
-   * stay for the next drain. A drain asked while one runs runs once more after it, so an entry
-   * recorded meanwhile - the re-plan's own Add lost in turn - is not left behind.
+   * Nothing runs without a re-planner, on a follower tab (only the leader commits), or while this
+   * device holds an add lock: the entries stay for the next drain, and the release asks for it. A
+   * drain asked while one runs runs once more after it, so an entry recorded meanwhile - the
+   * re-plan's own Add lost in turn - is not left behind.
    */
   protected replanOwedInvitations(why: string): void {
     // A connection's settlement drains once it has settled EVERY kept stage (see there).
     if (this.connectionSettling) return;
+    // Asked while one runs - its own re-plans hold add locks, so this comes first.
     if (this.owedInvitationDrain) {
       this.owedInvitationDrainAgain = true;
       return;
     }
+    // The release of the last one drains (`releaseAddLock`).
+    if (this.addLocksHeld.size > 0) return;
     const drain = async () => {
       do {
         this.owedInvitationDrainAgain = false;
@@ -5015,15 +5076,17 @@ export abstract class BaseMlsService implements IMlsService {
       console.log(
         `[INVITE_OWED] ${entry.groupId.slice(0, 8)}... re-planning the invitation lost at epoch ${entry.baseEpoch} (${entry.cause}, ${why})`
       );
+      let verdict: ReplanVerdict;
       try {
-        await replanner(entry);
+        verdict = await replanner(entry);
       } catch (e) {
         // The re-planner reports every ending itself; a throw is a defect of it, said as one.
         console.error(
           `[INVITE_OWED] ${entry.groupId.slice(0, 8)}... the re-plan of the invitation lost at epoch ${entry.baseEpoch} THREW - dropped: ${String(e).slice(0, 160)}`
         );
+        verdict = 'concluded';
       }
-      settleOwedInvitation(this.userId, entry);
+      if (verdict === 'concluded') settleOwedInvitation(this.userId, entry);
     }
   }
 
