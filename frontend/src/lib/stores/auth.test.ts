@@ -44,7 +44,10 @@ const { IdentitySplitError, getIdentitySplit } = await import('$lib/stores/token
 function answer(status: number): Response {
   // A refusal as core-service sends it (Nest JSON): only that proves the cookie dead.
   if (status !== 200)
-    return new Response('{}', { status, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ statusCode: status, message: 'Unauthorized' }), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
   const claims = btoa(JSON.stringify({ sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 3600 }));
   return new Response(JSON.stringify({ access_token: `h.${claims}.s` }), {
     status: 200,
@@ -98,6 +101,18 @@ describe('the session-expired announcement', () => {
         status: 403,
         headers: { 'content-type': 'text/html' },
       })
+    );
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).not.toBeInstanceOf(SessionExpiredError);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("stays silent on a JSON-speaking edge 403 - only Nest's envelope proves the cookie dead", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    fetchMock.mockResolvedValue(
+      Response.json({ status: 403, title: 'Access denied' }, { status: 403 })
     );
 
     const outcome = await refresh().catch((e: unknown) => e);

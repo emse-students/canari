@@ -10,7 +10,7 @@ import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
-import { assertAnsweredByApi, readApiJson } from '$lib/utils/apiJson';
+import { assertAnsweredByApi, readApiJson, refusalOrigin } from '$lib/utils/apiJson';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 import { RefreshFailedError } from '$lib/stores/auth';
@@ -644,9 +644,15 @@ export class GroupExitRefusedError extends Error {
   constructor(
     readonly groupId: string,
     readonly status: number,
-    readonly operation: 'delete' | 'leave'
+    readonly operation: 'delete' | 'leave',
+    /**
+     * WHO ANSWERED (`refusalOrigin`, Nest's error envelope). `classifyExitFailure` forgets an owed
+     * exit on a 403 only when the delivery service sent it; an edge's or a portal's page says
+     * nothing about the group.
+     */
+    readonly origin: ResponseOrigin
   ) {
-    super(`Group ${operation} refused for ${groupId}: ${status}`);
+    super(`Group ${operation} refused for ${groupId}: ${status} (${origin})`);
     this.name = 'GroupExitRefusedError';
   }
 }
@@ -1547,7 +1553,7 @@ export class MlsDeliveryApi {
     );
     // ORIGIN FIRST: only the delivery service's JSON 403 says "not a member" (a caller retires the
     // conversation on it); an edge's HTML 403 (a WAF ban page) says nothing about membership.
-    if (res.status === 403 && responseOrigin(res) === 'gateway') {
+    if (res.status === 403 && (await refusalOrigin(res)) === 'gateway') {
       throw new NotAGroupMemberError(groupId);
     }
     const awaiting = await awaitingAdmissionFrom(res, groupId);
@@ -2113,7 +2119,9 @@ export class MlsDeliveryApi {
       method: 'DELETE',
       headers: await this.auth(),
     });
-    if (!res.ok) throw new GroupExitRefusedError(groupId, res.status, 'delete');
+    if (!res.ok) {
+      throw new GroupExitRefusedError(groupId, res.status, 'delete', await refusalOrigin(res));
+    }
     assertAnsweredByApi(res, `DELETE /api/mls/groups (group ${groupId.slice(0, 8)})`);
   }
 
@@ -2123,10 +2131,15 @@ export class MlsDeliveryApi {
       method: 'DELETE',
       headers: await this.auth(),
     });
-    // A 404 (no such group) and a 403 (not a member of it) are both the server ANSWERING that this
-    // user is already out - which is what a leave asks for - and they reach the caller as a status it
-    // can act on rather than as a sentence it would have to read.
-    if (!res.ok) throw new GroupExitRefusedError(groupId, res.status, 'leave');
+    // A 403 from the delivery service (not a member of it) is the server ANSWERING that this user is
+    // already out - which is what a leave asks for - and it reaches the caller as a status and an
+    // origin it can act on rather than as a sentence it would have to read.
+    if (!res.ok) {
+      throw new GroupExitRefusedError(groupId, res.status, 'leave', await refusalOrigin(res));
+    }
+    // The route answers `{ status: 'removed' }`: a portal's 200 removed nobody, and the drain must
+    // not clear the owed leave on it (`NotFromApiError`, a transport failure, keeps the row).
+    assertAnsweredByApi(res, `DELETE /api/mls/groups/members (group ${groupId.slice(0, 8)})`);
   }
 
   /**
@@ -2162,7 +2175,7 @@ export class MlsDeliveryApi {
       headers: await this.auth(),
     });
     // ORIGIN FIRST, as on `fetchGroupInfo`: an edge's 403 is no membership answer.
-    if (res.status === 403 && responseOrigin(res) === 'gateway') {
+    if (res.status === 403 && (await refusalOrigin(res)) === 'gateway') {
       throw new NotAGroupMemberError(groupId);
     }
     const awaiting = await awaitingAdmissionFrom(res, groupId);
@@ -2414,11 +2427,20 @@ export class MlsDeliveryApi {
     } catch {
       return 'error';
     }
-    // ANY non-2xx is doubt, a 404 included - see the doc comment: never purge on it.
+    // ANY non-2xx is doubt, a 404 included - see the doc comment: never purge on it. Only the 404
+    // ACCUSES: the handler never sends one, so it names a misrouted deploy or an edge in the way.
+    // Every other status (a 5xx, a gateway's 502, a WAF) is the same answer for every group of the
+    // sweep, so it is a debug line here and ONE line per sweep in `discoverMissingGroups`.
     if (!res.ok) {
-      console.warn(
-        `[MLS] group ${groupId.slice(0, 8)} status answered ${res.status} - unknown, nothing purged`
-      );
+      if (res.status === 404) {
+        console.warn(
+          `[MLS] group ${groupId.slice(0, 8)} status answered 404, which the delivery service never sends - an edge or a misrouted deploy; unknown, nothing purged`
+        );
+      } else {
+        console.debug(
+          `[MLS] group ${groupId.slice(0, 8)} status answered ${res.status} - unknown, nothing purged`
+        );
+      }
       return 'error';
     }
     // 'absent' PURGES the local conversation and its MLS state, so it is read only from the
@@ -2427,7 +2449,8 @@ export class MlsDeliveryApi {
     // body (also what a server older than that answer sends for its bare `null`), a body that does
     // not parse - is NO ANSWER, and doubt never purges. [[lifecycle]]
     if (!res.fromApi) {
-      console.warn(
+      // A portal answers every group alike: debug here, one line per sweep at the caller.
+      console.debug(
         `[MLS] group ${groupId.slice(0, 8)} status answered ${res.status} without the delivery service's JSON - unknown, nothing purged`
       );
       return 'error';
@@ -2510,6 +2533,8 @@ export class MlsDeliveryApi {
       }
     );
     if (!res.ok) throw await refusalFromResponse(res, 'dismissGroup refused');
+    // The route answers `{ status: 'dismissed' }`: a portal's 200 recorded nothing.
+    assertAnsweredByApi(res, 'POST /api/mls/users/dismissed-groups');
   }
 
   /**

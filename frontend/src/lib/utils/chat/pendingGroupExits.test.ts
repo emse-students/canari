@@ -57,16 +57,38 @@ beforeEach(() => {
 });
 
 describe('classifyExitFailure', () => {
-  // 403 and 404 are the two answers that mean the end state is already reached, and the reason the
-  // drain and `exitGroupAndCleanup` must not each hold their own copy of that reading.
-  it('reads 404 and 403 as the exit having already happened', () => {
-    expect(classifyExitFailure(new GroupExitRefusedError(G1, 404, 'delete'))).toBe('already-gone');
-    expect(classifyExitFailure(new GroupExitRefusedError(G1, 403, 'leave'))).toBe('already-gone');
+  // The delivery service's own 403 is the one answer that means the end state is already reached,
+  // and the reason the drain and `exitGroupAndCleanup` must not each hold their own copy of it.
+  it("reads the delivery service's own 403 as the exit having already happened", () => {
+    expect(classifyExitFailure(new GroupExitRefusedError(G1, 403, 'leave', 'gateway'))).toBe(
+      'already-gone'
+    );
+    expect(classifyExitFailure(new GroupExitRefusedError(G1, 403, 'delete', 'gateway'))).toBe(
+      'already-gone'
+    );
+  });
+
+  // Neither exit route sends a 404, and an edge's or a portal's 403 page says nothing about the
+  // group: forgetting the owed exit on either would drop the user's decision on a page nobody sent.
+  it("keeps a 404 and an edge's 403 or 404 as a refusal, never as already gone", () => {
+    expect(classifyExitFailure(new GroupExitRefusedError(G1, 404, 'delete', 'gateway'))).toBe(
+      'refused'
+    );
+    expect(classifyExitFailure(new GroupExitRefusedError(G1, 403, 'leave', 'edge'))).toBe(
+      'refused'
+    );
+    expect(classifyExitFailure(new GroupExitRefusedError(G1, 404, 'delete', 'edge'))).toBe(
+      'refused'
+    );
   });
 
   it('reads any other status as a reachable server refusing', () => {
-    expect(classifyExitFailure(new GroupExitRefusedError(G1, 500, 'delete'))).toBe('refused');
-    expect(classifyExitFailure(new GroupExitRefusedError(G1, 409, 'leave'))).toBe('refused');
+    expect(classifyExitFailure(new GroupExitRefusedError(G1, 500, 'delete', 'gateway'))).toBe(
+      'refused'
+    );
+    expect(classifyExitFailure(new GroupExitRefusedError(G1, 409, 'leave', 'gateway'))).toBe(
+      'refused'
+    );
   });
 
   it('reads a transport failure as no answer at all', () => {
@@ -197,7 +219,7 @@ describe('drainPendingGroupExits', () => {
     const storage = makeStorage([{ groupId: G1, kind: 'leave', requestedAt: 1 }]);
     const mlsService = makeMls({
       removeMemberFromServer: vi.fn(async () => {
-        throw new GroupExitRefusedError(G1, 500, 'leave');
+        throw new GroupExitRefusedError(G1, 500, 'leave', 'gateway');
       }),
     });
     const out = await drainPendingGroupExits({
@@ -223,7 +245,7 @@ describe('drainPendingGroupExits', () => {
     ]);
     const mlsService = makeMls({
       removeMemberFromServer: vi.fn(async () => {
-        throw new GroupExitRefusedError(G1, 500, 'leave');
+        throw new GroupExitRefusedError(G1, 500, 'leave', 'gateway');
       }),
     });
 
@@ -261,16 +283,37 @@ describe('drainPendingGroupExits', () => {
     expect(lines.join('\n')).toContain('owed for 3d');
   });
 
-  it('clears the row when the server says the group is already gone', async () => {
-    const storage = makeStorage([{ groupId: G1, kind: 'delete', requestedAt: 1 }]);
+  it('clears the row when the delivery service says the exit already happened', async () => {
+    const storage = makeStorage([{ groupId: G1, kind: 'leave', requestedAt: 1 }]);
     const mlsService = makeMls({
-      deleteGroupOnServer: vi.fn(async () => {
-        throw new GroupExitRefusedError(G1, 404, 'delete');
+      removeMemberFromServer: vi.fn(async () => {
+        throw new GroupExitRefusedError(G1, 403, 'leave', 'gateway');
       }),
     });
     const out = await drainPendingGroupExits({ storage, mlsService, userId: 'u1', log: () => {} });
-    expect(out).toEqual([{ groupId: G1, kind: 'delete', result: 'answered' }]);
+    expect(out).toEqual([{ groupId: G1, kind: 'leave', result: 'answered' }]);
     expect(storage.rows.size).toBe(0);
+  });
+
+  // An edge's HTML 403 or 404 (a portal, a WAF, a misrouted deploy) is not the service answering.
+  it.each([
+    ['delete', 404],
+    ['delete', 403],
+    ['leave', 403],
+    ['leave', 404],
+  ] as const)("keeps a %s row on an edge's HTML %i", async (kind, status) => {
+    const storage = makeStorage([{ groupId: G1, kind, requestedAt: 1 }]);
+    const refusal = async () => {
+      throw new GroupExitRefusedError(G1, status, kind, 'edge');
+    };
+    const mlsService = makeMls(
+      kind === 'delete'
+        ? { deleteGroupOnServer: vi.fn(refusal) }
+        : { removeMemberFromServer: vi.fn(refusal) }
+    );
+    const out = await drainPendingGroupExits({ storage, mlsService, userId: 'u1', log: () => {} });
+    expect(out[0].result).not.toBe('answered');
+    expect(storage.rows.has(G1)).toBe(true);
   });
 
   it('does not keep a row because the per-user dismiss failed - the exit was answered', async () => {

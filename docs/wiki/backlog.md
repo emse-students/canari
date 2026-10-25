@@ -115,14 +115,13 @@ send. Owed: one device reading on the Mi 9T behind a portal.
 #2428 covered the places that PARSE a 2xx. About 140 write sites read no body at all, so a portal's
 `200` is believed. Ranked:
 
-- **P2** `dismissGroup`: the server is never told, and the group comes back on the next listing.
 - **P3** `renameGroup` / `setGroupImage`, and the notification-preference PATCH/PUTs
   (`notifications/preferencesApi.ts`): the change is lost silently and shows again on reload.
 - **P3** `registerMember` swallows every outcome (it is due to leave the Add paths anyway, see the
   entry on it below).
 
 The plan is the shared guard (`assertAnsweredByApi`, `utils/apiJson.ts`) applied per site with its
-test, starting with the P2s. A blanket sweep inside `apiFetch` is not the plan: some routes answer
+test. `dismissGroup` and `removeMemberFromServer` already carry it (#2428). A blanket sweep inside `apiFetch` is not the plan: some routes answer
 non-JSON on purpose (media, files).
 
 ## P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)

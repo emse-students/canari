@@ -141,6 +141,46 @@ describe("a delete for everyone is done only on the delivery service's answer", 
   });
 });
 
+describe("a leave and a dismiss are done only on the delivery service's answer", () => {
+  it('a portal 200 on the leave is no answer, so the owed leave is kept', async () => {
+    const { api } = makeApi(portal);
+    const failure = await api.removeMemberFromServer('g1', 'u1').catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(NotFromApiError);
+    expect(isTransportFailure(failure)).toBe(true);
+  });
+
+  it("the leave carries WHO refused it: an edge's 403 page is not the service's", async () => {
+    const { api } = makeApi(
+      () =>
+        new Response('<html>Forbidden</html>', {
+          status: 403,
+          headers: { 'content-type': 'text/html' },
+        }),
+      () => Response.json({ statusCode: 403, message: 'Forbidden' }, { status: 403 })
+    );
+    const edge = await api.removeMemberFromServer('g1', 'u1').catch((e: unknown) => e);
+    expect(edge).toBeInstanceOf(GroupExitRefusedError);
+    expect((edge as GroupExitRefusedError).origin).toBe('edge');
+    const gateway = await api.removeMemberFromServer('g1', 'u1').catch((e: unknown) => e);
+    expect((gateway as GroupExitRefusedError).origin).toBe('gateway');
+  });
+
+  it("the service's JSON 200 is a leave done", async () => {
+    const { api } = makeApi(() => Response.json({ status: 'removed' }));
+    await expect(api.removeMemberFromServer('g1', 'u1')).resolves.toBeUndefined();
+  });
+
+  it('a portal 200 on the dismiss recorded nothing', async () => {
+    const { api } = makeApi(portal);
+    await expect(api.dismissGroup('g1')).rejects.toBeInstanceOf(NotFromApiError);
+  });
+
+  it("the service's JSON 200 is a dismiss recorded", async () => {
+    const { api } = makeApi(() => Response.json({ status: 'dismissed' }));
+    await expect(api.dismissGroup('g1')).resolves.toBeUndefined();
+  });
+});
+
 describe('an ACK a portal answered acknowledged nothing', () => {
   const body = { userId: 'user-a', deviceId: 'device-a', messageIds: ['row-1'] };
 

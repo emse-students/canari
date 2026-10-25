@@ -52,7 +52,7 @@ import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
-import { responseOrigin } from '$lib/utils/apiJson';
+import { refusalOrigin } from '$lib/utils/apiJson';
 import {
   REFRESH_HEADER,
   clearNativeRefreshToken,
@@ -1107,8 +1107,9 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
     // while the backend restarts during a deploy) is transient: throwing
     // SessionExpiredError there would force a logout + cookie revocation for a hiccup.
     // ...and only when core-service SAID it: an edge's HTML 403 (a WAF ban page, a portal) is a
-    // verdict on the network path, never on the credential, so it is transient like a 5xx.
-    if ((res.status === 401 || res.status === 403) && responseOrigin(res) === 'gateway') {
+    // verdict on the network path, never on the credential, so it is transient like a 5xx. Read
+    // from Nest's error envelope, not the header alone: an edge can answer in JSON too.
+    if ((res.status === 401 || res.status === 403) && (await refusalOrigin(res)) === 'gateway') {
       // The proof, latched: only a new credential can change this answer.
       _refreshCredentialProvenDead = true;
       noteSessionAnswered(null);

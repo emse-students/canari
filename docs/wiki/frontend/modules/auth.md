@@ -2034,7 +2034,7 @@ no network still gets the honest `auth_server_unreachable`. `offlineUnlock.test.
 
 | Signal | Meaning | Offline unlock |
 |---|---|---|
-| `SessionExpiredError` (HTTP 401/403 in core-service's JSON; an edge's HTML 403 is transient, [chat](chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) | The server was reached **and refused us** | Never. Logs out. |
+| `SessionExpiredError` (HTTP 401/403 in core-service's Nest error envelope; an edge's 403, HTML or JSON, is transient, [chat](chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) | The server was reached **and refused us** | Never. Logs out. |
 | Any other `getToken()` rejection | Transport failure - the server said nothing | Proceeds on the two capable paths |
 
 That distinction is the rule the whole feature rests on: **a status code is an answer, a transport

@@ -69,6 +69,28 @@ describe('getGroupServerStatus', () => {
     expect(await api.getGroupServerStatus('g1')).toBe('error');
   });
 
+  // ONLY THE 404 ACCUSES (the handler never sends one). A 5xx or a portal answers every group of a
+  // sweep alike, so it stays at debug and the sweep says it once (`discoverMissingGroups`).
+  it('warns on a 404 only; a 5xx and a portal 200 are debug lines', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    try {
+      await makeApi(async () => response('boom', { status: 502 })).getGroupServerStatus('g1');
+      await makeApi(async () =>
+        response('<html>portal</html>', { status: 200, contentType: 'text/html' })
+      ).getGroupServerStatus('g1');
+      expect(warn).not.toHaveBeenCalled();
+      expect(debug).toHaveBeenCalledTimes(2);
+      await makeApi(async () =>
+        response('Not Found', { status: 404, contentType: 'text/plain' })
+      ).getGroupServerStatus('g1');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('never sends'));
+    } finally {
+      warn.mockRestore();
+      debug.mockRestore();
+    }
+  });
+
   it("fetch rejette (reseau coupe) -> 'error'", async () => {
     const api = makeApi(async () => {
       throw new Error('network down');
@@ -102,7 +124,7 @@ describe('getGroupServerStatus', () => {
 describe('getGroupMembers - a status code is an answer, a transport failure is not', () => {
   it('raises a typed refusal on 403, carrying the group', async () => {
     const api = makeApi(async () =>
-      response('{"message":"Caller is not a member"}', { status: 403 })
+      response('{"statusCode":403,"message":"Caller is not a member"}', { status: 403 })
     );
 
     const err = await api.getGroupMembers('g1').catch((e: unknown) => e);
@@ -154,7 +176,9 @@ describe('getGroupMembers - a status code is an answer, a transport failure is n
 describe('fetchGroupInfo - a refused base is a membership answer', () => {
   it('raises a typed refusal on 403, carrying the group', async () => {
     const api = makeApi(async () =>
-      response('{"message":"User u is not a member of group g1"}', { status: 403 })
+      response('{"statusCode":403,"message":"User u is not a member of group g1"}', {
+        status: 403,
+      })
     );
 
     const err = await api.fetchGroupInfo('g1').catch((e: unknown) => e);
@@ -166,6 +190,17 @@ describe('fetchGroupInfo - a refused base is a membership answer', () => {
   it("an edge's HTML 403 is no membership answer", async () => {
     const api = makeApi(async () =>
       response('<html>Access denied</html>', { status: 403, contentType: 'text/html' })
+    );
+
+    const err = await api.fetchGroupInfo('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
+  });
+
+  it('a JSON-speaking edge 403 (no Nest envelope) is no membership answer either', async () => {
+    const api = makeApi(async () =>
+      response('{"status":403,"title":"Access denied"}', { status: 403 })
     );
 
     const err = await api.fetchGroupInfo('g1').catch((e: unknown) => e);

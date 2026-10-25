@@ -3,7 +3,7 @@ import type { Campus, CursusEntry, Post } from '$lib/profile/miconnectProfile';
 import { forgetReaderCaches, SharedCache } from '$lib/utils/sharedCache';
 import { setCurrentUserId, setGlobalAdmin, setFeedAudience } from '$lib/stores/userState.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
-import { responseOrigin, type ResponseOrigin } from '$lib/utils/apiJson';
+import { refusalOrigin, type ResponseOrigin } from '$lib/utils/apiJson';
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { clearWorkspaceSnapshots } from '$lib/utils/chat/workspaceSnapshot';
 import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
@@ -119,7 +119,7 @@ export class UserProfileFetchError extends Error {
   constructor(
     readonly status: number,
     /**
-     * WHO ANSWERED (`responseOrigin`). A 404 is an account's absence only when core-service's JSON
+     * WHO ANSWERED (`refusalOrigin`, Nest's error envelope). A 404 is an account's absence only when core-service's JSON
      * says it; an edge's or a portal's "Not Found" page says nothing about the account. A status
      * synthesized from a parsed answer (the batch's absence) is the gateway's by construction.
      */
@@ -164,7 +164,7 @@ export function isAbsentUserError(e: unknown): boolean {
 async function requestMyProfile(): Promise<UserProfile> {
   const res = await apiFetch(`${coreUrl()}/api/users/me`);
   if (!res.ok) {
-    throw new UserProfileFetchError(res.status, responseOrigin(res));
+    throw new UserProfileFetchError(res.status, await refusalOrigin(res));
   }
   return (await res.json()) as UserProfile;
 }
@@ -241,7 +241,7 @@ async function flushProfileBatch(
         const res = await apiFetch(
           `${coreUrl()}/api/users/batch?ids=${chunk.map(encodeURIComponent).join(',')}`
         );
-        if (!res.ok) throw new UserProfileFetchError(res.status, responseOrigin(res));
+        if (!res.ok) throw new UserProfileFetchError(res.status, await refusalOrigin(res));
         const { users, deleted } = (await res.json()) as {
           users: UserProfile[];
           deleted?: string[];

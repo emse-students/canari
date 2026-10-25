@@ -334,12 +334,24 @@ describe('exitGroupAndCleanup - an exit the server never answered stays owed', (
     const { storage, log } = await exitWith(
       leaveGroupAndBroadcast,
       async () => {
-        throw new GroupExitRefusedError(GROUP_ID, 403, 'leave');
+        throw new GroupExitRefusedError(GROUP_ID, 403, 'leave', 'gateway');
       },
       'leave'
     );
     expect(storage.rows.size).toBe(0);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Deja fait cote serveur'));
+  });
+
+  // An edge's or a portal's 403 page says nothing about the group: the owed leave stays.
+  it("keeps the row when the 403 is an edge's page, not the delivery service's", async () => {
+    const { storage } = await exitWith(
+      leaveGroupAndBroadcast,
+      async () => {
+        throw new GroupExitRefusedError(GROUP_ID, 403, 'leave', 'edge');
+      },
+      'leave'
+    );
+    expect(storage.rows.has(GROUP_ID)).toBe(true);
   });
 
   // A reachable server refusing is a defect to find, not a decision to forget - so the row stays,
@@ -348,7 +360,7 @@ describe('exitGroupAndCleanup - an exit the server never answered stays owed', (
     const { storage, log } = await exitWith(
       leaveGroupAndBroadcast,
       async () => {
-        throw new GroupExitRefusedError(GROUP_ID, 500, 'leave');
+        throw new GroupExitRefusedError(GROUP_ID, 500, 'leave', 'gateway');
       },
       'leave'
     );

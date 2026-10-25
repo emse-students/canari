@@ -41,6 +41,34 @@ export function responseOrigin(res: Pick<Response, 'headers'>): ResponseOrigin {
 }
 
 /**
+ * WHO REFUSED, for a refusal whose reading DESTROYS something (a sign-out, a retired conversation, a
+ * forgotten exit): `gateway` only when the body is Nest's own error envelope, whose `statusCode`
+ * repeats the HTTP status (`{ statusCode, message, error }` - no service here installs an exception
+ * filter, so every `HttpException` and every guard refusal leaves in that shape).
+ *
+ * WHY THE HEADER ALONE IS NOT ENOUGH HERE: the estate sits behind an edge that can answer in JSON
+ * too (a WAF or CDN block page served as `application/json` to an API client). Its body carries its
+ * own fields (`status`, `title`, `errors`), never Nest's `statusCode` equal to the status, so the
+ * envelope separates the two where {@link responseOrigin} cannot. A body that does not parse is the
+ * edge's. The body is read from a CLONE, so the caller can still read or report the original.
+ *
+ * Non-destructive readings keep {@link responseOrigin}: a misread there costs a retry, not a state.
+ */
+export async function refusalOrigin(res: Response): Promise<ResponseOrigin> {
+  if (responseOrigin(res) === 'edge') return 'edge';
+  let body: unknown;
+  try {
+    body = JSON.parse(await res.clone().text());
+  } catch (e) {
+    console.debug(`[HTTP] a ${res.status} with a JSON type did not parse - read as the edge's:`, e);
+    return 'edge';
+  }
+  const statusCode =
+    body && typeof body === 'object' ? (body as { statusCode?: unknown }).statusCode : undefined;
+  return statusCode === res.status ? 'gateway' : 'edge';
+}
+
+/**
  * A 2xx answered by something IN FRONT of the API - its body is not the API's JSON. No answer from
  * the API, so nothing it would have decided may be assumed: the caller keeps what it was sending
  * and retries exactly as for any other transport failure.

@@ -1,4 +1,10 @@
-import { assertAnsweredByApi, NotFromApiError, readApiJson, responseOrigin } from './apiJson';
+import {
+  assertAnsweredByApi,
+  NotFromApiError,
+  readApiJson,
+  refusalOrigin,
+  responseOrigin,
+} from './apiJson';
 import { isTransportFailure } from './transportFailure';
 
 /** WHO ANSWERED a 2xx, decided from the response's own facts - the content type, then a parse. */
@@ -54,5 +60,45 @@ describe('assertAnsweredByApi', () => {
     const edge = new Response('x', { status: 200, headers: { 'content-type': 'text/plain' } });
     expect(responseOrigin(edge)).toBe('edge');
     expect(() => assertAnsweredByApi(edge, 'x')).toThrow(NotFromApiError);
+  });
+});
+
+/**
+ * WHO REFUSED, where the reading destroys something: Nest's envelope (`statusCode` equal to the
+ * status), because an edge in front of the estate can answer in JSON too.
+ */
+describe('refusalOrigin', () => {
+  const json = (body: unknown, status: number) => Response.json(body, { status });
+
+  it("reads Nest's own envelope as the gateway's", async () => {
+    await expect(refusalOrigin(json({ statusCode: 403, message: 'Forbidden' }, 403))).resolves.toBe(
+      'gateway'
+    );
+  });
+
+  it("reads a JSON-speaking edge (a WAF or CDN block) as the edge's", async () => {
+    await expect(
+      refusalOrigin(json({ status: 403, title: 'Access denied', errors: [] }, 403))
+    ).resolves.toBe('edge');
+    // An envelope whose code is not the status it came with was not written for this answer.
+    await expect(refusalOrigin(json({ statusCode: 401 }, 403))).resolves.toBe('edge');
+  });
+
+  it("reads HTML, and a JSON type that does not parse, as the edge's", async () => {
+    const html = new Response('<html/>', { status: 403, headers: { 'content-type': 'text/html' } });
+    await expect(refusalOrigin(html)).resolves.toBe('edge');
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const half = new Response('{"st', {
+      status: 403,
+      headers: { 'content-type': 'application/json' },
+    });
+    await expect(refusalOrigin(half)).resolves.toBe('edge');
+    debug.mockRestore();
+  });
+
+  it('leaves the body readable for the caller', async () => {
+    const res = json({ statusCode: 403, message: 'm' }, 403);
+    await refusalOrigin(res);
+    await expect(res.json()).resolves.toEqual({ statusCode: 403, message: 'm' });
   });
 });

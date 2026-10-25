@@ -26,7 +26,7 @@ const fetchMock = vi.fn(async (url: string) => {
   if (String(url).includes('/api/auth/refresh')) {
     if (refreshStatus === 0) throw new TypeError('Failed to fetch');
     if (refreshStatus !== 200)
-      return new Response('{}', {
+      return new Response(JSON.stringify({ statusCode: refreshStatus, message: 'refused' }), {
         status: refreshStatus,
         headers: { 'content-type': 'application/json' },
       });
