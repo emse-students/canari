@@ -796,22 +796,6 @@ phone state the reading would have had with the pending commits drained first. A
 same newcomer ended `ALREADY_MEMBER` on the phone, a duplicate that is expected. **Not fixed here:** the
 fix is native and MLS, its own work package with an adversarial review.
 
-## P2 - the group settings panel keeps listing `Membres (1)` after an add the commit admitted (seen 2026-10-22 and 2026-10-25, web, dev)
-
-Adding one member from `Gestion du groupe` > `Ajouter` > `Envoyer l'invitation`: the console showed
-`add_members_bulk ... (1 key packages)`, `[COMMIT] ... admits 1 device(s) at epoch 1`, `[SYNC] Welcome -> ...
-OK` and `Members added (1/1 delivered)`, yet the panel still read `Membres (1)` with only the creator, for
-at least 30 s and after reopening it. A second add of the same person then failed with
-`ALREADY_MEMBER` (the commit had indeed landed). The panel's member list does not refresh from the
-commit it just made.
-
-**SEEN AGAIN 2026-10-25 (RM-3, `1.4.1-alpha.3`, dev.9335201), AND IT BLOCKED A REMOVAL - re-graded P2:
-a member cannot remove someone the panel does not show.** One bulk Add of two people (`admits 2
-device(s) at epoch 2`, `Members added (2/2 delivered)`); the server held all three on the roster with
-active seats, yet minutes later the open panel read `MEMBRES (2)` with a `data-remove-member` button
-for one invitee only. A NEW document of the same seat listed both. So the stale list is state held by
-the page and is not re-read from the commit. Being fixed on `fix/member-panel-lists-admitted-members`.
-
 ## The encryption PIN unlock on the iPhone: READ 2026-10-22, it answers - the "hang" was the rig's tap, and one P3 is left
 
 Read over WDA on the iPhone 12 (TestFlight `1.4.0 (100400003)`, `dev.canari-emse.fr`). **The first
@@ -2944,3 +2928,11 @@ measurements: [lydia-api](lydia-api.md) and [payments](frontend/modules/payments
 | P3 | A product with no price is creatable and its checkout answers 400 with no log | open |
 | Owed | The confirm callback verified with a Business key | done in production 2026-10-23 ([lydia-api](lydia-api.md#3-callbacks-confirm_url-cancel_url-expire_url)) |
 | Owed | A refund end to end, the default `expire_time` (at least 47 min), the deep link as `end_mobile_url` | open, [lydia-api](lydia-api.md#6-still-unknown); `request/cancel` on a PAID request measured 2026-10-23 (error 2, stays paid) |
+
+## P3 - legacy link seats written before migration 038 would now be listed by the group panel (found 2026-10-25)
+
+The group panel reads the user-level roster (`user-members`) and drops only seats flagged
+`awaitingAdmission`. A link seat written BEFORE migration 038 got `awaitingAdmission` defaulting to
+`false` and never entered the MLS tree, so it would now appear as a member. Owed ONE production count,
+read-only: roster rows with no active or admitted device of that user in that group. Nothing was run
+on production. If it is 0, delete this section; otherwise a backfill migration the user approves.

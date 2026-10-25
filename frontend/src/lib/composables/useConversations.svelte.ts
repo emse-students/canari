@@ -42,6 +42,7 @@ import { whenSalonEntryDecided } from '$lib/utils/graine/salonSendGate';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import {
+  fetchGroupRoster,
   fetchUniqueGroupMembers,
   removeMemberAndBroadcast,
   renameGroupAndBroadcast,
@@ -1687,11 +1688,13 @@ export function useConversations() {
   // ── Group members ─────────────────────────────────────────────────────────
 
   /**
-   * Fetches the deduplicated list of member userIds for an MLS group and stores them in
-   * groupMembers. No-op for channel conversations, and for one this device is no longer in.
+   * Reads the group's roster ({@link fetchGroupRoster}) into groupMembers, the ONE list every
+   * member surface shows. No-op for channel conversations, and for one this device is no longer in.
+   * Re-read on the events that change it: selecting the conversation, and the end of this device's
+   * own Add, admission or Remove (each writes the roster before it returns).
    *
-   * THE ROSTER OF A RETIRED CONVERSATION IS NOT OURS TO ASK FOR. `GET /api/mls/groups/:id/members`
-   * is members-only by design, so on a device holding a Remove commit the request has exactly one
+   * THE ROSTER OF A RETIRED CONVERSATION IS NOT OURS TO ASK FOR. `GET /api/mls/groups/:id/user-members`
+   * (like `.../members`, which this read used until 2026-10-25) is members-only by design, so on a device holding a Remove commit the request has exactly one
    * possible outcome, and it is a 403 in the console of every removed device. Both selection paths
    * fire this one line above `verifyCurrentUserMembership`, which was taught the same fact on
    * 2026-08-23 - this call site was not, which is why GRP-3 still recorded the 403 the next day.
@@ -1699,7 +1702,11 @@ export function useConversations() {
    *
    * An empty roster is the ANSWER here rather than a fallback: there is no membership to show.
    */
-  async function loadGroupMembers(id: string, ctx: ConversationContext | null) {
+  async function loadGroupMembers(
+    id: string,
+    ctx: ConversationContext | null,
+    opts?: { fresh?: boolean }
+  ) {
     if (!ctx) return;
     if (isChannelConversationId(id)) {
       groupMembers = [];
@@ -1712,7 +1719,7 @@ export function useConversations() {
       return;
     }
     try {
-      groupMembers = await fetchUniqueGroupMembers(ctx.ensureMls(), id);
+      groupMembers = await fetchGroupRoster(ctx.ensureMls(), id, opts);
     } catch (e) {
       console.warn('[GroupMembers]', e);
       groupMembers = [];
@@ -2092,7 +2099,8 @@ export function useConversations() {
       });
       // NEVER A SILENT REFUSAL: the member is the only one who can retry an invitation.
       if (outcome.kind === 'not-added') reportBulkAdditionRefusal(outcome.reason);
-      await loadGroupMembers(convo.id, ctx);
+      // FRESH: a roster read begun before the commit's write must not be joined (pre-Add roster).
+      await loadGroupMembers(convo.id, ctx, { fresh: true });
     } catch (e) {
       // `processBulkAddition` lets only this refusal through; anything else is its own to report.
       if (!reportFollowerTabRefusal(e)) throw e;
@@ -2167,7 +2175,7 @@ export function useConversations() {
   ): Promise<JoinAnswerResult> {
     const result = await admitJoinRequest(request, joinAnswerDeps(ctx));
     if (result.done && selectedContact === request.groupId) {
-      await loadGroupMembers(request.groupId, ctx);
+      await loadGroupMembers(request.groupId, ctx, { fresh: true });
     }
     return result;
   }
@@ -2541,7 +2549,10 @@ export function useConversations() {
     openSidePanel,
     closeSidePanel,
     toggleSidePanel,
-    /** Fetches and stores the deduplicated member list for an MLS group. */
+    /**
+     * Reads and stores the user-level ADMITTED roster of an MLS group (`user-members`, seats awaiting
+     * admission left out). `fresh` skips an identical read already in flight.
+     */
     loadGroupMembers,
     /** Checks and caches whether the current user is still in the given conversation. */
     verifyCurrentUserMembership,

@@ -366,13 +366,26 @@ channel's member list in the server's order. All three now render through `membe
   re-reads every name. Pinned by `memberOrder.svelte.test.ts`, `familyNameOrder.test.ts` and
   `ChannelMembersList.order.svelte.test.ts`.
 - **A newcomer is never absent (2026-10-05, user: they appeared, vanished, reappeared).** The
-  group roster is `dm_device_group_memberships` (active devices), refetched when the invite ends;
+  group roster is refetched when the invite ends (see the next item for which table);
   the newcomer's profile lookup is still in flight, so the roster HOLDS the id while the ordered
   list does not LIST it. `ChatGroupPanel` hid its "Inviting..." row on roster membership: appeared
   (pending), vanished (roster, not listed), reappeared (listed). `joiningRows` now decides by what
   the list renders: a row stays until the member row replaces it, one hand-over, no timer. NOT an
   MLS ordering problem - commit, welcome and roster were already in order. Pinned by
   `memberOrder.svelte.test.ts` ("a member added while the panel is open").
+- **The group's member list is its ROSTER, not its active devices (2026-10-25, seen twice by the
+  rig).** A bulk Add of two people in one commit left the creator's open panel at `Membres (2)` with
+  a remove button for ONE invitee, while the server held both. `loadGroupMembers` read
+  `GET .../members` - devices whose row is `active` - and an Add's commit writes its newcomers'
+  rows `pending`: only the NEWCOMER's client activates them, when it opens its Welcome, on its own
+  clock. The one read at the end of the Add caught the quick invitee only, and nothing read it again
+  in that page (a later document, read after both had activated, listed both). It now reads
+  `fetchGroupRoster` (`groupActions.ts`): `dm_group_members` less the seats awaiting a member's
+  admission, which the adder writes itself (`registerMember`, awaited before the Add returns) and
+  every Remove or departure cuts first. So the list is current when the gesture ends, by
+  construction; the panel, its count, the mention picker and a call's avatars all read this one
+  list (`convs.groupMembers`). `fetchUniqueGroupMembers` stays for its own question - who is ROUTED
+  to (the membership check). Pinned by `useConversations.memberPanel.svelte.test.ts`.
 
 Association rosters (`EditMembersTab`, `AssociationDetailView`) are NOT sorted: their order is the
 one the bureau arranges by drag (`sortOrder`), and the president is its first row.

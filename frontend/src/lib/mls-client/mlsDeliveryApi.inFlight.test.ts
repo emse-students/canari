@@ -40,6 +40,17 @@ describe('simultaneous identical reads', () => {
     expect(urls).toHaveLength(2);
   });
 
+  it('a fresh user-members read neither joins nor is joined by one already on the wire', async () => {
+    const { api, urls } = counting(JSON.stringify([{ userId: 'a' }]));
+    await Promise.all([
+      api.getGroupUserMembers('g1'),
+      api.getGroupUserMembers('g1', { fresh: true }),
+      api.getGroupUserMembers('g1'),
+    ]);
+    // the two plain askers share one request, the fresh one sent its own
+    expect(urls).toHaveLength(2);
+  });
+
   it('keeps different groups apart', async () => {
     const { api, urls } = counting('[]');
     await Promise.all([api.getGroupUserMembers('g1'), api.getGroupUserMembers('g2')]);

@@ -148,10 +148,34 @@ export async function deliverWelcomes(params: {
   return delivered;
 }
 
-/** Returns the deduplicated list of userId strings that are members of a group (a user can have multiple devices). */
+/**
+ * The users holding an ACTIVE device row in a group - who the delivery service ROUTES to, deduplicated
+ * (a user can have multiple devices). Not who is in the group: see {@link fetchGroupRoster}.
+ */
 export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: string) {
   const members = await mlsService.getGroupMembers(groupId);
   return [...new Set(members.map((m) => m.userId))];
+}
+
+/**
+ * The people IN a group: its user-level roster (`dm_group_members`), less the seats an invitation
+ * link opened that no member has admitted yet. What every surface listing members shows (the group
+ * panel, its count, the mention picker, a call's avatars).
+ *
+ * WHY NOT THE ACTIVE DEVICE ROWS ({@link fetchUniqueGroupMembers}): an Add's commit writes its
+ * newcomers' device rows `pending`, and only the NEWCOMER's own client turns them `active`, when it
+ * opens its Welcome - on its clock, possibly days later. Read right after the Add, that list held
+ * whichever invitee happened to be quick, and the panel then offered no way to remove the others.
+ * The roster is written by the adder ITSELF (`registerMember`, awaited before the Add returns), and
+ * cut first by every removal and every departure, so it is current the moment either gesture ends.
+ */
+export async function fetchGroupRoster(
+  mlsService: Pick<IMlsService, 'getGroupUserMembers'>,
+  groupId: string,
+  opts?: { fresh?: boolean }
+): Promise<string[]> {
+  const rows = await mlsService.getGroupUserMembers(groupId, opts);
+  return [...new Set(rows.filter((r) => r.awaitingAdmission !== true).map((r) => r.userId))];
 }
 
 /**

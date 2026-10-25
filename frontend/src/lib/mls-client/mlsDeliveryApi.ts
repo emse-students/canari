@@ -2125,10 +2125,12 @@ export class MlsDeliveryApi {
    * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
    * A seat still awaiting a member's admission is answered {@link AwaitingAdmissionError}.
    */
-  getGroupUserMembers(groupId: string): Promise<GroupUserMemberRow[]> {
+  getGroupUserMembers(groupId: string, opts?: { fresh?: boolean }): Promise<GroupUserMemberRow[]> {
     // Simultaneous askers share ONE request (membership guards, stray sweeps and peer resolution all
     // ask per conversation). Never held past the answer: callers decide security and repairs on it.
-    return this.joinInFlight(`user-members:${groupId}`, async () => {
+    // `fresh` is for a caller that has just WRITTEN the roster (an Add): a request already on the wire
+    // was sent before that write and may answer the roster as it was, so it neither joins nor is joined.
+    const read = async (): Promise<GroupUserMemberRow[]> => {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
         headers: await this.auth(),
       });
@@ -2136,7 +2138,8 @@ export class MlsDeliveryApi {
       if (awaiting) throw awaiting;
       if (!res.ok) throw await refusalFromResponse(res, 'getGroupUserMembers failed');
       return await res.json();
-    });
+    };
+    return opts?.fresh ? read() : this.joinInFlight(`user-members:${groupId}`, read);
   }
 
   /**
