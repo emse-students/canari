@@ -991,6 +991,8 @@ export async function loginImpl(
   // builds and the handshake it starts beside the state load (see `releaseLoginStoppedBySignOut`).
   let loginClient: ReturnType<SessionContext['ensureMls']> | null = null;
   let loginHandshake: ReturnType<typeof startGatewayHandshake> = null;
+  /** Set when THIS login raised `isLoggedIn`, so its failure lowers the flag only if it raised it. */
+  let thisLoginWentLive = false;
 
   try {
     // The wait above is the first await a sign-out can run during, so nothing - not even the
@@ -1523,6 +1525,7 @@ export async function loginImpl(
     ctx.setIsOfflineSession(offlineSession);
 
     ctx.setIsLoggedIn(true);
+    thisLoginWentLive = true;
     saveUserLocally({ id: ctx.getUserId(), admin: isGlobalAdmin() });
     ctx.setIsMessagingInitializing(true);
     // THE BOOT MEASUREMENT ENDS EXACTLY WHERE THE CATCH-UP ONE BEGINS, on the same line, so the two
@@ -2391,6 +2394,17 @@ export async function loginImpl(
     } else {
       cb.log(`Error: ${String(_e)}`);
       console.error(`[INIT] Login failed (${code}):`, _e);
+    }
+    // A LOGIN THAT FAILED AFTER IT WENT LIVE LEAVES NOTHING ACTING ON ITS SESSION. A failed reopen of
+    // its handshake arms the reconnect ladder (`openGatewayConnection`); left armed over a raised
+    // flag, the rung would build a fresh, uninitialised client from the holder and connect it.
+    if (thisLoginWentLive) {
+      if (ctx.timers.reconnect !== null) {
+        clearTimeout(ctx.timers.reconnect);
+        ctx.timers.reconnect = null;
+        cb.log('[INIT] Failed login: the reconnect rung it armed is cleared.');
+      }
+      ctx.setIsLoggedIn(false);
     }
     ctx.resetMls();
     // THIS ACCOUNT'S SLOT ONLY: another account's, and the unlabelled one of an older build, are not

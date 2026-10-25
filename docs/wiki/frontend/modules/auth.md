@@ -208,6 +208,55 @@ handshake. Behaviour is in `BaseMlsService.socketRotation.test.ts`,
 `TauriMlsService.socketRotation.test.ts`, `startGatewayHandshake.test.ts` and
 `signOutDuringLogin.test.ts`.
 
+#### A destroyed client keeps no socket, and none lands on it later (2026-10-25)
+
+**The overlap opens the socket BEFORE the login knows it will succeed.** On the PIN path the server
+has accepted the PIN by then; on the unattended paths (biometric, vault, hardware-held "stay signed
+in") nothing has proved the key yet - the keystore read is inside `init`. That is on purpose (the
+measured 182 ms above), and it makes one more thing owed: **a login that fails releases the socket it
+opened.** It goes through `resetMls`, which destroys the client it built.
+
+What the code did, certain from reading it:
+
+- `destroy` did not FENCE the socket queue. A handshake still in its token fetch or its native
+  connect when the login failed (a fast failure: an empty keystore, a refused vault) landed AFTER
+  the destroy, assigned its socket to the destroyed client and started its heartbeat.
+- On the web, `destroy` did not close the socket at all, open or opening.
+- Nothing held that client any more. A pause, a reconnect and a sign-out all act on the CURRENT
+  client (`ensureMls()`), and a sign-out at the PIN gate has no session and no login in flight to
+  stop - so no path could ever reach the socket.
+- The socket stays alive by itself: the plugin's Rust reader (or the browser) answers the gateway's
+  protocol pings with no JS involved, and the gateway refreshes `user:online:{user}:{device}` on
+  every pong. Dropping a JS handle releases nothing; only a `Close` does.
+
+**The fix is the destroy.** It now runs the pause (the fence moves, an open in flight is settled as
+abandoned at once and releases whatever socket it later receives, `disconnect` is sent so the
+presence goes immediately) and marks the client retired: a `connect` on a destroyed client opens
+nothing and accuses its caller at `error`, because its fence can only match if it was taken after the
+destroy. Tests: `TauriMlsService.destroyFence.test.ts`, `WebMlsService.destroyFence.test.ts`.
+
+**The same failure catch also lowers what the login raised.** A login can fail AFTER
+`setIsLoggedIn(true)`, and its handshake's failed reopen may have armed the reconnect ladder by then.
+The catch reset the client but left the flag up and the rung armed, so the rung would have built a
+fresh, uninitialised client from the holder and connected it. The catch now clears that rung and
+lowers the flag - only when this login raised it, never another session's
+(`signOutDuringLogin.test.ts`).
+
+**The gateway's rule for a second socket of one device is to ADD it** (the comment at the
+registration in `apps/chat-gateway/src/handlers.rs`): sibling tabs, a reconnect overlapping its
+predecessor's close and a deploy overlap are all legitimate, and a sibling may sit on another
+process. So the gateway cannot tell a forgotten socket from a sibling, and releasing every socket it
+opened is the client's job - which is why the fix is here.
+
+**Owed, on an iPhone (TestFlight, server side only so far):** the reading that showed two sockets of
+one device at the PIN gate, both alive after a sign-out, fits this class but the app's own log was not
+read. To close it: on the build carrying this fix, reproduce (stay at the PIN gate after a failed
+unattended unlock, then sign out) and read in the app log `[INIT] Login did not complete (...)`
+(or `Login failed`) followed by `[WS] MLS client destroyed` and NO later `[WS] Connected to Chat Gateway`; on the gateway,
+one `Explicit disconnect` (or a close) per socket opened and no presence refresh for the device after
+the sign-out. A second socket that appears WITHOUT a failed login between the two is a different
+cause, and this fix does not claim it.
+
 The order is asserted by `session/startupOrder.test.ts`, deliberately a SOURCE test: the property is
 an order between two statements inside a function that takes a live MLS client, a storage backend, a
 device key and a gateway, so there is no seam to observe it through short of running a whole
