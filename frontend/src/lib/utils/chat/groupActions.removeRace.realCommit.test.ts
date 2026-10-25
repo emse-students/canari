@@ -6,6 +6,11 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
   scheduleOutboundMlsPersist: vi.fn(),
 }));
 vi.mock('$lib/mls-client/tabLeader', () => ({ getTabLeadership: () => 'leader' }));
+// The acting device's own notice resolves names: a profile read nothing here is about.
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
+  resolveDisplayNames: async () => (id: string) => id,
+}));
 
 import { BaseMlsService } from '$lib/services/BaseMlsService';
 import { removeMemberAndBroadcast } from './groupActions';
@@ -112,6 +117,7 @@ const run = (svc: IMlsService) =>
     memberId: BOB,
     userId: ME,
     deviceKeyB64: 'k',
+    ownNotice: { contactName: G, addMessageToChat: async () => {} },
   });
 
 describe('removeMemberAndBroadcast through the real commit path', () => {

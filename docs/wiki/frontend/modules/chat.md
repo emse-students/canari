@@ -1449,6 +1449,7 @@ group - is written by **two paths that never meet**, and copied between devices 
 | live delivery | `systemMessageHandler.ts`, the `memberAdded` / `memberRemoved` / `memberLeft` / `groupRenamed` / `groupImageChanged` / `groupDeleted` branches |
 | archive replay | `historySystemEvents.ts`, the same events re-read from `history:{groupId}` |
 | a peer's `history_bundle` | `serializeForBundle` copies the row, **with the id that peer stored** |
+| the acting device itself | `sendVisibleNotice` (`visibleNotices.ts`) writes its own row under the frame's id once the frame is accepted, since MLS never hands it that frame (2026-10-25, [history-reconciliation](../../protocols/history-reconciliation.md#the-acting-device-writes-its-own-notice)) |
 
 **Every deduplication in the application compares ids** - the bulk-ingest check in
 `addMessageToChat`, the bundle's `existingIds` set, the post-save merge. So a notice with no id

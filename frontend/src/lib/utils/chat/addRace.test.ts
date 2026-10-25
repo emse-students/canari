@@ -7,6 +7,11 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalMessaging: { isMessageCatchupActive: false, resetMessageCatchupState: vi.fn() },
 }));
 vi.mock('$lib/users/blocks', () => ({ isBlockedWith: vi.fn(async () => false) }));
+// The inviter's own notice resolves names: a profile read nothing here is about.
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
+  resolveDisplayNames: async () => (id: string) => id,
+}));
 vi.mock('$lib/utils/hex', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/hex')>()),
   saveMlsState: vi.fn().mockResolvedValue(undefined),
@@ -15,6 +20,7 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
 import { inviteMembersToGroup } from './groupCreation';
 import { processPendingInvitations } from './actions';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { decodeAppMessage } from '$lib/proto/codec';
 
 /**
  * AN ADD THAT LOSES A COMMIT RACE IS REBUILT ON PROVEN PROGRESS, OR SURFACED - NEVER DROPPED (CC-4,
@@ -92,7 +98,7 @@ function inviteHarness() {
       }
     ),
     sendWelcome: vi.fn(async () => {}),
-    sendMessage: vi.fn(async () => {}),
+    sendMessage: vi.fn(async (_g: string, _bytes: Uint8Array) => {}),
     getDeviceId: vi.fn(() => 'dev-2'),
   };
   const deps = {
@@ -104,6 +110,8 @@ function inviteHarness() {
     conversations: new SvelteMap(),
     selectConversation: vi.fn(),
     saveConversation: vi.fn(async () => {}),
+    /** Where the inviter writes its own `memberAdded` row (`sendVisibleNotice`). */
+    addMessageToChat: vi.fn(async (..._args: unknown[]) => {}),
     log: vi.fn(),
   };
   return { state, roster, mlsService, deps };
@@ -133,6 +141,12 @@ describe('inviteMembersToGroup - a lost commit race', () => {
     expect(h.mlsService.addMembersBulk).toHaveBeenCalledTimes(2);
     expect(h.state.tree).toContain('w4:w4-dev');
     expect(h.mlsService.sendWelcome).toHaveBeenCalledTimes(1);
+    // ONE notice for the rebuilt Add, and the inviter holds it under the frame's minted id.
+    expect(h.mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    const frame = decodeAppMessage(h.mlsService.sendMessage.mock.calls[0][1]);
+    expect(frame?.system?.event).toBe('memberAdded');
+    expect(h.deps.addMessageToChat).toHaveBeenCalledTimes(1);
+    expect(h.deps.addMessageToChat.mock.calls[0][3]).toMatchObject({ messageId: frame?.messageId });
   });
 
   it('a race refusal that moved nothing is NOT dropped as `failed` - it answers commit-race-lost', async () => {
@@ -181,6 +195,9 @@ describe('inviteMembersToGroup - a lost commit race', () => {
     expect(h.mlsService.addMembersBulk).toHaveBeenCalledTimes(1);
     expect(h.state.tree).not.toContain('w4:w4-dev');
     expect(h.mlsService.registerMember).not.toHaveBeenCalledWith(G, 'w4');
+    // Abandoned before its stage: nothing announced, and no row of the inviter's own.
+    expect(h.mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(h.deps.addMessageToChat).not.toHaveBeenCalled();
   });
 
   it('B3: a device a STALE tree still shows is not filtered - the tree is caught up, and the Add is made', async () => {

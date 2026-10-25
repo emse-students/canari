@@ -5,13 +5,14 @@ import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { ReadWatermarks } from '$lib/types';
 import type { Conversation } from '$lib/types';
-import { encodeAppMessage, mkSystem, mkVisibleSystem } from '$lib/proto/codec';
+import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { pinEntries } from '$lib/stores/pinStore.svelte';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 import { dropGroupState } from './dropGroupState';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
+import { sendVisibleNotice, type OwnNotice } from './visibleNotices';
 import { readerHistorySelection } from './historyEntitlement';
 import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
 import { treeHoldsUser, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
@@ -190,10 +191,9 @@ export async function deleteGroupAndBroadcast(params: {
   // the deletion from the server (a 410 on their next send, the group gone from their next pull).
   if (holdsGroupState(mlsService, groupId)) {
     try {
-      const controlMsg = encodeAppMessage(
-        mkVisibleSystem('groupDeleted', JSON.stringify({ deletedBy: userId }))
-      );
-      await mlsService.sendMessage(groupId, controlMsg);
+      // No row of our own: this device drops the conversation below, and our other devices
+      // purge it on this frame - no device of ours holds the notice (`sendVisibleNotice`).
+      await sendVisibleNotice(mlsService, groupId, 'groupDeleted', { deletedBy: userId });
     } catch (e) {
       const line = `[DELETE] groupDeleted notice for ${groupId.slice(0, 8)}… NOT delivered - deleting without it: ${String(e).slice(0, 120)}`;
       console.warn(line);
@@ -231,52 +231,73 @@ export async function deleteGroupAndBroadcast(params: {
   if (serverExitFailure) throw serverExitFailure.error;
 }
 
-/** Renames the group on the server, then broadcasts a "groupRenamed" system message to all members so their UIs update. */
+/**
+ * Renames the group on the server, then broadcasts a "groupRenamed" system message to all members so
+ * their UIs update, and writes this device's own notice under the frame's id (`sendVisibleNotice`).
+ */
 export async function renameGroupAndBroadcast(params: {
   mlsService: IMlsService;
   groupId: string;
   newName: string;
   userId: string;
   deviceKeyB64: string;
+  /** Where this device writes its own copy of the notice. */
+  ownNotice: Omit<OwnNotice, 'actor'>;
 }) {
-  const { mlsService, groupId, newName, userId, deviceKeyB64 } = params;
+  const { mlsService, groupId, newName, userId, deviceKeyB64, ownNotice } = params;
   await mlsService.renameGroup(groupId, newName);
 
   // Broadcast the rename notification - best-effort: the local rename is
   // already committed to the server; if the MLS message fails, peers will
   // still see the new name when they next fetch group metadata.
   try {
-    const controlMsg = encodeAppMessage(
-      mkVisibleSystem('groupRenamed', JSON.stringify({ newName }))
+    await sendVisibleNotice(
+      mlsService,
+      groupId,
+      'groupRenamed',
+      { newName },
+      { ...ownNotice, actor: userId }
     );
-    await mlsService.sendMessage(groupId, controlMsg);
-  } catch {
-    // Non-blocking: rename already applied server-side
+  } catch (e) {
+    console.warn(
+      `[GROUP] groupRenamed notice for ${groupId.slice(0, 8)}… NOT delivered - the rename stands, the members read it from the group metadata: ${String(e).slice(0, 120)}`
+    );
   }
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
 }
 
-/** Sets the group avatar on the server, then broadcasts a "groupImageChanged" system message to all members so their UIs update. Pass mediaId=null to remove the photo. */
+/**
+ * Sets the group avatar on the server, then broadcasts a "groupImageChanged" system message to all
+ * members so their UIs update, and writes this device's own notice under the frame's id. Pass
+ * mediaId=null to remove the photo.
+ */
 export async function setGroupImageAndBroadcast(params: {
   mlsService: IMlsService;
   groupId: string;
   mediaId: string | null;
   userId: string;
   deviceKeyB64: string;
+  /** Where this device writes its own copy of the notice. */
+  ownNotice: Omit<OwnNotice, 'actor'>;
 }) {
-  const { mlsService, groupId, mediaId, userId, deviceKeyB64 } = params;
+  const { mlsService, groupId, mediaId, userId, deviceKeyB64, ownNotice } = params;
   await mlsService.setGroupImage(groupId, mediaId);
 
   // Broadcast the photo change - best-effort: the change is already committed to
   // the server; if the MLS message fails, peers will still see the new photo when
   // they next fetch group metadata via getUserGroups.
   try {
-    const controlMsg = encodeAppMessage(
-      mkVisibleSystem('groupImageChanged', JSON.stringify({ imageMediaId: mediaId }))
+    await sendVisibleNotice(
+      mlsService,
+      groupId,
+      'groupImageChanged',
+      { imageMediaId: mediaId },
+      { ...ownNotice, actor: userId }
     );
-    await mlsService.sendMessage(groupId, controlMsg);
-  } catch {
-    // Non-blocking: image already applied server-side
+  } catch (e) {
+    console.warn(
+      `[GROUP] groupImageChanged notice for ${groupId.slice(0, 8)}… NOT delivered - the photo stands, the members read it from the group metadata: ${String(e).slice(0, 120)}`
+    );
   }
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
 }
@@ -295,13 +316,11 @@ async function notifyMembershipChange(
   groupId: string,
   event: 'memberLeft' | 'memberRemoved',
   payload: Record<string, string>,
-  log?: (msg: string) => void
+  log?: (msg: string) => void,
+  ownNotice?: OwnNotice
 ): Promise<void> {
   try {
-    await mlsService.sendMessage(
-      groupId,
-      encodeAppMessage(mkVisibleSystem(event, JSON.stringify(payload)))
-    );
+    await sendVisibleNotice(mlsService, groupId, event, payload, ownNotice);
   } catch (e) {
     const line = `[GROUP] ${event} notice for ${groupId.slice(0, 8)}… NOT delivered, and not sent later - the members see the roster change without it: ${String(e).slice(0, 120)}`;
     console.warn(line);
@@ -365,9 +384,23 @@ export async function removeMemberAndBroadcast(params: {
   memberId: string;
   userId: string;
   deviceKeyB64: string;
+  /** Where this device writes its own copy of the notice. */
+  ownNotice: Omit<OwnNotice, 'actor'>;
 }): Promise<MemberRemovalOutcome> {
-  const { mlsService, groupId, memberId, userId, deviceKeyB64 } = params;
+  const { mlsService, groupId, memberId, userId, deviceKeyB64, ownNotice } = params;
   const short = groupId.slice(0, 8);
+  // Every `memberRemoved` this device sends, it also holds, under the frame's id
+  // (`sendVisibleNotice`) - on `committed` and on a record that landed uncommitted, never on
+  // `already-out`, which sends nothing.
+  const announce = () =>
+    notifyMembershipChange(
+      mlsService,
+      groupId,
+      'memberRemoved',
+      { targetUser: memberId },
+      undefined,
+      { ...ownNotice, actor: userId }
+    );
 
   // 0. Known from leadership, a fact here - never learnt from a commit refused after the record.
   if (getTabLeadership() === 'follower') {
@@ -392,16 +425,15 @@ export async function removeMemberAndBroadcast(params: {
   } catch (e) {
     // The record stands, so its notice goes (see above), and the caller is told.
     if (e instanceof MemberRemovalNotCommittedError) {
-      await notifyMembershipChange(mlsService, groupId, 'memberRemoved', { targetUser: memberId });
+      await announce();
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
     }
     throw e;
   }
 
-  // 3. Notify remaining members - only when THIS commit removed them (see above).
-  if (outcome === 'committed') {
-    await notifyMembershipChange(mlsService, groupId, 'memberRemoved', { targetUser: memberId });
-  }
+  // 3. Notify remaining members - only when THIS commit removed them (see above) - and write our
+  // own notice under the frame's id.
+  if (outcome === 'committed') await announce();
 
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
   return outcome;
@@ -560,7 +592,8 @@ export async function leaveGroupAndBroadcast(params: {
   const { mlsService, groupId, userId, log } = params;
 
   // 1. Notify BEFORE server deletion (WASM must be intact to encrypt), and AWAIT ITS ACCEPTANCE:
-  // the server step below ends the membership, and a frame posted after it is refused.
+  // the server step below ends the membership, and a frame posted after it is refused. No row of
+  // our own: none of our devices draws our own departure (`sendVisibleNotice`).
   // A failure is logged there and the leave goes on - see this function's doc for why it is lost.
   await notifyMembershipChange(mlsService, groupId, 'memberLeft', { userId }, log);
 

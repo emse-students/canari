@@ -1343,6 +1343,49 @@ and device beside each frame, and a push payload already names the sending user 
 device id in a push payload is what the claim adds there. The author proof of this section is inside
 the ciphertext and adds nothing visible.
 
+### The acting device writes its own notice
+
+**Found by the 1.4.1 dev campaign (4 draws in 10, deterministic), fixed 2026-10-25.** A visible
+notice - a member added or removed, a rename, a photo change - is written on every member's device
+from the frame, under the id the sender minted (`mkVisibleSystem`). MLS never hands a device its own
+application message, so the ACTING device wrote nothing. Its store was one row short of every other
+member's, and the history exchange repaired that the only way it can:
+
+1. the acting device's state key differed from a member's (`Keys differ ... asked <them> to describe`) - on every connection until the step below, not for ever: the key covers ids, not content or time;
+2. the member's diff named the notice as missing there and sent it (`Diff sent: 1 of 1 requested`);
+3. the acting device vetted a row authored by nobody, which no proof can cover, and kept it MARKED: `[AUTHORSHIP] 1 restored message(s) ... carry no author proof - kept, marked unverified`.
+
+**The fix is at the source, and it is the one the channel invitation card already used**
+(`inviteMemberToChannel`): `sendVisibleNotice` (`visibleNotices.ts`) sends the frame and, once the
+delivery service has accepted it, writes the acting device's own row under the frame's id. Every
+device then holds the same row, the state keys agree, the diff is empty, nothing is relayed and
+nothing is vetted - no filter in the digest, the diff or the vetting. Its callers:
+`processBulkAddition` (`memberAdded`), `renameGroupAndBroadcast`, `setGroupImageAndBroadcast` and
+`removeMemberAndBroadcast`. The row follows the frame exactly, so it follows the race rules: a
+`memberRemoved` on `committed` and on a record that landed uncommitted, none on `already-out`
+("The removal order", above); one `memberAdded` for a rebuilt Add, none on
+`already-in-tree` (the winner announced it) or an Add abandoned before its stage (`AddAbortedError`).
+A frame that was not accepted writes no row, since a row only this device
+holds is the same divergence the other way. The text is rendered BEFORE the send and the row written
+right after it, so nothing slow sits between the send and the MLS checkpoint `processBulkAddition`
+owes it; a local write that fails is logged as such (`[NOTICE] ... was DELIVERED ... not written`)
+and never thrown as a failed send. **And the handler that called it must not write a pre-await
+snapshot back**: `handleRenameGroup` / `handleSetGroupImage` did `{ ...convo, name }` after the
+await and erased the notice just written - they now patch the conversation as it stands
+(`patchConversation`). A departure (`memberLeft`) and a deletion
+(`groupDeleted`) write none either: no device of the acting user draws them (the handler skips its
+own departure and purges on its own deletion), so all its devices agree on holding nothing.
+
+**One rendering.** `renderVisibleNotice` draws these four events for the acting device, the live
+handler and the archive replay, which had two copies of it between them. The replay now draws the
+photo notice it never drew, which had left a device that met that frame only in the archive one row
+short as well.
+
+**Mixed versions need nothing.** An older acting device still lacks its row, and converges as before
+(one relay, marked). An older member's digest names the notice the updated acting device now holds,
+so the diff is empty. Rows that only one device should ever hold (an outbox line, an eviction notice)
+are a separate defect ([backlog](../backlog.md)).
+
 ### Reactions
 
 Each `(user, emoji)` pair carries its own timestamp and an on/off state; the larger timestamp wins.

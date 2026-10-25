@@ -244,7 +244,10 @@ export function mkSystem(event: string, data?: string): canari.AppMessage.$Prope
  * `sentAt` rides along for the same reason it does on a text frame: it is the sender's clock, and
  * the two reading paths otherwise date the row from two different arrivals.
  */
-export function mkVisibleSystem(event: string, data?: string): canari.AppMessage.$Properties {
+export function mkVisibleSystem(
+  event: string,
+  data?: string
+): canari.AppMessage.$Properties & { messageId: string; sentAt: number } {
   return { ...mkSystem(event, data), messageId: crypto.randomUUID(), sentAt: Date.now() };
 }
 

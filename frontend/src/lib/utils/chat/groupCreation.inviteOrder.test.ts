@@ -9,6 +9,11 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 vi.mock('$lib/users/blocks', () => ({ isBlockedWith: vi.fn(async () => false) }));
+// The acting device's own notice resolves names: a profile read nothing here is about.
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
+  resolveDisplayNames: async () => (id: string) => id,
+}));
 
 import { inviteMembersToGroup } from './groupCreation';
 
@@ -54,6 +59,7 @@ function inviteDeps(registerImpl?: (u: string) => Promise<void>) {
       conversations: new SvelteMap(),
       selectConversation: vi.fn(),
       saveConversation: vi.fn(async () => {}),
+      addMessageToChat: vi.fn(async () => {}),
       log: vi.fn(),
     },
   };
