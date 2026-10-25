@@ -42,7 +42,9 @@ const { IdentitySplitError, getIdentitySplit } = await import('$lib/stores/token
 
 /** A refresh response with the given status; 200 carries a syntactically valid JWT. */
 function answer(status: number): Response {
-  if (status !== 200) return new Response('', { status });
+  // A refusal as core-service sends it (Nest JSON): only that proves the cookie dead.
+  if (status !== 200)
+    return new Response('{}', { status, headers: { 'content-type': 'application/json' } });
   const claims = btoa(JSON.stringify({ sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 3600 }));
   return new Response(JSON.stringify({ access_token: `h.${claims}.s` }), {
     status: 200,
@@ -85,6 +87,21 @@ describe('the session-expired announcement', () => {
     fetchMock.mockResolvedValue(answer(503));
 
     await expect(refresh()).rejects.toThrow();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("stays silent on an edge's HTML 403 - a WAF or a portal says nothing about the cookie", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    fetchMock.mockResolvedValue(
+      new Response('<html>Access denied</html>', {
+        status: 403,
+        headers: { 'content-type': 'text/html' },
+      })
+    );
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).not.toBeInstanceOf(SessionExpiredError);
     expect(handler).not.toHaveBeenCalled();
   });
 

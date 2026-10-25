@@ -115,8 +115,6 @@ send. Owed: one device reading on the Mi 9T behind a portal.
 #2428 covered the places that PARSE a 2xx. About 140 write sites read no body at all, so a portal's
 `200` is believed. Ranked:
 
-- **P2** `deleteGroupOnServer` returns `true` on any 2xx: a "delete for everyone" reports done while
-  nothing was deleted.
 - **P2** `dismissGroup`: the server is never told, and the group comes back on the next listing.
 - **P3** `renameGroup` / `setGroupImage`, and the notification-preference PATCH/PUTs
   (`notifications/preferencesApi.ts`): the change is lost silently and shows again on reload.

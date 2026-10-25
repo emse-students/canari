@@ -307,7 +307,6 @@ describe('drainPendingGroupExits', () => {
     const mlsService = makeMls({
       deleteGroupOnServer: vi.fn(async () => {
         await gate;
-        return true;
       }),
     });
     const lines: string[] = [];

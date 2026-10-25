@@ -61,7 +61,9 @@ describe('a sign-out ends the device push registration', () => {
   });
 
   it('when the session is already dead on the server', async () => {
-    fetchMock.mockResolvedValue(new Response('', { status: 401 }));
+    fetchMock.mockResolvedValue(
+      new Response('{}', { status: 401, headers: { 'content-type': 'application/json' } })
+    );
     await expect(refresh()).rejects.toThrow();
     expect(isRefreshCredentialProvenDead()).toBe(true);
 

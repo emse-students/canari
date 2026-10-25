@@ -255,11 +255,10 @@ export async function drainPendingGroupExits(params: {
       const short = entry.groupId.slice(0, 8);
       try {
         if (entry.kind === 'delete') {
-          const deleted = await mlsService.deleteGroupOnServer(entry.groupId);
-          // `false` is the 404: the group is not there, which is the end state asked for.
-          log(
-            `[EXIT] ${short}... delete replayed - server ${deleted ? 'deleted it' : 'had no such group'}`
-          );
+          // Resolves only on the delivery service's own answer (an absent group is answered
+          // `deleted` too); anything else throws and keeps the row below.
+          await mlsService.deleteGroupOnServer(entry.groupId);
+          log(`[EXIT] ${short}... delete replayed - server deleted it`);
         } else {
           await mlsService.removeMemberFromServer(entry.groupId, userId);
           log(`[EXIT] ${short}... leave replayed - server removed this user`);

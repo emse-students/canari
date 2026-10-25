@@ -54,9 +54,14 @@ describe('getGroupServerStatus', () => {
     expect(await api.getGroupServerStatus('g1')).toBe('absent');
   });
 
-  it("404 -> 'absent' (aucune ligne dm_groups)", async () => {
-    const api = makeApi(async () => response('Not Found', { status: 404 }));
-    expect(await api.getGroupServerStatus('g1')).toBe('absent');
+  // THE HANDLER NEVER ANSWERS 404 (a missing row is `{ found: false }`), so a 404 is an edge, a
+  // portal or a misrouted deploy - and a route-level 404 would purge EVERY group at once.
+  it.each([
+    ['plain text', 'text/plain'],
+    ['JSON', 'application/json'],
+  ])("a 404 (%s) -> 'error', never a purge", async (_label, contentType) => {
+    const api = makeApi(async () => response('Not Found', { status: 404, contentType }));
+    expect(await api.getGroupServerStatus('g1')).toBe('error');
   });
 
   it("500 -> 'error' (doute reel, on ne purge pas)", async () => {
@@ -106,6 +111,17 @@ describe('getGroupMembers - a status code is an answer, a transport failure is n
     expect((err as NotAGroupMemberError).groupId).toBe('g1');
   });
 
+  it("an edge's HTML 403 is no membership answer", async () => {
+    const api = makeApi(async () =>
+      response('<html>Access denied</html>', { status: 403, contentType: 'text/html' })
+    );
+
+    const err = await api.getGroupMembers('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
+  });
+
   // Every other non-2xx says NOTHING about membership, so none of them may be mistaken for one.
   // A 500 read as "not a member" would retire live conversations on a bad deploy.
   it.each([401, 404, 500, 502])('leaves %i unclassified', async (status) => {
@@ -145,6 +161,17 @@ describe('fetchGroupInfo - a refused base is a membership answer', () => {
 
     expect(err).toBeInstanceOf(NotAGroupMemberError);
     expect((err as NotAGroupMemberError).groupId).toBe('g1');
+  });
+
+  it("an edge's HTML 403 is no membership answer", async () => {
+    const api = makeApi(async () =>
+      response('<html>Access denied</html>', { status: 403, contentType: 'text/html' })
+    );
+
+    const err = await api.fetchGroupInfo('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
   });
 
   it.each([401, 404, 500, 502, 503])('leaves %i unclassified', async (status) => {

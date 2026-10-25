@@ -205,12 +205,7 @@ export async function deleteGroupAndBroadcast(params: {
   // than a sentinel value, because "no failure" and "a falsy error" must not be the same state.
   let serverExitFailure: { error: unknown } | null = null;
   try {
-    const serverDeleted = await mlsService.deleteGroupOnServer(groupId);
-    if (!serverDeleted) {
-      // A 404 IS AN ANSWER: the group is not there, which is the end state asked for. Nothing is
-      // owed and nothing is rethrown.
-      log?.(`[DELETE] Group ${groupId.slice(0, 8)}... not found on server (already deleted?)`);
-    }
+    await mlsService.deleteGroupOnServer(groupId);
   } catch (e) {
     serverExitFailure = { error: e };
   }

@@ -2034,7 +2034,7 @@ no network still gets the honest `auth_server_unreachable`. `offlineUnlock.test.
 
 | Signal | Meaning | Offline unlock |
 |---|---|---|
-| `SessionExpiredError` (HTTP 401/403) | The server was reached **and refused us** | Never. Logs out. |
+| `SessionExpiredError` (HTTP 401/403 in core-service's JSON; an edge's HTML 403 is transient, [chat](chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) | The server was reached **and refused us** | Never. Logs out. |
 | Any other `getToken()` rejection | Transport failure - the server said nothing | Proceeds on the two capable paths |
 
 That distinction is the rule the whole feature rests on: **a status code is an answer, a transport
@@ -2108,7 +2108,7 @@ about the network, the token or the server was wrong. Only the flag.
 | Terminator | Why it is a proof |
 |---|---|
 | `!ctx.isLoggedIn()` | There is no session to carry. |
-| `SessionExpiredError` (401/403 on the refresh cookie) | The server was reached **and refused us** - an answer. Logs out, redirects to `/login`. |
+| `SessionExpiredError` (401/403 on the refresh cookie, in core-service's JSON) | The server was reached **and refused us** - an answer. Logs out, redirects to `/login`. |
 
 A repeated transport failure is not an answer and may never end the loop. The cost that makes this
 safe rather than merely correct: the backoff caps at 30 s, so a stuck tab settles at **two connect

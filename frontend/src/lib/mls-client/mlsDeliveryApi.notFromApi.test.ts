@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { DeliveryUnreachableError, MlsDeliveryApi } from './mlsDeliveryApi';
+import { DeliveryUnreachableError, GroupExitRefusedError, MlsDeliveryApi } from './mlsDeliveryApi';
 import {
   ackMessagesWithRetry,
   clearPersistedPendingAcks,
@@ -121,6 +121,23 @@ describe('the commit gate, the published base and the pull read a portal the sam
     const failure = await api.pullPendingMessagesJson().catch((e: unknown) => e);
     expect(failure).toBeInstanceOf(NotFromApiError);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a delete for everyone is done only on the delivery service's answer", () => {
+  it('a 404 is refused, never "already gone" - the route never sends one', async () => {
+    const { api } = makeApi(() => new Response('Not Found', { status: 404 }));
+    await expect(api.deleteGroupOnServer('g1')).rejects.toBeInstanceOf(GroupExitRefusedError);
+  });
+
+  it('a portal 200 is no answer', async () => {
+    const { api } = makeApi(portal);
+    await expect(api.deleteGroupOnServer('g1')).rejects.toBeInstanceOf(NotFromApiError);
+  });
+
+  it("the service's JSON 200 is done", async () => {
+    const { api } = makeApi(() => Response.json({ status: 'deleted' }));
+    await expect(api.deleteGroupOnServer('g1')).resolves.toBeUndefined();
   });
 });
 

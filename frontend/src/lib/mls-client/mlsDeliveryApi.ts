@@ -1545,7 +1545,11 @@ export class MlsDeliveryApi {
       `${this.historyUrl}/api/mls/group-info/${encodeURIComponent(groupId)}`,
       { headers: await this.auth() }
     );
-    if (res.status === 403) throw new NotAGroupMemberError(groupId);
+    // ORIGIN FIRST: only the delivery service's JSON 403 says "not a member" (a caller retires the
+    // conversation on it); an edge's HTML 403 (a WAF ban page) says nothing about membership.
+    if (res.status === 403 && responseOrigin(res) === 'gateway') {
+      throw new NotAGroupMemberError(groupId);
+    }
     const awaiting = await awaitingAdmissionFrom(res, groupId);
     if (awaiting) throw awaiting;
     if (!res.ok) {
@@ -2095,15 +2099,22 @@ export class MlsDeliveryApi {
     if (!res.ok) throw await refusalFromResponse(res, 'setGroupImage failed');
   }
 
-  /** Soft-deletes `groupId` on the server. Returns `false` if already absent (404). */
-  async deleteGroupOnServer(groupId: string): Promise<boolean> {
+  /**
+   * Soft-deletes `groupId` on the server - a "delete for everyone".
+   *
+   * DONE ONLY ON THE DELIVERY SERVICE'S OWN ANSWER. The route never answers 404 (deleting an absent
+   * group tombstones nothing and still answers `{ status: 'deleted' }`), so a 404 used to read as
+   * "already gone" came only from an edge, a portal or a misrouted deploy - and the delete was then
+   * reported done with nothing deleted. Any non-2xx is `GroupExitRefusedError`, held by the caller;
+   * a 2xx that is not the API's JSON is `NotFromApiError`, a transport failure.
+   */
+  async deleteGroupOnServer(groupId: string): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'DELETE',
       headers: await this.auth(),
     });
-    if (res.status === 404) return false;
     if (!res.ok) throw new GroupExitRefusedError(groupId, res.status, 'delete');
-    return true;
+    assertAnsweredByApi(res, `DELETE /api/mls/groups (group ${groupId.slice(0, 8)})`);
   }
 
   /** Removes `userId` from the server-side member list of `groupId`. */
@@ -2150,7 +2161,10 @@ export class MlsDeliveryApi {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
       headers: await this.auth(),
     });
-    if (res.status === 403) throw new NotAGroupMemberError(groupId);
+    // ORIGIN FIRST, as on `fetchGroupInfo`: an edge's 403 is no membership answer.
+    if (res.status === 403 && responseOrigin(res) === 'gateway') {
+      throw new NotAGroupMemberError(groupId);
+    }
     const awaiting = await awaitingAdmissionFrom(res, groupId);
     if (awaiting) throw awaiting;
     if (!res.ok) throw await refusalFromResponse(res, 'getGroupMembers failed');
@@ -2382,11 +2396,14 @@ export class MlsDeliveryApi {
   /**
    * Server status of a group, distinguishing a CONFIRMED absence from network uncertainty -
    * something `getGroupMeta` (which returns `null` for both) cannot do. `GET /api/mls/groups/:id`
-   * queries `dm_groups` WITHOUT a membership check and returns `null` (body) if the row does not
-   * exist, hence:
-   *  - `'absent'` : the server replied and the `dm_groups` row does not exist -> group really gone
-   *    (never created / hard-purged). The only case where discovery may auto-delete the conversation.
-   *  - `'error'`  : HTTP/network failure -> status unknown, delete NOTHING.
+   * queries `dm_groups` WITHOUT a membership check and answers `{ found: false }` if the row does
+   * not exist, hence:
+   *  - `'absent'` : the delivery service's own JSON says the `dm_groups` row does not exist -> group
+   *    really gone (never created / hard-purged). The only case where discovery may auto-delete the
+   *    conversation, so it is read from an ALLOWLIST of one answer.
+   *  - `'error'`  : anything else - a network failure, any non-2xx (a 404 included: the handler never
+   *    sends one, so it is an edge, a portal or a misrouted deploy, and a route-level 404 would
+   *    otherwise purge EVERY group at once), a 2xx that is not the API's JSON -> delete NOTHING.
    *  - `GroupMeta`: the row exists (live group, `deletedAt` tombstone, or exclusion) -> keep the
    *    conversation locally (banner + manual deletion).
    */
@@ -2397,10 +2414,13 @@ export class MlsDeliveryApi {
     } catch {
       return 'error';
     }
-    // 404 = no dm_groups row -> confirmed absent (never created or hard-purged).
-    if (res.status === 404) return 'absent';
-    // Other non-2xx (401/5xx/…) = real doubt -> never purge on error.
-    if (!res.ok) return 'error';
+    // ANY non-2xx is doubt, a 404 included - see the doc comment: never purge on it.
+    if (!res.ok) {
+      console.warn(
+        `[MLS] group ${groupId.slice(0, 8)} status answered ${res.status} - unknown, nothing purged`
+      );
+      return 'error';
+    }
     // 'absent' PURGES the local conversation and its MLS state, so it is read only from the
     // delivery service's own JSON: the handler answers `{ found: false }` (an object with no id)
     // for a missing row. A 2xx that is not that JSON - a captive portal's page, an empty untyped

@@ -1329,7 +1329,23 @@ erased a conversation. `absent` now comes only from the delivery service's JSON.
 a missing row `{ found: false }`, and "nothing stored" on `GET /group-info` `{ groupInfo: null }`,
 because a handler's bare `null` leaves Nest as an empty, untyped `200` that a portal can send too.
 Every older client already reads both objects as before. An empty untyped `200` is now `error`
-(doubt, nothing purged). The discriminator is the
+(doubt, nothing purged). So is a **404**: the handler never sends one, so a 404 is an edge, a portal
+or a misrouted deploy, and a route-level 404 would have purged EVERY group at once. `absent` is an
+allowlist of one answer.
+
+The same review of status-only arms changed four more places, each to the rule "a status decides
+only when the API said it":
+- The 403 behind `NotAGroupMemberError` (`fetchGroupInfo`, `getGroupMembers`) counts only with the
+  gateway's JSON. A caller retires the conversation on it, and an edge's HTML 403 (a WAF ban page)
+  says nothing about membership.
+- `deleteGroupOnServer` no longer reads a 404 as "already gone". The route never sends one, so a
+  delete for everyone was reported done with nothing deleted. A non-API 2xx is now no answer.
+- A profile 404 (`isAbsentUserError`, which sends the session to the login page) counts only from
+  core-service.
+- The refresh's 401/403 latches the cookie dead and signs out only when core-service sent it. An
+  edge's 403 is transient, like a 5xx.
+
+The discriminator is the
 content type `responseOrigin` already used for an edge refusal, plus the parse - facts the
 response carries, never a guess from its words. The log line an operator reads is
 `[DELIVERY] send to <group> answered 200 with no answer of the delivery service - not accepted, kept

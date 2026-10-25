@@ -33,18 +33,12 @@ describe('deleteGroupAndBroadcast - the server failure', () => {
     expect(mlsService.persistCheckpoint).toHaveBeenCalled();
   });
 
-  it('treats a 404 as an ANSWER and returns normally', async () => {
-    // `deleteGroupOnServer` maps 404 to `false`: the group is not there, which is the end state a
-    // delete asks for. Nothing is owed, so nothing may be thrown.
+  it('returns normally once the delivery service answered the delete', async () => {
     const mlsService = createMlsServiceStub({
-      deleteGroupOnServer: vi.fn().mockResolvedValue(false),
+      deleteGroupOnServer: vi.fn().mockResolvedValue(undefined),
     });
-    const lines: string[] = [];
 
-    await expect(
-      deleteGroupAndBroadcast({ mlsService, ...args, log: (m) => lines.push(m) })
-    ).resolves.toBeUndefined();
-    expect(lines.some((l) => l.includes('not found on server'))).toBe(true);
+    await expect(deleteGroupAndBroadcast({ mlsService, ...args })).resolves.toBeUndefined();
   });
 });
 
