@@ -68,19 +68,25 @@ export class CommitRefusedError extends Error {
  *   group's seat generation on every submission `runCommitTransaction` made - each refusal proves
  *   an eviction landed, and the epoch stood still, so the rebuild stages on the same tree.
  *
- * Read from the TYPE and its `reason` field, never from the message.
+ * NEVER A REFUSAL THE CLIENT ITSELF DECIDED: `rate_limited` (the server asked this account to wait)
+ * and `lock_budget_spent` (nothing was even staged) are not races, and a rebuild would only meet them
+ * again - whatever the epoch did meanwhile.
+ *
+ * Read from the TYPE and its fields, never from the message. The epoch is compared with the one the
+ * refused commit RECORDED (`baseEpoch`), not one read before the call: a frame processed between that
+ * read and the stage would otherwise count as progress the refusal did not make.
  *
  * @param error - what the commit threw.
- * @param builtOn - the local epoch the commit was staged on, read before it was.
  * @param epochNow - the local epoch after the refusal.
  */
 export function rebuildableRefusal(
   error: unknown,
-  builtOn: number,
   epochNow: number
 ): 'epoch-moved' | 'seat-claim-overtaken' | null {
   if (!(error instanceof CommitRefusedError)) return null;
-  if (epochNow > builtOn) return 'epoch-moved';
+  if (error.reason === 'rate_limited' || error.reason === COMMIT_LOCK_BUDGET_SPENT_REASON)
+    return null;
+  if (epochNow > error.baseEpoch) return 'epoch-moved';
   if (error.reason === SEAT_CLAIM_OVERTAKEN_REASON) return 'seat-claim-overtaken';
   return null;
 }

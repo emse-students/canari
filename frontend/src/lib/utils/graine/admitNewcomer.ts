@@ -214,7 +214,7 @@ export async function admitNewcomerToDistributionGroup(
         break;
       } catch (e) {
         const caughtUpTo = mlsService.getEpoch(groupId);
-        const rebuild = rebuildableRefusal(e, builtOn, caughtUpTo);
+        const rebuild = rebuildableRefusal(e, caughtUpTo);
         if (rebuild === 'epoch-moved' && e instanceof CommitRefusedError) {
           log(
             `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: the Add built on epoch ${builtOn} lost to a commit (${e.reason}); caught up to ${caughtUpTo} - re-reading the tree`

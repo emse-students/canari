@@ -27,6 +27,17 @@ describe('reportFollowerTabRefusal', () => {
     expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_error_follower_tab());
   });
 
+  it('reaches the follower-tab refusal a recorded removal carries as its cause, by type', () => {
+    const wrapped = new MemberRemovalNotCommittedError(
+      'g-1',
+      'user-b',
+      'commit-not-landed',
+      new FollowerTabCommitError('g-1')
+    );
+    expect(reportFollowerTabRefusal(wrapped)).toBe(true);
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_error_follower_tab());
+  });
+
   it('leaves every other failure to its caller, whatever its text says', () => {
     const lookalike = new Error(new FollowerTabCommitError('g-1').message);
     expect(reportFollowerTabRefusal(lookalike)).toBe(false);
@@ -46,7 +57,12 @@ describe('reportMemberRemovalFailure', () => {
   beforeEach(() => showToast.mockReset());
 
   it('says the person is removed and the key change follows, when only the commit is owed', () => {
-    const e = new MemberRemovalNotCommittedError('g-1', 'user-b', new Error('refused'));
+    const e = new MemberRemovalNotCommittedError(
+      'g-1',
+      'user-b',
+      'commit-not-landed',
+      new Error('refused')
+    );
     expect(reportMemberRemovalFailure(e)).toBe('recorded');
     expect(showToast).toHaveBeenCalledExactlyOnceWith(
       m.chat_group_remove_member_keys_pending(),

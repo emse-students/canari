@@ -45,9 +45,12 @@ export function conversationRefusalMessage(reason: ConversationRefusal): string 
  * @returns whether the failure was that refusal and was shown.
  */
 export function reportFollowerTabRefusal(e: unknown): boolean {
-  if (!(e instanceof FollowerTabCommitError)) return false;
+  // A removal the server recorded and then could not commit carries the refusal as its cause: the
+  // member still learns WHY, by type (`MemberRemovalNotCommittedError`).
+  const refusal = e instanceof MemberRemovalNotCommittedError ? e.cause : e;
+  if (!(refusal instanceof FollowerTabCommitError)) return false;
   console.warn(
-    `[GROUP] a group action was refused in a follower tab (${e.groupId.slice(0, 8)}...)`
+    `[GROUP] a group action was refused in a follower tab (${refusal.groupId.slice(0, 8)}...)`
   );
   showToast(conversationRefusalMessage('follower-tab'));
   return true;

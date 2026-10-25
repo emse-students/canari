@@ -86,6 +86,7 @@ import {
   reportFollowerTabRefusal,
   reportMemberRemovalFailure,
 } from '$lib/utils/chat/conversationRefusalMessage';
+import { MemberRemovalNotCommittedError } from '$lib/utils/chat/memberRemovalError';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
@@ -2301,8 +2302,9 @@ export function useConversations() {
     } catch (e) {
       // NEVER A LOG LINE ALONE: every ending reaches the person who asked, classified by TYPE.
       ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} not fully removed: ${String(e)}`);
-      if (reportFollowerTabRefusal(e)) return;
-      recorded = reportMemberRemovalFailure(e) === 'recorded';
+      // Recorded or not is the error's TYPE; the sentence is the follower tab's when that is why.
+      recorded = e instanceof MemberRemovalNotCommittedError;
+      if (!reportFollowerTabRefusal(e)) reportMemberRemovalFailure(e);
     }
     if (!recorded) return;
     membershipCache.delete(convo.id);

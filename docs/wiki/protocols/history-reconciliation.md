@@ -946,21 +946,33 @@ commit, and learning that from the commit, after the record, was a half-removal.
 
 **A Remove that loses the commit race is REBUILT, never left to a sweep** (CC-2, 1.4.1 dev campaign,
 2026-10-25). Between the record and the commit another commit can take the epoch - a concurrent Add,
-a leaf refresh, another holder's collector - and the gate refuses ours `epoch_mismatch`. That refusal
-used to reach the caller as a `CommitRefusedError` it only logged: the member off the roster and still
-in the tree, the person who asked told nothing, and `removeStrayLeaves` finishing the job at some
-holder's next connection. Now `commitMemberRemoval` (`groupActions.ts`) re-reads the tree after the
-refusal's catch-up applied the winner, and stages the Remove again on it, under `rebuildableRefusal`
-(`CommitRefusedError.ts`) - the one rule the newcomer admission follows too: only a refusal whose
-catch-up MOVED the epoch, or an overtaken seat claim (each one an eviction), is rebuilt, so the loop
-ends on a proof, never on a count. A tree that no longer holds the member commits nothing and
-resolves `already-out`, QUIETLY (no warning, no second `memberRemoved` notice) - read before the
-commit, and read again after ANY refused attempt: two Removes of one person (CC-3) refuse the loser
-`concurrent_commit` with no epoch to catch up on, and the winner's commit is already in its tree. Every other ending - a refusal that moved nothing, an unknown outcome, an unreadable
-tree - throws `MemberRemovalNotCommittedError`, and the person who asked is told by TYPE
-(`reportMemberRemovalFailure`): "removed, the key change finishes at the next connection", never
-"failed", because the record IS the removal and is not rolled back. The collector still completes
-that case from durable state (roster against tree).
+a leaf refresh, another holder's collector - and the gate refuses ours. That refusal used to reach the
+caller as a `CommitRefusedError` it only logged: the member off the roster and still in the tree, the
+person who asked told nothing, and `removeStrayLeaves` finishing the job at some holder's next
+connection. Now `commitMemberRemoval` (`groupActions.ts`) stages the Remove again on the tree that won,
+under `rebuildableRefusal` (`CommitRefusedError.ts`) - the one rule the newcomer admission follows too:
+only a refusal whose catch-up moved the epoch past the base the refused commit RECORDED, or an
+overtaken seat claim (each one an eviction), is rebuilt, so the loop ends on a proof, never on a count.
+`rate_limited` and `lock_budget_spent` are never rebuilt: the client decided them, not a race.
+
+**"Out" is read from the tree, after any failure, and only on a tree confirmed current.** Two Removes
+of one person (CC-3) rarely end in a gate refusal: the MLS lock is taken before the stage, and incoming
+commits are applied under the same lock, so the loser waits while the winner's Remove is applied and
+then its STAGE fails - openmls finds no leaf (`NoSuchMember`, `members.rs`), an untyped error from the
+platform. So every failure of the commit except an unknown outcome (whose kept stage a later settle
+decides) asks the tree again (`memberStanding`), and a tree without the member resolves `already-out`,
+quietly: no warning and no second notice. That answer is trusted only at the server's epoch: a tree
+behind an Add that re-admitted the member would say "out" of someone still in, so when the commit log
+is ahead the rung-1 replay applies it first, and a tree that cannot be brought there is
+`tree-unconfirmed` - surfaced, never "out". Every other ending throws `MemberRemovalNotCommittedError`
+and the person who asked is told by TYPE (`reportMemberRemovalFailure`): "removed, the key change
+finishes at the next connection", never "failed", because the record IS the removal and is not rolled
+back. The collector completes that case from durable state (roster against tree). A follower-tab
+refusal it carries as its `cause` still reaches its own sentence.
+
+**The `memberRemoved` notice follows the record** (decided 2026-10-25): sent on `committed` AND when
+the record landed but the commit did not - safe, because the record already cut the removed device's
+rows - and not on `already-out`, whose winner sent its own.
 
 **Why the record stays first rather than moving after the commit.** The record is what gates
 delivery: it deletes the member's device rows, so no application frame reaches them from that instant,
