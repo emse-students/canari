@@ -4,14 +4,14 @@ import type { ChannelService } from '../channels/channel.service';
 
 describe('InternalDistributionEntitlementController', () => {
   const env = { ...process.env };
-  const isDistributionGroupEntitled = jest.fn();
+  const distributionGroupEntitlement = jest.fn();
   const controller = new InternalDistributionEntitlementController({
-    isDistributionGroupEntitled,
+    distributionGroupEntitlement,
   } as unknown as ChannelService);
 
   beforeEach(() => {
     process.env.INTERNAL_SECRET = 'shared-secret';
-    isDistributionGroupEntitled.mockReset().mockResolvedValue(true);
+    distributionGroupEntitlement.mockReset().mockResolvedValue({ entitled: true });
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
@@ -23,21 +23,51 @@ describe('InternalDistributionEntitlementController', () => {
   it.each([true, false])(
     'answers the service verdict (%s) for a well-formed question',
     async (entitled) => {
-      isDistributionGroupEntitled.mockResolvedValue(entitled);
+      distributionGroupEntitlement.mockResolvedValue(
+        entitled ? { entitled } : { entitled, cause: 'not a reader of the salon' }
+      );
 
       await expect(
-        controller.entitlement('shared-secret', { kind: 'channel', scopeId: 'ch-1', userId: 'U-1' })
+        controller.entitlement('shared-secret', {
+          kind: 'channel',
+          scopeId: 'ch-1',
+          userId: 'U-1',
+        })
       ).resolves.toEqual({ entitled });
       // The user id is compared as the rest of this service stores it.
-      expect(isDistributionGroupEntitled).toHaveBeenCalledWith('channel', 'ch-1', 'u-1');
+      expect(distributionGroupEntitlement).toHaveBeenCalledWith('channel', 'ch-1', 'u-1');
     }
   );
+
+  it('logs the verdict when it CHANGES, not on every read, and names the cause of a flip to false', async () => {
+    const log = jest.spyOn(Logger.prototype, 'log');
+    const ask = () =>
+      controller.entitlement('shared-secret', {
+        kind: 'workspace',
+        scopeId: 'ws-9',
+        userId: 'u-9',
+      });
+    for (let i = 0; i < 5; i++) await ask();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][0]).toContain('first evaluation');
+
+    distributionGroupEntitlement.mockResolvedValue({
+      entitled: false,
+      cause: 'not a member of the community',
+    });
+    await ask();
+    await ask();
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log.mock.calls[1][0]).toContain(
+      'entitled=false (was true) - not a member of the community'
+    );
+  });
 
   it('refuses a caller without the internal secret before asking anything', async () => {
     await expect(
       controller.entitlement('wrong', { kind: 'workspace', scopeId: 'ws-1', userId: 'u-1' })
     ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(isDistributionGroupEntitled).not.toHaveBeenCalled();
+    expect(distributionGroupEntitlement).not.toHaveBeenCalled();
   });
 
   it('refuses a malformed question rather than answering it', async () => {
@@ -50,7 +80,7 @@ describe('InternalDistributionEntitlementController', () => {
         controller.entitlement('shared-secret', bad as Parameters<typeof controller.entitlement>[1])
       ).rejects.toBeInstanceOf(BadRequestException);
     }
-    expect(isDistributionGroupEntitled).not.toHaveBeenCalled();
+    expect(distributionGroupEntitlement).not.toHaveBeenCalled();
   });
 
   describe('departure-outcome', () => {

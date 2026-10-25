@@ -1527,7 +1527,7 @@ const FORGIVE_CASES = [
       ],
     ],
     FRESH_DEVICE_SESSION_NARRATION,
-    { clean: true, unmatched: 15 },
+    { clean: true, unmatched: 14 },
   ],
   [
     'a callback that was not challenged, and a seed lost on the way, are not forgiven',
@@ -1539,13 +1539,13 @@ const FORGIVE_CASES = [
       ],
     ],
     FRESH_DEVICE_SESSION_NARRATION,
-    { clean: false, unmatched: 21 },
+    { clean: false, unmatched: 20 },
   ],
   [
     'a fresh-session line as an ERROR is not forgiven',
     [['error', '[10:01:02] [PIN] Keypad shown (open) - the unlock is owed to the member']],
     FRESH_DEVICE_SESSION_NARRATION,
-    { clean: false, unmatched: 21 },
+    { clean: false, unmatched: 20 },
   ],
   [
     'a login that skipped PKCE is not forgiven by the fresh-client needle',

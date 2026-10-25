@@ -1895,15 +1895,34 @@ export class ChannelService implements OnApplicationBootstrap {
     scopeId: string,
     userId: string
   ): Promise<boolean> {
+    return (await this.distributionGroupEntitlement(kind, scopeId, userId)).entitled;
+  }
+
+  /**
+   * {@link isDistributionGroupEntitled} with the CAUSE of a refusal, so the caller can say why an
+   * answer flipped to false rather than only that it did.
+   */
+  async distributionGroupEntitlement(
+    kind: 'workspace' | 'channel',
+    scopeId: string,
+    userId: string
+  ): Promise<{ entitled: true } | { entitled: false; cause: string }> {
     if (kind === 'workspace') {
       const workspace = await this.workspaceRepo.findOne({
         where: { id: scopeId },
         select: { id: true },
       });
-      return !!workspace && (await this.isWorkspaceMember(scopeId, userId));
+      if (!workspace) return { entitled: false, cause: 'no such community' };
+      return (await this.isWorkspaceMember(scopeId, userId))
+        ? { entitled: true }
+        : { entitled: false, cause: 'not a member of the community' };
     }
     const channel = await this.channelRepo.findOne({ where: { id: scopeId } });
-    return !!channel?.isPrivate && (await this.isChannelReader(channel, userId));
+    if (!channel) return { entitled: false, cause: 'no such salon' };
+    if (!channel.isPrivate) return { entitled: false, cause: 'the salon is not private' };
+    return (await this.isChannelReader(channel, userId))
+      ? { entitled: true }
+      : { entitled: false, cause: 'not a reader of the salon' };
   }
 
   /**

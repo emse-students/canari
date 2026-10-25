@@ -1323,6 +1323,9 @@ describe('a history request from a joiner (WP-34)', () => {
     expect(bundle?.seeds ?? []).toHaveLength(0);
     expect(delivery).toEqual(addressedKeyMaterial('newcomer:newcomer-web'));
     expect(delivery.recipients).toEqual(['newcomer:newcomer-web']);
+    // The empty answer is the routine outcome of a join into a community with no past: the frame is
+    // its record, and neither "0 of 0" nor "0 seed(s)" is logged (25 + 18 lines in one measured row).
+    expect(info.mock.calls.flat().join(' ')).not.toMatch(/[GRAINE] (sending|answered)/);
     info.mockRestore();
   });
 
