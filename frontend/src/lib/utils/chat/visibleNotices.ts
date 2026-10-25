@@ -95,9 +95,12 @@ export async function renderVisibleNotice(
  * Sends a visible notice frame and, once the delivery service has ACCEPTED it, writes the acting
  * device's own row under the id the frame carries.
  *
- * The text is rendered BEFORE the send and the row written right after it, so nothing slow sits
- * between the send and whatever the caller does next (an MLS checkpoint follows the `memberAdded`
- * send). The row is written only once the send resolved: a frame that never left reaches no member,
+ * The text is rendered BEFORE the send (a name may be a profile fetch, which delays the frame and
+ * never throws), and the row written right after it, so only that local write sits between the send
+ * and whatever the caller does next (an MLS checkpoint follows the `memberAdded` send). A kill in that
+ * window loses the row here; the digest diff brings it back once, marked unverified (accepted - see
+ * the wiki). The row is written with `soleWriter`, so a bulk drain never defers it into a buffer that
+ * can be discarded unflushed. The row is written only once the send resolved: a frame that never left reaches no member,
  * and a row only this device holds is the same divergence in the other direction. A failed SEND
  * throws to the caller, which owns what a lost notice means for its action (all of them go on
  * without it). A failed LOCAL WRITE is a different fact - the members have the notice, this device
@@ -130,6 +133,8 @@ export async function sendVisibleNotice(
       isSystem: true,
       messageId: frame.messageId,
       timestamp: new Date(frame.sentAt),
+      // Never deferred into a drain's buffer: nothing will ever write this row again.
+      soleWriter: true,
     });
   } catch (e) {
     console.error(

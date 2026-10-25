@@ -1366,10 +1366,26 @@ nothing is vetted - no filter in the digest, the diff or the vetting. Its caller
 ("The removal order", above); one `memberAdded` for a rebuilt Add, none on
 `already-in-tree` (the winner announced it) or an Add abandoned before its stage (`AddAbortedError`).
 A frame that was not accepted writes no row, since a row only this device
-holds is the same divergence the other way. The text is rendered BEFORE the send and the row written
-right after it, so nothing slow sits between the send and the MLS checkpoint `processBulkAddition`
-owes it; a local write that fails is logged as such (`[NOTICE] ... was DELIVERED ... not written`)
-and never thrown as a failed send. **And the handler that called it must not write a pre-await
+holds is the same divergence the other way.
+
+**What runs, in order.** (1) The text is rendered: `resolveDisplayNames`, which may fetch a profile
+and so can delay the FRAME (it never throws - an unresolved name stays the id). (2) The frame is sent
+and the call waits for the delivery service's acceptance. (3) The own row is written through
+`addMessageToChat` with `soleWriter` - memory, then the IndexedDB / SQLite row - never deferred into
+a bulk drain's buffer, which a second drain start or `resetMessageCatchupState` discards unflushed
+(the own-message rule, WP-ECHO-1, for the same reason: nothing will ever write this row again).
+(4) For `memberAdded`, the caller's MLS checkpoint follows - so a local write sits between the send
+and that checkpoint; a write that FAILS is logged (`[NOTICE] ... was DELIVERED ... not written`, at
+ERROR) and never thrown as a failed send, so the checkpoint is still reached.
+
+**A kill between (2) and (3) is accepted, and repaired only by the digest diff.** The members hold
+the row and this device does not, so its next reconciliation reads `Keys differ`, the diff relays the
+notice, and it lands here ONCE, marked unverified - exactly an older build's behaviour, for one
+notice. No line marks the window: a "sending" line before every send would be a second line per
+notice to say what the `written` line's absence already says, and the evidence of the repair is the
+existing `[AUTHORSHIP] ... kept, marked unverified` line naming that conversation.
+
+**And the handler that called it must not write a pre-await
 snapshot back**: `handleRenameGroup` / `handleSetGroupImage` did `{ ...convo, name }` after the
 await and erased the notice just written - they now patch the conversation as it stands
 (`patchConversation`). A departure (`memberLeft`) and a deletion

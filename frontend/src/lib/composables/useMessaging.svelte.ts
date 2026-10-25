@@ -754,7 +754,9 @@ export function useMessaging() {
     // drain window died before it was persisted - the receiver had it and the sender lost it at the
     // next load (WP-ECHO-1). It also explains why the OFFLINE path was always correct: offline there
     // is no inbound drain, so the echo took the live path. One extra item costs nothing to render.
-    if (bulkIngestActive && !isOwnMessage(senderId, ctx.userId)) {
+    // The acting device's own visible notice is the same case under a `system` sender
+    // (`soleWriter`): nothing echoes it either, so the buffer would be its only copy.
+    if (bulkIngestActive && !isOwnMessage(senderId, ctx.userId) && options.soleWriter !== true) {
       const convo = ctx.conversations.get(normalized);
       if (!convo) {
         console.warn(
