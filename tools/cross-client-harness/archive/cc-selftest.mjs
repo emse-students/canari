@@ -17,6 +17,7 @@ import {
   lockRaceOwn,
   parseCommitLines,
   parseLockLines,
+  raceForgiveness,
   rebuiltRaceOwn,
   refreshRaceOwn,
   refusalCodes,
@@ -123,7 +124,19 @@ const busy = (s) => ADD_LOCK_REFUSED_NARRATION.some((re) => re.test(s));
 ok('the loser\'s two narration lines are forgiven', busy(`[WARN] Add-lock busy for ${G} - invite cancelled (another device is in progress).`) && busy(`[SYNC] Add-lock busy for ${G}, aborting to avoid concurrent commits`));
 ok('control: another WARN is not', !busy(`[WARN] Add-lock release failed for ${G}`) && !busy(`[WARN] Add-lock busy for ${G} - invite cancelled (another device is in progress). extra`));
 
+console.log('what each racer is forgiven - per gesture, not per seat name');
+const N = { creation: ['create', 'staged', 'notice'], blockQuestion: 'block?', lockRefused: ['busy'] };
+const fg = (id, loser) => raceForgiveness(CC_ROWS[id].race, loser, N);
+ok('CC-1, W2 loses the lock: W2 gets the block question and the refusal only', JSON.stringify(fg('CC-1', 'W2').W2) === JSON.stringify(['block?', 'busy']));
+ok('CC-1, W2 loses the lock: W1 keeps the creation narration', JSON.stringify(fg('CC-1', 'W2').W1) === JSON.stringify(N.creation));
+ok('CC-1, W1 loses the lock: W2 made the Add and gets its narration', JSON.stringify(fg('CC-1', 'W1').W2) === JSON.stringify(N.creation));
+ok('CC-1, W1 loses the lock: W1 keeps creation and gains the refusal', ['create', 'block?', 'busy'].every((x) => fg('CC-1', 'W1').W1.includes(x)));
+ok('CC-2: W2 Adds against a Remove and gets the Add narration', JSON.stringify(fg('CC-2', null).W2) === JSON.stringify(N.creation));
+ok('CC-3: two Removes - only W1 is forgiven anything', JSON.stringify(Object.keys(fg('CC-3', null))) === JSON.stringify(['W1']));
+ok('the lock loser is never forgiven a commit line', !fg('CC-1', 'W2').W2.includes('staged'));
+
 // ── CC-3 ─────────────────────────────────────────────────────────────────────────────────────
+
 console.log('CC-3 double remove');
 const v3 = view({ activeEpoch: 4, commitEpochs: [0, 1, 2, 3], roster: ['u1', 'u2'].map((userId) => ({ userId, awaitingAdmission: false })), seats: view().seats.filter((s) => ['u1', 'u2'].includes(s.userId)) });
 const d = (over = {}) => doubleRemoveOwn({ fromEpoch: 3, view: v3, parsed: parseCommitLines([ACCEPT('a', 4), MISMATCH('b', 3, 4)]), removed: U4, outcomes: both, ...over });

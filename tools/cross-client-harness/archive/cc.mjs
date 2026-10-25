@@ -25,7 +25,7 @@ import { send } from '../chat.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
 import { addMembers, removeMember } from './addmember.mjs';
 import { checkInvariant } from '../invariant.mjs';
-import { CC_ROWS, doubleRemoveOwn, lockRaceLoser, lockRaceOwn, parseCommitLines, parseLockLines, rebuiltRaceOwn, refreshRaceOwn, refusalCodes } from '../ccrows.mjs';
+import { CC_ROWS, doubleRemoveOwn, lockRaceLoser, lockRaceOwn, parseCommitLines, parseLockLines, raceForgiveness, rebuiltRaceOwn, refreshRaceOwn, refusalCodes } from '../ccrows.mjs';
 import {
   armLeafRefresh,
   assertRowOwns,
@@ -47,7 +47,7 @@ import {
 } from '../mlsrow.mjs';
 import { composeVerdict, invariantDetail, rowMessageMark } from '../rowkit.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
-import { ADD_LOCK_REFUSED_NARRATION, GROUP_CREATION_NARRATION } from '../watch.mjs';
+import { ADD_BLOCK_QUESTION_NARRATION, ADD_LOCK_REFUSED_NARRATION, GROUP_CREATION_NARRATION } from '../watch.mjs';
 
 const argv = process.argv.slice(2);
 const n = argv.includes('--row') ? argv[argv.indexOf('--row') + 1] : null;
@@ -194,9 +194,11 @@ async function play() {
     invariant,
     // THE LOCK LOSER'S HOLD NEVER FIRES BY CONSTRUCTION - it built no commit - so it is not vacuous.
     vacuousFaults: race.vacuous.filter((v) => v.device !== lockLoser),
-    forgiveLogs: lockLoser
-      ? { W1: GROUP_CREATION_NARRATION, [lockLoser]: [...(lockLoser === 'W1' ? GROUP_CREATION_NARRATION : []), ...ADD_LOCK_REFUSED_NARRATION] }
-      : { W1: GROUP_CREATION_NARRATION },
+    forgiveLogs: raceForgiveness(spec.race, lockLoser, {
+      creation: GROUP_CREATION_NARRATION,
+      blockQuestion: ADD_BLOCK_QUESTION_NARRATION,
+      lockRefused: ADD_LOCK_REFUSED_NARRATION,
+    }),
     detail: {
       group: group.id,
       name: group.name,
