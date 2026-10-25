@@ -1701,7 +1701,22 @@ seconds old (two extra commits on the server, each accepted at the next epoch: n
 too many). Naming the leaf lets the state itself say which entry describes it, whatever reached disk;
 an entry of a former leaf reads as a first sight, the direction that costs no commit. Pinned by
 `leafRefresh.test.ts` ("a date written for a FORMER leaf ...") and
-`mls-core/tests/self_update.rs::the_own_leaf_key_names_the_leaf_only_this_device_commits_replace_it`.
+`mls-core/tests/self_update.rs::the_own_leaf_key_names_the_leaf_only_this_device_commits_replace_it`
+and `::the_own_leaf_key_moves_on_an_add_a_remove_and_an_external_join` (every own commit moves
+the key, so every merge's entry names a new leaf).
+
+**The upgrade costs one first sight per group per device, by design.** Entries written before #2489
+name no leaf, so the first send after the upgrade reads each one as a first sight: the leaf is
+observed again and its schedule restarts at that observation plus the offset - up to about seven
+extra days before its next refresh, once, in the direction that costs no commit.
+
+**The observation is written for the leaf in the state when it is written.** The decision runs
+outside the MLS lock, and an own commit can merge while it awaits; that merge dates its own leaf, and
+an observation of the leaf read before it would overwrite the entry with a leaf already gone (a
+false "FORMER leaf" line at the next send). So the leaf is read again just before the write, with no
+await between them, and a leaf that moved writes nothing (`leaf-moved`). An ACTIVE group whose tree
+holds no leaf of this device is not an inactive group: it is a defect, reported as `no-own-leaf` at
+warn level once per group and epoch, never once per send. Pinned by `leafRefresh.test.ts`.
 
 **The first refresh is spread, or it is a herd** (review, 2026-10-23). The day this ships, every
 leaf is older than the interval, so a decision on age alone makes every seat refresh at its first

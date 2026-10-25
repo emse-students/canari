@@ -221,6 +221,70 @@ fn the_own_leaf_key_names_the_leaf_only_this_device_commits_replace_it() {
 }
 
 #[test]
+fn the_own_leaf_key_moves_on_an_add_a_remove_and_an_external_join() {
+    // `BaseMlsService.noteOwnLeafReplaced` dates the leaf after EVERY merge of an own commit, not
+    // only after a self-update - so the key it names the entry by must move on each of them. An
+    // own commit that left the key in place would let a former leaf's date pass for this one's.
+    let gid = "g-refresh-key-commits";
+    let (mut alice, mut bob) = alice_and_bob(gid);
+
+    // An Add: alice's commit carries a path, so her leaf is new.
+    let before_add = alice.own_leaf_encryption_key(gid).expect("readable");
+    let carol = make_device("carol", "dev1");
+    let kp_carol = carol.generate_key_package().expect("kp carol");
+    let (add, _welcome, _added, _skipped) = alice
+        .add_members_bulk(gid, &[&kp_carol])
+        .expect("add carol");
+    assert_eq!(
+        alice.own_leaf_encryption_key(gid).expect("readable"),
+        before_add,
+        "a staged Add has not replaced the leaf yet"
+    );
+    alice.merge_pending_commit_for(gid).expect("merge add");
+    let after_add = alice.own_leaf_encryption_key(gid).expect("readable");
+    assert!(after_add.is_some());
+    assert_ne!(
+        after_add, before_add,
+        "the merged Add replaced the committer's leaf"
+    );
+    bob.process_incoming_message(gid, &add)
+        .expect("bob applies the Add");
+
+    // A Remove: bob's commit carries a path too.
+    let before_remove = bob.own_leaf_encryption_key(gid).expect("readable");
+    let _ = bob
+        .remove_members_for_devices(gid, &["carol:dev1"])
+        .expect("stage remove");
+    bob.merge_pending_commit_for(gid).expect("merge remove");
+    let after_remove = bob.own_leaf_encryption_key(gid).expect("readable");
+    assert!(after_remove.is_some());
+    assert_ne!(
+        after_remove, before_remove,
+        "the merged Remove replaced the committer's leaf"
+    );
+
+    // An external join: a device that lost the group rejoins with a leaf of its own, never the one
+    // it held before - which is why the join dates it.
+    let mut alice2 = make_device("alice", "dev1");
+    let former = alice.own_leaf_encryption_key(gid).expect("readable");
+    let _ = bob
+        .remove_members_for_devices(gid, &["alice:dev1"])
+        .expect("stage remove alice");
+    bob.merge_pending_commit_for(gid)
+        .expect("merge remove alice");
+    let group_info = bob.export_group_info(gid).expect("export group info");
+    let (_gid, _join) = alice2
+        .join_by_external_commit(&group_info)
+        .expect("alice rejoins by an external commit");
+    alice2
+        .merge_pending_commit_for(gid)
+        .expect("merge the join");
+    let joined = alice2.own_leaf_encryption_key(gid).expect("readable");
+    assert!(joined.is_some(), "the joined device has a leaf");
+    assert_ne!(joined, former, "the external join brought a new leaf");
+}
+
+#[test]
 fn a_refused_self_update_clears_cleanly_and_can_be_staged_again() {
     let gid = "g-refresh-refused";
     let (_alice, mut bob) = alice_and_bob(gid);
