@@ -110,6 +110,14 @@ const CASES = [
     'notable',
   ],
   ['log', '[14:24:09] [HISTORY_REQ] 642f389a... same state as d82cd226… (7e5952f8…) - nothing to do', 'notable'],
+  // An addressed history answer filtered on the reader's windows: what a newcomer was withheld, worth
+  // reading on every pass (CC-4, 2026-10-25) and not dirt. A line that does not finish is not it.
+  [
+    'log',
+    "[01:41:12] [HISTORY_ENTITLEMENT] b8226a10… - answer addressed to c71e1a5b, filtered on the reader's 1 window(s): withheld 0, 1 undated within 60 min of one, 0 undatable; kept 0",
+    'notable',
+  ],
+  ['log', "[01:41:12] [HISTORY_ENTITLEMENT] b8226a10… - answer addressed to c71e1a5b, filtered on the reader's 1 window(s): withheld 0", 'unexplained'],
   ['log', '[14:26:02] [SYNC] WASM purge skipped - server list unreliable (fetchOk=false, 9 group(s))', 'notable'],
   ['log', '[14:25:41] [LIFECYCLE] Resume: already connected (flag=true, socket=false).', 'notable'],
   ['log', '[14:25:41] [LIFECYCLE] Resume: already connected (flag=true, socket=true).', 'benign'],

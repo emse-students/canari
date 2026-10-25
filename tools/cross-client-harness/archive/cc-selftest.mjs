@@ -8,7 +8,20 @@
  *
  *   bun archive/cc-selftest.mjs
  */
-import { CC5_PREMISE, CC_ROWS, RACE_REFUSALS, doubleRemoveOwn, parseCommitLines, rebuiltRaceOwn, refreshRaceOwn, refusalCodes } from '../ccrows.mjs';
+import {
+  CC5_PREMISE,
+  CC_ROWS,
+  RACE_REFUSALS,
+  doubleRemoveOwn,
+  lockRaceLoser,
+  lockRaceOwn,
+  parseCommitLines,
+  parseLockLines,
+  rebuiltRaceOwn,
+  refreshRaceOwn,
+  refusalCodes,
+} from '../ccrows.mjs';
+import { ADD_LOCK_REFUSED_NARRATION } from '../watch.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -83,6 +96,32 @@ ok('CC-2: the removed user still on the roster fails', !allOk(r({ view: cc2view,
 ok('CC-2: the removed user keeping an active seat (a leaf) fails', !allOk(
   r({ view: { ...cc2view, roster: cc2view.roster, seats: [...cc2view.seats, { userId: U3, deviceId: 'dx', status: 'active', kicked: false }] }, added: [U5], removed: [U3] })
 ));
+
+// ── CC-1, the add lock ───────────────────────────────────────────────────────────────────────
+console.log('CC-1 add-lock race');
+// `locks.controller.ts`, behind a Nest prefix; the owner is `<user>:<device>`.
+const LOCK = (dev, acquired, g = G) => nest(`[ADD_LOCK] group=${g} owner=u2:${dev} acquired=${acquired}`);
+ok('CC-1 is the lock race', CC_ROWS['CC-1'].lockRace === true && !CC_ROWS['CC-2'].lockRace);
+const locks = parseLockLines([LOCK('dev-w2', true), LOCK('dev-w1', false), LOCK('dev-x', true, 'other-group'), 'unrelated'], G);
+ok('parseLockLines keeps this group\'s decisions, in order', locks.length === 2 && locks[0].device === 'dev-w2' && locks[0].acquired && locks[1].device === 'dev-w1' && !locks[1].acquired);
+const racers = { W1: 'dev-w1', W2: 'dev-w2' };
+ok('one granted, one refused -> the refused seat is the loser', lockRaceLoser(locks, racers) === 'W1');
+ok('both granted (no contention) -> no loser, INCONCLUSIVE', lockRaceLoser(parseLockLines([LOCK('dev-w2', true), LOCK('dev-w1', true)], G), racers) === null);
+ok('no lock line at all -> no loser', lockRaceLoser([], racers) === null);
+ok('a refusal of a device that is not a racer -> no loser', lockRaceLoser(parseLockLines([LOCK('dev-w2', true), LOCK('dev-x', false)], G), racers) === null);
+ok('a seat both refused and granted (a retry) is not a clean loser', lockRaceLoser(parseLockLines([LOCK('dev-w2', true), LOCK('dev-w1', false), LOCK('dev-w1', true)], G), racers) === null);
+const v1 = view({ activeEpoch: 4, commitEpochs: [0, 1, 2, 3], roster: ['u1', 'u2', U5].map((userId) => ({ userId, awaitingAdmission: false })), seats: view().seats.filter((s) => s.userId !== U4) });
+const l = (over = {}) => lockRaceOwn({ fromEpoch: 3, view: v1, parsed: parseCommitLines([ACCEPT('a', 4)]), winnerAdded: U5, loserAdded: U4, outcomes: both, winner: 'W2', ...over });
+ok('one accept, no refusal, winner\'s user in, loser\'s user out -> all hold', allOk(l()));
+ok('a commit REFUSED (the loser built one) fails', !allOk(l({ parsed: parseCommitLines([ACCEPT('a', 4), MISMATCH('b', 3, 4)]) })));
+ok('two accepts fails', !allOk(l({ parsed: parseCommitLines([ACCEPT('a', 4), ACCEPT('b', 5)]), view: { ...v1, activeEpoch: 5 } })));
+ok('the loser\'s user on the roster (an Add half-done) fails', !allOk(l({ view: { ...v1, roster: [...v1.roster, { userId: U4, awaitingAdmission: false }] } })));
+ok('the loser\'s user with a seat fails', !allOk(l({ view: { ...v1, seats: [...v1.seats, { userId: U4, deviceId: 'dy', status: 'active', kicked: false }] } })));
+ok('the winner\'s user missing fails', !allOk(l({ view: { ...v1, roster: v1.roster.filter((x) => x.userId !== U5) } })));
+ok('the winner\'s gesture died fails; the loser\'s outcome is not judged', !allOk(l({ outcomes: { W2: { ok: false, error: 'x' } } })) && allOk(l({ outcomes: { W2: { ok: true }, W1: { ok: false, error: 'cancelled' } } })));
+const busy = (s) => ADD_LOCK_REFUSED_NARRATION.some((re) => re.test(s));
+ok('the loser\'s two narration lines are forgiven', busy(`[WARN] Add-lock busy for ${G} - invite cancelled (another device is in progress).`) && busy(`[SYNC] Add-lock busy for ${G}, aborting to avoid concurrent commits`));
+ok('control: another WARN is not', !busy(`[WARN] Add-lock release failed for ${G}`) && !busy(`[WARN] Add-lock busy for ${G} - invite cancelled (another device is in progress). extra`));
 
 // ── CC-3 ─────────────────────────────────────────────────────────────────────────────────────
 console.log('CC-3 double remove');
