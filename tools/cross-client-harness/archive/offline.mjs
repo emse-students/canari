@@ -37,7 +37,7 @@ import {
   userOf,
   watchersOf,
 } from '../mlsrow.mjs';
-import { ADD_ABANDONED_NOTICE, LOCK_BUDGET_SPENT, OFFLINE_BLOCKED, OFFLINE_ROWS, PORTAL_HTML, RM8_NARRATION, RM8_W1_NARRATION, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
+import { ADD_ABANDONED_NOTICE, LOCK_BUDGET_SPENT, OFFLINE_BLOCKED, OFFLINE_ROWS, PORTAL_HTML, RM8_NARRATION, RM8_W1_NARRATION, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, owedReleaseNarration, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, provokedFailures, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence, decidedAfter, resubmissionLine, settleNarration, settledOnce } from '../settlerows.mjs';
@@ -156,7 +156,8 @@ const ACTIONS = {
       offline: ['W1'],
       members: reissued.settled ? spec.devices : spec.devices.filter((d) => d !== spec.subject),
       joiners: ['W4', ...(reissued.settled ? [spec.subject] : [])],
-      narration: { W1: settleNarration(c.group.id) },
+      // W1 returns owing its add-lock release; W2 MAKES AN ADD (of W4), so it narrates one.
+      narration: { W1: [...settleNarration(c.group.id), ...owedReleaseNarration(c.group.id)], W2: [...GROUP_CREATION_NARRATION] },
       detail: { gesture, notices, lockFreedMs, w2Add: w4, clientUnknown: unknown, gatewayMs, clearedLine, caughtUpMs, returnedAt },
       judge: (view) => staleStageOwn({ seqAfter: commitSequence(commitLines(c.group.id, returnedAt)), clearedLine, caughtUpMs, view, subject: c.user[spec.subject], advanced, notices }),
     };

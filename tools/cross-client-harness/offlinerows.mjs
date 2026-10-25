@@ -190,6 +190,16 @@ export const RM8_NARRATION = [
 export const RM8_W1_NARRATION = [/^\[STRAY\] [0-9a-f]{8}\.\.\. 1 member\(s\) left but still hold a leaf - removing \(\d+ leaves stay\)$/];
 
 /**
+ * OFF-3's W1, cut holding the group's add lock: its release got no answer, so the device OWES it and
+ * sends it before it next acquires - and says so on return (`BaseMlsService`, alpha.4 2026-10-25).
+ * Scoped to the row's group, and to `answered`: a release `still unanswered - kept` stays dirt.
+ */
+export function owedReleaseNarration(groupId) {
+  const short = String(groupId).slice(0, 8);
+  return [new RegExp(`^\\[ADD_LOCK\\] ${short}\\.\\.\\. a release this device owed \\((?:token|no token)\\) was sent before acquiring: answered$`)];
+}
+
+/**
  * RM-8: no half-left group. Either W2 is gone on BOTH sides (off the roster, no seat, not listed) or
  * still a member on both (on the roster, an active seat, listed, at the server's epoch).
  *
