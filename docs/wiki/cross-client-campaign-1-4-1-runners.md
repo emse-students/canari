@@ -46,8 +46,8 @@ is one table plus one action per shape. Each holds its pure judgements in `<name
 | `archive/settle.mjs` | DUP-1..6, OFF-1, OFF-2, TOK-1..3 | a commit whose ANSWER is lost, refused or late; the settlement | built ([#2396](https://github.com/emse-students/canari/pull/2396)); DUP-3 records `SKIPPED`; DUP-7 moved to `devrows.mjs` (a new device) |
 | `archive/offline.mjs` | OFF-3..5, NET-1..3, RM-8 | a seat without network, or a degraded one, for a duration | built ([#2398](https://github.com/emse-students/canari/pull/2398)); OFF-4 `BLOCKED-ON-ACCOUNT` |
 | `archive/gap.mjs` | GAP-1..3 | frames reordered, replayed or flooded against a frozen member | built ([#2397](https://github.com/emse-students/canari/pull/2397)); GAP-4 records `SKIPPED` |
-| `archive/kill.mjs` | KILL-1..5, RM-3 | a process killed at a point of the commit | built (draft PR) |
-| `archive/admit.mjs` | ADM-1..8 | a group link, an ask, Add or Decline, and the waiting seat's probes | owed |
+| `archive/kill.mjs` | KILL-1..5, RM-3 | a process killed at a point of the commit | built ([#2399](https://github.com/emse-students/canari/pull/2399)) |
+| `archive/admit.mjs` | ADM-1..8 | a group link, an ask, Add or Decline, and the waiting seat's probes | built (draft PR); ADM-5..7 wait on the old APK's install |
 | `archive/devrows.mjs` | DEV-1..4, DEV-6, DEV-7, DUP-7 | a device minted, revoked or woken | owed |
 | `archive/salon.mjs` | RM-4..6 | two admins rewriting one salon's access | owed |
 | `archive/big.mjs` | BIG-1..3 | everything at twelve devices | owed |
@@ -133,10 +133,10 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 
 | Id | How it is run | Atom | Missing | Human | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| ADM-1..3 | W4 follows a group link; the ask on every member; Add, Decline, or both at once | - | gestures: mint a group link, follow it, answer the ask (Add / Decline) | no | U | 65 min |
-| ADM-4 | the waiting seat calls every member route from its own page; each `409 awaiting_admission` | `chat.mjs` authenticated request from the page | the route table | no | U | 20 min |
-| ADM-5..7 | A1 on the `v1.4.0` debug APK (Q8 built it) as joiner, as member, as an external joiner | `a1apk.mjs`, `apkbuild.mjs` | the install swap and back to R2's APK | no | B | 95 min |
-| ADM-8 | the link in a 1:1 and in a key group raises no ask | as ADM-1 | - | no | U | 10 min |
+| ADM-1..3 | W4 follows a group link; the ask on every member; Add, Decline, or both at once (both requests held, released together) | `grouplink.mjs` | - | no | U | 65 min |
+| ADM-4 | the waiting seat calls every member route from its own page; each `409 awaiting_admission` | `chat.mjs` `apiGet`/`apiPost`, `admitrows.mjs` `memberRoutes` | - | no | U | 20 min |
+| ADM-5..7 | A1 on the `v1.4.0` debug APK (Q8 built it) as joiner, as member, as an external joiner; the row refuses a phone on another build. A1 is the OWNER, so ADM-5 and ADM-7 use a group of W2's and W4's | `a1apk.mjs`, `chat.mjs` `apiAt` | the install swap and back to R2's APK, by the operator | no | B | 95 min |
+| ADM-8 | a link minted through the API on a 1:1 and on a key group of W1's; refused at the mint or the accept, and no ask | `chat.mjs` `apiPost` | a 1:1 between W1 and W2 and a key group of W1's on the estate | no | U | 10 min |
 
 ### DEV (`devrows.mjs`)
 

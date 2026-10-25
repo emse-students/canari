@@ -18,13 +18,14 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-100 scripts.
+101 scripts.
 
 | script | what it is |
 |---|---|
 | `a1apk.mjs` | BUILD THE A1 APK AGAINST THE ESTATE `SITE` NAMES (LOCAL OR DEV), INSTALL IT, AND PROVE THE PHONE IS RUNNING IT. |
 | `a1plan.mjs` | WHAT AN A1 APK BUILD MUST BE FOR THE ESTATE `SITE` NAMES - the decisions of `a1apk.mjs`, pure. |
 | `accounts.mjs` | The ONE reader of `test-accounts.json`. |
+| `admitrows.mjs` | THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - ADM-1..8 - their table, the waiting seat's route table, |
 | `apkbuild.mjs` | WHETHER THE APK ON THE PHONE IS ANY COMMIT AT ALL - the provenance a build stamp cannot carry. |
 | `arm.mjs` | The one module in this harness that WRITES to the estate's database (local or dev; production is refused by R1), and the distinction it turns on. |
 | `atoms.mjs` | THE ATOMS - every gesture this rig can make, in one place, each with its contract. |
@@ -138,10 +139,11 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-86 scripts.
+87 scripts.
 
 | script | what it is |
 |---|---|
+| `archive/admit.mjs` | THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - a group link, the ask it raises, and who may answer it. |
 | `archive/cc.mjs` | CC-1..4 OF THE 1.4.1 CAMPAIGN - two commits built on the SAME epoch, released together. |
 | `archive/comm1.mjs` | COMM-1: a community, a channel, a message - and both peers converge on it. |
 | `archive/comm11.mjs` | COMM-11: kicked from a community, and taken out of every private salon inside it. |
@@ -233,11 +235,12 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-54 scripts.
+55 scripts.
 
 | script | what it is |
 |---|---|
 | `archive/a1plan-selftest.mjs` | THE A1 APK IS BUILT FOR THE ESTATE `SITE` NAMES, AND NEVER FOR PRODUCTION. |
+| `archive/admit-selftest.mjs` | THE ADMISSION ROWS' OWN JUDGEMENTS AND THE WAITING SEAT'S ROUTE TABLE, PINNED (`admitrows.mjs`). |
 | `archive/campaign-selftest.mjs` | ON DEV, A DESTRUCTIVE GESTURE TOUCHES ONLY WHAT THE CAMPAIGN CREATED - pinned (R5, 2026-10-24). |
 | `archive/caption-selftest.mjs` | EVERY PARAGLIDE KEY THE RIG NAMES MUST STILL RESOLVE THROUGH THE HELPER THAT NAMES IT. |
 | `archive/cc-selftest.mjs` | THE CC ROWS' OWN JUDGEMENTS, PINNED (`ccrows.mjs`). |
@@ -296,7 +299,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 
 They live under `archive/` but they are NOT questions - they take no verdict. Runners that drive other rows, probes, and vocabulary that never moved to the root. **Search here before writing a gesture**: this is the half that used to be filed as rows, where nobody looking for a gesture would ever have found it.
 
-43 scripts.
+44 scripts.
 
 | script | what it is |
 |---|---|
@@ -313,6 +316,7 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 | `archive/footprint.mjs` | What is LEFT on a device, read off the device instead of out of its own log. |
 | `archive/gateway.mjs` | Proves that each client's GATEWAY SOCKET is up - the pre-flight gate the campaign was missing. |
 | `archive/grainestore.mjs` | The Graine seed store as the CLIENT holds it, read from the browser's own IndexedDB. |
+| `archive/grouplink.mjs` | THE GROUP LINK AND ITS ASK - the gestures of the admission rows (`archive/admit.mjs`). |
 | `archive/idb.mjs` | Reading the app's OWN IndexedDB from outside it - one implementation of the awkward part. |
 | `archive/idcheck.mjs` | Does anything STAGED carry a real identity? Run it before every commit that touches this rig. |
 | `archive/identity.mjs` | Fingerprints each client's IDENTITY - the pre-flight gate that says the two Chrome profiles are |
@@ -346,4 +350,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-285 scripts in total.
+289 scripts in total.

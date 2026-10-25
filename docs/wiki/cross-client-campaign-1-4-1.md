@@ -249,9 +249,9 @@ arrivals were, so it is recorded in the row's detail and never decides it.
 | ADM-2 | A member Declines | `withdrawn`: roster row, queued Welcomes and device rows gone, no eviction or exclusion written; the joiner never reads the conversation | as ADM-1 | U | 15 min |
 | ADM-3 | Two members answer at once: one Adds, one Declines | the Add wins (`already-admitted`) or the Decline wins and the Add becomes an ordinary invitation; never an admitted person stripped | W1 W2 + W4 | U | 30 min |
 | ADM-4 | **Security**: the waiting seat calls every member route from its own page (roster, members, enrol someone, mint a link, vouch, history, exclusions, call initiate/ring) | each answers `409 awaiting_admission`; presence and ring audiences exclude it; nothing it does admits anyone | W4 waiting | U | 20 min |
-| ADM-5 | OLD joiner: A1 on the `v1.4.0` APK follows a link created on new clients | it meets the withheld base (`409`), falls back to asking a member, is admitted by a member's Add; the server's `[GROUP_INFO] base withheld` line is rate-limited, not one per retry | +A1 (old) W1 W2 | B | 45 min with the install |
+| ADM-5 | OLD joiner: A1 on the `v1.4.0` APK follows a link created on new clients | it meets the withheld base (`409`), falls back to asking a member, is admitted by a member's Add; the server's `[GROUP_INFO] base withheld` line is rate-limited, not one per retry | +A1 (old) W2 W4 - A1 is the owner, so the group is W2's | B | 45 min with the install |
 | ADM-6 | OLD member: A1 on `v1.4.0` is a member when a NEW joiner follows the link | A1 may auto-Add (the shim); the Welcome lift admits the joiner; no `[ADMISSION]` ERROR; recorded which device added | +A1 (old) W1 + W4 | B | 30 min |
-| ADM-7 | An external join by a non-member, from an old client, at the base | refused; `[UNINVITED_ENTRY]` count stays 0; no "entered without being added" notice anywhere | +A1 (old) | B | 20 min |
+| ADM-7 | An external join by a non-member, from an old client, at the base | refused; `[UNINVITED_ENTRY]` count stays 0; no "entered without being added" notice anywhere | +A1 (old) W2 W4 - a group the owner is not in | B | 20 min |
 | ADM-8 | The link in a 1:1 conversation and in a key group | no ask is raised (only a GROUP conversation takes one) | W1 W2 | U | 10 min |
 
 #### DEV - device add, revoke, and the background Welcome
