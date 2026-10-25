@@ -492,6 +492,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/devrows-selftest.mjs
 	@bun tools/cross-client-harness/archive/salon-selftest.mjs
 	@bun tools/cross-client-harness/archive/big-selftest.mjs
+	@bun tools/cross-client-harness/archive/handrow-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
 # THE SELF-TESTS THAT NEED THE RIG UP, and therefore not the CI gate. `test-harness` runs on a fresh

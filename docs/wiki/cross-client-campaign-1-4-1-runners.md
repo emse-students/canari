@@ -50,7 +50,8 @@ is one table plus one action per shape. Each holds its pure judgements in `<name
 | `archive/admit.mjs` | ADM-1..8 | a group link, an ask, Add or Decline, and the waiting seat's probes | built ([#2400](https://github.com/emse-students/canari/pull/2400)); ADM-5..7 wait on the old APK's install |
 | `archive/devrows.mjs` | DEV-1..4, DEV-6, DEV-7, DUP-7 | a device minted, revoked or woken | built ([#2401](https://github.com/emse-students/canari/pull/2401)); W6 owes its `names.mjs` entry and one human sign-in |
 | `archive/salon.mjs` | RM-4..6 | two admins rewriting one salon's access | built ([#2402](https://github.com/emse-students/canari/pull/2402)); its invariant is the salon's entitlement, not the message probe |
-| `archive/big.mjs` | BIG-1..3 | everything at twelve devices | built (draft PR); W7 and W8 owe their `names.mjs` entries and one human sign-in each |
+| `archive/big.mjs` | BIG-1..3 | everything at twelve devices | built ([#2403](https://github.com/emse-students/canari/pull/2403)); W7 and W8 owe their `names.mjs` entries and one human sign-in each |
+| `archive/handrow.mjs` | LIFE-5, CALL-12, CALL-13 | a person's observation, recorded `unobservable`, with the server window | built (draft PR) |
 
 ## 3. Row by row
 
@@ -181,7 +182,8 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
   [cross-client-testing-archive-1-4-0](cross-client-testing-archive-1-4-0.md) and
   [cross-client-testing](cross-client-testing.md) holds exactly these rows.
 - **A gesture only a person can make** (none in section 4.2 today; the `O` rows of 4.3) is recorded
-  by a small `archive/handrow.mjs --row <id> --verdict <V> --what "<observed>"` (owed): it records
+  by `archive/handrow.mjs --row <id> --verdict <V> --what "<observed>" --since <ISO>` (LIFE-5,
+  CALL-12, CALL-13; TOK-3 needs only the clock and stays in `settle.mjs`): it records
   with the SERVER window (`serverWindowSince` = the start the lead gives) and states the client side
   `unobservable` in the detail, so a person's observation is never written as a watched `PASS`.
 - **One-off actions for the user**: install the pre-release from TestFlight on I1; authorise adb on
@@ -219,7 +221,7 @@ Measured against the FLOOR runner (one session including the kernel), the rest i
 | `devrows.mjs` | revoke gesture, W6 wipeable | 1 session |
 | `salon.mjs` | admin roles in the venue | 0.5 session |
 | `big.mjs` | W6-W8 seats | 0.5 session |
-| `handrow.mjs` | - | 0.1 session |
+| `handrow.mjs` | - | done |
 
 About **eight sessions of desk work**, each with selftests only, then the live runs the plan's section
 5 already costs. Every runner's first live draw is its real test: nothing above has met a client yet.
