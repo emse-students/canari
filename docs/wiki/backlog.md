@@ -27,6 +27,20 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P3 - A key-group Welcome whose server row cannot be read is installed as a conversation (2026-10-25)
+
+The two halves that wrote and then probed a key group's conversation row are fixed
+([channel-encryption](protocols/channel-encryption.md#a-key-groups-welcome-wrote-a-conversation-row-and-discovery-asked-its-roster-2026-10-25)).
+One path is left: `handleWelcome` (`setupMessageHandler.ts`) reads the group's kind from
+`getGroupMeta`, which answers `null` for a network failure or any non-2xx as well as for a missing
+row. On `null` it takes the CONVERSATION path - `processWelcome`, a placeholder row, `upsertConversation`
+- and `isDistributionGroup` stays false, so the drain announces it too. Discovery purges that row at
+the next boot (now without the roster 403), but until then a seed carrier sits in the sidebar store
+and its seed frames go to the conversation pipeline. Not fixed inline because it is a policy choice,
+not a reorder: a Welcome is always acknowledged (its KeyPackage is consumed), so "could not read the
+kind" needs a decision - hold the Welcome unacknowledged until the row is readable, or install it
+without a row and classify it afterwards. Unmeasured: how often the meta read fails on a Welcome.
+
 ## P3 - What a republication still does not move in the feeds (review of #2384, 2026-10-24)
 
 - **The promo cutoff reads `publishedAt`**, so a post published before the reader's promo opens

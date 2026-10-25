@@ -2127,7 +2127,19 @@ export abstract class BaseMlsService implements IMlsService {
 
           if (msg.isWelcome && groupId) {
             this.messageScheduler.releaseWelcomeBuffer(groupId, 'Welcome complete');
-            this.welcomeProcessedCallback?.(groupId);
+            // A KEY GROUP'S WELCOME IS NOT A CONVERSATION'S, and the listener below is the
+            // conversation layer: it writes a sidebar row for any group it does not hold one for,
+            // then restores, reconciles and loads history for it. The handler classified the group
+            // BEFORE installing it (`handleDistributionWelcome` registers or notes it first), so the
+            // fact is in hand here; announcing it anyway persisted an `active` row for a community's
+            // key group, which the next boot's discovery then purged again.
+            if (this.isDistributionGroup(groupId)) {
+              console.log(
+                `[QUEUE] Welcome for key group ${groupId.slice(0, 8)}... - not announced to the conversation layer`
+              );
+            } else {
+              this.welcomeProcessedCallback?.(groupId);
+            }
             welcomedGroups.push(groupId);
           }
         } catch (e) {

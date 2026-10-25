@@ -1747,6 +1747,26 @@ load.
 **A departing member's LEAF stayed in the tree** - the last of the three, and the largest. It has
 its own section below.
 
+### A key group's Welcome wrote a conversation row, and discovery asked its roster (2026-10-25)
+
+Measured at boot on `1.4.1-alpha.3`: `GET /api/mls/groups/<id>/user-members -> 403`, then
+`[DISCOVERY] ... is a Graine distribution group - removing conversation row`, for a community's key
+group. Two defects, one behind the other:
+
+- **The row came from the Welcome announcement.** Since section 20 an admitter Welcomes a newcomer
+  into the key group. `handleDistributionWelcome` installs it without a row, but the drain
+  (`BaseMlsService.processQueue`) then fired `onWelcomeProcessed` for every Welcome, and that
+  listener (`sessionAuth.ts`) builds an `active` row for any group it holds none for, saves it and
+  restores. The drain now reads `isDistributionGroup` - set by the handler BEFORE the install - and
+  does not announce a key group's Welcome.
+- **Discovery asked the roster before the kind.** `discoverMissingGroups` read the `dm_groups` row,
+  asked `getGroupUserMembers` on any active one, and only then tested `isDistributionGroupMeta` on the
+  row it already held. The server refuses that roster on a key group, so the 403 was provoked for a
+  question already answered. The kind is now tested first; the roster is asked of conversations only.
+
+What is still open - a key-group Welcome whose `dm_groups` row could not be read - is in
+[backlog](../backlog.md).
+
 ## 10. A departure moved nothing, and rotation waited on it - FIXED 2026-08-19
 
 `graineRotationReason` returns `roster` when a session's `distributionEpoch` no longer matches the
