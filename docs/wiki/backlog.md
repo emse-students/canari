@@ -39,6 +39,18 @@ replay)`. The frame is not damaged and nothing failed, so both Rust lines accuse
 reload re-fetched it. The fix is to classify `SecretReuseError` before the fork judgement and the
 error line, carrying it as the type the TS classifier already keys on.
 
+## P3 - A browser whose storage is broken is told the connection failed (KILL-2, 2026-10-25)
+
+When the browser serves no storage at all - `indexedDB` and `navigator.storage.estimate()` both
+throw `Internal error`, `localStorage` an empty in-memory store - the page boots to the PIN gate
+and says *"La connexion n'a pas abouti. Réessayez dans un instant."*, with the status pill on
+*Hors-ligne*. Nothing is wrong with the connection, and retrying never helps: the user cannot tell
+that their browser's storage is the fault, nor that a browser restart is the cure. Seen on
+`1.4.1-alpha.3` after a test rig's whole-browser kill left a Chrome profile without its quota
+database (the data was intact on disk and came back on a clean restart, so the product wiped
+nothing). The fix is to classify a storage failure at boot as its own type where it is thrown, so
+the gate can name it; whether it earns a distinct message is decided with the fix.
+
 ## P2 - An Add whose commit outcome is unknown is reported as failed (NET-3, 2026-10-25)
 
 `processBulkAddition` (`groupCreation.ts`) handles a `CommitOutcomeUnknownError` in its catch-all.
@@ -48,9 +60,13 @@ and resubmitted (`kept until a resubmission answers`). On `1.4.1-alpha.3` (NET-3
 the commit POST) it was ACCEPTED at the next settlement, about 26 s later. So an unknown outcome is
 logged as an error and shown to the member as a failure, and the member may retry an Add that is
 going to land. It wants its own outcome: an Add pending its answer, said as such, at `warn` at most.
-P2 (re-graded the same day): the toast misinforms, and the member may retry an Add that will land. #2426
-changes the GESTURE-time answer to `outcome-unknown`; whether it also covers this catch-all toast is
-to be checked when it lands.
+P2 (re-graded the same day): the toast misinforms, and the member may retry an Add that will land.
+**#2426 (merged) covers the TYPED case**: a `CommitOutcomeUnknownError` now returns
+`outcome-unknown`, logs at `warn` and is said as a warning ("pending connection"), pinned by
+`conversationRefusalMessage.test.ts` and `lostInvitation.test.ts`. **What is left is the
+catch-all**: a no-answer NOT thrown as that type still reaches `console.error` and `failed`. Whether
+a portal on the commit POST always reaches the typed error is what the OFF-3 replay on the next build
+answers - if it falls through, the fix is at the throw, not at the toast.
 
 ## P2 - An invitee the Add could not check is dropped silently when others are added (1.4.1 dev campaign, 2026-10-25)
 

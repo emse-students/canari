@@ -39,7 +39,12 @@ export const KILL_ROWS = {
     runs: 10,
     maxDelayMs: 800,
     what: "W1's whole browser killed (no unload handler runs) at the same point, then relaunched: as KILL-1",
-    note: 'ten runs, not twenty: each is a browser relaunch and a PIN, and the two windows are covered five times each',
+    note:
+      'ten runs, not twenty: each is a browser relaunch and a PIN, and the two windows are covered five times each. ' +
+      'THE BROWSER, NOT THE RENDERER, because the subject is the browser crashing under the user - which is also what ' +
+      'can take the PROFILE with it: on 2026-10-25 a kill left W1 with no quota database, every storage call failed ' +
+      'and the gate read as LOCKED. The other profiles surviving the same kill does not make it safe, so `killSeat` ' +
+      'asserts the quota database before the kill and `reviveSeat` probes the storage before the PIN (`storageLost`)',
   },
   'KILL-3': {
     devices: ['A1', 'W2'],
@@ -170,6 +175,22 @@ export function welcomeOnceOwn({ accepts, welcome, listed, caughtUpMs, heldWelco
 export function panelMissing(panel, userIds) {
   const shown = new Set((panel?.buttons ?? []).map((u) => String(u).toLowerCase()));
   return userIds.filter((u) => !shown.has(String(u).toLowerCase()));
+}
+
+/**
+ * A browser kill that took the PROFILE'S STORAGE with it, read from the revived page before its PIN.
+ * Chrome came back without its quota database (2026-10-25, W1): `indexedDB.databases()` threw
+ * "Internal error", `localStorage` was an empty in-memory store, and the page could only show its
+ * gate - which the row recorded as a product LOCKED. The data was intact on disk and a clean restart
+ * read it back, so this is the RIG's casualty and is named as one, never judged.
+ *
+ * @param {{quotaDb: boolean, idb: string|null, estimate: string|null}} probe `quotaDb`: the profile's
+ *   quota database exists on disk; `idb` / `estimate`: the error each storage call threw, or null
+ * @returns {string|null} why the storage is lost, or null when it answers
+ */
+export function storageLost({ quotaDb, idb, estimate }) {
+  const failed = [!quotaDb && 'no quota database in the profile', idb && `indexedDB: ${idb}`, estimate && `storage estimate: ${estimate}`].filter(Boolean);
+  return failed.length ? failed.join('; ') : null;
 }
 
 /**

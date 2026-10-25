@@ -7,7 +7,7 @@
  *
  *   bun archive/kill-selftest.mjs
  */
-import { KILL_ROWS, WINDOWS, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runOutcome, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { KILL_ROWS, WINDOWS, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runOutcome, storageLost, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -92,6 +92,9 @@ ok('a seat never taken within the bound fails', failing(rm({ goneAfterMs: null }
 // RM-3's premise: the panel lists every invitee of the one bulk Add (#2433, 2026-10-25).
 ok('the panel offering both invitees misses nobody', panelMissing({ buttons: ['AAA', 'bbb'] }, ['aaa', 'BBB']).length === 0);
 ok('control: the alpha.3 panel (one invitee only) misses the other', panelMissing({ buttons: ['c71e'] }, ['c71e', '223b']).join() === '223b');
+ok('a whole profile whose storage answers is not lost', storageLost({ quotaDb: true, idb: null, estimate: null }) === null);
+ok('control: the 2026-10-25 W1 revival (no quota db, both calls failing) is lost and says so', /quota database.*indexedDB: UnknownError.*estimate/.test(storageLost({ quotaDb: false, idb: 'UnknownError: Internal error.', estimate: 'TypeError: Internal error when calculating storage usage.' }) ?? ''));
+ok('control: one failing call alone is enough', storageLost({ quotaDb: true, idb: 'UnknownError: Internal error.', estimate: null }) !== null);
 ok('control: an unreadable panel misses everyone', panelMissing(null, ['a', 'b']).length === 2);
 
 if (failures) {
