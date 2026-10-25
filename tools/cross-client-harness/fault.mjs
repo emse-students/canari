@@ -107,10 +107,27 @@ export function parseFault(spec) {
  */
 export const toUrlPattern = (match) => (match instanceof RegExp ? '*' : `*${String(match).replace(/[\\*?]/g, (c) => `\\${c}`)}*`);
 
-/** Whether a rule applies to this request (URL substring or RegExp, and the method when given). */
-export function ruleMatches(rule, { url, method }) {
+/**
+ * Whether a rule applies to this request (URL substring or RegExp, the method when given, and a
+ * substring of the request BODY when the rule names `bodyIncludes`).
+ *
+ * `bodyIncludes` is how a rule picks ONE conversation's request on a route every conversation shares:
+ * `POST /api/mls/commit` and `POST /api/mls/welcome` carry the group in their JSON body, never in the
+ * url, and a new device makes its owner commit in EVERY group at once (DUP-7). A request whose body
+ * CDP did not hand over never matches such a rule - it is let through, not guessed at.
+ */
+export function ruleMatches(rule, { url, method, body = null }) {
   const urlOk = rule.match instanceof RegExp ? rule.match.test(url) : url.includes(rule.match);
-  return urlOk && (!rule.method || rule.method.toUpperCase() === String(method).toUpperCase());
+  const bodyOk = !rule.bodyIncludes || (typeof body === 'string' && body.includes(rule.bodyIncludes));
+  return urlOk && bodyOk && (!rule.method || rule.method.toUpperCase() === String(method).toUpperCase());
+}
+
+/** The request body CDP paused with: `postData`, or its `postDataEntries` decoded; null when neither. */
+export function pausedBody(request) {
+  if (typeof request?.postData === 'string') return request.postData;
+  const entries = request?.postDataEntries;
+  if (!Array.isArray(entries) || entries.length === 0) return null;
+  return entries.map((e) => (e.bytes ? Buffer.from(e.bytes, 'base64').toString('utf8') : '')).join('');
 }
 
 /**
@@ -124,7 +141,7 @@ export function ruleMatches(rule, { url, method }) {
  * `transform` (for `rewrite`) and `url` (for `rewrite-url`) are functions, required by their mode and
  * refused on any other, for the same reason.
  *
- * @param {Array<{match: string|RegExp, method?: string, fault: string, body?: string|object,
+ * @param {Array<{match: string|RegExp, method?: string, bodyIncludes?: string, fault: string, body?: string|object,
  *   transform?: (text: string, record: object) => string, url?: (original: string) => string}>} rules
  */
 export function compileRules(rules) {
@@ -147,6 +164,7 @@ export function compileRules(rules) {
       index,
       match: r.match,
       method: r.method ?? null,
+      bodyIncludes: r.bodyIncludes ?? null,
       ...parsed,
       body: fulfilBody(r.body, r.contentType),
       transform: r.transform ?? null,
@@ -255,7 +273,7 @@ export async function armFault(cx, rules, { log = (l) => console.log(l) } = {}) 
 
   const onPaused = (p) => {
     const stage = p.responseStatusCode !== undefined || p.responseErrorReason !== undefined ? 'Response' : 'Request';
-    const req = { url: p.request?.url ?? '', method: p.request?.method ?? '', stage };
+    const req = { url: p.request?.url ?? '', method: p.request?.method ?? '', stage, body: pausedBody(p.request) };
     const rule = armed ? claimRule(compiled, req) : null;
     if (!rule) {
       // NOT OURS, OR NO LONGER: every paused request MUST be answered or the page hangs on it.

@@ -10,7 +10,7 @@
  *
  *   bun archive/fault-selftest.mjs
  */
-import { armFault, claimRule, compileRules, fulfilBody, parseFault, ruleMatches, toUrlPattern } from '../fault.mjs';
+import { armFault, claimRule, compileRules, fulfilBody, parseFault, pausedBody, ruleMatches, toUrlPattern } from '../fault.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -49,6 +49,13 @@ ok('a RegExp pauses everything and decides in JS', toUrlPattern(/commit$/) === '
 ok('method is compared case-insensitively', ruleMatches({ match: '/x', method: 'post' }, { url: 'http://h/x', method: 'POST' }));
 ok('a different method does not match', !ruleMatches({ match: '/x', method: 'POST' }, { url: 'http://h/x', method: 'GET' }));
 ok('a RegExp rule matches by test', ruleMatches({ match: /\/x$/ }, { url: 'http://h/x', method: 'GET' }));
+ok('bodyIncludes matches the body that names it', ruleMatches({ match: '/x', bodyIncludes: '"groupId":"g1"' }, { url: 'http://h/x', method: 'POST', body: '{"groupId":"g1"}' }));
+ok('bodyIncludes refuses another body', !ruleMatches({ match: '/x', bodyIncludes: 'g1' }, { url: 'http://h/x', method: 'POST', body: '{"groupId":"g2"}' }));
+ok('bodyIncludes refuses a request whose body CDP did not hand over', !ruleMatches({ match: '/x', bodyIncludes: 'g1' }, { url: 'http://h/x', method: 'POST', body: null }));
+ok('pausedBody reads postData', pausedBody({ postData: 'abc' }) === 'abc');
+ok('pausedBody decodes postDataEntries', pausedBody({ postDataEntries: [{ bytes: Buffer.from('ab').toString('base64') }, { bytes: Buffer.from('c').toString('base64') }] }) === 'abc');
+ok('pausedBody is null with no body', pausedBody({}) === null);
+ok('compileRules keeps bodyIncludes', compileRules([{ match: '/x', bodyIncludes: 'g1', fault: 'hold once' }])[0].bodyIncludes === 'g1');
 
 // ── accounting: a once is taken once, even by two requests paused together ──────────────────────
 {

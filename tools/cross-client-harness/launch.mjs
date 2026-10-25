@@ -45,6 +45,8 @@ export const BROWSERS = {
   // seats them on W4/W5 and refuses without a web seat, so the profiles must be launchable.
   w4: { port: 9226, profile: join(STATE_DIR, "chrome-w4") },
   w5: { port: 9227, profile: join(STATE_DIR, "chrome-w5") },
+  // The owner's second scratch device (1.4.1 campaign, DEV-4 and DEV-6): wiped like W3.
+  w6: { port: 9228, profile: join(STATE_DIR, "chrome-w6") },
 };
 
 /** True when something still answers on that debugging port. */

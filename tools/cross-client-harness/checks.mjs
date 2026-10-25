@@ -509,6 +509,14 @@ export const PHASES = {
     scripts: ['admit.mjs --row ADM-1', 'admit.mjs --row ADM-2', 'admit.mjs --row ADM-3', 'admit.mjs --row ADM-4', 'admit.mjs --row ADM-8'],
     needs: ['W1', 'W2', 'W4', 'W5'],
   },
+  // A NEW DEVICE OF THE OWNER (DEV-1..4, DEV-6, DUP-7), browsers only: every row mints on W3 (and W6),
+  // so the phase is LAST in its session (plan section 5, step 6). DEV-7 needs A1 swiped away, run by
+  // hand: `bun archive/devrows.mjs --row DEV-7 --variant cold|opened|stale`. DEV-5 is CORRUPT-8's.
+  DEVICES: {
+    title: '1.4.1 - a new device of the owner: seated, revoked online and offline, two at once, and its Welcome once',
+    scripts: ['devrows.mjs --row DEV-1', 'devrows.mjs --row DEV-2', 'devrows.mjs --row DEV-3', 'devrows.mjs --row DEV-4', 'devrows.mjs --row DEV-6', 'devrows.mjs --row DUP-7'],
+    needs: ['W1', 'W2', 'W3', 'W6'],
+  },
 };
 
 /**

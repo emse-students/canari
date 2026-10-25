@@ -211,6 +211,19 @@ const CUT_PATCH = `(function () {
 })()`;
 
 /**
+ * Installs {@link CUT_PATCH} for every document this page loads from now on, WITHOUT reloading it.
+ *
+ * For a page whose next load is somebody else's: `newdevice.mjs` wipes the origin and navigates
+ * itself, so a device row arms before the mint and the mint's own load carries the patch (DEV-3).
+ * Any other caller wants {@link armCut}, which reloads and proves the patch is in.
+ */
+export async function armCutOnNextLoad(cx) {
+  await cx.send('Page.enable');
+  await cx.send('Network.enable');
+  await cx.send('Page.addScriptToEvaluateOnNewDocument', { source: CUT_PATCH });
+}
+
+/**
  * Installs {@link CUT_PATCH} and reloads, so a later {@link cutHard} has sockets to close.
  *
  * Call at the START of a check, before anything is opened or measured: the reload it costs is a
@@ -218,9 +231,7 @@ const CUT_PATCH = `(function () {
  * gateway line is waited for rather than a delay.
  */
 export async function armCut(cx) {
-  await cx.send('Page.enable');
-  await cx.send('Network.enable');
-  await cx.send('Page.addScriptToEvaluateOnNewDocument', { source: CUT_PATCH });
+  await armCutOnNextLoad(cx);
   const before = cx.events.length;
   // NOT `until(readyState === 'complete')`, WHICH IS THE RACE THIS LINE USED TO BE. The poll is a
   // `Runtime.evaluate` into the context the reload on the line above is tearing down, so one poll in
