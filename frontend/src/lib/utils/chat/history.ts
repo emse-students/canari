@@ -29,6 +29,7 @@ import {
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { frameFingerprint, noteFrameProcessed } from '$lib/mls-client/inboundFrameLedger';
 import { checkVerifiedSender } from '$lib/mls-client/verifiedSender';
+import { isFrameFromThisDevice } from '$lib/mls-client/ownDeviceFrame';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { escalateReconciliation } from '$lib/utils/chat/historyReconcile';
@@ -1050,7 +1051,12 @@ export async function replayConversationHistory(params: {
          * The row is marked seen so later replays answer from the cheap check above, and the
          * cursor moves past it - a frame we sent is a frame we have, by definition.
          */
-        if (msg.sender_device_id && msg.sender_device_id === myDeviceId) {
+        if (
+          isFrameFromThisDevice(
+            { userId: msg.sender_id, deviceId: msg.sender_device_id },
+            { userId, deviceId: myDeviceId }
+          )
+        ) {
           ownFramesSkipped++;
           seenCipherHashes.add(rowKey);
           markSeenUpdated();
