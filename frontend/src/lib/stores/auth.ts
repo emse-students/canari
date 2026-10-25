@@ -52,7 +52,8 @@ import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
-import { refusalBodyCode, refusalOrigin } from '$lib/utils/apiJson';
+import { refusalOrigin } from '$lib/utils/apiJson';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import {
   REFRESH_HEADER,
   clearNativeRefreshToken,
@@ -1162,7 +1163,8 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
     if ((res.status === 401 || res.status === 403) && (await refusalOrigin(res)) === 'gateway') {
       // The proof, latched: only a new credential can change this answer. WHY it is dead is latched
       // with it, from the refusal's CODE - the one cause the device answers with a full reset.
-      const byRevocation = (await refusalBodyCode(res)) === DEVICE_REVOKED_BY_OWNER;
+      const byRevocation =
+        (await refusalFromResponse(res, 'Token renewal')).code === DEVICE_REVOKED_BY_OWNER;
       _refreshCredentialProvenDead = true;
       _sessionEndedByDeviceRevocation = byRevocation;
       noteSessionAnswered(null);
