@@ -4,9 +4,10 @@
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 const persistMlsStructuralCheckpoint = vi.hoisted(() => vi.fn());
+const scheduleOutboundMlsPersist = vi.hoisted(() => vi.fn());
 vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
   persistMlsStructuralCheckpoint: (...a: unknown[]) => persistMlsStructuralCheckpoint(...a),
-  scheduleOutboundMlsPersist: vi.fn(),
+  scheduleOutboundMlsPersist: () => scheduleOutboundMlsPersist(),
 }));
 
 import { BaseMlsService } from './BaseMlsService';
@@ -102,8 +103,15 @@ function recordOf(
   };
 }
 
-/** group id -> the Welcome a settled Add still owes (`mls-core/src/owed_welcome.rs`). */
-type OwedState = Map<string, OwedWelcome>;
+/**
+ * group id -> the Welcomes its Adds still owe, one entry per Add, with the crate's rules
+ * (`mls-core/src/owed_welcome.rs`): a later Add supersedes a recipient an earlier entry names, and a
+ * delivery clears the entry carrying the delivered bytes only.
+ */
+type OwedState = Map<string, OwedWelcome[]>;
+
+const sameBytes = (a: Uint8Array, b: Uint8Array) =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
 
 function primitives(state: PendingState, owed: OwedState = new Map()) {
   return {
@@ -111,20 +119,29 @@ function primitives(state: PendingState, owed: OwedState = new Map()) {
     mergePendingCommitOwingWelcome: vi.fn(async (g: string, recipients: string[]) => {
       const read = state.get(g);
       if (read?.status !== 'recorded' || !read.record.welcome) throw new Error('InvalidData');
-      owed.set(g, {
+      const entries = (owed.get(g) ?? [])
+        .map((w) => ({ ...w, recipients: w.recipients.filter((r) => !recipients.includes(r)) }))
+        .filter((w) => w.recipients.length > 0);
+      entries.push({
         groupId: g,
         welcome: read.record.welcome,
         ratchetTree: new Uint8Array([7]),
         recipients,
       });
+      owed.set(g, entries);
       state.delete(g);
     }),
-    owedWelcomes: vi.fn(async () => [...owed.values()].map((w) => ({ ...w }))),
-    welcomeDelivered: vi.fn(async (g: string, r: string) => {
-      const w = owed.get(g);
-      if (!w) return;
-      w.recipients = w.recipients.filter((x) => x !== r);
-      if (w.recipients.length === 0) owed.delete(g);
+    owedWelcomes: vi.fn(async () =>
+      [...owed.values()].flat().map((w) => ({ ...w, recipients: [...w.recipients] }))
+    ),
+    welcomeDelivered: vi.fn(async (g: string, r: string, welcome: Uint8Array) => {
+      const entries = owed.get(g);
+      const entry = entries?.find((w) => sameBytes(w.welcome, welcome) && w.recipients.includes(r));
+      if (!entries || !entry) return;
+      entry.recipients = entry.recipients.filter((x) => x !== r);
+      const left = entries.filter((w) => w.recipients.length > 0);
+      if (left.length === 0) owed.delete(g);
+      else owed.set(g, left);
     }),
     pendingSubmission: vi.fn(async (g: string) => state.get(g) ?? { status: 'none' }),
     groupsWithPendingCommit: vi.fn(async () => [...state.keys()]),
@@ -721,12 +738,14 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     const owed: OwedState = new Map([
       [
         G,
-        {
-          groupId: G,
-          welcome: new Uint8Array([3]),
-          ratchetTree: new Uint8Array([7]),
-          recipients: ['u-b:d-b2'],
-        },
+        [
+          {
+            groupId: G,
+            welcome: new Uint8Array([3]),
+            ratchetTree: new Uint8Array([7]),
+            recipients: ['u-b:d-b2'],
+          },
+        ],
       ],
     ]);
     const c = ctx(submitting(), { owed });
@@ -747,7 +766,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     c.delivery.sendWelcome.mockRejectedValueOnce(lost());
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await c.settleUnresolvedCommits();
-    expect(c.owed.get(G)?.recipients).toEqual(['u-b:d-b']);
+    expect(c.owed.get(G)?.[0].recipients).toEqual(['u-b:d-b']);
     error.mockRestore();
     await c.settleUnresolvedCommits();
     expect(c.delivery.sendWelcome).toHaveBeenCalledTimes(2);
@@ -765,7 +784,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await c.settleUnresolvedCommits();
     // The terminal refusal is cleared; the transport failure beside it stays owed.
-    expect(c.owed.get(G)?.recipients).toEqual(['u-b:d-b2']);
+    expect(c.owed.get(G)?.[0].recipients).toEqual(['u-b:d-b2']);
     expect(
       error.mock.calls.some(([line]) => String(line).includes('terminal, no longer owed'))
     ).toBe(true);
@@ -1679,6 +1698,47 @@ describe("runCommitTransaction - an accepted Add's Welcome is owed in the state,
     await Promise.all([caller, drain]);
     expect(c.delivery.sendWelcome).toHaveBeenCalledTimes(1);
     expect(c.owed.size).toBe(0);
+  });
+
+  it.each([
+    ['delivered', undefined],
+    ['refused for good', new WelcomeTargetNotMemberError(G, 'u-b', 'd-b')],
+  ] as const)(
+    'an older Welcome %s AFTER a re-admission merged a newer one never clears the newer one',
+    async (_n, refusal) => {
+      const c = ctx(submitting({ accepted: true }, { accepted: true }));
+      const first = await addOf(c);
+      let answer!: (e?: Error) => void;
+      c.delivery.sendWelcome.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            answer = (e) => (e ? reject(e) : resolve());
+          })
+      );
+      const w1 = callerSends(c, first);
+      // The same device admitted again while W1 is in flight: W2 owed, W1's entry superseded.
+      await c.runCommitTransaction(G, stagerOf(c, { welcome: new Uint8Array([4]) }), {
+        excludeDeviceIds: ['u-b:d-b'],
+        exportTree: true,
+      });
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      answer(refusal);
+      if (refusal) await expect(w1).rejects.toBe(refusal);
+      else await w1;
+      error.mockRestore();
+      expect(c.owed.get(G)).toEqual([
+        expect.objectContaining({ welcome: new Uint8Array([4]), recipients: ['u-b:d-b'] }),
+      ]);
+    }
+  );
+
+  it('a consumed Welcome is handed to the next checkpoint', async () => {
+    const c = ctx(submitting({ accepted: true }));
+    const result = await addOf(c);
+    scheduleOutboundMlsPersist.mockClear();
+    await callerSends(c, result);
+    expect(c.owed.size).toBe(0);
+    expect(scheduleOutboundMlsPersist).toHaveBeenCalledTimes(1);
   });
 
   it('merges a commit that admits nobody plainly - it owes no Welcome', async () => {

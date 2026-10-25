@@ -90,7 +90,16 @@ impl MlsManager {
             }
         };
         self.merge_pending_commit_for(group_id)?;
-        let ratchet_tree = self.export_ratchet_tree_for(group_id)?;
+        // THE MERGE HAS HAPPENED, SO THE OBLIGATION IS RECORDED WHATEVER THE EXPORT SAYS: an error
+        // here would leave a merged Add owing nothing. A tree that cannot be exported is recorded
+        // empty and the Welcome goes without one - the joiner then needs its own repair, which is
+        // what nothing owed would have cost too, and it is said at the level that accuses.
+        let ratchet_tree = self.export_ratchet_tree_for(group_id).unwrap_or_else(|e| {
+            log::error!(
+                "merge_pending_commit_owing_welcome: {group_id}: the ratchet tree of the merged Add could not be exported ({e}) - the Welcome is owed without it"
+            );
+            Vec::new()
+        });
         let mut entries = self.owed_entries(group_id);
         for earlier in &mut entries {
             let before = earlier.recipients.len();
@@ -125,20 +134,22 @@ impl MlsManager {
             .collect()
     }
 
-    /// `recipient` was sent `group_id`'s owed Welcome: it is owed to it no longer. A device is named
-    /// by at most one entry of its group (a later Add supersedes it), so this is that entry's.
-    pub fn welcome_delivered(&mut self, group_id: &str, recipient: &str) {
+    /// `recipient` was answered for THE `welcome` it was sent in `group_id`: the entry carrying
+    /// those bytes owes it no longer. Matched by the bytes, never by the device alone: a send of an
+    /// older Welcome that completes after a re-admission merged a newer one must not clear the newer
+    /// one (the merge already superseded the older entry's recipient, so it clears nothing).
+    pub fn welcome_delivered(&mut self, group_id: &str, recipient: &str, welcome: &[u8]) {
         let mut entries = self.owed_entries(group_id);
-        if !entries
-            .iter()
-            .any(|w| w.recipients.iter().any(|r| r == recipient))
-        {
-            log::debug!("welcome_delivered: {group_id} -> {recipient}: nothing owed");
+        let Some(entry) = entries
+            .iter_mut()
+            .find(|w| w.welcome == welcome && w.recipients.iter().any(|r| r == recipient))
+        else {
+            log::debug!(
+                "welcome_delivered: {group_id} -> {recipient}: nothing owed for that Welcome"
+            );
             return;
-        }
-        for w in &mut entries {
-            w.recipients.retain(|r| r != recipient);
-        }
+        };
+        entry.recipients.retain(|r| r != recipient);
         entries.retain(|w| !w.recipients.is_empty());
         log::debug!(
             "welcome_delivered: {group_id} -> {recipient} ({} recipient(s) still owed)",

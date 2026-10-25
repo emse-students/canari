@@ -96,12 +96,12 @@ fn the_merge_of_a_settled_add_writes_the_owed_welcome_and_a_delivery_clears_it()
     );
     assert_eq!(owed[0].recipients, vec!["bob:dev1", "carol:dev1"]);
 
-    alice.welcome_delivered(gid, "bob:dev1");
+    alice.welcome_delivered(gid, "bob:dev1", &staged.welcome);
     let alice = restart(&alice, "alice");
     assert_eq!(alice.owed_welcomes()[0].recipients, vec!["carol:dev1"]);
 
     let mut alice = alice;
-    alice.welcome_delivered(gid, "carol:dev1");
+    alice.welcome_delivered(gid, "carol:dev1", &staged.welcome);
     assert!(alice.owed_welcomes().is_empty());
     assert!(restart(&alice, "alice").owed_welcomes().is_empty());
 }
@@ -173,7 +173,7 @@ fn a_second_add_keeps_the_welcome_an_earlier_add_still_owes() {
     assert_eq!(owed[1].welcome, second.welcome);
     assert_eq!(owed[1].recipients, vec!["carol:dev1"]);
 
-    alice.welcome_delivered(gid, "carol:dev1");
+    alice.welcome_delivered(gid, "carol:dev1", &second.welcome);
     let owed = restart(&alice, "alice").owed_welcomes();
     assert_eq!(owed.len(), 1);
     assert_eq!(owed[0].recipients, vec!["bob:dev1"]);
@@ -216,4 +216,39 @@ fn a_device_admitted_again_is_owed_only_the_newer_welcome() {
     assert_eq!(owed[0].recipients, vec!["carol:dev1"]);
     assert_eq!(owed[1].recipients, vec!["bob:dev1"]);
     assert_eq!(owed[1].welcome, replaced.welcome);
+}
+
+/// A send of the OLDER Welcome that completes after a re-admission merged a newer one clears
+/// nothing: the newer Welcome stays owed to the device (the review of #2452).
+#[test]
+fn an_older_welcome_answered_late_never_clears_the_newer_one() {
+    let gid = "g-late";
+    let mut alice = make_device("alice", "dev1");
+    let bob = make_device("bob", "dev1");
+    alice.create_group(gid.to_string()).expect("create");
+    let kp_b = bob.generate_key_package().expect("kp b");
+    let (w1, _) = alice
+        .add_members_recorded(gid, &[&kp_b], &["bob:dev1"], Vec::new())
+        .expect("stage");
+    alice
+        .merge_pending_commit_owing_welcome(gid, vec!["bob:dev1".to_string()])
+        .expect("merge w1");
+    let kp_b2 = bob.generate_key_package().expect("kp b2");
+    let w2 = alice
+        .replace_device_recorded(gid, "bob:dev1", &kp_b2, Vec::new())
+        .expect("stage the replace");
+    alice
+        .merge_pending_commit_owing_welcome(gid, vec!["bob:dev1".to_string()])
+        .expect("merge w2");
+
+    // W1's send, in flight across the re-admission, is answered now - delivered or refused alike.
+    alice.welcome_delivered(gid, "bob:dev1", &w1.welcome);
+    let owed = restart(&alice, "alice").owed_welcomes();
+    assert_eq!(owed.len(), 1);
+    assert_eq!(owed[0].welcome, w2.welcome);
+    assert_eq!(owed[0].recipients, vec!["bob:dev1"]);
+
+    // ...and W2's own answer clears it.
+    alice.welcome_delivered(gid, "bob:dev1", &w2.welcome);
+    assert!(alice.owed_welcomes().is_empty());
 }

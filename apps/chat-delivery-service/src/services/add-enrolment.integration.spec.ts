@@ -313,14 +313,18 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
   const deliverWelcome = () =>
     (service as unknown as { deliverWelcome: jest.Mock }).deliverWelcome as jest.Mock;
 
-  it('the same Welcome sent again - its first answer lost - is stored and delivered once (DUP-7)', async () => {
+  it('the same Welcome sent again - its first answer lost - is stored once and its one row delivered again (DUP-7)', async () => {
     await addCommit(1);
     deliverWelcome().mockClear();
     await expect(welcome()).resolves.toEqual({ status: 'queued' });
     // The client re-sends the owed Welcome it never read an answer for: the same bytes.
     await expect(welcome()).resolves.toEqual({ status: 'queued' });
     expect(await queuedWelcomes()).toBe(1);
-    expect(deliverWelcome()).toHaveBeenCalledTimes(1);
+    // ...and the ONE row is delivered again: the first request may have died between its store
+    // and its delivery, and only the re-send is left to arm the live publish and the push.
+    expect(deliverWelcome()).toHaveBeenCalledTimes(2);
+    const [[first], [again]] = deliverWelcome().mock.calls as [[{ id: string }], [{ id: string }]];
+    expect(again.id).toBe(first.id);
   });
 
   it('two copies of the same Welcome racing are stored once', async () => {

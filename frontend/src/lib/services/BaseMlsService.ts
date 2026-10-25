@@ -2950,12 +2950,12 @@ export abstract class BaseMlsService implements IMlsService {
         );
       } catch (e) {
         if (e instanceof WelcomeTargetNotMemberError) {
-          await this.consumeOwedWelcome(groupId, recipient, 'refused');
+          await this.consumeOwedWelcome(groupId, recipient, welcomeBytes, 'refused');
         }
         throw e;
       }
       recordWelcomeSent(groupId, targetDeviceId!);
-      await this.consumeOwedWelcome(groupId, recipient, 'delivered');
+      await this.consumeOwedWelcome(groupId, recipient, welcomeBytes, 'delivered');
     })();
     const entry = { welcome: welcomeBytes, done };
     this.welcomeSendsInFlight.set(key, entry);
@@ -2971,7 +2971,7 @@ export abstract class BaseMlsService implements IMlsService {
 
   /**
    * The server ANSWERED a Welcome to `recipient` in `groupId`: whatever the state owed it there is
-   * owed no longer (a no-op when nothing was). `refused` is the terminal `WELCOME_TARGET_NOT_MEMBER`:
+   * owed no longer for `welcome` (a no-op when nothing was). `refused` is the terminal `WELCOME_TARGET_NOT_MEMBER`:
    * the server enrols an Add's people with the commit it accepts, or refuses them for good, so
    * resending the same bytes cannot change the answer - said at the level that accuses, since an
    * accepted Add whose person is off the roster is the visible end of something upstream. A clear
@@ -2981,6 +2981,7 @@ export abstract class BaseMlsService implements IMlsService {
   private async consumeOwedWelcome(
     groupId: string,
     recipient: string,
+    welcome: Uint8Array,
     answer: 'delivered' | 'refused'
   ): Promise<void> {
     const short = groupId.slice(0, 8);
@@ -2992,7 +2993,10 @@ export abstract class BaseMlsService implements IMlsService {
       );
     }
     try {
-      await this.welcomeDelivered(groupId, recipient);
+      // The entry carrying THESE bytes only: an older Welcome answered late never clears a newer one.
+      await this.welcomeDelivered(groupId, recipient, welcome);
+      // To disk with the next checkpoint, like any state change outside a commit.
+      scheduleOutboundMlsPersist();
     } catch (e) {
       console.error(
         `[WELCOME] ${short}... the owed Welcome to ${recipient.slice(0, 8)}... could not be cleared ` +
@@ -4999,8 +5003,12 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<void>;
   /** Every Welcome the state still owes (`mls-core/src/owed_welcome.rs`). */
   protected abstract owedWelcomes(): Promise<OwedWelcome[]>;
-  /** `recipient` was sent `groupId`'s owed Welcome. */
-  protected abstract welcomeDelivered(groupId: string, recipient: string): Promise<void>;
+  /** `recipient` was answered for `welcome` in `groupId`: the entry carrying those bytes owes it no longer. */
+  protected abstract welcomeDelivered(
+    groupId: string,
+    recipient: string,
+    welcome: Uint8Array
+  ): Promise<void>;
   /** Every group whose state holds a staged commit not yet merged or cleared. */
   protected abstract groupsWithPendingCommit(): Promise<string[]>;
 
@@ -5397,10 +5405,10 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private async deliverOwedWelcomes(groupId?: string): Promise<void> {
     const owed = (await this.owedWelcomes()).filter((w) => !groupId || w.groupId === groupId);
-    let cleared = 0;
-    let dropped = 0;
     for (const w of owed) {
       const short = w.groupId.slice(0, 8);
+      // A tree the merge could not export is recorded empty (`owed_welcome.rs`): sent without one.
+      const ratchetTree = w.ratchetTree.length > 0 ? w.ratchetTree : undefined;
       for (const recipient of w.recipients) {
         const device = parseDeviceIdentity(recipient);
         if (!device) {
@@ -5408,28 +5416,18 @@ export abstract class BaseMlsService implements IMlsService {
           console.error(
             `[COMMIT] ${short}... owed Welcome names no device (${recipient}) - dropped`
           );
-          await this.welcomeDelivered(w.groupId, recipient);
+          await this.consumeOwedWelcome(w.groupId, recipient, w.welcome, 'refused');
           continue;
         }
         try {
           // `sendWelcome` clears the recipient once the server answered (`consumeOwedWelcome`).
-          await this.sendWelcome(
-            w.welcome,
-            device.userId,
-            w.groupId,
-            device.deviceId,
-            w.ratchetTree
-          );
-          cleared += 1;
+          await this.sendWelcome(w.welcome, device.userId, w.groupId, device.deviceId, ratchetTree);
           console.log(
             `[COMMIT] ${short}... owed Welcome of an Add delivered to ${device.deviceId}`
           );
         } catch (e) {
           // Terminal: `sendWelcome` already dropped it from the state, and said why.
-          if (e instanceof WelcomeTargetNotMemberError) {
-            dropped += 1;
-            continue;
-          }
+          if (e instanceof WelcomeTargetNotMemberError) continue;
           console.error(
             `[COMMIT] ${short}... owed Welcome of an Add NOT delivered to ${device.deviceId} - ` +
               `still owed, sent again at the next connection: ${String(e).slice(0, 120)}`
@@ -5437,7 +5435,6 @@ export abstract class BaseMlsService implements IMlsService {
         }
       }
     }
-    if (cleared > 0 || dropped > 0) scheduleOutboundMlsPersist();
   }
 
   /**

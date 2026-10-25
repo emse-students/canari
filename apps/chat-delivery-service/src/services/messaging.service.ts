@@ -4273,12 +4273,16 @@ export class MessagingService {
       }
     );
     if (stored && stored !== queuedWelcome) {
-      // A RE-SEND OF THE SAME BYTES, already queued and already handed to the delivery: nothing is
-      // stored or delivered a second time, and the sender reads the same answer as the first time.
+      // A RE-SEND OF THE SAME BYTES, already queued: nothing is stored a second time. The queued
+      // row is handed to the delivery again - the same row, so nothing new is queued, and a device
+      // that already joined from it takes the copy as a redelivery (`setupMessageHandler`) - because
+      // the first request may have died between its store and its delivery, and a re-send is the
+      // only thing left to arm the live publish and the push.
       this.logger.log(
         `[WELCOME][${traceId}] DUPLICATE id=${stored.id} recipient=${deviceInfo.userId}:${targetDeviceId} ` +
-          `group=${safeGroupId} - the same Welcome is already queued, nothing stored again`
+          `group=${safeGroupId} - the same Welcome is already queued, nothing stored again; its row is delivered again`
       );
+      await this.deliverWelcome(stored, traceId);
       return { status: 'queued' };
     }
     this.logger.log(

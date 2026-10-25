@@ -1478,16 +1478,24 @@ only the invitee's own `[READD]` external join let it in. Both paths now go thro
 (a settlement re-derives the Add) or the merge and its owed Welcome (the connection drain,
 `deliverOwedWelcomes`, sends it) - never the merge alone. The caller still sends the Welcome it was
 handed, and **`sendWelcome` is where the obligation is consumed**: the server's answer - stored, or
-the terminal `WELCOME_TARGET_NOT_MEMBER` - clears that recipient, whoever sent it. A send of the
-same bytes to the same device already in flight (the caller's, met by the drain) is awaited, never
-repeated. A group can owe the Welcomes of SEVERAL Adds, so a group's record is a list, one entry per
-Add; a device admitted again is owed only the newer Welcome (a record of one bare entry, written by
-an older build, still reads - [legacy-compatibility](../legacy-compatibility.md)).
+the terminal `WELCOME_TARGET_NOT_MEMBER` - clears that recipient FROM THE ENTRY CARRYING THOSE BYTES
+(`welcome_delivered` matches the Welcome, never the device alone), whoever sent it, and hands the
+change to the next checkpoint. So the connection drain now competes with a live Add's own send; that
+is correct because a send of the same bytes to the same device already in flight is awaited, never
+repeated, and the server stores a copy once (below). A group can owe the Welcomes of SEVERAL Adds,
+so a group's record is a list, one entry per Add; a device admitted again is owed only the newer
+Welcome, and an older Welcome answered late clears nothing (a record of one bare entry, written by
+an older build, still reads - [legacy-compatibility](../legacy-compatibility.md)). The merge records
+the obligation even when the ratchet tree cannot be exported afterwards: the entry carries an empty
+tree, said at error level, and the Welcome goes without one - never a merged Add owing nothing.
 
 **The same Welcome stored twice is stored once.** A re-send after a lost answer is the same bytes,
 and the first request may have been stored. `MessagingService.sendWelcome` looks, under a lock that
 serialises every store of a Welcome for that device in that group, for a row still queued with that
-payload, and answers `queued` without storing or delivering again (`[WELCOME] DUPLICATE`). A copy
+payload, and answers `queued` without storing again (`[WELCOME] DUPLICATE`); it hands THAT row to
+the delivery again, since the first request may have died between its store and its delivery and
+the re-send is then the only thing left to arm the live publish and the push - the same row, so
+nothing new is queued, and a device that already joined from it takes the copy as a redelivery. A copy
 arriving after the joiner consumed the first meets a device holding the group, which takes it as a
 redelivery. Pinned by `add-enrolment.integration.spec.ts`.
 

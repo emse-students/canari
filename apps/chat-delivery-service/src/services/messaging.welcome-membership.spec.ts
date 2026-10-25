@@ -399,14 +399,27 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     });
   });
 
-  it('stores and publishes nothing when the same Welcome is already queued - a re-send after a lost answer', async () => {
-    queuedCopy = { id: 'q-first', recipientId: 'u2', deviceId: 'd2', groupId: 'g1' };
+  it('stores nothing when the same Welcome is already queued, and delivers THAT row again - a re-send after a lost answer', async () => {
+    queuedCopy = {
+      id: 'q-first',
+      recipientId: 'u2',
+      deviceId: 'd2',
+      groupId: 'g1',
+      isWelcome: true,
+      proto: body.welcomePayload,
+      createdAt: new Date(),
+    };
 
     await expect(service.sendWelcome(undefined, body)).resolves.toEqual({ status: 'queued' });
 
     expect(txReads).toContain('welcome-lock');
     expect(txReads).not.toContain('save');
-    expect(redis.publish).not.toHaveBeenCalled();
+    // The first request may have died between its store and its delivery: the re-send arms it.
+    expect(redis.publish).toHaveBeenCalledTimes(1);
+    const envelope = String(redis.publish.mock.calls[0][1]);
+    expect(JSON.parse(envelope)).toMatchObject({ isWelcome: true });
+    // THE queued row, by its id - never a second row.
+    expect(envelope).toContain('q-first');
   });
 
   it('refuses a target device that does not exist', async () => {

@@ -1436,8 +1436,12 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** WASM client wrapper - see {@link BaseMlsService.welcomeDelivered}. */
-  protected async welcomeDelivered(groupId: string, recipient: string): Promise<void> {
-    this.client.welcome_delivered(groupId, recipient);
+  protected async welcomeDelivered(
+    groupId: string,
+    recipient: string,
+    welcome: Uint8Array
+  ): Promise<void> {
+    this.client.welcome_delivered(groupId, recipient, welcome);
   }
 
   /** WASM client wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */
