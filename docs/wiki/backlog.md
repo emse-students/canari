@@ -39,7 +39,7 @@ replay)`. The frame is not damaged and nothing failed, so both Rust lines accuse
 reload re-fetched it. The fix is to classify `SecretReuseError` before the fork judgement and the
 error line, carrying it as the type the TS classifier already keys on.
 
-## P3 - An Add whose commit outcome is unknown is reported as failed (NET-3, 2026-10-25)
+## P2 - An Add whose commit outcome is unknown is reported as failed (NET-3, 2026-10-25)
 
 `processBulkAddition` (`groupCreation.ts`) handles a `CommitOutcomeUnknownError` in its catch-all.
 It logs `console.error('[SYNC] processBulkAddition failed:', …)` and returns `not-added('failed')`,
@@ -48,6 +48,9 @@ and resubmitted (`kept until a resubmission answers`). On `1.4.1-alpha.3` (NET-3
 the commit POST) it was ACCEPTED at the next settlement, about 26 s later. So an unknown outcome is
 logged as an error and shown to the member as a failure, and the member may retry an Add that is
 going to land. It wants its own outcome: an Add pending its answer, said as such, at `warn` at most.
+P2 (re-graded the same day): the toast misinforms, and the member may retry an Add that will land. #2426
+changes the GESTURE-time answer to `outcome-unknown`; whether it also covers this catch-all toast is
+to be checked when it lands.
 
 ## P2 - An invitee the Add could not check is dropped silently when others are added (1.4.1 dev campaign, 2026-10-25)
 
