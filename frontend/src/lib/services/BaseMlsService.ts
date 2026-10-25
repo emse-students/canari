@@ -133,7 +133,7 @@ import {
   takeGroupsAwaiting,
   type UnackedReason,
 } from '$lib/mls-client/messagePipeline/unackedFrames';
-import { getToken } from '$lib/stores/auth';
+import { getToken, refresh } from '$lib/stores/auth';
 import {
   GatewayOpenAbandonedError,
   type GatewaySocketOpen,
@@ -665,6 +665,8 @@ export abstract class BaseMlsService implements IMlsService {
     this.delivery = new MlsDeliveryApi({
       historyUrl: this.historyUrl,
       getToken,
+      // A closure, so the auth store's export is read when a 401 asks for it, not at construction.
+      refreshToken: () => refresh(),
       ...(fetchImpl ? { fetchImpl } : {}),
     });
     // Where a disagreement between a frame's envelope and its verified sender is READ: the console

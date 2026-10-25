@@ -11,6 +11,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { renewingOn401 } from '$lib/utils/renewOn401';
 
 /**
  * What the server did with a member's Decline of an invitation-link ask
@@ -601,6 +602,14 @@ export class GroupExitRefusedError extends Error {
 export type MlsDeliveryApiOptions = {
   historyUrl: string;
   getToken: () => Promise<string>;
+  /**
+   * Renews the access token after a 401 (`refresh` from the auth store, single-flight). Given, every
+   * request this class sends with a bearer obeys the one 401 rule (`renewOn401.ts`): renew, send
+   * the SAME request once more, `SessionExpiredError` only when the renewed token is refused too.
+   * The one production construction (`BaseMlsService`) passes it; a test that reads a single
+   * response leaves it out and gets the 401 as the answer it is.
+   */
+  refreshToken?: () => Promise<string>;
   /** Defaults to `globalThis.fetch` (browser); Tauri passes `plugin-http` fetch. */
   fetchImpl?: MlsDeliveryFetch;
 };
@@ -622,7 +631,13 @@ export class MlsDeliveryApi {
   constructor(opts: MlsDeliveryApiOptions) {
     this.historyUrl = opts.historyUrl;
     this.getToken = opts.getToken;
-    this.f = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    const f = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    // A 401 here is the auth guard's answer about the BEARER, given before any handler runs, so the
+    // request did nothing and the same bytes may go again: a commit answered 401 used to end an Add
+    // with the group left at its old epoch (TOK-1). Wrapped ONCE, here, so every route of this class
+    // obeys it - and under each caller's own deadline, which keeps a commit inside the MLS lock-hold
+    // budget (`COMMIT_LOCK_HOLD_BUDGET_MS`) whatever the renewal costs.
+    this.f = opts.refreshToken ? renewingOn401(f, opts.refreshToken) : f;
   }
 
   /**

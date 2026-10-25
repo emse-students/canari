@@ -572,7 +572,8 @@ know it had been evicted would be claiming knowledge it does not have.
 - **Access token**: JWT HS256 (15 min), stored in memory only — never localStorage.
 - **Refresh token**: HttpOnly cookie (7 days), rotated on each use via `POST /api/auth/refresh`.
 - **WebSocket auth**: cookie `canari_ws_token` set via `document.cookie` on each token refresh.
-- `apiFetch.ts` handles 401 responses by attempting a token refresh before retrying.
+- A 401 renews the token and resends the same request once, for `apiFetch`, the media upload and the
+  MLS delivery API alike - one implementation, `utils/renewOn401.ts` ([sessions](../sessions.md#a-401-renews-the-token-and-sends-the-same-request-once---one-rule-every-caller)).
 
 ```typescript
 // auth.svelte.ts

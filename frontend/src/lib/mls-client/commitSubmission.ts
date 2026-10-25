@@ -36,6 +36,7 @@
 import { commitAdmits } from './commitAdmits';
 import type { CommitRemoval } from './mlsDeliveryApi';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { SessionExpiredError } from '$lib/stores/auth';
 import { toBase64 } from '$lib/utils/hex';
 import { DEADLINE_MS } from '$lib/utils/requestDeadline';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -241,9 +242,16 @@ export class FollowerTabCommitError extends Error {
  * A 5xx, a gateway error or a transport failure is NOT one: the advance may have committed before
  * the answer was lost. A RESUBMISSION reads some of these 4xx differently
  * ({@link refusesOnlyThisRequest}).
+ *
+ * A {@link SessionExpiredError} is one too: it is the auth guard's 401 to the request AND to its
+ * resend with a renewed token (`renewOn401.ts`), or a token that could not be had before anything
+ * was sent - in every case no request of these bytes reached the gate.
  */
 export function isDefinitiveCommitRefusal(error: unknown): boolean {
-  return error instanceof ApiRefusalError && error.status >= 400 && error.status < 500;
+  return (
+    error instanceof SessionExpiredError ||
+    (error instanceof ApiRefusalError && error.status >= 400 && error.status < 500)
+  );
 }
 
 /**
@@ -251,12 +259,14 @@ export function isDefinitiveCommitRefusal(error: unknown): boolean {
  * guard (a session that expired, a device revoked since, a committer no longer a member) or a 429
  * from the throttler, all given before the gate. On a resubmission they say nothing of the EARLIER
  * request of the same bytes, which may have landed - an expired session after an accepted but
- * unanswered commit is exactly that - so the outcome stays UNKNOWN, never refused.
+ * unanswered commit is exactly that - so the outcome stays UNKNOWN, never refused. A
+ * {@link SessionExpiredError} is the same 401, proven against a renewed token.
  */
 export function refusesOnlyThisRequest(error: unknown): boolean {
   return (
-    error instanceof ApiRefusalError &&
-    (error.status === 401 || error.status === 403 || error.status === 429)
+    error instanceof SessionExpiredError ||
+    (error instanceof ApiRefusalError &&
+      (error.status === 401 || error.status === 403 || error.status === 429))
   );
 }
 

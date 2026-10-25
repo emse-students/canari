@@ -527,10 +527,27 @@ design. An audit trail names the account that ACTED, so it reads the real user, 
   to whatever the client sent, so the head of the list is attacker-controlled.
 - **An upload that meets a 401 refreshes and retries ONCE; it never ends the session.** The media
   upload takes a token its caller read BEFORE a long encryption, so a 401 is usually a stale copy.
-  `fetchUpload` in `frontend/src/lib/media.ts` (every `MediaService` upload route) renews through the
-  single-flight `refresh()` and resends; only a 401 on the FRESH token throws `SessionExpiredError`,
-  and a failed refresh is rethrown as it came. Prod 2026-10-06: 9 `POST /api/media/upload` 401 in 30 h
-  from a web client, each followed by logout and sign-in. The salon branch's stale `ctx.authToken`
-  copy (#1472) and the post forms (#1477) fixed WHO hands the token; this fixes the token expiring
-  between the hand-over and the request, for every caller including reels and avatars. Test:
-  `media.uploadRefreshRetry.test.ts`.
+  `fetchUpload` in `frontend/src/lib/media.ts` (every `MediaService` upload route) obeys the one rule
+  below. Prod 2026-10-06: 9 `POST /api/media/upload` 401 in 30 h from a web client, each followed by
+  logout and sign-in. The salon branch's stale `ctx.authToken` copy (#1472) and the post forms (#1477)
+  fixed WHO hands the token; this fixes the token expiring between the hand-over and the request, for
+  every caller including reels and avatars. Test: `media.uploadRefreshRetry.test.ts`.
+
+## A 401 renews the token and sends the same request once - one rule, every caller
+
+A 401 on a first-party request is the auth guard's answer about the BEARER, given before any handler
+runs, so the request did nothing and sending it again is safe, a POST included. ONE implementation,
+`sendRenewingOn401` in `frontend/src/lib/utils/renewOn401.ts`: renew through the single-flight
+`refresh()`, send the SAME request once more with the renewed token, and only a 401 on THAT token is a
+`SessionExpiredError`. Whatever the renewal threw is rethrown as it came, so a dead cookie, a refresh
+answered 5xx (`RefreshFailedError`) and a refresh that reached nobody (a transport failure, never a
+logout) stay three types. Its callers: `apiFetch`, `fetchUpload`, and `MlsDeliveryApi`, which builds
+its own headers on an injected `fetch` (Tauri passes `plugin-http`) and so takes the rule as a `fetch`
+decorator, `renewingOn401`, applied once in its constructor to every request carrying a bearer.
+
+The MLS delivery API had none until 2026-10-25: a commit answered 401 ended an Add with the group at its
+old epoch (TOK-1; what the commit gate makes of each outcome is in
+[mls-protocol](protocols/mls-protocol.md)). Two delivery paths do not use the injected `fetch` and are
+outside the rule: the best-effort keepalive POST (`deliveryKeepalivePost`, a `null` on any failure) and
+the ACK queue (`ackMessagesWithRetry`, its own retry ladder). Tests: `renewOn401.test.ts`,
+`mlsDeliveryApi.renewOn401.test.ts`, `apiFetch.test.ts`.

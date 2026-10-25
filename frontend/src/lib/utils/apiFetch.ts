@@ -14,6 +14,7 @@ import { getToken, refresh, SessionExpiredError } from '$lib/stores/auth';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { trackedFetch } from '$lib/utils/trackedFetch';
+import { sendRenewingOn401 } from '$lib/utils/renewOn401';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 
 /**
@@ -107,47 +108,25 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
     ...init.headers,
   };
 
-  headers['Authorization'] = `Bearer ${token}`;
-
   // Polling routes are demoted to debug to avoid drowning the console.
   const POLL_ROUTES = ['/api/presence', '/api/moderation/me/mute-status'];
   const log = POLL_ROUTES.some((r) => logUrl.startsWith(r)) ? console.debug : console.log;
 
   log(`[API] → ${method} ${logUrl}`);
-  let res = await attempt(url, { ...init, headers }, deadlineMs);
-  onAuthorization?.(token);
-  log(`[API] ← ${res.status} ${method} ${logUrl} (${Date.now() - t0}ms)`);
-
-  if (res.status === 401) {
-    console.warn(`[API] 401 on ${method} ${logUrl} - tentative de refresh token`);
-    try {
-      const newToken = await refresh();
-      headers['Authorization'] = `Bearer ${newToken}`;
-      res = await attempt(url, { ...init, headers }, deadlineMs);
-      onAuthorization?.(newToken);
-      console.log(`[API] ← ${res.status} ${method} ${logUrl} (retry, ${Date.now() - t0}ms)`);
-    } catch (e) {
-      // RETHROWN AS IT CAME, because `refresh()` already answered the only question that matters
-      // and this frame used to destroy the answer. It separates three outcomes deliberately - a
-      // dead cookie (`SessionExpiredError`), a server that answered something else
-      // (`RefreshFailedError`, typically a 502 while a container restarts mid-deploy), and a
-      // transport failure that reached nobody - and every one of them left here as one untyped
-      // French sentence. A caller holding that sentence could tell "you are logged out" from "come
-      // back in ten seconds" only by matching prose, which is a distinction exactly one call site
-      // ever makes; the other call sites retried a dead session, or gave up on a live one.
-      const cause = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-      console.warn(`[API] refresh failed on ${method} ${logUrl} - ${cause}`);
-      throw e;
-    }
-    if (res.status === 401) {
-      // A FRESHLY MINTED access token was refused, so the session really is over - which is what
-      // `SessionExpiredError` means, and the only reason it was not thrown here is that this line
-      // predates the type. Saying it in prose left the logout paths (`ChatBackgroundService`,
-      // `sessionConnection`, `promoteOfflineSession`) unable to see the one case they exist for.
-      console.warn(`[API] double 401 on ${method} ${logUrl} - session invalide`);
-      throw new SessionExpiredError();
-    }
-  }
-
-  return res;
+  // A 401 renews the token and sends the same request once more, a 401 on the renewed token is a
+  // `SessionExpiredError`, and a failed renewal is rethrown AS IT CAME (`refresh()` separates a dead
+  // cookie, a non-verdict answer and a transport failure at its own throw) - the one rule, in
+  // `renewOn401.ts`, shared with the media upload and the MLS delivery API.
+  return sendRenewingOn401(
+    async (bearer) => {
+      headers['Authorization'] = `Bearer ${bearer}`;
+      const answer = await attempt(url, { ...init, headers }, deadlineMs);
+      onAuthorization?.(bearer);
+      log(`[API] ← ${answer.status} ${method} ${logUrl} (${Date.now() - t0}ms)`);
+      return answer;
+    },
+    token,
+    () => refresh(),
+    `${method} ${logUrl}`
+  );
 }

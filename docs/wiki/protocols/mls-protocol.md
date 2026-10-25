@@ -1132,6 +1132,17 @@ at the next gateway connection (before the pending messages are drained), before
 commit in the group, and a commit replay settles it from the log only when the log holds a row AT its
 base epoch, which is decided for good. No clock decides anything.
 
+**A 401 is not a refusal of the commit; it is a stale bearer (TOK-1, 2026-10-25).** The auth guard
+answers it before the gate, so the request did nothing, and every request `MlsDeliveryApi` sends with a
+bearer obeys the one 401 rule of every first-party call (`renewOn401.ts`, [sessions](../sessions.md#a-401-renews-the-token-and-sends-the-same-request-once---one-rule-every-caller)): the token is renewed and
+the SAME bytes are sent once more, inside the same `write` deadline, so the transaction sees one
+answer and merges once. Before, the 401 was an `ApiRefusalError` and cleared the staged Add, the group
+left at its old epoch. A 401 on the renewed token too is a `SessionExpiredError`, read as a definitive
+refusal of a first request (nothing reached the gate: the stage is cleared, nothing resubmitted) and as
+UNKNOWN on a resubmission, like any 401 there. A renewal that got no answer is rethrown as the
+transport failure it is, so the commit takes the no-answer path above: resubmitted, then KEPT as
+unknown for the settle - never cleared, never a logout (`BaseMlsService.commit401.test.ts`).
+
 **No submission holds the MLS lock unbounded.** Every submission - the first and each resubmission - is
 awaited INSIDE the global MLS lock, which also guards the incoming processing of every group, so a
 POST hung on a half-open connection or a captive portal froze decryption in every conversation. Since
