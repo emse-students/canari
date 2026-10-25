@@ -1133,8 +1133,12 @@ outcome is read on the SERVER - merged once or cleared, the seat caught up, traf
 because the settlement runs at the connection, before a `watch()` can attach to the new page.
 KILL-4 has no `[CHECKPOINT]` line to time on: one un-killed run measures the send-to-request window
 and each kill lands at a fraction of it. KILL-5 holds `POST /api/mls/welcome`; RM-3 holds the roster
-delete's answer and measures how long W4's seat outlives it. Judgements in `killrows.mjs`, pinned by
-`archive/kill-selftest.mjs`.
+delete's answer and measures how long W4's seat outlives it. **A RUN OWNS ONLY THE COMMITS PAST
+THE EPOCH IT READ** (`runCommits`): its window opens before that read, and an accept naming an epoch
+the read already saw is a STRAY (`strayCommits`) - an own commit no run armed, which fails the run it
+preceded, as does one after the last run. Each run writes the killed seat's DYING and REVIVED
+consoles to `logs/consoles/` (`keepConsoles`), because the row's end keeps only the last page.
+Judgements in `killrows.mjs`, pinned by `archive/kill-selftest.mjs`.
 
 ```sh
 bun archive/admit.mjs --row ADM-1|ADM-2|ADM-3|ADM-4|ADM-8   # browsers

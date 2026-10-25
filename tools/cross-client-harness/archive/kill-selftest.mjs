@@ -7,7 +7,7 @@
  *
  *   bun archive/kill-selftest.mjs
  */
-import { COOKIE_COMMIT_MS, KILL_ROWS, REFRESH_COOKIE_TTL_S, WINDOWS, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runOutcome, storageLost, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { COOKIE_COMMIT_MS, KILL_ROWS, REFRESH_COOKIE_TTL_S, WINDOWS, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, storageLost, strayCommits, strayCommitsOwn, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -105,6 +105,15 @@ ok('a cookie received 70 s ago is on disk', cookieCommitWaitMs({ expiresSec: exp
 ok('control: the reproduced sign-out (kill 5 s after a rotation) waits out the rest', cookieCommitWaitMs({ expiresSec: exp(T0 - 5_000), nowMs: T0 }) === COOKIE_COMMIT_MS - 5_000);
 ok('control: no refresh cookie is an unmet premise, not a zero wait', cookieCommitWaitMs({ expiresSec: null, nowMs: T0 }) === null);
 ok('control: an unreadable panel misses everyone', panelMissing(null, ['a', 'b']).length === 2);
+
+// KILL-2 run 2 on alpha.4: a commit landing between the window opening and the epoch read (2026-10-25).
+const RUN2 = [{ kind: 'ACCEPT', trace: 'commit-e48a5d06', newEpoch: 4 }, { kind: 'ACCEPT', trace: 'commit-efef320a', newEpoch: 5 }];
+ok('the replayed run 2: the commit the epoch read already saw is a stray', strayCommits(RUN2, 4).map((d) => d.trace).join() === 'commit-e48a5d06');
+ok('the replayed run 2: the run keeps only its own commit, so it merged once', runOutcome({ window: 'after-accept', seq: runCommits(RUN2, 4), fromEpoch: 4, serverEpoch: 5, caughtUpMs: 3, outShown: 1, inShown: 1 }).outcome === 'merged');
+ok('the replayed run 2: the stray fails its own assertion, by trace', !strayCommitsOwn(strayCommits(RUN2, 4), 'between run 1 and run 2').ok && strayCommitsOwn(strayCommits(RUN2, 4), 'x').what.includes('commit-e48a5d06->4'));
+ok('control: a run with no stray passes it', strayCommitsOwn([], 'between run 1 and run 2').ok);
+ok('control: a REJECT or DUPLICATE is never a stray', strayCommits([{ kind: 'REJECT', trace: 't', reason: 'epoch_mismatch' }, { kind: 'DUPLICATE', trace: 'u' }], 9).length === 0);
+ok('control: two accepts past the read are still neither', runOutcome({ window: 'after-accept', seq: runCommits(RUN2, 3), fromEpoch: 3, serverEpoch: 5, caughtUpMs: 3, outShown: 1, inShown: 1 }).outcome === 'neither');
 
 if (failures) {
   console.error(`\n${failures} kill assertion(s) failed`);

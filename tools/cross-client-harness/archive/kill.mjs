@@ -19,7 +19,7 @@ import { send } from '../chat.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
 import { checkInvariant, receivedOn } from '../invariant.mjs';
-import { KILL_BLOCKED, KILL_ROWS, WINDOWS, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runOutcome, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { KILL_BLOCKED, KILL_ROWS, WINDOWS, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, stageKillsOwn, strayCommits, strayCommitsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 import { SITE } from '../site.mjs';
 import { activeSeats, onRoster } from '../ccrows.mjs';
 import {
@@ -39,11 +39,11 @@ import {
   userOf,
   watchersOf,
 } from '../mlsrow.mjs';
-import { errorDetail, finishObserved, record } from '../results.mjs';
+import { errorDetail, finishObserved, keepConsoles, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence, settleNarration } from '../settlerows.mjs';
 import { RM8_W1_NARRATION } from '../offlinerows.mjs';
-import { GROUP_CREATION_NARRATION, consoleLines, report } from '../watch.mjs';
+import { GROUP_CREATION_NARRATION, consoleDump, consoleLines, report } from '../watch.mjs';
 import { addMembers, openGroupSettings, removeMember } from './addmember.mjs';
 import { killSeat, reviveSeat } from './reopen.mjs';
 
@@ -133,14 +133,18 @@ async function awaitCookieCommitted(cx, label) {
  * One run: a refresh commit held on its side of the server, the kill after the drawn delay (or at the
  * fraction of the measured window), the revival, the outcome.
  */
-async function killRun(c, i, { window = null, delayMs = 0, fraction = null, windowMs = null }) {
+async function killRun(c, i, { window = null, delayMs = 0, fraction = null, windowMs = null, prevEnd = null }) {
   const killer = spec.devices[0];
   const seat = seats.seat[killer];
   const other = seats.seat.W2;
   // Before the commit is held, never after: the drawn delay places the kill, and nothing may stretch it.
   const cookieWaitMs = spec.kill === 'browser' ? await awaitCookieCommitted(seat.cx, `${killer}#${i + 1}`) : null;
-  const fromEpoch = serverView(c.group.id).activeEpoch;
+  // THE WINDOW OPENS BEFORE THE EPOCH IS READ, and `strayCommits` sorts what landed in between by the
+  // epoch it names - the reverse order counted a commit the epoch read had already seen (KILL-2 run 2).
   const runStart = now();
+  const fromEpoch = serverView(c.group.id).activeEpoch;
+  // An own commit since the previous run settled, before this one armed anything, is no run's.
+  const strays = strayCommits(commitSequence(commitLines(c.group.id, prevEnd ?? runStart)), fromEpoch);
   await armLeafRefresh(seat.cx, c.user[killer], c.device, c.group.id);
   const f = await armFault(seat.cx, [{ ...COMMIT_POST, fault: window ? WINDOWS[window] : 'hold once' }]);
   await send(seat.cx, `${id} run ${i + 1} trigger [${rowMessageMark(id, `K${i}`)}]`);
@@ -152,14 +156,18 @@ async function killRun(c, i, { window = null, delayMs = 0, fraction = null, wind
     await sleep(Math.round(fraction * windowMs));
   }
   const heldAtKill = f.held().length;
-  const acceptedAtKill = accepts(commitSequence(commitLines(c.group.id, runStart)));
+  const acceptedAtKill = accepts(runCommits(commitSequence(commitLines(c.group.id, runStart)), fromEpoch));
   const dead = await deadReport(seat.w);
+  // THE DYING PAGE'S CONSOLE, read before the kill takes it: the row's end keeps only the last page.
+  const dying = consoleDump({ page: { cx: seat.cx } }).page ?? '';
   const killed = await killSeat(seat, spec.kill);
   const { revived, serverEpoch, caughtUpMs } = await reviveAndSettle(c, seat, spec.kill, `${id}:${killer}#${i + 1}`, fromEpoch);
-  const seq = commitSequence(commitLines(c.group.id, runStart));
+  const seq = runCommits(commitSequence(commitLines(c.group.id, runStart)), fromEpoch);
   const { outShown, inShown } = await trafficBothWays(c, seat, other, i);
   const judged = runOutcome({ window: window ?? 'stage', seq, fromEpoch, serverEpoch, caughtUpMs, outShown, inShown });
-  const run = { run: i + 1, window: window ?? 'stage', delayMs, fraction, msAfterSend: Date.now() - sentAt, cookieWaitMs, heldAtKill, acceptedAtKill, killed, revived, dead, ...judged };
+  judged.assertions.push(strayCommitsOwn(strays, i === 0 ? 'before the first run armed anything' : `between run ${i} and run ${i + 1}`));
+  const consoles = keepConsoles(id, { [`${killer}-run${i + 1}-dying`]: dying, [`${killer}-run${i + 1}-revived`]: consoleDump({ page: { cx: seat.cx } }).page ?? '' });
+  const run = { run: i + 1, window: window ?? 'stage', delayMs, fraction, msAfterSend: Date.now() - sentAt, cookieWaitMs, heldAtKill, acceptedAtKill, killed, revived, dead, strays, consoles, endAt: now(), ...judged };
   console.log(`[${id}] run ${i + 1}: ${run.window}${fraction === null ? ` +${delayMs} ms` : ` at ${fraction}`} -> ${judged.outcome}${judged.assertions.every((a) => a.ok) ? '' : ' (FAILING)'}`);
   return run;
 }
@@ -178,6 +186,16 @@ async function awaitPanelLists(cx, userIds, abortMs = 20_000) {
 }
 
 /**
+ * Every own commit since the last run settled, read when the row judges - after the invariant's
+ * reload too, which commits nothing on a healthy client. No run armed any of them.
+ */
+function tailStraysOwn(c, runs) {
+  const last = runs.at(-1);
+  const tail = last ? commitSequence(commitLines(c.group.id, last.endAt)).filter((d) => d.kind === 'ACCEPT') : [];
+  return strayCommitsOwn(tail, 'after the last run settled');
+}
+
+/**
  * Opens the group on a REVIVED seat once its sidebar lists it: a fresh document draws its conversation
  * list after the unlock, and `openGroup` looked before it had (KILL-5, 2026-10-25: "no sidebar row",
  * the row there seconds later). The wait is recorded; a seat that never lists the group still throws.
@@ -192,8 +210,8 @@ const ACTIONS = {
   /** KILL-1..3: alternating windows, a drawn delay inside each. */
   async runs(c) {
     const runs = [];
-    for (let i = 0; i < spec.runs; i++) runs.push(await killRun(c, i, { window: windowOf(i), delayMs: delayOf(spec) }));
-    return { runs, offline: [spec.devices[0]], judge: () => killRunsOwn(runs) };
+    for (let i = 0; i < spec.runs; i++) runs.push(await killRun(c, i, { window: windowOf(i), delayMs: delayOf(spec), prevEnd: runs.at(-1)?.endAt ?? null }));
+    return { runs, offline: [spec.devices[0]], judge: () => [...killRunsOwn(runs), tailStraysOwn(c, runs)] };
   },
 
   /** KILL-4: one un-killed run measures the stage + checkpoint window; each kill lands at a fraction of it. */
@@ -211,8 +229,8 @@ const ACTIONS = {
     await awaitClientEpoch(seat.cx, c.group.id, fromEpoch + 1, 30_000);
     console.log(`[${id}] the send-to-request window measured ${windowMs} ms`);
     const runs = [];
-    for (const [i, fraction] of spec.fractions.entries()) runs.push(await killRun(c, i, { fraction, windowMs }));
-    return { runs, windowMs, offline: [spec.devices[0]], judge: () => [...stageKillsOwn({ windowMs, runs }), ...killRunsOwn(runs, { windows: false })] };
+    for (const [i, fraction] of spec.fractions.entries()) runs.push(await killRun(c, i, { fraction, windowMs, prevEnd: runs.at(-1)?.endAt ?? null }));
+    return { runs, windowMs, offline: [spec.devices[0]], judge: () => [...stageKillsOwn({ windowMs, runs }), ...killRunsOwn(runs, { windows: false }), tailStraysOwn(c, runs)] };
   },
 
   /** KILL-5: the Welcome request held, the tab closed; the revived W1 owes it, W2 joins once. */
