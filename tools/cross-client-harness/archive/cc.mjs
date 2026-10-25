@@ -47,7 +47,7 @@ import {
 } from '../mlsrow.mjs';
 import { composeVerdict, invariantDetail, rowMessageMark } from '../rowkit.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
-import { ADD_BLOCK_QUESTION_NARRATION, ADD_LOCK_REFUSED_NARRATION, GROUP_CREATION_NARRATION } from '../watch.mjs';
+import { ADD_BLOCK_QUESTION_NARRATION, ADD_LOCK_REFUSED_NARRATION, GROUP_CREATION_NARRATION, REMOVE_NARRATION } from '../watch.mjs';
 
 const argv = process.argv.slice(2);
 const n = argv.includes('--row') ? argv[argv.indexOf('--row') + 1] : null;
@@ -198,6 +198,7 @@ async function play() {
       creation: GROUP_CREATION_NARRATION,
       blockQuestion: ADD_BLOCK_QUESTION_NARRATION,
       lockRefused: ADD_LOCK_REFUSED_NARRATION,
+      removal: REMOVE_NARRATION,
     }),
     detail: {
       group: group.id,

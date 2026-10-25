@@ -2438,6 +2438,21 @@ export const GROUP_CREATION_NARRATION = [
 ];
 
 /**
+ * WHAT A REMOVE SAYS ABOUT ITSELF ON THE DEVICE THAT MADE IT - forgiven only to a seat whose gesture
+ * WAS a Remove (`raceForgiveness`), met on CC-2's first alpha.4 PASS (2026-10-25).
+ *
+ * `[REMOVE_MEMBER] <id> removed from the group (<outcome>)` (`useConversations.svelte.ts`) ends the
+ * gesture, and only two outcomes are a removal that happened: `committed`, and `already-out` - the
+ * other racer's commit took the leaves first, which is what CC-3 asks for. `unconfirmed` and
+ * `not fully removed` stay dirt. `[NOTICE] memberRemoved written on the acting device ...` is the
+ * remover's own line (#2412), at `debug` only, like its Add twin above.
+ */
+export const REMOVE_NARRATION = [
+  atLevels(['log'], /^\[REMOVE_MEMBER\] [0-9a-f]{8} removed from the group \((?:committed|already-out)\)$/),
+  atLevels(['debug'], /^\[NOTICE\] memberRemoved written on the acting device in [0-9a-f]{8}… as [0-9a-f]{8} - the id every member's device writes$/),
+];
+
+/**
  * AN ADD CANCELLED BECAUSE ANOTHER DEVICE HOLDS THE GROUP'S ADD LOCK (`groupCreation.ts`,
  * `notAdded('add-lock-busy')`) - forgiven per row, on the seat that lost CC-1's lock race and
  * nowhere else. Anywhere else an Add the lock cancelled is a lost gesture and stays dirt.

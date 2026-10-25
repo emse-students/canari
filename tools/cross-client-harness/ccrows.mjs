@@ -144,19 +144,22 @@ export function lockRaceLoser(locks, racers) {
  *   A racer whose action is an Add: the same narration, because it made that Add.
  *   The lock loser: the block question and the lock refusal only - it built no commit, so a commit
  *     line from it stays dirt.
+ *   A racer whose action is a Remove: the Remove narration (CC-2, CC-3 - alpha.4 met it on CC-2).
  *
  * Pure: the lists are passed in, so `cc-selftest` reads this without the rig.
  *
  * @param {Record<string, {add?: string, remove?: string, refresh?: boolean}>} race `CC_ROWS[id].race`
  * @param {string|null} lockLoser from {@link lockRaceLoser}
- * @param {{creation: unknown[], blockQuestion: unknown, lockRefused: unknown[]}} n the narration lists
+ * @param {{creation: unknown[], blockQuestion: unknown, lockRefused: unknown[], removal: unknown[]}} n the narration lists
  * @returns {Record<string, unknown[]>}
  */
 export function raceForgiveness(race, lockLoser, n) {
   const out = { W1: [...n.creation] };
   for (const [seat, action] of Object.entries(race)) {
-    if (!action.add) continue;
-    const provoked = seat === lockLoser ? [n.blockQuestion, ...n.lockRefused] : n.creation;
+    let provoked = [];
+    if (action.add) provoked = seat === lockLoser ? [n.blockQuestion, ...n.lockRefused] : n.creation;
+    else if (action.remove) provoked = n.removal;
+    else continue;
     out[seat] = [...new Set([...(out[seat] ?? []), ...provoked])];
   }
   return out;

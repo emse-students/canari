@@ -25,6 +25,7 @@ import {
   FRESH_CLIENT_NARRATION,
   FRESH_DEVICE_SESSION_NARRATION,
   GROUP_CREATION_NARRATION,
+  REMOVE_NARRATION,
   ignoringExpectedLog,
   OWNER_DEVICE_NOTICE_NARRATION,
   REVOKED_SIGN_OUT_NARRATION,
@@ -1583,6 +1584,26 @@ const FORGIVE_CASES = [
     ],
     GROUP_CREATION_NARRATION,
     { clean: false, unmatched: 3 },
+  ],
+  [
+    "the remover's own lines are forgiven: committed, already-out, and its memberRemoved notice at debug",
+    [
+      ['log', '[15:47:38.470] [REMOVE_MEMBER] 223bc34e removed from the group (committed)'],
+      ['log', '[15:47:38.470] [REMOVE_MEMBER] 223bc34e removed from the group (already-out)'],
+      ['debug', "[15:47:38.471] [NOTICE] memberRemoved written on the acting device in 997f2c05… as 28647c70 - the id every member's device writes"],
+    ],
+    REMOVE_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'control: an unconfirmed or failed Remove, and the notice at log, stay dirt',
+    [
+      ['log', '[15:47:38.470] [REMOVE_MEMBER] 223bc34e removed from the group (unconfirmed)'],
+      ['log', '[15:47:38.470] [REMOVE_MEMBER] 223bc34e not fully removed: Error: boom'],
+      ['log', "[15:47:38.471] [NOTICE] memberRemoved written on the acting device in 997f2c05… as 28647c70 - the id every member's device writes"],
+    ],
+    REMOVE_NARRATION,
+    { clean: false, unmatched: 2 },
   ],
 ];
 for (const [what, lines, needles, want] of FORGIVE_CASES) {
