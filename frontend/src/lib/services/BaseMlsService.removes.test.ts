@@ -9,6 +9,7 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 
 import { BaseMlsService } from './BaseMlsService';
 import { recordingStage } from '../../test/recordingStage';
+import { plainCommitLock } from '$lib/mls-client/test/fixtures/plainCommitLock';
 
 /**
  * A STAGED REMOVE DECLARES WHOM IT REMOVES (third review of #1878). The server's half of a removal
@@ -38,6 +39,7 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
       userId: 'user-a',
       deviceId: 'web-a',
       delivery: { submitCommit },
+      ...plainCommitLock,
       runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
       freshEpoch: vi.fn().mockResolvedValue(5),
       mergePendingCommit: vi.fn().mockResolvedValue(undefined),

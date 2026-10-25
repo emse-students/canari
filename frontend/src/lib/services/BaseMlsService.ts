@@ -2092,6 +2092,39 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * Runs ONE commit of `groupId` under the MLS mutex (`MlsPerGroupScheduler.runCommitUnderMlsLock`):
+   * exclusive of every other holder, and able to lend the mutex across its network round trip
+   * ({@link lendMlsLockDuring}). While it holds, the drain holds back that group's frames (and the
+   * other kinds it could not apply without waiting), so they are resumed here when it ends.
+   */
+  protected async runCommitUnderMlsLock<T>(groupId: string, fn: () => Promise<T>): Promise<T> {
+    try {
+      return await this.messageScheduler.runCommitUnderMlsLock(groupId, fn);
+    } finally {
+      this.resumeFramesHeldByCommit(groupId);
+    }
+  }
+
+  /** Lends the MLS mutex to the drain while `work` - a commit request of `groupId` - is pending. */
+  protected lendMlsLockDuring<T>(groupId: string, work: () => Promise<T>): Promise<T> {
+    return this.messageScheduler.lendMlsLockWhile(groupId, work);
+  }
+
+  /**
+   * Starts a drain for the frames a commit held back, once it has released the mutex. Nothing else
+   * would: they were enqueued (their drain found nothing it could pick, and ended), and no new frame
+   * need arrive. A drain still running picks them up itself, and its restart guard covers the drain
+   * that is closing.
+   */
+  private resumeFramesHeldByCommit(groupId: string): void {
+    if (this.messageScheduler.draining || !this.messageScheduler.hasRunnableWork()) return;
+    console.log(
+      `[QUEUE] the commit of ${groupId.slice(0, 8)}... released the MLS lock - draining the ${this.messageScheduler.getPendingCount()} frame(s) it held back`
+    );
+    void this.processQueue();
+  }
+
+  /**
    * WHAT A REPEATED DELIVERY MEANS, by the channel that offered the second copy and by what this
    * device already knew about the row. Four cells, four different findings, and only three of them
    * are explained by a crossing.
@@ -2586,7 +2619,9 @@ export abstract class BaseMlsService implements IMlsService {
 
     // Messages that arrived via WebSocket while onDrainEnd was awaiting (draining=true)
     // were enqueued but could not start a new drain. Restart here so they are not stuck.
-    if (this.messageScheduler.getPendingCount() > 0 && !this.messageScheduler.draining) {
+    // RUNNABLE, NOT MERELY PENDING: a frame held back by a commit stays pending for the whole commit,
+    // and restarting on it would spin; the commit's end resumes it (`resumeFramesHeldByCommit`).
+    if (this.messageScheduler.hasRunnableWork() && !this.messageScheduler.draining) {
       void this.processQueue();
     }
   }
@@ -4644,7 +4679,7 @@ export abstract class BaseMlsService implements IMlsService {
       );
       throw new FollowerTabCommitError(groupId);
     }
-    const out = await this.runUnderMlsLock(async () =>
+    const out = await this.runCommitUnderMlsLock(groupId, async () =>
       // RAISED UNDER THE MLS MUTEX, WHICH IS WHAT MAKES IT DEADLOCK-FREE: a send that sees this
       // barrier provably does not hold the mutex, so it blocks nothing the drain inside waits for.
       // The section covers stage through merge - the whole window in which this device's notion
@@ -4673,7 +4708,8 @@ export abstract class BaseMlsService implements IMlsService {
           }
         };
         // ONE BUDGET FOR THE WHOLE HOLD, settlement and rebuilds included (`COMMIT_LOCK_HOLD_BUDGET_MS`):
-        // the lock this runs under guards the incoming processing of every group.
+        // the lock this runs under guards every exclusive MLS section (the drain borrows it only
+        // while a request is on the network - `submitRecorded`), and this group's own frames.
         const holdEndsAt = commitLockHoldEndsAt();
         for (let attempt = 1; ; attempt++) {
           // NOT STAGED AT ALL while the server still refuses this account's commits: the answer is
@@ -4938,18 +4974,27 @@ export abstract class BaseMlsService implements IMlsService {
     return out;
   }
 
-  /** Submits `submission` to the commit gate, exactly as recorded - the one spelling of the request. */
+  /**
+   * Submits `submission` to the commit gate, exactly as recorded - the one spelling of the request.
+   *
+   * THE MLS MUTEX IS LENT WHILE THE REQUEST IS ON THE NETWORK (`lendMlsLockWhile`): frames of OTHER
+   * groups are applied meanwhile, one at a time, and the mutex is taken back before this returns, so
+   * the merge or clear that follows runs exactly as before. Called only by the holder of
+   * {@link runCommitUnderMlsLock} for this group - the transaction and the settlement.
+   */
   private submitRecorded(
     submission: CommitSubmission
   ): ReturnType<typeof this.delivery.submitCommit> {
-    return this.delivery.submitCommit(
-      submission.groupId,
-      submission.baseEpoch,
-      submission.commit,
-      submission.excludeDeviceIds,
-      submission.groupInfo,
-      submission.admits,
-      submission.removes
+    return this.lendMlsLockDuring(submission.groupId, () =>
+      this.delivery.submitCommit(
+        submission.groupId,
+        submission.baseEpoch,
+        submission.commit,
+        submission.excludeDeviceIds,
+        submission.groupInfo,
+        submission.admits,
+        submission.removes
+      )
     );
   }
 
@@ -5554,7 +5599,7 @@ export abstract class BaseMlsService implements IMlsService {
     let moved = false;
     for (const groupId of pending) {
       try {
-        const outcome = await this.runUnderMlsLock(() =>
+        const outcome = await this.runCommitUnderMlsLock(groupId, () =>
           runAsEpochAdvance(groupId, () =>
             this.settleUnresolvedLocked(groupId, commitLockHoldEndsAt())
           )

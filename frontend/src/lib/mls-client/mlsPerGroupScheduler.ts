@@ -45,6 +45,31 @@ export interface MlsPerGroupDrainHooks {
   onDrainEnd?: (hadWork: boolean) => void | Promise<void>;
 }
 
+/** One acquirer waiting for the MLS client mutex. */
+interface MlsLockWaiter {
+  /**
+   * The bucket key of the ONE frame the drain wants to apply, or `null` for every other acquirer -
+   * which is exclusive of everything, a commit and its loans included. Only a frame-scoped acquirer
+   * may borrow a loan ({@link MlsPerGroupScheduler.lendMlsLockWhile}).
+   */
+  readonly frameKey: string | null;
+  /** The group whose commit this acquirer runs, set as the mutex is GRANTED - see `committingGroup`. */
+  readonly commitGroup: string | null;
+  readonly grant: (release: () => void) => void;
+}
+
+/** The mutex lent by a commit to the drain while that commit's request is on the network. */
+interface MlsLockLoan {
+  /** The committing group: none of its frames may borrow, nor may an unaddressed one. */
+  readonly groupId: string;
+  /** A frame of another group is being applied under the loan right now. */
+  borrowed: boolean;
+  /** The network answered: no new borrower, and the commit waits for the current one to finish. */
+  closing: boolean;
+  /** Wakes the commit once the borrower in progress at `closing` has released. */
+  reclaim: (() => void) | null;
+}
+
 /**
  * Per-`groupId` MLS message queues with round-robin scheduling across conversations.
  * Ordering within a group is preserved; only one message is processed at a time on the
@@ -85,6 +110,16 @@ export interface MlsPerGroupDrainHooks {
  * claims of it ("nothing left to APPLY") instead of depending on a drop to stay true. What makes
  * counting it SAFE - rather than a new way to hang every barrier - is
  * {@link releaseStrandedWelcomeBuffers}: a window nothing can close is reported and released.
+ *
+ * ## A commit waiting on the network does not hold other conversations' frames (DUP-6)
+ *
+ * A commit holds the mutex from stage to merge ({@link runCommitUnderMlsLock}), and its request can
+ * wait two write deadlines for an answer. While it waits it LENDS the mutex
+ * ({@link lendMlsLockWhile}) to the drain, one frame at a time, for any group but its own; and from
+ * the moment it holds the mutex the drain skips the frames that would have to wait for it anyway
+ * ({@link isHeldBackByCommit}). A held-back frame is still pending, so the termination proof above
+ * is unchanged - a pick that finds only held-back frames ends the drain, and the commit's end
+ * resumes it.
  */
 export class MlsPerGroupScheduler {
   private readonly buckets = new Map<string, GroupBuckets>();
@@ -108,7 +143,22 @@ export class MlsPerGroupScheduler {
 
   /** Waiters for ONE group's queue, by bucket key. See {@link waitUntilGroupIdle}. */
   private readonly groupIdleWaiters = new Map<string, Array<() => void>>();
-  private mlsLock: Promise<void> = Promise.resolve();
+
+  /** Whether the MLS client mutex has a holder (a loan does not change it: the commit still holds). */
+  private lockHeld = false;
+  /** Acquirers waiting for the mutex, in arrival order. */
+  private readonly lockWaiters: MlsLockWaiter[] = [];
+  /**
+   * The group whose commit HOLDS the mutex ({@link runCommitUnderMlsLock}), or `null`.
+   *
+   * While it is set, {@link pickNext} holds back every frame that could touch that group - its own,
+   * the unaddressed ones, and a group whose next frame is a Welcome (a Welcome takes the mutex
+   * exclusively, so picking one would stall the drain behind the commit). Everything else can be
+   * applied under the commit's loan, which is the point: see {@link lendMlsLockWhile}.
+   */
+  private committingGroup: string | null = null;
+  /** The loan currently open, or `null`. At most one: only the commit holding the mutex lends it. */
+  private loan: MlsLockLoan | null = null;
 
   /**
    * How long any ONE await inside {@link drain} may take before it is reported as stuck, and how
@@ -289,19 +339,8 @@ export class MlsPerGroupScheduler {
    * drain via a fire-and-forget onWelcomeProcessed callback, so it queues behind the drain
    * here rather than re-entering; never re-acquire while already holding the lock.
    */
-  async acquireMlsLock(): Promise<() => void> {
-    const prev = this.mlsLock;
-    let release!: () => void;
-    this.mlsLock = new Promise<void>((r) => {
-      release = r;
-    });
-    await prev;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      release();
-    };
+  acquireMlsLock(): Promise<() => void> {
+    return this.acquire(null, null);
   }
 
   /**
@@ -314,6 +353,165 @@ export class MlsPerGroupScheduler {
     } finally {
       release();
     }
+  }
+
+  /**
+   * Runs ONE commit of `groupId` - stage through merge or clear - under the mutex, exclusive of
+   * every other acquirer exactly as {@link runUnderMlsLock} is, and names the group while it holds:
+   * that name is what lets the commit lend the mutex across its network round trip
+   * ({@link lendMlsLockWhile}) and what holds that group's frames back meanwhile.
+   *
+   * The name is set AS THE MUTEX IS GRANTED, synchronously, not after the caller resumes: a drain
+   * picking a frame in the microtask between the two would otherwise pick one of this group's.
+   */
+  async runCommitUnderMlsLock<T>(groupId: string, fn: () => Promise<T>): Promise<T> {
+    const release = await this.acquire(null, groupId);
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * Lends the mutex to the drain while `work` - a commit request of `groupId` on the network - is
+   * pending, then takes it back before returning.
+   *
+   * WHY IT EXISTS (DUP-6, 2026-10-25). The commit transaction holds the mutex from stage to merge,
+   * and its request may wait two 30 s write deadlines for an answer. The drain takes the same mutex
+   * for every frame, so a message in ANY other conversation waited the whole minute, its ACK with
+   * it, and the server's push fallback duplicated it. Nothing the network wait does touches the MLS
+   * state, so nothing about a frame of ANOTHER group needs to wait for it.
+   *
+   * WHAT A BORROWER MAY DO, and why it is safe:
+   * - only a frame-scoped acquirer ({@link acquireMlsLockForFrame}, the drain) borrows, and never for
+   *   `groupId` itself nor for an unaddressed frame. Every other acquirer - a catch-up that swaps the
+   *   whole client, a Welcome, a settlement, another commit - stays exclusive of the commit as before;
+   * - ONE borrower at a time, so two frames are never applied concurrently: the drain's own
+   *   one-frame-at-a-time rule is unchanged, only its gate moved;
+   * - the staged commit and its record are already ON DISK when the first request leaves
+   *   (`checkpointStageBeforeSend`), and a borrower can neither merge nor clear another group's stage.
+   *   A checkpoint taken during the loan therefore holds the stage AND the borrower's ratchet - the
+   *   same state a reload after the merge-less crash already had to settle;
+   * - the commit takes the mutex back before it merges or clears: the reclaim waits for the borrower
+   *   in progress to release, and admits no new one.
+   *
+   * MUST be called by the holder of {@link runCommitUnderMlsLock} for `groupId`; anything else is a
+   * defect, refused before `work` starts so no request leaves under a wrong lock.
+   */
+  async lendMlsLockWhile<T>(groupId: string, work: () => Promise<T>): Promise<T> {
+    if (!this.lockHeld || this.committingGroup !== groupId || this.loan !== null) {
+      const why =
+        this.loan !== null
+          ? `a loan for ${this.loan.groupId} is already open`
+          : `the mutex is held for ${this.committingGroup ?? (this.lockHeld ? 'no commit' : 'nobody')}`;
+      console.error(
+        `[MLS_LOCK] refused to lend the MLS mutex for ${groupId}: ${why} - only the commit holding it may lend it`
+      );
+      throw new Error(`MLS mutex loan refused for ${groupId}: ${why}`);
+    }
+    const loan: MlsLockLoan = { groupId, borrowed: false, closing: false, reclaim: null };
+    this.loan = loan;
+    this.offerLoan();
+    try {
+      return await work();
+    } finally {
+      loan.closing = true;
+      if (loan.borrowed) {
+        console.log(
+          `[MLS_LOCK] the commit of ${groupId} has its answer - waiting for the frame applied under its loan`
+        );
+        await new Promise<void>((resolve) => {
+          loan.reclaim = resolve;
+        });
+      }
+      this.loan = null;
+    }
+  }
+
+  /**
+   * The drain's acquisition for ONE frame of bucket `frameKey`: exclusive like
+   * {@link acquireMlsLock}, except that it may borrow the mutex a commit of ANOTHER group lends
+   * while its request is on the network ({@link lendMlsLockWhile}).
+   */
+  acquireMlsLockForFrame(frameKey: string): Promise<() => void> {
+    return this.acquire(frameKey, null);
+  }
+
+  /** Whether a commit holds the mutex right now, and of which group. Diagnostics and tests. */
+  get committingGroupId(): string | null {
+    return this.committingGroup;
+  }
+
+  private acquire(frameKey: string | null, commitGroup: string | null): Promise<() => void> {
+    return new Promise((resolve) => {
+      const waiter: MlsLockWaiter = { frameKey, commitGroup, grant: resolve };
+      if (!this.lockHeld && this.lockWaiters.length === 0) {
+        this.grantMain(waiter);
+      } else if (this.mayBorrow(waiter)) {
+        this.grantBorrow(waiter);
+      } else {
+        this.lockWaiters.push(waiter);
+      }
+    });
+  }
+
+  /** Hands the mutex itself to `waiter`, naming the commit it runs - in the same synchronous step. */
+  private grantMain(waiter: MlsLockWaiter): void {
+    this.lockHeld = true;
+    this.committingGroup = waiter.commitGroup;
+    let released = false;
+    waiter.grant(() => {
+      if (released) return;
+      released = true;
+      if (this.loan !== null) {
+        // `lendMlsLockWhile` closes its loan before returning, so a holder releasing with one open
+        // released from inside its own loan - a defect, said as one. The loan is left to its owner.
+        console.error(
+          `[MLS_LOCK] the MLS mutex was released while its loan for ${this.loan.groupId} was still open`
+        );
+      }
+      this.committingGroup = null;
+      this.lockHeld = false;
+      const next = this.lockWaiters.shift();
+      if (next) this.grantMain(next);
+    });
+  }
+
+  private mayBorrow(waiter: MlsLockWaiter): boolean {
+    const loan = this.loan;
+    return (
+      loan !== null &&
+      !loan.borrowed &&
+      !loan.closing &&
+      waiter.frameKey !== null &&
+      waiter.frameKey !== loan.groupId &&
+      waiter.frameKey !== MLS_QUEUE_ORPHAN_KEY
+    );
+  }
+
+  private grantBorrow(waiter: MlsLockWaiter): void {
+    const loan = this.loan!;
+    loan.borrowed = true;
+    console.log(
+      `[MLS_LOCK] a frame of ${waiter.frameKey} is applied while the commit of ${loan.groupId} awaits its answer`
+    );
+    let released = false;
+    waiter.grant(() => {
+      if (released) return;
+      released = true;
+      loan.borrowed = false;
+      if (loan.closing) loan.reclaim?.();
+      else this.offerLoan();
+    });
+  }
+
+  /** Grants the open loan to the first waiter allowed to borrow it, if any. */
+  private offerLoan(): void {
+    const idx = this.lockWaiters.findIndex((w) => this.mayBorrow(w));
+    if (idx < 0) return;
+    const [waiter] = this.lockWaiters.splice(idx, 1);
+    this.grantBorrow(waiter);
   }
 
   /**
@@ -407,7 +605,9 @@ export class MlsPerGroupScheduler {
     }
 
     const pendingAtStart = this.getPendingCount();
-    if (pendingAtStart === 0) return;
+    // NOTHING THIS DRAIN MAY PICK: either nothing is queued, or every frame queued is held back by
+    // the commit holding the mutex - which resumes them itself when it ends (`BaseMlsService`).
+    if (!this.hasRunnableWork()) return;
 
     this.isDraining = true;
     const stats = this.getStats();
@@ -443,9 +643,14 @@ export class MlsPerGroupScheduler {
           // exactly the ambiguity the split exists to remove. They fail differently and point at
           // different code - waiting on the mutex means something outside this loop is holding it
           // (WP-DRAIN-1's recovery re-entering it), a slow `processMessage` means the handler
-          // itself is hung - so `acquireMlsLock` is called directly rather than through the
-          // wrapper, and each guard covers exactly its own await.
-          const release = await this.guarded(`mlsLock (${where})`, () => this.acquireMlsLock());
+          // itself is hung - so the mutex is acquired directly rather than through the wrapper,
+          // and each guard covers exactly its own await.
+          //
+          // SCOPED TO THE FRAME'S BUCKET, so a commit of ANOTHER group waiting on the network can
+          // lend the mutex to it (`lendMlsLockWhile`) rather than hold this frame for a minute.
+          const release = await this.guarded(`mlsLock (${where})`, () =>
+            this.acquireMlsLockForFrame(picked.key)
+          );
           try {
             await this.guarded(`processMessage (${where})`, () => processMessage(msg));
           } finally {
@@ -563,20 +768,60 @@ export class MlsPerGroupScheduler {
   }
 
   private pickFromTier(tier: keyof GroupBuckets): { key: string; msg: MlsQueuedMessage } | null {
-    const n = this.rrKeys.length;
-    if (n === 0) return null;
+    const idx = this.findInTier(tier);
+    if (idx === null) return null;
+    const key = this.rrKeys[idx];
+    const msg = this.buckets.get(key)![tier].shift()!;
+    this.rrIndex = (idx + 1) % this.rrKeys.length;
+    return { key, msg };
+  }
 
+  /** The round-robin index of the next bucket with a frame `tier` may pick now, or `null`. */
+  private findInTier(tier: keyof GroupBuckets): number | null {
+    const n = this.rrKeys.length;
     for (let offset = 0; offset < n; offset++) {
       const idx = (this.rrIndex + offset) % n;
       const key = this.rrKeys[idx];
       const bucket = this.buckets.get(key);
       if (!bucket || bucket[tier].length === 0) continue;
-
-      const msg = bucket[tier].shift()!;
-      this.rrIndex = (idx + 1) % n;
-      return { key, msg };
+      if (this.isHeldBackByCommit(key, bucket, tier)) continue;
+      return idx;
     }
     return null;
+  }
+
+  /**
+   * Whether the commit holding the mutex holds this bucket's next `tier` frame back.
+   *
+   * THREE KINDS, each because picking it would make the drain wait for the whole commit instead of
+   * applying what it can: the committing group's own frames (a frame of it - another member's commit
+   * above all - must not be applied while its stage is in flight: it would clear that stage), an
+   * unaddressed frame (it could be that group's), and a Welcome (its handler takes the mutex
+   * exclusively) together with the frames queued behind it in its group, which it must precede.
+   * Nothing is dropped: they stay in their buckets, counted as pending, and the commit's end resumes
+   * them.
+   */
+  private isHeldBackByCommit(key: string, bucket: GroupBuckets, tier: keyof GroupBuckets): boolean {
+    const committing = this.committingGroup;
+    if (committing === null) return false;
+    if (key === committing || key === MLS_QUEUE_ORPHAN_KEY) return true;
+    if (tier === 'welcome') return true;
+    if (tier === 'messages') {
+      return bucket.welcome.length > 0 || bucket.messages[0]?.isWelcome === true;
+    }
+    return false;
+  }
+
+  /**
+   * Whether a drain started now would apply anything: a frame is queued that no commit holds back.
+   * The drain's restart guard reads this rather than the pending count, which a held-back frame keeps
+   * above zero for the whole commit.
+   */
+  hasRunnableWork(): boolean {
+    if (this.committingGroup === null) return this.getPendingCount() > 0;
+    const tiers: Array<keyof GroupBuckets> =
+      this.mode === 'tauri' ? ['control', 'welcome', 'messages'] : ['messages'];
+    return tiers.some((tier) => this.findInTier(tier) !== null);
   }
 
   private notifyIdle(): void {

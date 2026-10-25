@@ -509,7 +509,9 @@ ordering is the guarantee.
   observes a raised barrier provably does not hold the mutex the advance is waiting for. Registered
   sends never need the mutex themselves (`encryptForSend` is a direct client call), so an advance
   holding it can wait for them to land. A barrier raised outside the mutex, or a send issued from
-  inside it, reintroduces the cycle.
+  inside it, reintroduces the cycle. A commit LENDS the mutex to the drain while its request is on the
+  network; a borrower may see the barrier raised but never awaits a send, so the order holds
+  ([mls-protocol](mls-protocol.md#a-commit-waiting-on-the-network-lends-the-mls-lock-to-other-groups-frames)).
 
 ## Verification
 
