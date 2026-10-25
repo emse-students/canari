@@ -1259,6 +1259,17 @@ this is what the code does.
 | `acceptWorkspaceInvite` | the community still has at least one member | `WORKSPACE_HAS_NO_MEMBERS` |
 | `internal DELETE users/:id` | cannot refuse - repairs instead, see below | - |
 
+**The check is asked twice: early, then under the lock where the write happens (2026-10-26).** The
+early answer (`400`) comes before anything is asked of another service, and it cannot see another
+exit from the admin set that commits after it - two demotions, or a demotion and a leave or a kick,
+could each pass it and together leave no admin. So all three exits write inside the community
+removal lock (`withCommunityRemovalLock`, or the roster write of the departure for a leave or a
+kick) and ask `assertExitKeepsAnAdminLocked` there, against the membership rows read `FOR UPDATE`
+in id order; the one that would break the invariant is refused `409 WORKSPACE_WOULD_HAVE_NO_ADMIN`,
+the same code the client already names, and writes nothing. Proven on PostgreSQL by
+`last-admin.integration.spec.ts`, which commits the second exit between the first one's early check
+and its write.
+
 `listWorkspaceAdminIds` is the single definition of "admin": a member holding a role whose
 permissions include `workspace.manage`. It is the permission that can grant every other one back,
 and therefore the only one whose disappearance a community cannot recover from on its own.

@@ -543,6 +543,55 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * THE LAST-ADMIN POSTCONDITION, ASKED WHERE IT HOLDS: inside {@link withCommunityRemovalLock}'s
+   * transaction `m`, before the write that would break it. Every exit from the admin set - leaving,
+   * being kicked, being demoted - writes under that lock, so the answer read here is the one that
+   * holds when the write commits. The early checks ({@link assertRemovalKeepsAnAdmin}, the
+   * demotion's) answer before anything is asked of another service; they cannot see an exit that
+   * commits after them, and this one can.
+   *
+   * The community's membership rows are read `FOR UPDATE` in id order (one lock order with every
+   * other locker of these rows). A removal that leaves nobody at all is allowed, as above; a
+   * demotion always leaves its target a member, so that escape is not its own.
+   *
+   * @throws ConflictException `WORKSPACE_WOULD_HAVE_NO_ADMIN` (409) when `targetUserId` is now the
+   *   only admin and other members would remain
+   */
+  private async assertExitKeepsAnAdminLocked(
+    m: EntityManager,
+    workspaceId: string,
+    targetUserId: string,
+    exit: 'left' | 'kicked' | 'demoted'
+  ): Promise<void> {
+    const roles = await m.getRepository(ChannelRole).find({ where: { workspaceId } });
+    const adminRoleIds = new Set(
+      roles
+        .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
+        .map((r) => r.id)
+    );
+    const rows = await m.getRepository(ChannelMember).find({
+      where: { workspaceId },
+      order: { id: 'ASC' },
+      lock: { mode: 'pessimistic_write' },
+    });
+    const adminIds = rows
+      .filter((r) => (r.roleIds ?? []).some((id) => adminRoleIds.has(id)))
+      .map((r) => r.userId);
+    if (adminIds.length !== 1 || adminIds[0] !== targetUserId) return;
+    if (exit !== 'demoted' && rows.every((r) => r.userId === targetUserId)) return;
+
+    this.logger.warn(
+      `[WORKSPACE] REFUSED under the removal lock - the exit would leave no admin exit=${exit} ` +
+        `workspace=${workspaceId} target=${targetUserId.slice(0, 8)} members=${rows.length} - ` +
+        `the admin set changed after the early check`
+    );
+    throw new ConflictException({
+      code: 'WORKSPACE_WOULD_HAVE_NO_ADMIN',
+      message: 'The community would be left with no administrator.',
+    });
+  }
+
+  /**
    * Runs `work` in ONE transaction that first takes the community's removal lock
    * ({@link COMMUNITY_REMOVAL_LOCK_SQL}, transaction-scoped), so every removal and every private
    * creation in one community is serialised, and a permission checked inside `work` against rows
@@ -2852,7 +2901,10 @@ export class ChannelService implements OnApplicationBootstrap {
 
     await this.assertRemovalKeepsAnAdmin(workspaceId, userId);
 
-    await this.removeFromWorkspace(workspaceId, userId, 'left');
+    // Asked again under the removal lock, where the answer still holds when the row is deleted.
+    await this.removeFromWorkspace(workspaceId, userId, 'left', (m) =>
+      this.assertExitKeepsAnAdminLocked(m, workspaceId, userId, 'left')
+    );
 
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
     // Published before any deletion: the event is what tells the leaver's own devices to drop the
@@ -3800,9 +3852,11 @@ export class ChannelService implements OnApplicationBootstrap {
     // used to remove the sole Administrateur.
     await this.assertRemovalKeepsAnAdmin(workspaceId, targetUserId);
 
-    await this.removeFromWorkspace(workspaceId, targetUserId, 'kicked', (m) =>
-      this.assertActorMayRemoveMembers(workspaceId, actorUserId, [targetUserId], 'refuse', m)
-    );
+    // Both asked again under the removal lock: the actor's bound, then the last-admin postcondition.
+    await this.removeFromWorkspace(workspaceId, targetUserId, 'kicked', async (m) => {
+      await this.assertActorMayRemoveMembers(workspaceId, actorUserId, [targetUserId], 'refuse', m);
+      await this.assertExitKeepsAnAdminLocked(m, workspaceId, targetUserId, 'kicked');
+    });
 
     // Notify the kicked user and remaining workspace members
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
@@ -3889,22 +3943,31 @@ export class ChannelService implements OnApplicationBootstrap {
     // stale entity re-inserts a deleted one and reverts what a concurrent writer changed. The
     // UPDATE is CONDITIONED on the roles the bound was judged against (`simple-array` is stored
     // comma-joined), so 0 rows means the row is not the one judged - gone, or re-roled since.
-    const updated = await this.memberRepo
-      .createQueryBuilder()
-      .update(ChannelMember)
-      .set({ roleIds: [role.id] })
-      .where('id = :memberId', { memberId: targetMember.id })
-      .andWhere('"roleIds" = :judged', { judged: (targetMember.roleIds ?? []).join(',') })
-      .execute();
-    if (updated.affected !== 1) {
-      this.logger.warn(
-        `[WORKSPACE] role NOT set, membership changed or gone since its read workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
-      );
-      throw new ConflictException({
-        code: MEMBER_CHANGED_MEANWHILE,
-        message: 'This member changed meanwhile, retry.',
-      });
-    }
+    //
+    // A DEMOTION WRITES UNDER THE REMOVAL LOCK, like every other exit from the admin set, and asks
+    // the last-admin postcondition again there: two exits that each passed the early check above
+    // cannot both commit.
+    const demotes = !role.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE);
+    await this.withCommunityRemovalLock(workspaceId, async (m) => {
+      if (demotes) await this.assertExitKeepsAnAdminLocked(m, workspaceId, targetUserId, 'demoted');
+      const updated = await m
+        .getRepository(ChannelMember)
+        .createQueryBuilder()
+        .update(ChannelMember)
+        .set({ roleIds: [role.id] })
+        .where('id = :memberId', { memberId: targetMember.id })
+        .andWhere('"roleIds" = :judged', { judged: (targetMember.roleIds ?? []).join(',') })
+        .execute();
+      if (updated.affected !== 1) {
+        this.logger.warn(
+          `[WORKSPACE] role NOT set, membership changed or gone since its read workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)} affected=${updated.affected ?? 'unknown'}`
+        );
+        throw new ConflictException({
+          code: MEMBER_CHANGED_MEANWHILE,
+          message: 'This member changed meanwhile, retry.',
+        });
+      }
+    });
 
     this.logger.log(
       `[WORKSPACE] role set workspace=${workspaceId} target=${targetUserId.slice(0, 8)} role="${role.name}" by=${actorUserId.slice(0, 8)}`
