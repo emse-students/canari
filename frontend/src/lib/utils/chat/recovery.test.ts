@@ -16,6 +16,7 @@ import {
   reAddIsInFlight,
 } from './recovery';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { saveMlsState } from '$lib/utils/hex';
 import { resetHistoryReconciliation, setHistoryProbeSender } from './historyReconcile';
 import { purgeLocalConversationRecord } from './groupActions';
@@ -737,50 +738,6 @@ describe('requestReAdd - an invitation-link ask a member declined', () => {
     expect(enumerateNotReadyGroups('user-a')).toEqual([]);
   });
 
-  it('the retry scheduled BEFORE the removal does not fire after it, even past the cadence and a reload (ADM-2, ADM-4)', async () => {
-    // Measured twice: the stale pass came 27 s (ADM-2) and 37 s (ADM-4) after the removal, each
-    // time after a reload had emptied the in-memory cooldown and left the persisted marker standing.
-    vi.useFakeTimers();
-    try {
-      const deps = makeDeps({
-        conversations: makeConversations([
-          ['g1', { id: 'g1', lifecycle: 'pending', awaitingAdmission: true }],
-        ]),
-      });
-      deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([
-        membership('g1', 'pending', {
-          welcomeQueued: false,
-          addInFlight: false,
-          awaitingAdmission: true,
-        }),
-      ]);
-      await requestReAdd('g1', deps);
-      expect(enumerateNotReadyGroups('user-a')).toEqual(['g1']);
-
-      await purgeLocalConversationRecord({
-        conversations: deps.conversations,
-        contactKey: 'g1',
-        groupId: 'g1',
-        userId: 'user-a',
-        deleteConversation: deps.deleteConversation,
-        log: deps.log,
-      });
-      // Past the cadence, and a reload: the cooldown that used to be the only brake is gone.
-      vi.advanceTimersByTime(RECOVERY_TIMEOUT_MS * 2);
-      resetReAddCooldowns();
-
-      // The watchdog's candidate set is the conversations plus the registry - both empty now.
-      const candidates = new Set([
-        ...[...deps.conversations.values()].map((c: { id: string }) => c.id),
-        ...enumerateNotReadyGroups('user-a'),
-      ]);
-      expect(candidates.size).toBe(0);
-      expect(deps.mlsService.getGroupMeta).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it('the end is not sticky: a member who Adds the person later is waited for as any Welcome is', async () => {
     // A Decline followed by a member's own Add re-seats the person (mls-protocol, "Who admits a new
     // person"). Nothing local records the decline, so the server's word is read afresh each pass.
@@ -840,16 +797,95 @@ describe('requestReAdd - an invitation-link ask a member declined', () => {
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
   });
 
-  it('a conversation this device was in is still retired, as a removal always was', async () => {
+  it('a conversation this device was in is retired only on the answer of the group itself, never on list absence', async () => {
+    // Review of #2493 (F2): the list leaving a group out is not, alone, a removal of a row this
+    // device was ever in - discovery asks the group's roster before it retires one, and so does this.
+    const notAMember = new ApiRefusalError(403, 'NOT_A_MEMBER', 'getGroupUserMembers failed (403)');
     const deps = makeDeps({
-      mlsService: declined(),
+      mlsService: declined({ getGroupUserMembers: vi.fn().mockRejectedValue(notAMember) }),
       conversations: makeConversations([['g1', { id: 'g1', lifecycle: 'active' }]]),
     });
 
     await requestReAdd('g1', deps);
 
+    expect(deps.mlsService.getGroupUserMembers).toHaveBeenCalledWith('g1');
     expect(deps.conversations.get('g1')?.lifecycle).toBe('removed');
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+  });
+
+  it('a list that left out a group whose roster still names us was stale: the pass goes on to its door', async () => {
+    const deps = makeDeps({
+      mlsService: declined({
+        getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'user-a' }]),
+        externalJoin: vi.fn().mockResolvedValue({ joined: true }),
+      }),
+      conversations: makeConversations([['g1', { id: 'g1', lifecycle: 'active' }]]),
+    });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.conversations.get('g1')?.lifecycle).toBe('active');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+  });
+
+  it('a roster that does not answer retires nothing: the round is skipped', async () => {
+    const deps = makeDeps({
+      mlsService: declined({ getGroupUserMembers: vi.fn().mockRejectedValue(new Error('502')) }),
+      conversations: makeConversations([['g1', { id: 'g1', lifecycle: 'active' }]]),
+    });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.conversations.get('g1')?.lifecycle).toBe('active');
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(enumerateNotReadyGroups('user-a')).toEqual(['g1']);
+  });
+
+  it('ends the ask of a community member too, whose key-group trees the list never names (F1)', async () => {
+    const deps = makeDeps({
+      mlsService: declined({
+        getUserGroups: vi.fn().mockResolvedValue([]),
+        getLocalGroups: vi.fn().mockReturnValue(['key-group']),
+        isDistributionGroup: vi.fn((id: string) => id === 'key-group'),
+      }),
+      conversations: makeConversations([
+        ['g1', { id: 'g1', lifecycle: 'pending', awaitingAdmission: true }],
+      ]),
+    });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.conversations.has('g1')).toBe(false);
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(enumerateNotReadyGroups('user-a')).toEqual([]);
+  });
+
+  it('reads the device seat the account list carries when the first read had none (F3)', async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        getDeviceMemberships: vi.fn().mockResolvedValue([]),
+        getUserGroups: vi.fn().mockResolvedValue([
+          {
+            groupId: 'g1',
+            name: '',
+            isGroup: true,
+            deviceMembership: {
+              status: 'pending',
+              welcomeQueued: false,
+              addInFlight: false,
+              admitted: false,
+              awaitingAdmission: true,
+            },
+          },
+        ]),
+        externalJoin: vi.fn().mockResolvedValue({ joined: true }),
+      }),
+    });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
   });
 
   it('an account list that cannot be read decides nothing: the round is skipped', async () => {

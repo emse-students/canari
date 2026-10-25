@@ -715,7 +715,12 @@ export async function purgeLocalConversationRecord(params: {
   // nothing, and stays.
   clearGroupNotReady(userId, groupId);
   if (deleteConversation) {
-    await deleteConversation(contactKey).catch(() => {});
+    // Best-effort, never silent: a row left in the local store comes back at the next restore.
+    await deleteConversation(contactKey).catch((e: unknown) =>
+      log?.(
+        `[UI] Local conversation ${groupId} dropped from memory, but its stored row could not be deleted: ${String(e).slice(0, 120)}`
+      )
+    );
   }
   conversations.delete(contactKey);
   log?.(`[UI] Local conversation removed (${groupId})`);
