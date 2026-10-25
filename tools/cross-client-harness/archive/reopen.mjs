@@ -15,10 +15,13 @@
  * `cx` and `w` are REPLACED in place, so every later step and the invariant read the living page; the
  * dead page's observation is returned to the caller, which records it.
  */
-import { connect, listTargets } from '../cdp.mjs';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { connect, evaluate, listTargets } from '../cdp.mjs';
 import { APP_TAB, awaitAppReady, client } from '../chat.mjs';
 import { armIfPhone } from '../device.mjs';
-import { killBrowser, startBrowser } from '../launch.mjs';
+import { storageLost } from '../killrows.mjs';
+import { BROWSERS, killBrowser, startBrowser } from '../launch.mjs';
 import { SITE } from '../site.mjs';
 import { watch } from '../watch.mjs';
 import { unlockClient } from './pingate.mjs';
@@ -45,6 +48,18 @@ async function browserOf(port) {
   await b.ready;
   return b;
 }
+
+/** True when the browser profile still holds its quota database - without it Chrome serves no storage. */
+const quotaDbOf = (device) => existsSync(join(BROWSERS[device.toLowerCase()].profile, 'Default', 'WebStorage', 'QuotaManager'));
+
+/** The error each storage call throws on this page, or null for each that answers. */
+const STORAGE_PROBE = `(async () => {
+  const err = async (f) => { try { await f(); return null; } catch (e) { return String(e).slice(0, 120); } };
+  return { idb: await err(() => indexedDB.databases()), estimate: await err(() => navigator.storage.estimate()) };
+})()`;
+
+/** How many cookies the browser holds for the site - read from the browser's jar, not the page. */
+const siteCookies = async (cx) => (await cx.send('Network.getCookies', { urls: [SITE] })).cookies?.length ?? null;
 
 const appTabs = async (port) => (await listTargets(port).catch(() => [])).filter((t) => t.type === 'page' && String(t.url).includes(APP_TAB));
 
@@ -88,6 +103,10 @@ export async function killSeat(seat, how) {
     return { how, killedAt, deadInMs: await proven(async () => (await appTabs(port)).length === 0, `the app tab on ${port} closed`, 10_000) };
   }
   if (how === 'browser') {
+    // THE PREMISE OF A BROWSER KILL: a profile whose storage is whole. Without it the revival's
+    // storage check below could not tell what the kill did from what was already broken.
+    if (!quotaDbOf(seat.target.device)) throw new Error(`${seat.target.device}: rig - the profile has no quota database BEFORE the kill`);
+    if ((await siteCookies(seat.cx)) === 0) throw new Error(`${seat.target.device}: rig - the browser holds no cookie for the site BEFORE the kill`);
     seat.cx.close?.();
     return { how, killedAt, deadInMs: await killBrowser(seat.target.device.toLowerCase()) };
   }
@@ -144,6 +163,12 @@ export async function reviveSeat(seat, how, label) {
     () => Date.now() - t0,
     () => null
   );
+  // A BROWSER KILL CAN TAKE THE PROFILE'S STORAGE WITH IT (`storageLost`): read before the PIN, or the
+  // gate a storage-less page can only show is recorded as the product's LOCKED.
+  if (how === 'browser') {
+    const lost = storageLost({ quotaDb: quotaDbOf(target.device), ...(await evaluate(cx, STORAGE_PROBE)), cookies: await siteCookies(cx) });
+    if (lost) throw new Error(`${target.device}: rig - the browser kill lost the profile's storage (${lost}); restart it cleanly, nothing to judge`);
+  }
   const pin = await unlockClient(cx, target.port, target.account, { match: APP_TAB });
   if (pin.verdict !== 'unlocked') throw new Error(`${target.device}: the revived tab did not unlock (${pin.verdict}: ${pin.said})`);
   seat.cx = cx;
