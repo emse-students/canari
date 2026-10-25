@@ -42,7 +42,7 @@ import { evaluate, reloadAndWait } from './cdp.mjs';
 import { armIfPhone, resolveDevices, tabMatchFor } from './device.mjs';
 import { psql, srvLines } from './estate.mjs';
 import { closeOverlays } from './groupnav.mjs';
-import { invariantVerdict } from './invariantverdict.mjs';
+import { behindServer, invariantVerdict } from './invariantverdict.mjs';
 import { ESTATE } from './site.mjs';
 import { consoleEntries, watch } from './watch.mjs';
 
@@ -181,6 +181,25 @@ async function readClient(slot, group, markers, provoked) {
 }
 
 /**
+ * Waits, after the reload, until no member is behind the server's epoch for `group` - re-reading the
+ * server each round, since a reloaded client's connection may itself commit (`behindServer`). Bounded:
+ * a member that never catches up is the judge's failure to report, not this wait's.
+ *
+ * @returns {Promise<{ms: number, behind: string[]}>}
+ */
+async function awaitSettled(members, group, boundMs = 30_000) {
+  const started = Date.now();
+  for (;;) {
+    const epochs = {};
+    for (const s of members) epochs[s.target.device ?? String(s.target.port)] = JSON.parse(await evaluate(s.cx, EPOCHS)).epochs;
+    const behind = behindServer(epochs, group, serverView(group).activeEpoch);
+    const ms = Date.now() - started;
+    if (!behind.length || ms > boundMs) return { ms, behind };
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
+/**
  * Run the invariant over every client in play.
  *
  * @param {object} p
@@ -272,7 +291,13 @@ export async function checkInvariant({ group, targets, members, conversation, fr
         await openConversation(s.cx, conversationOf(s.target.device));
       }
     }
+    const settled = await awaitSettled(slots.filter((s) => s.member), group);
     const second = await judge('after a reload of every web client');
+    // THE WAIT IS RECORDED, and a bound reached says so instead of leaving the failure bare.
+    second.settleMs = settled.ms;
+    if (settled.behind.length) {
+      second.approximations.push({ invariant: 1, what: `still behind the server ${settled.ms} ms after the reload: ${settled.behind.join(' ')} - judged anyway` });
+    }
     if (notReloaded.length) {
       second.approximations.push({ invariant: 0, what: `not reloaded (a phone reload re-locks the PIN and replaces the document under Tauri IPC): ${notReloaded.join(' ')}` });
     }

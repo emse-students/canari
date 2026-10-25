@@ -7,7 +7,7 @@
  *
  *   bun archive/invariant-selftest.mjs
  */
-import { FORBIDDEN, forbiddenIn, forgiveProvoked5xx, invariantVerdict } from '../invariantverdict.mjs';
+import { FORBIDDEN, behindServer, forbiddenIn, forgiveProvoked5xx, invariantVerdict } from '../invariantverdict.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -210,6 +210,13 @@ ok('... and its forbidden line still fails', failsOn(invariantVerdict(w), 4, /W3
 w = world();
 for (const c of w.clients) c.member = false;
 ok('an invariant over no member at all fails', failsOn(invariantVerdict(w), 1, /no member device/));
+
+// THE RELOAD PASS WAITS FOR ITS OWN CONNECTION COMMITS (RM-8, 2026-10-25): who is behind the server.
+ok('a member at the server epoch is settled', behindServer({ W1: { [G]: 3 }, W2: { [G]: 3 } }, G, 3).length === 0);
+ok('a member one commit behind is waited for', behindServer({ W1: { [G]: 2 }, W2: { [G]: 3 } }, G, 3).join() === 'W1');
+ok('a member ahead of a server read taken a moment earlier is not behind', behindServer({ W1: { [G]: 4 } }, G, 3).length === 0);
+ok('a member that does not hold the group, or exposes no epochs, is behind', behindServer({ W1: {}, W2: null }, G, 3).join() === 'W1,W2');
+ok('no server epoch to reach: nobody is waited for', behindServer({ W1: null }, G, null).length === 0);
 
 console.log(failures ? `[invariant] ${failures} FAILURE(S)` : '[invariant] clean - every invariant fails on its own fault, and every approximation is named');
 process.exit(failures ? 1 : 0);

@@ -84,7 +84,9 @@ export function composeVerdict({ own = [], invariant = null, vacuousFaults = [],
  * an approximation is what the rig could not read directly, and the row must say so.
  */
 export const invariantDetail = (inv) =>
-  inv ? inv.passes.map((p) => ({ pass: p.pass, ok: p.ok, failures: p.failures, approximations: p.approximations })) : null;
+  inv
+    ? inv.passes.map((p) => ({ pass: p.pass, ok: p.ok, failures: p.failures, approximations: p.approximations, ...(p.settleMs !== undefined ? { settleMs: p.settleMs } : {}) }))
+    : null;
 
 /**
  * What a row's armed faults PUT IN FRONT OF THE PAGE, one entry per acted record (`fault.mjs`): a

@@ -36,7 +36,7 @@ import {
   userOf,
   watchersOf,
 } from '../mlsrow.mjs';
-import { LOCK_BUDGET_SPENT, OFFLINE_ROWS, PORTAL_HTML, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
+import { EXIT_REPLAY_NARRATION, LOCK_BUDGET_SPENT, OFFLINE_ROWS, PORTAL_HTML, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
 import { errorDetail, finishObserved, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, provokedFailures, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence, decidedAfter, resubmissionLine, settleNarration, settledOnce } from '../settlerows.mjs';
@@ -353,7 +353,9 @@ const ACTIONS = {
       offline: ['W2'],
       members: stayed ? spec.devices : ['W1'],
       joiners: [],
-      narration: {},
+      // THE EXIT REPLAY IS THE MECHANISM UNDER TEST (#2259): its narration is expected, never dirt. The
+      // `memberLeft` notice the cut lost is a WARN and stays the verdict's to judge.
+      narration: { W2: EXIT_REPLAY_NARRATION },
       detail: { gesture, stayed, listed, atServerEpoch },
       judge: (v) => departureOwn({ view: v, user: c.user.W2, listed, atServerEpoch, gesture }),
     };

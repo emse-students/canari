@@ -141,6 +141,17 @@ export function portalOwn({ loggedOutDuring, loggedOutAfter, noAnswer, clearedLi
 }
 
 /**
+ * RM-8's expected narration on W2: the exit replay of `pendingGroupExits.ts` (#2259), which is the row's
+ * mechanism and runs on the reconnect after the cut. A KEPT exit (`could NOT`, `NOT recorded`, a refusal)
+ * is not in this list: it stays dirt.
+ */
+export const EXIT_REPLAY_NARRATION = [
+  /^\[EXIT\] replaying \d+ exit\(s\) the server never answered - oldest owed for \S+$/,
+  /^\[EXIT\] [0-9a-f]{8}\.\.\. leave replayed - server removed this user$/,
+  /^\[EXIT\] [0-9a-f]{8}\.\.\. leave already done server-side - clearing$/,
+];
+
+/**
  * RM-8: no half-left group. Either W2 is gone on BOTH sides (off the roster, no seat, not listed) or
  * still a member on both (on the roster, an active seat, listed, at the server's epoch).
  *

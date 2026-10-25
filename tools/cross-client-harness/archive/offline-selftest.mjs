@@ -10,7 +10,7 @@
  *   bun archive/offline-selftest.mjs
  */
 import { fulfilBody } from '../fault.mjs';
-import { LOCK_BUDGET_SPENT, OFF4_PREMISE, OFFLINE_ROWS, PORTAL_HTML, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
+import { EXIT_REPLAY_NARRATION, LOCK_BUDGET_SPENT, OFF4_PREMISE, OFFLINE_ROWS, PORTAL_HTML, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -100,6 +100,13 @@ ok('gone on the server, still listed on W2 -> half-left', failing(departureOwn({
 ok('member on the server, W2 not listing it -> half-left', failing(departureOwn({ view: view(['u1', 'u2']), user: 'u2', listed: false, atServerEpoch: false, gesture: refused })) === 1);
 ok('member on both, but W2 behind the epoch -> half-left', failing(departureOwn({ view: view(['u1', 'u2']), user: 'u2', listed: true, atServerEpoch: false, gesture: refused })) === 1);
 ok('a "completed" leave that left W2 a member fails', failing(departureOwn({ view: view(['u1', 'u2']), user: 'u2', listed: true, atServerEpoch: true, gesture: done })) === 1);
+
+// The exit replay's narration, as W2 logged it on dev.9335201 (2026-10-25), and a KEPT exit that stays dirt.
+const narrated = (l) => EXIT_REPLAY_NARRATION.some((re) => re.test(l));
+ok('the replay announcement is narration', narrated('[EXIT] replaying 1 exit(s) the server never answered - oldest owed for 2s'));
+ok('the replayed leave is narration', narrated('[EXIT] 477435be... leave replayed - server removed this user'));
+ok('a replayed DELETE is not RM-8 narration', !narrated('[EXIT] 477435be... delete replayed - server deleted it'));
+ok('an exit that could not be recorded stays dirt', !narrated('[EXIT] 477435be... leave could NOT be recorded (x) - a transport failure loses it'));
 
 // ── the rig pieces ───────────────────────────────────────────────────────────────────────────────
 console.log('the rig pieces');
