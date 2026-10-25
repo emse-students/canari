@@ -918,13 +918,17 @@ is `POST mls/groups/:groupId/join-requests/:userId/decline`, answered only to an
 other than the asker (`403 NOT_A_MEMBER` otherwise). Under the seat lock it deletes the seat ONLY
 while `awaitingAdmission` still stands (`withdrawAwaitingSeat`), and answers a typed outcome:
 `withdrawn` (roster row, queued Welcomes and device rows gone, the open interval deleted - no
-eviction and no exclusion interval are written for someone who was never in), `already-admitted`
+exclusion interval is written for someone who was never in; the one record is the seat generation
+the Decline moved the group to, `declinedAtSeatGeneration`, see "An Add enrols its people with the
+accepted commit" below), `already-admitted`
 (a member's Add came first; nothing is touched, so a Decline can never strip an admitted person),
 `not-awaiting` (the flag was never set and the server holds no trace of an Add - no `active` device
 row, no `admittedAtEpoch`, no queued Welcome: the seat was never an ask, nothing is touched), or
 `gone`. All four leave the screen; a refused or failed call keeps the ask. A Decline that wins
-the race against an Add makes that Add an ordinary invitation by the adding member, which registers
-the roster row as any invite does. Anything else keeps the ask, logged with its reason.
+the race against an Add holds against it: that Add was built on the epoch the Decline left
+unchanged, so the gate enrols nobody (`departed_since_base`) and drops its admits; the adding
+member's direct-path `registerMember` can still enrol the person while that call exists (below).
+Anything else keeps the ask, logged with its reason.
 
 **The link is an ASK, carried from the server that knows it.** Accepting a link writes the roster row
 with `awaitingAdmission = true` (`dm_group_members`, migration 038; only `acceptGroupInvite` sets it),
@@ -1391,15 +1395,27 @@ frame is queued for a device whose Welcome will be refused, and no stale row lat
 - a person a block stands between and the committer (`blocked`);
 - **a person who departed after the epoch the commit was built on began** (`departed_since_base`).
   A removal holds against an Add built before it (owner's rule, 2026-10-14). A self-leave makes no
-  commit, and a removal's Remove commit can be lost, so an Add held in an outbox can still land at the
-  unchanged epoch after the departure; enrolling then would undo it. Ordered by a COUNTER, never a
-  clock: every removal moves the group's `seatGeneration` under the seat lock and stamps it on the
-  stretch it closes (`leftAtSeatGeneration`), and every advance records the generation its epoch
-  began at (`epochSeatGeneration`, migration 039). A stretch closed later than the base's generation
-  is a departure the Add could not have seen. **The cost is one-sided:** a re-invite built after a
-  self-leave at that same epoch is refused too - nothing distinguishes it from the stale Add - and is
-  enrolled by the client's own `registerMember` on a direct accept, or not at all if its answer was
-  also lost, until a new Add. Once any commit lands after the departure, a new Add enrols as usual.
+  commit, a member's Decline of an invitation-link ask makes none either, and a removal's Remove
+  commit can be lost, so an Add held in an outbox can still land at the unchanged epoch after the
+  departure; enrolling then would undo it. Ordered by a COUNTER, never a clock: every removal and
+  every Decline moves the group's `seatGeneration` under the seat lock, a removal stamps it on the
+  stretch it closes (`leftAtSeatGeneration`), a Decline - which DELETES the ask's stretch, since a
+  closed one would read as a gap and withhold its span from every history answer - on the person's
+  `dm_seat_evictions` row (`declinedAtSeatGeneration`), and every advance records the generation its
+  epoch began at (`epochSeatGeneration`, migration 039). A departure recorded later than the base's
+  generation is one the Add could not have seen. **An ask that EXPIRES records nothing:** no member
+  decided anything, and a member's Add built while it was open is the answer it waited for - refusing
+  it because a timer ran would let a clock decide an admission. **The cost is one-sided:** a re-invite
+  built after a self-leave or a Decline at that same epoch is refused too - nothing distinguishes it
+  from the stale Add - and is enrolled by the client's own `registerMember` on a direct accept, or not
+  at all if its answer was also lost, until a new Add. Even enrolled that way, it has lost a span:
+  its admits were dropped, so no `admittedAtEpoch` row is kept and a frame sent between the accept
+  and that `registerMember` (or the Welcome) is not queued for the invitee's devices. Once any commit
+  lands after the departure, a new Add enrols as usual. **The guard holds only where
+  `registerMember` is not called:** a settlement and an outbox replay. While clients still make that
+  call after a direct accept, a stale Add answered directly is re-enrolled by it, exactly as before
+  this check existed - not a regression, and closed when the call goes
+  ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25)).
 
 A seat already on the roster is left as it is (one awaiting a member's admission is lifted). A key
 group has no conversation roster: its people are social-service's entitlement, asked before the
@@ -1414,7 +1430,8 @@ until then a settlement re-sent the refused bytes at every connection.
 
 **And the leaf such a refused person holds is the stray sweep's.** The sweep reads the tree first and
 the roster after, and an accepted Add's person is enrolled in the advance unless refused above - so
-the leaves it finds without a seat are exactly the refused ones, which it is right to remove. What the
+the leaves it finds without a seat are exactly the refused ones, which it is right to remove. It
+REMOVES them and repairs nothing: a person refused here needs a new Add to be in. What the
 older shape still leaves is in
 [legacy-compatibility](../legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25).
 

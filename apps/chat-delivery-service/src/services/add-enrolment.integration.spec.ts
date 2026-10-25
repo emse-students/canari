@@ -10,7 +10,8 @@
  * OFF rows of the 1.4.1 campaign, 2026-10-25). These cases fail on that state: the enrolment must be
  * there after the advance with no client call at all, and a duplicate must find exactly the state the
  * first accept left. The review of #2419 added the other half: an Add built BEFORE a leave or a
- * removal, landing after it at an unchanged epoch, must not undo it (docs/wiki/protocols/
+ * removal or a member's Decline of an invitation-link ask, landing after it at an unchanged epoch, must
+ * not undo it (docs/wiki/protocols/
  * mls-protocol.md, "An Add enrols its people with the accepted commit").
  *
  * GATED ON `CHAT_DELIVERY_IT_DATABASE_URL`, like every chat-delivery integration spec. Locally:
@@ -41,6 +42,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { MembersController } from '../controllers/members.controller';
+import { ensureGroupMember, expireUnansweredAsks } from '../utils/group-membership';
 import { memberCommitFrame } from '../testing/mlsFrameFixture';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 
@@ -403,6 +405,40 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
 
       expect(await enrolment()).toEqual({ seats: 1, openIntervals: 1, devices: 1 });
       await expect(refusalOf(welcome())).resolves.toBeNull();
+    });
+
+    /** The invitee's invitation-link ask: an awaiting seat and its open interval, as the join writes them. */
+    const ask = () =>
+      ensureGroupMember(ds.manager, GROUP, INVITEE.userId, { awaitingAdmission: true });
+
+    it('declined by a member (no commit at all): an Add built while the ask was open enrols nobody', async () => {
+      await ask();
+      await expect(
+        members().declineJoinRequest(GROUP, INVITEE.userId, INVITER.userId)
+      ).resolves.toEqual({ outcome: 'withdrawn' });
+
+      // Another member's Add of the asker, built on epoch 1 before the Decline, lands at it.
+      await expect(addCommit(1)).resolves.toMatchObject({ accepted: true, newEpoch: 2 });
+
+      expect(await enrolment()).toEqual({ seats: 0, openIntervals: 0, devices: 0 });
+      await expect(refusalOf(welcome())).resolves.toEqual({
+        status: 403,
+        name: 'WELCOME_TARGET_NOT_MEMBER',
+      });
+    });
+
+    it('expired with nobody answering: an Add built while the ask was open is the answer, and enrols', async () => {
+      await ask();
+      const { outcomes } = await expireUnansweredAsks(
+        ds.manager,
+        [{ groupId: GROUP, userId: INVITEE.userId }],
+        new Date()
+      );
+      expect(outcomes).toEqual({ withdrawn: 1 });
+
+      await expect(addCommit(1)).resolves.toMatchObject({ accepted: true, newEpoch: 2 });
+
+      expect(await enrolment()).toEqual({ seats: 1, openIntervals: 1, devices: 1 });
     });
   });
 

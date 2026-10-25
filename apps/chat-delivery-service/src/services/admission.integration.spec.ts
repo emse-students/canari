@@ -53,6 +53,7 @@ const maybe = URL ? describe : describe.skip;
 const dir = join(__dirname, '..', 'migrations');
 const MIGRATION_036 = readFileSync(join(dir, '036_seat_evictions.sql'), 'utf8');
 const MIGRATION_038 = readFileSync(join(dir, '038_group_member_awaiting_admission.sql'), 'utf8');
+const MIGRATION_039 = readFileSync(join(dir, '039_departure_seat_generation.sql'), 'utf8');
 
 const GROUP = '00000000-0000-4000-8000-0000000000a8';
 const MEMBER = { userId: 'member', deviceId: 'dev-m' };
@@ -252,6 +253,7 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     // The column as production gets it: the entity already made it, so the migration must replay
     // as a no-op on a table that has it.
     await q(MIGRATION_038);
+    await q(MIGRATION_039);
     service = new MessagingService(
       ds.getRepository(QueuedMessage),
       ds.getRepository(GroupMember),
@@ -392,9 +394,16 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
 
     expect(await rowsOf('dm_group_members', JOINER)).toBe(0);
     expect(await rowsOf('dm_device_group_memberships', JOINER)).toBe(0);
-    // Never in, so nothing of a removal is recorded: no eviction, no exclusion interval left behind.
+    // Never in, so no exclusion interval is left behind; the one record is the generation the
+    // Decline moved the group to, which an Add built before it is ordered by (review of #2419).
     expect(await rowsOf('dm_group_membership_intervals', JOINER)).toBe(0);
-    expect(await rowsOf('dm_seat_evictions', JOINER)).toBe(0);
+    const [stamp]: { declinedAtSeatGeneration: number | null; owedDeparture: number | null }[] =
+      await q(
+        `SELECT "declinedAtSeatGeneration", "owedDeparture" FROM dm_seat_evictions
+         WHERE "groupId" = $1 AND "userId" = $2`,
+        [GROUP, JOINER.userId]
+      );
+    expect(stamp).toEqual({ declinedAtSeatGeneration: 1, owedDeparture: null });
     await expect(refusalOf(service.getGroupInfo(GROUP, JOINER.userId))).resolves.toMatchObject({
       status: 403,
     });
@@ -457,17 +466,16 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       };
       // Two orders, each with ONE consistent end state - chosen by what the Decline answered, and
       // asserted whole, so no expectation is skipped on either side.
-      // - The Decline went first: the ask is gone whole. An Add accepted after it is an ordinary
-      //   invitation by that member - its own admitted row, the roster row its client registers
-      //   next - never a leftover of the withdrawn ask: a Decline does not undo a later Add.
+      // - The Decline went first: the ask is gone whole, and the Add - built on the epoch the
+      //   Decline left unchanged, so before it - enrols nobody and leaves no admitted row: a Decline
+      //   holds against an Add built before it (review of #2419).
       // - The Add went first: the Decline answers `already-admitted` and leaves the person whole.
       const declineFirst = {
         declined: 'withdrawn',
         added: added.status,
         seat: null,
-        // Not this order's question: the admitted rows below are.
-        devices: observed.devices,
-        admittedRows: added.status === 'fulfilled' ? [{ admittedAtEpoch: 4 }] : [],
+        devices: 0,
+        admittedRows: [],
       };
       const addFirst = {
         declined: 'already-admitted',

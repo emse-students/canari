@@ -246,14 +246,20 @@ ACCEPTS IT (`enrolAdmittedPeople`, [mls-protocol](protocols/mls-protocol.md#an-a
 so against a current server the call after the accept writes nothing - but it is NOT quite a no-op:
 the route still answers `403 USER_BLOCKED` for a blocked person (`UserBlockedError`, which the
 caller reads), and it still enrols a person the commit refused as `departed_since_base` when the
-Add was answered directly (the one re-invite the gate cannot tell from a stale Add). It stays for a
+Add was answered directly. That cuts both ways: it rescues the one re-invite the gate cannot tell
+from a stale Add (with a span lost - the refused admits left no `admittedAtEpoch` row, so a frame sent
+between the accept and this call or the Welcome is not queued for the invitee's devices), and it
+re-enrols the departed person of a stale Add answered directly, as before the gate's check existed.
+So the guard holds only on the paths that skip this call - a settlement, an outbox replay - until the
+call goes. It stays for a
 store build live before production deploys, whose server does not enrol: dropping it there would
 lose the enrolment of every Add, not only of the settled ones.
 **Transitional loss, accepted:** an Add the PRE-DEPLOY server accepted with its answer lost, and
 settled after the deploy as a `duplicate`, is never enrolled - the duplicate is answered before any
 transaction, and the enrolment ran with an advance that predates it. Its Welcome is refused
 `WELCOME_TARGET_NOT_MEMBER`, cleared as terminal by a current client (an older client keeps
-re-sending it, as before), and the stray sweep collects the leaf; the person needs a new Add.
+re-sending it, as before), and the stray sweep REMOVES the leaf - it repairs nothing; the person
+needs a new Add.
 **Removal condition:** every estate's chat-delivery-service enrols with the commit (dev and
 production both deployed past the 2026-10-25 change, no rollback below it planned); then the
 post-accept `registerMember` calls go. A server version, not a client floor. The CREATOR's own

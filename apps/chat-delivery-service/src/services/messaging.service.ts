@@ -3652,18 +3652,25 @@ export class MessagingService {
    *   `assertCallerMayMutateMembership`; the gate already refuses a seat awaiting admission);
    * - a person a block stands between and the committer;
    * - A PERSON WHO DEPARTED AFTER THE EPOCH THIS COMMIT WAS BUILT ON BEGAN (`departed_since_base`):
-   *   a stretch of theirs closed at a seat generation later than the base's
-   *   (`leftAtSeatGeneration` > `epochSeatGeneration`, migration 039). A removal holds against an
-   *   Add built before it (owner's rule of 2026-10-14): an Add held in an outbox, or a removal whose
-   *   Remove commit was lost, can still land at an unchanged epoch, and enrolling then would undo the
-   *   departure. Ordered by a COUNTER every removal moves under the seat lock, never by a clock. The
-   *   cost is one-sided: a re-invite built after a self-leave at that same epoch is refused here too
-   *   (nothing distinguishes it from the stale Add), and is enrolled by the client's own
-   *   `registerMember` on a direct accept - or not at all if its answer was lost, until a new Add.
+   *   a stretch of theirs closed, or a member's Decline of their ask was recorded, at a seat
+   *   generation later than the base's (`leftAtSeatGeneration` / `declinedAtSeatGeneration` >
+   *   `epochSeatGeneration`, migration 039). A removal holds against an Add built before it (owner's
+   *   rule of 2026-10-14): an Add held in an outbox, a removal whose Remove commit was lost, or a
+   *   Decline (which makes no commit) can leave the epoch unchanged, and enrolling then would undo
+   *   the departure. Ordered by a COUNTER every removal and Decline moves under the seat lock, never
+   *   by a clock. The cost is one-sided: a re-invite built after a self-leave or a Decline at that
+   *   same epoch is refused here too (nothing distinguishes it from the stale Add), and is enrolled
+   *   by the client's own `registerMember` on a direct accept - or not at all if its answer was lost,
+   *   until a new Add. WHILE CLIENTS STILL CALL `registerMember` after a direct accept, that call
+   *   re-enrols the departed person of a stale Add too, as before this check existed: the guard
+   *   holds on the paths that skip the call (a settlement, the outbox) until it is removed.
    * A refused person's admits are dropped by the caller: no device row, so no frame is queued for a
    * device whose Welcome will be refused (`WELCOME_TARGET_NOT_MEMBER`, terminal for the sender) and
    * no stale row later dates their arrival. The leaf stays in the tree with no seat, and the stray
-   * sweep collects it. A person already on the roster is left as they are (an awaiting seat is lifted
+   * sweep REMOVES it - it repairs nothing: the person needs a new Add. Dropping the rows has a cost
+   * for a refused re-invite that the client's `registerMember` then enrols: no `admittedAtEpoch` is
+   * kept, so a frame sent between the accept and that call (or the Welcome) is not queued for the
+   * invitee's devices. A person already on the roster is left as they are (an awaiting seat is lifted
    * by {@link liftAwaitingAdmission}). A key group's roster is social-service's entitlement, not a
    * row here, and never reaches this.
    *
@@ -3711,16 +3718,18 @@ export class MessagingService {
       for (const userId of newcomers) refuse(userId, 'committer_not_on_roster');
       return refused;
     }
+    // A removal or a self-leave closes a stretch; a Decline deletes the ask's stretch and records
+    // its generation on the person's eviction row instead (`withdrawAwaitingSeat`).
     const departed = new Set(
       (
-        await m
-          .getRepository(GroupMembershipInterval)
-          .createQueryBuilder('i')
-          .select('DISTINCT i.userId', 'userId')
-          .where('i.groupId = :groupId', { groupId })
-          .andWhere('i.userId IN (:...userIds)', { userIds: newcomers })
-          .andWhere('i.leftAtSeatGeneration > :baseGeneration', { baseGeneration })
-          .getRawMany<{ userId: string }>()
+        (await m.query(
+          `SELECT "userId" FROM dm_group_membership_intervals
+            WHERE "groupId" = $1 AND "userId" = ANY($2::varchar[]) AND "leftAtSeatGeneration" > $3
+           UNION
+           SELECT "userId" FROM dm_seat_evictions
+            WHERE "groupId" = $1 AND "userId" = ANY($2::varchar[]) AND "declinedAtSeatGeneration" > $3`,
+          [groupId, newcomers, baseGeneration]
+        )) as Array<{ userId: string }>
       ).map((r) => r.userId)
     );
     for (const userId of newcomers) {
