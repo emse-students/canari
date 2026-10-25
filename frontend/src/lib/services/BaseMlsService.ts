@@ -37,6 +37,8 @@ import {
   type GroupUserMemberRow,
   type PendingInvitationRow,
   WelcomeTargetNotMemberError,
+  ADD_LOCK_WAIT_BOUND_MS,
+  boundAddLockWait,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import {
@@ -937,6 +939,8 @@ export abstract class BaseMlsService implements IMlsService {
     externalJoinFlights.get(this)?.clear();
     // Nor a wait for a drain this client will never see (the admission gate's parked asks).
     this.abandonGroupDrainedWaiters();
+    // Nor a wake at the end of a lock the server refused: it would re-plan through a dead client.
+    this.cancelAddLockExpiryWakes();
     if (this.heartbeatTimer !== null) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -3682,7 +3686,8 @@ export abstract class BaseMlsService implements IMlsService {
     if (!this.addLocksHeld.has(groupId)) {
       const owed = claimAddLockMarker(this.userId, groupId);
       if (owed) {
-        const released = await this.delivery.releaseAddLock(groupId, owed.token);
+        // Said as OWED: on the server line, this `released=false` is not an Add outliving its TTL.
+        const released = await this.delivery.releaseAddLock(groupId, owed.token, { owed: true });
         console.log(
           `[ADD_LOCK] ${short}... a release this device owed (${owed.token ? 'token' : 'no token'}) was sent before acquiring: ${released ? 'answered' : 'still unanswered - kept'}`
         );
@@ -3730,9 +3735,15 @@ export abstract class BaseMlsService implements IMlsService {
    * is only a bound this does not need to observe). No stated end (a server that predates it, an
    * acquire nothing answered): no wake, the next commit or connection drains.
    */
-  private wakeAtAddLockExpiry(groupId: string, retryAfterMs: number | undefined): void {
+  private wakeAtAddLockExpiry(groupId: string, stated: number | undefined): void {
     if (!this.owedInvitationReplanner || !owesInvitationIn(this.userId, groupId)) return;
     const short = groupId.slice(0, 8);
+    const retryAfterMs = boundAddLockWait(stated);
+    if (retryAfterMs !== stated) {
+      console.warn(
+        `[INVITE_OWED] ${short}... the add lock's stated end (${String(stated)} ms) is outside 0..${ADD_LOCK_WAIT_BOUND_MS} ms - read as ${String(retryAfterMs)}`
+      );
+    }
     if (retryAfterMs === undefined) {
       console.log(
         `[INVITE_OWED] ${short}... the add lock was refused with no stated end - the next commit in the group or the next connection re-plans`
@@ -3750,6 +3761,12 @@ export abstract class BaseMlsService implements IMlsService {
         this.replanOwedInvitationsIn(groupId, 'add lock ended (server-stated)');
       }, retryAfterMs)
     );
+  }
+
+  /** Cancels every pending {@link wakeAtAddLockExpiry} wake (a sign-out, or this client's destroy). */
+  private cancelAddLockExpiryWakes(): void {
+    for (const wake of this.addLockExpiryWakes.values()) clearTimeout(wake);
+    this.addLockExpiryWakes.clear();
   }
 
   async createRemoteGroup(name: string, isGroup = true): Promise<string> {
@@ -5111,8 +5128,7 @@ export abstract class BaseMlsService implements IMlsService {
     this.owedInvitationGeneration++;
     if (!replanner) {
       // The session's wakes and notices are its own: the next account inherits none.
-      for (const wake of this.addLockExpiryWakes.values()) clearTimeout(wake);
-      this.addLockExpiryWakes.clear();
+      this.cancelAddLockExpiryWakes();
       this.unrecordedInvitationsUntold = [];
     } else if (tellUnrecorded) {
       const untold = this.unrecordedInvitationsUntold;

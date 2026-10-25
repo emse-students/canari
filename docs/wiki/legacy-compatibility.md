@@ -232,13 +232,15 @@ mls/push/release-add-lock`) when the body carries no `token`.
 older than this change) is released with none.
 **Shim:** since #2426 every acquisition writes `owner#token` and answers the token, and a release
 naming it deletes that acquisition or nothing. A release with no token still deletes ANY acquisition
-of the same device (the bare `owner` an older server wrote, or a `owner#token` value). It is kept for
-two callers: web and app clients older than #2426, and the Android background service
-(`CanariFirebaseMessagingService.kt`), which does not send the token yet. That path is exactly as
-blind as before: a late release can still free a live lock of the same device.
-**Removal condition:** the Android service sends its token, AND `minClientVersion` is at or above the
-first stable carrying #2426 on both stores. Then a token-less release is refused, not legacy. On the
-client side, the token-less release goes once every estate's chat-delivery-service answers the token.
+of the same device (the bare `owner` an older server wrote, or a `owner#token` value). It is kept
+ONLY for builds older than #2426: web and app clients, and above all the Android background service
+of those builds (`CanariFirebaseMessagingService.kt`). Since #2426 that service also reads the token
+from the acquire answer and sends it on its release. The legacy path is exactly as blind as before: a
+late release can still free a live lock of the same device.
+**Removal condition:** `minClientVersion` is at or above the first stable carrying #2426 on both
+stores (the Android service of every allowed build then sends its token). After that a token-less
+release is refused, not legacy. On the client side, the token-less release (the web client's and the
+Android service's) goes once every estate's chat-delivery-service answers the token.
 
 ### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 

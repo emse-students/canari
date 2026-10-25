@@ -129,6 +129,12 @@ export async function acquireAddLock(
  * `released=false` is not an error: the lock may have expired, been retaken, or never been held. It
  * is logged because it is the only trace an expiry-under-its-holder leaves.
  *
+ * `owed` is the client's own statement that this release was OWED - sent by a page that found the
+ * marker of an acquisition it never saw released (a reload, a lost answer) before acquiring again.
+ * Only that case and a slow Add whose TTL ran out under it print `released=false by=token`, and only
+ * the client knows which one it is: the line ends ` owed=true` for exactly a JSON `true`, and is
+ * otherwise unchanged.
+ *
  * @returns `true` if this call is what deleted the key.
  */
 export async function releaseAddLock(
@@ -136,7 +142,8 @@ export async function releaseAddLock(
   logger: Logger,
   holder: AddLockHolder,
   door: AddLockDoor,
-  token?: string
+  token?: string,
+  owed?: unknown
 ): Promise<boolean> {
   const owner = addLockOwner(holder.userId, holder.deviceId);
   const key = addLockKey(holder.groupId);
@@ -145,7 +152,7 @@ export async function releaseAddLock(
     : await redis.eval(RELEASE_IF_OWNER_LEGACY, 1, key, owner, `${owner}#`);
   const released = deleted === 1;
   logger.log(
-    `[RELEASE_LOCK] group=${holder.groupId} owner=${owner} released=${released} by=${token ? 'token' : 'owner-legacy'} via=${door}`
+    `[RELEASE_LOCK] group=${holder.groupId} owner=${owner} released=${released} by=${token ? 'token' : 'owner-legacy'} via=${door}${owed === true ? ' owed=true' : ''}`
   );
   return released;
 }

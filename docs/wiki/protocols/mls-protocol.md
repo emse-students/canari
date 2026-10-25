@@ -673,11 +673,22 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
   page. The marker is claimed synchronously, so two racing acquires never both send it, and no
   release is sent for a group this page holds. The release names its token, so a late one frees
   that acquisition or nothing: never a lock taken since, by this page or by the Android background
-  service. A release with no token is the legacy owner-only one
+  service, which also names its token since this change. A release with no token is the legacy
+  owner-only one
   ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-add-lock-released-by-owner-alone-with-no-token-2026-10-25)).
+- **The owed release says so on the server line.** Two cases print `released=false by=token`: a slow
+  Add whose TTL ran out under it, and a revived page's owed release of a lock that already expired.
+  Only the client knows which one it is, so the owed release (the one through `claimAddLockMarker`)
+  sends `owed: true`. Both doors take it, ignore anything other than a JSON `true`, and append it at
+  the END of the line, so the prefix stays the same:
+  `[RELEASE_LOCK] group=<g> owner=<u:d> released=<bool> by=<token|owner-legacy> via=<jwt|push> owed=true`.
+  Without the flag the line ends at `via=<door>`, as before.
 - **A refused acquire carries the server's own fact about when the lock ends** (`retryAfterMs`, its
   `PTTL`). A lost invitation waiting on that group is re-planned at that moment, once per group
-  (`wakeAtAddLockExpiry`). This is the one timer, and the server states its value. The holder's
+  (`wakeAtAddLockExpiry`). This is the one timer, and the server states its value. The client bounds
+  that value to 0..31 s (`boundAddLockWait`: TTL + 1 s, since `setTimeout` fires at once above
+  2^31-1 ms), reads a non-number as no stated end, and warns when it had to bound one. The wakes go
+  with the session (sign-out) and with the client (`destroy`). The holder's
   release sends no frame, and its Add commit lands BEFORE its release (the holder still persists,
   registers and sends Welcomes, 5-8 s), so the commit-applied wake alone would find the lock still up.
 - **The re-planner exists only on a RESTORED map** (`makeLostInvitationReplanner`, registered by

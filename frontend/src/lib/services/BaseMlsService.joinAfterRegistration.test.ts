@@ -73,6 +73,8 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
     // `destroy` settles the drain waiters too, and `Object.create` skips the field initialisers.
     groupDrainedWaiters: new Map(),
     groupDrainedArmed: new Set<string>(),
+    // And it cancels the add-lock expiry wakes.
+    addLockExpiryWakes: new Map(),
     // And it releases the socket through the platform half, which a prototype has no body for.
     pausePlatformSocket: vi.fn(),
     distributionGroupInfo: null,

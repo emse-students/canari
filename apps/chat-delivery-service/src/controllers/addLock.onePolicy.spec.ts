@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 
+import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ThrottlerGuard } from '@nestjs/throttler';
@@ -61,7 +62,8 @@ interface Door {
   }) => Promise<{ acquired: boolean; token?: string; retryAfterMs?: number }>;
   drop: (
     c: { locks: LocksController; push: PushController },
-    token?: string
+    token?: string,
+    extra?: { owed?: unknown }
   ) => Promise<{ released: boolean }>;
 }
 
@@ -70,8 +72,11 @@ const DOORS: Door[] = [
     name: 'the JWT door',
     via: 'jwt',
     take: ({ locks }) => locks.acquireAddLock({ groupId: GROUP, deviceId: DEVICE }, USER),
-    drop: ({ locks }, token) =>
-      locks.releaseAddLock({ groupId: GROUP, deviceId: DEVICE, ...(token ? { token } : {}) }, USER),
+    drop: ({ locks }, token, extra) =>
+      locks.releaseAddLock(
+        { groupId: GROUP, deviceId: DEVICE, ...(token ? { token } : {}), ...extra },
+        USER
+      ),
   },
   {
     name: 'the PushSecret door',
@@ -82,12 +87,13 @@ const DOORS: Door[] = [
         deviceId: DEVICE,
         groupId: GROUP,
       }),
-    drop: ({ push }, token) =>
+    drop: ({ push }, token, extra) =>
       push.releaseAddLockPush('PushSecret sekret', {
         userId: USER,
         deviceId: DEVICE,
         groupId: GROUP,
         ...(token ? { token } : {}),
+        ...extra,
       }),
   },
 ];
@@ -196,6 +202,31 @@ describe('the MLS add-lock - one policy, both doors', () => {
 
       await expect(drop(controllers)).resolves.toEqual({ released: false });
     });
+
+    it.each([
+      ['a JSON true', true, true],
+      ['absent', undefined, false],
+      ['false', false, false],
+      ['the STRING "true"', 'true', false],
+      ['1', 1, false],
+    ])(
+      'an OWED release (%s) ends the line with owed=true only for a boolean true',
+      async (_n, owed, said) => {
+        redis.eval.mockResolvedValue(0);
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        try {
+          await drop(controllers, 'tok-1', owed === undefined ? {} : { owed });
+          const line = log.mock.calls
+            .map(([m]) => String(m))
+            .find((m) => m.startsWith('[RELEASE_LOCK]'));
+          // The prefix every reader matches is unchanged; the flag is only ever appended.
+          expect(line).toMatch(/ released=false by=token via=(jwt|push)( owed=true)?$/);
+          expect(line?.endsWith(' owed=true')).toBe(said);
+        } finally {
+          log.mockRestore();
+        }
+      }
+    );
   });
 
   it('the lifetime is long enough to cover the work the lock is held across', () => {

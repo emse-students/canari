@@ -678,7 +678,8 @@ export class PushController {
   @Delete('mls/push/release-add-lock')
   async releaseAddLockPush(
     @Headers('authorization') authHeader: string,
-    @Body() body: { userId: string; deviceId: string; groupId: string; token?: string }
+    @Body()
+    body: { userId: string; deviceId: string; groupId: string; token?: string; owed?: unknown }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
@@ -686,13 +687,15 @@ export class PushController {
     const token = body.token ? sanitizeQueryValue(body.token, 'token') : undefined;
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
-    // The Android service sends no token yet: the LEGACY owner-only release (`utils/add-lock.ts`).
+    // An Android build that predates the token sends none: the LEGACY owner-only release
+    // (`utils/add-lock.ts`). `owed` is logged only, as on the JWT door.
     const released = await releaseAddLock(
       this.redis,
       this.logger,
       { groupId, userId, deviceId },
       'push',
-      token
+      token,
+      body.owed
     );
     return { released };
   }

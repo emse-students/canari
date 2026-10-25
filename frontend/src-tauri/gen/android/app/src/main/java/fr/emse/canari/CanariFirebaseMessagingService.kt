@@ -3291,14 +3291,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         // 1. Acquire the Redis add-lock (HTTP + retries) - outside MlsStateLock
-        var lockAcquired = false
+        var hold: AddLockHold? = null
         for (attempt in 0..2) {
-            lockAcquired = acquireAddLock(ctx, secret, groupId)
-            if (lockAcquired) break
+            hold = acquireAddLock(ctx, secret, groupId)
+            if (hold != null) break
             Log.w(TAG, "processWelcomeRequestBackground: Redis lock not acquired (attempt ${attempt + 1}/3)")
             if (attempt < 2) Thread.sleep(2_000)
         }
-        if (!lockAcquired) {
+        if (hold == null) {
             Log.w(TAG, "processWelcomeRequestBackground: unable to acquire the lock for group=$groupId -> abort")
             return
         }
@@ -3395,7 +3395,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         } finally {
             // 6. Release the Redis lock in all cases
-            releaseAddLock(ctx, secret, groupId)
+            releaseAddLock(ctx, secret, groupId, hold.token)
             Log.d(TAG, "processWelcomeRequestBackground: Redis lock released for group=$groupId")
             // 7. Opportunistic: this device may also have pending messages - try to send them
             //    now that the app is awake, and notify if any remain.
@@ -3404,8 +3404,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
-    /** Acquires the Redis add-lock via the PushSecret endpoint. Returns true if acquired. */
-    private fun acquireAddLock(ctx: PushContext, secret: String, groupId: String): Boolean {
+    /**
+     * An add lock this service holds. [token] names THIS acquisition, so its release can never free
+     * another one of the same device (the foreground's); `null` only from a server that predates it.
+     */
+    private class AddLockHold(val token: String?)
+
+    /** Acquires the Redis add-lock via the PushSecret endpoint. Returns the hold, or null if not acquired. */
+    private fun acquireAddLock(ctx: PushContext, secret: String, groupId: String): AddLockHold? {
         return try {
             val url = URL("${ctx.baseUrl}/api/mls/push/acquire-add-lock")
             val body = JSONObject().apply {
@@ -3426,24 +3432,31 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val code = conn.responseCode
                 val text = conn.inputStream.bufferedReader().use { it.readText() }
                 Log.d(TAG, "acquireAddLock: HTTP $code group=$groupId")
-                if (code == 201) JSONObject(text).optBoolean("acquired", false) else false
+                val json = if (code == 201) JSONObject(text) else null
+                if (json != null && json.optBoolean("acquired", false)) {
+                    AddLockHold(json.optString("token").takeIf { it.isNotEmpty() && it != "null" })
+                } else null
             } finally {
                 conn.disconnect()
             }
         } catch (e: Exception) {
             Log.e(TAG, "acquireAddLock: exception: ${e.message}")
-            false
+            null
         }
     }
 
-    /** Releases the Redis add-lock via the PushSecret endpoint. */
-    private fun releaseAddLock(ctx: PushContext, secret: String, groupId: String) {
+    /**
+     * Releases the Redis add-lock via the PushSecret endpoint: the acquisition [token] names, or - with
+     * no token, from a server that predates it - any lock of this device (the legacy release).
+     */
+    private fun releaseAddLock(ctx: PushContext, secret: String, groupId: String, token: String?) {
         try {
             val url  = URL("${ctx.baseUrl}/api/mls/push/release-add-lock")
             val body = JSONObject().apply {
                 put("userId", ctx.userId)
                 put("deviceId", ctx.deviceId)
                 put("groupId", groupId)
+                if (token != null) put("token", token)
             }.toString()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 5_000
@@ -3456,7 +3469,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             try {
                 conn.outputStream.use { it.write(body.toByteArray()) }
                 val code = conn.responseCode
-                Log.d(TAG, "releaseAddLock: HTTP $code group=$groupId")
+                Log.d(TAG, "releaseAddLock: HTTP $code group=$groupId by=${if (token != null) "token" else "owner-legacy"}")
             } finally {
                 conn.disconnect()
             }

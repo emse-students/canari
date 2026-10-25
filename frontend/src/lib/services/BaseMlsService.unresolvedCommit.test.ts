@@ -33,7 +33,11 @@ import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { MlsCheckpointNotWrittenError, MlsStateWriteRefusedError } from '$lib/utils/hex';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { TransportFailureError, isTransportFailure } from '$lib/utils/transportFailure';
-import { MlsDeliveryApi, WelcomeTargetNotMemberError } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  ADD_LOCK_WAIT_BOUND_MS,
+  MlsDeliveryApi,
+  WelcomeTargetNotMemberError,
+} from '$lib/mls-client/mlsDeliveryApi';
 import { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
   listOwedInvitations,
@@ -191,6 +195,7 @@ function ctx(
     'acquireAddLock',
     'releaseAddLock',
     'wakeAtAddLockExpiry',
+    'cancelAddLockExpiryWakes',
     'notifyCommitsApplied',
   ]) {
     c[name] = proto[name];
@@ -1417,8 +1422,13 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     reloaded.delivery.acquireAddLock = dead.delivery.acquireAddLock;
     reloaded.delivery.releaseAddLock = dead.delivery.releaseAddLock;
     expect(await lockOf(reloaded).acquireAddLock(G)).toBe(true);
-    expect(reloaded.delivery.releaseAddLock).toHaveBeenCalledWith(G, 't1');
+    // Said OWED, so the server line tells it from a slow Add's TTL running out under it.
+    expect(reloaded.delivery.releaseAddLock).toHaveBeenCalledWith(G, 't1', { owed: true });
     expect(server.value).toBe(server.valueOf('t2'));
+
+    // The ordinary release of the lock it holds is NOT owed.
+    await lockOf(reloaded).releaseAddLock(G);
+    expect(vi.mocked(reloaded.delivery.releaseAddLock).mock.calls.at(-1)).toEqual([G, 't2']);
   });
 
   it('a server with NO token: the release is the legacy owner-only one, and it still frees the lock', async () => {
@@ -1456,6 +1466,84 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
       expect(replanner).toHaveBeenCalledTimes(2);
       expect(listOwedInvitations(U)).toEqual([]);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** A refusal stating `stated` ms on a group that owes an invitation; returns the re-planner. */
+  async function refusedWith(c: ReturnType<typeof ctx>, stated: number | undefined) {
+    fakeLockServer(c);
+    // Refused once with that statement; the holder's lock is gone by the next acquire.
+    c.delivery.acquireAddLock = vi
+      .fn()
+      .mockResolvedValueOnce({ acquired: false, retryAfterMs: stated })
+      .mockResolvedValue({ acquired: true, token: 'mine' });
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => {
+      if (!(await lockOf(c).acquireAddLock(G))) return 'waiting';
+      return 'concluded';
+    });
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledTimes(1);
+    return replanner;
+  }
+
+  it('a DESTROYED client keeps no wake: the server-stated moment comes and nothing re-plans', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const c = ctx(raceLost(), { state: keptInvite() });
+      const replanner = await refusedWith(c, 7_000);
+      // The teardown's other seams are not what this case is about.
+      Object.assign(c, {
+        pauseSocket: vi.fn(),
+        wakeKeyPackageRoundWaiters: vi.fn(),
+        abandonGroupDrainedWaiters: vi.fn(),
+        destroyPlatformResources: vi.fn(),
+        heartbeatTimer: null,
+        heldFrames: [],
+      });
+      (proto.destroy as (this: unknown) => void).call(c);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(replanner).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['a negative wait', -5, 0],
+    ['a HUGE wait (above 2^31-1, which setTimeout fires at once)', 2 ** 40, ADD_LOCK_WAIT_BOUND_MS],
+  ])('a refusal stating %s is bounded to 0..TTL+1 s', async (_name, stated, fireAt) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const c = ctx(raceLost(), { state: keptInvite() });
+      const replanner = await refusedWith(c, stated);
+      if (fireAt > 0) {
+        await vi.advanceTimersByTimeAsync(fireAt - 1);
+        expect(replanner).toHaveBeenCalledTimes(1);
+      }
+      await vi.advanceTimersByTimeAsync(1);
+      await drained(c);
+      expect(replanner).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('is outside 0..'));
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('a refusal stating NaN is NO stated end: no wake, and said so', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const c = ctx(raceLost(), { state: keptInvite() });
+      const replanner = await refusedWith(c, Number.NaN);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(replanner).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('read as undefined'));
+    } finally {
+      warn.mockRestore();
       vi.useRealTimers();
     }
   });

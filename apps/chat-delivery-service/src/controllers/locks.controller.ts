@@ -39,9 +39,10 @@ export class LocksController {
   /**
    * Releases the group's add-lock if it is still the acquisition `token` names. A body with no
    * token (a client that predates it) takes the LEGACY owner-only release (`utils/add-lock.ts`).
+   * `owed: true` marks a release the client owed from an earlier acquisition (logged only).
    */
   async releaseAddLock(
-    @Body() body: { groupId: string; deviceId: string; token?: string },
+    @Body() body: { groupId: string; deviceId: string; token?: string; owed?: unknown },
     @Headers('x-user-id') userIdRaw?: string
   ) {
     const userId = sanitizeQueryValue(userIdRaw ?? '', 'x-user-id');
@@ -53,7 +54,8 @@ export class LocksController {
       this.logger,
       { groupId, userId, deviceId },
       'jwt',
-      token
+      token,
+      body.owed
     );
     return { released };
   }

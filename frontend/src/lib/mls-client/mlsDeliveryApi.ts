@@ -70,6 +70,22 @@ export type AddLockAnswer =
   | { acquired: false; retryAfterMs: number | undefined };
 
 /**
+ * The longest wait a refused acquire may state: the server's `ADD_LOCK_TTL_SEC` (30 s) plus 1 s.
+ * A key can never have more left than its TTL, so a larger value is a defect upstream - and handed to
+ * `setTimeout` unbounded, anything above 2^31-1 ms fires at once instead of late.
+ */
+export const ADD_LOCK_WAIT_BOUND_MS = 31_000;
+
+/**
+ * Bounds a server-stated add-lock wait to 0..{@link ADD_LOCK_WAIT_BOUND_MS}. Not a number (absent,
+ * NaN, infinite) is "no stated end" (`undefined`), never a guess.
+ */
+export function boundAddLockWait(stated: number | undefined): number | undefined {
+  if (stated === undefined || !Number.isFinite(stated)) return undefined;
+  return Math.min(Math.max(stated, 0), ADD_LOCK_WAIT_BOUND_MS);
+}
+
+/**
  * How long one pending page may stay COMPLETELY SILENT before it is abandoned.
  *
  * Not a budget for the page: {@link fetchJsonUnderProgressDeadline} re-arms it on the response head
@@ -1615,13 +1631,26 @@ export class MlsDeliveryApi {
    * @returns whether the server answered the release. `false` means the lock may still be up on the
    *   server for its whole TTL - the caller keeps its marker (`addLockMarkers.ts`), and the next
    *   acquire sends it again.
+   *
+   * `owed` marks the release a page sends for an acquisition it never saw released (its durable
+   * marker, before acquiring again): the server ends its `[RELEASE_LOCK]` line ` owed=true`, the one
+   * thing that tells that `released=false` from a slow Add whose TTL ran out under it.
    */
-  async releaseAddLock(groupId: string, token: string | undefined): Promise<boolean> {
+  async releaseAddLock(
+    groupId: string,
+    token: string | undefined,
+    opts: { owed?: true } = {}
+  ): Promise<boolean> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/add-lock`, {
         method: 'DELETE',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ groupId, deviceId: this.deviceId, ...(token ? { token } : {}) }),
+        body: JSON.stringify({
+          groupId,
+          deviceId: this.deviceId,
+          ...(token ? { token } : {}),
+          ...(opts.owed ? { owed: true } : {}),
+        }),
       });
       if (res.ok) return true;
       console.warn(
