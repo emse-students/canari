@@ -25,7 +25,7 @@
  * timeout the arrival case uses, so "it did not arrive in 25 s" is measured against the latency the
  * rest of the phase measures rather than against a number chosen here.
  */
-import { client, countMessage, realClick, send, traceArrival } from '../chat.mjs';
+import { clearOverlays, client, countMessage, realClick, send, traceArrival } from '../chat.mjs';
 import {
   createChannel,
   enterCommunities,
@@ -34,7 +34,6 @@ import {
   openChannelAccess,
   openCommunity,
   revokeChannelAccess,
-  saveChannelAccess,
   selectedChannel,
 } from '../comm.mjs';
 import { channelIdOf, salonDistribution, userIdOf, workspaceIdOf } from '../grainedb.mjs';
@@ -73,7 +72,7 @@ await step('create the salon with the peer in it', async () => {
   await realClick(w1, `[aria-label*=${JSON.stringify(salon)}]`);
   await openChannelAccess(w1);
   await grantChannelAccess(w1, PEER_NAME);
-  await saveChannelAccess(w1);
+  await clearOverlays(w1);
 });
 
 const channelId = await step('read the salon id', () =>

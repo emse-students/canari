@@ -19,7 +19,7 @@
  * DEBRIS IS LEFT BEHIND, like every check in this phase - deleting the salon would delete the
  * evidence of a failure with it. `cleanup.mjs` is the deliberate, separate step.
  */
-import { apiGet, client, realClick, send } from '../chat.mjs';
+import { apiGet, clearOverlays, client, realClick, send } from '../chat.mjs';
 import {
   channelRow,
   createChannel,
@@ -27,7 +27,6 @@ import {
   grantChannelAccess,
   openChannelAccess,
   openCommunity,
-  saveChannelAccess,
   selectedChannel,
 } from '../comm.mjs';
 import {
@@ -140,7 +139,7 @@ const armed = await step('grant the peer access, then look again', async () => {
   await realClick(w1, `[aria-label*=${JSON.stringify(salon)}]`);
   await openChannelAccess(w1);
   await grantChannelAccess(w1, PEER_NAME);
-  await saveChannelAccess(w1);
+  await clearOverlays(w1);
 
   await enterCommunities(w2);
   await openCommunity(w2, VENUE.community);
