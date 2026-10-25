@@ -27,6 +27,15 @@ describe('describeCommunityRefusal', () => {
     );
   });
 
+  it('names a salon grant of someone no longer in the community, apart from a race', () => {
+    expect(describeCommunityRefusal('CHANNEL_GRANTEE_NOT_MEMBER')).toBe(
+      m.chat_channel_grantee_not_member_error()
+    );
+    expect(m.chat_channel_grantee_not_member_error()).not.toBe(
+      m.chat_channel_access_changed_error()
+    );
+  });
+
   it('keeps the caller generic line for a code it does not know, or none', () => {
     expect(describeCommunityRefusal('SOMETHING_ELSE')).toBeNull();
     expect(describeCommunityRefusal(undefined)).toBeNull();

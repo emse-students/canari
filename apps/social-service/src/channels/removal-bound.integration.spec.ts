@@ -24,7 +24,11 @@ import { join } from 'path';
 import { ForbiddenException, HttpException, Logger, NotFoundException } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
-import { CHANNEL_ACCESS_CHANGED, ChannelService } from './channel.service';
+import {
+  CHANNEL_ACCESS_CHANGED,
+  CHANNEL_GRANTEE_NOT_MEMBER,
+  ChannelService,
+} from './channel.service';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -459,6 +463,88 @@ maybe('a removal against PostgreSQL', () => {
     );
     expect(rows).toHaveLength(0);
     expect(await allowedOn(id)).toEqual(['owner']);
+  });
+
+  /**
+   * A KICK COMMITTED WHILE A GRANT WAITS ON THE REMOVAL LOCK (cross-client row RM-5). The kick read
+   * the salons its target held - none - and its roster write committed; the access-list rewrite that
+   * names the same person had read its row before, so it parks on the community's removal lock and
+   * then finds the revision unmoved (the kick cut no salon). Saving it would leave a non-member on
+   * the allowlist, restored the day they rejoin by link. Refused whole, typed, nothing written.
+   */
+  it('refuses a grant whose grantee was kicked while it waited on the removal lock', async () => {
+    await member('kicked-mid-grant', BASE_ROLE);
+    const id = await salon(['salons', 'owner']);
+    const panel = await service.getChannelAccess(id, 'salons');
+    const kick = await holder();
+    try {
+      // The kick's roster write, as it commits: the removal lock, then the membership row deleted -
+      // and no salon touched, since it held none when the kick read them.
+      await kick.client.query('BEGIN');
+      await kick.client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended('community_removal:' || $1, 0))`,
+        [WS]
+      );
+      await kick.client.query(
+        `DELETE FROM channel_members WHERE "workspaceId" = $1 AND "userId" = 'kicked-mid-grant'`,
+        [WS]
+      );
+      const grant = started(
+        service.updateChannelAccess(
+          id,
+          'salons',
+          true,
+          [...panel.allowedUsers, 'kicked-mid-grant'],
+          undefined,
+          panel.accessRevision
+        )
+      );
+      await blockedBy(kick.pid, grant.settled);
+      await kick.client.query('COMMIT');
+      expect(await grant.outcome).toBe(CHANNEL_GRANTEE_NOT_MEMBER);
+      expect(await allowedOn(id)).toEqual(['salons', 'owner']);
+      expect((await ds.getRepository(Channel).findOneByOrFail({ id })).accessRevision).toBe(
+        panel.accessRevision
+      );
+    } finally {
+      await kick.client.query('ROLLBACK').catch(() => undefined);
+      await kick.client.end();
+    }
+  });
+
+  it('the same grant committed BEFORE the kick is taken back by the kick', async () => {
+    // The other order, unchanged: the kick reads the salon naming its target and cuts it.
+    await member('granted-then-kicked', BASE_ROLE);
+    const id = await salon(['salons', 'owner']);
+    await service.updateChannelAccess(
+      id,
+      'salons',
+      true,
+      ['salons', 'owner', 'granted-then-kicked'],
+      undefined,
+      0
+    );
+    expect(await allowedOn(id)).toEqual(['salons', 'owner', 'granted-then-kicked']);
+    expect(
+      await started(service.kickFromWorkspace(WS, 'granted-then-kicked', 'kicker')).outcome
+    ).toBe('allowed');
+    expect(await allowedOn(id)).toEqual(['salons', 'owner']);
+  });
+
+  it('keeps an entry that outlived its membership when a save does not add it', async () => {
+    // Only who a save ADDS is asked: a list already naming a non-member (written before the check
+    // existed) must stay editable, or that salon's access could never be saved again.
+    await member('kept-member', BASE_ROLE);
+    const id = await salon(['salons', 'gone-before']);
+    await service.updateChannelAccess(
+      id,
+      'salons',
+      true,
+      ['salons', 'gone-before', 'kept-member'],
+      undefined,
+      0
+    );
+    expect(await allowedOn(id)).toEqual(['salons', 'gone-before', 'kept-member']);
   });
 
   it('refuses a private creation that leaves off someone who holds more than its creator', async () => {

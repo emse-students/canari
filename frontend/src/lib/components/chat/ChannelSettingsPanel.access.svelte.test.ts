@@ -395,6 +395,21 @@ describe('ChannelSettingsPanel - the revision every access write is based on', (
     ]);
   });
 
+  it('reads the access again when the grantee left the community meanwhile, and names it', async () => {
+    await mountOnAccessTab('salon-a');
+    service.updateChannelAccess.mockRejectedValueOnce(
+      new ApiRefusalError(409, 'CHANNEL_GRANTEE_NOT_MEMBER', 'not a member')
+    );
+
+    await addPeer();
+
+    expect(service.getChannelAccess).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('[role=alert]')?.textContent).toBe(
+      m.chat_channel_grantee_not_member_error()
+    );
+    expect(admitSalonGrantee).not.toHaveBeenCalled();
+  });
+
   it('sends one access write at a time, so its own two gestures cannot refuse each other', async () => {
     await mountOnAccessTab('salon-a');
     let release: () => void = () => {};

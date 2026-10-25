@@ -283,10 +283,15 @@
 
   /**
    * What a refused access write leaves on screen. `CHANNEL_ACCESS_CHANGED` means the list shown is
-   * stale - so it is read again BEFORE the refusal is named, and the admin decides on the real one.
+   * stale, and `CHANNEL_GRANTEE_NOT_MEMBER` that someone it grants left the community meanwhile -
+   * so in both it is read again BEFORE the refusal is named, and the admin decides on the real one.
    */
   async function accessWriteRefused(channelId: string, e: unknown, generic: string) {
-    if (refusalCode(e) === 'CHANNEL_ACCESS_CHANGED') await refreshAccess(channelId);
+    const code = refusalCode(e);
+    if (code === 'CHANNEL_ACCESS_CHANGED' || code === 'CHANNEL_GRANTEE_NOT_MEMBER') {
+      Log.d('channelSettings.accessWriteRefused reading the access again', { channelId, code });
+      await refreshAccess(channelId);
+    }
     return accessWriteError(e, generic);
   }
 

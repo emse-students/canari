@@ -170,6 +170,14 @@ export const CHANNEL_SIGNATURE_REQUIRED = 'CHANNEL_SIGNATURE_REQUIRED';
 export const CHANNEL_ACCESS_CHANGED = 'CHANNEL_ACCESS_CHANGED';
 
 /**
+ * 409 code: an access-list rewrite refused because someone it ADDS is no longer a member of the
+ * community - asked under the community's removal lock, so a kick or a departure that committed
+ * while the rewrite waited is seen. Nothing was written; the body's `current` is the access as it
+ * stands. Not retryable as sent: the same list names the same non-member.
+ */
+export const CHANNEL_GRANTEE_NOT_MEMBER = 'CHANNEL_GRANTEE_NOT_MEMBER';
+
+/**
  * A salon's access as the settings panel reads and edits it, revision included - the one shape the
  * access read, a successful rewrite and a {@link CHANNEL_ACCESS_CHANGED} refusal all answer with.
  */
@@ -3045,6 +3053,19 @@ export class ChannelService implements OnApplicationBootstrap {
           if (locked.accessRevision !== channel.accessRevision) {
             this.refuseStaleAccessRewrite(locked, actorUserId, channel.accessRevision);
           }
+          // WHOEVER THIS SAVE ADDS IS STILL A MEMBER, asked here and nowhere earlier. A kick that
+          // committed while this waited on the removal lock cut no salon when it read none naming
+          // its target, so the revision above did not move - and without this the save would put a
+          // non-member on the allowlist, restored the day they rejoin. Every name of a salon
+          // becoming private is an addition (`gained` below says why); an entry the row already
+          // holds is not, so a list that outlived a membership stays editable.
+          const lockedAllowed = new Set(locked.isPrivate ? locked.allowedUsers || [] : []);
+          await this.assertGranteesAreMembers(
+            m,
+            locked,
+            actorUserId,
+            nextAllowed.filter((u) => !lockedAllowed.has(u))
+          );
           const communityMemberIds = wasPrivate
             ? []
             : (
@@ -3217,6 +3238,44 @@ export class ChannelService implements OnApplicationBootstrap {
       code: CHANNEL_ACCESS_CHANGED,
       message: 'The salon access changed meanwhile, retry.',
       current: channelAccessState(current),
+    });
+  }
+
+  /**
+   * Refuses an access rewrite that ADDS someone who is not a member of the salon's community: the
+   * typed `409 CHANNEL_GRANTEE_NOT_MEMBER`, carrying the current access.
+   *
+   * RUN UNDER THE COMMUNITY'S REMOVAL LOCK, through its transaction `m`, which is what makes it a
+   * check and not a preview: every departure's roster write (a kick, leaving, an erasure) holds that
+   * lock, so one that committed while the rewrite waited is seen here, and the membership rows read
+   * are share-locked until the save commits - the same lock `grantPrivateChannelAccess` takes on its
+   * one grantee. The community's rows are read whole and matched case-blind, as
+   * {@link assertActorMayRemoveMembers} reads them, because an allowlist entry is lowercased and a
+   * membership row keeps its id as written.
+   */
+  private async assertGranteesAreMembers(
+    m: EntityManager,
+    locked: Channel,
+    actorUserId: string,
+    granteeIds: readonly string[]
+  ): Promise<void> {
+    if (granteeIds.length === 0) return;
+    const rows = await m.getRepository(ChannelMember).find({
+      where: { workspaceId: locked.workspaceId },
+      lock: { mode: 'pessimistic_read' },
+    });
+    const members = new Set(rows.map((r) => r.userId.trim().toLowerCase()));
+    const absent = granteeIds.filter((u) => !members.has(u.trim().toLowerCase()));
+    if (absent.length === 0) return;
+    this.logger.warn(
+      `[CHANNEL_ACCESS] refused - the rewrite grants ${absent.length} non-member(s) ` +
+        `channel=${locked.id} by=${actorUserId.slice(0, 8)} ` +
+        `first=${absent[0].slice(0, 8)} revision=${locked.accessRevision}`
+    );
+    throw new ConflictException({
+      code: CHANNEL_GRANTEE_NOT_MEMBER,
+      message: 'Someone this list grants is no longer a member of the community.',
+      current: channelAccessState(locked),
     });
   }
 
