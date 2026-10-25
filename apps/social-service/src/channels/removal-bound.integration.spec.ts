@@ -532,8 +532,8 @@ maybe('a removal against PostgreSQL', () => {
   });
 
   it('keeps an entry that outlived its membership when a save does not add it', async () => {
-    // Only who a save ADDS is asked: a list already naming a non-member (written before the check
-    // existed) must stay editable, or that salon's access could never be saved again.
+    // Only who a save ADDS is asked: an entry the row already holds is not re-judged by an edit
+    // that does not add it.
     await member('kept-member', BASE_ROLE);
     const id = await salon(['salons', 'gone-before']);
     await service.updateChannelAccess(
@@ -545,6 +545,70 @@ maybe('a removal against PostgreSQL', () => {
       0
     );
     expect(await allowedOn(id)).toEqual(['salons', 'gone-before', 'kept-member']);
+  });
+
+  it('grants a member whose membership row keeps its id in mixed case', async () => {
+    // An allowlist entry is lowercased; a membership row keeps its id as written.
+    await member('Mixed-Case-Grantee', BASE_ROLE);
+    const id = await salon(['salons']);
+    await service.updateChannelAccess(
+      id,
+      'salons',
+      true,
+      ['salons', 'Mixed-Case-Grantee'],
+      undefined,
+      0
+    );
+    expect(await allowedOn(id)).toEqual(['salons', 'mixed-case-grantee']);
+  });
+
+  it('refuses a grant of a non-member before minting a group for a salon going private', async () => {
+    // The early preview: a crafted list naming someone outside the community is refused before any
+    // call to chat-delivery, so no group is minted for a flip that will not happen.
+    const channels = ds.getRepository(Channel);
+    const { id } = await channels.save(
+      channels.create({ workspaceId: WS, name: `public-${salonSeq++}`, isPrivate: false })
+    );
+    (global.fetch as unknown as jest.Mock).mockClear();
+    const outcome = await started(
+      service.updateChannelAccess(id, 'owner', true, ['owner', 'never-a-member'], undefined, 0)
+    ).outcome;
+    expect(outcome).toBe(CHANNEL_GRANTEE_NOT_MEMBER);
+    expect((global.fetch as unknown as jest.Mock).mock.calls).toHaveLength(0);
+    expect(await channels.findOneByOrFail({ id })).toMatchObject({ isPrivate: false });
+  });
+
+  it("answers a flip whose actor was kicked while it waited with the actor's 403", async () => {
+    // The actor is asked before the grantees under the lock: a flip grants its actor, so the
+    // grantee check would otherwise answer first, and about the wrong person.
+    await member('flip-admin', ADMIN_ROLE);
+    const channels = ds.getRepository(Channel);
+    const { id } = await channels.save(
+      channels.create({ workspaceId: WS, name: `public-${salonSeq++}`, isPrivate: false })
+    );
+    const kick = await holder();
+    try {
+      await kick.client.query('BEGIN');
+      await kick.client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended('community_removal:' || $1, 0))`,
+        [WS]
+      );
+      await kick.client.query(
+        `DELETE FROM channel_members WHERE "workspaceId" = $1 AND "userId" = 'flip-admin'`,
+        [WS]
+      );
+      const flip = started(service.updateChannelAccess(id, 'flip-admin', true, [], undefined, 0));
+      await blockedBy(kick.pid, flip.settled);
+      await kick.client.query('COMMIT');
+      expect(await flip.outcome).toBeInstanceOf(ForbiddenException);
+      expect(await channels.findOneByOrFail({ id })).toMatchObject({
+        isPrivate: false,
+        accessRevision: 0,
+      });
+    } finally {
+      await kick.client.query('ROLLBACK').catch(() => undefined);
+      await kick.client.end();
+    }
   });
 
   it('refuses a private creation that leaves off someone who holds more than its creator', async () => {

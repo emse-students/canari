@@ -241,7 +241,9 @@ describe('removals bounded by the actor', () => {
         )
       ).toBe('allowed');
       expect(channel.allowedUsers).toEqual(everyoneBut('u-member'));
-      expect(memberRepo.findOne).toHaveBeenCalledWith(ROW_LOCKED);
+      // ONE read of the community's rows under the lock, share-locked, serving the actor, the
+      // removal bound and the grantee check alike.
+      expect(memberRepo.find).toHaveBeenCalledWith(ROW_LOCKED);
     });
 
     it('skips an allowlist entry who is no longer a member of the community', async () => {

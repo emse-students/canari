@@ -1444,22 +1444,24 @@ rewrite takes the removal lock, then its salon, then the community's membership 
 
 ### Every writer that ADDS to an allowlist asks membership under a lock a kick also takes (2026-10-25)
 
-**Found by cross-client row RM-5 on `1.4.1-alpha.4`.** An admin kicked a member while another
-admin's access-list rewrite granting that member a private salon was in flight. The kick read the
-salons naming its target (none), committed (key group cut, membership deleted), and only then did
-the rewrite take the removal lock: the revision had not moved, because the kick stripped no salon, so
-its stale-revision check passed and it saved. The kicked user stayed on the allowlist - no content
-while out (the key-group and channel-seed gates refuse a non-member), but the grant outlived the
-membership and came back the day they rejoined by link. Neither side could see the other: the
-kick's `DEPARTURE_SUPERSEDED` re-read fires only for a grant that committed FIRST.
+**The lesson: a check re-asked under a lock must cover what the save ADDS, not only what it
+removes.** An access-list rewrite re-checked its stale revision and the members it dropped under the
+community removal lock, and never asked whether the people it granted were still members. A kick
+that strips no salon does not move the revision, so a kick committed while the rewrite waited on the
+lock was invisible to it - and the kick's own re-read sees only a grant committed BEFORE it. Found by
+cross-client row RM-5.
 
-**The rewrite now asks, under the lock, whether everyone it ADDS is a member**
-(`assertGranteesAreMembers`): the community's membership rows read share-locked in the same
-transaction, matched case-blind; anyone absent refuses the whole save `409 CHANNEL_GRANTEE_NOT_MEMBER`
-with `current`, nothing written. "Adds" is the list minus the locked row's (every name, when the
-salon becomes private), so a list that already names a non-member stays editable. The panel reads
-the access again on that code, then names it (`chat_channel_grantee_not_member_error`); an older
-client shows its generic line. Not retryable as sent - the same list names the same person.
+**The rewrite asks it, twice, in the order every removal check already uses.** Early, before the
+salon's group is minted or any eviction begins, an unlocked preview (`assertGranteesAreMembers`
+beside the early `assertActorMayRemoveMembers`) refuses a grant of a non-member outright. Under the
+lock, the community's membership rows are read ONCE, share-locked, and handed to both checks: the
+actor's first (a kicked actor is answered `403`), then the grantees. Anyone absent refuses the whole
+save `409 CHANNEL_GRANTEE_NOT_MEMBER` with `current`, nothing written; the locked answer is the
+authority. Matched case-blind (an allowlist entry is lowercased, a membership row keeps its id as
+written). Only the names the save adds are judged - every name, when the salon becomes private.
+The panel reads the access again on that code, clears its pending pick, refreshes the member list it
+offers, then names the refusal (`chat_channel_grantee_not_member_error`); an older client shows its
+generic line. Not retryable as sent.
 
 **The other writers, audited - each already asked membership under a lock the kick serialises
 with:** `grantPrivateChannelAccess` (an admin's join, an invitation into a private salon) re-reads
@@ -1467,15 +1469,11 @@ the salon `FOR UPDATE` and the grantee's membership `FOR SHARE`, and the kick lo
 deleting the membership; a private `createChannel` names only its creator, who is the actor
 `assertActorMayRemoveMembers` re-reads under the removal lock. Strips, the per-member `DELETE`,
 leaving a salon and the erasure only remove; nothing outside social-service writes `allowedUsers`.
-
-**No extra scrub on a kick, and none on a rejoin.** A kick already strips every private salon of
-the community that names its target, from a row-locked re-read under the removal lock; with every
-adder now checked under that lock, no allowlist can name a non-member after the fix, so a sweep
-would heal a state nothing can produce - a witness, not a fix. Whether the race left entries
-before the fix is a production measurement (one `GROUP BY` of private-salon entries with no
-membership row), and any repair a data change the user decides; both are tracked in the private
-operations notes. Pinned by `removal-bound.integration.spec.ts` (the kick committed while
-the rewrite is parked on the removal lock, the reverse order, and a pre-existing non-member entry).
+A kick already strips every private salon naming its target from a row-locked re-read under the
+same lock, so no separate sweep is added: with every adder checked there, it would heal a state
+nothing produces. Pinned by `removal-bound.integration.spec.ts` (the kick committed while the
+rewrite is parked on the removal lock, the reverse order, a mixed-case membership id, and a flip
+whose actor was kicked while it waited).
 
 Pinned by `removal-bound.integration.spec.ts` (PostgreSQL: the gate parked on an uncommitted role
 change through `pg_blocking_pids`, the removal lock, a rewrite raced by another, a flip computed
