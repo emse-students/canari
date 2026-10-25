@@ -105,8 +105,8 @@ export async function withSeatLock<T>(
  *   its new, empty group): it reads the key packages outside any lock and writes the roster row, its
  *   interval and `pending` seats with no seat lock. Every other call of that route writes device
  *   seats through `writePendingSeats` and enrols nobody (ADM-3, 2026-10-25), so a peer's invite can
- *   no longer re-enrol an erased account; the creator's own erasure racing its group creation can still
- *   leave a row (backlog, P2 "addGroupMember can enrol an erased account after the final erasure pass").
+ *   no longer re-enrol an erased account; the creator's own erasure racing its group creation
+ *   can still leave a row (backlog, P2 "addGroupMember can enrol an erased account after the final erasure pass").
  *
  * THE KEY PACKAGE IS WHAT AN ACCOUNT ERASURE TAKES FIRST, in a transaction of its own
  * (`InternalController.deleteUserData`), and AGAIN before its last sweep. A writer either holds the
