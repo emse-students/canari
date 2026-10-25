@@ -1079,6 +1079,13 @@ export async function openCommunityMembers(cx) {
   const alreadyOpen = await evaluate(cx, saysCount);
   if (alreadyOpen !== 'true' && alreadyOpen !== true) {
     await openCommunitySettings(cx);
+  } else {
+    // AN OPEN MEMBERS TAB IS A READ FROM WHEN IT OPENED. The panel loads its roster when the tab
+    // becomes active and never again while it stays so, and `clearOverlays` closes dialogs, not this
+    // side panel. RM-4..6 (2026-10-25) opened it for the invitation link with one member, the others
+    // joined, and the roster still held one: `markMemberRow` found no row for a member the server
+    // listed. Leaving the tab and coming back is the app's own reload, with no wait of its own.
+    await communityTab(cx, 'overview');
   }
   await communityTab(cx, 'members');
   // THE LOADING LINE IS WAITED OUT, not the heading: the heading renders before the request returns,
@@ -1099,7 +1106,7 @@ export async function openCommunityMembers(cx) {
        return document.querySelectorAll(${JSON.stringify(ROLE_TRIGGER())}).length > 1;
      })()`,
     20000
-  ).catch(() => {});
+  ).catch((e) => console.log(`[openCommunityMembers] the roster shows at most one member after 20 s - read as it is: ${e.message}`));
   return communityMembers(cx);
 }
 
