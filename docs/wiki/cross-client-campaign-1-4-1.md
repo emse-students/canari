@@ -296,7 +296,7 @@ from panels read at the same revision answer one 200 and one 409.
 | Id | Question | `PASS` entails | Devices | Fault | Class | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
 | TOK-1 | The commit POST is answered `401` once | refresh, then the SAME bytes resubmitted; merged once; no logout | W1 W2 | `status-unsent 401 once` - a real 401 is the auth guard's, before the gate | U | 20 min |
-| TOK-2 | The refresh itself fails as TRANSPORT during a commit | no logout; outcome unknown kept; settled once the network answers | W1 W2 | `lose-answer` on the refresh | U | 20 min |
+| TOK-2 | The refresh itself fails as TRANSPORT during a commit | no logout; since #2420 the 401 means the request did nothing, so the stage is CLEARED and the gesture fails typed (`DeliveryRenewalFailedError`), never kept as unknown; only a renewal abandoned at the request deadline keeps it | W1 W2 | `lose-answer` on the refresh | U | 20 min |
 | TOK-3 | The access token really expires (1 h TTL) while the socket stays open, then a commit and a reconnect | the gateway (access tokens only since #2319) is re-authenticated; the settlement runs at the reconnection | W1 W2 | wait 61 min | U | 75 min wall clock, unattended |
 
 #### NET - a flaky network

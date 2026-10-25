@@ -28,6 +28,7 @@
 import { LOGIN_SHOWING, awaitGatewayConnected, evaluate, requestsSince, send } from '../chat.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
+import { onRoster } from '../ccrows.mjs';
 import { checkInvariant, receivedOn } from '../invariant.mjs';
 import {
   COMMIT_POST,
@@ -52,6 +53,8 @@ import {
   DUP7_ELSEWHERE,
   SEAT_CLAIM_OVERTAKEN_BODY,
   SETTLE_ROWS,
+  TOK_NARRATION,
+  authLines,
   blockedHereOnly,
   commitSequence,
   decidedAfter,
@@ -59,12 +62,14 @@ import {
   firedAtLeast,
   interveningOrder,
   nothingBefore,
+  renewalFailedOwn,
+  renewedOnceOwn,
   resubmissionLine,
   sessionSurvived,
   settleNarration,
   settledOnce,
 } from '../settlerows.mjs';
-import { GROUP_CREATION_NARRATION, awaitLine } from '../watch.mjs';
+import { GROUP_CREATION_NARRATION, awaitLine, consoleLines } from '../watch.mjs';
 import { addMembers } from './addmember.mjs';
 import { armCut, cutHard } from './net.mjs';
 
@@ -87,6 +92,8 @@ const since = new Date().toISOString();
 let seats = null;
 
 const REFRESH = /\/api\/auth\/refresh(\?|$)/;
+/** The commit POST's url, for COUNTING requests (`COMMIT_POST` is a fault rule, matched by prefix and method). */
+const COMMIT_URL = /\/api\/mls\/commit(\?|$)/;
 const now = () => new Date().toISOString();
 /** A gesture's outcome, captured and never thrown: a row with a fault EXPECTS gestures that do not finish cleanly. */
 const outcome = (p) =>
@@ -383,7 +390,7 @@ const ACTIONS = {
     return offTwo(c);
   },
 
-  /** TOK-1: the auth guard's 401, before the gate; the client refreshes and sends the SAME bytes. */
+  /** TOK-1: the auth guard's 401, before the gate; the client renews and sends the SAME bytes (#2420). */
   async 'TOK-1'(c) {
     const W1 = c.cx('W1');
     const rules = [{ ...COMMIT_POST, fault: 'status-unsent 401 once' }];
@@ -392,16 +399,20 @@ const ACTIONS = {
     const g = outcome(addMembers(W1, [c.name(spec.subject)]));
     await f.awaitFired(0, 1, 45_000).catch(() => {});
     const gesture = await g;
+    // COUNTED AT THE GESTURE'S END, so a leaf refresh the page starts later is not this Add's resend.
+    const commitPosts = requestsSince(W1, COMMIT_URL, idx).length;
     const rep = await f.disarm();
     await awaitServer(c.group.id, (v) => v.activeEpoch > c.fromEpoch, 30_000);
     const refreshes = requestsSince(W1, REFRESH, idx).length;
     const loggedOut = (await evaluate(W1, LOGIN_SHOWING)) === true;
+    const auth = authLines(consoleLines(W1));
     return {
       records: rep.records,
       vacuous: vacuousOf(rules, rep),
-      detail: { gesture, refreshes, loggedOut },
+      narration: TOK_NARRATION[id],
+      detail: { gesture, refreshes, loggedOut, commitPosts, auth },
       judge: (view, seq) => [
-        firedAtLeast('status-unsent 401', byRule(rep.records, 0), 1),
+        ...renewedOnceOwn({ auth, fired401: provokedFailures(byRule(rep.records, 0)).length, commitPosts }),
         ...sessionSurvived({ refreshes, loggedOut }),
         // The first request never reached the gate: ONE accept, and nothing to call a duplicate.
         ...settledOnce({ fromEpoch: c.fromEpoch, view, seq, minDuplicates: 0, maxDuplicates: 0, joined: [c.user[spec.subject]] }),
@@ -409,7 +420,12 @@ const ACTIONS = {
     };
   },
 
-  /** TOK-2: the commit is refused 401 by the guard, and the refresh it triggers loses its answer. */
+  /**
+   * TOK-2: the commit is refused 401 by the guard, and the renewal it triggers loses its answer. Since
+   * #2420 the request DID NOTHING (the bytes never reached the gate), so the stage is cleared and the
+   * gesture fails typed; the send that follows is the probe - a kept stage would be settled by it,
+   * before it goes out.
+   */
   async 'TOK-2'(c) {
     const W1 = c.cx('W1');
     const rules = [
@@ -421,26 +437,40 @@ const ACTIONS = {
     const g = outcome(addMembers(W1, [c.name(spec.subject)]));
     await f.awaitFired(1, 1, 45_000).catch(() => {});
     const gesture = await g;
+    const commitPosts = requestsSince(W1, COMMIT_URL, idx).length;
     const rep = await f.disarm();
-    // "SETTLED ONCE THE NETWORK ANSWERS": if the commit is still unknown, the next send settles it.
-    let settleSince = null;
-    if (!(await awaitServer(c.group.id, (v) => v.activeEpoch > c.fromEpoch, 10_000)).settled) {
-      settleSince = now();
-      await closeOverlays(W1);
-      await send(W1, `${id} settles [${rowMessageMark(id, 'S')}]`).catch((e) => console.log(`[${id}] the settling send: ${String(e?.message ?? e).slice(0, 200)}`));
-      await awaitServer(c.group.id, (v) => v.activeEpoch > c.fromEpoch, 30_000);
-    }
+    const probeSince = now();
+    await closeOverlays(W1);
+    const probe = await outcome(send(W1, `${id} probe [${rowMessageMark(id, 'S')}]`));
+    const epochAfter = serverView(c.group.id).activeEpoch;
     const refreshes = requestsSince(W1, REFRESH, idx).length;
     const loggedOut = (await evaluate(W1, LOGIN_SHOWING)) === true;
+    const short = c.group.id.slice(0, 8);
+    const lines = consoleLines(W1);
+    const auth = authLines(lines);
+    const unknownLines = lines.filter((l) => l.includes(`[COMMIT] ${short}... no answer to the commit`) || (l.includes(short) && l.includes('kept until a resubmission answers'))).length;
     return {
       records: rep.records,
       vacuous: vacuousOf(rules, rep),
-      detail: { gesture, refreshes, loggedOut, settleSince },
+      // NOBODY JOINS: the subject is judged absent by the roster, and the invariant reads W1 alone.
+      joiners: [],
+      members: spec.devices.filter((d) => d !== spec.subject),
+      narration: TOK_NARRATION[id],
+      detail: { gesture, refreshes, loggedOut, commitPosts, probe, probeSince, epochAfter, unknownLines, auth },
       judge: (view, seq) => [
-        firedAtLeast('status-unsent 401', byRule(rep.records, 0), 1),
-        firedAtLeast('lose-answer on the refresh', byRule(rep.records, 1), 1),
+        firedAtLeast('lose-answer on the renewal', byRule(rep.records, 1), 1),
+        ...renewalFailedOwn({
+          auth,
+          fired401: provokedFailures(byRule(rep.records, 0)).length,
+          commitPosts,
+          gestureFailed: !gesture.ok,
+          unknownLines,
+          epochBefore: c.fromEpoch,
+          epochAfter,
+          accepts: seq.filter((d) => d.kind === 'ACCEPT').length,
+          subjectAdded: onRoster(view, c.user[spec.subject]),
+        }),
         ...sessionSurvived({ refreshes, loggedOut }),
-        ...settledOnce({ fromEpoch: c.fromEpoch, view, seq, minDuplicates: 0, joined: [c.user[spec.subject]] }),
       ],
     };
   },
@@ -552,7 +582,7 @@ async function play() {
   const invariant = await checkInvariant({
     group: group.id,
     targets: seats.targets,
-    members: spec.devices.filter((d) => !unlisted.includes(d)),
+    members: (act.members ?? spec.devices).filter((d) => !unlisted.includes(d)),
     conversation: group.name,
     fromEpoch,
     since,
@@ -568,7 +598,7 @@ async function play() {
     vacuousFaults: act.vacuous,
     records: act.records,
     offline: act.offline,
-    narration: settleNarration(group.id),
+    narration: [...settleNarration(group.id), ...(act.narration ?? [])],
     detail: { group: group.id, name: group.name, side: side?.id ?? null, fromEpoch, decisions: seq, faultRecords: act.records, ...act.detail, ...(unlisted.length ? { unlisted } : {}), ...(spec.note ? { note: spec.note } : {}) },
   };
 }

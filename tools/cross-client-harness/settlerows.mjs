@@ -86,7 +86,7 @@ export const SETTLE_ROWS = {
     devices: ['W1', 'W2'],
     setup: [],
     subject: 'W2',
-    what: 'the refresh a commit needs fails as TRANSPORT: no logout, the outcome kept, settled once the network answers',
+    what: 'the renewal a 401 needs fails as TRANSPORT: no logout; the request did nothing, so the stage is cleared and the gesture fails typed (#2420)',
   },
   'TOK-3': {
     devices: ['W1', 'W2'],
@@ -252,6 +252,86 @@ export function decryptsDuringHold({ shownAt, heldFrom, heldUntil }) {
       what: `W2's side-group message was shown on W1 during the hold (${shownAt ?? 'never'} in ${heldFrom ?? '?'}..${heldUntil ?? '?'})`,
       ok: !!shownAt && !!heldFrom && shownAt >= heldFrom && (!heldUntil || shownAt <= heldUntil),
     },
+  ];
+}
+
+/**
+ * THE DELIVERY CLIENT'S `[AUTH]` LINES (#2420), as it writes them about the commit POST - the ONLY
+ * request TOK-1 and TOK-2 refuse 401. Anchored on each sentence; never on the level (three are
+ * `console.log`, the rest `console.warn`), and the stamp in front is the page's.
+ *
+ * NARRATION ON THE TOK ROWS ONLY, never a global rule: a 401 on a delivery request in any other row
+ * is a token that failed for real, and stays dirt there.
+ */
+export const AUTH_LINES = {
+  renewing: /\[AUTH\] 401 on POST \/api\/mls\/commit - renewing the token and sending the same request once more$/,
+  renewedMeanwhile: /\[AUTH\] POST \/api\/mls\/commit: the token was renewed meanwhile - sent again with it$/,
+  okAfterRenewal: /\[AUTH\] 200 on POST \/api\/mls\/commit after the token renewal$/,
+  renewalFailed: /\[AUTH\] token renewal failed after a 401 on POST \/api\/mls\/commit - .+ - the request did nothing: DeliveryRenewalFailedError$/,
+  renewalAbandoned: /\[AUTH\] token renewal abandoned at the request deadline after a 401 on POST \/api\/mls\/commit - /,
+  refusedRenewedOnce: /\[AUTH\] 401 on .+ with a token already refused once renewed - not renewed again: DeliveryRefusedRenewedTokenError$/,
+  refusedRenewedAgain: /\[AUTH\] 401 again on .+ with a renewed token - DeliveryRefusedRenewedTokenError; that token is not renewed again$/,
+  accountChanged: /\[AUTH\] .+ was refused for one account and the token now names another - not sent again$/,
+  bodyNotReleased: /\[AUTH\] the 401 body of .+ could not be released: /,
+};
+
+/** The `[AUTH]` warns: none is expected on TOK-1, and on TOK-2 only `renewalFailed`. */
+const AUTH_WARNS = ['renewalFailed', 'renewalAbandoned', 'refusedRenewedOnce', 'refusedRenewedAgain', 'accountChanged', 'bodyNotReleased'];
+
+/** A page's console lines sorted by {@link AUTH_LINES}: each key, the lines it matched. */
+export function authLines(lines) {
+  const texts = (lines ?? []).map((l) => (typeof l === 'string' ? l : l.text));
+  return Object.fromEntries(Object.entries(AUTH_LINES).map(([k, re]) => [k, texts.filter((t) => re.test(t))]));
+}
+
+/** What each TOK row expects W1 to narrate - forgiven there and nowhere else. */
+export const TOK_NARRATION = {
+  'TOK-1': [AUTH_LINES.renewing, AUTH_LINES.okAfterRenewal],
+  'TOK-2': [AUTH_LINES.renewing, AUTH_LINES.renewalFailed],
+};
+
+const noWarnBut = (auth, allowed = []) => {
+  const seen = AUTH_WARNS.filter((k) => !allowed.includes(k) && auth[k].length);
+  return { what: `no other [AUTH] warn (${seen.length ? seen.join(', ') : 'none'})`, ok: seen.length === 0 };
+};
+
+/**
+ * TOK-1, POSITIVELY: ONE 401 in front of the commit, ONE renewal, the same request sent ONCE more and
+ * answered 200 - not merely "no logout", which a commit dropped in silence would also show.
+ *
+ * @param {{auth: ReturnType<typeof authLines>, fired401: number, commitPosts: number}} p
+ */
+export function renewedOnceOwn({ auth, fired401, commitPosts }) {
+  return [
+    { what: `exactly one 401 was put in front of the commit POST (${fired401})`, ok: fired401 === 1 },
+    { what: `W1 announced one renewal (${auth.renewing.length})`, ok: auth.renewing.length === 1 },
+    { what: `the same request went out once more: two commit POSTs in all (${commitPosts})`, ok: commitPosts === 2 },
+    { what: `it was answered 200 after the renewal (${auth.okAfterRenewal.length})`, ok: auth.okAfterRenewal.length === 1 },
+    noWarnBut(auth),
+  ];
+}
+
+/**
+ * TOK-2 (#2420): the renewal a 401 needs FAILS, so the request did nothing - the server answered 401,
+ * the bytes never reached the gate. The stage is CLEARED, not kept as unknown: the gesture fails
+ * typed, nothing is sent again, no "no answer to the commit" line, and a later send settles nothing
+ * (the group does not move, the subject is not added). Only a renewal ABANDONED at the request
+ * deadline still keeps the stage, and that is not this row.
+ *
+ * @param {{auth: ReturnType<typeof authLines>, fired401: number, commitPosts: number, gestureFailed: boolean,
+ *   unknownLines: number, epochBefore: number, epochAfter: number, accepts: number, subjectAdded: boolean}} p
+ */
+export function renewalFailedOwn({ auth, fired401, commitPosts, gestureFailed, unknownLines, epochBefore, epochAfter, accepts, subjectAdded }) {
+  return [
+    { what: `exactly one 401 was put in front of the commit POST (${fired401})`, ok: fired401 === 1 },
+    { what: `W1 announced one renewal (${auth.renewing.length})`, ok: auth.renewing.length === 1 },
+    { what: `the renewal failed, typed, once (${auth.renewalFailed.length} DeliveryRenewalFailedError)`, ok: auth.renewalFailed.length === 1 },
+    { what: `the commit was not sent again (${commitPosts} commit POST(s))`, ok: commitPosts === 1 },
+    { what: `the gesture failed (${gestureFailed ? 'it did' : 'it reported success'})`, ok: gestureFailed },
+    { what: `the stage was not kept as unknown (${unknownLines} no-answer / kept line(s))`, ok: unknownLines === 0 },
+    { what: `a later send settled nothing: epoch ${epochBefore} -> ${epochAfter}, ${accepts} ACCEPT(s)`, ok: epochAfter === epochBefore && accepts === 0 },
+    { what: `the subject was not added (${subjectAdded ? 'on the roster' : 'absent'})`, ok: !subjectAdded },
+    noWarnBut(auth, ['renewalFailed']),
   ];
 }
 
