@@ -36,6 +36,7 @@ import {
   type JoinDeclineOutcome,
   type GroupUserMemberRow,
   type PendingInvitationRow,
+  WelcomeTargetNotMemberError,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import {
@@ -4947,6 +4948,7 @@ export abstract class BaseMlsService implements IMlsService {
   private async deliverOwedWelcomes(groupId?: string): Promise<void> {
     const owed = (await this.owedWelcomes()).filter((w) => !groupId || w.groupId === groupId);
     let cleared = 0;
+    let dropped = 0;
     for (const w of owed) {
       const short = w.groupId.slice(0, 8);
       for (const recipient of w.recipients) {
@@ -4973,6 +4975,21 @@ export abstract class BaseMlsService implements IMlsService {
             `[COMMIT] ${short}... Welcome of the settled Add delivered to ${device.deviceId}`
           );
         } catch (e) {
+          // A REFUSAL THAT CANNOT CHANGE IS NOT OWED AGAIN. The server enrols an Add's people with
+          // the commit it accepts, so a target the roster still does not name will not be named by
+          // resending these bytes - and resending them at every connection was the defect.
+          // Dropped from the state, said at the level that accuses: an accepted Add whose person is
+          // off the roster is the visible end of something upstream (`WelcomeTargetNotMemberError`).
+          if (e instanceof WelcomeTargetNotMemberError) {
+            await this.welcomeDelivered(w.groupId, recipient);
+            dropped += 1;
+            console.error(
+              `[COMMIT] ${short}... Welcome of the settled Add REFUSED for ${device.deviceId}: the ` +
+                `roster does not name ${device.userId.slice(0, 8)} - terminal, no longer owed; the ` +
+                'leaf it admitted has no seat and the stray sweep collects it'
+            );
+            continue;
+          }
           console.error(
             `[COMMIT] ${short}... Welcome of the settled Add NOT delivered to ${device.deviceId} - ` +
               `still owed, sent again at the next settlement: ${String(e).slice(0, 120)}`
@@ -4980,7 +4997,7 @@ export abstract class BaseMlsService implements IMlsService {
         }
       }
     }
-    if (cleared > 0) scheduleOutboundMlsPersist();
+    if (cleared > 0 || dropped > 0) scheduleOutboundMlsPersist();
   }
 
   /**

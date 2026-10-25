@@ -51,6 +51,9 @@ export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   // A key-group commit whose seat claim an unrelated eviction overtook is a typed
   // `CommitRefusedError('seat_claim_overtaken')`, and the committer retries it at once.
   'SEAT_CLAIM_OVERTAKEN',
+  // A Welcome whose target the roster does not name is a typed `WelcomeTargetNotMemberError`, and
+  // the settlement that sent it stops owing it; no screen words it.
+  'WELCOME_TARGET_NOT_MEMBER',
 ];
 
 /** Every code {@link describeRefusalCode} words. */

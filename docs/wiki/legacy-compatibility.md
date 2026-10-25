@@ -236,6 +236,22 @@ and `displayName.ts` warned, backed off 120 s and asked again.
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
 
+### No date yet - `registerMember` after an accepted Add, for a server older than 2026-10-25
+
+**Sites:** every Add path that calls `registerMember` for the people it added once the commit
+returned - `processBulkAddition` and `performDirectAdd` in `frontend/src/lib/utils/chat/groupCreation.ts`,
+the pending-invitation and `welcome_request` Adds in `frontend/src/lib/utils/chat/actions.ts`.
+**Shim (2026-10-25):** the commit gate enrols the people an Add admits IN THE TRANSACTION THAT
+ACCEPTS IT (`enrolAdmittedPeople`, [mls-protocol](protocols/mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25)),
+so the call after the accept is a no-op against a current server. It stays for a store build live
+before production deploys, whose server does not enrol: dropping it there would lose the enrolment
+of every Add, not only of the settled ones.
+**Removal condition:** every estate's chat-delivery-service enrols with the commit (dev and
+production both deployed past the 2026-10-25 change, no rollback below it planned); then the
+post-accept `registerMember` calls go. A server version, not a client floor. The CREATOR's own
+`registerMember` before `createGroup` is not this shim - it puts the creator on the roster before the
+group exists, and stays.
+
 ### No date yet - an OIDC callback with no PKCE verifier
 
 **Site:** `oidcCallback` in `apps/core-service/src/auth/auth.controller.ts`, the branch that logs

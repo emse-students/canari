@@ -33,7 +33,7 @@ import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { MlsCheckpointNotWrittenError, MlsStateWriteRefusedError } from '$lib/utils/hex';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { TransportFailureError, isTransportFailure } from '$lib/utils/transportFailure';
-import { MlsDeliveryApi } from '$lib/mls-client/mlsDeliveryApi';
+import { MlsDeliveryApi, WelcomeTargetNotMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
 import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
 
@@ -700,6 +700,27 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     error.mockRestore();
     await c.settleUnresolvedCommits();
     expect(c.sendWelcome).toHaveBeenCalledTimes(2);
+    expect(c.owed.size).toBe(0);
+  });
+
+  it('stops owing a Welcome the server refuses WELCOME_TARGET_NOT_MEMBER - never re-sent at the next settlement', async () => {
+    // The DUP/OFF rows of 2026-10-25: the refused Welcome went again at every connection, for ever.
+    const c = ctx(submitting({ accepted: true, duplicate: true }), {
+      state: kept({ excludeDeviceIds: ['u-b:d-b1', 'u-b:d-b2'] }, { welcome: new Uint8Array([3]) }),
+    });
+    c.sendWelcome
+      .mockRejectedValueOnce(new WelcomeTargetNotMemberError(G, 'u-b', 'd-b1'))
+      .mockRejectedValueOnce(lost());
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await c.settleUnresolvedCommits();
+    // The terminal refusal is cleared; the transport failure beside it stays owed.
+    expect(c.owed.get(G)?.recipients).toEqual(['u-b:d-b2']);
+    expect(
+      error.mock.calls.some(([line]) => String(line).includes('terminal, no longer owed'))
+    ).toBe(true);
+    error.mockRestore();
+    await c.settleUnresolvedCommits();
+    expect(c.sendWelcome.mock.calls.map((call) => call[3])).toEqual(['d-b1', 'd-b2', 'd-b2']);
     expect(c.owed.size).toBe(0);
   });
 

@@ -61,6 +61,7 @@ import {
   awaitingAdmissionRefusal,
   callerSeatStandings,
   endDeviceMemberships,
+  ensureGroupMember,
   refuseAwaitingSeat,
   exclusionWindows,
   openMissingIntervals,
@@ -70,6 +71,7 @@ import {
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import { isBlockedBetween } from '../utils/user-blocks';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
   type PayloadGroupFacts,
@@ -2514,6 +2516,12 @@ export class MessagingService {
                 { admittedAtEpoch: baseEpoch + 1, kickedAt: null }
               );
           }
+          // THE PEOPLE THIS COMMIT ADMITS ARE ENROLLED WITH THE ADVANCE ({@link enrolAdmittedPeople}),
+          // so an accepted Add and its roster row commit together or not at all - whichever request
+          // of the commit lands, and a resubmission answered `duplicate` finds both.
+          if (!distributionScopeOf(group)) {
+            await this.enrolAdmittedPeople(m, groupId, committer, admitted, traceId);
+          }
           // THE ADMISSION A LINK'S SEAT WAITED FOR (`GroupMember.awaitingAdmission`): this commit
           // is a member's Add - the gate above refuses every commit from a seat still awaiting one -
           // and it admits a device of the person, declared (`admits`) or as the target of the
@@ -3589,6 +3597,77 @@ export class MessagingService {
   }
 
   /**
+   * ENROLS, in the advance's transaction `m`, every person a conversation commit admits a device of
+   * and the roster does not name yet - the `dm_group_members` row `POST mls/groups/:id/members`
+   * writes, through the same {@link ensureGroupMember}.
+   *
+   * WHY HERE AND NOT IN A LATER CLIENT CALL (2026-10-25, the DUP/OFF rows of the 1.4.1 campaign).
+   * The enrolment used to be the committer's `registerMember`, made after it READ the accept. An Add
+   * whose answer was lost - settled later by a resubmission answered `duplicate`, or held offline and
+   * sent from the outbox on return - is merged by `mergeSettled`, which sends the Welcome and never
+   * enrols: the invitee held a leaf, every Welcome was refused `welcome_target_not_member`, it
+   * retired itself, and the inviter's stray sweep removed the leaf. Written here, the roster row is
+   * part of the accepted commit: a duplicate answer finds it already there, and no path to the gate
+   * can skip it.
+   *
+   * THE SAME BAR AS THE ROUTE, nothing wider. The committer must hold an admitted seat (the route's
+   * `assertCallerMayMutateMembership`; the gate already refuses a seat awaiting admission); a person
+   * a block stands between and the committer is not enrolled - logged, the leaf then has no seat and
+   * the stray sweep collects it, exactly as when the route refused. A person already on the roster
+   * is left as they are (an awaiting seat is lifted by {@link liftAwaitingAdmission}). A key group has
+   * no roster here and never reaches this.
+   *
+   * IDEMPOTENT BY CONSTRUCTION: it runs once per accepted commit, inside the transaction that writes
+   * its log row, and `ensureGroupMember` ignores a row that exists - so a client that still calls the
+   * route afterwards (every client up to 1.4.1 does) changes nothing.
+   */
+  private async enrolAdmittedPeople(
+    m: EntityManager,
+    groupId: string,
+    committer: string,
+    admitted: ReadonlyArray<{ userId: string; deviceId: string }>,
+    traceId: string
+  ): Promise<void> {
+    const people = [...new Set(admitted.map((a) => a.userId))].filter((u) => u !== committer);
+    if (people.length === 0) return;
+    const seats = m.getRepository(GroupMember);
+    const committerSeat = await seats.findOne({
+      where: { groupId, userId: committer, ...ADMITTED_SEAT },
+      select: { id: true },
+    });
+    if (!committerSeat) {
+      this.logger.warn(
+        `[ADD_MEMBER][${traceId}] NOT_ENROLLED group=${groupId} users=${people.length} ` +
+          `reason=committer_not_on_roster committer=${cutUserId(committer)} - the admitted leaves have no seat`
+      );
+      return;
+    }
+    const enrolled = new Set(
+      (
+        await seats.find({
+          where: { groupId, userId: In(people) },
+          select: { userId: true },
+        })
+      ).map((s) => s.userId)
+    );
+    for (const userId of people) {
+      if (enrolled.has(userId)) continue;
+      if (await isBlockedBetween(m, committer, userId)) {
+        this.logger.log(
+          `[ADD_MEMBER][${traceId}] NOT_ENROLLED group=${groupId} user=${cutUserId(userId)} ` +
+            `reason=blocked committer=${cutUserId(committer)}`
+        );
+        continue;
+      }
+      await ensureGroupMember(m, groupId, userId);
+      this.logger.log(
+        `[ADD_MEMBER][${traceId}] ENROLLED by commit group=${groupId} user=${cutUserId(userId)} ` +
+          `committer=${cutUserId(committer)}`
+      );
+    }
+  }
+
+  /**
    * LIFTS `awaitingAdmission` FOR `userIds` in `groupId`, in the transaction `m` that stores what
    * admits them - the ONE writer of that lift. Two doors reach it, both behind a member:
    *
@@ -3753,8 +3832,8 @@ export class MessagingService {
    *
    * The device must be registered (its KeyPackage row; the user narrows the lookup when given, so
    * two accounts sharing a raw device id stay apart). THE TARGET OF A CONVERSATION'S WELCOME IS ON
-   * ITS ROSTER: every client path registers the member (`registerMember`) before it delivers the
-   * Welcome, so this refuses only a device whose owner the group does not name - the row a Welcome
+   * ITS ROSTER: the accepted Add enrolled its person ({@link enrolAdmittedPeople}) before any Welcome
+   * of it can be sent, so this refuses only a device whose owner the group does not name - the row a Welcome
    * writes would otherwise make it a device of the group. A key-distribution group has no user
    * roster here, so its target is asked of social-service, exactly as its external joins are
    * (WP-KEYGROUP-JOIN-GATE); a grant is written there before the granting device Welcomes anyone.
@@ -4023,10 +4102,13 @@ export class MessagingService {
           `Device ${targetDeviceId} (user: ${targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`
         );
       }
-      throw new ForbiddenException({
-        error: 'welcome_target_not_member',
-        message: 'this Welcome is not accepted',
-      });
+      // `code` is what a client types the refusal by (`WelcomeTargetNotMemberError`); `error` and the
+      // message stay for the clients that predate it.
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.WELCOME_TARGET_NOT_MEMBER, 'this Welcome is not accepted', {
+          error: 'welcome_target_not_member',
+        })
+      );
     }
     const deviceInfo = target;
 

@@ -48,6 +48,12 @@ export const RefusalCode = {
    * commit and submit it again now.
    */
   SEAT_CLAIM_OVERTAKEN: 'SEAT_CLAIM_OVERTAKEN',
+  /**
+   * 403 - a Welcome addressed to a person the conversation's roster does not name (`POST mls/welcome`).
+   * Terminal for that Welcome: re-sending it changes nothing, and the Add that could make its target
+   * a member is a new commit with a Welcome of its own.
+   */
+  WELCOME_TARGET_NOT_MEMBER: 'WELCOME_TARGET_NOT_MEMBER',
 } as const;
 
 /** A stable refusal code of this service. */

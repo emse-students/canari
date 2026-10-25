@@ -36,7 +36,16 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   // The group row read under lock before a carried Welcome is written: live unless a test says not.
   const txGroupFind = jest.fn();
   // `update`: the link seat a commit's admits answer (`awaitingAdmission`), lifted in the advance.
-  const txSeatRepo = { findOne: jest.fn(), update: jest.fn().mockResolvedValue({ affected: 0 }) };
+  const txSeatRepo = {
+    findOne: jest.fn(),
+    update: jest.fn().mockResolvedValue({ affected: 0 }),
+    // The roster read of the people a commit admits (`enrolAdmittedPeople`): everyone asked about is
+    // already enrolled here, so no seat is written. The enrolment itself is judged against a real
+    // database (`add-enrolment.integration.spec.ts`).
+    find: jest.fn(async ({ where }: { where: { userId: { value: string[] } } }) =>
+      where.userId.value.map((userId) => ({ userId }))
+    ),
+  };
   const txQueuedRepo = {
     create: jest.fn((row: Record<string, unknown>) => ({ ...row })),
     save: jest.fn(async (row: Record<string, unknown>) => ({ ...row, id: 'queued-welcome-1' })),
