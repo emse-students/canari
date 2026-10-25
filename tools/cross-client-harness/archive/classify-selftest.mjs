@@ -55,6 +55,7 @@ const CASES = [
   // [level, line, expected bucket]
   ['log', '[14:24:25] [OUTBOX] 1 entry still queued', 'notable'],
   ['log', '[14:24:25] [OUTBOX] 12 entries still queued', 'notable'],
+  ['log', '[14:24:25] [OUTBOX] ef8eca5e… skipped, backing off for 4452ms (attempt 2)', 'notable'],
   // The two withdrawal branches, pinned TOGETHER because the risk in classifying them is that one
   // rule swallows both: they share a prefix, an id and the word "withdrawn", and they mean opposite
   // things about what the peers hold. Landed in `unexplained` on MUT-19's first green run.

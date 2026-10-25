@@ -977,6 +977,10 @@ const NOTABLE = [
   // expected - so it is reported and does not break `clean`. It must never be filed as routine: an
   // outbox that stays non-empty is exactly how a message is lost without anything else complaining.
   /^\[OUTBOX\] \d+ entr(y|ies) still queued/,
+  // AN ENTRY WAITING OUT ITS BACKOFF after a failed attempt (`outbox.ts`): the sibling of the
+  // `transient failure` before it, and the same claim - an entry that did not leave. Reported, never
+  // routine, for the reason above. Met on DUP-5's alpha.4 run, an Add's unknown outcome holding a send.
+  /^\[OUTBOX\] [0-9a-f]{8}… skipped, backing off for -?\d+ms \(attempt \d+\)$/,
   // THE DELETE THAT ARRIVED ONE INSTANT TOO LATE - the sibling of the `BENIGN` withdrawal line. The
   // entry was already in flight, so the peers will have the text and the delete has to travel as a
   // `delete_message` event instead. NOTABLE rather than benign because it is the race MUT-19 exists
