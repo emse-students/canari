@@ -142,6 +142,37 @@ export async function throttleUpload(cx, bytesPerSecond) {
 }
 
 /**
+ * A SLOW LINK IN BOTH DIRECTIONS - latency added to every request and both throughputs capped
+ * (NET-1: 800 ms, 50 kB/s). Not a cut and not `throttleUpload`: the app enters no offline path, and
+ * the peer's reaction is slowed too, which is the condition under test rather than noise in it.
+ *
+ * WHAT IT CANNOT DO: lose packets. `emulateNetworkConditions` has no loss rate, so a "lossy" link is
+ * measured as a slow one, and a row using this says so.
+ *
+ * @param {{latencyMs: number, downBytesPerSecond: number, upBytesPerSecond: number}} link
+ */
+export async function degrade(cx, { latencyMs, downBytesPerSecond, upBytesPerSecond }) {
+  for (const [k, v] of Object.entries({ latencyMs, downBytesPerSecond, upBytesPerSecond })) {
+    if (!(Number.isFinite(v) && v > 0)) throw new Error(`degrade: ${k} must be a positive number, not ${v}`);
+  }
+  await cx.send('Network.enable');
+  await cx.send('Network.emulateNetworkConditions', {
+    offline: false,
+    latency: latencyMs,
+    downloadThroughput: downBytesPerSecond,
+    uploadThroughput: upBytesPerSecond,
+  });
+  return {
+    latencyMs,
+    downBytesPerSecond,
+    upBytesPerSecond,
+    restore: async () => {
+      await cx.send('Network.emulateNetworkConditions', ONLINE);
+    },
+  };
+}
+
+/**
  * THE PATCH THAT MAKES A REAL DISCONNECTION POSSIBLE FROM A BROWSER.
  *
  * `emulateNetworkConditions` fails every NEW request and leaves an ESTABLISHED WebSocket completely

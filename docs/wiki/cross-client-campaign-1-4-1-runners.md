@@ -44,7 +44,7 @@ is one table plus one action per shape. Each holds its pure judgements in `<name
 | `archive/floor.mjs` | FLOOR-1..3 | plain sends and one bulk Add | built ([#2393](https://github.com/emse-students/canari/pull/2393)) |
 | `archive/race.mjs` | CC-1..5, RM-1, RM-2, RM-7 | two (or four) actions held by `fault.mjs` `hold` and released together | CC-1..4 built as `archive/cc.mjs` ([#2395](https://github.com/emse-students/canari/pull/2395)); RM owed |
 | `archive/settle.mjs` | DUP-1..6, OFF-1, OFF-2, TOK-1..3 | a commit whose ANSWER is lost, refused or late; the settlement | built ([#2396](https://github.com/emse-students/canari/pull/2396)); DUP-3 records `SKIPPED`; DUP-7 moved to `devrows.mjs` (a new device) |
-| `archive/offline.mjs` | OFF-3..5, NET-1..3, RM-8 | a seat without network, or a degraded one, for a duration | owed |
+| `archive/offline.mjs` | OFF-3..5, NET-1..3, RM-8 | a seat without network, or a degraded one, for a duration | built (draft PR); OFF-4 `BLOCKED-ON-ACCOUNT` |
 | `archive/gap.mjs` | GAP-1..3 | frames reordered, replayed or flooded against a frozen member | built ([#2397](https://github.com/emse-students/canari/pull/2397)); GAP-4 records `SKIPPED` |
 | `archive/kill.mjs` | KILL-1..5, RM-3 | a process killed at a point of the commit | owed |
 | `archive/admit.mjs` | ADM-1..8 | a group link, an ask, Add or Decline, and the waiting seat's probes | owed |
@@ -93,9 +93,9 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | --- | --- | --- | --- | --- | --- | --- |
 | OFF-1 | `hold` the POST, `cut()`, release on reconnect | `fault.mjs`, `net.mjs` `cut` | - | no | U | 20 min |
 | OFF-2 | `lose-answer` + `cutHard()`; the reconnect answers `duplicate` | `fault.mjs`, `net.mjs` | - | no | U | 20 min |
-| OFF-3 | W1 `cutHard()` while W2 and W4 move three epochs; on return the stage is refused, cleared, re-issued | `net.mjs`, `addMembers` | the invariant run with `expectStage` false AFTER the return | no | U | 30 min |
+| OFF-3 | W1's Add of W5 `hold`, then `cutHard()` and the held request failed; W2 Adds W4 and refreshes its leaf twice; on return the stage is refused, cleared, re-issued | `fault.mjs`, `net.mjs`, `addMembers`, `armLeafRefresh` | - | no | U | 30 min |
 | OFF-4 | **BLOCKED-ON-ACCOUNT**. W2 `cutHard()` across ten commits and a hundred messages | `net.mjs` | ten commits need ten membership changes: Add/Remove of the fifth account in a loop | fifth account | U | 20 min |
-| OFF-5 | A1 loses both radios mid-Add (`svc wifi/data disable`) | `phone.mjs` radio control | timing the cut on A1's stage line (logcat) | no | B | 30 min |
+| OFF-5 | A1's Add `hold-answer`, then both radios off (`svc wifi/data disable`, the USB reverse on local), the answer failed; radios on; settled with the app never reopened | `fault.mjs`, `phone.mjs` `sh`, `a1apk.mjs` `estateReverse` | - | no | B | 30 min |
 
 ### GAP (`gap.mjs`)
 
@@ -117,7 +117,7 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | RM-5 | a kick races an invitation into a private salon, x5 | as RM-4 | - | no | U | 30 min |
 | RM-6 | a `channel.manage`-only member makes a salon private leaving out an admin | `comm.mjs` | a role holding only `channel.manage` | no | U | 15 min |
 | RM-7 | the actor's demotion races their removal of someone | `fault.mjs` | the demotion gesture | no | U | 20 min |
-| RM-8 | leave a group while `cut()` | `net.mjs` | extracted `leaveGroup` | no | U | 15 min |
+| RM-8 | leave a group while `cut()`; the server and W2 must agree, whichever way it went | `net.mjs`, `leaveGroup` | - | no | U | 15 min |
 
 ### KILL (`kill.mjs`)
 
@@ -162,9 +162,9 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
 | TOK-1 | `status 401 once` on the commit POST; refresh then the SAME bytes | `fault.mjs` | - | no | U | 20 min |
 | TOK-2 | `lose-answer` on `/api/auth/refresh` during a commit | `fault.mjs` | - | no | U | 20 min |
 | TOK-3 | wait 61 min with the socket open, then a commit and a reconnect | - | nothing but the clock; unattended | no | U | 75 min |
-| NET-1 | 800 ms, 50 kB/s during a four-device Add | `net.mjs` `throttleUpload` (upload only) | a full `emulateNetworkConditions` helper (latency + both directions) | no | U | 20 min |
-| NET-2 | `cutHard()` every 10 s for five minutes while commits and messages flow | `net.mjs` | the flap loop | no | U | 20 min |
-| NET-3 | every `/api/*` answered `200 text/html` | `fault.mjs` `status 200` with a string `body` (since #2396) | - | no | U | 20 min |
+| NET-1 | 800 ms, 50 kB/s each way during a bulk Add of three | `net.mjs` `degrade` | loss is not emulated (CDP has no loss rate) | no | U | 20 min |
+| NET-2 | W2 `cutHard()` on every other 5 s tick for five minutes; W1 sends each tick, refreshes its leaf every 18 | `net.mjs`, `armLeafRefresh` | - | no | U | 20 min |
+| NET-3 | every `/api/*` answered `200 text/html` for 20 s, from the Add's submission (`addMembers` `beforeSubmit`) | `fault.mjs` `status-unsent 200` with `body` and `contentType` | - | no | U | 20 min |
 
 ## 4. What cannot be automated, and how it is recorded instead
 
@@ -212,7 +212,7 @@ Measured against the FLOOR runner (one session including the kernel), the rest i
 | --- | --- | --- |
 | `race.mjs` | `removeMember`/`leaveGroup` extracted, `armLeafRefresh` | 1 session |
 | `settle.mjs` | fault forgiveness inside `checkInvariant` | 1 session |
-| `offline.mjs` | `emulateNetworkConditions` helper, flap loop | 0.5 session |
+| `offline.mjs` | `degrade` (latency + both throughputs), the flap loop - built | done |
 | `gap.mjs` | response-rewrite fault mode, freeze atom | 1 session |
 | `kill.mjs` | `Target.close` timed on a line, recents swipe, line-triggered `am kill` | 1 session |
 | `admit.mjs` | link, ask, Add/Decline gestures; route table | 1 session |

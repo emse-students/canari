@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-98 scripts.
+99 scripts.
 
 | script | what it is |
 |---|---|
@@ -79,6 +79,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `navstack.mjs` | What the BACK button has left to go back to - the one reading a screenshot cannot give. |
 | `newgroup.mjs` | Creates a group conversation, and reports the surface that adds a member to it. |
 | `notif-bodies.mjs` | The exact bodies the native push code renders when it could NOT decrypt - one list for BOTH phones. |
+| `offlinerows.mjs` | THE OFFLINE AND DEGRADED-LINK ROWS OF THE 1.4.1 CAMPAIGN - OFF-3, OFF-5, NET-1..3, RM-8 - their |
 | `overlay-probe.mjs` | THE ONE EXPRESSION THAT ANSWERS "what is covering the screen right now" - page source, kept PURE. |
 | `ownedpaths.mjs` | THE SET OF PATHS THE APPLICATION OWNS, READ FROM THE TREE, AND THE 404 RULE THAT FOLLOWS FROM IT. |
 | `phone-any.mjs` | THE PHONE A ROW DRIVES, CHOSEN BY `CANARI_PHONE` - `phone.mjs` (Android, the default) or |
@@ -136,7 +137,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-84 scripts.
+85 scripts.
 
 | script | what it is |
 |---|---|
@@ -211,6 +212,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/notif20.mjs` | NOTIF-20 - the seed travels with the message: a dead phone draws a salon message in clear on the |
 | `archive/notif21.mjs` | NOTIF-21 - whoever admits a newcomer Welcomes them: a phone invited to a community while it is |
 | `archive/notif7.mjs` | NOTIF-7 - tapping a notification deep-links into the RIGHT conversation. Run TWICE. |
+| `archive/offline.mjs` | THE OFFLINE AND DEGRADED-LINK ROWS OF THE 1.4.1 CAMPAIGN - a seat without a working link, for a while. |
 | `archive/pinrows.mjs` | PIN - the encryption gate, one row per invocation. |
 | `archive/read.mjs` | READ-1..10 - MLS read receipts: the sidebar unread badge, and the sender's own |
 | `archive/reel.mjs` | REEL-1 and REEL-2 on the phone: the camera tab opens a live PORTRAIT preview from a real swipe |
@@ -229,7 +231,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-52 scripts.
+53 scripts.
 
 | script | what it is |
 |---|---|
@@ -263,6 +265,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
 | `archive/lucide-selftest.mjs` | EVERY `.lucide-*` CLASS THIS RIG AIMS AT MUST BE ONE THE APPLICATION ACTUALLY RENDERS. |
 | `archive/names-selftest.mjs` | Pins `namesderive.mjs`: the counterpart helper answers for the pair and THROWS for anyone else. |
+| `archive/offline-selftest.mjs` | THE OFFLINE AND DEGRADED-LINK ROWS' OWN JUDGEMENTS, PINNED (`offlinerows.mjs`), AND THE TWO RIG |
 | `archive/origin-selftest.mjs` | NO CHECK MAY SPELL THE APPLICATION'S ORIGIN. `SITE` IS WHERE THE ESTATE IS NAMED. |
 | `archive/ownedpaths-selftest.mjs` | Pins `ownedpaths.mjs`: a 404 outside the application's route/static set is a scanner's guess, a 404 |
 | `archive/phone-ios-selftest.mjs` | THE iPHONE ADAPTER KEEPS THE ANDROID PHONE'S CONTRACT - pinned with no phone, no WDA and no names.mjs. |
@@ -339,4 +342,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-278 scripts in total.
+281 scripts in total.

@@ -179,9 +179,11 @@ export async function addMember(cx, who, { openSettings = true, openPickerFirst 
  *
  * @param cx a connected client, with the group open
  * @param {string[]} names display names as the picker renders them, at least one
+ * @param {{openSettings?: boolean, beforeSubmit?: () => Promise<void>}} [options] `beforeSubmit` runs
+ *   after every pick took and before the invite is pressed
  * @returns {Promise<string[]>} the option texts that were picked, in order
  */
-export async function addMembers(cx, names, { openSettings = true } = {}) {
+export async function addMembers(cx, names, { openSettings = true, beforeSubmit = null } = {}) {
   if (!names.length) throw new Error('addMembers: nobody to add');
   if (openSettings) await openGroupSettings(cx);
   await openPicker(cx);
@@ -205,6 +207,9 @@ export async function addMembers(cx, names, { openSettings = true } = {}) {
   ).catch(() => {
     throw new Error(`addMembers: the invite button never read (${names.length}) - a pick did not take`);
   });
+  // A FAULT THAT MUST HIT THE COMMIT AND NOT THE PICKER'S SEARCH is armed here (NET-3's portal would
+  // otherwise answer the user search and the Add would never be made).
+  if (beforeSubmit) await beforeSubmit();
   await submitInvite(cx);
   return picked;
 }
