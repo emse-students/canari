@@ -52,7 +52,7 @@ ok('DUP-6 has a side group for the decrypts', SETTLE_ROWS['DUP-6'].side === true
 ok('every cut row is a row that needs the gateway back', ['DUP-5', 'OFF-1', 'OFF-2', 'TOK-3'].every((k) => SETTLE_ROWS[k].cut) && !SETTLE_ROWS['DUP-1'].cut);
 ok('TOK-3 waits past the 1 h access token', SETTLE_ROWS['TOK-3'].waitMinutes > 60);
 ok('DUP-3 is absent and its SKIPPED reason names Q2', !SETTLE_ROWS['DUP-3'] && /Q2/.test(DUP3_SKIP));
-ok('DUP-7 is absent and says where it is played', !SETTLE_ROWS['DUP-7'] && /new device|NEW device/i.test(DUP7_ELSEWHERE));
+ok('DUP-7 is absent and says where it is played', !SETTLE_ROWS['DUP-7'] && /device runner/.test(DUP7_ELSEWHERE));
 ok("the 409 body carries the code the client types by", SEAT_CLAIM_OVERTAKEN_BODY.code === 'SEAT_CLAIM_OVERTAKEN');
 
 // ── the gate's decisions, in order ──────────────────────────────────────────────────────────────

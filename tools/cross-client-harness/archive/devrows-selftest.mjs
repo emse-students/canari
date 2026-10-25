@@ -160,6 +160,7 @@ ok('DUP-7: no reload fails', failing(welcomeAcrossReloadOwn({ ...reload, reloade
 ok('DUP-7: joined twice fails', failing(welcomeAcrossReloadOwn({ ...reload, welcome: { ...once, joined: 2 } })) === 1);
 ok('DUP-7: never joined fails', failing(welcomeAcrossReloadOwn({ ...reload, welcome: { ...once, joined: 0 }, listed: false })) === 2);
 ok('DUP-7: a second copy processed as a join fails', failing(welcomeAcrossReloadOwn({ ...reload, welcome: { ...once, failed: ['GroupAlreadyExists'] } })) === 1);
+ok('DUP-7: an Add that really happens - W4 is invited in the row, never set up, and nothing is minted', DEV_ROWS['DUP-7'].mint.length === 0 && DEV_ROWS['DUP-7'].addedInRow.includes('W4') && DEV_ROWS['DUP-7'].devices.includes('W4'));
 ok('DUP-7: W1 never committed (rule #0 vacuous) is a premise, not a verdict', addAcrossReloadPremise({ vacuous: [0, 1] }).length === 1);
 ok('DUP-7: CONTROL - a held Welcome that never came is NOT a premise once W1 committed', addAcrossReloadPremise({ vacuous: [1] }).length === 0);
 ok('DUP-7: both rules fired, no premise', addAcrossReloadPremise({ vacuous: [] }).length === 0);

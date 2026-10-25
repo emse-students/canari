@@ -56,10 +56,15 @@ export const DEV_ROWS = {
       "A1 is SWIPED away (killed, not force-stopped: a force-stopped app receives no push), then W1's and W2's tabs are closed, so A1 is the only member device left to answer. " +
       "`stale` moves the group once (a leaf refresh by W1) between the swipe and the closing. The lines are the backlog's own (Hardware reading owed: one background Welcome on the Mi 9T)",
   },
+  // AN ADD THAT REALLY HAPPENS (coordinator, 2026-10-25): on 1.4.1 the owner's own new device seats
+  // itself by external join, so the first design's "W1 Adds W3" never ran. A member inviting another
+  // PERSON is an Add on every build: W4 (the third account) is left out of the setup and invited by
+  // W1 inside the row, through the product's invite path.
   'DUP-7': {
-    devices: ['W1', 'W2'],
-    mint: ['W3'],
-    what: "W1's automatic Add of W3 is accepted only through a resubmission (answer lost), and W1 reloads between the merge and the Welcome send: W3 receives ONE Welcome",
+    devices: ['W1', 'W2', 'W4'],
+    mint: [],
+    addedInRow: ['W4'],
+    what: "W1 invites W4: the Add is accepted only through a resubmission (answer lost), and W1 reloads between the merge and the Welcome send: W4 receives ONE Welcome",
   },
 };
 
@@ -252,17 +257,18 @@ export function bgWelcomeOwn(variant, { phone, webview = [], server, newcomerRea
 /**
  * DUP-7'S PREMISE: W1 must have COMMITTED the Add of W3 (fault rule #0, its commit answer lost).
  *
- * Read on alpha.3 (2026-10-25): the owner's new device joined the group by its OWN external commit,
- * W1 posted no commit at all, so rule #0 never fired and neither did the held Welcome. Judged, that
- * was three failed assertions about a path that never ran - a FAIL naming a defect nobody met. A rule
- * that never fired is the row not happening, so it is a premise, named with what happened instead.
+ * Read on alpha.3 (2026-10-25), on the first design: the owner's new device joined the group by its
+ * OWN external commit, W1 posted no commit at all, so rule #0 never fired and neither did the held
+ * Welcome. Judged, that was three failed assertions about a path that never ran - a FAIL naming a
+ * defect nobody met. The row now invites another person, which is an Add on every build; this stays
+ * the first line of defence: a rule that never fired is the row not happening, so it is a premise.
  *
  * @param {{ vacuous: number[] }} p the fault rules that never fired (`fault.mjs` `disarm()`)
  * @returns {string[]} the unmet premises, `[]` when W1's Add was committed
  */
 export function addAcrossReloadPremise({ vacuous }) {
   return (vacuous ?? []).includes(0)
-    ? ["W1 never posted a commit for the group: the new device joined by its own external commit, so the lost-answer Add and the held Welcome this row measures did not happen"]
+    ? ["W1 never posted a commit for the group: its Add was never committed, so the lost-answer Add and the held Welcome this row measures did not happen"]
     : [];
 }
 

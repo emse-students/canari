@@ -103,7 +103,7 @@ export const DUP3_SKIP =
   "not played on the bench (plan Q2, settled 2026-10-24): the stall must be INSIDE the server's commit transaction, which no client-side fault reaches; unit coverage stands in";
 
 /** DUP-7 is played by the device-enrolment runner, which owns a wipeable W3 and its PIN. */
-export const DUP7_ELSEWHERE = 'DUP-7 needs a NEW device (W3, wipeable, PIN): it is played by the device runner, not here';
+export const DUP7_ELSEWHERE = 'DUP-7 is an invite of W4 with its answer lost: it is played by the device runner (devrows.mjs), not here';
 
 /** The 409 body the server's seat-claim gate answers (`ConflictException`), which the client types by its `code`. */
 export const SEAT_CLAIM_OVERTAKEN_BODY = {
