@@ -419,6 +419,12 @@ describe('ChannelSettingsPanel - the revision every access write is based on', (
 
     release();
     await settle();
+    // THE PICKER IS REOPENED ONLY ONCE ITS OUTRO HAS PLAYED OUT. Reopened mid-outro, the intro aborts
+    // the outro's animation through a path `adoptTransitionAnimations` does not cover, and happy-dom
+    // rejects a `finished` promise nothing owns - an unhandled AbortError that failed CI on a green
+    // suite (#2445). The product never waits on that promise; only the test reopened mid-outro.
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
     await pickWritePolicy(m.chat_channel_write_admins());
     expect(service.updateChannelAccess).toHaveBeenCalledTimes(2);
     expect(service.updateChannelAccess).toHaveBeenLastCalledWith(
