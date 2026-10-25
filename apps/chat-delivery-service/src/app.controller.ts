@@ -43,6 +43,7 @@ import {
 } from './utils/group-purge';
 import { MessagingService } from './services/messaging.service';
 import { expireUnansweredAsks, seatKey } from './utils/group-membership';
+import { announceExpiredAsks } from './utils/join-ask-announce';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -1253,11 +1254,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     if (stale.length === 0) return;
 
-    const { awaiting, outcomes } = await expireUnansweredAsks(
+    const { awaiting, outcomes, expired } = await expireUnansweredAsks(
       this.groupMemberRepo.manager,
       stale,
       expiry
     );
+    // Each expiry committed in its own transaction: every online member's ask goes now.
+    announceExpiredAsks(this.groupMemberRepo.manager, this.redis, expired);
     if (awaiting.size > 0) {
       this.logger.log(
         `[CRON] cleanupStalePendingInvitations: ${awaiting.size} invitation-link ask(s) awaiting a member - ${JSON.stringify(outcomes)}`

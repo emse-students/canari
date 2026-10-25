@@ -65,7 +65,6 @@ import {
   recordRefusedDevice,
   reportRefusedDeviceSkipped,
 } from '$lib/mls-client/refusedDevices';
-import { joinRequestClock } from './joinRequests.svelte';
 import { isNeverAdmitted, syncAdmissionFlags } from './admissionState';
 
 /**
@@ -77,10 +76,10 @@ export interface JoinApprovalRequest {
   requesterUserId: string;
   requesterDeviceId: string;
   /**
-   * For a LIVE raise, the settlement count when its reads began (`joinRequestClock`): an ask the
-   * server settled after that is not raised. Absent from the sweep, whose rows are the durable state.
+   * The ask's identity, the id of the seat its link wrote, as the server row or frame raising it
+   * named it (`askId`): an ask the server settled is never raised again (`joinRequests.svelte.ts`).
    */
-  seenAt?: number;
+  askId?: string;
 }
 
 /**
@@ -294,6 +293,8 @@ function askAMemberToAdmit(
 /** An ask as the server announces it to every online admitted member (`group.join_ask`). */
 export interface AnnouncedJoinAsk {
   groupId: string;
+  /** The ask's identity, the id of the seat its link wrote. */
+  askId: string;
   requesterUserId: string;
   requesterDeviceIds: string[];
 }
@@ -306,8 +307,9 @@ export interface AnnouncedJoinAsk {
  * rows and the roster are ({@link askAMemberToAdmit}'s `isAsk`). What it cannot say is whether the
  * person already holds a leaf, which is read from THIS device's tree - a person a member already
  * added is not asked about. It adds nobody: this is the human-visible ask, and only a member's Add
- * brings the person in. Idempotent by (group, person) in the store, so the elected member's
- * `welcome_request` and the sweep raising the same ask make one entry.
+ * brings the person in. One entry per (group, person) in the store, so the elected member's
+ * `welcome_request` and the sweep raising the same ask make one entry; and an ask the server already
+ * settled (`askId`) is not raised however late this lands.
  */
 export async function raiseAnnouncedJoinAsk(params: {
   mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
@@ -317,8 +319,6 @@ export async function raiseAnnouncedJoinAsk(params: {
   onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
 }): Promise<void> {
   const { mlsService, conversations, ask, log, onJoinApprovalRequested } = params;
-  // Taken before the first await: a settlement that arrives while the tree is read wins.
-  const seenAt = joinRequestClock();
   const admission = await automaticAdmission({
     mlsService,
     groupId: ask.groupId,
@@ -338,7 +338,7 @@ export async function raiseAnnouncedJoinAsk(params: {
     log(`[JOIN_ASK] the ask of ${ask.requesterUserId} names no device - nothing to raise`);
     return;
   }
-  const request = { groupId: ask.groupId, requesterUserId: ask.requesterUserId, seenAt };
+  const request = { groupId: ask.groupId, requesterUserId: ask.requesterUserId, askId: ask.askId };
   const asked = askAMemberToAdmit(
     conversations,
     { ...request, requesterDeviceId: first },
@@ -642,7 +642,12 @@ export async function processPendingInvitations(params: {
         if (admission === 'newcomer') {
           askAMemberToAdmit(
             conversations,
-            { groupId, requesterUserId: inv.userId, requesterDeviceId: inv.deviceId },
+            {
+              groupId,
+              requesterUserId: inv.userId,
+              requesterDeviceId: inv.deviceId,
+              ...(inv.askId ? { askId: inv.askId } : {}),
+            },
             inv.awaitingAdmission,
             '[PENDING]',
             log,
@@ -1440,8 +1445,6 @@ export async function handleWelcomeRequest(params: {
     onNotReady,
     onJoinApprovalRequested,
   } = params;
-  // Taken before the first await: an ask settled while this request is read is not raised by it.
-  const seenAt = joinRequestClock();
 
   // Anti-self guard: the gateway broadcasts welcome_requests to ALL devices of the user,
   // including the sender. A device must never handle its own request: it would add itself
@@ -1513,10 +1516,16 @@ export async function handleWelcomeRequest(params: {
   });
   if (admission === 'unreadable') return;
   if (admission === 'newcomer') {
+    const seat = userMembers.find((m) => m.userId === requesterUserId);
     askAMemberToAdmit(
       conversations,
-      { groupId, requesterUserId, requesterDeviceId, seenAt },
-      userMembers.find((m) => m.userId === requesterUserId)?.awaitingAdmission,
+      {
+        groupId,
+        requesterUserId,
+        requesterDeviceId,
+        ...(seat?.askId ? { askId: seat.askId } : {}),
+      },
+      seat?.awaitingAdmission,
       '[WELCOME_REQ]',
       log,
       onJoinApprovalRequested

@@ -268,6 +268,20 @@ of whose hash is the capability ([history-answer-addressing](../protocols/histor
 rule 6). The pub/sub loop forwards the row's `addressed` flag, and hands an addressed frame only to the
 local sessions that declared - every one withheld is logged at error.
 
+**A session declares a LIST (2026-10-25, `SessionCaps`).** `caps=` is comma-separated and each known
+name is recorded: `addressed-history-1`, and `join-ask-1` for a build that routes the invitation-link
+ask frames. The field value is the declared names joined by commas, or `-`; `WRITE_SESSION` refuses a
+value naming anything outside the known list. chat-delivery reads list MEMBERSHIP, never the whole
+value. A control frame naming `requiresCapability` is delivered only to the sessions holding it
+(`required_capability`, `deliverable_sessions`); an unknown name drops the frame at error.
+
+Deploy order: an OLDER gateway already split `caps=` on commas but recorded only
+`addressed-history-1`, so a new client on an old estate is addressable for history and simply receives
+no ask frame. The one window is inside a rollout where this gateway runs beside an older chat-delivery,
+whose script compares the WHOLE value: a device recorded as `addressed-history-1,join-ask-1` reads as
+unaddressable there, and a history answer to it is refused `addressed_unsupported` (answered by nobody,
+never broadcast) until chat-delivery is replaced. Both ship in the same release.
+
 ### The key is per DEVICE, the event is per CONNECTION
 
 Two tabs of one browser share a `deviceId`, so they share one presence key while holding two

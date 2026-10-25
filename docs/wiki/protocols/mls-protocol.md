@@ -1087,19 +1087,37 @@ completed sweep replaces the asks on screen.
 **Every online member sees the ask at once, and sees it go at once (2026-10-25).** A
 `welcome_request` reaches ONE elected device, so every other member used to learn of an ask only at
 their next sweep, minutes later. Now chat-delivery announces it itself: `acceptGroupInvite` sends
-`group.join_ask` (`groupId`, `requesterUserId`, `requesterDeviceIds`) to every online device of every
-ADMITTED member except the asker, and the outcome goes out the same way as
-`group.join_ask.settled` (`outcome: 'admitted' | 'declined'`) - after the transaction that lifted
-`awaitingAdmission` (either door) or the Decline that withdrew the seat commits, and only for a seat
-that call really changed, so a second Add or a late Decline announces nothing
-(`utils/join-ask-announce.ts`). The client raises the announced ask through the same gates as the
+`group.join_ask` (`groupId`, `askId`, `requesterUserId`, `requesterDeviceIds`) to every online device
+of every ADMITTED member except the asker, and the outcome goes out the same way as
+`group.join_ask.settled` (`askId`, `outcome: 'admitted' | 'declined' | 'expired' | 'withdrawn'`) -
+after the transaction that lifted `awaitingAdmission` (either door) commits, after a Decline or a
+removal by another member (`declined`), after the asker removes their own awaiting seat
+(`withdrawn`), and after `expireUnansweredAsks` deletes it (`expired`); only for a seat that call
+really changed, so a second Add or a late Decline announces nothing (`utils/join-ask-announce.ts`).
+The announcement never runs inside the commit lock and never delays the HTTP answer: it is dispatched
+after the lock is released, one Redis script per device checking presence and capability and
+publishing together.
+
+**An ask has an IDENTITY, `askId` - the id of the seat its link wrote** (`dm_group_members.id`). A
+Decline deletes the seat and a new ask writes a new one, so a person's second ask is a second
+identity. It is carried on both frames, on the pending sweep rows and on the roster rows while the
+seat awaits. The client settles BY IDENTITY and remembers every settled one for the session
+(`settledAsks`, `joinRequests.svelte.ts`): any read made before a settlement - a sweep, a roster read,
+an announcement - is not raised however late it lands, a settlement of an older identity leaves the
+person's newer ask on screen, and an Add or Decline tapped on an ask already settled runs nothing
+(an answer the server settled WHILE it ran reports nothing left, not a failure). No order of arrival
+is assumed; the earlier `joinRequestClock` (a count of settlements) assumed one and is gone.
+
+**Only a client that routes these frames receives them.** A build older than them would log every
+one as reaching no handler, so the socket declares `join-ask-1` (`caps=addressed-history-1,join-ask-1`,
+`gatewaySocketUrl`), chat-delivery publishes to a device only when every live session declared it,
+and the gateway keeps a frame naming `requiresCapability` from any session that did not
+([chat-gateway](../services/chat-gateway.md#presence), [legacy-compatibility](../legacy-compatibility.md)). The client raises the announced ask through the same gates as the
 sweep (`raiseAnnouncedJoinAsk`: a group, the member's own tree read, `automaticAdmission`), and it is
 the same entry, keyed `(group, person)`, so the sweep and the elected device's `welcome_request` do
 not duplicate it. The election stays for the mechanical answer to a member's own new device. A
 settlement removes the ask on every screen, so the member who lost an Add/Decline race sees the
-winner's outcome without a refresh. A raise that read its facts before a settlement arrived is not
-raised (`joinRequestClock`, a count of settlements, never a wall clock). An expired ask
-(`expireUnansweredAsks`) is not announced; the next sweep removes it.
+winner's outcome without a refresh.
 
 **The joiner's own row says what it is.** A joiner whose ask is unanswered holds a `pending` row for a
 conversation it was never in, which used to read "Canal E2E établi.". The server's groups list carries,

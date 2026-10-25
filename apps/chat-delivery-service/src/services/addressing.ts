@@ -18,6 +18,26 @@
 export const ADDRESSED_HISTORY_CAPABILITY = 'addressed-history-1';
 
 /**
+ * The capability a session declares when its code routes the invitation-link ask frames
+ * (`group.join_ask`, `group.join_ask.settled`). Those are published only to a device ALL of whose
+ * sessions declared it ({@link publishIfAddressable}), and carry it as `requiresCapability` so the
+ * gateway keeps them from a session that connected since without it - a client that predates them
+ * would meet a frame it routes nowhere. The same literal is in the gateway and the client.
+ */
+export const JOIN_ASK_CAPABILITY = 'join-ask-1';
+
+/** A capability the gateway records per session and chat-delivery may require of a device. */
+export type SessionCapability = typeof ADDRESSED_HISTORY_CAPABILITY | typeof JOIN_ASK_CAPABILITY;
+
+/**
+ * The presence key of ONE device - THE one spelling, read by every check of whether a device is
+ * online. The gateway writes it on connect (`apps/chat-gateway/src/addressing.rs`) and lets it expire.
+ */
+export function devicePresenceKey(userId: string, deviceId: string): string {
+  return `user:online:${userId}:${deviceId}`;
+}
+
+/**
  * The presence value written by a gateway that records every session in
  * {@link addressingSessionsKey}. An older gateway writes `true` and records nothing, and a current
  * one never overwrites that `true` - so any other value means a session whose declaration nobody
@@ -49,13 +69,20 @@ export function declaresAddressedHistory(caps: string | undefined | null): boole
  * (and the frame was published, when a channel was given), 0 otherwise. Redis runs a script alone,
  * so a session the gateway records after this ran is one the frame was already published before -
  * and the gateway's edge filter keeps it from that session anyway.
+ *
+ * A session's value is a comma-separated LIST of what it declared (or `-`), so the capability is
+ * looked for among its items, never compared with the whole value.
  */
 export const ADDRESSABLE_PUBLISH_LUA = `
 if redis.call('GET', KEYS[1]) ~= ARGV[4] then return 0 end
 local declared = redis.call('HVALS', KEYS[2])
 if #declared == 0 then return 0 end
 for _, value in ipairs(declared) do
-  if value ~= ARGV[3] then return 0 end
+  local holds = false
+  for cap in string.gmatch(value, '[^,]+') do
+    if cap == ARGV[3] then holds = true end
+  end
+  if not holds then return 0 end
 end
 if ARGV[1] ~= '' then redis.call('PUBLISH', ARGV[1], ARGV[2]) end
 return 1
@@ -67,23 +94,24 @@ export interface EvalCapable {
 }
 
 /**
- * Whether the device is addressable now and, when `publish` is given, the frame published in the
- * same atomic step. True only when the script answered 1.
+ * Whether every session of the device declared `capability` now and, when `publish` is given, the
+ * frame published in the same atomic step. True only when the script answered 1.
  */
 export async function publishIfAddressable(
   redis: EvalCapable,
   userId: string,
   deviceId: string,
-  publish?: { channel: string; payload: string }
+  publish?: { channel: string; payload: string },
+  capability: SessionCapability = ADDRESSED_HISTORY_CAPABILITY
 ): Promise<boolean> {
   const answer = await redis.eval(
     ADDRESSABLE_PUBLISH_LUA,
     2,
-    `user:online:${userId}:${deviceId}`,
+    devicePresenceKey(userId, deviceId),
     addressingSessionsKey(userId, deviceId),
     publish?.channel ?? '',
     publish?.payload ?? '',
-    ADDRESSED_HISTORY_CAPABILITY,
+    capability,
     PRESENCE_SESSIONS
   );
   return Number(answer) === 1;

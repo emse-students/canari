@@ -55,6 +55,12 @@ export type PendingInvitationRow = {
    * asked about ("X asks to join"). Absent from a server older than the field.
    */
   awaitingAdmission?: boolean;
+  /**
+   * The ask's IDENTITY, the id of the seat its link wrote, set while `awaitingAdmission` is: a
+   * member's screen settles an ask by it, so a read made before a settlement never raises the settled
+   * ask again (`joinRequests.svelte.ts`). A new ask of the same person is a new identity.
+   */
+  askId?: string | null;
 };
 
 /** One user of a group's roster (`GET mls/groups/:groupId/user-members`). */
@@ -62,6 +68,8 @@ export type GroupUserMemberRow = {
   userId: string;
   /** As {@link PendingInvitationRow.awaitingAdmission}, for the roster read. */
   awaitingAdmission?: boolean;
+  /** As {@link PendingInvitationRow.askId}. */
+  askId?: string | null;
 };
 
 export type MlsDeliveryFetch = typeof fetch;

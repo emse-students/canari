@@ -13,6 +13,7 @@ import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { mergeReadWatermark, withOwnReadAdvanced } from '$lib/utils/chat/readState';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
+import { isJoinAskOutcome } from '../joinAskFrames';
 
 /**
  * Context for handleChannelEvent: MessageHandlerDeps plus the epoch-recovery
@@ -123,31 +124,39 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const data = event.data || {};
     const groupId = String(data.groupId || '');
     const requesterUserId = String(data.requesterUserId || '');
-    if (!groupId || !requesterUserId) {
-      return unaddressable(log, event.type, groupId ? 'requesterUserId' : 'groupId');
+    const askId = String(data.askId || '');
+    if (!groupId || !requesterUserId || !askId) {
+      return unaddressable(
+        log,
+        event.type,
+        !groupId ? 'groupId' : !requesterUserId ? 'requesterUserId' : 'askId'
+      );
     }
     const requesterDeviceIds = Array.isArray(data.requesterDeviceIds)
       ? (data.requesterDeviceIds as unknown[]).filter(
           (d): d is string => typeof d === 'string' && !!d
         )
       : [];
-    onJoinAsk?.({ groupId, requesterUserId, requesterDeviceIds });
+    onJoinAsk?.({ groupId, askId, requesterUserId, requesterDeviceIds });
     return;
   }
 
-  // That ask was answered by some member: the server's outcome takes it off this screen.
+  // That ask ended - answered, withdrawn or expired: the server's outcome takes it off this screen.
   if (event.type === 'group.join_ask.settled') {
     const data = event.data || {};
     const groupId = String(data.groupId || '');
     const userId = String(data.userId || '');
-    if (!groupId || !userId) return unaddressable(log, event.type, groupId ? 'userId' : 'groupId');
-    if (data.outcome !== 'admitted' && data.outcome !== 'declined') {
+    const askId = String(data.askId || '');
+    if (!groupId || !userId || !askId) {
+      return unaddressable(log, event.type, !groupId ? 'groupId' : !userId ? 'userId' : 'askId');
+    }
+    if (!isJoinAskOutcome(data.outcome)) {
       log(
         `[ERROR] ${event.type} carries an unknown outcome "${String(data.outcome)}" - the ask stays`
       );
       return;
     }
-    onJoinAskSettled?.({ groupId, userId, outcome: data.outcome });
+    onJoinAskSettled?.({ groupId, userId, askId, outcome: data.outcome });
     return;
   }
 

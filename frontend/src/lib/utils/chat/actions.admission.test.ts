@@ -69,7 +69,7 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
         .mockResolvedValue([
           { userId: 'me' },
           { userId: 'peer' },
-          { userId: 'stranger', awaitingAdmission: true },
+          { userId: 'stranger', awaitingAdmission: true, askId: 'ask-stranger' },
         ]),
       fetchUserDevices: vi
         .fn()
@@ -125,12 +125,12 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
     await run('g-adm-approval', mlsService, 'stranger', { onJoinApprovalRequested });
 
     expect(onJoinApprovalRequested).toHaveBeenCalledTimes(1);
-    // A LIVE raise says when its reads began (`seenAt`), so an ask settled meanwhile is not raised.
+    // The ask carries its identity, the seat's id, so an ask the server settled is never raised again.
     expect(onJoinApprovalRequested).toHaveBeenCalledWith({
       groupId: 'g-adm-approval',
       requesterUserId: 'stranger',
       requesterDeviceId: 'dev-1',
-      seenAt: expect.any(Number),
+      askId: 'ask-stranger',
     });
     expect(mlsService.addMember).not.toHaveBeenCalled();
   });
@@ -434,6 +434,7 @@ describe('processPendingInvitations - a new user is never added automatically', 
 describe('raiseAnnouncedJoinAsk - every online member sees the ask live', () => {
   const announced = (groupId: string, deviceIds = ['dev-1', 'dev-2']) => ({
     groupId,
+    askId: `ask-${groupId}`,
     requesterUserId: 'stranger',
     requesterDeviceIds: deviceIds,
   });
@@ -461,7 +462,7 @@ describe('raiseAnnouncedJoinAsk - every online member sees the ask live', () => 
     await raise('g-ann', async () => ['me:self', 'peer:p1']);
 
     expect(pendingJoinRequests()).toEqual([
-      { groupId: 'g-ann', userId: 'stranger', deviceIds: ['dev-1', 'dev-2'] },
+      { groupId: 'g-ann', userId: 'stranger', deviceIds: ['dev-1', 'dev-2'], askId: 'ask-g-ann' },
     ]);
   });
 
@@ -490,7 +491,12 @@ describe('raiseAnnouncedJoinAsk - every online member sees the ask live', () => 
   it('does not put back an ask the server settled while the tree was being read', async () => {
     await raise('g-ann-race', async () => {
       // Another member declined; the settlement arrives before this read answers.
-      settleJoinRequest({ groupId: 'g-ann-race', userId: 'stranger', outcome: 'declined' });
+      settleJoinRequest({
+        groupId: 'g-ann-race',
+        userId: 'stranger',
+        askId: 'ask-g-ann-race',
+        outcome: 'declined',
+      });
       return ['me:self'];
     });
 

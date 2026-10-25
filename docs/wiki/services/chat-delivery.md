@@ -1021,16 +1021,30 @@ stranded=N` on the log when any seat is pending with all three false. Client sid
 
 `utils/join-ask-announce.ts` is the one place both frames are built. The audience is every `active`
 device row of every ADMITTED seat (`ADMITTED_SEAT`, so an awaiting seat never hears another's ask),
-minus the asker, filtered by the gateway's presence key (`devicePresenceKey`, shared with
-`messaging.service.ts`). Each goes out on the generic control path (`chat:messages`,
-`isWelcomeRequest: true`, `proto` = the JSON frame), which the gateway relays as is:
+minus the asker. Each device gets ONE Redis script (`publishIfAddressable` with `JOIN_ASK_CAPABILITY`,
+`services/addressing.ts`) that checks the presence key (`devicePresenceKey`, the one implementation,
+shared with `messaging.service.ts`) and that every live session declared `join-ask-1`, and publishes in
+the same call; all devices go concurrently. A device with a session that did not declare it - a build
+older than these frames - gets nothing, so it never logs a frame no handler took. Each frame goes out
+on the generic control path (`chat:messages`, `isWelcomeRequest: true`, `proto` = the JSON frame,
+`requiresCapability: 'join-ask-1'`), which the gateway delivers only to sessions holding it.
+
+Every frame carries `askId`, the awaiting seat's row id - the ask's identity, which the client settles
+by ([mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)); the pending sweep
+rows and the roster rows of an awaiting seat carry it too.
 
 - `group.join_ask` from `acceptGroupInvite`, after the seat is written, beside the existing
   `welcome_request` to ONE elected device (that election now only answers a member's own devices);
-- `group.join_ask.settled` with `outcome: 'declined'` from `declineJoinRequest` on `withdrawn` only,
-  and with `outcome: 'admitted'` after the transaction in which `liftAwaitingAdmission` cleared a
-  flag commits - the commit door and the Welcome door, which now return the users they lifted, so a
-  second Add announces nothing.
+- `group.join_ask.settled` with `outcome: 'declined'` from `declineJoinRequest` on `withdrawn` only
+  and from `removeGroupMember` on an awaiting seat removed by someone else; `withdrawn` when the asker
+  removes their own awaiting seat; `expired` for each seat `expireUnansweredAsks` deletes; and
+  `admitted` after the transaction in which `liftAwaitingAdmission` cleared a flag commits - the
+  commit door and the Welcome door, which return the asks they lifted, so a second Add announces
+  nothing.
+
+Announcing is fire-and-forget (`dispatch`, tracked so `joinAskAnnouncementsSettled()` can await it in
+tests): no caller awaits it, so no HTTP answer waits on Redis, and the commit door announces in its
+`finally`, after the commit lock is released.
 
 An offline member gets nothing and learns it at its next sweep (`GET mls/invitations/pending`); a
 failed publish is logged `[JOIN_ASK]` at WARN and changes no outcome. The log is

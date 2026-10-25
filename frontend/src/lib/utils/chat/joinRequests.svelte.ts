@@ -1,5 +1,6 @@
-import { SvelteMap } from 'svelte/reactivity';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import type { JoinAskOutcome } from '$lib/mls-client/joinAskFrames';
 import type { JoinApprovalRequest } from './actions';
 
 /**
@@ -21,6 +22,11 @@ export interface JoinRequest {
   userId: string;
   /** The person's devices that asked, in the order they did. */
   deviceIds: string[];
+  /**
+   * The ask's identity - the id of the seat its link wrote - when the server named it. Absent only
+   * from a server older than the field.
+   */
+  askId?: string;
 }
 
 /**
@@ -38,16 +44,12 @@ export interface JoinRequestHandlers {
 
 const requests = new SvelteMap<string, JoinRequest>();
 /**
- * How many asks the server has said were answered this session, and, per ask, the count at which it
- * was - THE ORDER BETWEEN A SETTLEMENT AND A RAISE THAT READ ITS FACTS BEFORE IT. A live raise reads
- * the roster and the tree over a few awaits; a settlement arriving in between used to be undone by the
- * raise that followed it, and the answered ask stood until the next sweep. A raise says when it began
- * ({@link joinRequestClock}, `JoinApprovalRequest.seenAt`), and one that began before the ask's
- * settlement is not raised. A raise that began after it read facts the server wrote before announcing
- * it, so it can only be a NEW ask. No clock of the wall: a count of events, in the order they arrived.
+ * THE ASKS THE SERVER SAID WERE ANSWERED THIS SESSION, BY IDENTITY (`askId`, the seat's id). An ask
+ * is settled for good: a raise naming a settled identity is a read made before the settlement - a
+ * sweep, a roster read, an announcement - however late it lands, and it is not raised. A NEW ask of
+ * the same person is a new seat, so a new identity, and is raised. No order of arrival is assumed.
  */
-let settlements = 0;
-const settledAt = new SvelteMap<string, number>();
+const settledAsks = new SvelteSet<string>();
 // Reactive, so the banner shows an ask only while something can answer it (`canAnswerJoinRequests`).
 let handlers = $state.raw<JoinRequestHandlers | null>(null);
 
@@ -55,36 +57,42 @@ function keyOf(groupId: string, userId: string): string {
   return `${groupId}|${canonicalUserId(userId)}`;
 }
 
-/** The settlement count a live raise starts at - see {@link settledAt}. */
-export function joinRequestClock(): number {
-  return settlements;
+function short(groupId: string): string {
+  return `${groupId.slice(0, 8)}...`;
 }
 
 /**
- * Records one ask; a second device of the same person joins the same entry. An ask whose raise began
- * before the server settled it (`seenAt`) is not recorded: it was answered while it was being read.
+ * Records one ask; a second device of the same person joins the same entry. An ask whose identity
+ * the server already settled is not recorded, and a newer ask of the same person replaces the entry.
  */
 export function raiseJoinRequest(ask: JoinApprovalRequest): void {
   const key = keyOf(ask.groupId, ask.requesterUserId);
-  if (ask.seenAt !== undefined && (settledAt.get(key) ?? 0) > ask.seenAt) {
+  const userId = canonicalUserId(ask.requesterUserId);
+  if (ask.askId && settledAsks.has(ask.askId)) {
     console.log(
-      `[JOIN_REQUEST] ${canonicalUserId(ask.requesterUserId)} in ${ask.groupId.slice(0, 8)}... was answered while this ask was being read - not raised`
+      `[JOIN_REQUEST] ${userId} in ${short(ask.groupId)} - ask ${ask.askId.slice(0, 8)} was already answered, not raised`
     );
     return;
   }
   const known = requests.get(key);
-  if (known) {
-    if (known.deviceIds.includes(ask.requesterDeviceId)) return;
-    requests.set(key, { ...known, deviceIds: [...known.deviceIds, ask.requesterDeviceId] });
+  const anotherAsk = !!(known && ask.askId && known.askId && known.askId !== ask.askId);
+  if (known && !anotherAsk) {
+    const deviceIds = known.deviceIds.includes(ask.requesterDeviceId)
+      ? known.deviceIds
+      : [...known.deviceIds, ask.requesterDeviceId];
+    const askId = known.askId ?? ask.askId;
+    if (deviceIds === known.deviceIds && askId === known.askId) return;
+    requests.set(key, { ...known, deviceIds, ...(askId ? { askId } : {}) });
     return;
   }
   requests.set(key, {
     groupId: ask.groupId,
-    userId: canonicalUserId(ask.requesterUserId),
+    userId,
     deviceIds: [ask.requesterDeviceId],
+    ...(ask.askId ? { askId: ask.askId } : {}),
   });
   console.log(
-    `[JOIN_REQUEST] ${canonicalUserId(ask.requesterUserId)} asks to join ${ask.groupId.slice(0, 8)}... - a member's answer is awaited`
+    `[JOIN_REQUEST] ${userId} asks to join ${short(ask.groupId)}${known ? ' again (a new ask)' : ''} - a member's answer is awaited`
   );
 }
 
@@ -102,29 +110,35 @@ export function settleSweptJoinRequests(raised: readonly JoinApprovalRequest[]):
   for (const ask of raised) raiseJoinRequest(ask);
 }
 
-/**
- * An ask answered by SOME member, as the server holds it (`group.join_ask.settled`): a member's Add
- * admitted the person, or a member's Decline withdrew the seat.
- */
+/** An ask the server says has ended (`group.join_ask.settled`), named by its identity. */
 export interface SettledJoinAsk {
   groupId: string;
   userId: string;
-  outcome: 'admitted' | 'declined';
+  askId: string;
+  outcome: JoinAskOutcome;
 }
 
 /**
- * Takes an ask off this screen because the SERVER says it was answered - by another member, or by
- * this one on another device, or by a race this member's own answer lost (two Adds, or an Add and a
- * Decline the server's seat lock ordered). The outcome is the server's, so a losing answer settles on
- * it without a refresh; the member's own answer, still in flight, then finds nothing to remove.
+ * Takes an ask off this screen because the SERVER says it ended - answered by another member, by
+ * this one on another device, by a race this member's own answer lost (two Adds, or an Add and a
+ * Decline the server's seat lock ordered), or withdrawn or expired. The identity is remembered, so no
+ * read made before this - however late it lands - raises it again. An entry holding a DIFFERENT
+ * identity is a newer ask of the same person, and stays.
  */
 export function settleJoinRequest(settled: SettledJoinAsk): void {
+  settledAsks.add(settled.askId);
   const key = keyOf(settled.groupId, settled.userId);
-  settlements += 1;
-  settledAt.set(key, settlements);
-  if (!requests.delete(key)) return;
+  const known = requests.get(key);
+  if (!known) return;
+  if (known.askId !== undefined && known.askId !== settled.askId) {
+    console.log(
+      `[JOIN_REQUEST] ${canonicalUserId(settled.userId)} in ${short(settled.groupId)} - an earlier ask ${settled.outcome}, the newer one stays`
+    );
+    return;
+  }
+  requests.delete(key);
   console.log(
-    `[JOIN_REQUEST] ${canonicalUserId(settled.userId)} ${settled.outcome} in ${settled.groupId.slice(0, 8)}... by a member - the ask leaves this screen`
+    `[JOIN_REQUEST] ${canonicalUserId(settled.userId)} ${settled.outcome} in ${short(settled.groupId)} - the ask leaves this screen`
   );
 }
 
@@ -146,18 +160,36 @@ export function setJoinRequestHandlers(next: JoinRequestHandlers | null): void {
   handlers = next;
 }
 
+/** Removes `request`'s entry only while it still is that ask - never a newer ask of the person. */
+function forget(request: JoinRequest): void {
+  const key = keyOf(request.groupId, request.userId);
+  if (requests.get(key)?.askId === request.askId) requests.delete(key);
+}
+
 /**
  * Runs a member's answer. The ask leaves only once the answer went through - the handler's
  * {@link JoinAnswerResult} says `done` - and an answer that did not happen, or threw, keeps it on
  * screen, logged with its reason, so the member can answer again. The invite flow never throws
  * (`inviteMembersToGroup` returns its outcome), so "no exception" is not "added".
  *
- * @returns whether the answer went through.
+ * AN ASK THE SERVER ALREADY SETTLED IS NOT ANSWERED: nothing runs, the entry goes, and the call
+ * reports no failure - the outcome is the server's, and the member's tap came after it. An answer
+ * that fails because the server settled the ask WHILE it ran is reported the same way.
+ *
+ * @returns whether nothing is left to answer: the answer went through, or the ask was already settled.
  */
 export async function answerJoinRequest(
   request: JoinRequest,
   answer: 'approve' | 'decline'
 ): Promise<boolean> {
+  const settledBefore = request.askId !== undefined && settledAsks.has(request.askId);
+  if (settledBefore) {
+    forget(request);
+    console.log(
+      `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} not run - the server already settled this ask`
+    );
+    return true;
+  }
   if (!handlers) {
     console.error(`[JOIN_REQUEST] no handler registered - the ${answer} of an ask was not run`);
     return false;
@@ -168,21 +200,27 @@ export async function answerJoinRequest(
   } catch (e) {
     // A handler that THROWS broke its contract (each returns its outcome): that accuses.
     console.error(
-      `[JOIN_REQUEST] ${answer} of ${request.userId} in ${request.groupId.slice(0, 8)}... threw, the ask stays: ${String(e)}`
+      `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} threw, the ask stays: ${String(e)}`
     );
     return false;
   }
   if (!result.done) {
+    if (request.askId !== undefined && settledAsks.has(request.askId)) {
+      console.log(
+        `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} did not happen - the server settled the ask meanwhile (${result.reason})`
+      );
+      return true;
+    }
     // An answer that did not happen is a known outcome (another device holds the add lock, the
     // network is down), named by its reason and retried by the member - a warning, not an error.
     console.warn(
-      `[JOIN_REQUEST] ${answer} of ${request.userId} in ${request.groupId.slice(0, 8)}... did not happen, the ask stays: ${result.reason}`
+      `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} did not happen, the ask stays: ${result.reason}`
     );
     return false;
   }
-  requests.delete(keyOf(request.groupId, request.userId));
+  forget(request);
   console.log(
-    `[JOIN_REQUEST] ${request.userId} ${answer === 'approve' ? 'admitted' : 'declined'} in ${request.groupId.slice(0, 8)}...`
+    `[JOIN_REQUEST] ${request.userId} ${answer === 'approve' ? 'admitted' : 'declined'} in ${short(request.groupId)}`
   );
   return true;
 }
@@ -190,6 +228,5 @@ export async function answerJoinRequest(
 /** Forgets every ask (sign-out, tests): they belong to the account that was signed in. */
 export function resetJoinRequests(): void {
   requests.clear();
-  settledAt.clear();
-  settlements = 0;
+  settledAsks.clear();
 }

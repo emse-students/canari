@@ -85,6 +85,8 @@ describe('MembersController - membership intervals and the exclusions read', () 
 
     const txManager = {
       getRepository: (entity: unknown) => ({
+        // The removal reads whether the seat was an open invitation-link ask: none here.
+        findOne: () => Promise.resolve(null),
         delete: (where: { userId: string }) => {
           txDeletes.push({ entity, where });
           if (entity === DeviceGroupMembership) {

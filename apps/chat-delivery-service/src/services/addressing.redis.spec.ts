@@ -12,6 +12,7 @@
 import Redis from 'ioredis';
 import {
   ADDRESSED_HISTORY_CAPABILITY,
+  JOIN_ASK_CAPABILITY,
   PRESENCE_SESSIONS,
   addressingSessionsKey,
   declaresAddressedHistory,
@@ -99,6 +100,47 @@ maybe('the check-and-publish script against a real Redis', () => {
     await redis.set(presence, PRESENCE_SESSIONS);
     await redis.del(hash);
     expect(await send('frame-4')).toBe(false);
+    expect(frames()).toEqual([]);
+  });
+
+  /** A session declaring several capabilities is a LIST: each is found among its items. */
+  it('reads a session that declared several capabilities as holding each of them', async () => {
+    await redis.set(presence, PRESENCE_SESSIONS);
+    await redis.hset(hash, 'p1:1', `${ADDRESSED_HISTORY_CAPABILITY},${JOIN_ASK_CAPABILITY}`);
+
+    expect(await send('frame-5')).toBe(true);
+    const ask = await publishIfAddressable(
+      redis,
+      user,
+      device,
+      { channel, payload: 'frame-6' },
+      JOIN_ASK_CAPABILITY
+    );
+    expect(ask).toBe(true);
+  });
+
+  /** An older client's session (history only) beside a current one: no join-ask frame at all. */
+  it('publishes no join-ask frame while ONE session did not declare it', async () => {
+    await redis.set(presence, PRESENCE_SESSIONS);
+    await redis.hset(
+      hash,
+      'p1:1',
+      `${ADDRESSED_HISTORY_CAPABILITY},${JOIN_ASK_CAPABILITY}`,
+      'p2:7',
+      ADDRESSED_HISTORY_CAPABILITY
+    );
+
+    const sent = await publishIfAddressable(
+      redis,
+      user,
+      device,
+      { channel, payload: 'frame-7' },
+      JOIN_ASK_CAPABILITY
+    );
+    await redis.publish(channel, 'fence-frame-7');
+    await waitFor(() => received.includes('fence-frame-7'));
+
+    expect(sent).toBe(false);
     expect(frames()).toEqual([]);
   });
 

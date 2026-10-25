@@ -348,28 +348,32 @@ export type AwaitingSeatWithdrawal =
  *
  * The one order of `utils/seat-eviction.ts`: the `dm_groups` row (the bump), the roster row and its
  * interval, the queued Welcomes, the device rows, `dm_seat_evictions` last.
+ *
+ * @returns the outcome, and the seat's id (`askId`, the identity every member's screen settles the
+ *   ask by - `utils/join-ask-announce.ts`), or `null` when there was no seat.
  */
 export async function withdrawAwaitingSeat(
   m: EntityManager,
   groupId: string,
   userId: string,
   cause: 'declined' | 'expired'
-): Promise<AwaitingSeatWithdrawal> {
+): Promise<{ outcome: AwaitingSeatWithdrawal; askId: string | null }> {
   const seat = await m.getRepository(GroupMember).findOne({
     where: { groupId, userId },
     select: { id: true, awaitingAdmission: true },
     lock: { mode: 'pessimistic_write' },
   });
-  if (!seat) return 'gone';
+  if (!seat) return { outcome: 'gone', askId: null };
   if (!seat.awaitingAdmission) {
-    return (await holdsAdmissionTrace(m, groupId, userId)) ? 'already-admitted' : 'not-awaiting';
+    const admitted = await holdsAdmissionTrace(m, groupId, userId);
+    return { outcome: admitted ? 'already-admitted' : 'not-awaiting', askId: seat.id };
   }
   if (cause === 'declined') await bumpSeatGeneration(m, groupId);
   await m.getRepository(GroupMember).delete({ groupId, userId });
   await m.getRepository(GroupMembershipInterval).delete({ groupId, userId, leftAt: IsNull() });
   await endDeviceMemberships(m, { userId, groupId }, 'welcomes');
   if (cause === 'declined') await recordDecline(m, groupId, userId);
-  return 'withdrawn';
+  return { outcome: 'withdrawn', askId: seat.id };
 }
 
 /**
@@ -528,23 +532,29 @@ export function seatKey(groupId: string, userId: string): string {
  * Per seat, in a transaction of its own, so one failure costs that seat alone, logged.
  *
  * @returns the seats that await a member ({@link seatKey}) - every one of them, withdrawn or not,
- *   whose device rows the purge must therefore leave alone - and what was done with each.
+ *   whose device rows the purge must therefore leave alone - what was done with each, and the asks
+ *   that EXPIRED (group, person, seat id), for the caller to announce once each has committed.
  */
 export async function expireUnansweredAsks(
   manager: EntityManager,
   stale: readonly { groupId: string; userId: string }[],
   expiry: Date
-): Promise<{ awaiting: Set<string>; outcomes: Record<string, number> }> {
+): Promise<{
+  awaiting: Set<string>;
+  outcomes: Record<string, number>;
+  expired: Array<{ groupId: string; userId: string; askId: string }>;
+}> {
   const people = [...new Map(stale.map((s) => [seatKey(s.groupId, s.userId), s])).values()];
-  if (people.length === 0) return { awaiting: new Set(), outcomes: {} };
+  if (people.length === 0) return { awaiting: new Set(), outcomes: {}, expired: [] };
   const seats = await manager.getRepository(GroupMember).find({
     where: people.map((p) => ({ groupId: p.groupId, userId: p.userId, awaitingAdmission: true })),
     select: { groupId: true, userId: true },
   });
   const outcomes: Record<string, number> = {};
+  const expired: Array<{ groupId: string; userId: string; askId: string }> = [];
   for (const seat of seats) {
     try {
-      const outcome = await withSeatLock(manager, seat.groupId, async (m) => {
+      const { outcome, askId } = await withSeatLock(manager, seat.groupId, async (m) => {
         const live = await m
           .getRepository(DeviceGroupMembership)
           .createQueryBuilder('d')
@@ -555,17 +565,24 @@ export async function expireUnansweredAsks(
           .andWhere(`(d.status = 'active' OR d."pendingSince" >= :expiry)`, { expiry })
           .getCount();
         return live > 0
-          ? 'still-live'
+          ? { outcome: 'still-live' as const, askId: null }
           : withdrawAwaitingSeat(m, seat.groupId, seat.userId, 'expired');
       });
       outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+      if (outcome === 'withdrawn' && askId !== null) {
+        expired.push({ groupId: seat.groupId, userId: seat.userId, askId });
+      }
     } catch (e) {
       logger.error(
         `[ASK_EXPIRY] group=${seat.groupId} user=${seat.userId.slice(0, 8)} not withdrawn: ${String(e)}`
       );
     }
   }
-  return { awaiting: new Set(seats.map((s) => seatKey(s.groupId, s.userId))), outcomes };
+  return {
+    awaiting: new Set(seats.map((s) => seatKey(s.groupId, s.userId))),
+    outcomes,
+    expired,
+  };
 }
 
 /**

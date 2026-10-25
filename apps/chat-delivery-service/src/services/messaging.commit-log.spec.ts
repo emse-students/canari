@@ -36,14 +36,20 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   // The group row read under lock before a carried Welcome is written: live unless a test says not.
   const txGroupFind = jest.fn();
   // `update`: the link seat a commit's admits answer (`awaitingAdmission`), lifted in the advance.
+  /** The link seats still awaiting a member, as the lift reads them. */
+  let txAsks: Array<{ id: string; userId: string }> = [];
   const txSeatRepo = {
     findOne: jest.fn(),
     update: jest.fn().mockResolvedValue({ affected: 0 }),
     // The roster read of the people a commit admits (`enrolAdmittedPeople`): everyone asked about is
     // already enrolled here, so no seat is written. The enrolment itself is judged against a real
     // database (`add-enrolment.integration.spec.ts`).
-    find: jest.fn(async ({ where }: { where: { userId: { value: string[] } } }) =>
-      where.userId.value.map((userId) => ({ userId }))
+    // The lift's read of who still awaits (`awaitingAdmission: true`) answers `txAsks`.
+    find: jest.fn(
+      async ({ where }: { where: { userId: { value: string[] }; awaitingAdmission?: boolean } }) =>
+        where.awaitingAdmission === true
+          ? txAsks.filter((a) => where.userId.value.includes(a.userId))
+          : where.userId.value.map((userId) => ({ userId }))
     ),
   };
   const txQueuedRepo = {
@@ -208,6 +214,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   });
 
   beforeEach(async () => {
+    txAsks = [];
     jest.clearAllMocks();
     // Default: the committer is already an active member, so the promotion path stays inert
     // unless a test explicitly makes the row absent.
@@ -2241,7 +2248,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           roster: [{ groupId: 'group-1', userId: 'user-2' }],
         });
         fanOut();
-        txSeatRepo.update.mockResolvedValueOnce({ affected: 1 });
+        txAsks = [{ id: 'seat-2', userId: 'user-2' }];
 
         await expect(commit({ welcome }, 'user-1')).resolves.toEqual({
           accepted: true,
@@ -2249,11 +2256,11 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         });
         expect(txSeatRepo.update).toHaveBeenCalledTimes(1);
         const [where, set] = txSeatRepo.update.mock.calls[0] as [
-          { groupId: string; userId: FindOperator<string[]>; awaitingAdmission: boolean },
+          { groupId: string; id: FindOperator<string[]>; awaitingAdmission: boolean },
           unknown,
         ];
         expect(where.awaitingAdmission).toBe(true);
-        expect(where.userId.value).toEqual(['user-2']);
+        expect(where.id.value).toEqual(['seat-2']);
         expect(set).toEqual({ awaitingAdmission: false });
       });
 
@@ -2414,7 +2421,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         { userId: 'user-2', deviceId: 'phone-2' },
         { userId: 'user-2', deviceId: 'web-2' },
       ]);
-      txSeatRepo.update.mockResolvedValueOnce({ affected: 1 });
+      txAsks = [{ id: 'seat-2', userId: 'user-2' }];
 
       const res = await accept([
         { userId: 'user-2', deviceId: 'phone-2' },
@@ -2422,15 +2429,15 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       ]);
 
       expect(res.accepted).toBe(true);
-      // One update per commit, by person - guarded on the flag, so a seat no link wrote is untouched.
+      // One update per commit, by the asks' seats - guarded on the flag, so a seat no link wrote is untouched.
       expect(txSeatRepo.update).toHaveBeenCalledTimes(1);
       const [where, set] = txSeatRepo.update.mock.calls[0] as [
-        { groupId: string; userId: FindOperator<string[]>; awaitingAdmission: boolean },
+        { groupId: string; id: FindOperator<string[]>; awaitingAdmission: boolean },
         unknown,
       ];
       expect(where.groupId).toBe('group-1');
       expect(where.awaitingAdmission).toBe(true);
-      expect(where.userId.value).toEqual(['user-2']);
+      expect(where.id.value).toEqual(['seat-2']);
       expect(set).toEqual({ awaitingAdmission: false });
     });
 

@@ -49,12 +49,18 @@ describe('group.join_ask', () => {
     await handleChannelEvent(
       {
         type: 'group.join_ask',
-        data: { groupId: 'g1', requesterUserId: 'joiner', requesterDeviceIds: ['d1', 7, '', 'd2'] },
+        data: {
+          groupId: 'g1',
+          askId: 'a1',
+          requesterUserId: 'joiner',
+          requesterDeviceIds: ['d1', 7, '', 'd2'],
+        },
       },
       ctx()
     );
     expect(onJoinAsk).toHaveBeenCalledWith({
       groupId: 'g1',
+      askId: 'a1',
       requesterUserId: 'joiner',
       requesterDeviceIds: ['d1', 'd2'],
     });
@@ -72,12 +78,13 @@ describe('group.join_ask.settled', () => {
     await handleChannelEvent(
       {
         type: 'group.join_ask.settled',
-        data: { groupId: 'g1', userId: 'joiner', outcome: 'declined' },
+        data: { groupId: 'g1', userId: 'joiner', askId: 'a1', outcome: 'declined' },
       },
       ctx()
     );
     expect(onJoinAskSettled).toHaveBeenCalledWith({
       groupId: 'g1',
+      askId: 'a1',
       userId: 'joiner',
       outcome: 'declined',
     });
@@ -87,7 +94,7 @@ describe('group.join_ask.settled', () => {
     await handleChannelEvent(
       {
         type: 'group.join_ask.settled',
-        data: { groupId: 'g1', userId: 'joiner', outcome: 'maybe' },
+        data: { groupId: 'g1', userId: 'joiner', askId: 'a1', outcome: 'maybe' },
       },
       ctx()
     );
@@ -97,10 +104,59 @@ describe('group.join_ask.settled', () => {
 
   it('says which address is missing', async () => {
     await handleChannelEvent(
-      { type: 'group.join_ask.settled', data: { userId: 'joiner', outcome: 'admitted' } },
+      {
+        type: 'group.join_ask.settled',
+        data: { userId: 'joiner', askId: 'a1', outcome: 'admitted' },
+      },
       ctx()
     );
     expect(onJoinAskSettled).not.toHaveBeenCalled();
     expect(said()).toContain('groupId');
   });
+});
+
+/**
+ * AN ASK IS SETTLED BY ITS IDENTITY (the seat id the server stamps on both frames), never by the order
+ * frames arrive in - so a frame that does not carry it addresses nothing and is not handed on.
+ */
+describe('the ask identity', () => {
+  it('raises no ask without one', async () => {
+    await handleChannelEvent(
+      { type: 'group.join_ask', data: { groupId: 'g1', requesterUserId: 'joiner' } },
+      ctx()
+    );
+    expect(onJoinAsk).not.toHaveBeenCalled();
+    expect(said()).toContain('askId');
+  });
+
+  it('settles nothing without one', async () => {
+    await handleChannelEvent(
+      {
+        type: 'group.join_ask.settled',
+        data: { groupId: 'g1', userId: 'joiner', outcome: 'expired' },
+      },
+      ctx()
+    );
+    expect(onJoinAskSettled).not.toHaveBeenCalled();
+    expect(said()).toContain('askId');
+  });
+
+  it.each(['admitted', 'declined', 'expired', 'withdrawn'])(
+    'hands a %s outcome on',
+    async (outcome) => {
+      await handleChannelEvent(
+        {
+          type: 'group.join_ask.settled',
+          data: { groupId: 'g1', userId: 'joiner', askId: 'a1', outcome },
+        },
+        ctx()
+      );
+      expect(onJoinAskSettled).toHaveBeenCalledWith({
+        groupId: 'g1',
+        userId: 'joiner',
+        askId: 'a1',
+        outcome,
+      });
+    }
+  );
 });

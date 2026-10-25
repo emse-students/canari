@@ -8,7 +8,10 @@
 //! deploy overlap), so the fact is kept in the SHARED store, one field per session:
 //!
 //! - `addressing:sessions:{userId}:{deviceId}` (a hash, deliberately outside `user:*`, which the
-//!   presence scans match): field `{instance}:{conn_id}`, value the capability or [`UNDECLARED`].
+//!   presence scans match): field `{instance}:{conn_id}`, value the comma-separated capabilities
+//!   the session declared ([`SessionCaps::value`]) or [`UNDECLARED`]. The same mechanism carries
+//!   [`JOIN_ASK_CAPABILITY`]: chat-delivery publishes a join-ask frame only to a device all of whose
+//!   sessions declared it, and the edge filter keeps it from any session that did not.
 //!   Each field is written WITH its expiry in one command (`HSETEX`, Redis 8), refreshed by its own
 //!   session only, and removed when that session ends. The expiry decides LIVENESS (how long a
 //!   crashed process's field lingers), never safety: a lingering undeclared field only keeps the
@@ -30,7 +33,7 @@
 //! [`PRESENCE_SESSIONS`] and every field is the capability, and re-checks it in the same script as
 //! its PUBLISH. Between that check and the frame's
 //! arrival a new session may connect, so this gateway also filters at its EDGE
-//! ([`addressed_recipients`]): an addressed frame never reaches a session here that did not declare.
+//! ([`deliverable_sessions`]): an addressed frame never reaches a session here that did not declare.
 
 use redis::aio::MultiplexedConnection;
 use std::collections::HashMap;
@@ -40,8 +43,62 @@ use std::collections::HashMap;
 /// `ADDRESSED_HISTORY_CAPABILITY` in chat-delivery and in the client.
 pub const ADDRESSED_HISTORY_CAPABILITY: &str = "addressed-history-1";
 
-/// A session field's value when its socket did not declare [`ADDRESSED_HISTORY_CAPABILITY`].
+/// The capability a socket declares when the code behind it routes the invitation-link ask frames
+/// (`group.join_ask`, `group.join_ask.settled`). chat-delivery publishes those only to a device ALL of
+/// whose sessions declared it, and this gateway delivers a frame naming it (`requiresCapability`)
+/// only to a session that did - so a client that predates them never meets a frame it cannot route.
+/// The same literal is `JOIN_ASK_CAPABILITY` in chat-delivery and in the client.
+pub const JOIN_ASK_CAPABILITY: &str = "join-ask-1";
+
+/// Every capability this gateway records, in the one order a session's field lists them.
+pub const KNOWN_CAPABILITIES: [&str; 2] = [ADDRESSED_HISTORY_CAPABILITY, JOIN_ASK_CAPABILITY];
+
+/// A session field's value when its socket declared none of [`KNOWN_CAPABILITIES`].
 pub const UNDECLARED: &str = "-";
+
+/// What ONE session declared on its socket, among [`KNOWN_CAPABILITIES`]. A name this gateway does
+/// not know is not recorded: nothing here could honour it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SessionCaps {
+    pub addressed_history: bool,
+    pub join_ask: bool,
+}
+
+impl SessionCaps {
+    /// Reads a `caps=` query value (comma-separated, spaces tolerated).
+    pub fn from_query(caps: Option<&str>) -> Self {
+        let named =
+            |cap: &str| caps.is_some_and(|c| c.split(',').any(|declared| declared.trim() == cap));
+        SessionCaps {
+            addressed_history: named(ADDRESSED_HISTORY_CAPABILITY),
+            join_ask: named(JOIN_ASK_CAPABILITY),
+        }
+    }
+
+    /// Whether this session declared `capability`.
+    pub fn holds(&self, capability: &str) -> bool {
+        match capability {
+            ADDRESSED_HISTORY_CAPABILITY => self.addressed_history,
+            JOIN_ASK_CAPABILITY => self.join_ask,
+            _ => false,
+        }
+    }
+
+    /// The session's field value: the declared capabilities in [`KNOWN_CAPABILITIES`] order, joined
+    /// by commas, or [`UNDECLARED`]. chat-delivery reads it as a LIST (`ADDRESSABLE_PUBLISH_LUA`).
+    pub fn value(&self) -> String {
+        let declared: Vec<&str> = KNOWN_CAPABILITIES
+            .iter()
+            .copied()
+            .filter(|cap| self.holds(cap))
+            .collect();
+        if declared.is_empty() {
+            UNDECLARED.to_string()
+        } else {
+            declared.join(",")
+        }
+    }
+}
 
 /// The presence value this gateway writes: "every session of mine is a field of the sessions hash".
 /// The same literal is `PRESENCE_SESSIONS` in chat-delivery.
@@ -49,14 +106,6 @@ pub const PRESENCE_SESSIONS: &str = "sessions-1";
 
 /// The presence value every OLDER gateway writes, and which this one never overwrites nor deletes.
 pub const PRESENCE_OLDER_GATEWAY: &str = "true";
-
-/// Whether a `caps=` query value declares [`ADDRESSED_HISTORY_CAPABILITY`].
-pub fn declares_addressed_history(caps: Option<&str>) -> bool {
-    caps.is_some_and(|c| {
-        c.split(',')
-            .any(|cap| cap.trim() == ADDRESSED_HISTORY_CAPABILITY)
-    })
-}
 
 /// The device's sessions hash, for `conn_key` = `"{userId}:{deviceId}"`.
 pub fn sessions_key(conn_key: &str) -> String {
@@ -68,43 +117,76 @@ pub fn session_field(instance: &str, conn_id: u64) -> String {
     format!("{}:{}", instance, conn_id)
 }
 
-/// What a session's field holds.
-pub fn session_value(declared: bool) -> &'static str {
-    if declared {
-        ADDRESSED_HISTORY_CAPABILITY
-    } else {
-        UNDECLARED
+/// The capability a frame from chat-delivery needs its receiving session to have declared, or
+/// `None` for a frame every session takes. An ADDRESSED conversation frame needs
+/// [`ADDRESSED_HISTORY_CAPABILITY`]; a control frame names its own in `requiresCapability`.
+///
+/// `Err` for a control frame naming a capability this gateway does not know: no session could have
+/// declared it, so the frame reaches none, and the caller says so.
+pub fn required_capability(
+    frame: &serde_json::Value,
+    is_control: bool,
+) -> Result<Option<&'static str>, String> {
+    if !is_control {
+        let addressed = frame
+            .get("addressed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        return Ok(addressed.then_some(ADDRESSED_HISTORY_CAPABILITY));
+    }
+    match frame.get("requiresCapability") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(named)) => KNOWN_CAPABILITIES
+            .iter()
+            .copied()
+            .find(|cap| cap == named)
+            .map(Some)
+            .ok_or_else(|| format!("unknown capability \"{}\"", named)),
+        Some(other) => Err(format!("requiresCapability is not a string: {}", other)),
     }
 }
 
 /// THE EDGE FILTER. Splits a device's local sessions (`conn_ids`) into those a frame may reach and
-/// those it must not: every one for an ordinary frame, only the sessions that declared
-/// [`ADDRESSED_HISTORY_CAPABILITY`] for an addressed one. A session with no recorded declaration
-/// counts as not declaring. Returns `(deliver, refused)`.
-pub fn addressed_recipients(
-    addressed: bool,
+/// those it must not: every one when the frame needs nothing, only the sessions that declared
+/// `required` otherwise. A session with no recorded declaration counts as declaring nothing.
+/// Returns `(deliver, refused)`.
+pub fn deliverable_sessions(
+    required: Option<&str>,
     conn_ids: impl IntoIterator<Item = u64>,
-    declared: &HashMap<u64, bool>,
+    declared: &HashMap<u64, SessionCaps>,
 ) -> (Vec<u64>, Vec<u64>) {
-    conn_ids
-        .into_iter()
-        .partition(|id| !addressed || declared.get(id).copied().unwrap_or(false))
+    conn_ids.into_iter().partition(|id| match required {
+        None => true,
+        Some(cap) => declared.get(id).is_some_and(|caps| caps.holds(cap)),
+    })
 }
 
 /// Records one session's declaration and refreshes the device's presence, atomically.
 ///
 /// KEYS: presence, sessions, left. ARGV: field, value, ttl, sessions marker, older marker,
-/// capability, undeclared. Everything is VALIDATED before the first write, so an error leaves
-/// nothing behind; the field and its expiry are one command (`HSETEX`). A session that left (its
-/// field is in the left hash) is never rewritten: returns 0. Otherwise the field, then the presence
-/// value - unless an older gateway's `true` is there, which is left to its own session - and 1.
+/// undeclared, then every known capability. The value is [`UNDECLARED`] or a comma-separated list of
+/// known capabilities. Everything is VALIDATED before the first write, so an error leaves nothing
+/// behind; the field and its expiry are one command (`HSETEX`). A session that left (its field is in
+/// the left hash) is never rewritten: returns 0. Otherwise the field, then the presence value -
+/// unless an older gateway's `true` is there, which is left to its own session - and 1.
 const WRITE_SESSION: &str = r"
 local ttl = tonumber(ARGV[3])
 if ARGV[1] == '' or not ttl or ttl < 1 or ttl % 1 ~= 0 then
   return redis.error_reply('ERR addressing: a session needs a name and a whole positive ttl')
 end
-if ARGV[2] ~= ARGV[6] and ARGV[2] ~= ARGV[7] then
-  return redis.error_reply('ERR addressing: a session declares the capability or nothing')
+if ARGV[2] ~= ARGV[6] then
+  if ARGV[2] == '' then
+    return redis.error_reply('ERR addressing: a session declares known capabilities or nothing')
+  end
+  for cap in string.gmatch(ARGV[2] .. ',', '([^,]*),') do
+    local known = false
+    for i = 7, #ARGV do
+      if cap == ARGV[i] then known = true end
+    end
+    if not known then
+      return redis.error_reply('ERR addressing: a session declares known capabilities or nothing')
+    end
+  end
 end
 if redis.call('HEXISTS', KEYS[3], ARGV[1]) == 1 then return 0 end
 redis.call('HSETEX', KEYS[2], 'EX', ttl, 'FIELDS', 1, ARGV[1], ARGV[2])
@@ -146,22 +228,25 @@ pub async fn write_session(
     con: &mut MultiplexedConnection,
     conn_key: &str,
     field: &str,
-    declared: bool,
+    declared: SessionCaps,
     ttl_secs: u64,
 ) -> redis::RedisResult<bool> {
-    let written: i64 = redis::Script::new(WRITE_SESSION)
+    let source = redis::Script::new(WRITE_SESSION);
+    let mut script = source.prepare_invoke();
+    script
         .key(format!("user:online:{}", conn_key))
         .key(sessions_key(conn_key))
         .key(left_key(conn_key))
         .arg(field)
-        .arg(session_value(declared))
+        .arg(declared.value())
         .arg(ttl_secs)
         .arg(PRESENCE_SESSIONS)
         .arg(PRESENCE_OLDER_GATEWAY)
-        .arg(ADDRESSED_HISTORY_CAPABILITY)
-        .arg(UNDECLARED)
-        .invoke_async(con)
-        .await?;
+        .arg(UNDECLARED);
+    for cap in KNOWN_CAPABILITIES {
+        script.arg(cap);
+    }
+    let written: i64 = script.invoke_async(con).await?;
     Ok(written == 1)
 }
 
@@ -199,6 +284,63 @@ pub async fn leave_session(
 #[cfg(test)]
 mod redis_it {
     use super::*;
+
+    const HISTORY: SessionCaps = SessionCaps {
+        addressed_history: true,
+        join_ask: false,
+    };
+    const NONE: SessionCaps = SessionCaps {
+        addressed_history: false,
+        join_ask: false,
+    };
+
+    /// A session declaring both capabilities is recorded as their LIST, which chat-delivery reads by
+    /// membership (`ADDRESSABLE_PUBLISH_LUA`).
+    #[tokio::test]
+    async fn a_session_declaring_two_capabilities_is_recorded_as_their_list() {
+        let Some(mut con) = redis().await else { return };
+        let key = device();
+        let both = SessionCaps {
+            addressed_history: true,
+            join_ask: true,
+        };
+
+        assert!(
+            write_session(&mut con, &key, "p:1", both, 90)
+                .await
+                .unwrap()
+        );
+
+        assert_eq!(
+            fields(&mut con, &key).await["p:1"],
+            "addressed-history-1,join-ask-1"
+        );
+    }
+
+    /// The script refuses a value naming a capability it was not given, and writes nothing.
+    #[tokio::test]
+    async fn a_value_naming_an_unknown_capability_is_refused() {
+        let Some(mut con) = redis().await else { return };
+        let key = device();
+        let refused: redis::RedisResult<i64> = redis::Script::new(WRITE_SESSION)
+            .key(format!("user:online:{}", key))
+            .key(sessions_key(&key))
+            .key(left_key(&key))
+            .arg("p:1")
+            .arg("addressed-history-1,nonsense-9")
+            .arg(90)
+            .arg(PRESENCE_SESSIONS)
+            .arg(PRESENCE_OLDER_GATEWAY)
+            .arg(UNDECLARED)
+            .arg(ADDRESSED_HISTORY_CAPABILITY)
+            .arg(JOIN_ASK_CAPABILITY)
+            .invoke_async(&mut con)
+            .await;
+
+        assert!(refused.is_err());
+        assert!(fields(&mut con, &key).await.is_empty());
+        assert_eq!(presence(&mut con, &key).await, None);
+    }
 
     async fn redis() -> Option<MultiplexedConnection> {
         let Ok(url) = std::env::var("GATEWAY_IT_REDIS_URL") else {
@@ -244,7 +386,7 @@ mod redis_it {
         let key = device();
 
         assert!(
-            write_session(&mut con, &key, "p:1", true, 90)
+            write_session(&mut con, &key, "p:1", HISTORY, 90)
                 .await
                 .unwrap()
         );
@@ -283,7 +425,7 @@ mod redis_it {
             .await
             .unwrap();
 
-        write_session(&mut con, &key, "p:1", true, 90)
+        write_session(&mut con, &key, "p:1", HISTORY, 90)
             .await
             .unwrap();
         assert_eq!(presence(&mut con, &key).await.as_deref(), Some("true"));
@@ -300,10 +442,10 @@ mod redis_it {
     async fn the_presence_goes_only_with_the_last_session_on_any_process() {
         let Some(mut con) = redis().await else { return };
         let key = device();
-        write_session(&mut con, &key, "a:1", true, 90)
+        write_session(&mut con, &key, "a:1", HISTORY, 90)
             .await
             .unwrap();
-        write_session(&mut con, &key, "b:1", false, 90)
+        write_session(&mut con, &key, "b:1", NONE, 90)
             .await
             .unwrap();
 
@@ -333,7 +475,7 @@ mod redis_it {
     async fn a_session_that_left_is_never_resurrected_by_a_late_refresh() {
         let Some(mut con) = redis().await else { return };
         let key = device();
-        write_session(&mut con, &key, "p:1", false, 90)
+        write_session(&mut con, &key, "p:1", NONE, 90)
             .await
             .unwrap();
         leave_session(&mut con, &key, Some("p:1"), 90)
@@ -341,7 +483,7 @@ mod redis_it {
             .unwrap();
 
         assert!(
-            !write_session(&mut con, &key, "p:1", false, 90)
+            !write_session(&mut con, &key, "p:1", NONE, 90)
                 .await
                 .unwrap()
         );
@@ -356,8 +498,16 @@ mod redis_it {
         let Some(mut con) = redis().await else { return };
         let key = device();
 
-        assert!(write_session(&mut con, &key, "", true, 90).await.is_err());
-        assert!(write_session(&mut con, &key, "p:1", true, 0).await.is_err());
+        assert!(
+            write_session(&mut con, &key, "", HISTORY, 90)
+                .await
+                .is_err()
+        );
+        assert!(
+            write_session(&mut con, &key, "p:1", HISTORY, 0)
+                .await
+                .is_err()
+        );
 
         assert!(fields(&mut con, &key).await.is_empty());
         assert_eq!(presence(&mut con, &key).await, None);
@@ -375,9 +525,15 @@ mod redis_it {
             let key = key.clone();
             tasks.push(tokio::spawn(async move {
                 let field = format!("p:{}", i);
-                write_session(&mut c, &key, &field, i % 2 == 0, 90)
-                    .await
-                    .unwrap();
+                write_session(
+                    &mut c,
+                    &key,
+                    &field,
+                    if i % 2 == 0 { HISTORY } else { NONE },
+                    90,
+                )
+                .await
+                .unwrap();
                 leave_session(&mut c, &key, Some(&field), 90).await.unwrap();
             }));
         }
@@ -395,13 +551,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_capability_is_read_from_the_caps_query_value() {
-        assert!(declares_addressed_history(Some("addressed-history-1")));
-        assert!(declares_addressed_history(Some(
-            "other, addressed-history-1"
-        )));
-        assert!(!declares_addressed_history(Some("addressed-history-2")));
-        assert!(!declares_addressed_history(None));
+    fn the_capabilities_are_read_from_the_caps_query_value() {
+        let history = SessionCaps::from_query(Some("addressed-history-1"));
+        assert!(history.addressed_history && !history.join_ask);
+        let both = SessionCaps::from_query(Some("join-ask-1, other, addressed-history-1"));
+        assert!(both.addressed_history && both.join_ask);
+        assert_eq!(
+            SessionCaps::from_query(Some("addressed-history-2")),
+            SessionCaps::default()
+        );
+        assert_eq!(SessionCaps::from_query(None), SessionCaps::default());
+    }
+
+    /// The field lists what was declared in ONE order, whatever order the socket named them in.
+    #[test]
+    fn a_sessions_value_lists_its_capabilities_in_one_order() {
+        assert_eq!(
+            SessionCaps::from_query(Some("join-ask-1,addressed-history-1")).value(),
+            "addressed-history-1,join-ask-1"
+        );
+        assert_eq!(
+            SessionCaps::from_query(Some("addressed-history-1")).value(),
+            ADDRESSED_HISTORY_CAPABILITY
+        );
+        assert_eq!(SessionCaps::default().value(), UNDECLARED);
+    }
+
+    #[test]
+    fn a_frame_names_the_capability_it_needs() {
+        let addressed = serde_json::json!({ "addressed": true });
+        let ordinary = serde_json::json!({ "addressed": false });
+        let ask = serde_json::json!({ "requiresCapability": "join-ask-1" });
+        let plain_control = serde_json::json!({});
+        let unknown = serde_json::json!({ "requiresCapability": "nonsense-9" });
+
+        assert_eq!(
+            required_capability(&addressed, false),
+            Ok(Some(ADDRESSED_HISTORY_CAPABILITY))
+        );
+        assert_eq!(required_capability(&ordinary, false), Ok(None));
+        assert_eq!(
+            required_capability(&ask, true),
+            Ok(Some(JOIN_ASK_CAPABILITY))
+        );
+        assert_eq!(required_capability(&plain_control, true), Ok(None));
+        assert!(required_capability(&unknown, true).is_err());
     }
 
     /// The hash must stay out of `user:*`: presence.rs and social-service SCAN `user:online:*`, and
@@ -416,8 +610,6 @@ mod tests {
     #[test]
     fn two_processes_never_share_a_session_field() {
         assert_ne!(session_field("a", 1), session_field("b", 1));
-        assert_eq!(session_value(true), ADDRESSED_HISTORY_CAPABILITY);
-        assert_eq!(session_value(false), UNDECLARED);
     }
 
     /// The value written must never be the older gateways' one, or chat-delivery could not tell a
@@ -431,21 +623,47 @@ mod tests {
     /// connect after - an addressed frame must still never reach it here.
     #[test]
     fn an_addressed_frame_reaches_only_the_sessions_that_declared() {
-        let declared = HashMap::from([(1, true), (2, false)]);
+        let declared = sessions();
 
-        let (deliver, refused) = addressed_recipients(true, [1, 2, 3], &declared);
+        let (deliver, refused) =
+            deliverable_sessions(Some(ADDRESSED_HISTORY_CAPABILITY), [1, 2, 3, 4], &declared);
 
-        assert_eq!(deliver, vec![1]);
-        assert_eq!(refused, vec![2, 3]);
+        assert_eq!(deliver, vec![1, 2]);
+        assert_eq!(refused, vec![3, 4]);
+    }
+
+    /// A join-ask frame never reaches a session whose code predates it: there it would reach no
+    /// handler and print an accusation for a frame nothing was wrong with.
+    #[test]
+    fn a_join_ask_frame_reaches_only_the_sessions_that_declared_it() {
+        let declared = sessions();
+
+        let (deliver, refused) =
+            deliverable_sessions(Some(JOIN_ASK_CAPABILITY), [1, 2, 3, 4], &declared);
+
+        assert_eq!(deliver, vec![2]);
+        assert_eq!(refused, vec![1, 3, 4]);
     }
 
     #[test]
     fn an_ordinary_frame_reaches_every_session() {
-        let declared = HashMap::from([(1, true), (2, false)]);
+        let declared = sessions();
 
-        let (deliver, refused) = addressed_recipients(false, [1, 2, 3], &declared);
+        let (deliver, refused) = deliverable_sessions(None, [1, 2, 3, 4], &declared);
 
-        assert_eq!(deliver, vec![1, 2, 3]);
+        assert_eq!(deliver, vec![1, 2, 3, 4]);
         assert!(refused.is_empty());
+    }
+
+    /// 1: history only (an older client), 2: both, 3: nothing, 4: no recorded declaration.
+    fn sessions() -> HashMap<u64, SessionCaps> {
+        HashMap::from([
+            (1, SessionCaps::from_query(Some("addressed-history-1"))),
+            (
+                2,
+                SessionCaps::from_query(Some("addressed-history-1,join-ask-1")),
+            ),
+            (3, SessionCaps::default()),
+        ])
     }
 }

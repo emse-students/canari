@@ -236,8 +236,26 @@ export class InvitationsController {
     );
 
     // THE ASK IS PUT TO EVERY ONLINE ADMITTED MEMBER, live (`announceJoinAsk`): any member may
-    // answer it. Best-effort - the pending rows above are the durable ask every member's sweep reads.
-    await announceJoinAsk(this.deviceGroupRepo.manager, this.redis, group.id, callerId, deviceIds);
+    // answer it. Named by the seat just written (its id is the ask's identity); a seat a member
+    // already answered is not announced. Started, not awaited - the pending rows above are the
+    // durable ask every member's sweep reads.
+    const seat = await this.groupMemberRepo.findOne({
+      where: { groupId: group.id, userId: callerId, awaitingAdmission: true },
+      select: { id: true },
+    });
+    if (seat) {
+      announceJoinAsk(
+        this.deviceGroupRepo.manager,
+        this.redis,
+        group.id,
+        { userId: callerId, askId: seat.id },
+        deviceIds
+      );
+    } else {
+      this.logger.log(
+        `[GROUP_INVITE] group=${group.id} user=${callerId.slice(0, 8)} - the ask was answered before it could be announced`
+      );
+    }
 
     // And the welcome_request, as before: forwarded to ONE elected online member (the device that
     // answers a relayed request mechanically) or, if none is online, a wake of one via FCM.
@@ -335,7 +353,9 @@ export class InvitationsController {
     // a member is asked "X asks to join". A person absent from the tree whose seat is NOT an ask - a
     // member's invite between its roster write and its Add, a seat older than migration 038 - is
     // neither added automatically nor put to a member as an ask nobody made (review of #2358, P2-1).
-    const askers = new Set(
+    // Keyed to the seat's id, which is the ask's IDENTITY (`askId`): a member's screen settles an ask
+    // by it, so a sweep that read before a settlement cannot bring the settled ask back.
+    const askers = new Map(
       (actionable.length === 0
         ? []
         : await this.groupMemberRepo.find({
@@ -344,9 +364,9 @@ export class InvitationsController {
               userId: In([...new Set(actionable.map((a) => a.userId))]),
               awaitingAdmission: true,
             },
-            select: { groupId: true, userId: true },
+            select: { id: true, groupId: true, userId: true },
           })
-      ).map((m) => `${m.groupId}|${m.userId}`)
+      ).map((m) => [`${m.groupId}|${m.userId}`, m.id] as const)
     );
     this.logger.log(
       `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=${actionable.length} asks=${askers.size}`
@@ -354,6 +374,7 @@ export class InvitationsController {
     return actionable.map((a) => ({
       ...a,
       awaitingAdmission: askers.has(`${a.groupId}|${a.userId}`),
+      askId: askers.get(`${a.groupId}|${a.userId}`) ?? null,
     }));
   }
 
