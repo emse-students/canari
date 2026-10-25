@@ -18,7 +18,7 @@
 import { awaitGatewayConnected, send } from '../chat.mjs';
 import { psql } from '../estate.mjs';
 import { armFault } from '../fault.mjs';
-import { GAP4_SKIP, GAP_ROWS, COMMIT_LOG, PENDING_PULL, captureRows, dropCommitRows, gapOneOwn, injectRows, linesAbout, pastFrameOwn, readdressRow, startAfter, tooDistantOwn } from '../gaprows.mjs';
+import { GAP4_SKIP, GAP_ROWS, COMMIT_LOG, PENDING_PULL, captureRows, dropCommitRows, gapOneOwn, injectRows, linesAbout, ownEchoLine, pastFrameOwn, readdressRow, startAfter, tooDistantOwn } from '../gaprows.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
 import { checkInvariant, receivedOn } from '../invariant.mjs';
 import {
@@ -257,7 +257,9 @@ const ACTIONS = {
       vacuous: injected === 0 ? [{ rule: 0, fault: 'W2 rewrite once (nothing injected)' }] : [],
       offline: ['W1', 'W2'],
       joiners: [],
-      narration: { W2: [`[MLS] Duplicate delivery for ${c.group.id.slice(0, 8)}`] },
+      // THE OWN-ECHO LINE IS EXPECTED HERE ONLY because this row hands W2 its own frame (#2421);
+      // anywhere else an own frame coming back is a delivery defect, and stays dirt.
+      narration: { W2: [`[MLS] Duplicate delivery for ${c.group.id.slice(0, 8)}`, ownEchoLine(c.group.id.slice(0, 8))] },
       detail: { gatewayMs: back.gatewayMs, epochBefore, epochAfter, duplicateLine, shown, capturedIds: replay.map((r) => r.id) },
       own: pastFrameOwn({ injected, epochBefore, epochAfter, shown, lines }),
     };

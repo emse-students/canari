@@ -19,6 +19,7 @@ import {
   gapOneOwn,
   injectRows,
   linesAbout,
+  ownEchoLine,
   pastFrameOwn,
   readdressRow,
   startAfter,
@@ -114,7 +115,9 @@ ok('rung 1 never asked fails', !allOk(g1({ held: 0 })));
 ok('a forget + re-Welcome where rung 1 should heal fails', !allOk(g1({ lines: linesAbout([`[GAP] ${S}… forget + welcome_request`], G) })));
 
 console.log('GAP-2 judge');
-const dup = linesAbout([`[MLS] Duplicate delivery for ${S}… - silent ACK (x)`], G);
+// #2421's own-echo line, verbatim (head c2485931a, a console.warn), which GAP-2 must see once beside the duplicate.
+const ECHO = `[MLS] Own frame for ${S}… delivered back to this device (pull, queue 747b77ae-b04d-4490-846d-e1e33e44be41) - ACKed, not offered to MLS; the fan-out excludes the sending device, so either a rig injected it or the sender exclusion missed (senderId case vs the membership userId)`;
+const dup = linesAbout([`[MLS] Duplicate delivery for ${S}… - silent ACK (x)`, ECHO], G);
 const g2 = (over = {}) => pastFrameOwn({ injected: 2, epochBefore: 7, epochAfter: 7, shown: { a: 1, b: 1 }, lines: dup, ...over });
 ok('classified a duplicate, nothing else, epoch still -> all hold', allOk(g2()));
 ok('read as an epoch gap fails', !allOk(g2({ lines: linesAbout([`[MLS] Duplicate delivery for ${S}… x`, `[GAP] ${S}… x`], G) })));
@@ -122,11 +125,21 @@ ok('a re-add fails', !allOk(g2({ lines: linesAbout([`[MLS] Duplicate delivery fo
 ok('the replay shown again fails', !allOk(g2({ shown: { a: 2, b: 1 } })));
 // THE QUEUE ANSWERS FIRST for a row already taken in, and its line names no group (2026-10-25).
 const QREP = (id) => `[QUEUE] delivery ${id.slice(0, 8)}... arrived twice - the pull listed a row this device had already acknowledged; not decrypting it again, acknowledging it once more`;
-const qdup = linesAbout([QREP('cca6907d-d72c-49f7-a658-e38236608c2a')], G, ['cca6907d-d72c-49f7-a658-e38236608c2a']);
+const qdup = linesAbout([QREP('cca6907d-d72c-49f7-a658-e38236608c2a'), ECHO], G, ['cca6907d-d72c-49f7-a658-e38236608c2a']);
 ok('a queue-level repeat of an INJECTED id is the classification', qdup.duplicate.length === 1 && allOk(g2({ lines: qdup })));
 ok('control: a queue repeat of an id that was NOT injected is not', linesAbout([QREP('deadbeef-0000-0000-0000-000000000000')], G, ['cca6907d-d72c-49f7-a658-e38236608c2a']).duplicate.length === 0);
 ok('control: with no injected ids a queue repeat counts for nothing', linesAbout([QREP('cca6907d-d72c-49f7-a658-e38236608c2a')], G).duplicate.length === 0);
 ok('an epoch that moved fails', !allOk(g2({ epochAfter: 8 })));
+// THE OWN FRAME MUST BE RECOGNISED, not merely not lost: an absence passes for a silent drop too.
+const noEcho = linesAbout([`[MLS] Duplicate delivery for ${S}… - silent ACK (x)`], G);
+ok('control: no own-echo line (a silent drop) FAILS, it does not pass', !allOk(g2({ lines: noEcho })) && g2({ lines: noEcho }).some((a) => !a.ok && a.what.includes('own echo, once (0)')));
+ok('the own echo counted twice fails', !allOk(g2({ lines: linesAbout([`[MLS] Duplicate delivery for ${S}… x`, ECHO, ECHO], G) })));
+ok('an own echo of ANOTHER group does not count', linesAbout([ECHO.replace(S, 'ffffffff')], G).ownEcho.length === 0);
+ok('the narration needle matches the line whatever the delivery detail', ownEchoLine(S).test(ECHO.replace('(pull, queue 747b77ae-b04d-4490-846d-e1e33e44be41)', '(unknown channel, queue none)')));
+ok('... at warn level, as watch.mjs renders an unexplained line', ownEchoLine(S).test(`warn: [12:00:00] ${ECHO}`));
+ok('... and whatever the cause clause after the ";" says', ownEchoLine(S).test(ECHO.replace(/;.*$/, '; reworded')));
+ok('control: a different sentence continuing past "MLS" is not the needle', !ownEchoLine(S).test(`${ECHO.replace(/;.*$/, '')} after all`));
+ok('control: a reworded echo is not the needle', !ownEchoLine(S).test(ECHO.replace('ACKed, not offered to MLS', 'ACKed, offered to MLS')));
 ok('nothing injected fails', !allOk(g2({ injected: 0 })));
 
 console.log('GAP-3 judge');
