@@ -60,7 +60,8 @@ import {
   reportDeviceTrustRefusal,
   verdictAdmits,
 } from '$lib/mls-client/deviceTrust';
-import type { PendingInvitationRow } from '$lib/mls-client/mlsDeliveryApi';
+import { MemberNotAdmittedError, type PendingInvitationRow } from '$lib/mls-client/mlsDeliveryApi';
+import { takeBackUnadmittedLeaves } from './strayLeaves';
 import {
   isRefusedDevice,
   recordRefusedDevice,
@@ -811,7 +812,22 @@ export async function processPendingInvitations(params: {
           );
 
           // Register member on server (upsert GroupMember row), keeping server state up to date.
-          await mlsService.registerMember(groupId, inv.userId);
+          // NOT ADMITTED: the server recorded their departure before this Add was decided - no
+          // Welcome, no history, and the leaf the merged commit gave them is taken back now.
+          try {
+            await mlsService.registerMember(groupId, inv.userId);
+          } catch (e) {
+            if (!(e instanceof MemberNotAdmittedError)) throw e;
+            await takeBackUnadmittedLeaves(
+              mlsService,
+              groupId,
+              userId,
+              [inv.userId],
+              '[PENDING]',
+              log
+            );
+            continue;
+          }
 
           // Send the Welcome + post-merge ratchet tree to the newly added device.
           if (result.welcome) {
@@ -1729,7 +1745,22 @@ export async function handleWelcomeRequest(params: {
         result = await mlsService.replaceMember(groupId, invitee, exclude);
       }
     }
-    await mlsService.registerMember(groupId, requesterUserId);
+    // NOT ADMITTED: the server recorded their departure before this commit was decided - no
+    // Welcome, no history, and the leaf the merged commit gave them is taken back now.
+    try {
+      await mlsService.registerMember(groupId, requesterUserId);
+    } catch (e) {
+      if (!(e instanceof MemberNotAdmittedError)) throw e;
+      await takeBackUnadmittedLeaves(
+        mlsService,
+        groupId,
+        userId,
+        [requesterUserId],
+        '[WELCOME_REQ]',
+        log
+      );
+      return;
+    }
 
     // Send the Welcome + post-merge ratchet tree to the requesting device.
     if (result.welcome) {

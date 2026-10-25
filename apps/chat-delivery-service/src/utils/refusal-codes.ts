@@ -64,6 +64,13 @@ export const RefusalCode = {
    * a member is a new commit with a Welcome of its own.
    */
   WELCOME_TARGET_NOT_MEMBER: 'WELCOME_TARGET_NOT_MEMBER',
+  /**
+   * 409 - `POST mls/groups/:groupId/members` named a person no accepted commit admitted: absent from
+   * the roster, or still awaiting a member's admission. The route enrols nobody (the accepted commit
+   * is the one writer of a new person); a Decline or a departure came before the Add, or no Add
+   * landed. Terminal for that call: the person needs a new Add, and the Welcome is withheld.
+   */
+  MEMBER_NOT_ADMITTED: 'MEMBER_NOT_ADMITTED',
 } as const;
 
 /** A stable refusal code of this service. */

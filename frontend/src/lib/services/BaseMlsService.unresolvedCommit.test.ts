@@ -294,7 +294,8 @@ describe('runCommitTransaction - the record is written by the stage, never after
       undefined,
       BASE,
       undefined,
-      [{ userId: 'user-z' }]
+      [{ userId: 'user-z' }],
+      undefined
     );
   });
 
@@ -695,6 +696,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
       ['u-b:d-b'],
       BASE,
       [{ userId: 'u-b', deviceId: 'd-b' }],
+      undefined,
       undefined
     );
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
@@ -896,6 +898,7 @@ describe('settleUnresolvedCommits - a stage a background engine wrote', () => {
       ['carol:dev-c'],
       BASE,
       [{ userId: 'carol', deviceId: 'dev-c' }],
+      undefined,
       undefined
     );
     expect(c.mergePendingCommitOwingWelcome).toHaveBeenCalledExactlyOnceWith(gid, ['carol:dev-c']);

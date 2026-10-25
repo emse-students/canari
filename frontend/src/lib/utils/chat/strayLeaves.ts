@@ -45,6 +45,12 @@ import { holdsGroupState } from './groupUsability';
  * it; a `memberRemoved` notice here would tell them a second time, in the words of an eviction, that
  * somebody chose to leave.
  *
+ * **A SEAT THAT AWAITS A MEMBER'S ANSWER ADMITS NOBODY.** An invitation-link ask is a row on the
+ * roster, but no accepted commit has admitted its person - so a leaf held under it (an Add decided
+ * before a Decline, merged by a client the server then refused) is stray like any departed one. The
+ * batch names those seats per group (`awaiting`) and the fresh read flags them
+ * (`awaitingAdmission`); both are read as off the roster here.
+ *
  * **AND THE LEAF OF A REVOKED DEVICE, WHOSE OWNER STAYS.** Revoking a device (`DELETE
  * mls/devices/:userId/:deviceId`) purges its routing and cannot touch a tree, so its leaf kept every
  * future epoch for whoever holds the device. The same batch read names, per group, the revoked
@@ -103,8 +109,11 @@ export async function removeStrayLeaves(
       log(`[STRAY] ${groupId.slice(0, 8)}... roster refused (not a member) - nobody removed`);
       continue;
     }
-    const rosterUserIds = batch.rosters.get(groupId);
-    if (!rosterUserIds) continue; // not answered: counted in the line above
+    const answered = batch.rosters.get(groupId);
+    if (!answered) continue; // not answered: counted in the line above
+    // A seat still AWAITING a member's answer admits nobody: a leaf held under it is stray.
+    const awaiting = new Set(batch.awaiting.get(groupId) ?? []);
+    const rosterUserIds = answered.filter((u) => !awaiting.has(u));
     const diff = diffRosterAgainstTree({ leafIdentities, rosterUserIds, selfUserId: userId });
     const revoked = revokedLeavesIn({
       leafIdentities,
@@ -130,6 +139,42 @@ export async function removeStrayLeaves(
     if (changedHere) changed.push(groupId);
   }
   return changed;
+}
+
+/**
+ * TAKES BACK THE LEAVES A MERGED ADD GAVE PEOPLE THE SERVER DID NOT ADMIT, NOW.
+ *
+ * The member-add call answered `MemberNotAdmittedError`: the commit was accepted, but a Decline or a
+ * departure the server recorded before the Add was decided meant it admitted nobody named in
+ * `users`. Their leaves hold no seat - the very shape {@link removeStrayLeaves} collects - so this is
+ * that collector, run on the one group right away rather than at the next connection: until it
+ * lands, a person nobody admitted holds the group's keys. The caller withholds their Welcome.
+ *
+ * @returns whether a removal landed; false is logged loudly, and the next connection retries.
+ */
+export async function takeBackUnadmittedLeaves(
+  mlsService: IMlsService,
+  groupId: string,
+  selfUserId: string,
+  users: string[],
+  tag: string,
+  log: (msg: string) => void
+): Promise<boolean> {
+  const short = groupId.slice(0, 8);
+  log(
+    `${tag} ${users.join(', ')} not admitted by the server in ${short}... (a Decline or a departure ` +
+      'came before this Add was decided) - Welcome withheld, removing the leaves the commit gave them'
+  );
+  const swept = await removeStrayLeaves(mlsService, [groupId], selfUserId, log);
+  if (swept.length > 0) {
+    log(`${tag} the unadmitted leaves are gone from ${short}...`);
+    return true;
+  }
+  log(
+    `${tag} [WARN] the unadmitted leaves of ${short}... were NOT removed now - the stray collector ` +
+      'retries at the next connection'
+  );
+  return false;
 }
 
 /**
@@ -276,7 +321,9 @@ async function removeStrays(
   let keptLeafCount: number;
   try {
     const leafIdentities = await mlsService.getGroupMemberIdentities(groupId);
-    const rosterUserIds = (await mlsService.getGroupUserMembers(groupId)).map((m) => m.userId);
+    const rosterUserIds = (await mlsService.getGroupUserMembers(groupId))
+      .filter((m) => m.awaitingAdmission !== true)
+      .map((m) => m.userId);
     ({ strayUserIds, keptLeafCount } = diffRosterAgainstTree({
       leafIdentities,
       rosterUserIds,

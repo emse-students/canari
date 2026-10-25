@@ -15,7 +15,13 @@ vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
   resolveDisplayNames: async () => (id: string) => id,
 }));
 
+// The collector is pinned on its own (`strayLeaves.test.ts`); here only WHETHER it is handed the
+// unadmitted people matters.
+vi.mock('./strayLeaves', () => ({ takeBackUnadmittedLeaves: vi.fn(async () => true) }));
+
 import { inviteMembersToGroup } from './groupCreation';
+import { takeBackUnadmittedLeaves } from './strayLeaves';
+import { MemberNotAdmittedError } from '$lib/mls-client/mlsDeliveryApi';
 
 /**
  * The INVITE path owes the same ordering as creation: the server names a joiner BEFORE its Welcome
@@ -30,6 +36,11 @@ function inviteDeps(registerImpl?: (u: string) => Promise<void>) {
       if (registerImpl) await registerImpl(u);
     }),
     fetchUserDevices: vi.fn(async (u: string) => [{ deviceId: `${u}-dev` }]),
+    // The invitation's baseline, read with the seat generation it is decided at.
+    getGroupRosterAtGeneration: vi.fn(async () => ({
+      members: [{ userId: 'u1' }],
+      seatGeneration: 3,
+    })),
     acquireAddLock: vi.fn(async () => true),
     releaseAddLock: vi.fn(async () => {}),
     // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
@@ -137,5 +148,122 @@ describe('inviteMembersToGroup - says what it did', () => {
       kind: 'not-added',
       reason: 'failed',
     });
+  });
+});
+
+/**
+ * A DECLINE HOLDS AGAINST AN ADD DECIDED BEFORE IT (ADM-3). The commit is accepted - it may carry
+ * other people - but the server admitted nobody it had ordered a Decline or a departure against, and
+ * says so on the member-add call (`MemberNotAdmittedError`). That person gets no Welcome, is not
+ * reported added, and the leaf the merged commit gave them is handed to the collector at once.
+ */
+describe('inviteMembersToGroup - a person the server did not admit', () => {
+  it('withholds their Welcome, drops them from `added`, and takes their leaf back', async () => {
+    vi.mocked(takeBackUnadmittedLeaves).mockClear();
+    const d = inviteDeps(async (u) => {
+      if (u === 'carol') throw new MemberNotAdmittedError('g1', 'carol');
+    });
+
+    const outcome = await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never);
+
+    expect(d.order).toContain('welcome:bob');
+    expect(d.order).not.toContain('welcome:carol');
+    expect(outcome).toEqual({ kind: 'added', addedUsers: ['bob'] });
+    expect(takeBackUnadmittedLeaves).toHaveBeenCalledExactlyOnceWith(
+      d.mlsService,
+      'g1',
+      'u1',
+      ['carol'],
+      '[SYNC]',
+      expect.any(Function)
+    );
+  });
+
+  it('answers `removed-meanwhile` when nobody it named was admitted', async () => {
+    vi.mocked(takeBackUnadmittedLeaves).mockClear();
+    const d = inviteDeps(async (u) => {
+      if (u !== 'u1') throw new MemberNotAdmittedError('g1', u);
+    });
+
+    expect(await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never)).toEqual({
+      kind: 'not-added',
+      reason: 'removed-meanwhile',
+    });
+    expect(d.order.some((s) => s.startsWith('welcome:'))).toBe(false);
+  });
+
+  it('sends the seat generation its roster was read at with the Add', async () => {
+    const d = inviteDeps();
+    await inviteMembersToGroup(['bob'], convo, d.deps as never);
+
+    expect(d.mlsService.addMembersBulk.mock.calls[0]).toContainEqual(
+      expect.objectContaining({ seatGeneration: 3 })
+    );
+  });
+});
+
+/**
+ * AN ANSWER TO A JOIN ASK IS AN ANSWER TO THAT ASK. A Decline that settled it first removes the seat
+ * (or a new ask replaces it under another identity): the Add stops before anything is staged.
+ */
+describe('inviteMembersToGroup - answering a join ask', () => {
+  const answering = { userId: 'joe', askId: 'ask-1' };
+
+  it('stages nothing when the ask it answers was declined first', async () => {
+    const d = inviteDeps();
+    d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => ({
+      members: [{ userId: 'u1' }],
+      seatGeneration: 5,
+    }));
+
+    expect(await inviteMembersToGroup(['joe'], convo, d.deps as never, { answering })).toEqual({
+      kind: 'not-added',
+      reason: 'removed-meanwhile',
+    });
+    expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('stages nothing when the seat now awaits under ANOTHER ask', async () => {
+    const d = inviteDeps();
+    d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => ({
+      members: [{ userId: 'u1' }, { userId: 'joe', awaitingAdmission: true, askId: 'ask-2' }],
+      seatGeneration: 6,
+    }));
+
+    expect(await inviteMembersToGroup(['joe'], convo, d.deps as never, { answering })).toEqual({
+      kind: 'not-added',
+      reason: 'removed-meanwhile',
+    });
+    expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('adds when the very ask it answers is still open', async () => {
+    const d = inviteDeps();
+    d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => ({
+      members: [{ userId: 'u1' }, { userId: 'joe', awaitingAdmission: true, askId: 'ask-1' }],
+      seatGeneration: 6,
+    }));
+    d.mlsService.addMembersBulk = vi.fn(async () => ({
+      addedDeviceIds: ['joe-dev'],
+      skipped: [],
+      welcome: new Uint8Array([1]),
+    }));
+
+    expect(await inviteMembersToGroup(['joe'], convo, d.deps as never, { answering })).toEqual({
+      kind: 'added',
+      addedUsers: ['joe'],
+    });
+  });
+
+  it('stages nothing when the ask cannot be read', async () => {
+    const d = inviteDeps();
+    d.mlsService.getGroupRosterAtGeneration = vi.fn(async () => {
+      throw new Error('502');
+    });
+
+    const outcome = await inviteMembersToGroup(['joe'], convo, d.deps as never, { answering });
+
+    expect(outcome.kind).toBe('not-added');
+    expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
 });

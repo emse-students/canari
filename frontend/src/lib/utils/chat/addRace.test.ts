@@ -79,6 +79,10 @@ function inviteHarness() {
   const mlsService = {
     ...confirmable(state),
     getGroupUserMembers: vi.fn(async () => [...roster].map((userId) => ({ userId }))),
+    getGroupRosterAtGeneration: vi.fn(async () => ({
+      members: [...roster].map((userId) => ({ userId })),
+      seatGeneration: 0,
+    })),
     getEpoch: vi.fn(() => state.epoch),
     getGroupMemberIdentities: vi.fn(async () => [...state.tree]),
     registerMember: vi.fn(async () => {}),

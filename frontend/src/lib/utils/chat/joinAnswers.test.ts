@@ -221,7 +221,18 @@ describe('admitJoinRequest - done only when the person is in the tree', () => {
     const m = memberSide();
 
     expect(await admitJoinRequest(request, m.deps)).toEqual({ done: true });
-    expect(m.invite).toHaveBeenCalledWith([JOINER], m.deps.conversations.get(GROUP));
+    expect(m.invite).toHaveBeenCalledWith([JOINER], m.deps.conversations.get(GROUP), undefined);
+  });
+
+  it('answers AS the ask it was tapped on: the Add carries its identity', async () => {
+    // So the Add stops before its stage if a Decline settled that ask first (`rosterPremise`).
+    const m = memberSide();
+
+    expect(await admitJoinRequest({ ...request, askId: 'ask-1' }, m.deps)).toEqual({ done: true });
+    expect(m.invite).toHaveBeenCalledWith([JOINER], m.deps.conversations.get(GROUP), {
+      userId: JOINER,
+      askId: 'ask-1',
+    });
   });
 
   it('is not done when the Add did not happen, and names why', async () => {

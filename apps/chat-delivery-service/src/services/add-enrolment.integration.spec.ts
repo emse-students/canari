@@ -106,7 +106,12 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
    * A commit of `INVITER`'s at `epoch`, admitting `INVITEE`'s device when `admits` - the same bytes
    * for the same epoch on every submission, which is what the gate's duplicate test compares.
    */
-  const commitAt = (epoch: number, admits = true, group = GROUP) =>
+  const commitAt = (
+    epoch: number,
+    admits = true,
+    group = GROUP,
+    invitationSeatGeneration?: number
+  ) =>
     service.validateCommit(
       {
         groupId: group,
@@ -120,10 +125,35 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
               admits: [INVITEE],
             }
           : {}),
+        ...(invitationSeatGeneration === undefined ? {} : { invitationSeatGeneration }),
       },
       INVITER.userId
     );
   const addCommit = (epoch: number) => commitAt(epoch, true);
+  /**
+   * A MEMBER'S INVITATION: the roster read with its seat generation (`?withSeatGeneration=1`), as
+   * the invitation reads its baseline, then the Add built on `epoch` carrying that generation.
+   */
+  const invitationAdd = async (epoch: number) => {
+    const { seatGeneration } = await members().getGroupUserMembers(
+      GROUP,
+      INVITER.userId,
+      undefined,
+      '1'
+    );
+    return commitAt(epoch, true, GROUP, seatGeneration);
+  };
+  /** The adding member's member-add call after its accept (`registerMember`). */
+  const register = (caller = INVITER.userId) =>
+    members().addGroupMember(GROUP, { userId: INVITEE.userId }, caller, undefined);
+  /** The invitee's roster flag, or `null` when they hold no seat. */
+  const awaitingFlag = async (): Promise<boolean | null> => {
+    const [seat]: { awaitingAdmission: boolean }[] = await q(
+      `SELECT "awaitingAdmission" FROM dm_group_members WHERE "groupId" = $1 AND "userId" = $2`,
+      [GROUP, INVITEE.userId]
+    );
+    return seat ? seat.awaitingAdmission : null;
+  };
   /** The Welcome of that Add, as `mergeSettled` sends it after a settlement. */
   const welcome = () =>
     service.sendWelcome(INVITER.userId, {
@@ -484,6 +514,178 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
       await expect(addCommit(1)).resolves.toMatchObject({ accepted: true, newEpoch: 2 });
 
       expect(await enrolment()).toEqual({ seats: 1, openIntervals: 1, devices: 1 });
+    });
+  });
+
+  /**
+   * ADM-3 (campaign row, build `1.4.1-alpha.4`): the gate honoured a member's Decline against an Add
+   * built before it, and in the same second the adding member's `registerMember` - the member-add
+   * route - enrolled the declined person again, its Welcome was stored and they sent as a member.
+   * Every writer that can admit a person is held to the Decline here: the route, the gate (a new
+   * ask after the Decline included), and a Welcome sent apart.
+   */
+  describe('a Decline holds against an Add built before it, through every writer (ADM-3)', () => {
+    const ask = () =>
+      ensureGroupMember(ds.manager, GROUP, INVITEE.userId, { awaitingAdmission: true });
+    const decline = async () =>
+      expect(members().declineJoinRequest(GROUP, INVITEE.userId, INVITER.userId)).resolves.toEqual({
+        outcome: 'withdrawn',
+      });
+
+    it("the adding member's member-add call after the accept enrols nobody, and its Welcome is refused", async () => {
+      await ask();
+      // The Add's roster read, made while the ask was open: the generation before the Decline.
+      const { seatGeneration } = await members().getGroupUserMembers(
+        GROUP,
+        INVITER.userId,
+        undefined,
+        '1'
+      );
+      await decline();
+      // The Add built on that read lands at the unchanged epoch, then the client registers the person.
+      await expect(commitAt(1, true, GROUP, seatGeneration)).resolves.toMatchObject({
+        accepted: true,
+        newEpoch: 2,
+      });
+      await expect(refusalOf(register())).resolves.toEqual({
+        status: 409,
+        name: 'MEMBER_NOT_ADMITTED',
+      });
+
+      expect(await enrolment()).toEqual({ seats: 0, openIntervals: 0, devices: 0 });
+      await expect(refusalOf(welcome())).resolves.toEqual({
+        status: 403,
+        name: 'WELCOME_TARGET_NOT_MEMBER',
+      });
+    });
+
+    it('an Add built AFTER the Decline at the same epoch is a fresh invite: admitted by the commit, the call a no-op', async () => {
+      await ask();
+      await decline();
+      // The member invites the declined person again: their roster read is the Decline's generation.
+      await expect(invitationAdd(1)).resolves.toMatchObject({ accepted: true, newEpoch: 2 });
+      expect(await enrolment()).toEqual({ seats: 1, openIntervals: 1, devices: 1 });
+
+      await expect(register()).resolves.toEqual({ status: 'added' });
+      expect(await enrolment()).toEqual({ seats: 1, openIntervals: 1, devices: 1 });
+      await expect(refusalOf(welcome())).resolves.toBeNull();
+    });
+
+    it('declined, then asked AGAIN: an Add built before the Decline does not lift the new ask', async () => {
+      await ask();
+      const { seatGeneration } = await members().getGroupUserMembers(
+        GROUP,
+        INVITER.userId,
+        undefined,
+        '1'
+      );
+      await decline();
+      // The person follows the link again: a new awaiting seat, a new ask.
+      await ask();
+
+      await expect(commitAt(1, true, GROUP, seatGeneration)).resolves.toMatchObject({
+        accepted: true,
+      });
+
+      expect(await awaitingFlag()).toBe(true);
+      // The admit was dropped: no device row a frame would be queued for.
+      expect((await enrolment()).devices).toBe(0);
+      await expect(refusalOf(register())).resolves.toEqual({
+        status: 409,
+        name: 'MEMBER_NOT_ADMITTED',
+      });
+      await expect(refusalOf(welcome())).resolves.toEqual({
+        status: 403,
+        name: 'WELCOME_TARGET_NOT_MEMBER',
+      });
+      expect(await awaitingFlag()).toBe(true);
+    });
+
+    it('declined, then asked again: an Add built after the Decline admits the new ask', async () => {
+      await ask();
+      await decline();
+      await ask();
+
+      await expect(invitationAdd(1)).resolves.toMatchObject({ accepted: true });
+
+      expect(await awaitingFlag()).toBe(false);
+      await expect(register()).resolves.toEqual({ status: 'added' });
+      await expect(refusalOf(welcome())).resolves.toBeNull();
+    });
+
+    it('an automatic Add (no invitation generation) built before the Decline is ordered by its base epoch, and refused', async () => {
+      await ask();
+      await decline();
+      await ask();
+
+      await expect(addCommit(1)).resolves.toMatchObject({ accepted: true });
+
+      expect(await awaitingFlag()).toBe(true);
+      expect((await enrolment()).devices).toBe(0);
+    });
+
+    it('a Welcome sent apart never admits a seat still awaiting a member', async () => {
+      await ask();
+      await expect(refusalOf(welcome())).resolves.toEqual({
+        status: 403,
+        name: 'WELCOME_TARGET_NOT_MEMBER',
+      });
+      expect(await awaitingFlag()).toBe(true);
+      expect(await queuedWelcomes()).toBe(0);
+    });
+
+    it('a member removed while an automatic Add of theirs was in flight is not re-enrolled by its member-add call', async () => {
+      await addCommit(1);
+      // A member removes them; the Remove commit has not landed, so the epoch is still 2.
+      await remove(INVITER.userId);
+      // Another member's device answers a welcome_request of theirs with an Add built before.
+      await expect(addCommit(2)).resolves.toMatchObject({ accepted: true });
+      await expect(refusalOf(register())).resolves.toEqual({
+        status: 409,
+        name: 'MEMBER_NOT_ADMITTED',
+      });
+      expect(await enrolment()).toEqual({ seats: 0, openIntervals: 0, devices: 0 });
+    });
+
+    it('the member-add route writes the devices of an admitted person, and enrols a creator into an empty group only', async () => {
+      await addCommit(1);
+      await q(`DELETE FROM dm_device_group_memberships WHERE "userId" = $1`, [INVITEE.userId]);
+      await expect(register()).resolves.toEqual({ status: 'added' });
+      expect(await enrolment()).toEqual({ seats: 1, openIntervals: 1, devices: 1 });
+
+      // A person nobody admitted, named by a member: nothing written.
+      await q(`DELETE FROM dm_group_members WHERE "userId" = $1`, [INVITEE.userId]);
+      await q(`DELETE FROM dm_device_group_memberships WHERE "userId" = $1`, [INVITEE.userId]);
+      await q(`DELETE FROM dm_group_membership_intervals WHERE "userId" = $1`, [INVITEE.userId]);
+      await expect(refusalOf(register())).resolves.toEqual({
+        status: 409,
+        name: 'MEMBER_NOT_ADMITTED',
+      });
+      expect(await enrolment()).toEqual({ seats: 0, openIntervals: 0, devices: 0 });
+
+      // The creator, into its own new group whose roster is empty.
+      const fresh = '00000000-0000-4000-8000-0000000000b4';
+      await q(`INSERT INTO dm_groups (id, "isGroup", "activeEpoch") VALUES ($1, true, 0)`, [fresh]);
+      try {
+        await expect(
+          members().addGroupMember(fresh, { userId: INVITEE.userId }, INVITEE.userId, undefined)
+        ).resolves.toEqual({ status: 'added' });
+        expect((await enrolment(fresh)).seats).toBe(1);
+      } finally {
+        await q(`DELETE FROM dm_group_members WHERE "groupId" = $1`, [fresh]);
+        await q(`DELETE FROM dm_device_group_memberships WHERE "groupId" = $1`, [fresh]);
+        await q(`DELETE FROM dm_group_membership_intervals WHERE "groupId" = $1`, [fresh]);
+        await q(`DELETE FROM dm_groups WHERE id = $1`, [fresh]);
+      }
+    });
+
+    it('refuses a declared invitation generation the group never reached', async () => {
+      await ask();
+      await expect(refusalOf(commitAt(1, true, GROUP, 7))).resolves.toEqual({
+        status: 400,
+        name: 'invitation_seat_generation_invalid',
+      });
+      expect(await awaitingFlag()).toBe(true);
     });
   });
 

@@ -2,7 +2,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { JoinDeclineOutcome } from '$lib/mls-client/mlsDeliveryApi';
 import type { Conversation } from '$lib/types';
 import { treeHoldsUser } from '$lib/mls-client/leafIdentity';
-import type { BulkAdditionOutcome } from './groupCreation';
+import type { AnsweredJoinAsk, BulkAdditionOutcome } from './groupCreation';
 import type { JoinAnswerResult, JoinRequest } from './joinRequests.svelte';
 
 /**
@@ -20,8 +20,15 @@ import type { JoinAnswerResult, JoinRequest } from './joinRequests.svelte';
 export interface JoinAnswerDeps {
   mlsService: Pick<IMlsService, 'getGroupMemberIdentities' | 'declineJoinRequest'>;
   conversations: ReadonlyMap<string, Conversation>;
-  /** The member's own Add (`inviteMembersToGroup`), which returns what it did and never throws. */
-  invite: (userIds: string[], conversation: Conversation) => Promise<BulkAdditionOutcome>;
+  /**
+   * The member's own Add (`inviteMembersToGroup`), which returns what it did and never throws.
+   * `answering` is the ask it answers: the Add goes ahead only while that very ask is still open.
+   */
+  invite: (
+    userIds: string[],
+    conversation: Conversation,
+    answering?: AnsweredJoinAsk
+  ) => Promise<BulkAdditionOutcome>;
   log: (message: string) => void;
 }
 
@@ -69,7 +76,13 @@ export async function admitJoinRequest(
     );
     return { done: true };
   }
-  const outcome = await deps.invite([request.userId], convo);
+  // An ask with an identity is answered AS that ask: a Decline or a newer ask since it was raised
+  // makes this Add stop before its stage (`rosterPremise`), never admit over the Decline.
+  const outcome = await deps.invite(
+    [request.userId],
+    convo,
+    request.askId !== undefined ? { userId: request.userId, askId: request.askId } : undefined
+  );
   if (outcome.kind === 'not-added') {
     return { done: false, reason: `the Add did not happen (${outcome.reason})` };
   }

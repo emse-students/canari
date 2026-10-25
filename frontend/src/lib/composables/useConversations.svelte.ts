@@ -2152,19 +2152,24 @@ export function useConversations() {
     return {
       mlsService,
       conversations,
-      invite: (userIds, convo) =>
-        inviteMembersToGroup(userIds, convo, {
-          mlsService,
-          storage: ctx.storage,
-          userId: ctx.userId,
-          deviceKeyB64: ctx.deviceKeyB64,
-          historyBaseUrl: ctx.historyBaseUrl,
-          conversations,
-          selectConversation: (name) => selectConversationWithCtx(name, ctx),
-          saveConversation: (name) => saveConversation(name, ctx),
-          addMessageToChat: ctx.addMessageToChat,
-          log: ctx.log,
-        }),
+      invite: (userIds, convo, answering) =>
+        inviteMembersToGroup(
+          userIds,
+          convo,
+          {
+            mlsService,
+            storage: ctx.storage,
+            userId: ctx.userId,
+            deviceKeyB64: ctx.deviceKeyB64,
+            historyBaseUrl: ctx.historyBaseUrl,
+            conversations,
+            selectConversation: (name) => selectConversationWithCtx(name, ctx),
+            saveConversation: (name) => saveConversation(name, ctx),
+            addMessageToChat: ctx.addMessageToChat,
+            log: ctx.log,
+          },
+          answering ? { answering } : {}
+        ),
       log: ctx.log,
     };
   }

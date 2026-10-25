@@ -711,12 +711,12 @@ window with a durable row and a lock:
   both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. **Two known exceptions.** The
   demotion (`deactivateDeviceMembership`, the stale-device cron among its callers), deliberately:
   it upserts a `pending` row without that read - the cron demotes precisely a device with no recent
-  key package - and removes the route itself. And `addGroupMember` (a group invite, and the opening
-  of a 1:1 DM), a pre-existing writer not yet converted: it reads the key packages outside any lock
-  and writes the roster row and `pending` seats with no seat lock, so **an erased account can be
-  re-enrolled by a peer's invite, roster row included, even after the erasure's final pass**
+  key package - and removes the route itself. And the creation bootstrap of `addGroupMember` (a
+  caller enrolling ITSELF into an empty roster), which writes the roster row and `pending` seats
+  with no seat lock. Since ADM-3 (2026-10-25) the route enrols nobody else: another person's device
+  rows go through `writePendingSeats` under the seat lock, or the route refuses
   ([backlog](../backlog.md), P2 "addGroupMember can enrol an erased account after the final erasure
-  pass"). An account erasure deletes the account's key packages FIRST, in a
+  pass", narrowed). An account erasure deletes the account's key packages FIRST, in a
   transaction of its own, so a writer either holds one and the delete waits for it - its row is
   then there for the erasure's discovery - or finds none and writes nothing. The erasure cuts every
   group it found, under each group's seat lock (`eraseSeats`: rows, queue and routes together), so

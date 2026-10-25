@@ -72,6 +72,18 @@ export type GroupUserMemberRow = {
   askId?: string | null;
 };
 
+/**
+ * A group's roster as a member's invitation reads it (`GET .../user-members?withSeatGeneration=1`):
+ * the rows, and the group's seat generation the server read BEFORE them - the number the invitation's
+ * Add carries (`invitationSeatGeneration`), which the commit gate orders every Decline and removal
+ * against. `null` from a server older than the parameter (it answers the bare rows): that server's
+ * gate reads no such number, so nothing is lost by not sending one.
+ */
+export interface GroupRosterAtGeneration {
+  members: GroupUserMemberRow[];
+  seatGeneration: number | null;
+}
+
 export type MlsDeliveryFetch = typeof fetch;
 
 /**
@@ -143,6 +155,13 @@ export interface GroupRosterBatch {
    * empty against a server that predates the field: nothing known revoked is nothing removed.
    */
   revoked: Map<string, string[]>;
+  /**
+   * The people of an answered group's roster whose seat still AWAITS a member's admission, by group:
+   * a leaf of theirs is one no accepted commit admitted (the commit that admits a person lifts the
+   * flag in the transaction that accepts it), so `removeStrayLeaves` reads them as off the roster.
+   * Absent for a group with none, and empty against a server that predates the field.
+   */
+  awaiting: Map<string, string[]>;
 }
 
 /**
@@ -654,6 +673,27 @@ export class UserBlockedError extends Error {
   constructor(readonly userId: string) {
     super(`A block stands between the caller and ${userId}`);
     this.name = 'UserBlockedError';
+  }
+}
+
+/**
+ * The member-add call named a person NO ACCEPTED COMMIT ADMITTED (`409 MEMBER_NOT_ADMITTED`, `POST
+ * /api/mls/groups/:id/members`): the commit gate enrols the people an Add admits in the transaction
+ * that accepts it, and refused this one - a member's Decline of their ask, or their departure, was
+ * recorded after the Add was decided. Typed so the adder withholds the Welcome (the server would
+ * refuse it anyway) and reports the person not added; the leaf the merged commit put in the tree has
+ * no seat, and the stray sweep removes it. Terminal for this Add: the person needs a new one.
+ */
+export class MemberNotAdmittedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly userId: string
+  ) {
+    super(
+      `${userId} was not admitted to ${groupId.slice(0, 8)}... by the accepted commit - a Decline ` +
+        'or a departure came before the Add was decided'
+    );
+    this.name = 'MemberNotAdmittedError';
   }
 }
 
@@ -1301,14 +1341,15 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Adds `userId` to the server-side member list of `groupId` (idempotent).
+   * Writes the device seats of `userId` in `groupId` once an accepted commit admitted them (and, for
+   * a new group's creator, enrols them into its empty roster). Idempotent.
    *
-   * ONE refusal is raised and the rest are logged. A 403 carrying `USER_BLOCKED` is the server
-   * stating a fact the caller has to act on - the person may not be added, and a group that
-   * pretended otherwise would show a member the server does not have. Every other non-2xx keeps the
-   * historical tolerance of this call, which callers up and down the invite path rely on, but it no
-   * longer passes in silence: an HTTP failure was swallowed here without so much as a line, since
-   * `f` resolves rather than throwing on a bad status and only transport errors reached the catch.
+   * TWO refusals are raised, typed by the server's code, and the rest are logged. `USER_BLOCKED`: the
+   * person may not be added, and a group that pretended otherwise would show a member the server does
+   * not have. `MEMBER_NOT_ADMITTED` ({@link MemberNotAdmittedError}): no accepted commit admitted
+   * them - a Decline or a departure came before the Add was decided - so the caller withholds the
+   * Welcome. Every other non-2xx keeps the historical tolerance of this call, which callers up and
+   * down the invite path rely on, logged: `f` resolves rather than throwing on a bad status.
    */
   async registerMember(groupId: string, userId: string): Promise<void> {
     try {
@@ -1318,13 +1359,12 @@ export class MlsDeliveryApi {
         body: JSON.stringify({ userId }),
       });
       if (res.ok) return;
-      const body = await res.text().catch(() => '');
-      if (res.status === 403 && body.includes('USER_BLOCKED')) {
-        throw new UserBlockedError(userId);
-      }
+      const refusal = await refusalFromResponse(res, 'registerMember refused');
+      if (refusal.code === 'USER_BLOCKED') throw new UserBlockedError(userId);
+      if (refusal.code === 'MEMBER_NOT_ADMITTED') throw new MemberNotAdmittedError(groupId, userId);
       console.error(`registerMember refused: group=${groupId} user=${userId} status=${res.status}`);
     } catch (e) {
-      if (e instanceof UserBlockedError) throw e;
+      if (e instanceof UserBlockedError || e instanceof MemberNotAdmittedError) throw e;
       console.error('Failed to register member', e);
     }
   }
@@ -1523,6 +1563,11 @@ export class MlsDeliveryApi {
    * were deleted by the server's half of the removal, which ran first, so the server queues the
    * commit to the devices it parted for exactly these (`partingKey`, server side): the removed
    * devices receive the commit that removes them. Only a staged Remove has any.
+   *
+   * `invitationSeatGeneration` is the seat generation a member's invitation read with its roster
+   * baseline ({@link getGroupRosterAtGeneration}): the gate orders every Decline and removal of the
+   * people this Add admits against it, so one made after the member decided holds and one made
+   * before does not. Only the Add of a member's invitation has one.
    */
   async submitCommit(
     groupId: string,
@@ -1531,7 +1576,8 @@ export class MlsDeliveryApi {
     excludeDeviceIds?: string[],
     groupInfoBase64?: string,
     admits?: Array<{ userId: string; deviceId: string }>,
-    removes?: CommitRemoval[]
+    removes?: CommitRemoval[],
+    invitationSeatGeneration?: number
   ): Promise<{
     accepted: boolean;
     reason?: string;
@@ -1568,6 +1614,7 @@ export class MlsDeliveryApi {
           ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
           ...(admits?.length ? { admits } : {}),
           ...(removes?.length ? { removes } : {}),
+          ...(invitationSeatGeneration !== undefined ? { invitationSeatGeneration } : {}),
         }),
       },
       { requestClass: 'write' }
@@ -2294,6 +2341,37 @@ export class MlsDeliveryApi {
   }
 
   /**
+   * The roster of `groupId` WITH the seat generation the server read before it - the baseline of a
+   * member's invitation ({@link GroupRosterAtGeneration}). Never joined to a read in flight: the
+   * number must be read after the member decided. Failures classified as
+   * {@link getGroupUserMembers}'s. A server older than the parameter answers the bare rows, read as
+   * `seatGeneration: null` - what that server said, not a guess.
+   */
+  async getGroupRosterAtGeneration(groupId: string): Promise<GroupRosterAtGeneration> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/groups/${groupId}/user-members?withSeatGeneration=1`,
+      { headers: await this.auth() }
+    );
+    const awaiting = await awaitingAdmissionFrom(res, groupId);
+    if (awaiting) throw awaiting;
+    if (!res.ok) throw await refusalFromResponse(res, 'getGroupRosterAtGeneration failed');
+    const body = (await readApiJson(
+      res,
+      `GET /api/mls/groups/user-members (group ${groupId.slice(0, 8)})`
+    )) as GroupUserMemberRow[] | { seatGeneration?: unknown; members?: unknown };
+    if (Array.isArray(body)) return { members: body, seatGeneration: null };
+    if (
+      !Array.isArray(body.members) ||
+      typeof body.seatGeneration !== 'number' ||
+      !Number.isInteger(body.seatGeneration) ||
+      body.seatGeneration < 0
+    ) {
+      throw new Error(`getGroupRosterAtGeneration: malformed answer for ${groupId.slice(0, 8)}...`);
+    }
+    return { members: body.members as GroupUserMemberRow[], seatGeneration: body.seatGeneration };
+  }
+
+  /**
    * The windows during which each current member of `groupId` was out of it - what a history answer
    * must withhold (user, 2026-10-14: a Remove holds against a later re-add).
    *
@@ -2396,7 +2474,12 @@ export class MlsDeliveryApi {
    * per group - so the caller knows it without asking again.
    */
   async fetchGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {
-    const out: GroupRosterBatch = { rosters: new Map(), refused: new Set(), revoked: new Map() };
+    const out: GroupRosterBatch = {
+      rosters: new Map(),
+      refused: new Set(),
+      revoked: new Map(),
+      awaiting: new Map(),
+    };
     for (let i = 0; i < groupIds.length; i += GROUP_ROSTERS_MAX_GROUPS) {
       const chunk = groupIds.slice(i, i + GROUP_ROSTERS_MAX_GROUPS);
       try {
@@ -2416,6 +2499,7 @@ export class MlsDeliveryApi {
           rosters?: Record<string, string[]>;
           refused?: string[];
           revoked?: Record<string, unknown>;
+          awaiting?: Record<string, unknown>;
         };
         for (const [groupId, userIds] of Object.entries(data.rosters ?? {})) {
           // A roster that is not a list is not an empty roster: an empty one names every leaf as a
@@ -2431,6 +2515,15 @@ export class MlsDeliveryApi {
             (id): id is string => typeof id === 'string' && id.length > 0
           );
           if (named.length > 0) out.revoked.set(groupId, named);
+        }
+        // THE SAME ALLOWLIST: an awaiting person becomes a removal candidate, so a malformed entry
+        // names nobody, and only a group whose roster was answered is read.
+        for (const [groupId, userIds] of Object.entries(data.awaiting ?? {})) {
+          if (!out.rosters.has(groupId) || !Array.isArray(userIds)) continue;
+          const named = userIds.filter(
+            (id): id is string => typeof id === 'string' && id.length > 0
+          );
+          if (named.length > 0) out.awaiting.set(groupId, named);
         }
       } catch (e) {
         console.warn(

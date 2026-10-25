@@ -36,6 +36,7 @@ import {
   type CommitRemoval,
   type JoinDeclineOutcome,
   type GroupUserMemberRow,
+  type GroupRosterAtGeneration,
   type PendingInvitationRow,
   WelcomeTargetNotMemberError,
   ADD_LOCK_WAIT_BOUND_MS,
@@ -4012,6 +4013,10 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.getGroupUserMembers(groupId, opts);
   }
 
+  async getGroupRosterAtGeneration(groupId: string): Promise<GroupRosterAtGeneration> {
+    return this.delivery.getGroupRosterAtGeneration(groupId);
+  }
+
   async getGroupWithheld(groupId: string, forUserId?: string): Promise<GroupExclusions> {
     return this.delivery.getGroupWithheld(groupId, forUserId);
   }
@@ -4991,7 +4996,8 @@ export abstract class BaseMlsService implements IMlsService {
         submission.excludeDeviceIds,
         submission.groupInfo,
         submission.admits,
-        submission.removes
+        submission.removes,
+        submission.invitationSeatGeneration
       )
     );
   }

@@ -57,6 +57,9 @@ export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   // A Welcome whose target the roster does not name is a typed `WelcomeTargetNotMemberError`, and
   // the settlement that sent it stops owing it; no screen words it.
   'WELCOME_TARGET_NOT_MEMBER',
+  // A member-add call naming a person no accepted commit admitted is a typed
+  // `MemberNotAdmittedError`: the invite withholds the Welcome and reports the person not added.
+  'MEMBER_NOT_ADMITTED',
 ];
 
 /** Every code {@link describeRefusalCode} words. */
