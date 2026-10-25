@@ -922,8 +922,8 @@ export abstract class BaseMlsService implements IMlsService {
       this.heartbeatTimer = null;
     }
     // The work list of unacknowledged frames belongs to the session, not to this client: it is
-    // dropped by `resetUnackedFrames` at logout, and a destroy that kept the socket's successor
-    // running must not lose what still needs re-fetching.
+    // dropped by `resetUnackedFrames` at logout, never here - the next client of the same session
+    // still has to re-fetch what this one never acknowledged. (The socket itself went at the top.)
     if (this._visibilityHandler) {
       document.removeEventListener('visibilitychange', this._visibilityHandler);
       this._visibilityHandler = null;

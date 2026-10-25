@@ -444,6 +444,26 @@ describe('a sign-out during a login in progress', () => {
     expect(s.wentLive()).toHaveBeenCalledTimes(1);
     expectQuietStop(s);
   });
+  it('a login that FAILS after it went live leaves no session flag and no armed reconnect behind', async () => {
+    // The login's handshake reopen failed and armed the ladder (`openGatewayConnection`); then a
+    // later step of the same login threw. Left armed over `isLoggedIn` true, the rung would build a
+    // fresh, uninitialised client from the holder and connect it.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const a = fakeClient();
+    const s = session([a.client]);
+    const rung = vi.fn();
+    (s.cb.loadAndRestoreConversations as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      s.ctx.timers.reconnect = setTimeout(rung, 60_000);
+      throw new Error('restore failed');
+    });
+
+    await loginImpl(s.ctx, s.cb);
+
+    expect(s.wentLive()).toHaveBeenCalledWith(true);
+    expect(s.cb.onLoginFailed).toHaveBeenCalled();
+    expect(s.ctx.isLoggedIn(), 'a failed login left the session flag up').toBe(false);
+    expect(s.ctx.timers.reconnect, 'a failed login left a reconnect rung armed').toBeNull();
+  });
   it('a revocation wipe that fails after its own sign-out is accused, not filed as a stopped login', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     wipeDeviceToFactory.mockRejectedValueOnce(new Error('IndexedDB delete blocked'));

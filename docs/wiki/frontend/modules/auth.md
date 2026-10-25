@@ -235,6 +235,13 @@ presence goes immediately) and marks the client retired: a `connect` on a destro
 nothing and accuses its caller at `error`, because its fence can only match if it was taken after the
 destroy. Tests: `TauriMlsService.destroyFence.test.ts`, `WebMlsService.destroyFence.test.ts`.
 
+**The same failure catch also lowers what the login raised.** A login can fail AFTER
+`setIsLoggedIn(true)`, and its handshake's failed reopen may have armed the reconnect ladder by then.
+The catch reset the client but left the flag up and the rung armed, so the rung would have built a
+fresh, uninitialised client from the holder and connected it. The catch now clears that rung and
+lowers the flag - only when this login raised it, never another session's
+(`signOutDuringLogin.test.ts`).
+
 **The gateway's rule for a second socket of one device is to ADD it** (the comment at the
 registration in `apps/chat-gateway/src/handlers.rs`): sibling tabs, a reconnect overlapping its
 predecessor's close and a deploy overlap are all legitimate, and a sibling may sit on another
