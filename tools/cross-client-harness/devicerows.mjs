@@ -17,7 +17,7 @@ export const DEV_ROWS = {
   'DEV-1': {
     devices: ['W1', 'W2'],
     mint: ['W3'],
-    what: "a new device of the owner (W3) is seated automatically; the owner's notice and the conversation's device line show once each",
+    what: "a new device of the owner (W3) is seated automatically; the owner's notice shows once, and the group's device line once on the contact (W2), never on the owner",
   },
   'DEV-2': {
     devices: ['W1', 'W2'],
@@ -147,12 +147,23 @@ export function mintedLine(stdout) {
   }
 }
 
-/** DEV-1: seated automatically; the owner's notice once; the conversation's device line once on each. */
+/**
+ * DEV-1: seated automatically; the owner's notice once; in the row's group, the device line once on
+ * the CONTACT (W2) and never on the OWNER (W1).
+ *
+ * The owner is told by the account notice and gets no line (`deviceEventAudience`: own account ->
+ * `owner-alert`). A contact gets the line in every 1:1 and group it shares with the owner, so `lines`
+ * is counted in the open conversation's pane only (`chat.mjs` `paneOccurrences`): counted on the whole
+ * page it read eight on W2 on 2026-10-25, one per shared conversation's preview, all correct.
+ *
+ * @param {{seatedMs: number|null, notice: {shown: number, most: number}, lines: {W1: number, W2: number}}} p
+ */
 export function deviceAddedOwn({ seatedMs, notice, lines }) {
   return [
     { what: `the new device was seated in the group automatically (${ms(seatedMs)})`, ok: seatedMs !== null },
     { what: `the owner's new-device notice appeared once, never two at a time (${notice.shown} appearance(s), at most ${notice.most})`, ok: notice.shown === 1 && notice.most === 1 },
-    ...Object.entries(lines).map(([d, n]) => ({ what: `${d} shows the "added a device" line once (${n})`, ok: n === 1 })),
+    { what: `W2 (a contact) shows the "added a device" line once in the group (${lines.W2})`, ok: lines.W2 === 1 },
+    { what: `W1 (the owner) shows no "added a device" line in the group - the notice is its alert (${lines.W1})`, ok: lines.W1 === 0 },
   ];
 }
 

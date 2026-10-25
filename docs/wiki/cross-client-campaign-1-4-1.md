@@ -258,7 +258,7 @@ arrivals were, so it is recorded in the row's detail and never decides it.
 
 | Id | Question | `PASS` entails | Devices | Class | Cost |
 | --- | --- | --- | --- | --- | --- |
-| DEV-1 | A new device of an existing member (W3 owner) | added automatically as `member-device`; the new-device notice and contact line appear on the owner's and the peer's devices once each | W1 W2 + W3 new | U, PIN | 20 min |
+| DEV-1 | A new device of an existing member (W3 owner) | added automatically as `member-device`; the new-device notice on the owner's device once, and the contact line once in the group on the peer's - never a contact line on the owner's (the notice is its alert) | W1 W2 + W3 new | U, PIN | 20 min |
 | DEV-2 | Revoke W3 from W1 | the stray-leaf collector removes W3's leaf in every group by allowlist; W3's next commit is `403 DEVICE_REVOKED`; nobody removes their own leaf | W1 W2 W3 | U | 30 min |
 | DEV-3 | Revoke W3 while it is OFFLINE, then bring it back | the wipe is deferred, not lost; on return it holds nothing; the leaf was already removed | W1 W2 W3 | U | 30 min |
 | DEV-4 | Two fresh devices enrol at the same instant (old HEAL-NEW-10) | both admitted, one tree, no add-lock deadlock | W1 W2 + W3 W6 new | U, PIN | 30 min |

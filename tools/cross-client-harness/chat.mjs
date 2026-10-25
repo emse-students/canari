@@ -221,6 +221,15 @@ const PANE_TEXT = `(function () {
 })()`;
 
 /**
+ * How many times `text` appears in the OPEN conversation's pane - never the whole page, whose
+ * sidebar previews repeat any line written in several conversations. DEV-1 counted the body and read
+ * a contact's new-device line eight times on W2: once per conversation W2 shares with the owner, each
+ * one correct (2026-10-25).
+ */
+export const paneOccurrences = (cx, text) =>
+  evaluate(cx, `${PANE_TEXT}.split(${JSON.stringify(text)}).length - 1`).then(Number);
+
+/**
  * Connect to a client by port, optionally picking the tab whose URL contains `match`.
  *
  * FOCUS EMULATION IS ON BY DEFAULT, and it is not a convenience.

@@ -21,7 +21,7 @@
  * sign-in the first time.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { APP_TAB, evaluate, send } from '../chat.mjs';
+import { APP_TAB, evaluate, paneOccurrences, send } from '../chat.mjs';
 import { reloadAndWait } from '../cdp.mjs';
 import {
   BG_WELCOME,
@@ -183,7 +183,11 @@ async function readsOn(device, c, mark, timeoutMs = 120_000) {
 }
 
 const ACTIONS = {
-  /** DEV-1: W3 minted; seated by itself; the notice on W1 and the device line on W1 and W2, once each. */
+  /**
+   * DEV-1: W3 minted; seated by itself; the owner's notice on W1 once; the device line in the row's
+   * group once on W2 (a contact) and never on W1 - the owner is told by the notice, not by a line
+   * (`deviceEventAudience`: own account -> `owner-alert`, a contact -> `contact-line`).
+   */
   async 'DEV-1'(c) {
     const W1 = seats.seat.W1.cx;
     const noticeP = sampleOnScreen(W1, 'Nouvel appareil sur votre compte', 240_000);
@@ -194,7 +198,7 @@ const ACTIONS = {
     const lines = {};
     for (const d of ['W1', 'W2']) {
       await openGroup(seats.seat[d].cx, c.group.name, { label: rowId });
-      lines[d] = await onScreen(seats.seat[d].cx, 'a ajouté un appareil');
+      lines[d] = await paneOccurrences(seats.seat[d].cx, 'a ajouté un appareil');
     }
     return {
       members: ['W1', 'W2', 'W3'],

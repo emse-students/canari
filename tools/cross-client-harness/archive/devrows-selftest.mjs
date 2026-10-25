@@ -77,14 +77,15 @@ ok('a stale refusal ends the answer', bgAnswered(['processWelcomeRequestBackgrou
 ok('a staged Welcome alone does not', !bgAnswered(['processWelcomeRequestBackground: Welcome staged ... baseEpoch=4']));
 
 // ── DEV-1 ───────────────────────────────────────────────────────────────────────────────────────
-const added = { seatedMs: 4_000, notice: { shown: 1, most: 1 }, lines: { W1: 1, W2: 1 } };
-ok('DEV-1: seated, one notice, one line each passes', allOk(deviceAddedOwn(added)));
+const added = { seatedMs: 4_000, notice: { shown: 1, most: 1 }, lines: { W1: 0, W2: 1 } };
+ok('DEV-1: seated, one notice, one line on the contact and none on the owner passes', allOk(deviceAddedOwn(added)));
 ok('DEV-1: never seated fails', failing(deviceAddedOwn({ ...added, seatedMs: null })) === 1);
 ok('DEV-1: a notice shown twice fails', failing(deviceAddedOwn({ ...added, notice: { shown: 2, most: 1 } })) === 1);
 ok('DEV-1: two notices at once fails', failing(deviceAddedOwn({ ...added, notice: { shown: 1, most: 2 } })) === 1);
 ok('DEV-1: no notice fails', failing(deviceAddedOwn({ ...added, notice: { shown: 0, most: 0 } })) === 1);
-ok('DEV-1: a doubled device line on W2 fails', failing(deviceAddedOwn({ ...added, lines: { W1: 1, W2: 2 } })) === 1);
-ok('DEV-1: a missing device line on W1 fails', failing(deviceAddedOwn({ ...added, lines: { W1: 0, W2: 1 } })) === 1);
+ok('DEV-1: a doubled device line on W2 fails', failing(deviceAddedOwn({ ...added, lines: { W1: 0, W2: 2 } })) === 1);
+ok('DEV-1: a missing device line on W2 fails', failing(deviceAddedOwn({ ...added, lines: { W1: 0, W2: 0 } })) === 1);
+ok('DEV-1: a device line on the owner fails - the notice is its alert', failing(deviceAddedOwn({ ...added, lines: { W1: 1, W2: 1 } })) === 1);
 
 // ── DEV-2 / DEV-3 ───────────────────────────────────────────────────────────────────────────────
 const revoked = { seatGoneMs: 2_000, toldMs: 1_000, listedAfter: false };
