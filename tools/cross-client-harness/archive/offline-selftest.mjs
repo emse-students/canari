@@ -10,7 +10,7 @@
  *   bun archive/offline-selftest.mjs
  */
 import { fulfilBody } from '../fault.mjs';
-import { ADD_ABANDONED_NOTICE, EXIT_REPLAY_NARRATION, LOCK_BUDGET_SPENT, OFF4_PREMISE, OFFLINE_ROWS, PORTAL_HTML, RM8_NARRATION, RM8_W1_NARRATION, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
+import { ADD_ABANDONED_NOTICE, EXIT_REPLAY_NARRATION, LOCK_BUDGET_SPENT, OFF4_PREMISE, OFFLINE_ROWS, PORTAL_HTML, RM8_NARRATION, RM8_W1_NARRATION, departureOwn, flapOwn, keptRefusedLine, noAnswerLine, owedReleaseNarration, portalOwn, slowLinkOwn, staleStageOwn } from '../offlinerows.mjs';
 import { GROUP_CREATION_NARRATION, ignoringExpectedLog } from '../watch.mjs';
 
 let failures = 0;
@@ -123,6 +123,11 @@ const swept = (l) => RM8_W1_NARRATION.some((re) => re.test(l));
 ok("W1's sweep of the one leaver is narration", swept('[STRAY] 40934a14... 1 member(s) left but still hold a leaf - removing (3 leaves stay)'));
 ok('control: a sweep naming two departed members is not RM-8 narration', !swept('[STRAY] 40934a14... 2 member(s) left but still hold a leaf - removing (2 leaves stay)'));
 ok('control: a sweep that FAILED is not narration', !RM8_W1_NARRATION.some((re) => re.test('[STRAY] 40934a14... could not remove the departed leaves')));
+// OFF-3 on alpha.4 (2026-10-25): W1 returns owing the release of the add lock it was cut holding.
+const owed = (l) => owedReleaseNarration('abdb07db-0000-4000-8000-000000000000').some((re) => re.test(l));
+ok("OFF-3: W1's owed release, answered, in the row's group is narration", owed('[ADD_LOCK] abdb07db... a release this device owed (token) was sent before acquiring: answered'));
+ok('control: a release still unanswered stays dirt', !owed('[ADD_LOCK] abdb07db... a release this device owed (token) was sent before acquiring: still unanswered - kept'));
+ok("control: another group's owed release stays dirt", !owed('[ADD_LOCK] 99999999... a release this device owed (token) was sent before acquiring: answered'));
 ok('control: lost to a REFUSAL rather than the cut, it stays dirt in RM-8 too',!RM8_NARRATION.some((re) => re.test(LOST.replace(/^warning: \[[^\]]+\] /, '').replace('DeliveryUnreachableError', 'DeliveryRefusedError'))));
 
 // ── the rig pieces ───────────────────────────────────────────────────────────────────────────────
