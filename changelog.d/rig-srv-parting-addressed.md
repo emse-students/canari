@@ -1,0 +1,1 @@
+- **Rig: a removal's commit queued to the parting device and an addressed history send are server narration.** `[COMMIT] PARTING`, `[SEND] ADDRESSED` and `ADDRESSED_CONVERSATION` read NOTABLE, not unexplained; they had made the first CC-3 draw on 1.4.1-alpha.3 dirty ([cross-client-testing](../docs/wiki/cross-client-testing.md)).

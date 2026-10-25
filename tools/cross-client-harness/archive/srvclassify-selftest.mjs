@@ -513,6 +513,12 @@ const fcmCallers = [
   // A COMMIT ADMITTING A NEWCOMER, and a send queueing it before it has joined (user, 2026-09-28).
   ['a commit admitting a device added while dead', `${NEST}[MessagingService] [COMMIT][commit-33f8f65a] ADMITS group=00000000-0000-4000-8000-000000000001 atEpoch=6 devices=aaaaaaaa:tauri-a-b`, 'notable'],
   ['a send queueing an admitted pending device', `${NEST}[MessagingService] [SEND][send-33f8f65a] PENDING_ADMITTED group=00000000-0000-4000-8000-000000000001 frameEpoch=6 devices=tauri-a-b@6`, 'notable'],
+  // A REMOVAL'S COMMIT QUEUED TO THE REMOVED DEVICE, and an addressed history answer (1.4.x).
+  ['a removal commit queued to the parting device', `${NEST}[MessagingService] [COMMIT][commit-19b43467] PARTING group=2719fb2f removes=1 - commit also queued to 1 removed device(s): 223bc34e:web-223bc34e`, 'notable'],
+  ['a removal commit that reached no parting device', `${NEST}[MessagingService] [COMMIT][commit-19b43467] PARTING group=2719fb2f removes=1 - commit also queued to 0 removed device(s)`, 'notable'],
+  ['an addressed send narrowed to its reader', `${NEST}[MessagingService] [SEND][send-4acf9899] ADDRESSED group=00000000-0000-4000-8000-000000000001 matched=1 of 1 addressed, 3 member device(s) not addressed: 2`, 'notable'],
+  ['an addressed conversation answer', `${NEST}[MessagingService] [SEND][send-4acf9899] ADDRESSED_CONVERSATION group=00000000-0000-4000-8000-000000000001 to=web-aaaa-mvn2mqtk-3phn - every addressee declared addressed-history-1`, 'notable'],
+  ['control: a PARTING line with more after it is read again', `${NEST}[MessagingService] [COMMIT][commit-19b43467] PARTING group=2719fb2f removes=1 - commit also queued to 1 removed device(s): a:b and then failed`, 'unexplained'],
   // AND THE REFUSAL TWIN, a `warn` - a device a commit named and the server would not record is a
   // newcomer left out of every frame until it joins, and nothing forgives it.
   ['an admission the server refused is forgiven by nothing', `${NEST}[MessagingService] [COMMIT][commit-33f8f65a] ADMIT_REFUSED group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:tauri-a-b reason=no_key_package`, 'unexplained'],
