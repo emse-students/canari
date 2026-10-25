@@ -27,6 +27,10 @@ import {
   ignoringExpectedRefusal,
   ignoringOfflineCut,
   report,
+  cspBlockedHashOf,
+  DEV_EDGE_CSP_EXCEPTION,
+  devEdgeCspDecision,
+  gate,
 } from '../watch.mjs';
 
 /** A fake CDP buffer: one `Runtime.consoleAPICalled` per line, dated so the timeline is orderable. */
@@ -1352,14 +1356,32 @@ const FORGIVE_CASES = [
       ['debug', '[2026-10-22T02:13:21.939Z] [CHAT_VIEW] channel_ messages 3 (hasNewMessage=true, response=repin-entry)'],
     ],
     PAGE_BOOT_NARRATION,
-    { clean: true, unmatched: 5 },
+    { clean: true, unmatched: 8 },
+  ],
+  [
+    // Read on the first live FLOOR draw on dev (2026-10-25), after the invariant's reload.
+    'the device notices, the trust consumer and the legacy seal format are boot narration',
+    [
+      ['log', '[02:42:30.317] [DEVICE_NOTICE] 2 unseen new-device alert(s) restored'],
+      ['debug', '[02:42:30.317] [TRUST] device-event consumer registered'],
+      ['log', '[02:42:30.637] [MLS] web checkpoint seal format: legacy (WASM ChaCha20)'],
+    ],
+    PAGE_BOOT_NARRATION,
+    { clean: true, unmatched: 14 },
+  ],
+  [
+    // CONTROL: a seal format other than the one this build writes is a reading, not narration.
+    'another checkpoint seal format is not forgiven',
+    [['log', '[02:42:30.637] [MLS] web checkpoint seal format: v2 (WebCrypto AES-GCM)']],
+    PAGE_BOOT_NARRATION,
+    { clean: false, unmatched: 17 },
   ],
   [
     // CONTROL: the same stray-tree sweep with a refusal in it is a finding, not the boot narrating.
     'a stray-tree sweep that was refused is not forgiven',
     [['log', '[04:13:20.877] [STRAY] compared 1 tree(s): 1 roster(s) in one read, 1 refused, 0 not answered (nobody removed in them)']],
     PAGE_BOOT_NARRATION,
-    { clean: false, unmatched: 14 },
+    { clean: false, unmatched: 17 },
   ],
   [
     'a console error beside a forgiven line still breaks clean',
@@ -1422,6 +1444,56 @@ const CUT_LINE =
   const ok = plain.unexplained.length === 1 && underCut.unexplained.length === 0;
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'cut'.padEnd(12)} the gateway line is forgiven under a cut and only there`);
+}
+
+/**
+ * THE ONE NAMED ENVIRONMENT EXCEPTION (`DEV_EDGE_CSP_EXCEPTION`, 2026-10-25): the Cloudflare inline
+ * script the dev edge injects is forgiven, one per document, on dev only - and every control beside
+ * it stays dirt. A report taken with it must read clean, so a verdict reads PASS, never PASS-DIRTY.
+ */
+{
+  const CF = 'sha256-CFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFC=';
+  const APP = 'sha256-APPAPPAPPAPPAPPAPPAPPAPPAPPAPPAPPAPPAPPAPPA=';
+  const line = (hash, url = 'https://dev.canari-emse.fr/chat', directive = 'script-src') => ({
+    level: 'error',
+    source: 'security',
+    url,
+    text: `Executing inline script violates the following Content Security Policy directive '${directive} 'self''. Either the 'unsafe-inline' keyword, a hash ('${hash}'), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked.`,
+  });
+  const withHash = (l) => ({ ...l, ...cspBlockedHashOf(l) });
+  const page = { injected: 1, appHashes: [APP] };
+  const cases = [
+    ['forgiven', 'the injected script, on dev, one document', [line(CF)], 0, page, 1],
+    ['forgiven', 'one per document across a reload', [line(CF), line(CF.replace('CFC', 'CFD'))], 1, page, 2],
+    ['control', 'an APP inline script refused stays dirt', [line(APP)], 0, page, 0],
+    ['control', 'a refusal on another origin stays dirt', [line(CF, 'http://localhost:5173/chat')], 0, page, 0],
+    ['control', 'another directive stays dirt', [line(CF, undefined, 'style-src')], 0, page, 0],
+    ['control', 'more refusals than documents forgives none', [line(CF), line(CF.replace('CFC', 'CFD'))], 0, page, 0],
+    ['control', 'a page without the injection forgives none', [line(CF)], 0, { injected: 0, appHashes: [APP] }, 0],
+    ['control', 'an unreadable page forgives none', [line(CF)], 0, null, 0],
+  ];
+  for (const [kind, label, errs, docs, pg, want] of cases) {
+    const d = devEdgeCspDecision(errs.map(withHash), docs, pg);
+    const ok = d.forgiven.length === want && d.kept.length === errs.length - want;
+    if (!ok) failures++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${kind.padEnd(12)} ${label}`);
+  }
+  // A non-security console error carrying the same words is never a candidate.
+  const fake = { ...line(CF), source: 'console-api' };
+  const okFake = devEdgeCspDecision([{ ...fake, ...cspBlockedHashOf(fake) }], 0, page).forgiven.length === 0;
+  if (!okFake) failures++;
+  console.log(`${okFake ? 'ok  ' : 'FAIL'} ${'control'.padEnd(12)} an app console line echoing the sentence stays dirt`);
+
+  // END TO END: a report whose only error is the injected refusal reads clean, records the exception,
+  // and `gate` keeps a PASS a PASS while listing the exception in the detail.
+  const cx = cxOf([]);
+  cx.events.push({ method: 'Log.entryAdded', params: { entry: { ...line(CF), timestamp: Date.now() } } });
+  cx.send = async (method) => (method === 'Runtime.evaluate' ? { result: { value: JSON.stringify(page) } } : {});
+  const rep = await report({ cx, label: 'W1' });
+  const g = gate('PASS', { W1: rep });
+  const okE2E = rep.clean && rep.environmentException?.forgiven === 1 && g.verdict === 'PASS' && g.detail.environmentException?.W1?.name === DEV_EDGE_CSP_EXCEPTION.name;
+  if (!okE2E) failures++;
+  console.log(`${okE2E ? 'ok  ' : 'FAIL'} ${'forgiven'.padEnd(12)} a verdict taken with the exception reads PASS and names it (got ${g.verdict})`);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');

@@ -25,11 +25,24 @@ import { createGroup } from './groupnav.mjs';
 import { serverView } from './invariant.mjs';
 import { forgivingProvoked, rowGroupName } from './rowkit.mjs';
 import { ESTATE } from './site.mjs';
-import { ignoringExpectedLog, ignoringExpectedRefusal, ignoringOfflineCut, report, watch } from './watch.mjs';
+import {
+  PAGE_BOOT_NARRATION,
+  ignoringExpectedLog,
+  ignoringExpectedRefusal,
+  ignoringOfflineCut,
+  report,
+  watch,
+} from './watch.mjs';
 
 if (ESTATE !== 'local' && ESTATE !== 'dev') throw new Error(`mlsrow.mjs drives the local or the dev estate only, not '${ESTATE}'`);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * A USER id is NOT a uuid: the server keys an account by the 64-hex digest of its identity-provider
+ * subject (measured on dev, 2026-10-25 - every FLOOR draw died on the uuid test before it acted).
+ * A uuid is still accepted for the older shape. The test exists because the id is spliced into SQL.
+ */
+const USER_ID = /^(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const rows = (out) =>
   String(out)
     .split('\n')
@@ -76,6 +89,11 @@ export async function observersOf(seats, { refusals = {}, logs = {}, provoked = 
   const out = {};
   for (const [device, s] of Object.entries(seats.seat)) {
     let rep = await report(s.w);
+    // EVERY MLS ROW RELOADS ITS WEB SEATS (the invariant's second pass, R8), and a reloaded page
+    // narrates its boot (`PAGE_BOOT_NARRATION`). Read off the window's OWN navigations rather than
+    // asked of each runner: a seat whose window saw no document replaced gets no forgiveness, so a
+    // page that booted unasked is still a finding. Met on the first live FLOOR draw (2026-10-25).
+    if ((rep.documentsReplaced ?? 0) > 0) rep = ignoringExpectedLog(rep, PAGE_BOOT_NARRATION);
     if (offline.includes(device)) rep = ignoringOfflineCut(rep);
     if (provoked[device]?.length) rep = forgivingProvoked(rep, provoked[device]);
     if (refusals[device]?.length) rep = ignoringExpectedRefusal(rep, refusals[device]);
@@ -101,7 +119,7 @@ export const userOf = (seats, device) => subjectFor(seats.seat[device].target.ac
 
 /** A user's display name as the server stores it - what the member picker and a DM's sidebar show. */
 export function displayNameOf(userId) {
-  if (!UUID.test(userId)) throw new Error(`displayNameOf: '${userId}' is not a user id`);
+  if (!USER_ID.test(userId)) throw new Error(`displayNameOf: '${userId}' is not a user id`);
   const name = rows(psql(`SELECT "displayName" FROM users WHERE id = '${userId}'`))[0]?.[0] ?? null;
   if (!name) throw new Error(`displayNameOf: no display name for ${userId.slice(0, 8)}`);
   return name;

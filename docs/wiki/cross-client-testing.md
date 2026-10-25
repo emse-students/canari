@@ -18,6 +18,12 @@ campaign alone with `bun rows.mjs --build <the pre-release commit>`.
 build does not carry to the next. A concurrency row is five draws and its verdict is the set.
 `Needs` is the seats and the plan's class (`U` unattended, `B` bench phone, `PIN`).
 
+**ONE NAMED ENVIRONMENT EXCEPTION (2026-10-25), AND ONLY ONE.** The dev zone's Cloudflare JS
+detections inject an inline `challenge-platform` script that our `script-src` refuses, once per
+document. `watch.mjs` `DEV_EDGE_CSP_EXCEPTION` forgives exactly that refusal, on dev only, at most one
+per document, never an app script's hash; every row that used it carries `environmentException` in
+its detail. Any other CSP refusal is dirt. It goes when the owner turns the zone's detections off.
+
 | State | Meaning |
 | --- | --- |
 | `PASS` | ran, the row's own assertions and the invariant of section 4.0 held, every window clean - and the row names the build |

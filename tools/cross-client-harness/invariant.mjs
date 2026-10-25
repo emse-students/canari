@@ -41,6 +41,7 @@ import { awaitAppReady, awaitMessage, client, ensureChat, openConversation, send
 import { evaluate, reloadAndWait } from './cdp.mjs';
 import { armIfPhone, resolveDevices, tabMatchFor } from './device.mjs';
 import { psql, srvLines } from './estate.mjs';
+import { closeOverlays } from './groupnav.mjs';
 import { invariantVerdict } from './invariantverdict.mjs';
 import { ESTATE } from './site.mjs';
 import { consoleEntries, watch } from './watch.mjs';
@@ -225,6 +226,10 @@ export async function checkInvariant({ group, targets, members, conversation, fr
   const sender = slots.find((s) => s.member);
   if (!sender) throw new Error('no member device in play');
   for (const s of slots.filter((x) => x.member)) {
+    // THE ROW'S ACTION MAY LEAVE A PANEL OPEN - FLOOR-2's bulk Add ended on the group's side panel,
+    // whose scrim covers the sidebar below `xl`, and the tile click below died on it (2026-10-25).
+    // The probe starts from a clear surface on every member rather than trusting each runner to.
+    await closeOverlays(s.cx);
     await ensureChat(s.cx);
     await openConversation(s.cx, conversationOf(s.target.device));
   }

@@ -1368,6 +1368,101 @@ export async function awaitLine(cx, needle, timeoutMs = 15000) {
   }
 }
 
+/**
+ * THE ONE NAMED ENVIRONMENT EXCEPTION OF THE 1.4.1 CAMPAIGN (2026-10-25): Cloudflare's JavaScript
+ * detections inject an inline `/cdn-cgi/challenge-platform/` script (`__CF$cv$params`) at the end of
+ * every HTML document of the DEV zone. The enforced `script-src` refuses it - correctly, it is not
+ * ours - and Chrome logs one `Executing inline script violates ... 'script-src ...'` error per
+ * document. That is a property of the dev edge, not of the build: the zone toggle is the owner's
+ * one-off, and until it is flipped every row on dev would read `PASS-DIRTY` for it alone.
+ *
+ * NARROW BY CONSTRUCTION, because an exception wider than its cause hides the next defect:
+ * - the dev estate only - the line's document must be on {@link DEV_SITE};
+ * - that sentence only (`script-src`, blocked inline), with the blocked script's hash present;
+ * - never a hash of one of the APP's own inline scripts in the current document (the build's inline
+ *   scripts are the same on every load, so a refused app script is caught by its hash);
+ * - only while the current document really carries the injected script (probed, never assumed);
+ * - at most ONE per document the window saw (`documentsReplaced + 1`) - beyond that, none at all.
+ * Any other console error or CSP refusal stays dirt. Every forgiveness is RECORDED on the report
+ * (`environmentException`) and listed by `gate` in the verdict detail.
+ */
+export const DEV_EDGE_CSP_EXCEPTION = {
+  name: 'dev-edge-cloudflare-challenge-inline-script',
+  reason:
+    "Cloudflare's JS detections inject an inline /cdn-cgi/challenge-platform/ script on the dev zone; " +
+    'the enforced script-src refuses it, once per document (owner toggle pending)',
+  sentence: /^Executing inline script violates the following Content Security Policy directive 'script-src /,
+  marker: '/cdn-cgi/challenge-platform/',
+};
+
+/** The hash Chrome names for a refused inline script - read off the FULL text, before it is cut. */
+export function cspBlockedHashOf(entry) {
+  if (entry?.source !== 'security') return {};
+  const m = /a hash \('(sha256-[A-Za-z0-9+/=]+)'\)/.exec(entry.text ?? '');
+  return m ? { cspBlockedHash: m[1] } : {};
+}
+
+/**
+ * Which error lines {@link DEV_EDGE_CSP_EXCEPTION} forgives - pure, so the selftest pins it.
+ *
+ * @param {object[]} errors the report's error lines (`{text, url, source, cspBlockedHash}`)
+ * @param {number} documentsReplaced main-frame navigations the window saw
+ * @param {{injected: number, appHashes: string[]}|null} page the current document's inline scripts:
+ *   how many carry the marker, and the hashes of the others; null when it could not be read
+ * @returns {{kept: object[], forgiven: object[], refused: string|null}}
+ */
+export function devEdgeCspDecision(errors, documentsReplaced, page) {
+  const devOrigin = new URL(DEV_SITE).origin;
+  const onDev = (u) => {
+    try {
+      return new URL(u).origin === devOrigin;
+    } catch {
+      return false;
+    }
+  };
+  const candidates = errors.filter(
+    (l) => l.source === 'security' && DEV_EDGE_CSP_EXCEPTION.sentence.test(l.text) && l.cspBlockedHash && onDev(l.url)
+  );
+  if (candidates.length === 0) return { kept: errors, forgiven: [], refused: null };
+  const none = (why) => ({ kept: errors, forgiven: [], refused: why });
+  if (!page) return none('the current document could not be read');
+  if (page.injected !== 1) return none(`the current document carries ${page.injected} injected scripts, not 1`);
+  const forgiven = candidates.filter((l) => !page.appHashes.includes(l.cspBlockedHash));
+  if (new Set(forgiven.map((l) => l.cspBlockedHash)).size !== forgiven.length) return none('one blocked hash refused twice');
+  if (forgiven.length > documentsReplaced + 1) return none(`${forgiven.length} refusals for ${documentsReplaced + 1} documents`);
+  return { kept: errors.filter((l) => !forgiven.includes(l)), forgiven, refused: null };
+}
+
+/** The current document's inline scripts, as {@link devEdgeCspDecision} reads them. */
+const INLINE_SCRIPTS = `(async () => {
+  const b64 = async (t) => btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))));
+  let injected = 0;
+  const appHashes = [];
+  for (const s of document.querySelectorAll('script:not([src])')) {
+    if (s.textContent.includes(${JSON.stringify(DEV_EDGE_CSP_EXCEPTION.marker)})) injected++;
+    else appHashes.push('sha256-' + (await b64(s.textContent)));
+  }
+  return JSON.stringify({ injected, appHashes });
+})()`;
+
+/** Applies {@link DEV_EDGE_CSP_EXCEPTION} to a window's error lines, probing the page only when owed. */
+async function devEdgeCspException(cx, errors, documentsReplaced) {
+  if (!errors.some((l) => l.cspBlockedHash)) return { kept: errors, record: null };
+  let page = null;
+  try {
+    page = JSON.parse(await evaluate(cx, INLINE_SCRIPTS));
+  } catch (e) {
+    // A blind probe forgives NOTHING: the refusals stay dirt, and this line says why.
+    console.log(`[watch] ${DEV_EDGE_CSP_EXCEPTION.name}: the page could not be read - ${String(e?.message ?? e)}`);
+  }
+  const d = devEdgeCspDecision(errors, documentsReplaced, page);
+  if (d.refused) console.log(`[watch] ${DEV_EDGE_CSP_EXCEPTION.name} NOT applied: ${d.refused}`);
+  return {
+    kept: d.kept,
+    record: d.forgiven.length ? { name: DEV_EDGE_CSP_EXCEPTION.name, reason: DEV_EDGE_CSP_EXCEPTION.reason, forgiven: d.forgiven.length } : null,
+  };
+}
+
 /** Drains what was observed and classifies it. */
 export async function report(w) {
   const { cx, label, since, home = new Set(), estateBuild } = w;
@@ -1479,7 +1574,7 @@ export async function report(w) {
         // four `[RUST::WARN] Past-epoch application frame` lines came back wearing
         // `<- ??? /_app/immutable/workers/mlsCrypto.worker-*.js`; the `???` was the tell, because
         // there was no request to name. Only `source === 'network'` is about a resource.
-        console_.push({ at: p.entry.timestamp, level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url, requestId: p.entry.networkRequestId, source: p.entry.source, origin: originOfConsoleEvent(e, ctxOrigins) });
+        console_.push({ at: p.entry.timestamp, level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url, requestId: p.entry.networkRequestId, source: p.entry.source, origin: originOfConsoleEvent(e, ctxOrigins), ...cspBlockedHashOf(p.entry) });
         break;
     }
   }
@@ -1589,7 +1684,7 @@ export async function report(w) {
     const r = l.requestId ? reqs.get(l.requestId) : null;
     return `${l.text} <- ${r?.method ?? '???'} ${l.url}`;
   };
-  const errors = lines.filter(
+  let errors = lines.filter(
     (l) => (l.level === 'error' || l.level === 'assert') && !isBenignUrl(l.url, l.text)
   );
   /**
@@ -1627,6 +1722,11 @@ export async function report(w) {
       !notable.includes(l) &&
       !stateChanges.includes(l)
   );
+
+  // THE ONE NAMED ENVIRONMENT EXCEPTION ({@link DEV_EDGE_CSP_EXCEPTION}), applied to `errors` alone
+  // and recorded on the report whenever it forgave anything, so `gate` can list it in the verdict.
+  const devEdge = await devEdgeCspException(cx, errors, documentsReplaced);
+  errors = devEdge.kept;
 
   const http = [...reqs.values()].filter((r) => !/\.(js|css|woff2?|png|svg|jpg|jpeg|ico|webp)(\?|$)/.test(r.url) && !r.url.startsWith('data:') && !r.url.startsWith('blob:'));
   // A STATUS IS AN ANSWER, AND A REQUEST THAT GOT ONE IS JUDGED ON IT - which is what the comment
@@ -1671,6 +1771,7 @@ export async function report(w) {
     since,
     // The build a DEV window opened on (`watch()`), for the same question asked of a deployed estate.
     estateBuild,
+    ...(devEdge.record ? { environmentException: devEdge.record } : {}),
     // `unexplained` BREAKS CLEAN, and that is the campaign's actual bar rather than a stricter one:
     // "tout doit etre explique, limite tu devrais savoir exactement avant de le voir". A line nobody
     // has classified is by definition a line whose meaning nobody knows, so a verdict formed over it
@@ -2125,6 +2226,13 @@ export const PAGE_BOOT_NARRATION = [
   /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/,
   /^\[STRAY\] compared \d+ tree\(s\): \d+ roster\(s\) in one read, 0 refused, 0 not answered \(nobody removed in them\)$/,
   /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z-]+\)$/,
+  // THREE MORE, read on the first live FLOOR draw on dev (1.4.1-alpha.3, 2026-10-25): the device
+  // notices kept across the reload, the trust consumer taking over device events, and the at-rest
+  // format the session's first checkpoint is sealed in (`legacy` until the blob-header writer may
+  // follow its reader - the format is the reading, so it is pinned by name and any other is dirt).
+  /^\[DEVICE_NOTICE\] \d+ unseen new-device alert\(s\) restored$/,
+  /^\[TRUST\] device-event consumer registered$/,
+  /^\[MLS\] web checkpoint seal format: legacy \(WASM ChaCha20\)$/,
 ];
 
 /**
@@ -2933,6 +3041,10 @@ export function gate(verdict, reports, observations = {}) {
   const detail = { clean: dirty.length === 0 };
   // `{}` for a clean client, so the record shows WHO was dirty without five empty objects around it.
   for (const [label, r] of dirty) detail[`dirt_${label}`] = dirtOf(r);
+  // THE NAMED ENVIRONMENT EXCEPTION IS LISTED WHEREVER IT WAS USED, clean or not - a PASS taken
+  // with it must say so in its own record (`DEV_EDGE_CSP_EXCEPTION`).
+  const excepted = entries.filter(([, r]) => r.environmentException);
+  if (excepted.length) detail.environmentException = Object.fromEntries(excepted.map(([label, r]) => [label, r.environmentException]));
 
   // A RUN THE SERVER RESTARTED UNDER IS NOT A FAILING RUN, IT IS AN ABSENT ONE - see `deploy.mjs`
   // for the measurement that put this here. It was written when a push to `main` redeployed the
