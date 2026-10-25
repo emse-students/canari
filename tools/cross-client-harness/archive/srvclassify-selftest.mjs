@@ -177,6 +177,16 @@ const BENIGN_CASES = [
   // produces one of these by construction. Three landed in GRP's window on 2026-08-24 from one
   // owner's two web devices. The NOTABLE case below is its twin and must NOT match here.
   `${NEST}[LocksController] [ADD_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b acquired=false ttl=30s`,
+  // The same refusal in #2426's shape: the key's remaining life and the door.
+  `${NEST}[LocksController] [ADD_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b acquired=false retryAfterMs=17342 via=jwt`,
+  `${NEST}[LocksController] [ADD_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b acquired=true ttl=30s via=push`,
+  // AN OWED RELEASE (#2426): the successor of a page that died mid-Add releases the expired
+  // acquisition before acquiring; the client marks it and the server ends the line ` owed=true`.
+  `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=token via=jwt owed=true`,
+  // An owed release whose marker carried no token (a page that predates it), and one that DID free
+  // the lock (`released=true ... owed=true`, the generic success rule): #2426's final line, head 46dac424d.
+  `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=owner-legacy via=jwt owed=true`,
+  `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=true by=token via=jwt owed=true`,
   // A LOGIN. Every phase that starts, reloads or reconnects a client mints one; the security signal
   // on this service is `Refresh token replay detected`, which is SEVERE and asserted apart.
   `${NEST}[AuthSessionsService] Session opened sid=00000000-0000-4000-8000-000000000001 user=aaaaaaaaaaaaaaaa`,
@@ -210,6 +220,9 @@ const NOTABLE_CASES = [
   // mid-Add, or another device took it. That is a slow or stuck commit, and it must not ride into
   // BENIGN on the back of its `acquired=false` twin: the two share a tag and nothing else.
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false`,
+  // ... and in #2426's shape WITHOUT the owed flag: a slow Add whose TTL expired under it.
+  `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=token via=jwt`,
+  `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=owner-legacy via=push`,
   // THE TWO BOOT LINES THAT ARE NOT THE ROUTE TABLE: a capability whose absence nothing else would
   // reveal, and a deletion pass crossing whatever window it lands in.
   `${NEST}[AppController] [FIREBASE] Admin SDK initialized`,
@@ -279,6 +292,25 @@ const NOTABLE_CASES = [
   // twice and produced exactly two. It is the row that decides where a push can land.
   `${NEST}[PushController] [PUSH_REGISTER] user=a1b2c3d4 device=tauri-a1b2c3d4-0000 platform=android`,
 ];
+// MALFORMED ADD-LOCK LINES ARE NEITHER (#2426's shapes, pinned by their controls): a flag or a number
+// the server does not write must surface as unexplained, never ride a rule written for the real one.
+for (const l of [
+  `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=token via=jwt owed=1`,
+  `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=token via=jwt owed=yes`,
+  `${NEST}[LocksController] [ADD_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b acquired=false retryAfterMs= via=jwt`,
+]) {
+  const ok = !matches(BENIGN_RULES, l) && !matches(NOTABLE_RULES, l);
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} malformed    ${l.slice(-72)}`);
+}
+// AND THE OWED RELEASE IS NOT ALSO NOTABLE: the slow-Add rule must not catch the flagged line.
+{
+  const owed = `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false by=token via=jwt owed=true`;
+  const ok = !matches(NOTABLE_RULES, owed);
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} owed release is not a slow Add`);
+}
+
 for (const l of NOTABLE_CASES) {
   const ok = matches(NOTABLE_RULES, l);
   if (!ok) failures++;
