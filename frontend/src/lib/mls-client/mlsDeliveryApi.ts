@@ -683,6 +683,72 @@ export class WelcomeTargetNotMemberError extends Error {
 }
 
 /**
+ * The server refused a Welcome because no device is registered under its target - no KeyPackage
+ * row names it (`404 WELCOME_TARGET_UNKNOWN`, `POST /api/mls/welcome`): its owner revoked it, its
+ * account is being erased, or it never registered.
+ *
+ * TERMINAL FOR THAT WELCOME like {@link WelcomeTargetNotMemberError}: a revoked id is denylisted and
+ * never registers again. The sender is normally told before it sends - the commit's own answer names
+ * the admit it refused (`refusedAdmits`, see {@link RefusedAdmit}) - so this is met only by a Welcome
+ * whose commit answer did not say it: a resubmission answered `duplicate`, or a revocation landing
+ * between the commit and the send. Until 2026-10-25 the server answered it with a 500.
+ */
+export class WelcomeTargetUnknownError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly targetUserId: string,
+    readonly targetDeviceId: string
+  ) {
+    super(
+      `the Welcome of ${groupId.slice(0, 8)}... to ${targetUserId}:${targetDeviceId} was refused - ` +
+        'no device is registered under its target'
+    );
+    this.name = 'WelcomeTargetUnknownError';
+  }
+}
+
+/** Whether `e` is a Welcome refusal that sending the same bytes again can never change. */
+export function isTerminalWelcomeRefusal(
+  e: unknown
+): e is WelcomeTargetNotMemberError | WelcomeTargetUnknownError {
+  return e instanceof WelcomeTargetNotMemberError || e instanceof WelcomeTargetUnknownError;
+}
+
+/**
+ * Why the commit gate did not record a device a commit declared admitting - mirrors
+ * `AdmitRefusalReason` in the delivery service. A reason this build does not know is kept as the
+ * string it is and acted on by nobody (see {@link admitRefusalMakesWelcomeUndeliverable}).
+ */
+export type AdmitRefusalReason =
+  | 'committer'
+  | 'unresolved_identity'
+  | 'no_key_package'
+  | 'already_active'
+  | 'not_entitled'
+  | 'departure_in_progress'
+  | 'not_enrolled'
+  | (string & {});
+
+/** One declared admit an ACCEPTED commit did not record (`refusedAdmits` of `POST /api/mls/commit`). */
+export interface RefusedAdmit {
+  userId: string;
+  deviceId: string;
+  reason: AdmitRefusalReason;
+}
+
+/**
+ * The refusals after which a Welcome to that device CANNOT be delivered - an ALLOWLIST, because
+ * acting on one drops the Welcome. `no_key_package` alone: `POST /api/mls/welcome` resolves its
+ * target by that very row and refuses it `WELCOME_TARGET_UNKNOWN`, and a revoked id never registers
+ * again. NOT `not_enrolled`: a re-invite the commit could not enrol is enrolled by the sender's own
+ * `registerMember` before its Welcome, which then lands. Every other reason, and any reason added
+ * later, leaves the Welcome to be sent and answered as before.
+ */
+export function admitRefusalMakesWelcomeUndeliverable(reason: AdmitRefusalReason): boolean {
+  return reason === 'no_key_package';
+}
+
+/**
  * A group EXIT the server answered with a refusal - the answer being the point.
  *
  * `DELETE /api/mls/groups/:id` and `DELETE /api/mls/groups/:id/members/:user` are the two calls that
@@ -1502,11 +1568,17 @@ export class MlsDeliveryApi {
             groupId,
           }),
         });
-        // The one refusal a sender must act on, typed at the throw from the server's code.
+        // The refusals a sender must act on, typed at the throw from the server's code.
         if (response.status === 403) {
           const refusal = await refusalFromResponse(response, 'Welcome delivery');
           if (refusal.code === 'WELCOME_TARGET_NOT_MEMBER') {
             throw new WelcomeTargetNotMemberError(groupId, targetUserId, deviceId);
+          }
+        }
+        if (response.status === 404) {
+          const refusal = await refusalFromResponse(response, 'Welcome delivery');
+          if (refusal.code === 'WELCOME_TARGET_UNKNOWN') {
+            throw new WelcomeTargetUnknownError(groupId, targetUserId, deviceId);
           }
         }
         await assertOkMlsDeliveryResponse(
@@ -1556,6 +1628,8 @@ export class MlsDeliveryApi {
     newEpoch?: number;
     /** True when the gate had ALREADY accepted these exact bytes: a resubmission, answered again. */
     duplicate?: boolean;
+    /** The declared admits an ACCEPTED commit did not record, each with why ({@link RefusedAdmit}). */
+    refusedAdmits?: RefusedAdmit[];
   }> {
     // UNDER THE `write` HEAD DEADLINE (`requestDeadline.ts`: 30 s plus the time the body needs to
     // leave), because a commit transaction awaits this while it HOLDS THE MLS MUTEX, from its stage to
@@ -1601,6 +1675,7 @@ export class MlsDeliveryApi {
       currentEpoch?: number;
       newEpoch?: number;
       duplicate?: boolean;
+      refusedAdmits?: RefusedAdmit[];
     };
   }
 

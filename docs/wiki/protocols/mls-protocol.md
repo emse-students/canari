@@ -1639,6 +1639,31 @@ owing nothing. The connection drain clears every recipient of its pass and sched
 after it; a recipient that names no device is a defect of the record, dropped unsent and said as
 one, never reported as a server refusal.
 
+#### A device the gate did not admit is owed no Welcome - the commit's answer says so (2026-10-25)
+
+Measured on the rig (DEV-3): a member's pending sweep added a device its owner revoked while the Add
+was in flight. The gate accepted the commit and dropped the admit (`ADMIT_REFUSED
+reason=no_key_package`: the revocation had purged the key package), and the member sent the Welcome
+anyway - a 500, then `Add error ... Could not send the secure invitation` - and every other group's
+invitation of that device asked the server again and was told `revoked`, six 404s for one fact. The
+accept now carries **`refusedAdmits`** (`{ userId, deviceId, reason }`, every admit the gate dropped,
+before or inside its transaction). `undeliverableAdmits` (`BaseMlsService.ts`) says each once and returns
+those whose Welcome cannot be delivered - an ALLOWLIST, `no_key_package` alone
+(`admitRefusalMakesWelcomeUndeliverable`; NOT `not_enrolled`, which the sender's own
+`registerMember` enrols before a Welcome that then lands). `mergeAccepted` owes them nothing,
+`addMember` / `replaceMember` hand out no Welcome and name the refusal (`notAdmitted`), and
+`addMembersBulk` leaves them out of `addedDeviceIds`, the list every caller welcomes. The pending
+sweep registers nobody, sends no Welcome or history, retires the invitation, and answers every other
+invitation of that device in the same sweep from that answer - as it now does a `revoked` or
+`unregistered` key-package answer, which is about the device, not the group (`expired` is not carried
+over). The leaf stays in the tree with no seat; the stray sweep removes it. A `duplicate` answer names
+no refusal (the first acceptance decided them and nothing records them), so a settled Add still owes
+that Welcome, and its typed refusal ends it: `404 WELCOME_TARGET_UNKNOWN` is
+`WelcomeTargetUnknownError`, terminal like `WELCOME_TARGET_NOT_MEMBER` (`isTerminalWelcomeRefusal`),
+said at WARN. Tests: `messaging.commit-log.spec.ts`, `add-enrolment.integration.spec.ts`,
+`BaseMlsService.unresolvedCommit.test.ts`, `BaseMlsService.notAdmitted.test.ts`,
+`actions.pendingNotAdmitted.test.ts`, `mlsDeliveryApi.welcomeRefusal.test.ts`.
+
 **The same Welcome stored twice is stored once.** A re-send after a lost answer is the same bytes,
 and the first request may have been stored. `MessagingService.sendWelcome` looks, under a lock that
 serialises every store of a Welcome for that device in that group, for a row still queued with that
