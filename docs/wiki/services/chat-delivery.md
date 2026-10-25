@@ -1201,9 +1201,9 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 |---|---|---|
 | POST | `/api/mls/groups` | Create group record |
 | GET | `/api/mls/groups/:groupId` | Get group metadata |
-| PATCH | `/api/mls/groups/:groupId` | Rename group (admitted member) |
-| PATCH | `/api/mls/groups/:groupId/image` | Set/clear group avatar (admitted member) |
-| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member) |
+| PATCH | `/api/mls/groups/:groupId` | Rename group (admitted member; never a key-distribution group) |
+| PATCH | `/api/mls/groups/:groupId/image` | Set/clear group avatar (admitted member; never a key-distribution group) |
+| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member; never a key-distribution group) |
 
 **A ROUTE KEYED BY A GROUP ID ASKS THE GROUP, NOT ONLY THE LOGIN (2026-10-25).** `HeaderAuthGuard`
 says who is asking; `assertCallerActsOnGroup` (`utils/group-membership.ts`) says whether that person
@@ -1213,8 +1213,14 @@ conversation panel offers rename, photo and delete to every member; a caller wit
 member, removed, or the group absent or tombstoned) gets the 403 `NOT_A_MEMBER`, the same for an
 unknown and a known id; a seat awaiting admission gets the 409 `awaiting_admission`. A key group
 answers from its active device rows (`standingOnGroupOfKind`, which `memberOfGroupKind` also reads).
-The tombstone purges every seat, so a replayed delete is the 403 the client's owed-exit drain reads
-as done. Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
+A tombstoned group is read as absent by its `deletedAt`, never inferred from the purge of its seats,
+so a replayed delete is the 403 the client's owed-exit drain reads as done. Two narrower rules sit on
+top: rename, photo and delete-for-everyone refuse a key-distribution group to EVERY caller (403
+`KEY_DISTRIBUTION_GROUP`, after the membership check, so a stranger still reads `NOT_A_MEMBER`) -
+its lifecycle is the internal `mls/distribution-groups` routes'; and a member ending ANOTHER user's
+device row may end only a row that is not `active` (the pending invitation the group cannot honour),
+the status read under a row lock in the deleting transaction - an active one is the 403
+`MEMBERSHIP_NOT_ALLOWED`. Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
 
 ### Membership
 
@@ -1332,7 +1338,7 @@ those groups' first pages itself, which is the path every group took before the 
 | POST | `/api/mls/invitations/status` | Upsert DeviceGroupMembership status |
 | POST | `/api/mls/kick-stale-user` | Reset all devices for a user to pending |
 | POST | `/api/mls/kick-stale-device` | Reset single device to pending |
-| DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete specific membership (own device, or an admitted member of the group) |
+| DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete specific membership (own device; an admitted member of the group may end another user's row only while it is not `active`) |
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all device memberships (own device) |
 | POST | `/api/mls/groups/:groupId/force_leave` | Force device exit from group |
 

@@ -8,6 +8,7 @@ import {
   Param,
   Inject,
   BadRequestException,
+  ForbiddenException,
   UseGuards,
   Logger,
   Headers,
@@ -22,7 +23,9 @@ import { GroupMember } from '../entities/group-member.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
-import { assertCallerActsOnGroup } from '../utils/group-membership';
+import { assertCallerActsOnGroup, isKeyDistributionGroup } from '../utils/group-membership';
+import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { cutUserId } from '../utils/log-repeat';
 import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
 import { MessagingService } from '../services/messaging.service';
 
@@ -46,17 +49,38 @@ export class GroupsController {
   /**
    * The caller must be an admitted member of `groupId` ({@link assertCallerActsOnGroup}): the
    * metadata and lifecycle routes below act on the conversation for EVERY member, so being signed in
-   * is not enough. Any admitted member may rename, set the photo or delete for everyone - the rule
-   * the conversation panel offers - and there is no role requirement.
+   * is not enough. Any admitted member of an ordinary or 1:1 group may rename, set the photo or
+   * delete for everyone - the rule the conversation panel offers - and there is no role requirement.
+   *
+   * **A KEY-DISTRIBUTION GROUP IS REFUSED TO EVERY CALLER** (403 `KEY_DISTRIBUTION_GROUP`): it is no
+   * conversation, its lifecycle belongs to the internal `mls/distribution-groups` routes, and no
+   * client ever addresses it here. The membership check runs FIRST, so a caller outside the group
+   * meets the same `NOT_A_MEMBER` as for any other id and learns nothing about its kind.
    */
-  private assertMember(route: string, groupId: string, headerUserId: string | undefined) {
-    return assertCallerActsOnGroup(
+  private async assertMayEditConversation(
+    route: string,
+    groupId: string,
+    headerUserId: string | undefined
+  ): Promise<void> {
+    const caller = sanitizeQueryValue(headerUserId ?? '', 'x-user-id');
+    const group = await assertCallerActsOnGroup(
       { groups: this.groupRepo, seats: this.groupMemberRepo, devices: this.deviceGroupRepo },
       this.logger,
       route,
       groupId,
-      sanitizeQueryValue(headerUserId ?? '', 'x-user-id')
+      caller
     );
+    if (isKeyDistributionGroup(group)) {
+      this.logger.warn(
+        `[${route}] REFUSED key-distribution group=${groupId} caller=${cutUserId(caller)} - its lifecycle belongs to the distribution-groups routes (403 KEY_DISTRIBUTION_GROUP)`
+      );
+      throw new ForbiddenException(
+        refusalBody(
+          RefusalCode.KEY_DISTRIBUTION_GROUP,
+          'A key-distribution group is managed through its community, not through this route.'
+        )
+      );
+    }
   }
 
   private makeTraceId(scope: string): string {
@@ -249,7 +273,7 @@ export class GroupsController {
     @Headers('x-user-id') headerUserId?: string
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    await this.assertMember('RENAME_GROUP', safeGroupId, headerUserId);
+    await this.assertMayEditConversation('RENAME_GROUP', safeGroupId, headerUserId);
     if (typeof body.name !== 'string' || !body.name.trim()) {
       throw new BadRequestException('name is required');
     }
@@ -273,7 +297,7 @@ export class GroupsController {
     @Headers('x-user-id') headerUserId?: string
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    await this.assertMember('SET_GROUP_IMAGE', safeGroupId, headerUserId);
+    await this.assertMayEditConversation('SET_GROUP_IMAGE', safeGroupId, headerUserId);
     const mediaId = body?.mediaId ?? null;
     if (mediaId !== null && !/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId format');
@@ -303,7 +327,7 @@ export class GroupsController {
     @Headers('x-user-id') headerUserId?: string
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    await this.assertMember('DELETE_GROUP', safeGroupId, headerUserId);
+    await this.assertMayEditConversation('DELETE_GROUP', safeGroupId, headerUserId);
 
     const counts = await tombstoneGroups(this.groupRepo.manager, this.redis, [safeGroupId]);
 

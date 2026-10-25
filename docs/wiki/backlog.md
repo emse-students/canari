@@ -32,6 +32,13 @@ half, the shipped half is a pointer, never a retelling.
 What the audit left open is in the private operations notes until each item is fixed; the rule is
 in [durable-rules](durable-rules.md).
 
+## P3 - Three helpers answer "is this caller a member of this group" (2026-10-25)
+
+`assertCallerActsOnGroup` (`utils/group-membership.ts`) and the private member checks of
+`invitations.controller.ts` and `members.controller.ts` (`assertCallerIsGroupMember`,
+`assertCallerMayMutateMembership`) each read a caller's standing on a group in their own way. Fold them onto the one kind-aware read (`standingOnGroupOfKind`) with a spec per
+route, so a group-keyed route has one answer to the question rather than three.
+
 ## P3 - A duplicate redelivery is logged as a damaged frame (portal ACK probe, 2026-10-25)
 
 When a frame this device already read comes back (`SecretReuseError` at its own epoch),

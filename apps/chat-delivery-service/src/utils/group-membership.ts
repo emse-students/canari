@@ -535,11 +535,24 @@ export async function standingOnGroupOfKind(
   groupId: string,
   userId: string
 ): Promise<SeatStanding | null> {
-  if (group?.distributionWorkspaceId || group?.distributionChannelId) {
+  if (isKeyDistributionGroup(group)) {
     const device = await repos.devices.findOne({ where: { groupId, userId, status: 'active' } });
     return device ? 'admitted' : null;
   }
   return callerSeatStanding(repos.seats, groupId, userId);
+}
+
+/** The columns of a `dm_groups` row that say which KIND of group it is. */
+export type GroupKindRow = Pick<Group, 'id' | 'distributionWorkspaceId' | 'distributionChannelId'>;
+
+/**
+ * Whether `group` is a key-distribution group: its roster is a community's (or salon's), held by
+ * social-service, and its whole lifecycle belongs to the internal `mls/distribution-groups` routes.
+ */
+export function isKeyDistributionGroup(
+  group: Pick<Group, 'distributionWorkspaceId' | 'distributionChannelId'> | null
+): boolean {
+  return !!(group?.distributionWorkspaceId || group?.distributionChannelId);
 }
 
 /** One count per (route, group, caller) for the refusals of {@link assertCallerActsOnGroup}. */
@@ -550,14 +563,19 @@ const notAMemberRepeats = new RepeatCounter();
  * member of it. Authentication (`HeaderAuthGuard`, or a PushSecret bound to a user and device) says
  * WHO is asking; this says whether that person may touch THIS group.
  *
- * - no seat - never a member, removed, departed, or the group is absent or tombstoned (a tombstone
- *   purges every seat, so nobody holds one) - is the 403 `NOT_A_MEMBER`, the SAME answer for an
- *   unknown and a known group, so the route is no oracle of which ids exist. A client replaying an
- *   owed exit reads that 403 as "already done" (`pendingGroupExits`) and stops owing it.
+ * - no seat - never a member, removed, departed, or the group is absent or tombstoned - is the 403
+ *   `NOT_A_MEMBER`, the SAME answer for an unknown and a known group, so the route is no oracle of
+ *   which ids exist. A tombstoned group is read as absent HERE, by its `deletedAt`, never trusted to
+ *   have lost every seat: a seat a purge left behind is not a member of a conversation that ended.
+ *   A client replaying an owed exit reads that 403 as "already done" (`pendingGroupExits`) and stops
+ *   owing it.
  * - a seat still awaiting a member's admission is the 409 `awaiting_admission`
  *   ({@link refuseAwaitingSeat}), never a 403 its client would retire the conversation on.
  *
  * Every refusal logs, at 1, 10, 100... per (route, group, caller), so a retrying client is one line.
+ *
+ * @returns the group's row as read for the check - its kind included - so a route that also rules
+ *          on the kind ({@link isKeyDistributionGroup}) does not read it a second time.
  */
 export async function assertCallerActsOnGroup(
   repos: GroupStandingRepos,
@@ -565,13 +583,13 @@ export async function assertCallerActsOnGroup(
   route: string,
   groupId: string,
   callerUserId: string
-): Promise<void> {
+): Promise<GroupKindRow> {
   const group = await repos.groups.findOne({
-    where: { id: groupId },
+    where: { id: groupId, deletedAt: IsNull() },
     select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
   });
   const standing = group ? await standingOnGroupOfKind(repos, group, groupId, callerUserId) : null;
-  if (standing === 'admitted') return;
+  if (group && standing === 'admitted') return group;
   if (standing === 'awaiting') throw refuseAwaitingSeat(log, route, groupId, callerUserId);
   const nth = notAMemberRepeats.hit(`${route}|${groupId}|${callerUserId}`);
   if (nth !== null) {

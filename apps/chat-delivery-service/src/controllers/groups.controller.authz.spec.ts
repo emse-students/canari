@@ -2,8 +2,10 @@
 
 import { ConflictException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { FindOperator } from 'typeorm';
 import { GroupsController } from './groups.controller';
 import { InvitationsController } from './invitations.controller';
+import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 
 /**
@@ -27,7 +29,15 @@ type GroupRow = {
   id: string;
   distributionWorkspaceId?: string | null;
   distributionChannelId?: string | null;
+  deletedAt?: Date | null;
 };
+
+/** One `where` clause against an in-memory row, `IsNull()` included (the tombstone filter). */
+function matches(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([k, v]) =>
+    v instanceof FindOperator && v.type === 'isNull' ? row[k] == null : row[k] === v
+  );
+}
 
 /** The three tables the check reads, as plain arrays a test edits. */
 function makeTables() {
@@ -42,7 +52,7 @@ function makeTables() {
   const match =
     <T extends Record<string, unknown>>(where: Record<string, unknown>) =>
     (row: T) =>
-      Object.entries(where).every(([k, v]) => row[k] === v);
+      matches(row, where);
   const groupRepo = {
     findOne: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
       return tables.groups.find(match<GroupRow>(where)) ?? null;
@@ -153,6 +163,42 @@ describe('the group routes enforce membership', () => {
       expect(wrote()).toBe(false);
     });
 
+    it('answers a tombstoned group that still holds a seat the same 403, and writes nothing', async () => {
+      // The tombstone is read from `deletedAt` itself, not inferred from a purge having run.
+      t.tables.groups = [{ id: GROUP, deletedAt: new Date() }];
+
+      const refusal = await call(groups, MEMBER).catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({ code: 'NOT_A_MEMBER' });
+      expect(wrote()).toBe(false);
+    });
+
+    it('refuses a key-distribution group to its own admitted member, and writes nothing', async () => {
+      t.tables.groups = [{ id: GROUP, distributionWorkspaceId: 'ws-1' }];
+      t.tables.seats = [];
+      t.tables.devices = [{ groupId: GROUP, userId: MEMBER, deviceId: 'd-1', status: 'active' }];
+
+      const refusal = await call(groups, MEMBER).catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: 'KEY_DISTRIBUTION_GROUP',
+      });
+      expect(wrote()).toBe(false);
+    });
+
+    it('answers a stranger to a key-distribution group NOT_A_MEMBER, naming nothing of its kind', async () => {
+      t.tables.groups = [{ id: GROUP, distributionChannelId: 'ch-1' }];
+      t.tables.seats = [];
+      t.tables.devices = [{ groupId: GROUP, userId: MEMBER, deviceId: 'd-1', status: 'active' }];
+
+      const refusal = await call(groups, STRANGER).catch((e: unknown) => e);
+
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({ code: 'NOT_A_MEMBER' });
+      expect(wrote()).toBe(false);
+    });
+
     it('is still refused by the authentication guard before any of this', () => {
       const method = (GroupsController.prototype as unknown as Record<string, object>)[handler];
       expect(Reflect.getMetadata(GUARDS_METADATA, method)).toContain(HeaderAuthGuard);
@@ -172,17 +218,25 @@ describe('the group routes enforce membership', () => {
     expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
   });
 
-  it('reads a key-distribution group from its device rows, where its members are recorded', async () => {
+  it('a key-distribution group is never deleted for everyone here, whoever asks', async () => {
     t.tables.groups = [{ id: GROUP, distributionWorkspaceId: 'ws-1' }];
-    t.tables.seats = [];
     t.tables.devices = [{ groupId: GROUP, userId: MEMBER, deviceId: 'd-1', status: 'active' }];
+
+    for (const caller of [MEMBER, STRANGER, WAITING]) {
+      await expect(groups.deleteGroup(GROUP, caller)).rejects.toBeInstanceOf(ForbiddenException);
+    }
+    expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    expect(redis.del).not.toHaveBeenCalled();
+  });
+
+  it('a group that is no key-distribution group keeps "any admitted member" for all three routes', async () => {
+    t.groupRepo.manager.transaction.mockResolvedValue({});
 
     await expect(groups.renameGroup(GROUP, { name: 'x' }, MEMBER)).resolves.toEqual({
       status: 'renamed',
     });
-    await expect(groups.renameGroup(GROUP, { name: 'x' }, STRANGER)).rejects.toBeInstanceOf(
-      ForbiddenException
-    );
+    await expect(groups.setGroupImage(GROUP, { mediaId: null }, MEMBER)).resolves.toBeDefined();
+    await expect(groups.deleteGroup(GROUP, MEMBER)).resolves.toBeDefined();
   });
 
   it('an unauthenticated call never reaches a route: the guard answers 401', () => {
@@ -197,11 +251,33 @@ describe('the device-membership deletions enforce who may end a row', () => {
   let t: ReturnType<typeof makeTables>;
   let invitations: InvitationsController;
   let transaction: jest.Mock;
+  /** The device rows the transaction deleted, read off the same in-memory table. */
+  let deleted: DeviceRow[];
+  /** Whether the transaction's status read took a row lock. */
+  let lockedRead: unknown;
 
   beforeEach(() => {
     t = makeTables();
+    deleted = [];
+    lockedRead = undefined;
     transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
-      cb({ getRepository: () => ({ delete: jest.fn().mockResolvedValue({ affected: 1 }) }) })
+      cb({
+        getRepository: (entity: unknown) => ({
+          findOne: jest.fn(
+            async ({ where, lock }: { where: Record<string, unknown>; lock?: unknown }) => {
+              lockedRead = lock;
+              return t.tables.devices.find((r) => matches(r, where)) ?? null;
+            }
+          ),
+          delete: jest.fn(async (where: Record<string, unknown>) => {
+            if (entity !== DeviceGroupMembership) return { affected: 0 };
+            const gone = t.tables.devices.filter((r) => matches(r, where));
+            deleted.push(...gone);
+            t.tables.devices = t.tables.devices.filter((r) => !matches(r, where));
+            return { affected: gone.length };
+          }),
+        }),
+      })
     );
     const deviceGroupRepo = {
       ...t.deviceRepo,
@@ -231,10 +307,38 @@ describe('the device-membership deletions enforce who may end a row', () => {
     ).resolves.toMatchObject({ status: 'deleted' });
   });
 
-  it("lets an admitted member end another person's device row in that group", async () => {
+  it('lets a person end their own ACTIVE device row in a group', async () => {
+    t.tables.devices = [{ groupId: GROUP, userId: MEMBER, deviceId: 'd-1', status: 'active' }];
+
+    await expect(
+      invitations.deleteDeviceMembership(MEMBER, 'd-1', GROUP, MEMBER)
+    ).resolves.toMatchObject({ status: 'deleted', affected: 1 });
+    expect(deleted).toHaveLength(1);
+  });
+
+  it("lets an admitted member end another person's PENDING device row in that group", async () => {
+    t.tables.devices = [{ groupId: GROUP, userId: STRANGER, deviceId: 'd-1', status: 'pending' }];
+
     await expect(
       invitations.deleteDeviceMembership(STRANGER, 'd-1', GROUP, MEMBER)
-    ).resolves.toMatchObject({ status: 'deleted' });
+    ).resolves.toMatchObject({ status: 'deleted', affected: 1 });
+    expect(deleted).toEqual([expect.objectContaining({ userId: STRANGER, status: 'pending' })]);
+    expect(lockedRead).toEqual({ mode: 'pessimistic_write' });
+  });
+
+  it("refuses an admitted member ending another member's ACTIVE device row, and ends nothing", async () => {
+    t.tables.devices = [{ groupId: GROUP, userId: WAITING, deviceId: 'd-2', status: 'active' }];
+
+    const refusal = await invitations
+      .deleteDeviceMembership(WAITING, 'd-2', GROUP, MEMBER)
+      .catch((e: unknown) => e);
+
+    expect(refusal).toBeInstanceOf(ForbiddenException);
+    expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+      code: 'MEMBERSHIP_NOT_ALLOWED',
+    });
+    expect(deleted).toEqual([]);
+    expect(t.tables.devices).toHaveLength(1);
   });
 
   it("refuses a stranger ending somebody else's device row, and ends nothing", async () => {

@@ -671,6 +671,12 @@ export class InvitationsController {
    *
    * The caller ends its OWN device's row, or - as an admitted member of the group - the row of a
    * device the group cannot add (`processPendingInvitations`); nobody else ends anybody's.
+   *
+   * **ANOTHER USER'S ROW IS ENDED ONLY WHILE IT IS NOT `active`**: the one use of that door is a
+   * pending invitation the group cannot honour, and an active row is a device IN the conversation,
+   * whose departure is its owner's (or a commit's) to make. The status is read under a row lock in
+   * the transaction that deletes it, so a row cannot turn active between the check and the delete.
+   * An active row is the 403 `MEMBERSHIP_NOT_ALLOWED`; an absent one ends nothing (`affected: 0`).
    */
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/device-memberships/:userId/:deviceId/:groupId')
@@ -685,7 +691,8 @@ export class InvitationsController {
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const caller = sanitizeQueryValue(headerUserId ?? '', 'x-user-id');
-    if (caller !== safeUserId && headerGlobalAdmin !== 'true') {
+    const forAnotherUser = caller !== safeUserId && headerGlobalAdmin !== 'true';
+    if (forAnotherUser) {
       await assertCallerActsOnGroup(
         { groups: this.groupRepo, seats: this.groupMemberRepo, devices: this.deviceGroupRepo },
         this.logger,
@@ -696,10 +703,27 @@ export class InvitationsController {
     }
 
     // The row and the Welcomes still queued for it, in ONE transaction ({@link endDeviceMemberships}).
-    const ended = await this.endMemberships({
-      userId: safeUserId,
-      deviceId: safeDeviceId,
-      groupId: safeGroupId,
+    const scope = { userId: safeUserId, deviceId: safeDeviceId, groupId: safeGroupId };
+    const ended = await this.deviceGroupRepo.manager.transaction(async (manager) => {
+      if (forAnotherUser) {
+        const row = await manager.getRepository(DeviceGroupMembership).findOne({
+          where: scope,
+          select: { id: true, status: true },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (row?.status === 'active') {
+          this.logger.warn(
+            `[DEL_MEMBERSHIP] REFUSED group=${safeGroupId} caller=${cutUserId(caller)} target=${cutUserId(safeUserId)}:${cutDeviceId(safeDeviceId)} - an active row is ended by its owner only (403 MEMBERSHIP_NOT_ALLOWED)`
+          );
+          throw new ForbiddenException(
+            refusalBody(
+              RefusalCode.MEMBERSHIP_NOT_ALLOWED,
+              "Cannot end another user's active device membership"
+            )
+          );
+        }
+      }
+      return endDeviceMemberships(manager, scope, 'welcomes');
     });
 
     // Keep Redis message routing in sync with membership deletion.
